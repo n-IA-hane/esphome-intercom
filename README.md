@@ -21,12 +21,9 @@ Using native ESPHome tools (automations, scripts, lambdas), you can build comple
 
 ## Preview
 
-### Demo
-<img src="readme-img/demo.gif" width="240">
-
-### Home Assistant Dashboard
-
-https://github.com/n-IA-hane/esphome-intercom/raw/refs/heads/main/readme-img/dashboard-demo.mp4
+| Device Demo | Home Assistant Dashboard |
+|:-----------:|:------------------------:|
+| <img src="readme-img/demo.gif" width="240"> | <img src="readme-img/dashboard-demo.gif" width="480"> |
 
 ### Device Display States
 | Idle | Ringing | In Call |
