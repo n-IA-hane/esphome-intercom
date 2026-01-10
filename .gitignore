@@ -22,10 +22,10 @@ __pycache__/
 !README.md
 !LICENSE
 
-# Custom components (the core of this project)
-!custom_components/
-!custom_components/**
-custom_components/**/__pycache__/
+# Components (the core of this project)
+!components/
+!components/**
+components/**/__pycache__/
 **/__pycache__/
 *.pyc
 
