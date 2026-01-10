@@ -21,14 +21,13 @@ Using native ESPHome tools (automations, scripts, lambdas), you can build comple
 
 ## Preview
 
-| Dashboard | Display States |
-|-----------|----------------|
-| ![Dashboard](readme-img/Dashboard.png) | ![Idle](readme-img/idle.jpg) ![Ringing](readme-img/ringing.jpg) |
-| Full control from Home Assistant | Local display with call states |
+### Home Assistant Dashboard
+![Dashboard](readme-img/Dashboard.png)
 
-| Active Call | Notification |
-|-------------|--------------|
-| ![In Call](readme-img/in_call.jpg) | ![Notification](readme-img/persistent_notification_call.png) |
+### Device Display States
+| Idle | Ringing | In Call |
+|------|---------|---------|
+| ![Idle](readme-img/idle.jpg) | ![Ringing](readme-img/ringing.jpg) | ![In Call](readme-img/in_call.jpg) |
 
 ## Installation
 
