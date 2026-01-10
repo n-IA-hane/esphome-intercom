@@ -30,8 +30,9 @@ This component works for many audio streaming applications:
 ```yaml
 external_components:
   - source:
-      type: local
-      path: custom_components
+      type: git
+      url: https://github.com/n-IA-hane/esphome-intercom
+      ref: main
     components: [intercom_audio]
 ```
 
@@ -269,8 +270,9 @@ bool aec_on = id(intercom).is_aec_enabled();
 ```yaml
 external_components:
   - source:
-      type: local
-      path: custom_components
+      type: git
+      url: https://github.com/n-IA-hane/esphome-intercom
+      ref: main
     components: [intercom_audio]
 
 i2s_audio:
@@ -321,8 +323,9 @@ button:
 ```yaml
 external_components:
   - source:
-      type: local
-      path: custom_components
+      type: git
+      url: https://github.com/n-IA-hane/esphome-intercom
+      ref: main
     components: [intercom_audio]
 
 i2s_audio:
@@ -367,8 +370,9 @@ sensor:
 ```yaml
 external_components:
   - source:
-      type: local
-      path: custom_components
+      type: git
+      url: https://github.com/n-IA-hane/esphome-intercom
+      ref: main
     components: [intercom_audio, i2s_audio_duplex, esp_aec, mdns_discovery]
 
 esp_aec:

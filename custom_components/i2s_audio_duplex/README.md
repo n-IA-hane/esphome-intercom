@@ -42,8 +42,9 @@ With i2s_audio_duplex:
 ```yaml
 external_components:
   - source:
-      type: local
-      path: custom_components
+      type: git
+      url: https://github.com/n-IA-hane/esphome-intercom
+      ref: main
     components: [i2s_audio_duplex]
 ```
 
@@ -197,8 +198,9 @@ intercom_audio:
 ```yaml
 external_components:
   - source:
-      type: local
-      path: custom_components
+      type: git
+      url: https://github.com/n-IA-hane/esphome-intercom
+      ref: main
     components: [i2s_audio_duplex, esp_aec]
 
 i2c:

@@ -1,15 +1,24 @@
 # ==============================================================================
-# ESP32-S3 INTERCOM MINI - Dual I2S Bus (INMP441 + MAX98357A)
+# ESP32-S3 INTERCOM MINI - Dual I2S Bus (SPH0645 + MAX98357A)
 # ==============================================================================
 #
 # Compact headless intercom device using separate I2S buses for microphone
 # and speaker. Controlled entirely via Home Assistant - no display or buttons.
 #
+# This example shows how to use intercom_audio with STANDARD ESPHome
+# microphone and speaker components (separate I2S buses).
+#
 # HARDWARE:
 #   - Board: ESP32-S3 Mini (4MB Flash, Quad PSRAM)
-#   - Microphone: INMP441 I2S MEMS (I2S_NUM_0)
+#   - Microphone: SPH0645 I2S MEMS (I2S_NUM_0) - has DC offset, needs dc_offset_removal
 #   - Speaker: MAX98357A I2S amplifier (I2S_NUM_1)
 #   - LED: WS2812 RGB (GPIO21)
+#
+# KEY DIFFERENCES FROM intercom.yaml:
+#   - Uses standard ESPHome microphone/speaker components (not i2s_audio_duplex)
+#   - Two separate I2S buses (one for mic, one for speaker)
+#   - No display - all control via Home Assistant
+#   - dc_offset_removal: true - required for SPH0645 microphone
 #
 # ==============================================================================
 

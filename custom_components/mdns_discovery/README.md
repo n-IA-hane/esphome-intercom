@@ -26,8 +26,9 @@ This component is useful beyond intercom systems:
 ```yaml
 external_components:
   - source:
-      type: local
-      path: custom_components
+      type: git
+      url: https://github.com/n-IA-hane/esphome-intercom
+      ref: main
     components: [mdns_discovery]
 ```
 
