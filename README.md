@@ -21,6 +21,9 @@ Using native ESPHome tools (automations, scripts, lambdas), you can build comple
 
 ## Preview
 
+### Demo
+![Demo](readme-img/demo.gif)
+
 ### Home Assistant Dashboard
 ![Dashboard](readme-img/Dashboard.png)
 
