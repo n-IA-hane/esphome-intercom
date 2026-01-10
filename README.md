@@ -485,4 +485,4 @@ MIT License - see [LICENSE](LICENSE)
 
 ## Credits
 
-Developed by [@n-IA-hane](https://github.com/n-IA-hane)
+Developed by [@n-IA-hane](https://github.com/n-IA-hane) with [Claude Code](https://claude.ai/code)
