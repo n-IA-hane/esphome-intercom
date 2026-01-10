@@ -22,7 +22,7 @@ Using native ESPHome tools (automations, scripts, lambdas), you can build comple
 ## Preview
 
 ### Demo
-![Demo](readme-img/demo.gif)
+<img src="readme-img/demo.gif" width="240">
 
 ### Home Assistant Dashboard
 ![Dashboard](readme-img/Dashboard.png)
