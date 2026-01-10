@@ -23,7 +23,7 @@ Using native ESPHome tools (automations, scripts, lambdas), you can build comple
 
 ### Demo
 <img src="readme-img/demo.gif" width="240">
-<video src="readme-img/dashboard-demo.mp4" autoplay loop muted></video>
+
 ### Home Assistant Dashboard
 
 <video src="readme-img/dashboard-demo.mp4" autoplay loop muted playsinline></video>
