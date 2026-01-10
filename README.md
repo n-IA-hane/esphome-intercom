@@ -25,7 +25,8 @@ Using native ESPHome tools (automations, scripts, lambdas), you can build comple
 <img src="readme-img/demo.gif" width="240">
 <video src="readme-img/dashboard-demo.mp4" autoplay loop muted></video>
 ### Home Assistant Dashboard
-![Dashboard](readme-img/Dashboard.png)
+
+<video src="readme-img/dashboard-demo.mp4" autoplay loop muted playsinline></video>
 
 ### Device Display States
 | Idle | Ringing | In Call |
