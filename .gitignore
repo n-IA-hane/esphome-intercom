@@ -1,0 +1,49 @@
+# ESPHome build artifacts
+.esphome/
+.pioenvs/
+.pio/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# System files
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Ignore everything by default
+*
+
+# Whitelist: what we want to publish
+!.gitignore
+!README.md
+!LICENSE
+
+# Custom components (the core of this project)
+!custom_components/
+!custom_components/**
+custom_components/**/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Package files
+!packages/
+!packages/**
+
+# Working examples
+!intercom.yaml
+!intercom-mini.yaml
+
+# Documentation images
+!readme-img/
+!readme-img/**
+
+# Explicitly ignore sensitive/local files
+CLAUDE.md
+secrets.yaml
+backup/
+backups/
+*.txt

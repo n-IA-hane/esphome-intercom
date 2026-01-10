@@ -1,0 +1,305 @@
+# ==============================================================================
+# ESP32-S3 INTERCOM MINI - Dual I2S Bus (INMP441 + MAX98357A)
+# ==============================================================================
+#
+# Compact headless intercom device using separate I2S buses for microphone
+# and speaker. Controlled entirely via Home Assistant - no display or buttons.
+#
+# HARDWARE:
+#   - Board: ESP32-S3 Mini (4MB Flash, Quad PSRAM)
+#   - Microphone: INMP441 I2S MEMS (I2S_NUM_0)
+#   - Speaker: MAX98357A I2S amplifier (I2S_NUM_1)
+#   - LED: WS2812 RGB (GPIO21)
+#
+# ==============================================================================
+
+substitutions:
+  name: intercom-mini
+  friendly_name: Intercom Mini
+  p2p_port: "12346"
+  signaling_port: "12350"
+  signaling_broadcast: "192.168.1.255"  # Subnet broadcast (more reliable than 255.255.255.255)
+
+# Include shared configuration
+packages:
+  base: !include packages/intercom_base.yaml
+
+# ==============================================================================
+# CONTACTS - Configure your contacts here
+# Format: "Name|IP" - First entry should be HomeAssistant
+# ==============================================================================
+globals:
+  - id: static_contacts
+    type: std::array<const char*, 8>
+    restore_value: no
+    initial_value: '{
+      "HomeAssistant|192.168.1.10",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    }'
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2025.5.0
+  platformio_options:
+    board_build.flash_mode: dio
+  on_boot:
+    priority: 600
+    then:
+      - lambda: |-
+          // Extract HA IP from static_contacts[0] (format: "Name|IP")
+          if (id(static_contacts)[0] && id(static_contacts)[0][0]) {
+            std::string entry = id(static_contacts)[0];
+            size_t sep = entry.find('|');
+            if (sep != std::string::npos) {
+              id(ha_ip) = entry.substr(sep + 1);
+            }
+          }
+          // Restore speaker volume from saved state
+          float vol = id(speaker_volume).state / 100.0f;
+          id(intercom).set_volume(vol);
+          // Restore mic gain from saved state
+          id(intercom).set_mic_gain((int)id(mic_gain).state);
+      # Resolve first contact at boot
+      - script.execute: resolve_selected_contact
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_LWIP_MAX_SOCKETS: "16"
+    components:
+      - espressif/esp-sr^2.3.0
+
+psram:
+  mode: quad
+  speed: 80MHz
+
+# ==============================================================================
+# CONNECTIVITY
+# ==============================================================================
+api:
+  id: api_server
+
+ota:
+  - platform: esphome
+
+web_server:
+  port: 80
+
+logger:
+  hardware_uart: UART0
+  level: INFO
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${name} Fallback"
+
+mdns:
+  services:
+    - service: "_intercom"
+      protocol: "_udp"
+      port: ${p2p_port}
+      txt:
+        device: ${name}
+
+# ==============================================================================
+# EXTERNAL COMPONENTS
+# ==============================================================================
+external_components:
+  - source:
+      type: local
+      path: custom_components
+    components: [intercom_audio, esp_aec, mdns_discovery]
+
+# ==============================================================================
+# I2S AUDIO BUSES
+# ==============================================================================
+i2s_audio:
+  # I2S Bus 0: INMP441 Microphone
+  - id: i2s_mic_bus
+    i2s_lrclk_pin: GPIO3
+    i2s_bclk_pin: GPIO2
+
+  # I2S Bus 1: MAX98357A Speaker
+  - id: i2s_spk_bus
+    i2s_lrclk_pin: GPIO6
+    i2s_bclk_pin: GPIO7
+
+# ==============================================================================
+# MICROPHONE (INMP441)
+# ==============================================================================
+microphone:
+  - platform: i2s_audio
+    id: mic_component
+    i2s_audio_id: i2s_mic_bus
+    i2s_din_pin: GPIO4
+    adc_type: external
+    pdm: false
+    bits_per_sample: 32bit
+    sample_rate: 16000
+    channel: left
+
+# ==============================================================================
+# SPEAKER (MAX98357A)
+# ==============================================================================
+speaker:
+  - platform: i2s_audio
+    id: spk_component
+    i2s_audio_id: i2s_spk_bus
+    i2s_dout_pin: GPIO8
+    dac_type: external
+    i2s_mode: primary
+
+# ==============================================================================
+# ECHO CANCELLATION
+# ==============================================================================
+esp_aec:
+  id: aec_component
+  sample_rate: 16000
+  filter_length: 4
+
+# ==============================================================================
+# INTERCOM AUDIO (separate mic/speaker mode)
+# ==============================================================================
+intercom_audio:
+  id: intercom
+  microphone_id: mic_component
+  speaker_id: spk_component
+  aec_id: aec_component
+  listen_port: ${p2p_port}
+  remote_ip: !lambda 'return id(selected_ip).state;'
+  remote_port: !lambda 'return (uint16_t)id(selected_port).state;'
+  buffer_size: 8192
+  prebuffer_size: 2048
+  dc_offset_removal: true  # Required for SPH0645 mic to allow mic_gain > 1
+  on_start:
+    - lambda: 'id(call_state) = 3;'
+    - component.update: call_state_text
+  on_stop:
+    - lambda: |-
+        if (id(call_state) == 3) {
+          std::string peer_ip = id(selected_ip).state;
+          if (!peer_ip.empty() && peer_ip != id(ha_ip)) {
+            auto ips = wifi::global_wifi_component->get_ip_addresses();
+            std::string our_ip = ips.empty() ? "" : ips[0].str();
+            id(signaling_msg) = "HANGUP:${name}:" + our_ip;
+          }
+        }
+        id(call_state) = 0;
+        id(caller_name) = "";
+        id(caller_ip) = "";
+    - script.execute: flush_signaling
+    - script.execute: resolve_selected_contact
+    - component.update: call_state_text
+
+# ==============================================================================
+# mDNS DISCOVERY
+# ==============================================================================
+mdns_discovery:
+  id: discovery
+  service_type: "_intercom._udp"
+  scan_interval: 30s
+  on_peer_found:
+    - logger.log:
+        format: "Peer found: %s (%s)"
+        args: ["name.c_str()", "ip.c_str()"]
+  on_peer_lost:
+    - logger.log:
+        format: "Peer lost: %s"
+        args: ["name.c_str()"]
+
+# ==============================================================================
+# DEVICE-SPECIFIC CONTROLS
+# ==============================================================================
+number:
+  # Speaker volume (software volume via intercom_audio component)
+  - platform: template
+    id: speaker_volume
+    name: "Speaker Volume"
+    icon: "mdi:volume-high"
+    min_value: 0
+    max_value: 100
+    step: 5
+    initial_value: 50
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "%"
+    set_action:
+      - lambda: |-
+          // Software volume: 0-100% maps to 0.0-1.0
+          float vol = x / 100.0f;
+          id(intercom).set_volume(vol);
+
+  # Microphone gain (amplification during 32→16 bit conversion)
+  - platform: template
+    id: mic_gain
+    name: "Microphone Gain"
+    icon: "mdi:microphone"
+    min_value: 1
+    max_value: 16
+    step: 1
+    initial_value: 2
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: 'id(intercom).set_mic_gain((int)x);'
+
+# ==============================================================================
+# ECHO CANCELLATION SWITCH
+# ==============================================================================
+switch:
+  - platform: intercom_audio
+    intercom_audio_id: intercom
+    aec:
+      name: "Echo Cancellation"
+      icon: "mdi:ear-hearing"
+
+# ==============================================================================
+# STATUS LED (WS2812 RGB on GPIO21)
+# ==============================================================================
+light:
+  - platform: esp32_rmt_led_strip
+    id: status_led
+    name: "Status LED"
+    icon: "mdi:led-on"
+    pin: GPIO21
+    chipset: WS2812
+    num_leds: 1
+    rgb_order: RGB
+    effects:
+      - strobe:
+          name: "Ringing"
+          colors:
+            - state: true
+              brightness: 100%
+              red: 100%
+              green: 0%
+              blue: 0%
+              duration: 300ms
+            - state: false
+              duration: 300ms
+      - strobe:
+          name: "Calling"
+          colors:
+            - state: true
+              brightness: 100%
+              red: 100%
+              green: 50%
+              blue: 0%
+              duration: 500ms
+            - state: false
+              duration: 500ms

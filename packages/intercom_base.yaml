@@ -1,0 +1,738 @@
+# ==============================================================================
+# INTERCOM BASE PACKAGE
+# ==============================================================================
+# Common configuration shared between all intercom devices.
+# Include this package in your device-specific YAML:
+#
+#   packages:
+#     base: !include packages/intercom_base.yaml
+#
+# Required substitutions in your device YAML:
+#   - name: Device name (e.g., "intercom", "intercom-mini")
+#   - friendly_name: Display name for Home Assistant
+#   - p2p_port: Audio streaming port (default: "12346")
+#   - signaling_port: Call signaling port (default: "12350")
+#
+# Required components in your device YAML:
+#   - intercom_audio with id: intercom
+#   - mdns_discovery with id: discovery
+#   - light with id: status_led (for call state indication)
+#
+# ==============================================================================
+
+# ==============================================================================
+# GLOBAL VARIABLES
+# Shared state for call management
+# ==============================================================================
+globals:
+  # NOTE: static_contacts must be defined in device-specific YAML!
+  # Example:
+  #   globals:
+  #     - id: static_contacts
+  #       type: std::array<const char*, 8>
+  #       initial_value: '{"HomeAssistant|192.168.1.10", "", "", "", "", "", "", ""}'
+
+  # Home Assistant IP (extracted from static_contacts[0] at boot)
+  - id: ha_ip
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+  # Currently selected contact index
+  - id: selected_idx
+    type: int
+    restore_value: yes
+    initial_value: '0'
+
+  # Call state machine: 0=IDLE, 1=RINGING_IN, 2=RINGING_OUT, 3=IN_CALL, 4=ANSWERING
+  - id: call_state
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  # Incoming caller information
+  - id: caller_name
+    type: std::string
+    restore_value: no
+
+  - id: caller_ip
+    type: std::string
+    restore_value: no
+
+  - id: caller_port
+    type: uint16_t
+    restore_value: no
+    initial_value: '${p2p_port}'
+
+  # Auto-answer mode
+  - id: auto_answer
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+
+  # Auto-hangup mode (automatically end call after timeout)
+  - id: auto_hangup
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+
+  # Signaling message buffer
+  - id: signaling_msg
+    type: std::string
+    restore_value: no
+
+  # Cached selected contact name (resolved from selected_idx)
+  # Updated by resolve_selected_contact script - read this instead of parsing
+  - id: selected_name_cache
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+  # Auto-hangup countdown (seconds remaining, 0 = inactive)
+  - id: auto_hangup_remaining
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+# ==============================================================================
+# UDP SIGNALING
+# Broadcast-based call signaling protocol (CALL/ANSWER/HANGUP)
+# ==============================================================================
+udp:
+  id: call_signaling
+  port: ${signaling_port}
+  addresses:
+    - ${signaling_broadcast}
+  on_receive:
+    then:
+      - lambda: |-
+          std::string msg(data.begin(), data.end());
+
+          // === HANGUP MESSAGE ===
+          if (msg.rfind("HANGUP:", 0) == 0) {
+            size_t p1 = msg.find(':', 7);
+            if (p1 == std::string::npos) return;
+            std::string peer_ip = msg.substr(p1 + 1);
+
+            // Handle hangup for all active call states
+            int state = id(call_state);
+            bool should_hangup = false;
+
+            if (state == 1) {
+              // RINGING_IN: hangup if from caller
+              should_hangup = (peer_ip == id(caller_ip));
+            } else if (state == 2) {
+              // RINGING_OUT: hangup if from callee
+              should_hangup = (peer_ip == id(selected_ip).state);
+            } else if (state == 3 || state == 4) {
+              // IN_CALL/ANSWERING: hangup if from peer
+              should_hangup = (peer_ip == id(selected_ip).state);
+            }
+
+            if (should_hangup) {
+              id(ring_timeout_script).stop();
+              if (id(streaming_switch).state) {
+                id(streaming_switch).turn_off();
+              }
+              id(call_state) = 0;
+              id(caller_name) = "";
+              id(caller_ip) = "";
+              id(resolve_selected_contact).execute();
+            }
+            return;
+          }
+
+          // === ANSWER MESSAGE ===
+          if (msg.rfind("ANSWER:", 0) == 0) {
+            if (id(call_state) != 2) return;  // Only accept if RINGING_OUT
+
+            size_t p1 = msg.find(':', 7);
+            size_t p2 = msg.find(':', p1 + 1);
+            if (p1 == std::string::npos || p2 == std::string::npos) return;
+
+            std::string callee_ip = msg.substr(p1 + 1, p2 - p1 - 1);
+
+            if (callee_ip == id(selected_ip).state) {
+              id(streaming_switch).turn_on();
+            }
+            return;
+          }
+
+          // === CALL MESSAGE ===
+          if (msg.rfind("CALL:", 0) == 0) {
+            size_t p1 = msg.find(':', 5);
+            size_t p2 = msg.find(':', p1 + 1);
+            size_t p3 = msg.find(':', p2 + 1);
+            if (p1 == std::string::npos || p2 == std::string::npos || p3 == std::string::npos) return;
+
+            std::string c_name = msg.substr(5, p1 - 5);
+            std::string c_ip = msg.substr(p1 + 1, p2 - p1 - 1);
+            int port_val = atoi(msg.substr(p2 + 1, p3 - p2 - 1).c_str());
+            if (port_val < 1 || port_val > 65535) return;  // Invalid port
+            uint16_t c_port = (uint16_t)port_val;
+            std::string target = msg.substr(p3 + 1);
+
+            // Verify this call is for us
+            if (target != "${name}") return;
+
+            // Reject if busy
+            if (id(call_state) != 0) return;
+
+            // Store caller info
+            id(caller_name) = c_name;
+            id(caller_ip) = c_ip;
+            id(caller_port) = c_port;
+
+            if (id(auto_answer)) {
+              // Auto-answer mode: accept immediately
+              id(selected_ip).make_call().set_value(c_ip).perform();
+              id(selected_port).make_call().set_value(c_port).perform();
+
+              auto ips = wifi::global_wifi_component->get_ip_addresses();
+              std::string our_ip = ips.empty() ? "" : ips[0].str();
+              id(signaling_msg) = "ANSWER:${name}:" + our_ip + ":${p2p_port}";
+
+              id(streaming_switch).turn_on();
+            } else {
+              // Manual answer: go to RINGING_IN state
+              id(call_state) = 1;
+            }
+          }
+      - script.execute: flush_signaling
+      - component.update: call_state_text
+      - component.update: call_from_text
+      # Start ring timeout if entering RINGING_IN
+      - if:
+          condition:
+            lambda: 'return id(call_state) == 1;'
+          then:
+            - script.execute: ring_timeout_script
+
+# ==============================================================================
+# SCRIPTS
+# ==============================================================================
+script:
+  # ===========================================================================
+  # RESOLVE SELECTED CONTACT
+  # Central script that resolves selected_idx to actual contact data.
+  # Updates: selected_ip, selected_port, selected_name_cache
+  # Call this whenever: idx changes, call ends, mDNS peers change
+  # ===========================================================================
+  - id: resolve_selected_contact
+    mode: restart
+    then:
+      - lambda: |-
+          // Count valid static contacts
+          int static_count = 0;
+          for (int i = 0; i < 8; i++) {
+            if (id(static_contacts)[i] && id(static_contacts)[i][0]) static_count++;
+          }
+
+          auto& dyn = id(discovery).get_peers();
+          int total = static_count + dyn.size();
+
+          if (total == 0) {
+            id(selected_name_cache) = "(no contacts)";
+            return;
+          }
+
+          // Normalize index
+          int idx = id(selected_idx) % total;
+          id(selected_idx) = idx;  // Store normalized
+
+          std::string name, ip;
+          uint16_t port = ${p2p_port};
+
+          if (idx < static_count) {
+            // Static contact
+            int si = 0;
+            for (int i = 0; i < 8; i++) {
+              if (id(static_contacts)[i] && id(static_contacts)[i][0]) {
+                if (si == idx) {
+                  std::string entry = id(static_contacts)[i];
+                  size_t sep = entry.find('|');
+                  if (sep != std::string::npos) {
+                    name = entry.substr(0, sep);
+                    ip = entry.substr(sep + 1);
+                  }
+                  break;
+                }
+                si++;
+              }
+            }
+            port = ${p2p_port};  // Static contacts use our port
+          } else {
+            // mDNS discovered contact
+            int di = idx - static_count;
+            if (di < dyn.size()) {
+              name = dyn[di].name;
+              ip = dyn[di].ip;
+              port = dyn[di].port;
+            }
+          }
+
+          // Update cache and actual values
+          id(selected_name_cache) = name;
+          if (!ip.empty()) {
+            id(selected_ip).make_call().set_value(ip).perform();
+            id(selected_port).make_call().set_value(port).perform();
+          }
+      - component.update: selected_contact_text
+
+  # Send pending signaling message via UDP
+  - id: flush_signaling
+    mode: queued
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(signaling_msg).empty();'
+          then:
+            - udp.write:
+                id: call_signaling
+                data: !lambda 'return std::vector<uint8_t>(id(signaling_msg).begin(), id(signaling_msg).end());'
+            - lambda: 'id(signaling_msg).clear();'
+
+  # Ring timeout - auto hangup if no answer
+  - id: ring_timeout_script
+    mode: restart
+    then:
+      - lambda: |-
+          int timeout = (int)id(ring_timeout).state;
+          if (timeout <= 0) return;  // Disabled
+      - delay: !lambda 'return id(ring_timeout).state * 1000;'
+      - lambda: |-
+          int state = id(call_state);
+          // If still ringing (in or out), auto-hangup
+          if (state == 1 || state == 2) {
+            ESP_LOGW("intercom", "Ring timeout - auto hangup");
+            // Send HANGUP
+            std::string peer_ip = (state == 1) ? id(caller_ip) : id(selected_ip).state;
+            if (!peer_ip.empty() && peer_ip != id(ha_ip)) {
+              auto ips = wifi::global_wifi_component->get_ip_addresses();
+              std::string our_ip = ips.empty() ? "" : ips[0].str();
+              id(signaling_msg) = "HANGUP:${name}:" + our_ip;
+            }
+            id(call_state) = 0;
+            id(caller_name) = "";
+            id(caller_ip) = "";
+          }
+      - script.execute: flush_signaling
+      - script.execute: resolve_selected_contact
+      - component.update: call_state_text
+
+  # Auto-hangup tick - called every second by interval
+  - id: auto_hangup_tick
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: 'return id(auto_hangup) && id(streaming_switch).state && id(auto_hangup_remaining) > 0;'
+          then:
+            - lambda: 'id(auto_hangup_remaining)--;'
+            - if:
+                condition:
+                  lambda: 'return id(auto_hangup_remaining) <= 0;'
+                then:
+                  - logger.log: "Auto-hangup: timeout reached"
+                  - switch.turn_off: streaming_switch
+
+# ==============================================================================
+# TEXT SENSORS
+# ==============================================================================
+text_sensor:
+  # Call state indicator (also controls LED color)
+  - platform: template
+    id: call_state_text
+    name: "Call State"
+    icon: "mdi:phone-settings"
+    lambda: |-
+      switch(id(call_state)) {
+        case 0: return {"IDLE"};
+        case 1: return {"RINGING_IN"};
+        case 2: return {"RINGING_OUT"};
+        case 3: return {"IN_CALL"};
+        case 4: return {"ANSWERING"};
+        default: return {"UNKNOWN"};
+      }
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return id(call_state) == 0;'
+            then:
+              - light.turn_off: status_led
+        - if:
+            condition:
+              lambda: 'return id(call_state) == 1;'
+            then:
+              - light.turn_on:
+                  id: status_led
+                  effect: "Ringing"
+        - if:
+            condition:
+              lambda: 'return id(call_state) == 2;'
+            then:
+              - light.turn_on:
+                  id: status_led
+                  effect: "Calling"
+        - if:
+            condition:
+              lambda: 'return id(call_state) == 3 || id(call_state) == 4;'
+            then:
+              - light.turn_on:
+                  id: status_led
+                  red: 30%
+                  green: 69%
+                  blue: 31%
+                  effect: none
+
+  # Incoming caller name
+  - platform: template
+    id: call_from_text
+    name: "Call From"
+    icon: "mdi:phone-incoming"
+    lambda: |-
+      if (id(call_state) == 1 || id(call_state) == 3) {
+        if (!id(caller_name).empty()) {
+          return id(caller_name);
+        }
+      }
+      return std::string("");
+
+  # Currently selected contact name (reads from cache, updated by resolve_selected_contact)
+  - platform: template
+    id: selected_contact_text
+    name: "Selected Contact"
+    icon: "mdi:account-circle"
+    update_interval: never
+    lambda: 'return id(selected_name_cache);'
+
+  # Discovered peers list
+  - platform: mdns_discovery
+    mdns_discovery_id: discovery
+    peers_list:
+      name: "Discovered Peers"
+      icon: "mdi:lan"
+
+# ==============================================================================
+# TEXT INPUT
+# ==============================================================================
+text:
+  # Target IP address (populated by contact selection)
+  - platform: template
+    id: selected_ip
+    name: "Destination IP"
+    icon: "mdi:ip-network"
+    optimistic: true
+    restore_value: true
+    mode: text
+    min_length: 0
+    max_length: 15
+
+# ==============================================================================
+# NUMBER
+# ==============================================================================
+number:
+  # Target port (usually same as listen port)
+  - platform: template
+    id: selected_port
+    name: "Destination Port"
+    icon: "mdi:ethernet"
+    min_value: 1024
+    max_value: 65535
+    step: 1
+    initial_value: ${p2p_port}
+    optimistic: true
+    restore_value: true
+
+  # Ring timeout in seconds (0 = disabled)
+  - platform: template
+    id: ring_timeout
+    name: "Ring Timeout"
+    icon: "mdi:timer-outline"
+    unit_of_measurement: "s"
+    min_value: 0
+    max_value: 120
+    step: 5
+    initial_value: 30
+    optimistic: true
+    restore_value: true
+
+  # Auto-hangup timeout in seconds (0 = disabled)
+  - platform: template
+    id: auto_hangup_timeout
+    name: "Auto Hangup Timeout"
+    icon: "mdi:timer-off-outline"
+    unit_of_measurement: "s"
+    min_value: 0
+    max_value: 300
+    step: 10
+    initial_value: 60
+    optimistic: true
+    restore_value: true
+
+# ==============================================================================
+# SWITCHES
+# ==============================================================================
+switch:
+  # Streaming control - single point of control for audio
+  - platform: template
+    name: "Streaming"
+    id: streaming_switch
+    icon: "mdi:broadcast"
+    lambda: 'return id(intercom).is_streaming();'
+    turn_on_action:
+      - intercom_audio.start:
+          id: intercom
+      - lambda: 'id(auto_hangup_remaining) = (int)id(auto_hangup_timeout).state;'
+    turn_off_action:
+      - lambda: 'id(auto_hangup_remaining) = 0;'
+      - intercom_audio.stop:
+          id: intercom
+
+  # Auto-answer mode toggle
+  - platform: template
+    name: "Auto Answer"
+    id: auto_answer_switch
+    icon: "mdi:phone-check"
+    lambda: 'return id(auto_answer);'
+    turn_on_action:
+      - lambda: 'id(auto_answer) = true;'
+    turn_off_action:
+      - lambda: 'id(auto_answer) = false;'
+
+  # Auto-hangup mode toggle (end call after timeout)
+  - platform: template
+    name: "Auto Hangup"
+    id: auto_hangup_switch
+    icon: "mdi:phone-off"
+    lambda: 'return id(auto_hangup);'
+    turn_on_action:
+      - lambda: 'id(auto_hangup) = true;'
+    turn_off_action:
+      - lambda: 'id(auto_hangup) = false;'
+
+# ==============================================================================
+# BINARY SENSORS
+# ==============================================================================
+binary_sensor:
+  # Node status (connected to HA API)
+  - platform: status
+    id: node_status
+    name: "Status"
+
+  # Call state indicators (for cleaner automations)
+  - platform: template
+    id: is_idle
+    lambda: 'return id(call_state) == 0;'
+  - platform: template
+    id: is_ringing_in
+    lambda: 'return id(call_state) == 1;'
+  - platform: template
+    id: is_ringing_out
+    lambda: 'return id(call_state) == 2;'
+  - platform: template
+    id: is_in_call
+    lambda: 'return id(call_state) == 3;'
+  - platform: template
+    id: is_answering
+    lambda: 'return id(call_state) == 4;'
+
+  # Incoming call indicator (exposed to HA)
+  - platform: template
+    name: "Incoming Call"
+    id: incoming_call_sensor
+    icon: "mdi:phone-ring"
+    lambda: 'return id(is_ringing_in).state;'
+
+# ==============================================================================
+# BUTTONS
+# ==============================================================================
+button:
+  # Call/Answer/Hangup button
+  # Behavior depends on current call_state:
+  #   IDLE → initiate call to selected contact
+  #   RINGING_IN → answer incoming call
+  #   RINGING_OUT/IN_CALL → hangup/cancel
+  - platform: template
+    name: "Call/Answer/Hangup"
+    id: call_button
+    icon: "mdi:phone"
+    on_press:
+      - lambda: |-
+          int state = id(call_state);
+          std::string ip = id(selected_ip).state;
+
+          // RINGING_IN: Answer the call
+          if (state == 1) {
+            id(ring_timeout_script).stop();  // Stop timeout
+            id(selected_ip).make_call().set_value(id(caller_ip)).perform();
+            id(selected_port).make_call().set_value(id(caller_port)).perform();
+            auto ips = wifi::global_wifi_component->get_ip_addresses();
+            std::string our_ip = ips.empty() ? "" : ips[0].str();
+            id(signaling_msg) = "ANSWER:${name}:" + our_ip + ":${p2p_port}";
+            id(call_state) = 4;  // ANSWERING
+            return;
+          }
+
+          // RINGING_OUT or IN_CALL: Hangup/Cancel
+          if (state == 2 || state == 3 || state == 4) {
+            id(ring_timeout_script).stop();  // Stop timeout
+            // Send HANGUP to peer
+            std::string peer_ip = id(selected_ip).state;
+            if (!peer_ip.empty() && peer_ip != id(ha_ip)) {
+              auto ips = wifi::global_wifi_component->get_ip_addresses();
+              std::string our_ip = ips.empty() ? "" : ips[0].str();
+              id(signaling_msg) = "HANGUP:${name}:" + our_ip;
+              id(flush_signaling).execute();
+            }
+            // Stop streaming if active
+            if (id(streaming_switch).state) {
+              id(streaming_switch).turn_off();
+            }
+            // Reset state
+            id(call_state) = 0;
+            id(caller_name) = "";
+            id(caller_ip) = "";
+            id(resolve_selected_contact).execute();
+            id(call_state_text).update();
+            return;
+          }
+
+          // IDLE: Initiate call
+          if (ip.empty()) return;
+
+          if (ip == id(ha_ip)) {
+            // HomeAssistant destination: direct call
+            id(call_state) = 3;
+          } else {
+            // ESP destination: send CALL signaling
+            auto ips = wifi::global_wifi_component->get_ip_addresses();
+            std::string our_ip = ips.empty() ? "" : ips[0].str();
+
+            std::string target_name = ip;
+            // First try mDNS discovered peers
+            auto& peers = id(discovery).get_peers();
+            for (const auto& p : peers) {
+              if (p.ip == ip) { target_name = p.name; break; }
+            }
+            // If not found in mDNS, try static contacts (format: "name|ip")
+            if (target_name == ip) {
+              for (int i = 0; i < 8; i++) {
+                if (id(static_contacts)[i] && id(static_contacts)[i][0]) {
+                  std::string entry = id(static_contacts)[i];
+                  size_t sep = entry.find('|');
+                  if (sep != std::string::npos && entry.substr(sep + 1) == ip) {
+                    target_name = entry.substr(0, sep);
+                    break;
+                  }
+                }
+              }
+            }
+
+            id(signaling_msg) = "CALL:${name}:" + our_ip + ":${p2p_port}:" + target_name;
+            id(call_state) = 2;  // RINGING_OUT
+          }
+      # Send HA event if calling HomeAssistant
+      - if:
+          condition:
+            lambda: 'return id(call_state) == 3 && id(selected_ip).state == id(ha_ip);'
+          then:
+            - homeassistant.event:
+                event: esphome.doorbell_ring
+                data:
+                  device: "${name}"
+            - switch.turn_on: streaming_switch
+      - script.execute: flush_signaling
+      # Start audio if answering call
+      - if:
+          condition:
+            lambda: 'return id(call_state) == 4;'
+          then:
+            - lambda: 'id(call_state) = 3;'
+            - switch.turn_on: streaming_switch
+      - component.update: call_state_text
+      # Start ring timeout if entering RINGING_OUT
+      - if:
+          condition:
+            lambda: 'return id(call_state) == 2;'
+          then:
+            - script.execute: ring_timeout_script
+
+  # Cycle to next contact
+  - platform: template
+    id: next_contact_button
+    name: "Next Contact"
+    icon: "mdi:account-arrow-right"
+    on_press:
+      - lambda: 'id(selected_idx)++;'
+      - script.execute: resolve_selected_contact
+
+  # Force mDNS peer scan
+  - platform: template
+    name: "Refresh Peers"
+    icon: "mdi:refresh"
+    on_press:
+      - lambda: 'id(discovery).scan_now();'
+
+  # Reset packet counters
+  - platform: template
+    name: "Reset Stats"
+    icon: "mdi:chart-box-outline"
+    on_press:
+      - intercom_audio.reset_counters:
+          id: intercom
+
+  # Device restart
+  - platform: restart
+    name: "Restart"
+    icon: "mdi:restart"
+
+# ==============================================================================
+# SENSORS
+# ==============================================================================
+sensor:
+  - platform: wifi_signal
+    id: wifi_signal_db
+    name: "WiFi Signal dBm"
+    icon: "mdi:wifi"
+    update_interval: 30s
+
+  - platform: template
+    id: wifi_pct
+    name: "WiFi Signal %"
+    icon: "mdi:wifi"
+    unit_of_measurement: "%"
+    update_interval: 30s
+    lambda: |-
+      if (!id(wifi_signal_db).has_state()) return 0.0f;
+      float dbm = id(wifi_signal_db).state;
+      if (dbm >= -50) return 100.0f;
+      if (dbm <= -100) return 0.0f;
+      return 2.0f * (dbm + 100.0f);
+
+  - platform: intercom_audio
+    intercom_audio_id: intercom
+    tx_packets:
+      name: "TX Packets"
+      icon: "mdi:upload-network"
+    rx_packets:
+      name: "RX Packets"
+      icon: "mdi:download-network"
+    buffer_fill:
+      name: "Buffer Fill"
+      icon: "mdi:memory"
+
+  - platform: mdns_discovery
+    mdns_discovery_id: discovery
+    peer_count:
+      name: "Peer Count"
+      icon: "mdi:account-group"
+
+# ==============================================================================
+# INTERVAL
+# ==============================================================================
+interval:
+  - interval: 1s
+    then:
+      - script.execute: auto_hangup_tick

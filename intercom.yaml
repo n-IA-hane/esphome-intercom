@@ -1,0 +1,557 @@
+# ==============================================================================
+# ESP32-S3 INTERCOM - Xiaozhi Ball V3 (ES8311 Codec + GC9A01A Display)
+# ==============================================================================
+#
+# Full-featured intercom device with round LCD display and RGB LED status.
+# Uses ES8311 audio codec for high-quality full-duplex audio on a single I2S bus.
+#
+# HARDWARE:
+#   - Board: ESP32-S3 DevKitC-1 (16MB Flash, Octal PSRAM)
+#   - Audio: ES8311 codec (I2C control + I2S audio)
+#   - Display: GC9A01A 240x240 round LCD (SPI)
+#   - LED: WS2812 RGB (GPIO48)
+#   - Button: GPIO0 (main call button)
+#
+# ==============================================================================
+
+substitutions:
+  name: intercom
+  friendly_name: Intercom
+  p2p_port: "12345"
+  signaling_port: "12350"
+  signaling_broadcast: "192.168.1.255"  # Subnet broadcast (more reliable than 255.255.255.255)
+
+# Include shared configuration
+packages:
+  base: !include packages/intercom_base.yaml
+
+# ==============================================================================
+# CONTACTS - Configure your contacts here
+# Format: "Name|IP" - First entry should be HomeAssistant
+# ==============================================================================
+globals:
+  - id: static_contacts
+    type: std::array<const char*, 8>
+    restore_value: no
+    initial_value: '{
+      "HomeAssistant|192.168.1.10",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    }'
+
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: 600
+    then:
+      - light.turn_on:
+          id: backlight
+          brightness: 100%
+      - light.turn_off: status_led
+      - delay: 2s
+      - lambda: |-
+          // Extract HA IP from static_contacts[0] (format: "Name|IP")
+          if (id(static_contacts)[0] && id(static_contacts)[0][0]) {
+            std::string entry = id(static_contacts)[0];
+            size_t sep = entry.find('|');
+            if (sep != std::string::npos) {
+              id(ha_ip) = entry.substr(sep + 1);
+            }
+          }
+          // Restore speaker volume from saved state
+          float vol = 0.15 + (id(speaker_volume).state / 100.0) * 0.60;
+          id(es8311_dac).set_volume(vol);
+          // Restore mic gain from saved state
+          id(intercom).set_mic_gain((int)id(mic_gain).state);
+      # Resolve first contact at boot
+      - script.execute: resolve_selected_contact
+      # Initialize display to idle page
+      - script.execute: update_display_page
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_LWIP_MAX_SOCKETS: "16"
+    components:
+      - espressif/esp-sr^2.3.0
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+# ==============================================================================
+# CONNECTIVITY
+# ==============================================================================
+api:
+  id: api_server
+
+ota:
+  - platform: esphome
+
+web_server:
+  port: 80
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+  level: INFO
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${name} Fallback"
+
+mdns:
+  services:
+    - service: "_intercom"
+      protocol: "_udp"
+      port: ${p2p_port}
+      txt:
+        device: ${name}
+
+# ==============================================================================
+# EXTERNAL COMPONENTS
+# ==============================================================================
+external_components:
+  - source:
+      type: local
+      path: custom_components
+    components: [intercom_audio, i2s_audio_duplex, esp_aec, mdns_discovery]
+
+# ==============================================================================
+# I2C BUS (for ES8311 codec control)
+# ==============================================================================
+i2c:
+  sda: GPIO15
+  scl: GPIO14
+  scan: false
+
+# ==============================================================================
+# AUDIO CODEC (ES8311)
+# ==============================================================================
+audio_dac:
+  - platform: es8311
+    id: es8311_dac
+    bits_per_sample: 16bit
+    sample_rate: 16000
+
+# ==============================================================================
+# ECHO CANCELLATION
+# ==============================================================================
+esp_aec:
+  id: aec_component
+  sample_rate: 16000
+  filter_length: 4
+
+# ==============================================================================
+# I2S AUDIO DUPLEX (single bus for ES8311)
+# ==============================================================================
+i2s_audio_duplex:
+  id: i2s_duplex
+  i2s_lrclk_pin: GPIO45
+  i2s_bclk_pin: GPIO9
+  i2s_mclk_pin: GPIO16
+  i2s_din_pin: GPIO10
+  i2s_dout_pin: GPIO8
+  sample_rate: 16000
+  aec_id: aec_component
+
+# Speaker amplifier enable pin
+output:
+  - platform: gpio
+    id: speaker_enable
+    pin: GPIO46
+  - platform: ledc
+    id: backlight_output
+    pin: GPIO42
+    inverted: true
+
+# ==============================================================================
+# INTERCOM AUDIO
+# ==============================================================================
+intercom_audio:
+  id: intercom
+  duplex_id: i2s_duplex
+  listen_port: ${p2p_port}
+  remote_ip: !lambda 'return id(selected_ip).state;'
+  remote_port: !lambda 'return (uint16_t)id(selected_port).state;'
+  buffer_size: 8192
+  prebuffer_size: 2048
+  on_start:
+    - output.turn_on: speaker_enable
+    - lambda: 'id(call_state) = 3;'
+    - component.update: call_state_text
+  on_stop:
+    - output.turn_off: speaker_enable
+    - lambda: |-
+        if (id(call_state) == 3) {
+          std::string peer_ip = id(selected_ip).state;
+          if (!peer_ip.empty() && peer_ip != id(ha_ip)) {
+            auto ips = wifi::global_wifi_component->get_ip_addresses();
+            std::string our_ip = ips.empty() ? "" : ips[0].str();
+            id(signaling_msg) = "HANGUP:${name}:" + our_ip;
+          }
+        }
+        id(call_state) = 0;
+        id(caller_name) = "";
+        id(caller_ip) = "";
+    - script.execute: flush_signaling
+    - script.execute: resolve_selected_contact
+    - component.update: call_state_text
+
+# ==============================================================================
+# mDNS DISCOVERY
+# ==============================================================================
+mdns_discovery:
+  id: discovery
+  service_type: "_intercom._udp"
+  scan_interval: 30s
+  on_peer_found:
+    - logger.log:
+        format: "Peer found: %s (%s)"
+        args: ["name.c_str()", "ip.c_str()"]
+  on_peer_lost:
+    - logger.log:
+        format: "Peer lost: %s"
+        args: ["name.c_str()"]
+
+# ==============================================================================
+# EXTEND CALL STATE TEXT SENSOR
+# Triggers display page change when call_state changes
+# ==============================================================================
+text_sensor:
+  - id: !extend call_state_text
+    on_value:
+      then:
+        - script.execute: update_display_page
+
+# ==============================================================================
+# DISPLAY UPDATE SCRIPT
+# Called when call_state changes to switch display page
+# ==============================================================================
+script:
+  - id: update_display_page
+    mode: restart
+    then:
+      - lambda: |-
+          switch(id(call_state)) {
+            case 0: id(main_display).show_page(id(page_idle)); break;
+            case 1: id(main_display).show_page(id(page_ringing_in)); break;
+            case 2: id(main_display).show_page(id(page_ringing_out)); break;
+            case 3:
+            case 4: id(main_display).show_page(id(page_in_call)); break;
+          }
+      - component.update: main_display
+
+# ==============================================================================
+# DISPLAY REFRESH INTERVAL
+# Re-renders current page every 1s (for countdown, TX/RX stats)
+# ==============================================================================
+interval:
+  - interval: 1s
+    then:
+      - component.update: main_display
+
+# ==============================================================================
+# DEVICE-SPECIFIC CONTROLS
+# ==============================================================================
+number:
+  # Speaker volume with ES8311 integration
+  - platform: template
+    id: speaker_volume
+    name: "Speaker Volume"
+    icon: "mdi:volume-high"
+    min_value: 0
+    max_value: 100
+    step: 5
+    initial_value: 50
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "%"
+    set_action:
+      - lambda: |-
+          float vol = 0.15 + (x / 100.0) * 0.60;
+          id(es8311_dac).set_volume(vol);
+
+  # Microphone gain (amplification during 32→16 bit conversion)
+  - platform: template
+    id: mic_gain
+    name: "Microphone Gain"
+    icon: "mdi:microphone"
+    min_value: 1
+    max_value: 16
+    step: 1
+    initial_value: 4
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: 'id(intercom).set_mic_gain((int)x);'
+
+switch:
+  # Echo cancellation toggle
+  - platform: i2s_audio_duplex
+    i2s_audio_duplex_id: i2s_duplex
+    aec:
+      name: "Echo Cancellation"
+      icon: "mdi:ear-hearing"
+
+binary_sensor:
+  # Main button - short press: call/answer/hangup, long press (>1s): next contact
+  - platform: gpio
+    pin:
+      number: GPIO0
+      mode: INPUT_PULLUP
+      inverted: true
+    id: main_button
+    name: "Main Button"
+    icon: "mdi:gesture-tap-button"
+    on_multi_click:
+      # Short press: call/answer/hangup
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 50ms
+        then:
+          - button.press: call_button
+      # Long press (>1s): next contact
+      - timing:
+          - ON for at least 1s
+        then:
+          - button.press: next_contact_button
+
+  # Display touch input
+  - platform: gpio
+    pin:
+      number: GPIO12
+      mode: INPUT_PULLUP
+      inverted: true
+    id: touch_input
+    name: "Display Touch"
+    icon: "mdi:gesture-tap"
+
+# ==============================================================================
+# DISPLAY BACKLIGHT
+# ==============================================================================
+light:
+  - platform: monochromatic
+    id: backlight
+    name: "Display Backlight"
+    icon: "mdi:brightness-6"
+    output: backlight_output
+    restore_mode: ALWAYS_ON
+    default_transition_length: 250ms
+
+# ==============================================================================
+# STATUS LED (WS2812 RGB on GPIO48)
+# ==============================================================================
+  - platform: esp32_rmt_led_strip
+    id: status_led
+    name: "Status LED"
+    icon: "mdi:led-on"
+    pin: GPIO48
+    chipset: WS2812
+    num_leds: 1
+    rgb_order: grb
+    effects:
+      - strobe:
+          name: "Ringing"
+          colors:
+            - state: true
+              brightness: 100%
+              red: 100%
+              green: 0%
+              blue: 0%
+              duration: 300ms
+            - state: false
+              duration: 300ms
+      - strobe:
+          name: "Calling"
+          colors:
+            - state: true
+              brightness: 100%
+              red: 100%
+              green: 50%
+              blue: 0%
+              duration: 500ms
+            - state: false
+              duration: 500ms
+
+# ==============================================================================
+# FONTS (for display)
+# ==============================================================================
+font:
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 700
+    id: font_title
+    size: 24
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 500
+    id: font_state
+    size: 28
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 400
+    id: font_info
+    size: 20
+  - file:
+      type: gfonts
+      family: Roboto Mono
+      weight: 400
+    id: font_debug
+    size: 14
+
+# ==============================================================================
+# COLORS (for display)
+# ==============================================================================
+color:
+  - id: color_white
+    red: 100%
+    green: 100%
+    blue: 100%
+  - id: color_black
+    red: 0%
+    green: 0%
+    blue: 0%
+  - id: color_red
+    red: 100%
+    green: 0%
+    blue: 0%
+  - id: color_green
+    red: 0%
+    green: 100%
+    blue: 0%
+  - id: color_blue
+    red: 0%
+    green: 0%
+    blue: 100%
+  - id: color_yellow
+    red: 100%
+    green: 100%
+    blue: 0%
+  - id: color_orange
+    red: 100%
+    green: 60%
+    blue: 0%
+
+# ==============================================================================
+# DISPLAY (GC9A01A 240x240 Round LCD)
+# ==============================================================================
+spi:
+  - id: spi_bus
+    clk_pin: GPIO4
+    mosi_pin: GPIO2
+
+display:
+  - platform: ili9xxx
+    id: main_display
+    model: GC9A01A
+    invert_colors: true
+    data_rate: 40MHz
+    cs_pin: GPIO5
+    dc_pin: GPIO47
+    reset_pin: GPIO38
+    update_interval: never
+    dimensions:
+      height: 240
+      width: 240
+    pages:
+      # ----------------------------------------------------------------------
+      # PAGE: IDLE - Blue background, system status in footer
+      # ----------------------------------------------------------------------
+      - id: page_idle
+        lambda: |-
+          constexpr int cx = 120;  // 240/2
+          constexpr int h = 240;
+          it.fill(id(color_blue));
+          it.print(cx, 30, id(font_title), id(color_white), TextAlign::CENTER, "${friendly_name}");
+          it.print(cx, 70, id(font_debug), id(color_white), TextAlign::CENTER, "Status:");
+          it.print(cx, 100, id(font_state), id(color_green), TextAlign::CENTER, "IDLE");
+          it.print(cx, 130, id(font_debug), id(color_white), TextAlign::CENTER, "Selected contact:");
+          std::string contact = id(selected_contact_text).state;
+          if (!contact.empty()) {
+            it.print(cx, 150, id(font_info), id(color_white), TextAlign::CENTER, contact.c_str());
+          }
+          char buf[32];
+          snprintf(buf, sizeof(buf), "WiFi: %.0f%%", id(wifi_pct).state);
+          it.print(cx, h - 35, id(font_debug), id(color_white), TextAlign::CENTER, buf);
+          it.print(cx, h - 15, id(font_debug), id(color_white), TextAlign::CENTER,
+                   id(node_status).state ? "HA: OK" : "HA: --");
+
+      # ----------------------------------------------------------------------
+      # PAGE: RINGING_IN - Red background, shows caller name
+      # ----------------------------------------------------------------------
+      - id: page_ringing_in
+        lambda: |-
+          constexpr int cx = 120;
+          it.fill(id(color_red));
+          it.print(cx, 30, id(font_title), id(color_white), TextAlign::CENTER, "${friendly_name}");
+          it.print(cx, 70, id(font_debug), id(color_white), TextAlign::CENTER, "Status:");
+          it.print(cx, 100, id(font_state), id(color_yellow), TextAlign::CENTER, "RINGING");
+          it.print(cx, 130, id(font_debug), id(color_white), TextAlign::CENTER, "Call from:");
+          std::string caller = id(caller_name);
+          if (!caller.empty()) {
+            it.print(cx, 160, id(font_info), id(color_white), TextAlign::CENTER, caller.c_str());
+          }
+          it.print(cx, 200, id(font_debug), id(color_yellow), TextAlign::CENTER, "Press button to answer");
+
+      # ----------------------------------------------------------------------
+      # PAGE: RINGING_OUT - Orange background, shows who we're calling
+      # ----------------------------------------------------------------------
+      - id: page_ringing_out
+        lambda: |-
+          constexpr int cx = 120;
+          it.fill(id(color_orange));
+          it.print(cx, 30, id(font_title), id(color_white), TextAlign::CENTER, "${friendly_name}");
+          it.print(cx, 70, id(font_debug), id(color_white), TextAlign::CENTER, "Status:");
+          it.print(cx, 100, id(font_state), id(color_black), TextAlign::CENTER, "CALLING");
+          it.print(cx, 130, id(font_debug), id(color_white), TextAlign::CENTER, "Calling:");
+          std::string contact = id(selected_contact_text).state;
+          if (!contact.empty()) {
+            it.print(cx, 160, id(font_info), id(color_white), TextAlign::CENTER, contact.c_str());
+          }
+          it.print(cx, 200, id(font_debug), id(color_white), TextAlign::CENTER, "Waiting for answer...");
+
+      # ----------------------------------------------------------------------
+      # PAGE: IN_CALL - Green background, shows TX/RX stats
+      # ----------------------------------------------------------------------
+      - id: page_in_call
+        lambda: |-
+          constexpr int cx = 120;
+          constexpr int h = 240;
+          it.fill(id(color_green));
+          it.print(cx, 30, id(font_title), id(color_white), TextAlign::CENTER, "${friendly_name}");
+          it.print(cx, 70, id(font_debug), id(color_white), TextAlign::CENTER, "Status:");
+          it.print(cx, 100, id(font_state), id(color_blue), TextAlign::CENTER, "IN CALL");
+          it.print(cx, 130, id(font_debug), id(color_white), TextAlign::CENTER, "Connected to:");
+          std::string contact = id(caller_name).empty() ? id(selected_contact_text).state : id(caller_name);
+          if (!contact.empty()) {
+            it.print(cx, 150, id(font_info), id(color_white), TextAlign::CENTER, contact.c_str());
+          }
+          char buf[48];
+          snprintf(buf, sizeof(buf), "TX:%lu RX:%lu",
+                   (unsigned long)id(intercom).get_tx_packets(),
+                   (unsigned long)id(intercom).get_rx_packets());
+          it.print(cx, 175, id(font_debug), id(color_white), TextAlign::CENTER, buf);
+          // Show auto-hangup countdown if active
+          if (id(auto_hangup) && id(auto_hangup_remaining) > 0) {
+            snprintf(buf, sizeof(buf), "Timeout in: %ds", id(auto_hangup_remaining));
+            it.print(cx, h - 35, id(font_debug), id(color_yellow), TextAlign::CENTER, buf);
+          }
+          it.print(cx, h - 15, id(font_debug), id(color_white), TextAlign::CENTER, "Press button to hang up");
