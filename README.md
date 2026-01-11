@@ -203,7 +203,7 @@ intercom_audio:
   # ...
 ```
 
-> **Note**: If you use hardware with separate I2S buses for mic and speaker (e.g., SPH0645 + MAX98357A), you can use native ESPHome `microphone` and `speaker` components.
+> **Note**: If you use hardware with separate I2S buses for mic and speaker (e.g., INMP441/SPH0645 + MAX98357A), you can use native ESPHome `microphone` and `speaker` components.
 
 ### `mdns_discovery`
 
@@ -242,7 +242,7 @@ intercom_audio:
 The repository includes fully working configurations:
 
 - **`intercom.yaml`** - Xiaozhi Ball V3 (ES8311 codec + GC9A01A display)
-- **`intercom-mini.yaml`** - ESP32-S3 Mini (SPH0645 mic + MAX98357A speaker)
+- **`intercom-mini.yaml`** - ESP32-S3 Mini (INMP441/SPH0645 mic + MAX98357A speaker)
 - **`packages/intercom_base.yaml`** - Shared package with call logic
 
 These files implement a complete intercom system with:
@@ -473,7 +473,9 @@ views:
 | Device | Codec/Mic | Speaker | Notes |
 |--------|-----------|---------|-------|
 | Xiaozhi Ball V3 | ES8311 (I2S duplex) | Built-in | Round GC9A01A display |
-| ESP32-S3 Mini | SPH0645 (I2S) | MAX98357A | Budget-friendly setup |
+| ESP32-S3 Mini | INMP441 or SPH0645 (I2S) | MAX98357A | Budget-friendly setup |
+
+> **Note**: The `intercom_audio` component should work with **any microphone and speaker supported by ESPHome**. The devices above are the ones we have tested. If you use a different microphone (e.g., INMP441, SPH0645, PDM mics), just configure it in ESPHome as usual and pass it to `intercom_audio`.
 
 ### GPIO Configuration for Xiaozhi Ball V3
 
@@ -503,7 +505,7 @@ All components are pre-soldered on the board.
 
 | Component | Pin | GPIO |
 |-----------|-----|------|
-| **SPH0645 Mic** | WS (LRCLK) | GPIO3 |
+| **INMP441/SPH0645 Mic** | WS (LRCLK) | GPIO3 |
 | | SCK (BCLK) | GPIO2 |
 | | SD (DOUT) | GPIO4 |
 | | L/R | GND (left channel) |
