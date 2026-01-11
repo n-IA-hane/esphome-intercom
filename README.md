@@ -21,11 +21,11 @@ Using native ESPHome tools (automations, scripts, lambdas), you can build comple
 
 ## Preview
 
-### Home Assistant Dashboard
-<img src="readme-img/dashboard-demo.gif" width="600">
-
 ### Device Demo
 <img src="readme-img/demo.gif" width="240">
+
+### Home Assistant Dashboard
+<img src="readme-img/dashboard-demo.gif" width="600">
 
 ### Device Display States
 | Idle | Ringing | In Call |
