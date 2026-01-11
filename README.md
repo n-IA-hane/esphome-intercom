@@ -21,9 +21,11 @@ Using native ESPHome tools (automations, scripts, lambdas), you can build comple
 
 ## Preview
 
-| Device Demo | Home Assistant Dashboard |
-|:-----------:|:------------------------:|
-| <img src="readme-img/demo.gif" width="240"> | <img src="readme-img/dashboard-demo.gif" width="480"> |
+### Home Assistant Dashboard
+<img src="readme-img/dashboard-demo.gif" width="600">
+
+### Device Demo
+<img src="readme-img/demo.gif" width="240">
 
 ### Device Display States
 | Idle | Ringing | In Call |
@@ -472,6 +474,43 @@ views:
 |--------|-----------|---------|-------|
 | Xiaozhi Ball V3 | ES8311 (I2S duplex) | Built-in | Round GC9A01A display |
 | ESP32-S3 Mini | SPH0645 (I2S) | MAX98357A | Budget-friendly setup |
+
+### GPIO Configuration for Xiaozhi Ball V3
+
+All components are pre-soldered on the board.
+
+| Function | Component | GPIO |
+|----------|-----------|------|
+| **I2C (ES8311)** | SDA | GPIO15 |
+| | SCL | GPIO14 |
+| **I2S Audio** | LRCLK | GPIO45 |
+| | BCLK | GPIO9 |
+| | MCLK | GPIO16 |
+| | DIN (mic) | GPIO10 |
+| | DOUT (spk) | GPIO8 |
+| **Speaker Amp** | Enable | GPIO46 |
+| **Display (SPI)** | CLK | GPIO4 |
+| | MOSI | GPIO2 |
+| | CS | GPIO5 |
+| | DC | GPIO47 |
+| | Reset | GPIO38 |
+| **Backlight** | PWM | GPIO42 |
+| **Status LED** | WS2812 | GPIO48 |
+| **Button** | Main | GPIO0 |
+| **Touch** | Input | GPIO12 |
+
+### Wiring for ESP32-S3 Mini
+
+| Component | Pin | GPIO |
+|-----------|-----|------|
+| **SPH0645 Mic** | WS (LRCLK) | GPIO3 |
+| | SCK (BCLK) | GPIO2 |
+| | SD (DOUT) | GPIO4 |
+| | L/R | GND (left channel) |
+| **MAX98357A Amp** | LRC (LRCLK) | GPIO6 |
+| | BCLK | GPIO7 |
+| | DIN | GPIO8 |
+| **Status LED** | WS2812 | GPIO21 |
 
 ## Audio Format
 
