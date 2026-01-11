@@ -9,6 +9,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#include <atomic>
 #include <functional>
 #include <vector>
 
@@ -22,8 +23,8 @@ class EspAec;
 namespace esphome {
 namespace i2s_audio_duplex {
 
-// Callback type for mic data: receives raw PCM samples
-using MicDataCallback = std::function<void(const std::vector<uint8_t> &data)>;
+// Callback type for mic data: receives raw PCM samples (pointer + length, zero-copy)
+using MicDataCallback = std::function<void(const uint8_t *data, size_t len)>;
 
 class I2SAudioDuplex : public Component {
  public:
@@ -90,7 +91,7 @@ class I2SAudioDuplex : public Component {
   i2s_chan_handle_t rx_handle_{nullptr};
 
   // State
-  bool duplex_running_{false};
+  std::atomic<bool> duplex_running_{false};
   bool mic_running_{false};
   bool speaker_running_{false};
   TaskHandle_t audio_task_handle_{nullptr};
@@ -105,6 +106,7 @@ class I2SAudioDuplex : public Component {
   esp_aec::EspAec *aec_{nullptr};
   bool aec_enabled_{true};  // Runtime toggle
   std::unique_ptr<RingBuffer> speaker_ref_buffer_;  // Reference for AEC
+  uint32_t aec_frame_count_{0};  // Debug counter, reset on start()
 
   // Volume control
   float mic_gain_{1.0f};       // 0.0 - 2.0 (1.0 = unity gain)
