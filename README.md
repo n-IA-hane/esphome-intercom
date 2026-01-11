@@ -479,7 +479,7 @@ views:
 
 ### GPIO Configuration for Xiaozhi Ball V3
 
-All components are pre-soldered on the board. The ES8311 codec uses a **single I2S bus** for both microphone and speaker, so you must use our `i2s_audio_duplex` component (not the native ESPHome `microphone` + `speaker`).
+All components are pre-soldered on the board. The ES8311 codec uses a **single I2S bus** for both microphone and speaker. Native ESPHome does not yet support full-duplex audio on a single I2S bus, so you must use our `i2s_audio_duplex` component which enables simultaneous TX/RX on the same bus.
 
 | Function | Component | GPIO |
 |----------|-----------|------|
