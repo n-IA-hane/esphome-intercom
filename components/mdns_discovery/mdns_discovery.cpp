@@ -13,7 +13,10 @@ namespace mdns_discovery {
 static const char *TAG = "mdns_discovery";
 
 void MdnsDiscovery::setup() {
-  // Config logged via dump_config()
+  ESP_LOGI(TAG, "Setting up mDNS Discovery...");
+  ESP_LOGI(TAG, "  Service type: %s", this->service_type_.c_str());
+  ESP_LOGI(TAG, "  Scan interval: %d ms", this->scan_interval_);
+  ESP_LOGI(TAG, "  Peer timeout: %d ms", this->peer_timeout_);
 }
 
 void MdnsDiscovery::loop() {
@@ -35,6 +38,7 @@ void MdnsDiscovery::dump_config() {
 }
 
 void MdnsDiscovery::scan_now() {
+  ESP_LOGI(TAG, "Manual scan requested");
   this->query_peers_();
   this->cleanup_stale_peers_();
   this->last_scan_ = millis();

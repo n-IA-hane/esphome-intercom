@@ -12,7 +12,24 @@ class IntercomAudioTextSensor : public text_sensor::TextSensor, public PollingCo
   void update() override {
     if (this->parent_ == nullptr) return;
 
-    const char *state_str = this->parent_->is_streaming() ? "STREAMING" : "IDLE";
+    const char *state_str;
+    switch (this->parent_->get_state()) {
+      case StreamState::IDLE:
+        state_str = "IDLE";
+        break;
+      case StreamState::STARTING:
+        state_str = "STARTING";
+        break;
+      case StreamState::STREAMING:
+        state_str = "STREAMING";
+        break;
+      case StreamState::STOPPING:
+        state_str = "STOPPING";
+        break;
+      default:
+        state_str = "UNKNOWN";
+        break;
+    }
     this->publish_state(state_str);
   }
 
