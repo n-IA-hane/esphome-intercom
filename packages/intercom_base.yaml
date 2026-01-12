@@ -418,13 +418,13 @@ text_sensor:
 # TEXT INPUT
 # ==============================================================================
 text:
-  # Target IP address (populated by contact selection)
+  # Target IP address (populated by contact selection at boot)
   - platform: template
     id: selected_ip
     name: "Destination IP"
     icon: "mdi:ip-network"
     optimistic: true
-    restore_value: true
+    restore_value: false  # Set by resolve_selected_contact at boot
     mode: text
     min_length: 0
     max_length: 15
