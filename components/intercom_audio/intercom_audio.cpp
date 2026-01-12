@@ -633,6 +633,17 @@ float IntercomAudio::get_volume() const {
   return 0.0f;
 }
 
+void IntercomAudio::set_mic_gain(int gain) {
+  this->mic_gain_ = gain;
+#ifdef USE_I2S_AUDIO_DUPLEX
+  // Forward to duplex if available (duplex uses float 0.0-2.0, we use int 1-10)
+  if (this->duplex_ != nullptr) {
+    float duplex_gain = static_cast<float>(gain) / 5.0f;  // 1->0.2, 5->1.0, 10->2.0
+    this->duplex_->set_mic_gain(duplex_gain);
+  }
+#endif
+}
+
 }  // namespace intercom_audio
 }  // namespace esphome
 

@@ -142,8 +142,8 @@ class IntercomAudio : public Component {
   void set_volume(float volume);
   float get_volume() const;
 
-  // Mic gain control (for 32->16 bit conversion)
-  void set_mic_gain(int gain) { this->mic_gain_ = gain; }
+  // Mic gain control (for 32->16 bit conversion, or forwarded to duplex)
+  void set_mic_gain(int gain);
   int get_mic_gain() const { return this->mic_gain_; }
 
   // DC offset removal (for microphones with significant DC bias like SPH0645)
