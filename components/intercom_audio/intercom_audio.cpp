@@ -18,6 +18,7 @@
 
 #include <lwip/netdb.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <cstring>
 
 namespace esphome {
@@ -29,62 +30,104 @@ static const char *const TAG = "intercom_audio";
 static const uint32_t SAMPLE_RATE = 16000;
 static const size_t FRAME_SAMPLES = 256;  // 16ms @ 16kHz
 static const size_t FRAME_BYTES = FRAME_SAMPLES * sizeof(int16_t);
+static const size_t RX_MAX_SAMPLES = 512;  // Max samples per UDP packet
+static const size_t RX_MAX_BYTES = RX_MAX_SAMPLES * sizeof(int16_t);
 
 void IntercomAudio::setup() {
   ESP_LOGCONFIG(TAG, "Setting up Intercom Audio...");
 
-  // Create jitter buffer
+  // Create mutexes for shared buffers
+  this->mic_mutex_ = xSemaphoreCreateMutex();
+  this->ref_mutex_ = xSemaphoreCreateMutex();
+  if (!this->mic_mutex_ || !this->ref_mutex_) {
+    ESP_LOGE(TAG, "Failed to create mutexes");
+    this->mark_failed();
+    return;
+  }
+
+  // Pre-allocate mic conversion buffer
+  this->mic_convert_buf_.resize(FRAME_SAMPLES);
+
+  // Allocate frame buffers
+  this->rx_frame_ = (int16_t *)heap_caps_malloc(RX_MAX_BYTES, MALLOC_CAP_INTERNAL);
+  this->tx_frame_ = (int16_t *)heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_INTERNAL);
+  if (!this->rx_frame_ || !this->tx_frame_) {
+    ESP_LOGE(TAG, "Failed to allocate frame buffers");
+    this->mark_failed();
+    return;
+  }
+
+  // Create ring buffers
   this->rx_buffer_ = RingBuffer::create(this->buffer_size_);
-  if (!this->rx_buffer_) {
-    ESP_LOGE(TAG, "Failed to create RX ring buffer");
-    this->mark_failed();
-    return;
-  }
-
-  // Create mic TX buffer (always needed - moves TX out of callback)
   this->mic_input_buffer_ = RingBuffer::create(this->buffer_size_);
-  if (this->mic_input_buffer_) {
-    ESP_LOGI(TAG, "Mic TX buffer created");
-  } else {
-    ESP_LOGE(TAG, "Failed to create mic TX buffer");
+  if (!this->rx_buffer_ || !this->mic_input_buffer_) {
+    ESP_LOGE(TAG, "Failed to create ring buffers");
     this->mark_failed();
     return;
   }
 
-  // Create speaker reference buffer for AEC (if AEC is configured)
+  // Create speaker reference buffer for AEC (if AEC configured)
+#ifdef USE_ESP_AEC
   if (this->aec_ != nullptr) {
     this->speaker_ref_buffer_ = RingBuffer::create(this->buffer_size_);
-    if (this->speaker_ref_buffer_) {
-      ESP_LOGI(TAG, "AEC speaker reference buffer created");
+    this->aec_mic_frame_ = (int16_t *)heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_INTERNAL);
+    this->aec_ref_frame_ = (int16_t *)heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_INTERNAL);
+    this->aec_out_frame_ = (int16_t *)heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_INTERNAL);
+    if (!this->speaker_ref_buffer_ || !this->aec_mic_frame_ || !this->aec_ref_frame_ || !this->aec_out_frame_) {
+      ESP_LOGW(TAG, "AEC buffer alloc failed - disabling AEC");
+      this->speaker_ref_buffer_.reset();
+      if (this->aec_mic_frame_) { heap_caps_free(this->aec_mic_frame_); this->aec_mic_frame_ = nullptr; }
+      if (this->aec_ref_frame_) { heap_caps_free(this->aec_ref_frame_); this->aec_ref_frame_ = nullptr; }
+      if (this->aec_out_frame_) { heap_caps_free(this->aec_out_frame_); this->aec_out_frame_ = nullptr; }
+      this->aec_enabled_ = false;
     } else {
-      ESP_LOGW(TAG, "Failed to create AEC speaker reference buffer");
+      ESP_LOGI(TAG, "AEC buffers ready");
     }
-    // Pre-allocate AEC processing buffers (256 samples = 16ms @ 16kHz)
-    this->aec_converted_data_.resize(FRAME_SAMPLES);
-    this->aec_speaker_ref_.resize(FRAME_SAMPLES);
-    this->aec_output_.resize(FRAME_SAMPLES);
-    ESP_LOGD(TAG, "AEC processing buffers pre-allocated");
   }
+#endif
 
-  // Register audio data callback - either from duplex or separate microphone
+  // Register microphone callback
 #ifdef USE_I2S_AUDIO_DUPLEX
   if (this->duplex_ != nullptr) {
-    ESP_LOGI(TAG, "Using DUPLEX mode - registering callback");
-    this->duplex_->add_mic_data_callback([this](const std::vector<uint8_t> &data) {
-      this->on_microphone_data_(data);
+    this->duplex_->add_mic_data_callback([this](const uint8_t *data, size_t len) {
+      this->on_microphone_data_(data, len);
     });
   } else
 #endif
 #ifdef USE_MICROPHONE
   if (this->microphone_ != nullptr) {
-    ESP_LOGI(TAG, "Using SEPARATE mode - registering mic callback");
     this->microphone_->add_data_callback([this](const std::vector<uint8_t> &data) {
       this->on_microphone_data_(data);
     });
-  } else
+  }
+#else
+  {}
 #endif
-  {
-    ESP_LOGW(TAG, "No audio source configured!");
+
+  // NOTE: Audio hardware started in audio_task_ when streaming begins
+  // Starting here without data causes speaker timeout/crash
+#ifdef USE_SPEAKER
+  if (this->speaker_ != nullptr) {
+    audio::AudioStreamInfo stream_info(16, 1, SAMPLE_RATE);
+    this->speaker_->set_audio_stream_info(stream_info);
+  }
+#endif
+
+  // Create audio task ONCE - runs forever, controlled by streaming_ flag
+  // Stack: 8KB needed for AEC processing + local buffers
+  BaseType_t ok = xTaskCreatePinnedToCore(
+      audio_task,
+      "intercom_audio",
+      8192,
+      this,
+      5,
+      &this->audio_task_handle_,
+      0  // Core 0
+  );
+  if (ok != pdPASS) {
+    ESP_LOGE(TAG, "Failed to create audio task");
+    this->mark_failed();
+    return;
   }
 
   ESP_LOGI(TAG, "Intercom Audio ready, listen port: %d", this->listen_port_);
@@ -93,94 +136,36 @@ void IntercomAudio::setup() {
 void IntercomAudio::dump_config() {
   ESP_LOGCONFIG(TAG, "Intercom Audio:");
   ESP_LOGCONFIG(TAG, "  Listen Port: %d", this->listen_port_);
-  if (!this->remote_ip_.empty()) {
-    ESP_LOGCONFIG(TAG, "  Remote IP: %s", this->remote_ip_.c_str());
-    ESP_LOGCONFIG(TAG, "  Remote Port: %d", this->remote_port_);
-  }
   ESP_LOGCONFIG(TAG, "  Buffer Size: %zu bytes", this->buffer_size_);
-  ESP_LOGCONFIG(TAG, "  Prebuffer Size: %zu bytes", this->prebuffer_size_);
-
-#ifdef USE_I2S_AUDIO_DUPLEX
-  if (this->duplex_ != nullptr) {
-    ESP_LOGCONFIG(TAG, "  Mode: FULL DUPLEX (i2s_audio_duplex)");
-  } else
-#endif
-  {
-    // Determine mode based on configured components
-    bool has_mic = false;
-    bool has_spk = false;
-#ifdef USE_MICROPHONE
-    has_mic = (this->microphone_ != nullptr);
-#endif
-#ifdef USE_SPEAKER
-    has_spk = (this->speaker_ != nullptr);
-#endif
-
-    if (has_mic && has_spk) {
-      ESP_LOGCONFIG(TAG, "  Mode: FULL DUPLEX (separate mic+speaker)");
-    } else if (has_mic) {
-      ESP_LOGCONFIG(TAG, "  Mode: TX ONLY (microphone -> network)");
-    } else if (has_spk) {
-      ESP_LOGCONFIG(TAG, "  Mode: RX ONLY (network -> speaker)");
-    } else {
-      ESP_LOGCONFIG(TAG, "  Mode: NO AUDIO CONFIGURED");
-    }
-
-#ifdef USE_MICROPHONE
-    if (this->microphone_ != nullptr) {
-      ESP_LOGCONFIG(TAG, "  Microphone: configured");
-    }
-#endif
-#ifdef USE_SPEAKER
-    if (this->speaker_ != nullptr) {
-      ESP_LOGCONFIG(TAG, "  Speaker: configured");
-    }
-#endif
-  }
-
-  if (this->aec_ != nullptr) {
-    ESP_LOGCONFIG(TAG, "  AEC: configured");
+  ESP_LOGCONFIG(TAG, "  Mode: %s", this->get_mode_str());
+  if (this->aec_ == nullptr) {
+    ESP_LOGCONFIG(TAG, "  AEC: not configured");
+  } else {
+    ESP_LOGCONFIG(TAG, "  AEC: %s", this->aec_enabled_ ? "enabled" : "disabled");
   }
 }
 
 void IntercomAudio::loop() {
-  // Handle state transitions in main loop
-  switch (this->state_) {
-    case StreamState::STARTING:
-      if (this->task_running_) {
-        this->state_ = StreamState::STREAMING;
-        this->start_trigger_.trigger();
-        ESP_LOGI(TAG, "Streaming started");
-      }
-      break;
-
-    case StreamState::STOPPING:
-      if (!this->task_running_) {
-        this->state_ = StreamState::IDLE;
-        this->stop_trigger_.trigger();
-        ESP_LOGI(TAG, "Streaming stopped");
-      }
-      break;
-
-    default:
-      break;
-  }
+  // Nothing needed - task does all the work
 }
 
 void IntercomAudio::start() {
-  // Use getters to evaluate lambda if configured
   this->start(this->get_remote_ip(), this->get_remote_port());
 }
 
 void IntercomAudio::start(const std::string &remote_ip, uint16_t remote_port) {
-  if (this->state_ != StreamState::IDLE) {
-    ESP_LOGW(TAG, "Cannot start: not idle (state=%d)", (int)this->state_);
+  if (this->streaming_.load(std::memory_order_acquire)) {
+    ESP_LOGW(TAG, "Already streaming");
+    return;
+  }
+  if (this->is_failed()) {
+    ESP_LOGE(TAG, "Cannot start: component failed");
     return;
   }
 
   ESP_LOGI(TAG, "Starting stream to %s:%d", remote_ip.c_str(), remote_port);
 
-  // Update remote address
+  // Store remote address
   this->remote_ip_ = remote_ip;
   this->remote_port_ = remote_port;
 
@@ -191,175 +176,130 @@ void IntercomAudio::start(const std::string &remote_ip, uint16_t remote_port) {
   }
 
   // Reset metrics
-  this->tx_packets_ = 0;
-  this->rx_packets_ = 0;
-  this->rx_buffer_->reset();
+  this->tx_packets_.store(0, std::memory_order_relaxed);
+  this->rx_packets_.store(0, std::memory_order_relaxed);
+  this->tx_drops_.store(0, std::memory_order_relaxed);
+  this->rx_drops_.store(0, std::memory_order_relaxed);
 
-  // Start audio hardware
-#ifdef USE_I2S_AUDIO_DUPLEX
-  if (this->duplex_ != nullptr) {
-    // DUPLEX mode: start the duplex component which handles both mic and speaker
-    ESP_LOGI(TAG, "Starting duplex audio...");
-    this->duplex_->start();
-  } else
-#endif
-  {
-    // SEPARATE mode: start mic and speaker components
-#ifdef USE_MICROPHONE
-    if (this->microphone_ != nullptr) {
-      ESP_LOGI(TAG, "Starting microphone...");
-      this->microphone_->start();
-    }
-#endif
-#ifdef USE_SPEAKER
-    if (this->speaker_ != nullptr) {
-      ESP_LOGI(TAG, "Starting speaker...");
-      // Set audio format: 16-bit, mono, 16kHz (matching our UDP stream)
-      audio::AudioStreamInfo stream_info(16, 1, SAMPLE_RATE);
-      this->speaker_->set_audio_stream_info(stream_info);
-      this->speaker_->start();
-    }
-#endif
+  // Increment session to invalidate any stale data, then reset buffers
+  this->session_.fetch_add(1, std::memory_order_acq_rel);
+
+  // Reset DC offset tracking for clean start
+  this->dc_sum_ = 0;
+
+  if (this->rx_buffer_) this->rx_buffer_->reset();
+  if (xSemaphoreTake(this->mic_mutex_, pdMS_TO_TICKS(50)) == pdTRUE) {
+    if (this->mic_input_buffer_) this->mic_input_buffer_->reset();
+    xSemaphoreGive(this->mic_mutex_);
+  }
+  if (xSemaphoreTake(this->ref_mutex_, pdMS_TO_TICKS(50)) == pdTRUE) {
+    if (this->speaker_ref_buffer_) this->speaker_ref_buffer_->reset();
+    xSemaphoreGive(this->ref_mutex_);
   }
 
-  // Create audio task on core 1
-  this->state_ = StreamState::STARTING;
-  xTaskCreatePinnedToCore(
-      audio_task,
-      "intercom_audio",
-      4096,
-      this,
-      10,  // High priority
-      &this->audio_task_handle_,
-      1   // Core 1
-  );
-
-#ifdef USE_ESP_AEC
-  // Create AEC task with larger stack (8KB for ESP-SR processing)
-  if (this->aec_ != nullptr && this->mic_input_buffer_ != nullptr) {
-    ESP_LOGI(TAG, "Starting AEC task...");
-    xTaskCreatePinnedToCore(
-        aec_task,
-        "aec_task",
-        8192,  // 8KB stack for AEC processing
-        this,
-        9,     // Slightly lower priority than audio task
-        &this->aec_task_handle_,
-        1      // Core 1
-    );
+  // Enable streaming and wake up task
+  this->streaming_.store(true, std::memory_order_release);
+  if (this->audio_task_handle_) {
+    xTaskNotifyGive(this->audio_task_handle_);
   }
-#endif
+
+  this->start_trigger_.trigger();
+  ESP_LOGI(TAG, "Streaming started");
 }
 
 void IntercomAudio::stop() {
-  if (this->state_ != StreamState::STREAMING) {
+  if (!this->streaming_.load(std::memory_order_acquire)) {
     return;
   }
 
   ESP_LOGI(TAG, "Stopping stream");
-  this->state_ = StreamState::STOPPING;
 
-  // Close sockets FIRST to unblock any I/O operations in tasks
+  // Disable streaming first
+  this->streaming_.store(false, std::memory_order_release);
+
+  // Invalidate any in-flight operations
+  this->session_.fetch_add(1, std::memory_order_acq_rel);
+
+  // Close sockets
   this->close_sockets_();
 
-  static const uint32_t STOP_TIMEOUT_MS = 1500;
-
-#ifdef USE_ESP_AEC
-  // Wait for AEC task to exit (with timeout)
-  if (this->aec_task_handle_ != nullptr) {
-    uint32_t start = millis();
-    while (this->aec_task_running_ && (millis() - start) < STOP_TIMEOUT_MS) {
-      vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    if (this->aec_task_running_) {
-      ESP_LOGW(TAG, "AEC task did not stop in time");
-    }
-    this->aec_task_handle_ = nullptr;
+  // Reset buffers
+  if (this->rx_buffer_) this->rx_buffer_->reset();
+  this->rx_fill_.store(0, std::memory_order_release);
+  if (xSemaphoreTake(this->mic_mutex_, pdMS_TO_TICKS(50)) == pdTRUE) {
+    if (this->mic_input_buffer_) this->mic_input_buffer_->reset();
+    xSemaphoreGive(this->mic_mutex_);
   }
-#endif
-
-  // Wait for audio task to exit (with timeout)
-  if (this->audio_task_handle_ != nullptr) {
-    uint32_t start = millis();
-    while (this->task_running_ && (millis() - start) < STOP_TIMEOUT_MS) {
-      vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    if (this->task_running_) {
-      ESP_LOGW(TAG, "Audio task did not stop in time");
-    }
-    this->audio_task_handle_ = nullptr;
+  if (xSemaphoreTake(this->ref_mutex_, pdMS_TO_TICKS(50)) == pdTRUE) {
+    if (this->speaker_ref_buffer_) this->speaker_ref_buffer_->reset();
+    xSemaphoreGive(this->ref_mutex_);
   }
 
-  // NOW stop audio hardware (after tasks have exited)
+  // Wake up task (so it exits idle loop immediately)
+  if (this->audio_task_handle_) {
+    xTaskNotifyGive(this->audio_task_handle_);
+  }
+
 #ifdef USE_I2S_AUDIO_DUPLEX
+  // Duplex can be safely stopped (no ESPHome cleanup bug)
   if (this->duplex_ != nullptr) {
     this->duplex_->stop();
   }
 #endif
-#ifdef USE_MICROPHONE
-  if (this->microphone_ != nullptr) {
-    this->microphone_->stop();
-  }
-#endif
-#ifdef USE_SPEAKER
-  if (this->speaker_ != nullptr) {
-    this->speaker_->stop();
-  }
-#endif
+  // DO NOT stop ESPHome speaker/microphone - keep them running to avoid cleanup bugs
+
+  this->stop_trigger_.trigger();
+  ESP_LOGI(TAG, "Streaming stopped");
 }
 
 bool IntercomAudio::setup_sockets_() {
-  // Create RX socket (receive from remote)
+  // Ensure clean state
+  this->close_sockets_();
+
+  // Create RX socket
   this->rx_socket_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (this->rx_socket_ < 0) {
     ESP_LOGE(TAG, "Failed to create RX socket: %d", errno);
     return false;
   }
 
-  // Socket options for RX
   int reuse = 1;
   setsockopt(this->rx_socket_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-  int rcvbuf = 16384;  // 16KB receive buffer
+  int rcvbuf = 16384;
   setsockopt(this->rx_socket_, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 
-  // Bind to listen port
-  struct sockaddr_in bind_addr;
-  memset(&bind_addr, 0, sizeof(bind_addr));
+  struct sockaddr_in bind_addr{};
   bind_addr.sin_family = AF_INET;
   bind_addr.sin_addr.s_addr = INADDR_ANY;
   bind_addr.sin_port = htons(this->listen_port_);
 
   if (bind(this->rx_socket_, (struct sockaddr *)&bind_addr, sizeof(bind_addr)) < 0) {
-    ESP_LOGE(TAG, "Failed to bind on port %d: %d", this->listen_port_, errno);
-    close(this->rx_socket_);
-    this->rx_socket_ = -1;
+    ESP_LOGE(TAG, "Failed to bind: %d", errno);
+    this->close_sockets_();
     return false;
   }
 
   // Set non-blocking
   int flags = fcntl(this->rx_socket_, F_GETFL, 0);
-  fcntl(this->rx_socket_, F_SETFL, flags | O_NONBLOCK);
+  if (flags >= 0) {
+    fcntl(this->rx_socket_, F_SETFL, flags | O_NONBLOCK);
+  }
 
-  // Create TX socket (send to remote)
+  // Create TX socket
   this->tx_socket_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (this->tx_socket_ < 0) {
     ESP_LOGE(TAG, "Failed to create TX socket: %d", errno);
-    close(this->rx_socket_);
-    this->rx_socket_ = -1;
+    this->close_sockets_();
     return false;
   }
 
-  // Socket options for TX
-  int sndbuf = 16384;  // 16KB send buffer
+  int sndbuf = 16384;
   setsockopt(this->tx_socket_, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
 
-  // Validate and setup remote address
+  // Setup remote address
   if (this->remote_ip_.empty()) {
     ESP_LOGE(TAG, "Remote IP is empty");
-    close(this->rx_socket_);
-    close(this->tx_socket_);
-    this->rx_socket_ = -1;
-    this->tx_socket_ = -1;
+    this->close_sockets_();
     return false;
   }
 
@@ -368,17 +308,13 @@ bool IntercomAudio::setup_sockets_() {
   this->remote_addr_.sin_port = htons(this->remote_port_);
 
   if (inet_pton(AF_INET, this->remote_ip_.c_str(), &this->remote_addr_.sin_addr) <= 0) {
-    ESP_LOGE(TAG, "Invalid remote IP address: %s", this->remote_ip_.c_str());
-    close(this->rx_socket_);
-    close(this->tx_socket_);
-    this->rx_socket_ = -1;
-    this->tx_socket_ = -1;
+    ESP_LOGE(TAG, "Invalid remote IP: %s", this->remote_ip_.c_str());
+    this->close_sockets_();
     return false;
   }
 
-  ESP_LOGI(TAG, "Sockets ready: RX on :%d, TX to %s:%d",
+  ESP_LOGD(TAG, "Sockets ready: RX :%d, TX %s:%d",
            this->listen_port_, this->remote_ip_.c_str(), this->remote_port_);
-
   return true;
 }
 
@@ -393,94 +329,83 @@ void IntercomAudio::close_sockets_() {
   }
 }
 
-void IntercomAudio::on_microphone_data_(const std::vector<uint8_t> &data) {
-  if (this->state_ != StreamState::STREAMING) {
+void IntercomAudio::on_microphone_data_(const uint8_t *data, size_t len) {
+  // Quick exit if not streaming
+  if (!this->streaming_.load(std::memory_order_acquire)) {
+    return;
+  }
+  if (data == nullptr || len == 0) {
     return;
   }
 
-  if (data.empty() || this->tx_socket_ < 0) {
-    return;
-  }
+  // Capture session to detect stop/start during processing
+  const uint32_t captured_session = this->session_.load(std::memory_order_acquire);
 
-  // Check if we need to convert 32-bit to 16-bit
-  size_t expected_16bit_size = FRAME_BYTES;  // 512 bytes for 256 samples
-
-  int16_t *mic_samples = nullptr;
+  const int16_t *mic_samples = nullptr;
   size_t num_samples = 0;
-  static std::vector<int16_t> converted_buffer;
+  size_t expected_16bit_size = FRAME_BYTES;
 
-  if (data.size() == expected_16bit_size * 2) {
-    // 32-bit data detected, convert to 16-bit
-    num_samples = data.size() / sizeof(int32_t);
-    converted_buffer.resize(num_samples);
+  if (len == expected_16bit_size * 2) {
+    // 32-bit data, convert to 16-bit
+    num_samples = len / sizeof(int32_t);
+    if (num_samples > FRAME_SAMPLES) num_samples = FRAME_SAMPLES;
 
-    const int32_t *src = reinterpret_cast<const int32_t *>(data.data());
+    const int32_t *src = reinterpret_cast<const int32_t *>(data);
 
-    // Calculate DC offset if enabled (for mics with significant DC bias like SPH0645)
-    int32_t dc_offset = 0;
-    if (this->dc_offset_removal_) {
-      int64_t sum = 0;
-      for (size_t i = 0; i < num_samples; i++) {
-        sum += src[i] >> 16;
-      }
-      dc_offset = static_cast<int32_t>(sum / num_samples);
-    }
-
-    // Convert 32-bit to 16-bit, optionally removing DC offset, then apply gain
     for (size_t i = 0; i < num_samples; i++) {
-      int32_t sample = ((src[i] >> 16) - dc_offset) * this->mic_gain_;
+      int32_t sample = src[i] >> 16;
+
+      // IIR-based DC offset removal (matches ESPHome's approach)
+      // Uses shift operations for efficiency: ~1/8192 smoothing factor
+      if (this->dc_offset_removal_) {
+        this->dc_sum_ = ((this->dc_sum_ >> 13) - (this->dc_sum_ >> 17)) + sample;
+        sample -= static_cast<int32_t>(this->dc_sum_ >> 13);
+      }
+
+      // Apply gain
+      sample *= this->mic_gain_;
       if (sample > 32767) sample = 32767;
       if (sample < -32768) sample = -32768;
-      converted_buffer[i] = static_cast<int16_t>(sample);
+      this->mic_convert_buf_[i] = static_cast<int16_t>(sample);
     }
-    mic_samples = converted_buffer.data();
+    mic_samples = this->mic_convert_buf_.data();
   } else {
-    // Already 16-bit - apply gain if not 1
-    num_samples = data.size() / sizeof(int16_t);
-    if (this->mic_gain_ != 1) {
-      converted_buffer.resize(num_samples);
-      const int16_t *src = reinterpret_cast<const int16_t *>(data.data());
-      for (size_t i = 0; i < num_samples; i++) {
-        int32_t sample = static_cast<int32_t>(src[i]) * this->mic_gain_;
-        if (sample > 32767) sample = 32767;
-        if (sample < -32768) sample = -32768;
-        converted_buffer[i] = static_cast<int16_t>(sample);
-      }
-      mic_samples = converted_buffer.data();
-    } else {
-      mic_samples = (int16_t *)data.data();
-    }
+    // Already 16-bit (from duplex or other source)
+    // NOTE: Don't apply mic_gain here - duplex already handles its own gain
+    num_samples = len / sizeof(int16_t);
+    if (num_samples > FRAME_SAMPLES) num_samples = FRAME_SAMPLES;
+    mic_samples = reinterpret_cast<const int16_t *>(data);
   }
 
-  // Always buffer mic data - TX happens in audio_task_ (or aec_task_ if AEC enabled)
-  if (this->mic_input_buffer_ != nullptr) {
-    size_t bytes = num_samples * sizeof(int16_t);
-    size_t written = this->mic_input_buffer_->write((void *)mic_samples, bytes);
-    if (written < bytes) {
-      this->tx_drops_++;  // Buffer overrun
+  // Write to buffer under mutex - verify session hasn't changed
+  if (this->mic_input_buffer_ != nullptr && this->mic_mutex_ != nullptr) {
+    if (xSemaphoreTake(this->mic_mutex_, 1) == pdTRUE) {
+      // Re-check atomics under lock
+      if (this->streaming_.load(std::memory_order_acquire) &&
+          this->session_.load(std::memory_order_acquire) == captured_session) {
+        size_t bytes = num_samples * sizeof(int16_t);
+        size_t written = this->mic_input_buffer_->write_without_replacement((void *)mic_samples, bytes, 0, true);
+        if (written < bytes) {
+          this->tx_drops_.fetch_add(1, std::memory_order_relaxed);
+        }
+      }
+      xSemaphoreGive(this->mic_mutex_);
+    } else {
+      this->tx_drops_.fetch_add(1, std::memory_order_relaxed);
     }
   }
 }
 
 bool IntercomAudio::send_audio_(const uint8_t *data, size_t bytes) {
-  if (this->tx_socket_ < 0 || this->remote_ip_.empty()) {
+  if (this->tx_socket_ < 0) {
     return false;
   }
-
-  ssize_t sent = sendto(
-      this->tx_socket_,
-      data,
-      bytes,
-      0,
-      (struct sockaddr *)&this->remote_addr_,
-      sizeof(this->remote_addr_)
-  );
-
+  ssize_t sent = sendto(this->tx_socket_, data, bytes, 0,
+                        (struct sockaddr *)&this->remote_addr_, sizeof(this->remote_addr_));
   if (sent > 0) {
-    this->tx_packets_++;
+    this->tx_packets_.fetch_add(1, std::memory_order_relaxed);
     return true;
   }
-
   return false;
 }
 
@@ -488,24 +413,14 @@ size_t IntercomAudio::receive_audio_(int16_t *buffer, size_t max_samples) {
   if (this->rx_socket_ < 0) {
     return 0;
   }
-
   struct sockaddr_in sender_addr;
   socklen_t sender_len = sizeof(sender_addr);
-
-  ssize_t received = recvfrom(
-      this->rx_socket_,
-      buffer,
-      max_samples * sizeof(int16_t),
-      0,
-      (struct sockaddr *)&sender_addr,
-      &sender_len
-  );
-
+  ssize_t received = recvfrom(this->rx_socket_, buffer, max_samples * sizeof(int16_t), 0,
+                              (struct sockaddr *)&sender_addr, &sender_len);
   if (received > 0) {
-    this->rx_packets_++;
+    this->rx_packets_.fetch_add(1, std::memory_order_relaxed);
     return received / sizeof(int16_t);
   }
-
   return 0;
 }
 
@@ -516,115 +431,189 @@ void IntercomAudio::audio_task(void *param) {
 }
 
 void IntercomAudio::audio_task_() {
-  ESP_LOGI(TAG, "Audio task started");
-  this->task_running_ = true;
+  ESP_LOGI(TAG, "Audio task started (runs forever)");
 
-  // Allocate frame buffers (use larger buffer to handle variable frame sizes)
-  static const size_t MAX_FRAME_BYTES = 1024;  // Up to 512 samples
-  int16_t *rx_frame = (int16_t *)heap_caps_malloc(MAX_FRAME_BYTES, MALLOC_CAP_INTERNAL);
-  int16_t *tx_frame = (int16_t *)heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_INTERNAL);
-  if (rx_frame == nullptr || tx_frame == nullptr) {
-    ESP_LOGE(TAG, "Failed to allocate frame buffers");
-    if (rx_frame) heap_caps_free(rx_frame);
-    if (tx_frame) heap_caps_free(tx_frame);
-    this->task_running_ = false;
-    return;
-  }
-
+  uint32_t seen_session = this->session_.load(std::memory_order_acquire);
   bool prebuffered = false;
-  uint32_t loop_count = 0;
-  uint32_t play_count = 0;
+  bool hw_started = false;  // Track if we started hardware
 
-  // Check if AEC is handling TX
-  bool aec_handles_tx = false;
+  // AEC hold-last buffer
+  int16_t last_ref[FRAME_SAMPLES];
+  bool have_last_ref = false;
+  memset(last_ref, 0, sizeof(last_ref));
+
+  // Compute AEC state
+  bool use_aec = false;
+  auto recompute_aec = [&]() {
 #ifdef USE_ESP_AEC
-  aec_handles_tx = (this->aec_ != nullptr && this->aec_enabled_);
+    use_aec = (this->aec_ != nullptr && this->aec_enabled_ &&
+               this->aec_mic_frame_ != nullptr && this->aec_ref_frame_ != nullptr &&
+               this->aec_out_frame_ != nullptr && this->speaker_ref_buffer_ != nullptr);
+#else
+    use_aec = false;
 #endif
+  };
+  recompute_aec();
 
-  while (this->state_ == StreamState::STARTING || this->state_ == StreamState::STREAMING) {
-    loop_count++;
+  while (true) {
+    // Wait for notification or timeout
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(5));
 
-    // Receive UDP audio into ring buffer (handle variable frame sizes)
-    size_t samples = this->receive_audio_(rx_frame, MAX_FRAME_BYTES / sizeof(int16_t));
+    // Check if streaming
+    if (!this->streaming_.load(std::memory_order_acquire)) {
+      // Not streaming - reset state and wait
+      prebuffered = false;
+      seen_session = this->session_.load(std::memory_order_acquire);
+      have_last_ref = false;
+      // NOTE: Don't stop hardware - keep it running to avoid cleanup crash
+      continue;
+    }
+
+    // Start hardware
+#ifdef USE_I2S_AUDIO_DUPLEX
+    // For duplex: start fresh each session (duplex handles its own state)
+    if (this->duplex_ != nullptr) {
+      if (!this->duplex_->is_running()) {
+        ESP_LOGI(TAG, "Starting duplex audio...");
+        this->duplex_->start();
+      }
+    } else
+#endif
+    // For separate mic/speaker: start once and keep running (avoid ESPHome cleanup crash)
+    if (!hw_started) {
+      ESP_LOGI(TAG, "Starting audio hardware...");
+#ifdef USE_SPEAKER
+      if (this->speaker_ != nullptr) {
+        this->speaker_->start();
+      }
+#endif
+#ifdef USE_MICROPHONE
+      if (this->microphone_ != nullptr) {
+        this->microphone_->start();
+      }
+#endif
+      hw_started = true;
+    }
+
+    // Check for session change (stop/start happened)
+    uint32_t current_session = this->session_.load(std::memory_order_acquire);
+    if (current_session != seen_session) {
+      seen_session = current_session;
+      prebuffered = false;
+      have_last_ref = false;
+      recompute_aec();
+      continue;
+    }
+
+    // Multi-frame processing limits
+    const int max_frames_per_iter = 4;
+    int frames_processed = 0;
+
+    // === RX: UDP -> ring buffer -> speaker ===
+    size_t samples = this->receive_audio_(this->rx_frame_, RX_MAX_SAMPLES);
     if (samples > 0) {
       size_t bytes = samples * sizeof(int16_t);
-      size_t written = this->rx_buffer_->write(rx_frame, bytes);
+      size_t written = this->rx_buffer_->write(this->rx_frame_, bytes);
       if (written < bytes) {
-        this->rx_drops_++;  // Buffer overrun
+        this->rx_drops_.fetch_add(1, std::memory_order_relaxed);
       }
-      if (this->rx_packets_ % 500 == 1) {
-        ESP_LOGD(TAG, "RX: %d pkts, drops: %d, buf: %zu",
-                 this->rx_packets_, this->rx_drops_, this->rx_buffer_->available());
-      }
+      this->rx_fill_.store(this->rx_buffer_->available(), std::memory_order_release);
     }
 
-    // TX: read from mic buffer and send (if AEC is not handling it)
-    if (!aec_handles_tx && this->mic_input_buffer_ != nullptr) {
-      if (this->mic_input_buffer_->available() >= FRAME_BYTES) {
-        this->mic_input_buffer_->read(tx_frame, FRAME_BYTES, 0);
-        this->send_audio_(reinterpret_cast<uint8_t *>(tx_frame), FRAME_BYTES);
-        if (this->tx_packets_ % 500 == 1) {
-          ESP_LOGD(TAG, "TX: %d pkts, drops: %d", this->tx_packets_, this->tx_drops_);
-        }
-      }
-    }
-
-    // Wait for prebuffer before sending to speaker
+    // Wait for prebuffer before playing
     if (!prebuffered) {
       if (this->rx_buffer_->available() >= this->prebuffer_size_) {
         prebuffered = true;
-        ESP_LOGI(TAG, "Prebuffer filled (%zu bytes), starting playback", this->rx_buffer_->available());
-      } else {
-        vTaskDelay(pdMS_TO_TICKS(5));
-        continue;
+        ESP_LOGD(TAG, "Prebuffer filled");
       }
     }
 
-    // Read from ring buffer and send to speaker (using either duplex or separate speaker)
-    if (this->rx_buffer_->available() >= FRAME_BYTES) {
-      size_t read = this->rx_buffer_->read(rx_frame, FRAME_BYTES, pdMS_TO_TICKS(10));
-      if (read > 0) {
-        play_count++;
-        // Store speaker data as reference for AEC (before sending to speaker)
-        if (this->speaker_ref_buffer_ != nullptr) {
-          this->speaker_ref_buffer_->write((void *)rx_frame, read);
+    // Play from RX buffer to speaker (multiple frames per iteration)
+    if (prebuffered) {
+      frames_processed = 0;
+      while (this->rx_buffer_->available() >= FRAME_BYTES && frames_processed < max_frames_per_iter) {
+        size_t read = this->rx_buffer_->read(this->rx_frame_, FRAME_BYTES, 0);
+        this->rx_fill_.store(this->rx_buffer_->available(), std::memory_order_release);
+
+        if (read != FRAME_BYTES || !this->streaming_.load(std::memory_order_acquire)) {
+          break;
         }
 
+        // Store speaker ref for AEC
+        if (this->speaker_ref_buffer_ != nullptr && this->ref_mutex_ != nullptr) {
+          if (xSemaphoreTake(this->ref_mutex_, pdMS_TO_TICKS(1)) == pdTRUE) {
+            this->speaker_ref_buffer_->write_without_replacement((void *)this->rx_frame_, FRAME_BYTES, 0, true);
+            xSemaphoreGive(this->ref_mutex_);
+          }
+        }
+
+        // Send to speaker (skip if volume is 0 to reduce crosstalk)
 #ifdef USE_I2S_AUDIO_DUPLEX
         if (this->duplex_ != nullptr) {
-          // DUPLEX mode: use duplex component's play method
-          this->duplex_->play((uint8_t *)rx_frame, read, pdMS_TO_TICKS(50));
+          this->duplex_->play((uint8_t *)this->rx_frame_, FRAME_BYTES, pdMS_TO_TICKS(10));
         }
 #endif
 #ifdef USE_SPEAKER
 #ifdef USE_I2S_AUDIO_DUPLEX
         else
 #endif
-        if (this->speaker_ != nullptr) {
-          // SEPARATE mode: use speaker component
-          size_t written = this->speaker_->play((uint8_t *)rx_frame, read, pdMS_TO_TICKS(50));
-          if (play_count % 500 == 1) {
-            ESP_LOGD(TAG, "SPK: %zu/%zu bytes, run=%d", written, read, this->speaker_->is_running());
-          }
+        if (this->speaker_ != nullptr && this->speaker_->get_volume() > 0.001f) {
+          this->speaker_->play((uint8_t *)this->rx_frame_, FRAME_BYTES, pdMS_TO_TICKS(10));
         }
 #endif
+        frames_processed++;
       }
     }
 
-    // Small delay to prevent tight loop
-    vTaskDelay(pdMS_TO_TICKS(1));
-  }
+    // === TX: mic buffer -> [AEC] -> UDP ===
+    frames_processed = 0;
 
-  heap_caps_free(rx_frame);
-  heap_caps_free(tx_frame);
-  this->task_running_ = false;
-}
+    while (frames_processed < max_frames_per_iter) {
+      size_t got_mic = 0;
+      if (xSemaphoreTake(this->mic_mutex_, pdMS_TO_TICKS(2)) == pdTRUE) {
+        if (this->mic_input_buffer_->available() >= FRAME_BYTES) {
+          got_mic = this->mic_input_buffer_->read(this->tx_frame_, FRAME_BYTES, 0);
+        }
+        xSemaphoreGive(this->mic_mutex_);
+      }
 
-size_t IntercomAudio::get_buffer_fill() const {
-  if (this->rx_buffer_) {
-    return this->rx_buffer_->available();
+      if (got_mic != FRAME_BYTES) {
+        break;  // No more data
+      }
+
+#ifdef USE_ESP_AEC
+      if (use_aec && this->aec_->is_initialized()) {
+        // Get speaker reference (use ref_mutex_)
+        size_t got_ref = 0;
+        if (this->ref_mutex_ != nullptr && xSemaphoreTake(this->ref_mutex_, pdMS_TO_TICKS(1)) == pdTRUE) {
+          if (this->speaker_ref_buffer_->available() >= FRAME_BYTES) {
+            got_ref = this->speaker_ref_buffer_->read(this->aec_ref_frame_, FRAME_BYTES, 0);
+          }
+          xSemaphoreGive(this->ref_mutex_);
+        }
+
+        if (got_ref == FRAME_BYTES) {
+          memcpy(last_ref, this->aec_ref_frame_, sizeof(last_ref));
+          have_last_ref = true;
+        } else if (have_last_ref) {
+          memcpy(this->aec_ref_frame_, last_ref, sizeof(last_ref));
+        } else {
+          memset(this->aec_ref_frame_, 0, FRAME_BYTES);
+        }
+
+        // Process AEC
+        memcpy(this->aec_mic_frame_, this->tx_frame_, FRAME_BYTES);
+        this->aec_->process(this->aec_mic_frame_, this->aec_ref_frame_, this->aec_out_frame_, FRAME_SAMPLES);
+        this->send_audio_(reinterpret_cast<uint8_t *>(this->aec_out_frame_), FRAME_BYTES);
+      } else
+#endif
+      {
+        // No AEC - send directly
+        this->send_audio_(reinterpret_cast<uint8_t *>(this->tx_frame_), FRAME_BYTES);
+      }
+      frames_processed++;
+    }
   }
-  return 0;
 }
 
 void IntercomAudio::set_volume(float volume) {
@@ -643,79 +632,6 @@ float IntercomAudio::get_volume() const {
 #endif
   return 0.0f;
 }
-
-#ifdef USE_ESP_AEC
-void IntercomAudio::aec_task(void *param) {
-  IntercomAudio *self = static_cast<IntercomAudio *>(param);
-  self->aec_task_();
-  vTaskDelete(nullptr);
-}
-
-void IntercomAudio::aec_task_() {
-  ESP_LOGI(TAG, "AEC task started");
-  this->aec_task_running_ = true;
-
-  // Allocate processing buffers
-  int16_t *mic_frame = (int16_t *)heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_INTERNAL);
-  int16_t *ref_frame = (int16_t *)heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_INTERNAL);
-  int16_t *out_frame = (int16_t *)heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_INTERNAL);
-
-  if (!mic_frame || !ref_frame || !out_frame) {
-    ESP_LOGE(TAG, "Failed to allocate AEC frames");
-    this->aec_task_running_ = false;
-    if (mic_frame) heap_caps_free(mic_frame);
-    if (ref_frame) heap_caps_free(ref_frame);
-    if (out_frame) heap_caps_free(out_frame);
-    return;
-  }
-
-  uint32_t frame_count = 0;
-
-  while (this->state_ == StreamState::STARTING || this->state_ == StreamState::STREAMING) {
-    // Check if AEC is enabled and buffers are ready
-    if (!this->aec_enabled_ || this->aec_ == nullptr || !this->aec_->is_initialized() ||
-        this->mic_input_buffer_ == nullptr) {
-      vTaskDelay(pdMS_TO_TICKS(10));
-      continue;
-    }
-
-    // Wait for enough mic data
-    if (this->mic_input_buffer_->available() < FRAME_BYTES) {
-      vTaskDelay(pdMS_TO_TICKS(1));
-      continue;
-    }
-
-    // Read mic data
-    this->mic_input_buffer_->read(mic_frame, FRAME_BYTES, 0);
-
-    // Get speaker reference
-    if (this->speaker_ref_buffer_ != nullptr && this->speaker_ref_buffer_->available() >= FRAME_BYTES) {
-      this->speaker_ref_buffer_->read(ref_frame, FRAME_BYTES, 0);
-    } else {
-      memset(ref_frame, 0, FRAME_BYTES);
-    }
-
-    // Process AEC
-    this->aec_->process(mic_frame, ref_frame, out_frame, FRAME_SAMPLES);
-
-    // Send processed audio
-    this->send_audio_(reinterpret_cast<uint8_t *>(out_frame), FRAME_BYTES);
-
-    frame_count++;
-    if (frame_count % 500 == 0) {
-      ESP_LOGD(TAG, "AEC: %d frames, mic_buf=%zu, ref_buf=%zu",
-               frame_count, this->mic_input_buffer_->available(),
-               this->speaker_ref_buffer_ ? this->speaker_ref_buffer_->available() : 0);
-    }
-  }
-
-  heap_caps_free(mic_frame);
-  heap_caps_free(ref_frame);
-  heap_caps_free(out_frame);
-  this->aec_task_running_ = false;
-  ESP_LOGI(TAG, "AEC task stopped");
-}
-#endif  // USE_ESP_AEC
 
 }  // namespace intercom_audio
 }  // namespace esphome
