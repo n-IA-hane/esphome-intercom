@@ -212,6 +212,16 @@ void IntercomAudio::stop() {
     return;
   }
 
+  // Diagnostic logging before stop
+  ESP_LOGW(TAG, "STOP: heap_free=%u, rx_avail=%zu",
+           heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           this->rx_buffer_ ? this->rx_buffer_->available() : 0);
+#ifdef USE_SPEAKER
+  if (this->speaker_ != nullptr) {
+    ESP_LOGW(TAG, "STOP: speaker_running=%d", this->speaker_->is_running());
+  }
+#endif
+
   ESP_LOGI(TAG, "Stopping stream");
 
   // Disable streaming first
@@ -220,10 +230,19 @@ void IntercomAudio::stop() {
   // Invalidate any in-flight operations
   this->session_.fetch_add(1, std::memory_order_acq_rel);
 
+  // Wake up task FIRST so it sees streaming_=false
+  if (this->audio_task_handle_) {
+    xTaskNotifyGive(this->audio_task_handle_);
+  }
+
+  // CRITICAL: Wait for audio_task to stop processing before resetting buffers
+  // This prevents race condition where task is mid-write to speaker
+  vTaskDelay(pdMS_TO_TICKS(100));
+
   // Close sockets
   this->close_sockets_();
 
-  // Reset buffers
+  // Reset buffers (now safe - audio_task has seen streaming_=false)
   if (this->rx_buffer_) this->rx_buffer_->reset();
   this->rx_fill_.store(0, std::memory_order_release);
   if (xSemaphoreTake(this->mic_mutex_, pdMS_TO_TICKS(50)) == pdTRUE) {
@@ -235,11 +254,6 @@ void IntercomAudio::stop() {
     xSemaphoreGive(this->ref_mutex_);
   }
 
-  // Wake up task (so it exits idle loop immediately)
-  if (this->audio_task_handle_) {
-    xTaskNotifyGive(this->audio_task_handle_);
-  }
-
 #ifdef USE_I2S_AUDIO_DUPLEX
   // Duplex can be safely stopped (no ESPHome cleanup bug)
   if (this->duplex_ != nullptr) {
@@ -247,6 +261,9 @@ void IntercomAudio::stop() {
   }
 #endif
   // DO NOT stop ESPHome speaker/microphone - keep them running to avoid cleanup bugs
+
+  // Diagnostic logging after stop
+  ESP_LOGW(TAG, "STOP DONE: heap_free=%u", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
   this->stop_trigger_.trigger();
   ESP_LOGI(TAG, "Streaming stopped");
