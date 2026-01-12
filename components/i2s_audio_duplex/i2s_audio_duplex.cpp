@@ -199,6 +199,9 @@ void I2SAudioDuplex::start() {
     return;
   }
 
+  // Small delay to ensure I2S is fully deinitialized from previous session
+  vTaskDelay(pdMS_TO_TICKS(50));
+
   ESP_LOGI(TAG, "Starting duplex audio...");
 
   if (!this->init_i2s_duplex_()) {
@@ -275,6 +278,9 @@ void I2SAudioDuplex::stop() {
 
   this->mic_running_ = false;
   this->speaker_running_ = false;
+
+  // Small delay to let I2S fully deinitialize
+  vTaskDelay(pdMS_TO_TICKS(30));
 
   ESP_LOGI(TAG, "Duplex audio stopped");
 }

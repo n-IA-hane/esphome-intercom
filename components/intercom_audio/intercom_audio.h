@@ -5,6 +5,7 @@
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/ring_buffer.h"
+#include "esphome/core/optional.h"
 
 #ifdef USE_MICROPHONE
 #include "esphome/components/microphone/microphone.h"
@@ -16,6 +17,14 @@
 #include <lwip/sockets.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/semphr.h>
+
+#include <atomic>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
 
 // Forward declare esp_aec if available
 namespace esphome {
@@ -36,11 +45,10 @@ class I2SAudioDuplex;
 namespace esphome {
 namespace intercom_audio {
 
+// Simplified: only IDLE and STREAMING (no transitional states)
 enum class StreamState : uint8_t {
   IDLE,
-  STARTING,
   STREAMING,
-  STOPPING,
 };
 
 class IntercomAudio : public Component {
@@ -65,17 +73,17 @@ class IntercomAudio : public Component {
   void set_listen_port(uint16_t port) { this->listen_port_ = port; }
 
   // Lambda setters for dynamic IP/port (evaluated at start() time)
-  void set_remote_ip_lambda(std::function<std::string()> &&f) { this->remote_ip_lambda_ = f; }
-  void set_remote_port_lambda(std::function<uint16_t()> &&f) { this->remote_port_lambda_ = f; }
+  void set_remote_ip_lambda(std::function<std::string()> &&f) { this->remote_ip_lambda_ = std::move(f); }
+  void set_remote_port_lambda(std::function<uint16_t()> &&f) { this->remote_port_lambda_ = std::move(f); }
 
   // Get current remote IP/port (evaluates lambda)
-  std::string get_remote_ip() {
+  std::string get_remote_ip() const {
     if (this->remote_ip_lambda_.has_value()) {
       return this->remote_ip_lambda_.value()();
     }
     return this->remote_ip_;
   }
-  uint16_t get_remote_port() {
+  uint16_t get_remote_port() const {
     if (this->remote_port_lambda_.has_value()) {
       return this->remote_port_lambda_.value()();
     }
@@ -85,17 +93,19 @@ class IntercomAudio : public Component {
   void set_buffer_size(size_t size) { this->buffer_size_ = size; }
   void set_prebuffer_size(size_t size) { this->prebuffer_size_ = size; }
 
-  // Runtime control
+  // Runtime control - simple: set flags, open/close sockets
   void start();
   void start(const std::string &remote_ip, uint16_t remote_port);
   void stop();
-  bool is_streaming() const { return this->state_ == StreamState::STREAMING; }
+  bool is_streaming() const { return this->streaming_.load(std::memory_order_acquire); }
 
-  // State getters
-  StreamState get_state() const { return this->state_; }
-  uint32_t get_tx_packets() const { return this->tx_packets_; }
-  uint32_t get_rx_packets() const { return this->rx_packets_; }
-  size_t get_buffer_fill() const;
+  // State getters (StreamState kept for API compatibility)
+  StreamState get_state() const {
+    return this->streaming_.load(std::memory_order_acquire) ? StreamState::STREAMING : StreamState::IDLE;
+  }
+  uint32_t get_tx_packets() const { return this->tx_packets_.load(std::memory_order_relaxed); }
+  uint32_t get_rx_packets() const { return this->rx_packets_.load(std::memory_order_relaxed); }
+  size_t get_buffer_fill() const { return this->rx_fill_.load(std::memory_order_acquire); }
 
   // Get audio mode as string
   const char *get_mode_str() const {
@@ -118,22 +128,22 @@ class IntercomAudio : public Component {
 
   // Reset packet counters
   void reset_counters() {
-    this->tx_packets_ = 0;
-    this->rx_packets_ = 0;
-    this->tx_drops_ = 0;
-    this->rx_drops_ = 0;
+    this->tx_packets_.store(0, std::memory_order_relaxed);
+    this->rx_packets_.store(0, std::memory_order_relaxed);
+    this->tx_drops_.store(0, std::memory_order_relaxed);
+    this->rx_drops_.store(0, std::memory_order_relaxed);
   }
 
   // Drop counters (buffer overruns)
-  uint32_t get_tx_drops() const { return this->tx_drops_; }
-  uint32_t get_rx_drops() const { return this->rx_drops_; }
+  uint32_t get_tx_drops() const { return this->tx_drops_.load(std::memory_order_relaxed); }
+  uint32_t get_rx_drops() const { return this->rx_drops_.load(std::memory_order_relaxed); }
 
   // Volume control (delegates to speaker)
   void set_volume(float volume);
   float get_volume() const;
 
-  // Mic gain control (for 32->16 bit conversion)
-  void set_mic_gain(int gain) { this->mic_gain_ = gain; }
+  // Mic gain control (for 32->16 bit conversion, or forwarded to duplex)
+  void set_mic_gain(int gain);
   int get_mic_gain() const { return this->mic_gain_; }
 
   // DC offset removal (for microphones with significant DC bias like SPH0645)
@@ -149,12 +159,15 @@ class IntercomAudio : public Component {
   Trigger<> *get_stop_trigger() { return &this->stop_trigger_; }
 
  protected:
-  // Audio task - runs on dedicated core
+  // Audio task - created ONCE in setup(), runs forever
   static void audio_task(void *param);
   void audio_task_();
 
   // Microphone callback
-  void on_microphone_data_(const std::vector<uint8_t> &data);
+  void on_microphone_data_(const uint8_t *data, size_t len);
+  void on_microphone_data_(const std::vector<uint8_t> &data) {
+    on_microphone_data_(data.data(), data.size());
+  }
 
   // UDP helpers
   bool setup_sockets_();
@@ -162,15 +175,15 @@ class IntercomAudio : public Component {
   bool send_audio_(const uint8_t *data, size_t bytes);
   size_t receive_audio_(int16_t *buffer, size_t max_samples);
 
-  // Components - either duplex OR separate mic/speaker
+  // Components
 #ifdef USE_I2S_AUDIO_DUPLEX
-  i2s_audio_duplex::I2SAudioDuplex *duplex_{nullptr};  // Full duplex mode
+  i2s_audio_duplex::I2SAudioDuplex *duplex_{nullptr};
 #endif
 #ifdef USE_MICROPHONE
-  microphone::Microphone *microphone_{nullptr};  // Separate mode
+  microphone::Microphone *microphone_{nullptr};
 #endif
 #ifdef USE_SPEAKER
-  speaker::Speaker *speaker_{nullptr};           // Separate mode
+  speaker::Speaker *speaker_{nullptr};
 #endif
   esp_aec::EspAec *aec_{nullptr};
 
@@ -185,46 +198,56 @@ class IntercomAudio : public Component {
   size_t buffer_size_{8192};
   size_t prebuffer_size_{2048};
 
-  // Mic gain for 32->16 bit conversion (default 4x)
+  // Mic gain for 32->16 bit conversion
   int mic_gain_{4};
 
-  // DC offset removal for mics with significant DC bias (e.g., SPH0645)
+  // DC offset removal for mics with significant DC bias
   bool dc_offset_removal_{false};
+  int64_t dc_sum_{0};  // Running sum for IIR-based DC offset removal
 
-  // State
-  StreamState state_{StreamState::IDLE};
-  bool task_running_{false};
+  // Core state: just two atomics
+  std::atomic<bool> streaming_{false};       // True = actively streaming
+  std::atomic<uint32_t> session_{0};         // Incremented on start/stop to invalidate in-flight ops
+
+  // Task handle (task created once in setup, runs forever)
   TaskHandle_t audio_task_handle_{nullptr};
+
+  // Separate mutexes to reduce contention
+  SemaphoreHandle_t mic_mutex_{nullptr};  // Protects mic_input_buffer_
+  SemaphoreHandle_t ref_mutex_{nullptr};  // Protects speaker_ref_buffer_
 
   // Sockets
   int rx_socket_{-1};
   int tx_socket_{-1};
-  struct sockaddr_in remote_addr_;
+  struct sockaddr_in remote_addr_{};
 
-  // Jitter buffer
-  std::unique_ptr<RingBuffer> rx_buffer_;
+  // Ring buffers
+  std::unique_ptr<RingBuffer> rx_buffer_;        // UDP RX -> speaker
+  std::unique_ptr<RingBuffer> mic_input_buffer_; // Mic -> UDP TX
+  std::unique_ptr<RingBuffer> speaker_ref_buffer_; // Speaker ref for AEC
 
-  // AEC speaker reference buffer (stores what we play for echo cancellation)
-  std::unique_ptr<RingBuffer> speaker_ref_buffer_;
   bool aec_enabled_{false};
 
-  // Pre-allocated AEC processing buffers (to avoid stack allocation in callback)
-  std::vector<int16_t> aec_converted_data_;
-  std::vector<int16_t> aec_speaker_ref_;
-  std::vector<int16_t> aec_output_;
+  // Mic data conversion buffer (pre-allocated in setup)
+  std::vector<int16_t> mic_convert_buf_;
 
-  // AEC processing task (separate from mic callback to avoid stack overflow)
-  std::unique_ptr<RingBuffer> mic_input_buffer_;  // Raw mic data for AEC processing
-  TaskHandle_t aec_task_handle_{nullptr};
-  bool aec_task_running_{false};
-  static void aec_task(void *param);
-  void aec_task_();
+  // Frame buffers (allocated once in setup)
+  int16_t *rx_frame_{nullptr};
+  int16_t *tx_frame_{nullptr};
 
-  // Metrics
-  uint32_t tx_packets_{0};
-  uint32_t rx_packets_{0};
-  uint32_t tx_drops_{0};  // Buffer overruns on TX
-  uint32_t rx_drops_{0};  // Buffer overruns on RX
+  // AEC frame buffers
+#ifdef USE_ESP_AEC
+  int16_t *aec_mic_frame_{nullptr};
+  int16_t *aec_ref_frame_{nullptr};
+  int16_t *aec_out_frame_{nullptr};
+#endif
+
+  // Metrics (atomic for cross-thread access)
+  std::atomic<uint32_t> tx_packets_{0};
+  std::atomic<uint32_t> rx_packets_{0};
+  std::atomic<uint32_t> tx_drops_{0};
+  std::atomic<uint32_t> rx_drops_{0};
+  std::atomic<size_t> rx_fill_{0};
 
   // Automations
   Trigger<> start_trigger_;
@@ -235,8 +258,8 @@ class IntercomAudio : public Component {
 template<typename... Ts>
 class StartAction : public Action<Ts...>, public Parented<IntercomAudio> {
  public:
-  void set_remote_ip(std::function<std::string(Ts...)> func) { this->remote_ip_ = func; }
-  void set_remote_port(std::function<uint16_t(Ts...)> func) { this->remote_port_ = func; }
+  void set_remote_ip(std::function<std::string(Ts...)> func) { this->remote_ip_ = std::move(func); }
+  void set_remote_port(std::function<uint16_t(Ts...)> func) { this->remote_port_ = std::move(func); }
 
   void play(Ts... x) override {
     if (this->remote_ip_.has_value() && this->remote_port_.has_value()) {
