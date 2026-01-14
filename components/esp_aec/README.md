@@ -47,6 +47,7 @@ external_components:
       type: git
       url: https://github.com/n-IA-hane/esphome-intercom
       ref: main
+      path: components
     components: [esp_aec]
 ```
 

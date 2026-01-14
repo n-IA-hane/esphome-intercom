@@ -45,6 +45,7 @@ external_components:
       type: git
       url: https://github.com/n-IA-hane/esphome-intercom
       ref: main
+      path: components
     components: [i2s_audio_duplex]
 ```
 
@@ -201,6 +202,7 @@ external_components:
       type: git
       url: https://github.com/n-IA-hane/esphome-intercom
       ref: main
+      path: components
     components: [i2s_audio_duplex, esp_aec]
 
 i2c:
