@@ -17,11 +17,11 @@ An ESPHome component for bidirectional UDP audio streaming. Enables full-duplex 
 
 The `intercom_audio` component provides the foundation for:
 
-- **Smart doorbell** - Push notifications when someone rings, answer and talk from your phone
+- **Smart doorbell** - Push notifications when someone rings, answer and talk from your phone *(see [intercom-api](https://github.com/n-IA-hane/intercom-api) for a more stable HA integration)*
 - **Multi-room intercom** - Room-to-room communication throughout your home
 - **Baby monitor** - One-way listening with remote speaker
-- **Remote access** - Talk to your home remotely via Home Assistant app
-- **P2P system** - Direct ESP-to-ESP communication without a server
+- **Remote access** - Talk to your home remotely via Home Assistant app *(works better with [intercom-api](https://github.com/n-IA-hane/intercom-api))*
+- **P2P system** - Direct ESP-to-ESP communication without a server *(best use case for this component)*
 
 Using native ESPHome tools (automations, scripts, lambdas), you can build complex logic: contact lists, destination selection, auto-answer, call timeouts, and much more.
 
