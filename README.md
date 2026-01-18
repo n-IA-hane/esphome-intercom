@@ -7,6 +7,12 @@
 
 An ESPHome component for bidirectional UDP audio streaming. Enables full-duplex communication between ESP32 and Home Assistant (via go2rtc/WebRTC) or directly between ESP32 devices.
 
+> **Looking for a stable Home Assistant intercom?** While this component works, it has proven to be better suited for **ESP-to-ESP direct communication** rather than Home Assistant integration. The go2rtc/WebRTC approach has inherent limitations: audio sometimes becomes one-directional, streaming stops when the browser tab loses focus, NAT traversal issues prevent remote access, and overall reliability can be frustrating.
+>
+> I'm developing a new integration called **[intercom-api](https://github.com/n-IA-hane/intercom-api)** that uses native ESPHome/Home Assistant components with a custom Lovelace card. It solves all these problems with a simple TCP-based protocol that works flawlessly both locally and remotely. A stable v1.0.0 release is already available and tested. The project will evolve into a complete PBX-like intercom system, taking inspiration from this project's architecture.
+>
+> **Use this repo** for direct ESP-to-ESP communication. **Use [intercom-api](https://github.com/n-IA-hane/intercom-api)** for Browser/Home Assistant ↔ ESP communication.
+
 ## What You Can Build
 
 The `intercom_audio` component provides the foundation for:
