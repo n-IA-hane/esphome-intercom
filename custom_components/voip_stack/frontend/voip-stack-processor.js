@@ -1,6 +1,38 @@
 const PCM_FORMATS = Object.freeze(["s16le", "s24le", "s24le_in_s32", "s32le"]);
 const FRAME_MS = Object.freeze([10, 16, 20, 32]);
 const TX_BUFFER_POOL = 4;
+// 4th-order Butterworth (2 cascaded biquads) Q values -- used to band-limit
+// the mic signal below the target rate's Nyquist before the linear-
+// interpolation decimation below, which otherwise aliases high-frequency
+// content back into the passband as audible noise.
+const ANTI_ALIAS_Q = Object.freeze([0.54119610, 1.30656296]);
+
+class Biquad {
+  constructor(sampleRateHz, cutoffHz, q) {
+    const omega = (2 * Math.PI * cutoffHz) / sampleRateHz;
+    const alpha = Math.sin(omega) / (2 * q);
+    const cosw = Math.cos(omega);
+    const a0 = 1 + alpha;
+    this._b0 = (1 - cosw) / 2 / a0;
+    this._b1 = (1 - cosw) / a0;
+    this._b2 = this._b0;
+    this._a1 = (-2 * cosw) / a0;
+    this._a2 = (1 - alpha) / a0;
+    this._x1 = 0;
+    this._x2 = 0;
+    this._y1 = 0;
+    this._y2 = 0;
+  }
+
+  process(x0) {
+    const y0 = this._b0 * x0 + this._b1 * this._x1 + this._b2 * this._x2 - this._a1 * this._y1 - this._a2 * this._y2;
+    this._x2 = this._x1;
+    this._x1 = x0;
+    this._y2 = this._y1;
+    this._y1 = y0;
+    return y0;
+  }
+}
 
 function normaliseFormat(value) {
   if (!value) throw new Error("recorder worklet requires negotiated PCM format");
@@ -39,6 +71,25 @@ class RecorderProcessor extends AudioWorkletProcessor {
     this._writeSample = 0;
     this._position = 0;
     this._lastSample = 0;
+
+    this._ratio = sampleRate / this._format.sampleRate;
+    this._antiAliasStages =
+      this._ratio > 1
+        ? ANTI_ALIAS_Q.map((q) => new Biquad(sampleRate, 0.9 * (this._format.sampleRate / 2), q))
+        : null;
+    this._filterScratch = null;
+  }
+
+  _filterBlock(input) {
+    if (!this._filterScratch || this._filterScratch.length !== input.length) {
+      this._filterScratch = new Float32Array(input.length);
+    }
+    for (let i = 0; i < input.length; i++) {
+      let s = input[i];
+      for (const stage of this._antiAliasStages) s = stage.process(s);
+      this._filterScratch[i] = s;
+    }
+    return this._filterScratch;
   }
 
   _encode(sample, sampleIndex) {
@@ -77,20 +128,20 @@ class RecorderProcessor extends AudioWorkletProcessor {
     const input = inputList?.[0]?.[0];
     if (!input?.length) return true;
 
-    const ratio = sampleRate / this._format.sampleRate;
-    if (ratio === 1) {
+    if (this._ratio === 1) {
       for (let i = 0; i < input.length; i++) this._writeMono(input[i]);
     } else {
-      while (this._position < input.length) {
+      const src = this._antiAliasStages ? this._filterBlock(input) : input;
+      while (this._position < src.length) {
         const idx = Math.floor(this._position);
         const frac = this._position - idx;
-        const a = idx > 0 ? input[idx - 1] : this._lastSample;
-        const b = input[idx] ?? a;
+        const a = idx > 0 ? src[idx - 1] : this._lastSample;
+        const b = src[idx] ?? a;
         this._writeMono(a + (b - a) * frac);
-        this._position += ratio;
+        this._position += this._ratio;
       }
-      this._position -= input.length;
-      this._lastSample = input[input.length - 1] || this._lastSample;
+      this._position -= src.length;
+      this._lastSample = src[src.length - 1] || this._lastSample;
     }
     return true;
   }
