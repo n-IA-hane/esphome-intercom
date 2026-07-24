@@ -514,6 +514,17 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("await asyncio.sleep(sleep_for)", audio_ws)
         self.assertIn("next_send = loop.time() + frame_delay", audio_ws)
 
+    def test_softphone_tx_uses_negotiated_rtp_timestamp_clock(self) -> None:
+        audio_ws = (
+            ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
+        ).read_text()
+        body = _function_body(audio_ws, "_run_audio_session")
+        self.assertIn("session.send_format.rtp_timestamp_step", body)
+        self.assertNotIn(
+            "session.send_format.audio_format.nominal_frame_samples",
+            body,
+        )
+
     def test_softphone_start_is_serialized_and_ring_group_claims_state_before_io(
         self,
     ) -> None:

@@ -161,6 +161,36 @@ def test_legacy_connection_hold_suppresses_only_assist_rtp_tx() -> None:
     asyncio.run(run())
 
 
+def test_assist_uses_g722_rtp_clock_instead_of_pcm_sample_count() -> None:
+    async def run() -> None:
+        session = _session()
+        g722 = sdp.RtpPcmFormat(9, "G722", 8000, 1, 20)
+        session.invite = replace(session.invite, send_format=g722)
+        session.encoder = types.SimpleNamespace(
+            encode=lambda _pcm: bytes(g722.rtp_timestamp_step)
+        )
+        sent: list[bytes] = []
+        session.transport = types.SimpleNamespace(
+            sendto=lambda packet, _addr: sent.append(packet)
+        )
+        session.timestamp = 1000
+
+        task = asyncio.create_task(session._send_loop())
+        deadline = asyncio.get_running_loop().time() + 1.0
+        while len(sent) < 2 and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.005)
+        session.closed.set()
+        await asyncio.wait_for(task, timeout=1)
+
+        assert len(sent) >= 2
+        first = rtp.parse_packet(sent[0])
+        second = rtp.parse_packet(sent[1])
+        assert first.timestamp == 1000
+        assert second.timestamp == 1160
+
+    asyncio.run(run())
+
+
 def test_assist_respects_sendonly_receive_direction() -> None:
     invite = replace(_invite(), local_audio_direction="sendonly")
     session = _session(invite)

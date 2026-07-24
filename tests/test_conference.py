@@ -387,10 +387,12 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(leg.tx_suppressed, 0)
         self.assertGreater(leg.timestamp, 100)
 
-    async def test_mixer_advances_rtp_clock_when_one_send_fails(self) -> None:
+    async def test_mixer_advances_negotiated_rtp_clock_when_one_send_fails(
+        self,
+    ) -> None:
         hass = _FakeHass()
         room = conference.ConferenceRoom(hass, name="Conference", local_ip="127.0.0.1")
-        fmt = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
+        fmt = sdp.RtpPcmFormat(9, "G722", 8000, 1, 20)
 
         class FailingEncoder:
             def __init__(self) -> None:
@@ -417,7 +419,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         await room._mix_loop()
 
-        self.assertEqual(leg.timestamp, 100 + conference.CONFERENCE_FORMAT.nominal_frame_samples)
+        self.assertEqual(leg.timestamp, 100 + 160)
 
     async def test_leg_disposal_closes_client_even_when_terminate_fails(self) -> None:
         hass = _FakeHass()

@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable
 
 from .audio_format import AudioFormat, HA_SIP_PCM_FORMATS, PcmFormat
 from . import g711
+from .g722_codec import G722Decoder, G722Encoder
 from .opus_codec import OpusDecoder, OpusEncoder
 from .session_cleanup import async_wait_for_cleanup
 from . import sdp, sip
@@ -47,6 +48,8 @@ def pcm_to_rtp_payload(data: bytes, fmt: AudioFormat | sdp.RtpPcmFormat) -> byte
         return g711.s16le_to_ulaw(data)
     if encoding == "OPUS":
         return OpusEncoder(fmt.sample_rate, fmt.channels).encode(data)
+    if encoding == "G722":
+        return G722Encoder().encode(data)
     fmt = _audio_format(fmt)
     if fmt.pcm_format == PcmFormat.S16LE:
         if len(data) % 2:
@@ -83,6 +86,8 @@ def rtp_payload_to_pcm(payload: bytes, fmt: AudioFormat | sdp.RtpPcmFormat) -> b
         return g711.ulaw_to_s16le(payload)
     if encoding == "OPUS":
         return OpusDecoder(fmt.sample_rate, fmt.channels).decode(payload)
+    if encoding == "G722":
+        return G722Decoder().decode(payload)
     fmt = _audio_format(fmt)
     if fmt.pcm_format == PcmFormat.S16LE:
         if len(payload) % 2:
@@ -115,22 +120,34 @@ def rtp_payload_to_pcm(payload: bytes, fmt: AudioFormat | sdp.RtpPcmFormat) -> b
 class RtpPayloadDecoder:
     def __init__(self, fmt: sdp.RtpPcmFormat) -> None:
         self.fmt = fmt
-        self._opus = OpusDecoder(fmt.sample_rate, fmt.channels) if fmt.encoding == "OPUS" else None
+        self._codec = (
+            OpusDecoder(fmt.pcm_sample_rate, fmt.channels)
+            if fmt.encoding == "OPUS"
+            else G722Decoder()
+            if fmt.encoding == "G722"
+            else None
+        )
 
     def decode(self, payload: bytes) -> bytes:
-        if self._opus is not None:
-            return self._opus.decode(payload)
+        if self._codec is not None:
+            return self._codec.decode(payload)
         return rtp_payload_to_pcm(payload, self.fmt)
 
 
 class RtpPayloadEncoder:
     def __init__(self, fmt: sdp.RtpPcmFormat) -> None:
         self.fmt = fmt
-        self._opus = OpusEncoder(fmt.sample_rate, fmt.channels) if fmt.encoding == "OPUS" else None
+        self._codec = (
+            OpusEncoder(fmt.pcm_sample_rate, fmt.channels)
+            if fmt.encoding == "OPUS"
+            else G722Encoder()
+            if fmt.encoding == "G722"
+            else None
+        )
 
     def encode(self, pcm: bytes) -> bytes:
-        if self._opus is not None:
-            return self._opus.encode(pcm)
+        if self._codec is not None:
+            return self._codec.encode(pcm)
         return pcm_to_rtp_payload(pcm, self.fmt)
 
 

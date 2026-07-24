@@ -362,7 +362,7 @@ class AssistMediaSession:
                 self.sequence = rtp.next_sequence(self.sequence)
                 self.timestamp = rtp.next_timestamp(
                     self.timestamp,
-                    frame_format.nominal_frame_samples,
+                    invite.send_format.rtp_timestamp_step,
                 )
                 next_send += frame_delay
                 if next_send <= loop.time():

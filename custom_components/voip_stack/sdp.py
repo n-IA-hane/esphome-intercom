@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from fractions import Fraction
 
 from .audio_format import AudioFormat, PcmFormat, UDP_SAFE_PAYLOAD_BYTES
+from .codec_capabilities import common_sip_codecs
 
 
 class SdpError(ValueError):
@@ -27,6 +28,7 @@ _PREFERRED_RTP_AUDIO_KEYS = {
 _STATIC_RTPMAP = {
     0: ("PCMU", 8000, 1),
     8: ("PCMA", 8000, 1),
+    9: ("G722", 8000, 1),
 }
 _RFC6184_DEFAULT_PROFILE_LEVEL_ID = "42000a"
 _SDP_DIRECTIONS = frozenset({"sendrecv", "sendonly", "recvonly", "inactive"})
@@ -105,7 +107,7 @@ class RtpPcmFormat:
             return 16
         if self.encoding == "L24":
             return 24
-        if self.encoding in {"PCMA", "PCMU"}:
+        if self.encoding in {"PCMA", "PCMU", "G722"}:
             return 8
         if self.encoding == "OPUS":
             return 0
@@ -117,12 +119,32 @@ class RtpPcmFormat:
             return AudioFormat(
                 self.sample_rate, PcmFormat.S16LE, self.channels, self.frame_ms or 20
             )
+        if self.encoding == "G722":
+            return AudioFormat(
+                16000, PcmFormat.S16LE, self.channels, self.frame_ms or 20
+            )
         if self.encoding == "OPUS":
             return AudioFormat(
                 48000, PcmFormat.S16LE, self.channels, self.frame_ms or 20
             )
         pcm = PcmFormat.S16LE if self.encoding == "L16" else PcmFormat.S24LE
         return AudioFormat(self.sample_rate, pcm, self.channels, self.frame_ms)
+
+    @property
+    def rtp_clock_rate(self) -> int:
+        """RTP timestamp clock advertised in SDP."""
+
+        return self.sample_rate
+
+    @property
+    def pcm_sample_rate(self) -> int:
+        """Decoded PCM rate, which differs from RTP clock rate for G.722."""
+
+        return self.audio_format.sample_rate
+
+    @property
+    def rtp_timestamp_step(self) -> int:
+        return (self.rtp_clock_rate * (self.frame_ms or 20)) // 1000
 
     def wire_token(self) -> str:
         return f"pt={self.payload_type}:{self.encoding}/{self.sample_rate}/{self.channels}/{self.frame_ms}ms"
@@ -959,6 +981,21 @@ def _rtp_compatible_audio(
                 offered.payload_type, "OPUS", 48000, offered.channels, local.frame_ms
             )
         return None
+    if offered.encoding == "G722":
+        if (
+            local.pcm_format == PcmFormat.S16LE
+            and local.sample_rate == 16000
+            and local.channels == 1
+            and local.frame_ms == 20
+        ):
+            return RtpPcmFormat(
+                offered.payload_type,
+                "G722",
+                8000,
+                1,
+                local.frame_ms,
+            )
+        return None
     if not is_rtp_pcm_mappable(local):
         return None
     if offered.encoding in {"PCMA", "PCMU"}:
@@ -1283,9 +1320,18 @@ def build_offer_directional(
 
 def _common_codec_offer_formats(formats: list[AudioFormat]) -> list[RtpPcmFormat]:
     format_set = set(formats)
+    capabilities = common_sip_codecs()
     out: list[RtpPcmFormat] = []
-    if AudioFormat(48000, PcmFormat.S16LE, 2, 20) in format_set:
+    if (
+        "OPUS" in capabilities
+        and AudioFormat(48000, PcmFormat.S16LE, 2, 20) in format_set
+    ):
         out.append(RtpPcmFormat(98, "OPUS", 48000, 2, 20))
+    if (
+        "G722" in capabilities
+        and AudioFormat(16000, PcmFormat.S16LE, 1, 20) in format_set
+    ):
+        out.append(RtpPcmFormat(9, "G722", 8000, 1, 20))
     if AudioFormat(8000, PcmFormat.S16LE, 1, 20) in format_set:
         out.extend(
             (
@@ -2488,7 +2534,7 @@ def offered_pcm_formats(sdp: str | bytes) -> list[RtpPcmFormat]:
         if spec is None:
             continue
         encoding, rate, channels = spec
-        if encoding not in {"L16", "L24", "PCMA", "PCMU", "OPUS"}:
+        if encoding not in {"L16", "L24", "PCMA", "PCMU", "OPUS", "G722"}:
             continue
         out.append(
             RtpPcmFormat(

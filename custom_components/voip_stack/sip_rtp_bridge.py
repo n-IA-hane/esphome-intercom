@@ -605,7 +605,9 @@ class SipRtpRelay:
             if self._stop_requested:
                 return
             event_rate = max(1, int(destination.dtmf_clock_rate))
-            audio_rate = max(1, int(destination.outbound_rtp_format.sample_rate))
+            audio_rate = max(
+                1, int(destination.outbound_rtp_format.rtp_clock_rate)
+            )
             shared_clock = event_rate == audio_rate
             event_timestamp = (
                 destination.timestamp
@@ -730,7 +732,7 @@ class SipRtpRelay:
             return
         dtmf_decoder = self._dtmf_decoders[side]
         shared_dtmf_clock = (
-            source.dtmf_clock_rate == source.inbound_rtp_format.sample_rate
+            source.dtmf_clock_rate == source.inbound_rtp_format.rtp_clock_rate
         )
         if dtmf_decoder is not None and (
             digit := dtmf_decoder.decode(
@@ -778,7 +780,6 @@ class SipRtpRelay:
             self._capture_pcm(side, pcm)
             converter = self.left_to_right if side == "left" else self.right_to_left
             converted_frames = converter.convert(pcm)
-            out_format = dest.outbound_audio_format
             encoder = self.right_encoder if side == "left" else self.left_encoder
             outgoing: list[bytes] = []
             sequence = dest.sequence
@@ -796,7 +797,10 @@ class SipRtpRelay:
                     )
                 )
                 sequence = rtp.next_sequence(sequence)
-                timestamp = rtp.next_timestamp(timestamp, out_format.nominal_frame_samples)
+                timestamp = rtp.next_timestamp(
+                    timestamp,
+                    dest.outbound_rtp_format.rtp_timestamp_step,
+                )
         except Exception as err:
             self.dropped += 1
             _LOGGER.debug("RTP relay drop: %s", err)

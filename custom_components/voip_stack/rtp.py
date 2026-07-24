@@ -65,6 +65,7 @@ def audio_payload_size_limit(fmt: _AudioRtpFormat) -> int:
         bytes_per_sample = {
             "PCMA": 1,
             "PCMU": 1,
+            "G722": 1,
             "L16": 2,
             "L24": 3,
         }.get(encoding)

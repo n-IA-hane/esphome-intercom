@@ -47,6 +47,8 @@ audio_format = _load_intercom_module("audio_format")
 audio_pcm = _load_intercom_module("audio_pcm")
 sip = _load_intercom_module("sip")
 sdp = _load_intercom_module("sdp")
+codec_capabilities = _load_intercom_module("codec_capabilities")
+g722_codec = _load_intercom_module("g722_codec")
 rtp = _load_intercom_module("rtp")
 roster = _load_intercom_module("roster")
 router = _load_intercom_module("router")
@@ -493,20 +495,221 @@ class SipProfileTest(unittest.TestCase):
         self.assertNotIn("PCMA/8000", body)
         self.assertNotIn("PCMU/8000", body)
 
-    def test_trunk_offer_includes_opus_and_g711_fallbacks(self) -> None:
-        body = sdp.build_offer_directional(
-            "192.168.1.20",
-            "192.168.1.20",
-            40000,
-            list(audio_format.HA_TRUNK_AUDIO_FORMATS),
-            list(audio_format.HA_TRUNK_AUDIO_FORMATS),
-            include_common_codecs=True,
-        )
-        self.assertIn("m=audio 40000 RTP/AVP 98 8 0", body)
+    def test_trunk_offer_includes_available_common_codec_fallbacks(self) -> None:
+        with patch.object(
+            sdp,
+            "common_sip_codecs",
+            return_value=frozenset({"OPUS", "G722"}),
+        ):
+            body = sdp.build_offer_directional(
+                "192.168.1.20",
+                "192.168.1.20",
+                40000,
+                list(audio_format.HA_TRUNK_AUDIO_FORMATS),
+                list(audio_format.HA_TRUNK_AUDIO_FORMATS),
+                include_common_codecs=True,
+            )
+        self.assertIn("m=audio 40000 RTP/AVP 98 9 8 0", body)
         self.assertIn("a=rtpmap:98 OPUS/48000/2", body)
+        self.assertIn("a=rtpmap:9 G722/8000/1", body)
         self.assertIn("a=rtpmap:8 PCMA/8000/1", body)
         self.assertIn("a=rtpmap:0 PCMU/8000/1", body)
         self.assertIn("a=ptime:20", body)
+
+    def test_trunk_offer_does_not_advertise_unavailable_optional_codecs(self) -> None:
+        with patch.object(
+            sdp,
+            "common_sip_codecs",
+            return_value=frozenset(),
+        ):
+            body = sdp.build_offer_directional(
+                "192.168.1.20",
+                "192.168.1.20",
+                40000,
+                list(audio_format.HA_TRUNK_AUDIO_FORMATS),
+                list(audio_format.HA_TRUNK_AUDIO_FORMATS),
+                include_common_codecs=True,
+            )
+        self.assertNotIn(" OPUS/", body)
+        self.assertNotIn(" G722/", body)
+        self.assertIn("a=rtpmap:8 PCMA/8000/1", body)
+        self.assertIn("a=rtpmap:0 PCMU/8000/1", body)
+
+    def test_g722_uses_16khz_pcm_with_the_rfc3551_8khz_rtp_clock(self) -> None:
+        fmt = sdp.RtpPcmFormat(9, "G722", 8000, 1, 20)
+
+        self.assertEqual(fmt.audio_format.sample_rate, 16000)
+        self.assertEqual(fmt.rtp_clock_rate, 8000)
+        self.assertEqual(fmt.pcm_sample_rate, 16000)
+        self.assertEqual(fmt.rtp_timestamp_step, 160)
+        self.assertEqual(fmt.audio_format.nominal_frame_samples, 320)
+
+    def test_g722_static_payload_negotiates_against_16khz_pcm(self) -> None:
+        offer = (
+            "v=0\r\n"
+            "o=- 0 0 IN IP4 192.168.1.30\r\n"
+            "s=-\r\n"
+            "c=IN IP4 192.168.1.30\r\n"
+            "t=0 0\r\n"
+            "m=audio 41000 RTP/AVP 9\r\n"
+            "a=ptime:20\r\n"
+            "a=sendrecv\r\n"
+        )
+        selected = sdp.negotiate_directional(
+            offer,
+            [audio_format.AudioFormat(16000, "s16le", 1, 20)],
+            [audio_format.AudioFormat(16000, "s16le", 1, 20)],
+        )
+
+        self.assertIsNotNone(selected)
+        assert selected is not None
+        self.assertEqual(selected.send.wire_token(), "pt=9:G722/8000/1/20ms")
+        self.assertEqual(selected.recv.audio_format.sample_rate, 16000)
+
+    def test_optional_codec_capabilities_require_both_encoder_and_decoder(self) -> None:
+        class CodecContext:
+            @staticmethod
+            def create(name: str, mode: str):
+                if (name, mode) == ("libopus", "w"):
+                    raise RuntimeError("encoder unavailable")
+                return object()
+
+        fake_av = types.SimpleNamespace(CodecContext=CodecContext)
+        codec_capabilities.common_sip_codecs.cache_clear()
+        try:
+            with patch.dict(sys.modules, {"av": fake_av}):
+                self.assertEqual(
+                    codec_capabilities.common_sip_codecs(),
+                    frozenset({"G722"}),
+                )
+        finally:
+            codec_capabilities.common_sip_codecs.cache_clear()
+
+    def test_g722_pyav_adapter_keeps_codec_state_and_pcm_shape(self) -> None:
+        contexts: list[object] = []
+
+        class Frame:
+            def __init__(self, samples=None) -> None:
+                self.samples = samples
+                self.sample_rate = 0
+
+            def to_ndarray(self):
+                return g722_codec.np.arange(320, dtype="<i2").reshape(1, -1)
+
+        class Context:
+            def __init__(self, mode: str) -> None:
+                self.mode = mode
+                self.sample_rate = 0
+                self.layout = ""
+                self.format = ""
+                self.bit_rate = 0
+                self.opened = False
+                contexts.append(self)
+
+            def open(self) -> None:
+                self.opened = True
+
+            def decode(self, _packet):
+                return [Frame()]
+
+            def encode(self, frame):
+                self.encoded_frame = frame
+                return [bytes(range(160))]
+
+        class CodecContext:
+            @staticmethod
+            def create(name: str, mode: str):
+                self.assertEqual(name, "g722")
+                return Context(mode)
+
+        class AudioFrame:
+            @staticmethod
+            def from_ndarray(samples, *, format: str, layout: str):
+                self.assertEqual(samples.shape, (1, 320))
+                self.assertEqual((format, layout), ("s16", "mono"))
+                return Frame(samples)
+
+        fake_av = types.SimpleNamespace(
+            CodecContext=CodecContext,
+            AudioFrame=AudioFrame,
+            Packet=lambda payload: payload,
+        )
+        with patch.dict(sys.modules, {"av": fake_av}):
+            encoder = g722_codec.G722Encoder()
+            decoder = g722_codec.G722Decoder()
+            encoded = encoder.encode(bytes(640))
+            decoded = decoder.decode(encoded)
+
+        self.assertEqual(len(contexts), 2)
+        self.assertTrue(contexts[0].opened)
+        self.assertEqual(encoded, bytes(range(160)))
+        self.assertEqual(len(decoded), 640)
+        self.assertEqual(encoder.audio_format.sample_rate, 16000)
+        self.assertEqual(decoder.audio_format.frame_ms, 20)
+
+    def test_g722_relay_advances_rtp_clock_by_160_not_pcm_samples(self) -> None:
+        class PassthroughCodec:
+            def __init__(self, _fmt) -> None:
+                pass
+
+            def decode(self, payload: bytes) -> bytes:
+                return payload
+
+            def encode(self, _pcm: bytes) -> bytes:
+                return bytes(160)
+
+        class Transport:
+            def __init__(self) -> None:
+                self.sent: list[bytes] = []
+
+            def sendto(self, packet: bytes, _addr) -> None:
+                self.sent.append(packet)
+
+        pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        l16 = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
+        g722 = sdp.RtpPcmFormat(9, "G722", 8000, 1, 20)
+        with (
+            patch.object(sip_rtp_bridge, "RtpPayloadDecoder", PassthroughCodec),
+            patch.object(sip_rtp_bridge, "RtpPayloadEncoder", PassthroughCodec),
+        ):
+            relay = sip_rtp_bridge.SipRtpRelay(
+                left=sip_rtp_bridge.RtpPeer(
+                    "127.0.0.1",
+                    40000,
+                    96,
+                    pcm,
+                    rtp_format=l16,
+                    send_rtp_format=l16,
+                ),
+                right=sip_rtp_bridge.RtpPeer(
+                    "127.0.0.2",
+                    40002,
+                    9,
+                    pcm,
+                    rtp_format=g722,
+                    send_rtp_format=g722,
+                    timestamp=1000,
+                ),
+                left_port=41000,
+                right_port=41002,
+            )
+        transport = Transport()
+        relay.right_transport = transport
+        packet = rtp.build_packet(
+            rtp.RtpPacket(
+                payload_type=96,
+                sequence=1,
+                timestamp=0,
+                ssrc=7,
+                payload=bytes(pcm.nominal_frame_bytes),
+            )
+        )
+
+        relay.handle_packet("left", packet, ("127.0.0.1", 40000))
+
+        self.assertEqual(len(transport.sent), 1)
+        self.assertEqual(rtp.parse_packet(transport.sent[0]).timestamp, 1000)
+        self.assertEqual(relay.right.timestamp, 1160)
 
     def test_trunk_opus_answer_negotiates_48k_stereo_20ms(self) -> None:
         answer = (
@@ -5195,6 +5398,11 @@ class RtpProfileTest(unittest.TestCase):
             rtp.audio_payload_size_limit(opus_120_ms),
             rtp.MAX_AUDIO_RTP_PAYLOAD_BYTES,
         )
+
+    def test_g722_receive_limit_uses_the_rtp_octet_clock(self) -> None:
+        fmt = sdp.RtpPcmFormat(9, "G722", 8000, 1, 20)
+
+        self.assertEqual(rtp.audio_payload_size_limit(fmt), 160)
 
     def test_rfc4733_decoder_emits_one_event_per_press(self) -> None:
         decoder = dtmf.RtpDtmfDecoder(101)

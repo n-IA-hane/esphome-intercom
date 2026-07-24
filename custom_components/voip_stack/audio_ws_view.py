@@ -1072,7 +1072,7 @@ async def _run_audio_session(
                 counters[counter] += 1
                 timestamp = rtp.next_timestamp(
                     timestamp,
-                    session.send_format.audio_format.nominal_frame_samples,
+                    session.send_format.rtp_timestamp_step,
                 )
                 publish_counters()
                 next_send += frame_delay
@@ -1086,7 +1086,7 @@ async def _run_audio_session(
                 _LOGGER.debug("HA softphone RTP encode drop: %s", err)
                 timestamp = rtp.next_timestamp(
                     timestamp,
-                    session.send_format.audio_format.nominal_frame_samples,
+                    session.send_format.rtp_timestamp_step,
                 )
                 next_send = max(next_send + frame_delay, loop.time() + frame_delay)
                 continue
@@ -1111,7 +1111,10 @@ async def _run_audio_session(
                     counters["rtp_tx"] += 1
                     counters["rtp_tx_bytes"] += len(packet)
                 sequence = rtp.next_sequence(sequence)
-            timestamp = rtp.next_timestamp(timestamp, session.send_format.audio_format.nominal_frame_samples)
+            timestamp = rtp.next_timestamp(
+                timestamp,
+                session.send_format.rtp_timestamp_step,
+            )
             publish_counters()
             next_send += frame_delay
             if next_send <= loop.time():

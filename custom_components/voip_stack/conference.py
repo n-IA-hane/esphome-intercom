@@ -484,7 +484,7 @@ class ConferenceRoom:
                             leg.tx_suppressed += 1
                             leg.timestamp = next_timestamp(
                                 leg.timestamp,
-                                leg.encoder.fmt.audio_format.nominal_frame_samples,
+                                leg.encoder.fmt.rtp_timestamp_step,
                             )
                             continue
                         try:
@@ -507,7 +507,7 @@ class ConferenceRoom:
                             # wall-clock audio time across an encode/send drop.
                             leg.timestamp = next_timestamp(
                                 leg.timestamp,
-                                leg.encoder.fmt.audio_format.nominal_frame_samples,
+                                leg.encoder.fmt.rtp_timestamp_step,
                             )
         except asyncio.CancelledError:
             raise
