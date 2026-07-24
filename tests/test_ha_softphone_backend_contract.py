@@ -11,6 +11,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INIT = ROOT / "custom_components" / "voip_stack" / "__init__.py"
 ENDPOINT_RUNTIME = ROOT / "custom_components" / "voip_stack" / "endpoint_runtime.py"
+INVITE_ROUTER = ROOT / "custom_components" / "voip_stack" / "invite_router.py"
+RING_GROUP_ORCHESTRATOR = (
+    ROOT / "custom_components" / "voip_stack" / "ring_group_orchestrator.py"
+)
 MEDIA_RENEGOTIATION = (
     ROOT / "custom_components" / "voip_stack" / "media_renegotiation.py"
 )
@@ -131,8 +135,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn('last_sip_event="SIP_BYE"', matching_branch)
 
     def test_inbound_bridge_completion_does_not_mutate_ha_softphone(self) -> None:
-        endpoint_runtime = ENDPOINT_RUNTIME.read_text()
-        body = _function_body(endpoint_runtime, "async_start_sip_endpoint")
+        body = _function_body(INVITE_ROUTER.read_text(), "route_invite")
         bridge_path = body.split("routeable_sip_target =", 1)[1]
         bridge_path = bridge_path.split(
             "if not force_ha_softphone and decision.action is RouteAction.ANSWER_HA:",
@@ -781,7 +784,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
 
     def test_video_bridge_projects_destination_h264_level_to_source_leg(self) -> None:
-        endpoint_runtime = ENDPOINT_RUNTIME.read_text()
+        routing_sources = (
+            INVITE_ROUTER.read_text() + RING_GROUP_ORCHESTRATOR.read_text()
+        )
         sip_bridge = SIP_BRIDGE.read_text()
         self.assertIn("source_video = (", sip_bridge)
         self.assertIn("video_answer_contract(", sip_bridge)
@@ -796,7 +801,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("video_format=source_video", sip_bridge)
         self.assertIn(
             "video_answer = configure_answered_invite_video_relay(",
-            endpoint_runtime,
+            routing_sources,
         )
 
     def test_outbound_softphone_accepts_live_peer_media_updates(self) -> None:
@@ -813,7 +818,6 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
     def test_ha_originated_ring_group_exposes_browser_audio_through_existing_relay(
         self,
     ) -> None:
-        endpoint_runtime = ENDPOINT_RUNTIME.read_text()
         audio_ws = (
             ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
         ).read_text()
@@ -821,11 +825,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             ROOT / "custom_components" / "voip_stack" / "bridge_manager.py"
         ).read_text()
 
-        ring_group = endpoint_runtime[
-            endpoint_runtime.index(
-                "async def _run_ring_group_call("
-            ) : endpoint_runtime.index("async def _ring_conference_members(")
-        ]
+        ring_group = RING_GROUP_ORCHESTRATOR.read_text()
         self.assertIn('"rtp_loopback": True', ring_group)
         self.assertIn('"remote_rtp_port": source_relay_port', ring_group)
         self.assertIn('"send_format": invite.recv_format', ring_group)
