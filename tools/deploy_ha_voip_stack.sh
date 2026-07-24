@@ -4,8 +4,39 @@ set -euo pipefail
 HA_HOST="${HA_HOST:-hass}"
 HA_COMPONENT_DIR="${HA_COMPONENT_DIR:-/var/lib/hass/custom_components/voip_stack}"
 HA_SERVICE="${HA_SERVICE:-home-assistant.service}"
+HA_BACKUP_ROOT="${HA_BACKUP_ROOT:-/var/lib/hass/.cache/voip_stack_deploy_backups}"
 LOCAL_COMPONENT_DIR="custom_components/voip_stack"
 REMOTE_STAGE="/tmp/voip-stack-deploy-${USER:-codex}-$$"
+
+usage() {
+  cat <<'EOF'
+Usage: tools/deploy_ha_voip_stack.sh
+
+Deploy the local VoIP Stack custom component to the configured Home Assistant,
+create a timestamped pre-deploy backup, restart Home Assistant and wait until
+the service is active.
+
+Environment overrides:
+  HA_HOST           SSH alias or host (default: hass)
+  HA_COMPONENT_DIR  Remote component directory
+  HA_SERVICE        Remote systemd service
+  HA_BACKUP_ROOT    Remote backup directory
+EOF
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  "")
+    ;;
+  *)
+    echo "Unknown argument: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
 
 if [[ ! -f "$LOCAL_COMPONENT_DIR/manifest.json" ]]; then
   echo "Run this command from the esphome-intercom repository root." >&2
@@ -28,6 +59,12 @@ tar \
 
 ssh "$HA_HOST" "
   set -eu
+  backup_dir='$HA_BACKUP_ROOT'/\$(date -u +%Y%m%dT%H%M%SZ)-predeploy
+  if sudo -n test -d '$HA_COMPONENT_DIR'; then
+    sudo -n mkdir -p \"\$backup_dir\"
+    sudo -n cp -a '$HA_COMPONENT_DIR'/.' \"\$backup_dir\"/
+    echo \"Pre-deploy backup: \$backup_dir\"
+  fi
   sudo -n mkdir -p '$HA_COMPONENT_DIR'
   sudo -n rsync -a --delete --exclude='__pycache__/' '$REMOTE_STAGE/' '$HA_COMPONENT_DIR/'
   sudo -n chown -R hass:hass '$HA_COMPONENT_DIR'
