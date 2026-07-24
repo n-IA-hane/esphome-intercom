@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import logging
 
 from homeassistant.core import HomeAssistant
@@ -13,7 +13,11 @@ from .audio_format import (
     HA_SIP_PCM_TX_FORMATS,
     parse_audio_format_list,
 )
+from .config import trunk_config, trunk_enabled
+from .const import DOMAIN
 from .peer import Peer
+from .phone_endpoint import DEFAULT_ENDPOINT_ID
+from .router import resolve_ha_router
 from .store import manual_roster_entries
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,6 +28,107 @@ def same_route_name(left: str, right: str) -> bool:
         return "".join(ch for ch in value.lower() if ch.isalnum())
 
     return bool(left and right and norm(left) == norm(right))
+
+
+def is_ha_target(hass: HomeAssistant, value: str) -> bool:
+    """Return whether a dial token names the configured HA browser phone."""
+
+    # Kept deferred because websocket_api imports routing helpers during setup.
+    from .websocket_api import _ha_peer_name
+
+    return same_route_name(value, _ha_peer_name(hass)) or same_route_name(value, "ha")
+
+
+def ha_router_decision(hass: HomeAssistant, target: str, entries: list):
+    """Resolve one target against the canonical HA dial plan."""
+
+    trunk = hass.data.get(DOMAIN, {}).get("sip_trunk")
+    configured_trunk = trunk_config(hass)
+    trunk_ready = trunk_enabled(configured_trunk) and bool(
+        getattr(trunk, "registered", False)
+    )
+    return resolve_ha_router(target, entries, trunk_ready=trunk_ready)
+
+
+def is_local_listener_uri(uri, *, local_ip: str, sip_port: int) -> bool:
+    """Return whether a parsed SIP URI points back to the current listener."""
+
+    return bool(
+        uri is not None
+        and uri.host == local_ip
+        and int(uri.port or sip_port) == int(sip_port)
+    )
+
+
+def logical_endpoint_for_member(
+    hass: HomeAssistant,
+    member: str,
+    peers: list[Peer],
+    entries: list,
+):
+    """Resolve a dial-plan member to its transport-independent endpoint."""
+
+    endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
+    if endpoint_registry is None:
+        return None
+    entry = next(
+        (
+            candidate
+            for candidate in entries
+            if same_route_name(member, getattr(candidate, "id", ""))
+            or same_route_name(member, getattr(candidate, "name", ""))
+            or (
+                bool(getattr(candidate, "extension", ""))
+                and str(getattr(candidate, "extension", "")).strip()
+                == str(member).strip()
+            )
+        ),
+        None,
+    )
+    endpoint_id = str(
+        ((getattr(entry, "metadata", None) if entry is not None else {}) or {}).get(
+            "endpoint_id"
+        )
+        or ""
+    ).strip()
+    if not endpoint_id:
+        peer = next(
+            (
+                candidate
+                for candidate in peers
+                if same_route_name(member, candidate.name)
+            ),
+            None,
+        )
+        endpoint_id = str(getattr(peer, "endpoint_id", "") or "").strip()
+    if not endpoint_id and is_ha_target(hass, member):
+        endpoint_id = DEFAULT_ENDPOINT_ID
+    return endpoint_registry.get(endpoint_id) if endpoint_id else None
+
+
+@dataclass(frozen=True, slots=True)
+class EndpointRouteResolver:
+    """Runtime-bound routing helpers shared by endpoint orchestrators."""
+
+    hass: HomeAssistant
+    local_ip: str
+    sip_port: int
+
+    def is_ha_target(self, value: str) -> bool:
+        return is_ha_target(self.hass, value)
+
+    def route(self, target: str, entries: list):
+        return ha_router_decision(self.hass, target, entries)
+
+    def is_local_listener_uri(self, uri) -> bool:
+        return is_local_listener_uri(
+            uri,
+            local_ip=self.local_ip,
+            sip_port=self.sip_port,
+        )
+
+    def logical_endpoint(self, member: str, peers: list[Peer], entries: list):
+        return logical_endpoint_for_member(self.hass, member, peers, entries)
 
 
 def peer_for_target(target: str, peers: list[Peer]) -> Peer | None:

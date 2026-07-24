@@ -61,11 +61,11 @@ from .dtmf_events import (
     publish_dtmf_event as _publish_dtmf_event,
 )
 from .endpoint_routing import (
+    EndpointRouteResolver,
     peer_audio_formats as _peer_audio_formats,
     peer_for_target as _peer_for_target,
     roster_entry_formats as _roster_entry_formats,
     roster_from_peers as _roster_from_peers,
-    same_route_name as _same_route_name,
     sip_target_audio_profile as _sip_target_audio_profile,
 )
 from .fsm import (
@@ -113,7 +113,6 @@ from .router import (
     RouteAction,
     RouteReason,
     route_inbound_trunk,
-    resolve_ha_router,
 )
 from .ring_group import (
     endpoint_is_esphome as _endpoint_is_esphome,
@@ -284,6 +283,15 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     registry = _call_registry(hass)
     pbx_runtime = SipEndpointRuntime(projection=registry)
     pbx_runtime.attach_component("registrar", registrar)
+    route_resolver = EndpointRouteResolver(
+        hass=hass,
+        local_ip=local_ip,
+        sip_port=int(cfg["sip_port"]),
+    )
+    _is_ha_target = route_resolver.is_ha_target
+    _ha_router_decision = route_resolver.route
+    _is_local_listener_uri = route_resolver.is_local_listener_uri
+    _logical_endpoint_for_member = route_resolver.logical_endpoint
 
     def _attach_client_media_update(
         client: SipCallClient,
@@ -452,27 +460,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             _trunk_enabled(trunk_cfg)
             and invite.received_via_trunk
             and getattr(trunk, "registered", False)
-        )
-
-    def _is_ha_target(value: str) -> bool:
-        return _same_route_name(value, _ha_peer_name(hass)) or _same_route_name(
-            value, "ha"
-        )
-
-    def _ha_router_decision(target: str, entries: list[RosterEntry]):
-        trunk = hass.data.get(DOMAIN, {}).get("sip_trunk")
-        trunk_cfg = _get_trunk_config(hass)
-        trunk_ready = _trunk_enabled(trunk_cfg) and bool(
-            getattr(trunk, "registered", False)
-        )
-        return resolve_ha_router(target, entries, trunk_ready=trunk_ready)
-
-    def _is_local_listener_uri(uri) -> bool:
-        """Return whether a SIP URI points back to this exact listener."""
-        return bool(
-            uri is not None
-            and uri.host == local_ip
-            and int(uri.port or cfg["sip_port"]) == int(cfg["sip_port"])
         )
 
     async def _start_local_assist_bridge(
@@ -645,34 +632,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 entry,
             )
         return None, None, entry
-
-    def _logical_endpoint_for_member(
-        member: str,
-        peers: list[Peer],
-        entries: list[RosterEntry],
-    ):
-        """Resolve a group member to its transport-independent endpoint."""
-        endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-        if endpoint_registry is None:
-            return None
-        entry = _roster_entry_for_target(member, entries)
-        endpoint_id = str(
-            ((entry.metadata if entry is not None else {}) or {}).get("endpoint_id")
-            or ""
-        ).strip()
-        if not endpoint_id:
-            peer = next(
-                (
-                    candidate
-                    for candidate in peers
-                    if _same_route_name(member, candidate.name)
-                ),
-                None,
-            )
-            endpoint_id = str(getattr(peer, "endpoint_id", "") or "").strip()
-        if not endpoint_id and _is_ha_target(member):
-            endpoint_id = DEFAULT_ENDPOINT_ID
-        return endpoint_registry.get(endpoint_id) if endpoint_id else None
 
     def _browser_leg_for_member(
         member: str,

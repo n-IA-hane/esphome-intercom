@@ -67,6 +67,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.softphone_originate = SOFTPHONE_ORIGINATE.read_text()
         cls.outbound_attempts = OUTBOUND_ATTEMPTS.read_text()
         cls.dtmf_events = DTMF_EVENTS.read_text()
+        cls.endpoint_routing = ENDPOINT_ROUTING.read_text()
         cls.config_entry_runtime = CONFIG_ENTRY_RUNTIME.read_text()
         cls.pbx_routing = PBX_ROUTING.read_text()
         cls.trunk_dtmf = TRUNK_DTMF.read_text()
@@ -1232,17 +1233,19 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("decline_reason=TerminalReason.BUSY.value", self.source)
 
     def test_local_loop_detection_uses_host_and_listener_port(self) -> None:
-        helper = self.source[
-            self.source.index("def _is_local_listener_uri(") : self.source.index(
-                "async def _start_local_assist_bridge("
-            )
+        helper = self.endpoint_routing[
+            self.endpoint_routing.index("def is_local_listener_uri(") :
+            self.endpoint_routing.index("def logical_endpoint_for_member(")
         ]
         self.assertIn("uri.host == local_ip", helper)
         self.assertIn(
-            'int(uri.port or cfg["sip_port"]) == int(cfg["sip_port"])',
+            "int(uri.port or sip_port) == int(sip_port)",
             helper,
         )
-        self.assertEqual(self.source.count("_is_local_listener_uri("), 3)
+        self.assertIn(
+            "_is_local_listener_uri = route_resolver.is_local_listener_uri",
+            self.source,
+        )
 
     def test_early_router_cancel_publishes_one_terminal_event(self) -> None:
         terminated = self.source[
