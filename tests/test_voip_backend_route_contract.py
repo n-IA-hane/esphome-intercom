@@ -57,6 +57,9 @@ TRUNK_INBOUND_ROUTER = (
     ROOT / "custom_components" / "voip_stack" / "trunk_inbound_router.py"
 )
 CALL_FORWARDER = ROOT / "custom_components" / "voip_stack" / "call_forwarder.py"
+RING_GROUP_ORCHESTRATOR = (
+    ROOT / "custom_components" / "voip_stack" / "ring_group_orchestrator.py"
+)
 
 
 class VoipBackendRouteContractTest(unittest.TestCase):
@@ -78,6 +81,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.trunk_routing = TRUNK_ROUTING.read_text()
         cls.trunk_inbound_router = TRUNK_INBOUND_ROUTER.read_text()
         cls.call_forwarder = CALL_FORWARDER.read_text()
+        cls.ring_group = RING_GROUP_ORCHESTRATOR.read_text()
         spec = importlib.util.spec_from_file_location(
             "voip_stack_automation_routing_test", AUTOMATION_ROUTING
         )
@@ -298,7 +302,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertEqual(
             self.source.count("_attach_dtmf_event_bridge(")
             + self.trunk_inbound_router.count("attach_dtmf_event_bridge(")
-            + self.call_forwarder.count("_attach_dtmf_event_bridge("),
+            + self.call_forwarder.count("_attach_dtmf_event_bridge(")
+            + self.ring_group.count("_attach_dtmf_event_bridge("),
             5,
         )
         self.assertNotIn("dtmf_sequence", self.source)
@@ -1048,11 +1053,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("discard(invite.call_id)", task_prelude)
 
     def test_ring_group_treats_ha_member_as_parallel_contender(self) -> None:
-        ring_group = self.source[
-            self.source.index("async def _run_ring_group_call(") : self.source.index(
-                "async def _ring_conference_members("
-            )
-        ]
+        ring_group = self.ring_group
         self.assertIn("browser_legs: list[BrowserLeg]", ring_group)
         self.assertIn("_browser_leg_for_member(", ring_group)
         self.assertIn("member, peers, roster_entries", ring_group)
@@ -1101,11 +1102,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_ring_group_simultaneous_results_are_deterministic(self) -> None:
-        ring_group = self.source[
-            self.source.index("async def _run_ring_group_call(") : self.source.index(
-                "async def _ring_conference_members("
-            )
-        ]
+        ring_group = self.ring_group
         fork_source = (
             ROOT / "custom_components" / "voip_stack" / "dial_fork.py"
         ).read_text()
@@ -1124,11 +1121,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("_reduce_failures(failures)", fork_source)
 
     def test_ring_group_winner_clears_pending_route_before_active_hangup(self) -> None:
-        ring_group = self.source[
-            self.source.index("async def _run_ring_group_call(") : self.source.index(
-                "async def _ring_conference_members("
-            )
-        ]
+        ring_group = self.ring_group
         browser_winner = ring_group[
             ring_group.index(
                 "if browser_winner and isinstance(winner, BrowserLeg):"
@@ -1153,11 +1146,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("routes.pop(call_id, None)", hangup)
 
     def test_ring_group_ha_winner_publishes_connected_party_to_esp_mirrors(self) -> None:
-        ring_group = self.source[
-            self.source.index("async def _run_ring_group_call(") : self.source.index(
-                "async def _ring_conference_members("
-            )
-        ]
+        ring_group = self.ring_group
         ha_winner = ring_group[
             ring_group.index(
                 "if browser_winner and isinstance(winner, BrowserLeg):"
@@ -1172,11 +1161,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("answered_by=connected_party", ha_winner)
 
     def test_ring_group_external_winner_publishes_connected_party(self) -> None:
-        ring_group = self.source[
-            self.source.index("async def _run_ring_group_call(") : self.source.index(
-                "async def _ring_conference_members("
-            )
-        ]
+        ring_group = self.ring_group
         external_winner = ring_group[
             ring_group.index("client = winner.client") : ring_group.index(
                 "terminal = await client.wait_for_dialog_termination()"
@@ -1405,17 +1390,20 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("replace(\n                                invite,", group_dispatch)
 
     def test_ha_origin_ring_group_uses_local_media_without_sip_answer(self) -> None:
-        ring_group = self.source[
-            self.source.index("async def _run_ring_group_call(") :
-            self.source.index("async def _ring_conference_members(")
-        ]
+        ring_group = self.ring_group
         winner_bridge = ring_group[
-            ring_group.index("if ha_origin:\n                    relay =") :
-            ring_group.index("_set_sip_bridge_call_state(", ring_group.index("if ha_origin:\n                    relay ="))
+            ring_group.index("if ha_origin:\n                relay =") :
+            ring_group.index(
+                "_set_sip_bridge_call_state(",
+                ring_group.index("if ha_origin:\n                relay ="),
+            )
         ]
         self.assertIn("build_local_client_relay(", winner_bridge)
-        self.assertIn("else:\n                    relay = build_invite_client_relay(", winner_bridge)
-        self.assertIn("if not ha_origin:\n                answer = build_answer_directional(", winner_bridge)
+        self.assertIn("else:\n                relay = build_invite_client_relay(", winner_bridge)
+        self.assertIn(
+            "if not ha_origin:\n            answer = build_answer_directional(",
+            winner_bridge,
+        )
 
     def test_offline_browser_remains_a_logical_ringing_destination(self) -> None:
         on_invite = self.source[self.source.index("async def _on_invite(invite:") :]
