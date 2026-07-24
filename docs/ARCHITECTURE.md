@@ -4,6 +4,8 @@ This document describes the active VoIP architecture. It intentionally does not
 describe the retired proprietary intercom protocol except by omission: SIP,
 SDP and RTP are the functional primitives.
 
+![VoIP Stack SIP topology](images/sip-topology.png)
+
 ## Product Model
 
 Every ESP running `voip_stack` is a SIP user agent:
@@ -169,10 +171,15 @@ ESP devices are PCM-only endpoints. The supported ESP profile is linear PCM
 with network byte order on RTP; incompatible SDP receives `488 Not Acceptable
 Here` or the equivalent terminal reason.
 
-HA can accept richer media on softphone/trunk legs when it has a converter for
-the selected codec. The goal is best-quality-per-leg:
+HA can accept richer media on softphone/trunk legs when it has a bidirectional
+converter for the selected codec. Optional codecs are capability-gated and are
+not advertised when the runtime cannot encode and decode them. The goal is
+best-quality-per-leg:
 
-- a browser or softphone leg can negotiate OPUS or high-rate PCM;
+- a browser, phone or trunk leg can negotiate Opus, G.722, G.711 or high-rate
+  PCM as its own capability permits;
+- G.722 uses the RFC 3551 8 kHz RTP timestamp clock while decoding to 16 kHz
+  mono PCM inside HA;
 - an ESP speaker leg should receive 48 kHz PCM when its speaker path supports
   it;
 - an ESP AFE/AEC mic leg can still transmit 16 kHz PCM because that is the

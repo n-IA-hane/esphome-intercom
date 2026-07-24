@@ -1,59 +1,52 @@
-# Doorbell Notification Automation
+# Actionable Doorbell Notification
 #
-# When an ESP device calls your Home Assistant location name, VoIP Stack emits
-# a voip_stack.incoming_call event. This automation treats calls from a specific
-# caller as the doorbell and sends a push notification with action buttons.
+# Replace:
+# - event.casa_call with the Call Event Entity attached to the receiving phone;
+# - Front Door with the exact caller value exposed by that entity;
+# - notify.mobile_app_your_phone with the real Companion notification action;
+# - /lovelace/phones with the view containing the card for that phone;
+# - <casa_phone_device_id> through the HA Device selector/editor.
 #
-# Event data available:
-#   trigger.event.data.call_id - SIP Call-ID used by answer/decline services
-#   trigger.event.data.caller  - Device name (e.g., "Spotpear Ball v2")
-#   trigger.event.data.callee  - Your HA location name
-#   trigger.event.data.state   - SIP phone state, usually "ringing" here
-#
-# Replace notify.mobile_app_your_phone with your mobile app service.
-# Replace every /lovelace/default_view value with the dashboard view that
-# contains your voip-stack-card configured in Home Assistant softphone mode.
-# The deep link is not handled by ESP mirror cards.
+# Answer opens the card because only the browser/Companion session can request
+# media permission. Decline uses the authoritative phone Device and needs no
+# SIP Call-ID while exactly one call is ringing there.
 
-alias: Doorbell Notification
-description: Send push notification when Spotpear calls Home Assistant
+alias: VoIP - Actionable doorbell notification
+mode: restart
 triggers:
-  - trigger: event
-    event_type: voip_stack.incoming_call
+  - trigger: event.received
+    target:
+      entity_id: event.casa_call
+    options:
+      event_type:
+        - ringing
 conditions:
-  - condition: template
-    value_template: "{{ trigger.event.data.state == 'ringing' }}"
-  - condition: template
-    value_template: "{{ 'spotpear' in (trigger.event.data.caller | default('') | lower) }}"
+  - condition: state
+    entity_id: event.casa_call
+    attribute: caller
+    state: Front Door
 actions:
   - action: notify.mobile_app_your_phone
     data:
-      title: "Incoming Call"
-      message: "{{ trigger.event.data.caller }} is calling..."
+      title: "🔔 Front door"
+      message: "Front Door is calling Casa"
       data:
-        tag: voip_call
-        url: /lovelace/default_view
-        clickAction: /lovelace/default_view
+        tag: voip_front_door
         channel: doorbell
         importance: high
         ttl: 0
         priority: high
         actions:
           - action: URI
-            title: "Answer"
-            uri: /lovelace/default_view?voip_answer=1
-          - action: VOIP_DECLINE
-            title: "Decline"
-  - action: persistent_notification.create
-    data:
-      title: "Incoming Call"
-      message: "{{ trigger.event.data.caller }} is calling..."
-      notification_id: voip_call
+            title: Answer
+            uri: /lovelace/phones?voip_answer=1
+          - action: VOIP_DECLINE_CASA
+            title: Decline
   - wait_for_trigger:
       - trigger: event
         event_type: mobile_app_notification_action
         event_data:
-          action: VOIP_DECLINE
+          action: VOIP_DECLINE_CASA
     timeout: "00:00:30"
   - if:
       - condition: template
@@ -61,17 +54,9 @@ actions:
     then:
       - action: voip_stack.decline
         data:
-          call_id: "{{ trigger.event.data.call_id }}"
-          reason: declined
-      - action: notify.mobile_app_your_phone
-        data:
-          message: clear_notification
-          data:
-            tag: voip_call
-    else:
-      - action: notify.mobile_app_your_phone
-        data:
-          message: clear_notification
-          data:
-            tag: voip_call
-mode: single
+          device_id: <casa_phone_device_id>
+  - action: notify.mobile_app_your_phone
+    data:
+      message: clear_notification
+      data:
+        tag: voip_front_door

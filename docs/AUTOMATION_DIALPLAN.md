@@ -1,4 +1,4 @@
-# Automation Dial Plan
+# Home Assistant Automation Cookbook And Dial Plan
 
 > [!WARNING]
 > Initial experimental preview in `2026.8.0`. The normal phonebook route
@@ -14,6 +14,11 @@ without changing contacts, extensions or the configured inbound destination.
 
 The Lovelace card never chooses or filters a route. It mirrors the authoritative
 backend state and sends user actions to the same router.
+
+The recipes use native Home Assistant Event Entities, state Sensors,
+conditions and `voip_stack.*` actions. Replace every example entity, Device ID,
+person and destination with selections from your own installation. Prefer the
+automation editor's entity and Device selectors over guessed IDs.
 
 ## Configure Incoming Trunk Routing
 
@@ -269,6 +274,84 @@ automation from replacing a destination deliberately dialled by the caller.
 Likewise, a false condition should normally perform no action: after the short
 decision window, VoIP Stack follows the configured fallback transparently.
 
+## Actionable Doorbell Notification
+
+Use the call Event Entity attached to the **receiving Home Assistant phone**.
+The `ringing` occurrence contains caller information, while the selected phone
+Device lets `voip_stack.decline` resolve the current call without copying a SIP
+Call-ID into the automation.
+
+The **Answer** button must open the dashboard containing that phone's card.
+Only a browser or Companion view can request microphone/camera permission and
+attach media. The card consumes `?voip_answer=1` and answers the ringing call.
+
+```yaml
+alias: VoIP - Actionable doorbell notification
+mode: restart
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: event.casa_call
+    options:
+      event_type:
+        - ringing
+conditions:
+  - condition: state
+    entity_id: event.casa_call
+    attribute: caller
+    state: Front Door
+actions:
+  - action: notify.mobile_app_your_phone
+    data:
+      title: "🔔 Front door"
+      message: "Front Door is calling Casa"
+      data:
+        tag: voip_front_door
+        channel: doorbell
+        importance: high
+        ttl: 0
+        priority: high
+        actions:
+          - action: URI
+            title: Answer
+            uri: /lovelace/phones?voip_answer=1
+          - action: VOIP_DECLINE_CASA
+            title: Decline
+  - wait_for_trigger:
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: VOIP_DECLINE_CASA
+    timeout: "00:00:30"
+  - if:
+      - condition: template
+        value_template: "{{ wait.trigger is not none }}"
+    then:
+      - action: voip_stack.decline
+        data:
+          device_id: <casa_phone_device_id>
+  - action: notify.mobile_app_your_phone
+    data:
+      message: clear_notification
+      data:
+        tag: voip_front_door
+```
+
+Replace `/lovelace/phones` with the real view containing the card bound to the
+same Casa phone Device. Receiving the notification does not itself answer or
+claim media. If the call ends before the action is pressed, the backend rejects
+the stale decline instead of affecting a later call.
+
+For several phones or simultaneous door stations, use one distinct notification
+tag/action name per receiving phone. Expert flows may also copy `call_id` from
+the event and pass it through action data, but it is unnecessary when exactly
+one call is ringing on the selected Device.
+
+The same automation is available as a standalone file:
+[`examples/doorbell-automation.yaml`](../examples/doorbell-automation.yaml).
+
+![Answer a VoIP call from a Companion notification](images/mobile-notification-answer.gif)
+
 ## Native Automation Entities
 
 ### Event Entity
@@ -357,6 +440,6 @@ normal no-answer forward.
   dialogs.
 - REFER/NOTIFY transfer, locally originated renegotiation, offerless re-INVITE
   delayed offer/answer, PRACK/100rel and session timers are not implemented.
-- Legacy `voip_stack.call_event`, `voip_stack.route_request` and
-  `voip_stack.dtmf` bus events remain for compatibility. New automations should
-  prefer the entities above.
+- Raw internal bus events are implementation plumbing for the Event Entities,
+  not a second public automation API. Build new automations from the native
+  entities and services above.

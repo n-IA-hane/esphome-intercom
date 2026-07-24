@@ -119,7 +119,7 @@ mode. Automation routing stays off until explicitly enabled.
 The provider leg and local leg are separate SIP dialogs. HA bridges RTP between
 them with the same relay/resampler used for local HA bridge calls. ESP devices
 remain PCM-only and reject unsupported media with standard SIP errors. HA trunk
-and softphone legs may accept common SIP codecs such as OPUS, PCMA or PCMU,
+and softphone legs may accept common SIP codecs such as Opus, G.722, PCMA or PCMU,
 then convert toward ESP PCM when the route requires it.
 
 ## Observability

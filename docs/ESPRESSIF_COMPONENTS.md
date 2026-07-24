@@ -9,6 +9,8 @@ ESPHome's IDF Component Manager when users build their own firmware.
 The repositories ship YAML, ESPHome components and source code. They do not
 ship prebuilt firmware binaries for these Espressif audio components.
 
+![ESP audio-stack architecture](images/audio-stack.png)
+
 For repository-wide attribution, ESPHome-derived component notes and the
 Apache-2.0 license text used by local ESPHome compatibility forks, see
 [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
@@ -111,6 +113,10 @@ The current generated-code snapshots confirm:
 - Generic S3 dual-bus VoIP: remains no-codec and uses the same
   `esp_audio_stack` facade, but creates separate ESP-IDF I2S simplex channels
   for RX and TX. This path is only compiled when YAML uses `rx_bus` and `tx_bus`.
+
+![AFE runtime controls exposed through Home Assistant](images/afe-controls.png)
+
+![Wake-word barge-in and media ducking](images/ducking-barge-in.gif)
 
 ## Source Audit Findings
 

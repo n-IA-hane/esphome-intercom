@@ -197,6 +197,13 @@ Without `device_id`, only unavailable/unknown devices older than
 These accounts are for standard SIP endpoints registering to HA: phones,
 softphones, ATAs, baresip, pjsua and similar clients.
 
+<table>
+  <tr>
+    <td><img src="images/create-account-service.png" alt="Create SIP account action"/></td>
+    <td><img src="images/create-account-service-filled.png" alt="Filled SIP account action"/></td>
+  </tr>
+</table>
+
 ### `voip_stack.create_account`
 
 Create or replace a local SIP endpoint account.

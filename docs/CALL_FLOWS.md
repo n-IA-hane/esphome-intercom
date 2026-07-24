@@ -4,6 +4,8 @@ This document explains what happens on the wire and in Home Assistant for the
 main call paths. It is intentionally operational: when a call behaves oddly,
 start here and compare the observed log path against the expected path.
 
+![SIP call-flow sequences](images/call-flow-sequences.png)
+
 ## Common Pieces
 
 Every call has these layers:
@@ -44,6 +46,8 @@ If HA softphone DND is enabled, HA returns `486 Busy Here` with terminal reason
 If HA softphone is already ringing, in call or has an active browser media
 session, HA returns `486 Busy Here`.
 
+![Browser, Home Assistant and ESP media path](images/browser-ha-esp-path.png)
+
 ## HA/Card To ESP
 
 1. The card sends `voip_stack.call` with the selected target.
@@ -57,6 +61,8 @@ session, HA returns `486 Busy Here`.
 
 The card does not decide routing and does not filter the phonebook. It displays
 the central roster and mirrors HA softphone state.
+
+![Home Assistant calling an ESP endpoint](images/call-from-home-assistant-to-esp.gif)
 
 ## ESP Mirror Card To Target
 
@@ -75,6 +81,8 @@ the central roster and mirrors HA softphone state.
 The keypad is not a second HA-only routing path and it must not overwrite the
 ESP selected-contact sensor. Closing the keypad returns to the ESP contact
 cycler.
+
+![ESP route resolution](images/esp-route-decision.png)
 
 ## Registered SIP Endpoint To Registered SIP Endpoint
 
@@ -97,6 +105,8 @@ Unexpected log shape:
 
 - `SIP route requested ...` for ordinary registered endpoint calls. That means
   the call left the canonical dial plan and went into the automation fallback.
+
+![SIP bridge across transport boundaries](images/cross-transport-bridge.gif)
 
 ## Unknown Or Unregistered Caller
 

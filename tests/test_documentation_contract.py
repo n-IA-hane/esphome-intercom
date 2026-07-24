@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import yaml
 
@@ -28,6 +28,8 @@ MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 HTML_IMAGE = re.compile(r"<img\b[^>]*\bsrc=[\"']([^\"']+)", re.IGNORECASE)
 YAML_FENCE = re.compile(r"```ya?ml\s*\n(.*?)```", re.DOTALL)
+MARKDOWN_HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*$", re.MULTILINE)
+YAML_EXAMPLES = tuple(sorted((ROOT / "examples").glob("*.yaml")))
 
 
 def _service_fields() -> dict[str, set[str]]:
@@ -60,16 +62,33 @@ def _walk_service_calls(value):
             yield from _walk_service_calls(child)
 
 
+def _markdown_anchors(document: Path) -> set[str]:
+    """Return the GitHub-style anchors used by project documentation links."""
+
+    anchors: set[str] = set()
+    for heading in MARKDOWN_HEADING.findall(document.read_text()):
+        value = re.sub(r"<[^>]+>", "", heading).lower().strip()
+        value = re.sub(r"[^\w\- ]", "", value)
+        anchors.add(re.sub(r"\s+", "-", value))
+    return anchors
+
+
 def test_local_markdown_links_resolve() -> None:
     broken: list[str] = []
+    anchors = {document.resolve(): _markdown_anchors(document) for document in MARKDOWN_FILES}
     for document in MARKDOWN_FILES:
         for raw_target in MARKDOWN_LINK.findall(document.read_text()):
             target = raw_target.strip().split()[0].strip("<>")
             if not target or target.startswith(("#", "http://", "https://", "mailto:")):
                 continue
-            relative = target.split("#", 1)[0]
-            if relative and not (document.parent / relative).resolve().exists():
+            relative, _, fragment = target.partition("#")
+            resolved = (document.parent / relative).resolve()
+            if relative and not resolved.exists():
                 broken.append(f"{document.relative_to(ROOT)} -> {target}")
+            elif fragment and resolved in anchors and unquote(fragment) not in anchors[resolved]:
+                broken.append(
+                    f"{document.relative_to(ROOT)} -> {target} (unknown anchor)"
+                )
     assert not broken, "Broken local documentation links:\n" + "\n".join(broken)
 
 
@@ -116,4 +135,18 @@ def test_ha_services_are_documented_and_examples_use_real_fields() -> None:
                         f"{document.relative_to(ROOT)} block {index}: "
                         f"voip_stack.{service} fields {sorted(unknown)}"
                     )
+    for document in YAML_EXAMPLES:
+        parsed = yaml.safe_load(document.read_text())
+        for service, fields in _walk_service_calls(parsed):
+            if service not in service_fields:
+                errors.append(
+                    f"{document.relative_to(ROOT)}: unknown voip_stack.{service}"
+                )
+                continue
+            unknown = fields - service_fields[service]
+            if unknown:
+                errors.append(
+                    f"{document.relative_to(ROOT)}: "
+                    f"voip_stack.{service} fields {sorted(unknown)}"
+                )
     assert not errors, "Invalid documented HA service examples:\n" + "\n".join(errors)

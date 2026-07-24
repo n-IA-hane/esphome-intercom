@@ -36,6 +36,8 @@ mirror cards will not have state to display.
 If the card does not mirror an ESP's state, check that the device exposes at
 least `state`, `caller`, `destination` and `last_reason`.
 
+![ESP mirror card and keypad](images/esp-mirror-card-keypad-options.png)
+
 If the ESP does not appear in the HA phonebook, check that it exposes
 `endpoint` and that the endpoint state is not `unknown` or `unavailable`.
 
@@ -88,3 +90,7 @@ packages:
 ```
 
 This adds `transport` and `sip_snapshot`.
+
+LVGL profiles may project the same public call state and terminal reason:
+
+![LVGL call terminal reason](images/lvgl-hangup-reason.jpg)

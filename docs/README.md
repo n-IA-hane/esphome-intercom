@@ -9,9 +9,9 @@ Welcome. These pages cover everything beyond the project pitch on the [top-level
   2-mic Speech Enhancement) to the right ready-to-flash config under
   [`yamls/`](../yamls/).
 
-- 🧭 **Quick examples**: the top-level [README](../README.md#quick-start-examples)
-  includes practical doorbell, room-to-room VoIP, ESP static contacts and
-  HA-managed central roster examples.
+- 🧭 **Quick start**: the top-level [README](../README.md#fastest-start)
+  gives the shortest supported path from HACS and one maintained YAML to a
+  working call.
 
 - 🧾 **Release / upgrade notes**: [BREAKING_CHANGES.md](BREAKING_CHANGES.md)
   starts from the current SIP/VoIP breaking migration. The current
@@ -55,9 +55,10 @@ Welcome. These pages cover everything beyond the project pitch on the [top-level
 - 🧰 **HA services**: [SERVICES.md](SERVICES.md) documents every
   `voip_stack.*` service and the expected side effects.
 
-- 🧭 **Automation dial plan**: [AUTOMATION_DIALPLAN.md](AUTOMATION_DIALPLAN.md)
-  shows conditional forwarding, explicit ringing deadlines and unanswered-call
-  fallback to Assist without changing the default phonebook route.
+- 🧭 **Automation cookbook**:
+  [AUTOMATION_DIALPLAN.md](AUTOMATION_DIALPLAN.md) contains copyable native HA
+  recipes for presence routing, ring groups, actionable notifications,
+  no-answer forwarding to Assist and connected-call DTMF.
 
 - 👥 **Groups**: [GROUPS.md](GROUPS.md) documents ring group and conference
   group semantics, including `conference_ring`.
