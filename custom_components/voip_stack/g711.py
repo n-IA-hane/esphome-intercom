@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 _BIAS = 0x84
 _CLIP = 32635
 _ULAW_SEG_END = (0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF)
@@ -78,31 +80,81 @@ def _encode_ulaw_sample(sample: int) -> int:
     return encoded ^ mask
 
 
-def _iter_s16le(data: bytes):
+def _build_alaw_encode_lut() -> np.ndarray:
+    """Build the exhaustive signed-16 to A-law map without Python hot loops."""
+
+    samples = np.arange(-32768, 32768, dtype=np.int32) >> 3
+    positive = samples >= 0
+    mask = np.where(positive, 0xD5, 0x55).astype(np.uint8)
+    magnitude = np.where(positive, samples, -samples - 1)
+    segment = np.searchsorted(
+        np.asarray(_ALAW_SEG_END, dtype=np.int32),
+        magnitude,
+        side="left",
+    ).astype(np.int32)
+    quantized = np.where(
+        segment < 2,
+        magnitude >> 1,
+        magnitude >> np.minimum(segment, 7),
+    )
+    encoded = ((segment << 4) | (quantized & 0x0F)) ^ mask
+    encoded = np.where(segment >= 8, 0x7F ^ mask, encoded)
+    return encoded.astype(np.uint8)
+
+
+def _build_ulaw_encode_lut() -> np.ndarray:
+    """Build the exhaustive signed-16 to mu-law map without Python hot loops."""
+
+    samples = np.arange(-32768, 32768, dtype=np.int32)
+    negative = samples < 0
+    mask = np.where(negative, 0x7F, 0xFF).astype(np.uint8)
+    magnitude = np.where(negative, _BIAS - samples, _BIAS + samples)
+    magnitude = np.minimum(magnitude, _CLIP)
+    segment = np.searchsorted(
+        np.asarray(_ULAW_SEG_END, dtype=np.int32),
+        magnitude,
+        side="left",
+    ).astype(np.int32)
+    encoded = (segment << 4) | (
+        np.right_shift(magnitude, np.minimum(segment + 3, 10)) & 0x0F
+    )
+    encoded = np.where(segment >= 8, 0x7F ^ mask, encoded ^ mask)
+    return encoded.astype(np.uint8)
+
+
+_ALAW_DECODE_LUT = np.fromiter(
+    (_decode_alaw_byte(value) for value in range(256)),
+    dtype="<i2",
+    count=256,
+)
+_ULAW_DECODE_LUT = np.fromiter(
+    (_decode_ulaw_byte(value) for value in range(256)),
+    dtype="<i2",
+    count=256,
+)
+_ALAW_ENCODE_LUT = _build_alaw_encode_lut()
+_ULAW_ENCODE_LUT = _build_ulaw_encode_lut()
+
+
+def _s16le_lut_indices(data: bytes) -> np.ndarray:
     if len(data) % 2:
         raise ValueError("s16le frame length is not sample-aligned")
-    for offset in range(0, len(data), 2):
-        yield int.from_bytes(data[offset:offset + 2], "little", signed=True)
-
-
-def _pack_s16le(samples) -> bytes:
-    out = bytearray()
-    for sample in samples:
-        out.extend(int(sample).to_bytes(2, "little", signed=True))
-    return bytes(out)
+    # The encode LUT is ordered from -32768 through +32767. Flipping the sign
+    # bit maps the native two's-complement representation to that order.
+    return np.frombuffer(data, dtype="<u2") ^ np.uint16(0x8000)
 
 
 def alaw_to_s16le(payload: bytes) -> bytes:
-    return _pack_s16le(_decode_alaw_byte(value) for value in payload)
+    return _ALAW_DECODE_LUT[np.frombuffer(payload, dtype=np.uint8)].tobytes()
 
 
 def ulaw_to_s16le(payload: bytes) -> bytes:
-    return _pack_s16le(_decode_ulaw_byte(value) for value in payload)
+    return _ULAW_DECODE_LUT[np.frombuffer(payload, dtype=np.uint8)].tobytes()
 
 
 def s16le_to_alaw(pcm: bytes) -> bytes:
-    return bytes(_encode_alaw_sample(sample) for sample in _iter_s16le(pcm))
+    return _ALAW_ENCODE_LUT[_s16le_lut_indices(pcm)].tobytes()
 
 
 def s16le_to_ulaw(pcm: bytes) -> bytes:
-    return bytes(_encode_ulaw_sample(sample) for sample in _iter_s16le(pcm))
+    return _ULAW_ENCODE_LUT[_s16le_lut_indices(pcm)].tobytes()

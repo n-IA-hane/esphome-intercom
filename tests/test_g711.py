@@ -7,6 +7,8 @@ import math
 from pathlib import Path
 import struct
 
+import pytest
+
 
 MODULE_PATH = (
     Path(__file__).resolve().parents[1] / "custom_components" / "voip_stack" / "g711.py"
@@ -50,3 +52,32 @@ def test_alaw_round_trip_does_not_attenuate_speech_by_six_db() -> None:
 
     assert abs(level_delta_db) < 0.25
     assert max(abs(sample) for sample in decoded) >= 30000
+
+
+def test_vectorized_decode_matches_scalar_reference_exhaustively() -> None:
+    payload = bytes(range(256))
+
+    assert G711.alaw_to_s16le(payload) == _pack(
+        tuple(G711._decode_alaw_byte(value) for value in payload)
+    )
+    assert G711.ulaw_to_s16le(payload) == _pack(
+        tuple(G711._decode_ulaw_byte(value) for value in payload)
+    )
+
+
+def test_vectorized_encode_matches_scalar_reference_exhaustively() -> None:
+    samples = tuple(range(-32768, 32768))
+    pcm = _pack(samples)
+
+    assert G711.s16le_to_alaw(pcm) == bytes(
+        G711._encode_alaw_sample(sample) for sample in samples
+    )
+    assert G711.s16le_to_ulaw(pcm) == bytes(
+        G711._encode_ulaw_sample(sample) for sample in samples
+    )
+
+
+@pytest.mark.parametrize("encoder", (G711.s16le_to_alaw, G711.s16le_to_ulaw))
+def test_vectorized_encoder_rejects_unaligned_s16le(encoder) -> None:
+    with pytest.raises(ValueError, match="sample-aligned"):
+        encoder(b"\x00")
