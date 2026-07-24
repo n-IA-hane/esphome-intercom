@@ -37,7 +37,6 @@ from .const import (
     CONF_VIDEO_TRANSCODING,
     CONF_TRUNK_AUTH_USERNAME,
     CONF_TRUNK_DTMF_ENABLED,
-    CONF_TRUNK_DTMF_TERMINATOR,
     CONF_TRUNK_DTMF_TIMEOUT_MS,
     CONF_TRUNK_INBOUND_DEFAULT_TARGET,
     CONF_TRUNK_INBOUND_MODE,
@@ -103,16 +102,13 @@ from .phone_endpoint import (
 from .pbx_routing import (
     browser_endpoint_can_ring as _browser_endpoint_can_ring,
     caller_matches_group_member as _caller_matches_member,
-    dtmf_extension_routes as _dtmf_extension_routes,
     roster_entry_for_target as _roster_entry_for_target,
     unique_group_members as _unique_group_members,
 )
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .router import (
-    CallContext,
     RouteAction,
     RouteReason,
-    route_inbound_trunk,
 )
 from .ring_group import (
     endpoint_is_esphome as _endpoint_is_esphome,
@@ -129,10 +125,9 @@ from .sip_bridge import (
     dialog_video_rtp_peer,
 )
 from .store import sip_accounts as _sip_accounts
-from .trunk_dtmf import collect_trunk_dtmf as _collect_trunk_dtmf
-from .trunk_routing import (
-    async_request_inbound_destination as _request_inbound_destination,
-    trunk_default_target as _trunk_default_target,
+from .trunk_inbound_router import (
+    TrunkInboundRuntime,
+    async_route_trunk_invite,
 )
 from .websocket_api import (
     _ha_softphone_store,
@@ -934,531 +929,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         target = _ha_peer_name(hass) if _is_ha_target(invite.target) else invite.target
         return _ha_router_decision(target, entries)
 
-    async def _run_trunk_inbound_route(
-        invite: SipInvite,
-        *,
-        bridge_ports: RtpPortReservation,
-    ) -> None:
-        source_relay_port, dest_relay_port = bridge_ports.ports
-        bucket = hass.data.setdefault(DOMAIN, {})
-        registry = _call_registry(hass)
-        trunk_cfg = _get_trunk_config(hass)
-        dtmf_timeout_ms = max(0, int(trunk_cfg.get(CONF_TRUNK_DTMF_TIMEOUT_MS) or 0))
-        destination = ""
-        digits = ""
-        automation_decision: dict = {}
-        peers = await _async_build_peer_snapshot(hass)
-        roster_entries = _roster_from_peers(
-            hass, peers, _registered_roster_entries(hass)
-        )
-        routes = _dtmf_extension_routes(roster_entries)
-        if trunk_cfg.get(CONF_TRUNK_DTMF_ENABLED) and dtmf_timeout_ms > 0:
-            timeout = float(dtmf_timeout_ms) / 1000.0
-            terminator = str(trunk_cfg.get(CONF_TRUNK_DTMF_TERMINATOR) or "")
-            info_queue = bucket.setdefault("trunk_info_queues", {}).setdefault(
-                invite.call_id,
-                asyncio.Queue(maxsize=MAX_TRUNK_INFO_DIGITS),
-            )
-            selection = await _collect_trunk_dtmf(
-                invite,
-                info_queue=info_queue,
-                source_rtp_port=source_relay_port,
-                routes=routes,
-                timeout=timeout,
-                terminator=terminator,
-            )
-            digits = selection.digits
-            destination = selection.destination
-        # A source BYE must win before any no-digits automation window is
-        # opened. Otherwise a cancelled pre-answer call can emit one stale
-        # route_requested occurrence when its DTMF timer expires.
-        if invite.call_id in bucket.get("trunk_closed_calls", set()):
-            bucket["trunk_closed_calls"].discard(invite.call_id)
-            bucket.setdefault("trunk_info_queues", {}).pop(invite.call_id, None)
-            _LOGGER.info(
-                "SIP trunk inbound call_id=%s closed during DTMF collection",
-                invite.call_id,
-            )
-            bridge_ports.release()
-            return
-
-        # Explicit digits always select the canonical phonebook route. Only
-        # the no-digits fallback may be overridden by an automation.
-        if not digits and trunk_cfg.get(CONF_AUTOMATION_ROUTING_ENABLED):
-            automation_decision = await _request_inbound_destination(
-                hass,
-                invite,
-                trunk_config=trunk_cfg,
-                timeout=SIP_ROUTE_DECISION_TIMEOUT,
-            )
-        bucket.setdefault("trunk_info_queues", {}).pop(invite.call_id, None)
-
-        if invite.call_id in bucket.get("trunk_closed_calls", set()):
-            bucket["trunk_closed_calls"].discard(invite.call_id)
-            _LOGGER.info(
-                "SIP trunk inbound call_id=%s closed before routing", invite.call_id
-            )
-            bridge_ports.release()
-            return
-
-        automation_action = str(automation_decision.get("action") or "").strip().lower()
-        if automation_action in {"forward", "bridge"}:
-            automation_destination = str(
-                automation_decision.get("destination") or ""
-            ).strip()
-            _LOGGER.info(
-                "Inbound route selected call_id=%s source=automation destination=%s fallback=%s",
-                invite.call_id,
-                automation_destination or "-",
-                str(trunk_cfg.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "HA").strip()
-                or "HA",
-            )
-            await _async_forward_existing_call(
-                call_id=invite.call_id,
-                destination=automation_destination,
-                on_failure="resume",
-                initial_selection=True,
-            )
-            return
-        if automation_action in {"decline", "busy", "cancel"}:
-            registry = _call_registry(hass)
-            registry.pending_invites.pop(invite.call_id, None)
-            preanswered = registry.take_media(invite.call_id, provisional=True)
-            _release_media_reservation(preanswered)
-            status = 486 if automation_action == "busy" else 603
-            reason = (
-                TerminalReason.BUSY.value
-                if automation_action == "busy"
-                else TerminalReason.CANCELLED.value
-                if automation_action == "cancel"
-                else TerminalReason.DECLINED.value
-            )
-            if bool((preanswered or {}).get("final_response_sent", True)):
-                _sip_send_bye(hass, invite.call_id)
-            else:
-                _sip_send_final_response(hass, invite.call_id, status, "Busy Here" if status == 486 else "Decline")
-            bridge_ports.release()
-            _set_sip_bridge_call_state(
-                hass,
-                CallState.BUSY.value
-                if automation_action == "busy"
-                else CallState.DECLINED.value,
-                caller=invite.caller,
-                callee=invite.target,
-                peer_name=invite.caller,
-                call_id=invite.call_id,
-                direction="incoming",
-                reason=reason,
-                terminal_reason=reason,
-                origin="automation",
-                sip_status_code=status,
-                last_sip_event="BYE",
-            )
-            registry.finish_and_pop(invite.call_id, reason=reason)
-            return
-
-        default_target = _trunk_default_target(trunk_cfg)
-        route_hint = destination or digits
-        _LOGGER.info(
-            "Inbound route selected call_id=%s source=%s destination=%s fallback=%s",
-            invite.call_id,
-            "dtmf" if digits else "fallback",
-            route_hint or default_target,
-            default_target,
-        )
-        decision = route_inbound_trunk(
-            CallContext(
-                call_id=invite.call_id,
-                direction="inbound",
-                origin="trunk",
-                caller=invite.caller,
-                route_hint=route_hint,
-                source_host=invite.source_host,
-            ),
-            roster_entries,
-            trunk_ready=False,
-        )
-        if decision.action is RouteAction.ANSWER_HA:
-            # ANSWER_HA identifies the endpoint *kind*, not necessarily the
-            # default browser phone. Preserve an explicit DTMF extension so a
-            # second routing pass can select the corresponding logical HA
-            # softphone (for example 667 -> Test).
-            destination = route_hint or decision.target or default_target
-        elif decision.action is RouteAction.REJECT:
-            registry = _call_registry(hass)
-            registry.pending_invites.pop(invite.call_id, None)
-            preanswered = registry.take_media(invite.call_id, provisional=True)
-            _release_media_reservation(preanswered)
-            terminal_reason = RouteReason.ROUTE_NOT_FOUND.value
-            _LOGGER.info(
-                "SIP trunk route not found call_id=%s digits=%s hint=%s",
-                invite.call_id,
-                digits or "-",
-                route_hint or "-",
-            )
-            if bool((preanswered or {}).get("final_response_sent", True)):
-                _sip_send_bye(hass, invite.call_id)
-            else:
-                _sip_send_final_response(hass, invite.call_id, 404, "Not Found")
-            _set_sip_bridge_call_state(
-                hass,
-                CallState.TRANSPORT_UNREACHABLE.value,
-                caller=invite.caller,
-                callee=route_hint or default_target,
-                peer_name=invite.caller,
-                call_id=invite.call_id,
-                direction="incoming",
-                reason=terminal_reason,
-                terminal_reason=terminal_reason,
-                origin="self",
-                sip_status_code=404,
-                last_sip_event="BYE",
-            )
-            bridge_ports.release()
-            registry.finish_and_pop(
-                invite.call_id,
-                reason=terminal_reason,
-                state=CallState.TRANSPORT_UNREACHABLE.value,
-            )
-            return
-        else:
-            destination = decision.target or route_hint or default_target
-        _LOGGER.info(
-            "SIP trunk inbound route call_id=%s caller=%s digits=%s destination=%s tx=%s rx=%s",
-            invite.call_id,
-            invite.caller or invite.source_host,
-            digits or "-",
-            destination,
-            invite.send_format.wire_token(),
-            invite.recv_format.wire_token(),
-        )
-
-        if decision.action is RouteAction.ASSIST:
-            registry = _call_registry(hass)
-            registry.pending_invites.pop(invite.call_id, None)
-            preanswered = registry.take_media(invite.call_id, provisional=True)
-            _release_video_media_reservation(preanswered)
-            try:
-                await _start_local_assist_bridge(
-                    invite,
-                    reservation=bridge_ports,
-                    local_rtp_port=source_relay_port,
-                    roster_entries=roster_entries,
-                    source="trunk",
-                    called_extension=digits or route_hint,
-                )
-                if not bool((preanswered or {}).get("final_response_sent", True)):
-                    _sip_send_final_response(
-                        hass,
-                        invite.call_id,
-                        200,
-                        "OK",
-                        answer_sdp=str((preanswered or {}).get("early_answer_sdp") or ""),
-                    )
-            except Exception as err:
-                _LOGGER.exception(
-                    "SIP trunk Assist bridge failed call_id=%s", invite.call_id
-                )
-                if bool((preanswered or {}).get("final_response_sent", True)):
-                    _sip_send_bye(hass, invite.call_id)
-                else:
-                    _sip_send_final_response(
-                        hass, invite.call_id, 488, "Not Acceptable Here"
-                    )
-                _set_sip_bridge_call_state(
-                    hass,
-                    CallState.MEDIA_INCOMPATIBLE.value,
-                    caller=invite.caller,
-                    callee=destination,
-                    call_id=invite.call_id,
-                    direction="incoming",
-                    reason=str(err),
-                    terminal_reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-                    origin="self",
-                    sip_status_code=488,
-                    last_sip_event="BYE",
-                )
-            return
-
-        if _is_ha_target(destination):
-            _defer_invite_to_ha_softphone(
-                invite,
-                route_kind="trunk",
-                endpoint_id=DEFAULT_ENDPOINT_ID,
-                endpoint_device_id=HA_SOFTPHONE_DEVICE_ID,
-                callee=_ha_peer_name(hass),
-                last_sip_event="DTMF_ROUTE",
-            )
-            return
-
-        decision = _ha_router_decision(
-            destination,
-            _roster_from_peers(hass, peers, _registered_roster_entries(hass)),
-        )
-        if decision.action is RouteAction.ANSWER_HA:
-            roster = _roster_from_peers(
-                hass, peers, _registered_roster_entries(hass)
-            )
-            target_endpoint = _logical_endpoint_for_member(
-                decision.target or destination,
-                peers,
-                roster,
-            )
-            session = registry.sessions.get(
-                registry.resolve_session_id(invite.call_id)
-            )
-            current_endpoint_id = str(
-                ((session.metadata if session is not None else {}) or {}).get(
-                    "endpoint_id"
-                )
-                or DEFAULT_ENDPOINT_ID
-            ).strip()
-            if (
-                target_endpoint is not None
-                and target_endpoint.kind is EndpointKind.BROWSER
-                and target_endpoint.endpoint_id == current_endpoint_id
-            ):
-                # The pre-answered trunk dialog is initially parked on the
-                # master HA phone. Routing 666/default back to that same phone
-                # is an assignment, not a forward. Treating it as a forward
-                # trips the loop guard and leaves the async route task failed
-                # while the caller remains answered but unowned.
-                _defer_invite_to_ha_softphone(
-                    invite,
-                    route_kind="trunk",
-                    endpoint_id=target_endpoint.endpoint_id,
-                    endpoint_device_id=(
-                        target_endpoint.device_id or HA_SOFTPHONE_DEVICE_ID
-                    ),
-                    callee=target_endpoint.name,
-                    last_sip_event="DTMF_ROUTE",
-                )
-                return
-            # DTMF extensions are canonical phonebook destinations, including
-            # additional browser softphones. Reuse the normal forwarding path
-            # so endpoint ownership, offline policy and the selected device
-            # are handled exactly like an automation forward.
-            await _async_forward_existing_call(
-                call_id=invite.call_id,
-                destination=destination,
-                on_failure="resume",
-            )
-            return
-        registry = _call_registry(hass)
-        registry.pending_invites.pop(invite.call_id, None)
-        preanswered = registry.take_media(invite.call_id, provisional=True)
-        _release_video_media_reservation(preanswered)
-        peer_target = _peer_for_target(decision.target or destination, peers)
-        bridge_uri = None
-        try:
-            if peer_target is not None and peer_target.host:
-                sip_transport = str(
-                    (peer_target.device or {}).get("sip_transport") or "tcp"
-                ).lower()
-                if sip_transport not in {"tcp", "udp"}:
-                    sip_transport = "tcp"
-                bridge_uri = parse_sip_uri(
-                    f"sip:{decision.target or destination}@{peer_target.host}:{peer_target.sip_port or cfg['sip_port']};transport={sip_transport}"
-                )
-            elif decision.entry is not None and decision.entry.sip_uri:
-                bridge_uri = parse_sip_uri(decision.entry.sip_uri)
-            elif (
-                decision.entry is not None
-                and not decision.entry.metadata.get("local_ha")
-                and decision.entry.address
-            ):
-                bridge_port = int(
-                    decision.entry.port
-                    or (decision.entry.metadata or {}).get("port")
-                    or (decision.entry.metadata or {}).get("sip_port")
-                    or cfg["sip_port"]
-                )
-                bridge_uri = parse_sip_uri(
-                    f"sip:{decision.entry.id}@{decision.entry.address}:{bridge_port}"
-                )
-            elif decision.sip_uri:
-                bridge_uri = parse_sip_uri(decision.sip_uri)
-        except Exception as err:
-            _LOGGER.info(
-                "SIP trunk route parse failed destination=%s: %s", destination, err
-            )
-
-        if bridge_uri is None or _is_local_listener_uri(bridge_uri):
-            _LOGGER.info(
-                "SIP trunk destination unresolved destination=%s route=%s",
-                destination,
-                decision.action.value,
-            )
-            _sip_send_bye(hass, invite.call_id)
-            _set_sip_bridge_call_state(
-                hass,
-                CallState.TRANSPORT_UNREACHABLE.value,
-                caller=invite.caller,
-                callee=destination,
-                peer_name=invite.caller,
-                call_id=invite.call_id,
-                reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-                terminal_reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-                origin="self",
-                sip_status_code=404,
-                last_sip_event="BYE",
-            )
-            bridge_ports.release()
-            return
-
-        peer_target = _peer_for_target(destination, peers)
-        remote_tx_formats = _peer_audio_formats(
-            peer_target, "tx_formats"
-        ) or _roster_entry_formats(decision.entry, "tx_formats")
-        remote_rx_formats = _peer_audio_formats(
-            peer_target, "rx_formats"
-        ) or _roster_entry_formats(decision.entry, "rx_formats")
-        sip_send_formats, sip_recv_formats = _sip_target_audio_profile(
-            remote_tx_formats=remote_tx_formats,
-            remote_rx_formats=remote_rx_formats,
-            target=destination,
-        )
-        client = SipCallClient(
-            local_ip=local_ip,
-            local_name=invite.caller or _ha_peer_name(hass),
-            local_sip_port=int(cfg["sip_port"]),
-            local_rtp_port=dest_relay_port,
-            supported_send_formats=sip_send_formats,
-            supported_recv_formats=sip_recv_formats,
-            signaling_transport=_sip_uri_transport(bridge_uri),
-        )
-        _enable_reused_sip_tcp_connection(
-            hass,
-            client,
-            bridge_uri,
-            target=destination,
-            default_sip_port=int(cfg["sip_port"]),
-        )
-        result = await client.invite(
-            target=bridge_uri.user,
-            remote_host=bridge_uri.host,
-            remote_sip_port=bridge_uri.port or int(cfg["sip_port"]),
-            request_uri=str(bridge_uri),
-        )
-        if result == "ringing":
-            result = await client.wait_for_final()
-        if result != "in_call" or client.dialog is None:
-            _LOGGER.info(
-                "SIP trunk destination failed destination=%s result=%s",
-                destination,
-                result,
-            )
-            await _close_client_and_release(client, bridge_ports)
-            _sip_send_bye(hass, invite.call_id)
-            public_result = _sip_public_state(result)
-            terminal_reason = _sip_terminal_reason(result, public_result)
-            _set_sip_bridge_call_state(
-                hass,
-                public_result,
-                caller=invite.caller,
-                callee=destination,
-                peer_name=invite.caller,
-                call_id=invite.call_id,
-                dest_call_id=client.dialog_ids.call_id,
-                reason=terminal_reason,
-                terminal_reason=terminal_reason,
-                origin="remote",
-                sip_status_code=client.last_sip_status_code,
-                last_sip_event=client.last_sip_event or "BYE",
-            )
-            return
-        _LOGGER.info(
-            "SIP trunk bridge media call_id=%s trunk_tx=%s trunk_rx=%s destination_tx=%s destination_rx=%s",
-            invite.call_id,
-            invite.send_format.wire_token(),
-            invite.recv_format.wire_token(),
-            client.dialog.send_format.wire_token(),
-            client.dialog.recv_format.wire_token(),
-        )
-
-        try:
-            relay = build_invite_client_relay(
-                invite=invite,
-                client=client,
-                source_relay_port=source_relay_port,
-                dest_relay_port=dest_relay_port,
-                debug_capture=_debug_mode(hass),
-                on_release=lambda ports: _release_sip_rtp_port_pair(hass, ports),
-            )
-            _attach_dtmf_event_bridge(
-                hass,
-                relay,
-                call_id=invite.call_id,
-                dest_call_id=client.dialog_ids.call_id,
-                caller=invite.caller,
-                callee=destination,
-                client=client,
-            )
-            await relay.start()
-        except Exception as err:
-            _LOGGER.warning("SIP trunk RTP bridge unavailable: %s", err)
-            await _close_client_and_release(client, bridge_ports, bye=True)
-            _sip_send_bye(hass, invite.call_id)
-            _set_sip_bridge_call_state(
-                hass,
-                CallState.MEDIA_INCOMPATIBLE.value,
-                caller=invite.caller,
-                callee=destination,
-                peer_name=invite.caller,
-                call_id=invite.call_id,
-                dest_call_id=client.dialog_ids.call_id,
-                reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-                terminal_reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-                origin="self",
-                sip_status_code=488,
-                last_sip_event="BYE",
-            )
-            return
-
-        registry = _call_registry(hass)
-        registry.register_bridge(
-            source_call_id=invite.call_id,
-            dest_call_id=client.dialog_ids.call_id,
-            client=client,
-            state=CallState.IN_CALL.value,
-            caller=invite.caller,
-            callee=destination,
-            route_kind="trunk",
-            source_role="trunk",
-        )
-        _LOGGER.info(
-            "SIP bridge registered call_id=%s dest_call_id=%s target=%s",
-            invite.call_id,
-            client.dialog_ids.call_id,
-            bridge_uri.user,
-        )
-        _attach_client_media_update(
-            client,
-            relay,
-            source_call_id=invite.call_id,
-        )
-        registry.attach_relay(invite.call_id, relay)
-        bridge_ports.detach()
-        _set_sip_bridge_call_state(
-            hass,
-            CallState.IN_CALL.value,
-            caller=invite.caller,
-            callee=destination,
-            peer_name=destination,
-            call_id=invite.call_id,
-            dest_call_id=client.dialog_ids.call_id,
-            selected_tx_format=invite.send_format.audio_format.wire_token(),
-            selected_rx_format=invite.recv_format.audio_format.wire_token(),
-            selected_tx_rtp_format=invite.send_format.wire_token(),
-            selected_rx_rtp_format=invite.recv_format.wire_token(),
-            audio_mode="full_duplex",
-            route_kind="trunk",
-            sip_status_code=200,
-            last_sip_event="SIP_RESPONSE",
-            sip_uri=str(bridge_uri),
-            scope="sip_trunk",
-            dtmf_digits=digits,
-        )
 
     async def _async_forward_existing_call(
         *,
@@ -2761,7 +2231,22 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         """Fail one detached trunk route closed and release all ownership."""
 
         try:
-            await _run_trunk_inbound_route(invite, bridge_ports=bridge_ports)
+            await async_route_trunk_invite(
+                TrunkInboundRuntime(
+                    hass=hass,
+                    config=cfg,
+                    local_ip=local_ip,
+                    ha_peer_name=_ha_peer_name(hass),
+                    route_resolver=route_resolver,
+                    forward_existing_call=_async_forward_existing_call,
+                    defer_invite_to_softphone=_defer_invite_to_ha_softphone,
+                    start_local_assist_bridge=_start_local_assist_bridge,
+                    attach_client_media_update=_attach_client_media_update,
+                    attach_dtmf_event_bridge=_attach_dtmf_event_bridge,
+                ),
+                invite,
+                bridge_ports=bridge_ports,
+            )
         except asyncio.CancelledError:
             raise
         except Exception as err:  # noqa: BLE001 - detached call boundary.

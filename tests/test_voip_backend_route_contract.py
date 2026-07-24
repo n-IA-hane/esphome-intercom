@@ -53,6 +53,9 @@ CONFIG_ENTRY_RUNTIME = (
 PBX_ROUTING = ROOT / "custom_components" / "voip_stack" / "pbx_routing.py"
 TRUNK_DTMF = ROOT / "custom_components" / "voip_stack" / "trunk_dtmf.py"
 TRUNK_ROUTING = ROOT / "custom_components" / "voip_stack" / "trunk_routing.py"
+TRUNK_INBOUND_ROUTER = (
+    ROOT / "custom_components" / "voip_stack" / "trunk_inbound_router.py"
+)
 
 
 class VoipBackendRouteContractTest(unittest.TestCase):
@@ -72,6 +75,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.pbx_routing = PBX_ROUTING.read_text()
         cls.trunk_dtmf = TRUNK_DTMF.read_text()
         cls.trunk_routing = TRUNK_ROUTING.read_text()
+        cls.trunk_inbound_router = TRUNK_INBOUND_ROUTER.read_text()
         spec = importlib.util.spec_from_file_location(
             "voip_stack_automation_routing_test", AUTOMATION_ROUTING
         )
@@ -295,7 +299,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("relay.relay_dtmf(side, digit)", self.dtmf_events)
         self.assertNotIn("send_dtmf_info", self.source)
         # Five established HA-anchored bridge paths keep in-call DTMF.
-        self.assertEqual(self.source.count("_attach_dtmf_event_bridge("), 5)
+        self.assertEqual(
+            self.source.count("_attach_dtmf_event_bridge(")
+            + self.trunk_inbound_router.count("attach_dtmf_event_bridge("),
+            5,
+        )
         self.assertNotIn("dtmf_sequence", self.source)
 
     def test_logical_endpoint_busy_is_enforced_for_browser_and_sip_routes(self) -> None:
@@ -1010,14 +1018,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.assertNotIn("trunk_dtmf_routes", source)
             self.assertNotIn("parse_dtmf_route_map", source)
         self.assertIn("def dtmf_extension_routes(", self.pbx_routing)
-        self.assertIn("routes = _dtmf_extension_routes(roster_entries)", self.source)
-        self.assertIn("route_hint = destination or digits", self.source)
-        trunk_route = self.source[
-            self.source.index("async def _run_trunk_inbound_route(") : self.source.index(
-                "async def _run_ring_group_call("
-            )
-        ]
-        self.assertIn("_collect_trunk_dtmf(", trunk_route)
+        trunk_route = self.trunk_inbound_router
+        self.assertIn("routes = dtmf_extension_routes(roster_entries)", trunk_route)
+        self.assertIn("route_hint = destination or digits", trunk_route)
+        self.assertIn("collect_trunk_dtmf(", trunk_route)
         self.assertIn("collect_info_digits(", self.trunk_dtmf)
         self.assertIn("DtmfCollector(", self.trunk_dtmf)
         self.assertIn("asyncio.FIRST_COMPLETED", self.trunk_dtmf)
@@ -1038,7 +1042,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             'bucket.setdefault("trunk_closed_calls", set()).discard(invite.call_id)',
             preanswer,
         )
-        task_prelude = trunk_route.split("trunk_cfg = _get_trunk_config(hass)", 1)[0]
+        task_prelude = trunk_route.split(
+            "configured_trunk = trunk_config(hass)", 1
+        )[0]
         self.assertNotIn("discard(invite.call_id)", task_prelude)
 
     def test_ring_group_treats_ha_member_as_parallel_contender(self) -> None:
@@ -1064,11 +1070,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
                 "async def _run_trunk_inbound_route_guarded("
             )
         ]
-        trunk_route = self.source[
-            self.source.index("async def _run_trunk_inbound_route(") : self.source.index(
-                "async def _run_ring_group_call("
-            )
-        ]
+        trunk_route = self.trunk_inbound_router
         self.assertIn("initial_selection: bool = False", forward)
         self.assertIn("if not initial_selection:", forward)
         self.assertIn("_browser_endpoint_can_ring(endpoint)", forward)
@@ -1451,28 +1453,30 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("video_direction=preanswer_video_direction", trunk_branch)
 
     def test_dtmf_can_route_to_an_additional_ha_softphone(self) -> None:
-        runner = self.source[
-            self.source.index("async def _run_trunk_inbound_route(") :
-            self.source.index("async def _async_forward_existing_call(")
+        runner = self.trunk_inbound_router
+        browser_route = runner[
+            runner.index("decision = runtime.route_resolver.route(") :
         ]
-        browser_route = runner[runner.index("decision = _ha_router_decision(") :]
         self.assertIn("if decision.action is RouteAction.ANSWER_HA:", browser_route)
-        self.assertIn("await _async_forward_existing_call(", browser_route)
+        self.assertIn("await runtime.forward_existing_call(", browser_route)
         self.assertIn("destination=destination", browser_route)
 
     def test_dtmf_route_to_current_master_is_assignment_not_self_forward(self) -> None:
-        runner = self.source[
-            self.source.index("async def _run_trunk_inbound_route(") :
-            self.source.index("async def _async_forward_existing_call(")
-        ]
+        runner = self.trunk_inbound_router
         same_endpoint = runner[
             runner.index("current_endpoint_id = str(") :
-            runner.index("# DTMF extensions are canonical", runner.index("current_endpoint_id = str("))
+            runner.index(
+                "await runtime.forward_existing_call(",
+                runner.index("current_endpoint_id = str("),
+            )
         ]
         self.assertIn("target_endpoint.endpoint_id == current_endpoint_id", same_endpoint)
-        self.assertIn("_defer_invite_to_ha_softphone(", same_endpoint)
+        self.assertIn("runtime.defer_invite_to_softphone(", same_endpoint)
         self.assertIn('last_sip_event="DTMF_ROUTE"', same_endpoint)
-        self.assertIn("registry = _call_registry(hass)", runner.split("trunk_cfg =", 1)[0])
+        self.assertIn(
+            "registry = call_registry(hass)",
+            runner.split("configured_trunk =", 1)[0],
+        )
 
     def test_detached_dtmf_route_failure_releases_call_and_sends_bye(self) -> None:
         guarded = self.source[
@@ -1500,15 +1504,15 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("_run_trunk_inbound_route_guarded(", creator)
 
     def test_unknown_dtmf_route_finishes_the_preanswered_session(self) -> None:
-        runner = self.source[
-            self.source.index("async def _run_trunk_inbound_route(") :
-            self.source.index("async def _async_forward_existing_call(")
-        ]
+        runner = self.trunk_inbound_router
         rejected = runner[
             runner.index("elif decision.action is RouteAction.REJECT:") :
-            runner.index("else:\n            destination =", runner.index("elif decision.action is RouteAction.REJECT:"))
+            runner.index(
+                "else:\n        destination =",
+                runner.index("elif decision.action is RouteAction.REJECT:"),
+            )
         ]
-        self.assertIn("_sip_send_bye(hass, invite.call_id)", rejected)
+        self.assertIn("send_bye(hass, invite.call_id)", rejected)
         self.assertIn("bridge_ports.release()", rejected)
         self.assertIn("registry.finish_and_pop(", rejected)
         self.assertIn("state=CallState.TRANSPORT_UNREACHABLE.value", rejected)
@@ -1518,10 +1522,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_answer_ha_keeps_an_explicit_dtmf_extension(self) -> None:
-        runner = self.source[
-            self.source.index("async def _run_trunk_inbound_route(") :
-            self.source.index("async def _async_forward_existing_call(")
-        ]
+        runner = self.trunk_inbound_router
         self.assertIn(
             "destination = route_hint or decision.target or default_target",
             runner,
@@ -1592,17 +1593,14 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("_register_phonebook_service_event_sync(hass)", initialized)
 
     def test_trunk_dtmf_has_priority_over_automation_override(self) -> None:
-        runner = self.source[
-            self.source.index("async def _run_trunk_inbound_route(") :
-            self.source.index("async def _async_forward_existing_call(")
-        ]
-        collector = runner.index("selection = await _collect_trunk_dtmf(")
+        runner = self.trunk_inbound_router
+        collector = runner.index("selection = await collect_trunk_dtmf(")
         override = runner.index(
-            "if not digits and trunk_cfg.get(CONF_AUTOMATION_ROUTING_ENABLED):"
+            "if not digits and configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED):"
         )
         self.assertLess(collector, override)
         self.assertNotIn("route_future", runner[:override])
-        self.assertIn("_request_inbound_destination(", runner[override:])
+        self.assertIn("async_request_inbound_destination(", runner[override:])
         self.assertIn("await asyncio.wait_for(", self.trunk_routing)
 
     def test_preanswered_forward_failure_resumes_ha_ringing(self) -> None:
@@ -1681,7 +1679,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_direct_ha_alias_resolves_through_phonebook_name(self) -> None:
         router = self.source[
             self.source.index("def _inbound_route_decision(") :
-            self.source.index("async def _run_trunk_inbound_route(")
+            self.source.index("async def _async_forward_existing_call(")
         ]
         self.assertIn(
             "target = _ha_peer_name(hass) if _is_ha_target(invite.target)",
@@ -1689,15 +1687,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_dtmf_cancellation_precedes_automation_window(self) -> None:
-        runner = self.source[
-            self.source.index("async def _run_trunk_inbound_route(") :
-            self.source.index("async def _async_forward_existing_call(")
-        ]
+        runner = self.trunk_inbound_router
         cancellation = runner.index(
             'if invite.call_id in bucket.get("trunk_closed_calls", set()):'
         )
         automation = runner.index(
-            "if not digits and trunk_cfg.get(CONF_AUTOMATION_ROUTING_ENABLED):"
+            "if not digits and configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED):"
         )
         self.assertLess(cancellation, automation)
 
