@@ -56,6 +56,7 @@ TRUNK_ROUTING = ROOT / "custom_components" / "voip_stack" / "trunk_routing.py"
 TRUNK_INBOUND_ROUTER = (
     ROOT / "custom_components" / "voip_stack" / "trunk_inbound_router.py"
 )
+CALL_FORWARDER = ROOT / "custom_components" / "voip_stack" / "call_forwarder.py"
 
 
 class VoipBackendRouteContractTest(unittest.TestCase):
@@ -76,6 +77,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.trunk_dtmf = TRUNK_DTMF.read_text()
         cls.trunk_routing = TRUNK_ROUTING.read_text()
         cls.trunk_inbound_router = TRUNK_INBOUND_ROUTER.read_text()
+        cls.call_forwarder = CALL_FORWARDER.read_text()
         spec = importlib.util.spec_from_file_location(
             "voip_stack_automation_routing_test", AUTOMATION_ROUTING
         )
@@ -116,10 +118,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("ha_softphone_presence_events", defer)
 
     def test_ha_phone_forward_hands_off_the_existing_sip_dialog(self) -> None:
-        forward = self.source[
-            self.source.index("async def _async_forward_existing_call(") :
-            self.source.index("async def _run_ring_group_call(")
-        ]
+        forward = self.call_forwarder
         run = forward[
             forward.index("async def _run_forward()") :
         ]
@@ -168,10 +167,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_forwarded_standard_sip_video_requires_exact_passthrough_codec(
         self,
     ) -> None:
-        forward = self.source[
-            self.source.index("async def _async_forward_existing_call(") :
-            self.source.index("async def _run_ring_group_call(")
-        ]
+        forward = self.call_forwarder
         video_start = forward.index("forward_video_enabled = bool(")
         video = forward[
             video_start :
@@ -301,7 +297,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         # Five established HA-anchored bridge paths keep in-call DTMF.
         self.assertEqual(
             self.source.count("_attach_dtmf_event_bridge(")
-            + self.trunk_inbound_router.count("attach_dtmf_event_bridge("),
+            + self.trunk_inbound_router.count("attach_dtmf_event_bridge(")
+            + self.call_forwarder.count("_attach_dtmf_event_bridge("),
             5,
         )
         self.assertNotIn("dtmf_sequence", self.source)
@@ -544,15 +541,18 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("elif not decision.entry.metadata.get", bridge_path)
 
     def test_bridge_relay_uses_bounded_port_pool_and_release_callback(self) -> None:
-        self.assertIn("RtpPortReservation.allocate(hass)", self.source)
-        self.assertNotIn('bucket.get("sip_rtp_next_port"', self.source)
+        routing_sources = (
+            self.source + self.trunk_inbound_router + self.call_forwarder
+        )
+        self.assertIn("RtpPortReservation.allocate(hass)", routing_sources)
+        self.assertNotIn('bucket.get("sip_rtp_next_port"', routing_sources)
         self.assertIn(
             "on_release=lambda ports: _release_sip_rtp_port_pair(hass, ports)",
-            self.source,
+            routing_sources,
         )
         self.assertNotIn(
             "_release_sip_rtp_port_pair(hass, (source_relay_port, dest_relay_port))",
-            self.source,
+            routing_sources,
         )
         self.assertIn("class OutboundLeg", self.outbound_attempts)
         self.assertIn(
@@ -564,14 +564,14 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.outbound_attempts,
         )
         self.assertIn("attempt.ports.release()", self.outbound_attempts)
-        self.assertIn("winner.ports.detach()", self.source)
-        self.assertIn("bridge_ports.detach()", self.source)
+        self.assertIn("winner.ports.detach()", routing_sources)
+        self.assertIn("bridge_ports.detach()", routing_sources)
         self.assertNotIn(
-            "await client.close()\n            bridge_ports.release()", self.source
+            "await client.close()\n            bridge_ports.release()", routing_sources
         )
         self.assertNotIn(
             "await client.close()\n                    bridge_ports.release()",
-            self.source,
+            routing_sources,
         )
 
     def test_group_identity_capacity_and_local_ws_errors_are_isolated(self) -> None:
@@ -1065,11 +1065,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("registry.attach_media(invite.call_id, media)", ring_group)
 
     def test_initial_automation_group_selection_keeps_ha_members(self) -> None:
-        forward = self.source[
-            self.source.index("async def _async_forward_existing_call(") : self.source.index(
-                "async def _run_trunk_inbound_route_guarded("
-            )
-        ]
+        forward = self.call_forwarder
         trunk_route = self.trunk_inbound_router
         self.assertIn("initial_selection: bool = False", forward)
         self.assertIn("if not initial_selection:", forward)
@@ -1096,15 +1092,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_initial_automation_can_select_the_default_ha_phone(self) -> None:
-        forward = self.source[
-            self.source.index("async def _async_forward_existing_call(") : self.source.index(
-                "async def _run_trunk_inbound_route_guarded("
-            )
-        ]
+        forward = self.call_forwarder
         self.assertIn(
             "not initial_selection\n"
-            "                and target_browser_endpoint is not None\n"
-            "                and target_browser_endpoint.endpoint_id == session_endpoint_id",
+            "            and target_browser_endpoint is not None\n"
+            "            and target_browser_endpoint.endpoint_id == session_endpoint_id",
             forward,
         )
 
@@ -1604,10 +1596,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("await asyncio.wait_for(", self.trunk_routing)
 
     def test_preanswered_forward_failure_resumes_ha_ringing(self) -> None:
-        forward = self.source[
-            self.source.index("async def _async_forward_existing_call(") :
-            self.source.index("async def _run_ring_group_call(")
-        ]
+        forward = self.call_forwarder
         self.assertIn("or call_id in registry.preanswered", forward)
         restore = forward[
             forward.index("async def _restore_or_terminate(") :
