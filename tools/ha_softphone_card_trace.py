@@ -9,13 +9,8 @@ import sys
 import time
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
-
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "test_runs"))
-
-from ha_playwright_auth import context_kwargs  # noqa: E402
 
 
 DEFAULT_URL = "https://f0260ef3d722.sn.mynetname.net/lovelace/default_view"
@@ -93,6 +88,8 @@ def main() -> int:
         "--out", default=str(ROOT / "test_runs" / "ha_softphone_card_trace.json")
     )
     args = parser.parse_args()
+    from ha_playwright_auth import context_kwargs
+    from playwright.sync_api import sync_playwright
 
     console: list[str] = []
     with sync_playwright() as playwright:

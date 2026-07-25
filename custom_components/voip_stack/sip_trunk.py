@@ -1,4 +1,11 @@
-"""SIP trunk registration for provider/PBX interop."""
+"""SIP trunk registration for provider/PBX interop.
+
+The registration TCP flow is replaceable transport state, not dialog state.
+Confirmed inbound dialogs remain keyed by Call-ID and tags when a provider
+reconnects; only explicit local shutdown, BYE or normal call lifecycle cleanup
+may terminate them.  This separation is essential for in-dialog re-INVITE and
+BYE requests delivered on a replacement connection.
+"""
 
 from __future__ import annotations
 

@@ -20,6 +20,53 @@ conditions and `voip_stack.*` actions. Replace every example entity, Device ID,
 person and destination with selections from your own installation. Prefer the
 automation editor's entity and Device selectors over guessed IDs.
 
+The examples target VoIP Stack `2026.8.0` or later. Repository checks validate
+their YAML structure, Home Assistant event types and the runtime schemas of
+every `voip_stack.*` action they invoke.
+
+## Choose The Correct Call Hook
+
+Routing and observation are separate. Use the hook that owns the phase you
+want to control:
+
+In plain language:
+
+- `route_requested` means: “A new call has arrived, but the PBX has not chosen
+  which phone should ring yet.”
+- `voip_stack.select_inbound_destination` answers that request: “Send this new
+  call to this phone, group, extension or Assist.”
+- `ringing` means that the call has already been delivered to a specific phone.
+- `voip_stack.forward` moves that already-delivered call somewhere else.
+
+The normal sequence is:
+
+```text
+Incoming call
+  -> route_requested
+  -> select_inbound_destination
+  -> destination starts ringing
+  -> optional forward
+```
+
+| Goal | Trigger | Action |
+| --- | --- | --- |
+| Replace the first destination before the call is delivered | Aggregate `route_requested` Event Entity occurrence | `voip_stack.select_inbound_destination` |
+| React when one specific phone actually starts ringing | That phone's `ringing` Event Entity occurrence | Notification or another normal HA action |
+| Wait before replacing an already delivered destination | That phone's call-state Sensor remains `ringing` with `for:` | `voip_stack.forward` |
+| React to a key during an established call | Phone or aggregate `dtmf` Event Entity occurrence | Gate, light or another normal HA action |
+| Record completion or failure | Phone or aggregate `ended`, `missed` or `failed` occurrence | Notification, log or statistics |
+
+`route_requested` is deliberately the only public event that opens the short
+initial-routing decision window. A generic incoming-call notification would
+only describe what happened; it would not grant authority to replace the
+pending route. Raw SIP event-bus messages are internal plumbing and are not a
+second automation API.
+
+`voip_stack.select_inbound_destination` works only while that initial decision
+is pending. `voip_stack.forward` works later, after a phone or group has already
+received the call. It releases or replaces the current destination and follows
+the configured `on_failure` policy.
+
 ## Configure Incoming Trunk Routing
 
 Reconfigure VoIP Stack and choose one **Incoming routing** mode:
@@ -54,7 +101,7 @@ existing credentials, target and timeout are preserved.
 ## Override The Initial Destination
 
 This complete automation routes a trunk call to `Waveshare S3 Audio` before
-the default destination. It uses Home Assistant's native Event Entity trigger,
+the fallback destination. It uses Home Assistant's native Event Entity trigger,
 so it needs no Jinja, Call-ID or helper timer:
 
 ```yaml
@@ -68,6 +115,11 @@ triggers:
     options:
       event_type:
         - route_requested
+conditions:
+  - condition: state
+    entity_id: event.voip_stack_call
+    attribute: ingress
+    state: trunk
 actions:
   - action: voip_stack.select_inbound_destination
     data:
@@ -197,9 +249,6 @@ actions:
       on_failure: resume
 ```
 
-This lifecycle is covered by the release tests, including unanswered calls,
-forwarding to Assist and final remote hangup.
-
 The `ringing` state already means that this phone is the incoming call target;
 an additional `direction: incoming` condition would be redundant. Keep the
 `ingress: trunk` condition when only provider/PBX calls should fall through to
@@ -257,7 +306,7 @@ actions:
 ## Common Automation Recipes
 
 Keep the initial destination decision and later call handling separate. These
-are the most common patterns:
+are the most common patterns. Complete copyable examples follow the table:
 
 | Goal | Trigger/condition | Action |
 | --- | --- | --- |
@@ -265,7 +314,7 @@ are the most common patterns:
 | Route differently when nobody is home | Same initial event plus a normal person/presence state condition | Select an ESP, HA phone, Assist or another group; otherwise let the configured fallback run |
 | Use an office-hours destination | Same initial event plus a time condition | Select Reception during opening hours; allow the fallback or select Assist outside them |
 | Send an unanswered room phone elsewhere | That phone's call-state sensor remains `ringing` for a duration | `forward` to another room, group or Assist |
-| Notify on a missed call | That phone's Event Entity receives `missed` | Send a normal HA notification; no routing action is required |
+| Notify on a no-answer timeout | That phone's Event Entity receives `missed` | Send a normal HA notification; no routing action is required |
 | React to keypad input during a connected call | The phone or aggregate Event Entity receives `dtmf` | Run a gate, light or other HA action |
 
 An explicit DTMF extension entered during initial trunk collection remains
@@ -273,6 +322,121 @@ authoritative and bypasses the automation override. This prevents a broad
 automation from replacing a destination deliberately dialled by the caller.
 Likewise, a false condition should normally perform no action: after the short
 decision window, VoIP Stack follows the configured fallback transparently.
+
+### Route To Reception During Office Hours
+
+This automation affects only calls entering from the provider/PBX trunk. During
+office hours it selects `Reception`; outside those hours it performs no action,
+so the trunk's configured fallback continues normally:
+
+```yaml
+alias: VoIP - Trunk calls to Reception during office hours
+mode: parallel
+max: 10
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: event.voip_stack_call
+    options:
+      event_type:
+        - route_requested
+conditions:
+  - condition: state
+    entity_id: event.voip_stack_call
+    attribute: ingress
+    state: trunk
+  - condition: time
+    after: "08:30:00"
+    before: "18:00:00"
+    weekday:
+      - mon
+      - tue
+      - wed
+      - thu
+      - fri
+actions:
+  - action: voip_stack.select_inbound_destination
+    data:
+      destination: Reception
+```
+
+To send out-of-hours calls to Assist instead, configure Assist as the normal
+trunk fallback. This keeps one clear routing authority and avoids duplicating
+the same schedule in two automation branches.
+
+### Notify A No-Answer Timeout
+
+Use the Event Entity belonging to the phone you care about. This example sends
+one notification when `Casa` reaches its configured no-answer timeout:
+
+```yaml
+alias: VoIP - Notify Casa no-answer timeout
+mode: parallel
+max: 10
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: event.casa_call
+    options:
+      event_type:
+        - missed
+actions:
+  - action: notify.mobile_app_your_phone
+    data:
+      title: "Missed VoIP call"
+      message: >-
+        Missed call from
+        {{ state_attr('event.casa_call', 'caller') or 'Unknown caller' }}
+```
+
+Replace `event.casa_call` with the call Event Entity shown on the intended
+phone Device. Using the per-phone entity prevents a missed call on another
+room phone from triggering this notification. The public `missed` occurrence
+currently means that the no-answer timeout expired. If the caller hangs up
+before that timeout, the Event Entity emits `ended`; the Logbook still presents
+that unanswered incoming call as missed.
+
+### Forward An Unanswered Call To A Mobile Number
+
+First create a phonebook contact containing only the public number. Run this
+once from **Developer tools > Actions**, or create the same contact through
+your own provisioning automation:
+
+```yaml
+action: voip_stack.add_contact
+data:
+  name: Daniele mobile
+  number: "+1234567890"
+```
+
+Then forward the still-ringing `Casa` call after ten seconds:
+
+```yaml
+alias: VoIP - Casa unanswered to Daniele mobile
+mode: parallel
+max: 10
+triggers:
+  - trigger: state
+    entity_id: sensor.voip_stack_call_state  # Call state entity on Device Casa
+    to: ringing
+    for: "00:00:10"
+conditions:
+  - condition: state
+    entity_id: sensor.voip_stack_call_state
+    attribute: ingress
+    state: trunk
+actions:
+  - action: voip_stack.forward
+    data:
+      destination: Daniele mobile
+      on_failure: resume
+```
+
+This requires a configured and registered SIP trunk able to dial the public
+number. It creates an ordinary external telephone call, not a Companion-app
+VoIP channel. `on_failure: resume` leaves the original call available if the
+trunk call cannot be started. Remove the `ingress: trunk` condition if local
+extension calls should use the same fallback.
 
 ## Actionable Doorbell Notification
 
@@ -364,7 +528,7 @@ doorbell notification, a missed-call log, or behavior specific to one room.
 `event.voip_stack_call` remains the aggregate PBX-wide surface and publishes
 stateless occurrences for every HA-owned call:
 
-- `route_requested`, `incoming_call`, `outgoing_call`, `calling`
+- `route_requested`, `outgoing_call`, `calling`
 - `ringing`, `remote_ringing`, `forwarding`
 - `answered`, `connected`
 - `calling_timeout_requested`, `ringing_timeout_requested`
@@ -417,6 +581,68 @@ separate:
 
 This supports actions such as opening a gate when a participant presses a key,
 without turning the keypad into a second routing state machine.
+
+### Dial A Phonebook Extension During Initial Trunk Routing
+
+This path does not need an automation:
+
+1. Open the target phone Device and set its **Extension** entity, for example
+   `667` for the `Test` phone. A registered SIP account receives its extension
+   through the Add phone or Reconfigure flow. A manual contact receives it in
+   the optional `extension` field of `voip_stack.add_contact`.
+2. Reconfigure the trunk and select **Collect extension with DTMF**.
+3. Set a collection timeout and a normal fallback destination.
+4. Call the trunk and enter `667`. The phonebook routes the call to `Test`.
+
+Explicit digits are authoritative. A valid extension does not emit
+`route_requested` and cannot be replaced by a broad initial-routing
+automation. If the caller enters no digits, the optional automation decision
+and then the configured fallback are evaluated as described above.
+
+### Open A Gate With In-Call DTMF
+
+During a connected call, this example presses a gate relay when the caller on
+the `Front Door` call presses `5`:
+
+```yaml
+alias: VoIP - Open front gate with DTMF 5
+mode: parallel
+max: 10
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: event.casa_call
+    options:
+      event_type:
+        - dtmf
+conditions:
+  - condition: state
+    entity_id: event.casa_call
+    attribute: digit
+    state: "5"
+  - condition: state
+    entity_id: event.casa_call
+    attribute: source_leg
+    state: caller
+  - condition: state
+    entity_id: event.casa_call
+    attribute: caller
+    state: Front Door
+actions:
+  - action: button.press
+    target:
+      entity_id: button.front_gate
+```
+
+`source_leg: caller` prevents a key pressed by the receiving room phone from
+running the action. Replace the caller and button entities with values from
+your installation. The event also exposes `callee`, `transport` and `ingress`
+for more specific conditions.
+
+Do not treat caller text or a DTMF digit as authentication on an untrusted
+network. For locks and gates, restrict SIP access to a trusted LAN, VPN or
+authenticated trunk and add any authorization conditions required by the
+installation.
 
 ## Advanced Concurrency Controls
 

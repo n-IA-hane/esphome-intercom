@@ -54,7 +54,12 @@ class DialPlanTest(unittest.TestCase):
                 "endpoint_id": "desk-account",
                 "sip_contacts": [
                     {"uri": "sip:desk@192.0.2.12:5060", "q": 0.5, "transport": "udp"},
-                    {"uri": "sip:desk@192.0.2.11:5060", "q": 1.0, "transport": "udp"},
+                    {
+                        "uri": "sip:desk@192.0.2.11:5060",
+                        "q": 1.0,
+                        "transport": "udp",
+                        "user_agent": "Dahua UAC/3.0",
+                    },
                     {"uri": "sip:desk@192.0.2.13:5060", "q": 0.5, "transport": "udp"},
                 ],
             },
@@ -66,6 +71,7 @@ class DialPlanTest(unittest.TestCase):
 
         self.assertEqual([target.tier for target in targets], [0, 1, 1])
         self.assertEqual(targets[0].uri, "sip:desk@192.0.2.11:5060")
+        self.assertEqual(targets[0].user_agent, "Dahua UAC/3.0")
         self.assertEqual({target.endpoint_id for target in targets}, {"desk-account"})
 
     def test_member_tiers_and_exclusion_are_resolved_before_dial(self) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+from enum import StrEnum
 import hmac
 import logging
 import math
@@ -12,6 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 from . import sip
+from .codec_capabilities import supports_dahua_pcm
 from .sip_auth import parse_digest_challenge, sip_digest_md5
 from .roster import RosterEntry
 
@@ -74,6 +76,12 @@ class SipRegisterResult:
     status: int
     reason: str
     headers: tuple[tuple[str, str], ...] = ()
+
+
+class _AuthorizationStatus(StrEnum):
+    VALID = "valid"
+    INVALID = "invalid"
+    STALE = "stale"
 
 
 def generate_password() -> str:
@@ -396,13 +404,20 @@ class SipRegistrar:
             if nonce in active
         }
 
-    def _challenge(self, source: str = "") -> tuple[str, str]:
+    def _challenge(
+        self,
+        source: str = "",
+        *,
+        force_new: bool = False,
+        stale: bool = False,
+    ) -> tuple[str, str]:
         self._prune_nonces()
         cached_nonce = self.source_nonces.get(source) if source else None
-        if cached_nonce and cached_nonce in self.nonces:
+        if not force_new and cached_nonce and cached_nonce in self.nonces:
             return cached_nonce, (
                 f'Digest realm="{REALM}", nonce="{cached_nonce}", '
-                'algorithm=MD5, qop="auth"'
+                f'algorithm=MD5, qop="auth"'
+                f'{", stale=true" if stale else ""}'
             )
         while len(self.nonces) >= MAX_ACTIVE_NONCES:
             expired_nonce = next(iter(self.nonces))
@@ -421,7 +436,10 @@ class SipRegistrar:
         self.nonces[nonce] = time.time() + NONCE_TTL
         if source:
             self.source_nonces[source] = nonce
-        return nonce, f'Digest realm="{REALM}", nonce="{nonce}", algorithm=MD5, qop="auth"'
+        return nonce, (
+            f'Digest realm="{REALM}", nonce="{nonce}", algorithm=MD5, qop="auth"'
+            f'{", stale=true" if stale else ""}'
+        )
 
     def _valid_nonce(self, nonce: str) -> bool:
         self._prune_nonces()
@@ -452,14 +470,18 @@ class SipRegistrar:
         account: SipAccount,
         addr: tuple[str, int],
         transport: str,
-    ) -> bool:
+    ) -> _AuthorizationStatus:
         params = parse_digest_challenge(request.header("Authorization"))
         nonce = params.get("nonce", "")
         if not self._valid_nonce(nonce):
-            return False
+            return (
+                _AuthorizationStatus.STALE
+                if nonce
+                else _AuthorizationStatus.INVALID
+            )
         username = params.get("username", "")
         if username.lower() != account.username.lower():
-            return False
+            return _AuthorizationStatus.INVALID
         realm = params.get("realm", REALM)
         uri = params.get("uri", request.uri)
         qop = params.get("qop", "").lower()
@@ -475,37 +497,41 @@ class SipRegistrar:
             or len(cnonce) > 128
             or len(nc) != 8
         ):
-            return False
+            return _AuthorizationStatus.INVALID
         try:
             nonce_count = int(nc, 16)
         except ValueError:
-            return False
+            return _AuthorizationStatus.INVALID
         if nonce_count <= 0:
-            return False
+            return _AuthorizationStatus.INVALID
         ha1 = sip_digest_md5(f"{account.username}:{realm}:{account.password}")
         ha2 = sip_digest_md5(f"REGISTER:{uri}")
         expected = sip_digest_md5(
             f"{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}"
         )
         if not hmac.compare_digest(expected, params.get("response", "")):
-            return False
+            return _AuthorizationStatus.INVALID
         use_key = (nonce, account.username.lower(), cnonce)
         fingerprint = self._register_fingerprint(request, addr, transport)
         previous = self.nonce_uses.get(use_key)
         if previous is not None:
             previous_count, previous_fingerprint = previous
             if nonce_count < previous_count:
-                return False
+                return _AuthorizationStatus.STALE
             if nonce_count == previous_count:
-                return hmac.compare_digest(
-                    repr(fingerprint),
-                    repr(previous_fingerprint),
+                return (
+                    _AuthorizationStatus.VALID
+                    if hmac.compare_digest(
+                        repr(fingerprint),
+                        repr(previous_fingerprint),
+                    )
+                    else _AuthorizationStatus.STALE
                 )
         if use_key not in self.nonce_uses:
             while len(self.nonce_uses) >= MAX_NONCE_USE_RECORDS:
                 self.nonce_uses.pop(next(iter(self.nonce_uses)))
         self.nonce_uses[use_key] = (nonce_count, fingerprint)
-        return True
+        return _AuthorizationStatus.VALID
 
     async def handle_register(self, request: sip.SipMessage, addr: tuple[str, int], transport: str) -> SipRegisterResult:
         self.last_sip_event = "REGISTER"
@@ -518,12 +544,22 @@ class SipRegistrar:
             return self._result(400, "Bad Request")
         account = self.accounts.get(username.lower())
         source_key = f"{str(transport or '').upper()}:{addr[0]}"
+        authorization_status = (
+            _AuthorizationStatus.INVALID
+            if account is None or not account.enabled
+            else self._check_authorization(request, account, addr, transport)
+        )
         if (
             account is None
             or not account.enabled
-            or not self._check_authorization(request, account, addr, transport)
+            or authorization_status is not _AuthorizationStatus.VALID
         ):
-            _nonce, challenge = self._challenge(source_key)
+            stale = authorization_status is _AuthorizationStatus.STALE
+            _nonce, challenge = self._challenge(
+                source_key,
+                force_new=stale,
+                stale=stale,
+            )
             return self._result(401, "Unauthorized", (("WWW-Authenticate", challenge),))
 
         try:
@@ -761,6 +797,11 @@ class SipRegistrar:
                         "sip_transport": registration.transport.lower(),
                         "registered": True,
                         "user_agent": registration.user_agent,
+                        "sip_profile": (
+                            "dahua"
+                            if supports_dahua_pcm(registration.user_agent)
+                            else ""
+                        ),
                         "conference_group": account.conference_group,
                         "conference_ring": bool(account.conference_ring),
                         "ring_group": account.ring_group,
@@ -769,6 +810,12 @@ class SipRegistrar:
                                 "uri": binding.contact_uri,
                                 "transport": binding.transport.lower(),
                                 "q": binding.q,
+                                "user_agent": binding.user_agent,
+                                "sip_profile": (
+                                    "dahua"
+                                    if supports_dahua_pcm(binding.user_agent)
+                                    else ""
+                                ),
                             }
                             for binding in registrations
                         ],

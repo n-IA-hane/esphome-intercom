@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
-from homeassistant.core import HomeAssistant
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 
@@ -81,16 +83,34 @@ def enable_reused_tcp_connection(
     target: str,
     default_sip_port: int,
 ) -> bool:
-    """Use the REGISTER TCP connection when a client Contact points at it."""
+    """Use the REGISTER TCP connection when a client Contact points at it.
+
+    A registered endpoint behind NAT commonly advertises an unreachable
+    Contact.  The registrar therefore normalizes TCP contacts to the observed
+    source flow.  Keep the failure path observable: falling back to a new TCP
+    connection is valid for an ordinary URI, but is the main interoperability
+    clue when a registered door station never sees HA's outbound INVITE.
+    """
     if uri_transport(uri).upper() != "TCP":
         return False
     endpoint = hass.data.get(DOMAIN, {}).get("sip_endpoint")
     tcp_server = getattr(endpoint, "tcp_server", None)
     if tcp_server is None:
+        _LOGGER.debug(
+            "SIP TCP flow reuse unavailable for %s: listener is not running",
+            target,
+        )
         return False
     remote_addr = (uri.host, int(uri.port or default_sip_port))
     reuse = tcp_server.open_reused_dialog(remote_addr, client.dialog_ids.call_id)
     if reuse is None:
+        _LOGGER.debug(
+            "SIP TCP flow reuse unavailable for %s: no live registered flow "
+            "at %s:%s; the client may open a new connection",
+            target,
+            remote_addr[0],
+            remote_addr[1],
+        )
         return False
     send, responses = reuse
     client.use_reused_tcp_connection(

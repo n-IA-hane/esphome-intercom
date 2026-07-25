@@ -317,6 +317,11 @@ async def run_ring_group_call(
                             if target_spec is not None
                             else ""
                         ),
+                        peer_user_agent_override=(
+                            target_spec.user_agent
+                            if target_spec is not None
+                            else ""
+                        ),
                         candidate_id=(
                             target_spec.candidate_id
                             if target_spec is not None

@@ -31,7 +31,6 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 TEST_CAPTURE_DIR = ROOT / "test_captures"
 sys.path.insert(0, str(ROOT / "test_runs"))
-from ha_playwright_auth import ha_token  # noqa: E402
 
 
 HA_BASE = "http://192.168.1.10:8123"
@@ -54,10 +53,13 @@ class HomeAssistantApi:
     """Small strict wrapper around the public HA REST API."""
 
     def __init__(self) -> None:
+        from ha_playwright_auth import ha_token
+
+        self._token = ha_token()
         self.session = requests.Session()
         self.session.headers.update(
             {
-                "Authorization": f"Bearer {ha_token()}",
+                "Authorization": f"Bearer {self._token}",
                 "Content-Type": "application/json",
             }
         )
@@ -240,7 +242,9 @@ class EventTrace:
                 hello = await websocket.receive_json(timeout=5)
                 if hello.get("type") != "auth_required":
                     raise RuntimeError(f"unexpected WebSocket greeting: {hello}")
-                await websocket.send_json({"type": "auth", "access_token": ha_token()})
+                await websocket.send_json(
+                    {"type": "auth", "access_token": self.api._token}
+                )
                 authenticated = await websocket.receive_json(timeout=5)
                 if authenticated.get("type") != "auth_ok":
                     raise RuntimeError(

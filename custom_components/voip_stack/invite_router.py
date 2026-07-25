@@ -1,4 +1,11 @@
-"""Inbound SIP INVITE router and UAS orchestration."""
+"""Inbound SIP INVITE route selection and UAS orchestration.
+
+The router chooses a destination and builds the provisional/final SIP result.
+It does not own the dialog lifetime: the listener owns UAS transactions and
+the PBX session owner owns calls, legs and teardown.  ``InviteRuntime`` makes
+the remaining composition dependencies explicit so route-specific code cannot
+quietly grow a second registry or cleanup path.
+"""
 
 from __future__ import annotations
 
@@ -180,6 +187,7 @@ async def route_invite(
             invite.remote_sdp,
             send_candidates,
             recv_candidates,
+            allow_dahua_pcm=invite.peer_profile == "dahua",
         )
         if selected is None:
             _LOGGER.info(
@@ -1338,6 +1346,11 @@ async def route_invite(
                 if bridge_to_trunk
                 else "",
                 include_common_codecs=bridge_to_trunk or bridge_to_softphone,
+                peer_user_agent=(
+                    str((decision.entry.metadata or {}).get("user_agent") or "")
+                    if bridge_to_softphone and decision.entry is not None
+                    else ""
+                ),
                 local_video_rtp_port=(
                     video_bridge_ports.ports[1] if video_bridge_ports else 0
                 ),

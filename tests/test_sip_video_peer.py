@@ -41,6 +41,47 @@ def test_audio_offer_can_express_hold_and_resume_directions() -> None:
     assert b"a=sendrecv\r\n" in resumed
 
 
+def test_dahua_profile_offer_uses_vendor_pcm_and_keeps_video() -> None:
+    peer = _load_tool()
+
+    offer = peer._offer(
+        local_ip="127.0.0.1",
+        audio_port=40000,
+        video_port=40002,
+        codec="h264",
+        direction="sendrecv",
+        video_profile="RTP/AVP",
+        audio_codec="dahua-pcm",
+    )
+
+    assert b"m=audio 40000 RTP/AVP 97 101\r\n" in offer
+    assert b"a=rtpmap:97 PCM/16000\r\n" in offer
+    assert b"a=ptime:20\r\n" in offer
+    assert b"PCMA/8000" not in offer
+    assert b"L16/" not in offer
+    assert b"m=video 40002 RTP/AVP 102\r\n" in offer
+    assert b"a=rtpmap:102 H264/90000\r\n" in offer
+
+
+def test_dahua_profile_request_identity_is_explicit() -> None:
+    peer = _load_tool()
+
+    headers = peer._request_headers(
+        method="INVITE",
+        local_ip="127.0.0.1",
+        local_port=5062,
+        local_user="100",
+        remote_uri="sip:9901@127.0.0.1:5060",
+        call_id="dahua-sim",
+        local_tag="from-tag",
+        cseq=1,
+        branch="z9hG4bKdahua",
+        user_agent="Dahua UAC/3.0",
+    )
+
+    assert ("User-Agent", "Dahua UAC/3.0") in headers
+
+
 def test_audio_hold_mode_rejects_video_qualification() -> None:
     completed = subprocess.run(
         [
@@ -67,3 +108,10 @@ def test_softphone_matrix_uses_the_public_device_selector() -> None:
 
     assert '"device_id": phone_device_id' in source
     assert '{"destination": "Codex", "endpoint_id": "default"}' not in source
+
+
+def test_media_peer_requires_bye_acknowledgement() -> None:
+    source = TOOL.read_text()
+
+    assert '"bye_response_status": None' in source
+    assert 'raise TimeoutError("SIP BYE was not acknowledged")' in source

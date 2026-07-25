@@ -8,6 +8,17 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 
+def supports_dahua_pcm(user_agent: str | None) -> bool:
+    """Return whether a peer identifies the Dahua UAC media profile.
+
+    Dahua door stations advertise an unregistered ``PCM/16000`` RTP encoding
+    whose samples are signed 16-bit little-endian.  Keep this vendor profile
+    narrow so standard ``L16`` peers retain RFC 3551 network byte order.
+    """
+
+    return str(user_agent or "").strip().casefold().startswith("dahua uac/")
+
+
 def _pyav_codec_available(decoder: str, encoder: str) -> bool:
     """Return whether PyAV exposes both halves of one full-duplex codec."""
 

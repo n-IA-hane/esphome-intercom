@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 import re
 from urllib.parse import unquote, urlsplit
 
+import voluptuous as vol
 import yaml
+
+from tests.support.service_schemas import load_service_schemas, schema_fields
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
+AUTOMATION_COOKBOOK = DOCS / "AUTOMATION_DIALPLAN.md"
+AUTOMATION_ROUTING = ROOT / "custom_components" / "voip_stack" / "automation_routing.py"
+DTMF_EVENTS = ROOT / "custom_components" / "voip_stack" / "dtmf_events.py"
+WEBSOCKET_API = ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
 MARKDOWN_FILES = (
     ROOT / "README.md",
     *sorted(path for path in DOCS.rglob("*.md") if "private" not in path.parts),
@@ -60,6 +68,80 @@ def _walk_service_calls(value):
     elif isinstance(value, list):
         for child in value:
             yield from _walk_service_calls(child)
+
+
+def _walk_service_payloads(value):
+    if isinstance(value, dict):
+        action = value.get("action") or value.get("service")
+        if isinstance(action, str) and action.startswith("voip_stack."):
+            yield action.removeprefix("voip_stack."), dict(value.get("data") or {})
+        for child in value.values():
+            yield from _walk_service_payloads(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_service_payloads(child)
+
+
+def _walk_event_received_triggers(value):
+    if isinstance(value, dict):
+        if value.get("trigger") == "event.received":
+            yield value
+        for child in value.values():
+            yield from _walk_event_received_triggers(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_event_received_triggers(child)
+
+
+def _literal_assignment(path: Path, name: str):
+    tree = ast.parse(path.read_text())
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"{name} not found in {path.relative_to(ROOT)}")
+
+
+def _mapping_keys_in_function(path: Path, function_name: str, mapping_name: str) -> set[str]:
+    tree = ast.parse(path.read_text())
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+    )
+    keys: set[str] = set()
+    for node in ast.walk(function):
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == mapping_name
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+        ):
+            keys.add(node.slice.value)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == mapping_name
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            keys.add(node.args[0].value)
+        if (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == mapping_name for target in node.targets)
+            and isinstance(node.value, ast.Dict)
+        ):
+            keys.update(
+                key.value
+                for key in node.value.keys
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            )
+    return keys
 
 
 def _markdown_anchors(document: Path) -> set[str]:
@@ -150,3 +232,75 @@ def test_ha_services_are_documented_and_examples_use_real_fields() -> None:
                     f"voip_stack.{service} fields {sorted(unknown)}"
                 )
     assert not errors, "Invalid documented HA service examples:\n" + "\n".join(errors)
+
+
+def test_service_descriptions_are_accepted_by_the_runtime_schemas() -> None:
+    """Prevent UI documentation from exposing fields rejected by the backend."""
+
+    described = _service_fields()
+    runtime = load_service_schemas()
+    errors: list[str] = []
+    for service, schema in runtime.items():
+        if service not in described:
+            errors.append(f"voip_stack.{service} has a runtime schema but no services.yaml entry")
+            continue
+        runtime_fields = schema_fields(schema)
+        unsupported = described[service] - runtime_fields
+        if unsupported:
+            errors.append(
+                f"voip_stack.{service}: services.yaml exposes unsupported fields "
+                f"{sorted(unsupported)}"
+            )
+    assert not errors, "Service description/runtime schema mismatch:\n" + "\n".join(errors)
+
+
+def test_automation_cookbook_actions_pass_the_runtime_schemas() -> None:
+    """Validate every cookbook VoIP action with the schema HA actually registers."""
+
+    runtime = load_service_schemas()
+    errors: list[str] = []
+    for index, block in enumerate(YAML_FENCE.findall(AUTOMATION_COOKBOOK.read_text()), 1):
+        parsed = yaml.safe_load(block)
+        for service, payload in _walk_service_payloads(parsed):
+            schema = runtime.get(service)
+            if schema is None:
+                errors.append(f"block {index}: voip_stack.{service} has no runtime schema")
+                continue
+            try:
+                schema(payload)
+            except vol.Invalid as err:
+                errors.append(f"block {index}: voip_stack.{service}: {err}")
+    assert not errors, "Cookbook actions rejected by runtime schemas:\n" + "\n".join(errors)
+
+
+def test_automation_cookbook_uses_real_event_types_and_payload_fields() -> None:
+    """Pin cookbook event recipes to the event types and fields emitted by code."""
+
+    event_types = set(_literal_assignment(AUTOMATION_ROUTING, "AUTOMATION_EVENT_TYPES"))
+    call_fields = _mapping_keys_in_function(WEBSOCKET_API, "_fire_call_event", "event")
+    dtmf_fields = _mapping_keys_in_function(DTMF_EVENTS, "publish_dtmf_event", "payload")
+    errors: list[str] = []
+    for index, block in enumerate(YAML_FENCE.findall(AUTOMATION_COOKBOOK.read_text()), 1):
+        parsed = yaml.safe_load(block)
+        received_types: set[str] = set()
+        for trigger in _walk_event_received_triggers(parsed):
+            configured = (trigger.get("options") or {}).get("event_type") or []
+            if isinstance(configured, str):
+                configured = [configured]
+            received_types.update(str(item) for item in configured)
+        unknown_types = received_types - event_types
+        if unknown_types:
+            errors.append(f"block {index}: unknown event types {sorted(unknown_types)}")
+
+        allowed_fields = dtmf_fields if received_types == {"dtmf"} else call_fields
+        for condition in (parsed or {}).get("conditions", []):
+            if not isinstance(condition, dict):
+                continue
+            entity_id = str(condition.get("entity_id") or "")
+            attribute = str(condition.get("attribute") or "")
+            if entity_id.startswith("event.") and attribute and attribute not in allowed_fields:
+                errors.append(
+                    f"block {index}: event attribute {attribute!r} is not emitted "
+                    f"for {sorted(received_types)}"
+                )
+    assert not errors, "Cookbook event contract errors:\n" + "\n".join(errors)

@@ -10,6 +10,7 @@ import secrets
 from typing import Any, Awaitable, Callable
 
 from .audio_format import AudioFormat, HA_SIP_PCM_FORMATS
+from .codec_capabilities import supports_dahua_pcm
 from .const import VOIP_STACK_RTP_PORT
 from . import sdp, sip
 from .sip_dialog import uas_request_matches_dialog
@@ -65,6 +66,7 @@ class SipInvite:
     remote_video_connection_held: bool = False
     signaling_transport: str = "UDP"
     received_via_trunk: bool = False
+    peer_profile: str = ""
 
     @property
     def selected_format(self) -> sdp.RtpPcmFormat:
@@ -1050,7 +1052,15 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             previous_invite = existing_dialog.invite or self._parse_invite(
                 existing_dialog.request, existing_dialog.addr
             )
-            updated_invite = self._parse_invite(request, addr)
+            updated_invite = self._parse_invite(
+                request,
+                addr,
+                peer_profile=(
+                    previous_invite.peer_profile
+                    if previous_invite is not None
+                    else ""
+                ),
+            )
             media_unchanged = bool(
                 previous_invite is not None
                 and updated_invite is not None
@@ -1612,14 +1622,26 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             "last_sip_reason": self.last_sip_reason,
         }
 
-    def _parse_invite(self, request: sip.SipMessage, addr) -> SipInvite | None:
+    def _parse_invite(
+        self,
+        request: sip.SipMessage,
+        addr,
+        *,
+        peer_profile: str = "",
+    ) -> SipInvite | None:
         try:
             request_uri = sip.parse_sip_uri(request.uri)
             from_uri = _uri_from_header(request.header("From"))
+            peer_profile = str(peer_profile or "").strip().casefold()
+            if not peer_profile and supports_dahua_pcm(
+                request.header("User-Agent")
+            ):
+                peer_profile = "dahua"
             selected = sdp.negotiate_directional(
                 request.body,
                 self.supported_send_formats,
                 self.supported_recv_formats,
+                allow_dahua_pcm=peer_profile == "dahua",
             )
             if selected is None:
                 call_id = request.header("Call-ID")
@@ -1727,6 +1749,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 # answer omits a=rtcp-mux, regardless of the original offer.
                 signaling_transport=self.signaling_transport,
                 received_via_trunk=self.trusted_trunk,
+                peer_profile=peer_profile,
                 **remote_video_target.as_remote_video_fields(),
             )
         except Exception as err:

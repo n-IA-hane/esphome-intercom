@@ -541,6 +541,11 @@ async def async_originate_call(
         include_common_codecs=use_trunk
         or use_registered_contact_codecs
         or video_enabled,
+        peer_user_agent=(
+            str(entry_metadata.get("user_agent") or "")
+            if use_registered_contact_codecs
+            else ""
+        ),
         local_video_rtp_port=local_video_rtp_port,
         video_formats=offered_video_formats if video_enabled else (),
         video_direction=("sendrecv" if camera_send_enabled else "recvonly"),

@@ -11,5 +11,5 @@
   "issue_tracker": "https://github.com/n-IA-hane/esphome-intercom/issues",
   "loggers": ["custom_components.voip_stack"],
   "requirements": ["numpy>=2.0.0"],
-  "version": "2026.8.0"
+  "version": "2026.8.1"
 }

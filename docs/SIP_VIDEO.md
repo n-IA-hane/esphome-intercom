@@ -82,6 +82,31 @@ When a PBX bridges two HA instances, exact-codec H.264, VP8 or JPEG can remain
 passthrough; this integration does not require both homes to share one HA
 instance.
 
+### Dahua door-station interoperability
+
+Dahua UAC firmware commonly advertises `PCM/16000` for audio. This is not the
+network-byte-order `L16` payload defined by the RTP standards: captures and
+existing integrations show signed 16-bit **little-endian**, mono, 20 ms frames
+on a dynamic payload type. VoIP Stack recognizes the narrow `Dahua UAC/...`
+User-Agent profile and applies that contract only to that peer. It never treats
+generic `PCM` as an alias for standard `L16`.
+
+The same profile is used in both directions:
+
+- a Dahua INVITE can negotiate its exact PCM audio alongside compatible SIP
+  video;
+- an HA call to a Dahua endpoint registered over TCP reuses the live REGISTER
+  connection and offers the vendor PCM format first;
+- a repeated digest refresh with a stale nonce receives a fresh challenge
+  with `stale=true`, without weakening replay protection;
+- a compatible audio call may add video later with an in-dialog re-INVITE.
+
+There is no public Dahua switch and no ESPHome firmware change. Detection,
+offer/answer and RTP conversion remain internal to the HA SIP leg. The profile
+has been qualified against public wire captures and an exact simulated peer,
+including bidirectional audio/video, re-INVITE and teardown; real-device
+firmware variants still need user feedback.
+
 ## Card Behavior And Privacy
 
 Received video becomes the background of the in-call card. The caller,

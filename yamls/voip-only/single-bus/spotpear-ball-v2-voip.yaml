@@ -32,11 +32,11 @@ substitutions:
   name: spotpear-ball-v2
   friendly_name: Spotpear Ball v2
 
-  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
+  ext_components_source: "../../../esphome/components"
+  voip_stack_components_source: "../../../../esphome-voip-stack/esphome/components"
+  audio_stack_components_source: "../../../../esphome-audio-stack/esphome/components"
 
-  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/main/"
+  assets_base: "../../../"
 
   # Call layout proportions (relative to display_height)
   call_btn_size: "25%"
@@ -99,26 +99,26 @@ substitutions:
 # Shared packages: voip-only call controls, phonebook sync, Spotpear LED/LVGL
 # navigation, esp_audio_stack codec controls and AEC controls.
 packages:
-  core: github://n-IA-hane/esphome-intercom/packages/voip_only.yaml@main
-  voip_entities_full_duplex: github://n-IA-hane/esphome-intercom/packages/voip/entities_full_duplex.yaml@main
-  call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@main
-  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api.yaml@main
-  phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@main
-  voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@main
-  speaker_mute: github://n-IA-hane/esphome-intercom/packages/voip/speaker_mute.yaml@main
-  s3_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32s3_base.yaml@main
-  native_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native.yaml@main
-  status_led: github://n-IA-hane/esphome-intercom/packages/led/status_spotpear_ball_v2.yaml@main
-  audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@main
-  audio_stack_aec_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/aec_controls.yaml@main
-  speaker_power: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/speaker_power_output.yaml@main
+  core: !include ../../../packages/voip_only.yaml
+  voip_entities_full_duplex: !include ../../../packages/voip/entities_full_duplex.yaml
+  call_settings: !include ../../../packages/voip/call_settings.yaml
+  ha_api: !include ../../../packages/voip/ha_api.yaml
+  phonebook_subscribe: !include ../../../packages/voip/phonebook_subscribe.yaml
+  voip_transport: !include ../../../packages/voip/transport.yaml
+  speaker_mute: !include ../../../packages/voip/speaker_mute.yaml
+  s3_base: !include ../../../packages/platform/esp32s3_base.yaml
+  native_diagnostics: !include ../../../packages/diagnostics/native.yaml
+  status_led: !include ../../../packages/led/status_spotpear_ball_v2.yaml
+  audio_stack_controls: !include ../../../packages/esp_audio_stack/controls.yaml
+  audio_stack_aec_controls: !include ../../../packages/esp_audio_stack/aec_controls.yaml
+  speaker_power: !include ../../../packages/esp_audio_stack/speaker_power_output.yaml
   # LVGL settings carousel: globals, navigation scripts, and the individual
   # settings pages this device exposes (swipe-left order is the include order).
-  lvgl_settings_nav: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_navigation.yaml@main
-  lvgl_settings_sync_volumes: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_sync_volumes.yaml@main
-  lvgl_settings_sync_mute: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_sync_mute.yaml@main
-  lvgl_settings_sync_aec: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_sync_aec.yaml@main
-  spotpear_voip_nav: github://n-IA-hane/esphome-intercom/packages/lvgl/spotpear_voip/nav_voip_only.yaml@main
+  lvgl_settings_nav: !include ../../../packages/lvgl/lvgl_settings_navigation.yaml
+  lvgl_settings_sync_volumes: !include ../../../packages/lvgl/lvgl_settings_sync_volumes.yaml
+  lvgl_settings_sync_mute: !include ../../../packages/lvgl/lvgl_settings_sync_mute.yaml
+  lvgl_settings_sync_aec: !include ../../../packages/lvgl/lvgl_settings_sync_aec.yaml
+  spotpear_voip_nav: !include ../../../packages/lvgl/spotpear_voip/nav_voip_only.yaml
 
 # =============================================================================
 # BOARD AND MEMORY

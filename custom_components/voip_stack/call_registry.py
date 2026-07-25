@@ -131,6 +131,14 @@ class CallLeg:
 
 @dataclass(slots=True)
 class CallSession:
+    """Observable compatibility view of one authoritative PBX session.
+
+    ``generation`` distinguishes a new call lifetime from late callbacks that
+    still carry the same external Call-ID.  ``revision`` orders projections
+    within that lifetime.  Neither field is a SIP CSeq: SIP transaction and
+    dialog ordering remain owned by the signaling layer.
+    """
+
     id: str
     generation: int = 0
     revision: int = 0
@@ -158,7 +166,15 @@ class CallEventContext:
 
 
 class CallRegistry:
-    """Small session index shared by softphone, router and trunk handlers."""
+    """Compatibility index shared by softphone, router and trunk adapters.
+
+    Once ``bind_session_owner`` installs the PBX runtime, that owner is the
+    lifecycle authority.  This registry mirrors its snapshots and indexes the
+    concrete clients, relays and reservations still needed by older adapters;
+    callers must not build a second state machine from these dictionaries.
+    Generation guards and ``begin_termination`` prevent late transport, media
+    or UI callbacks from resurrecting an already terminated call.
+    """
 
     def __init__(self) -> None:
         self.sessions: dict[str, CallSession] = {}

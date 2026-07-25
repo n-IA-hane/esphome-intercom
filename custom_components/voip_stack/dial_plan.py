@@ -66,10 +66,11 @@ class SipContactTarget:
     q: float
     tier: int
     order: int
+    user_agent: str = ""
 
 
-def _contact_rows(entry: RosterEntry) -> list[tuple[str, str, float]]:
-    rows: list[tuple[str, str, float]] = []
+def _contact_rows(entry: RosterEntry) -> list[tuple[str, str, float, str]]:
+    rows: list[tuple[str, str, float, str]] = []
     raw_contacts = (entry.metadata or {}).get("sip_contacts")
     if raw_contacts is not None:
         if not isinstance(raw_contacts, list):
@@ -82,6 +83,7 @@ def _contact_rows(entry: RosterEntry) -> list[tuple[str, str, float]]:
             q = float(raw.get("q", 1.0))
             if not uri or not 0.0 <= q <= 1.0:
                 raise ValueError(f"invalid SIP Contact for {entry.id!r}")
+            user_agent = str(raw.get("user_agent") or "").strip()
             parsed = parse_sip_uri(uri)
             if transport not in {"udp", "tcp"}:
                 transport = next(
@@ -94,7 +96,7 @@ def _contact_rows(entry: RosterEntry) -> list[tuple[str, str, float]]:
                 )
             if transport not in {"udp", "tcp"}:
                 raise ValueError(f"unsupported SIP transport for {entry.id!r}")
-            rows.append((str(parsed), transport, q))
+            rows.append((str(parsed), transport, q, user_agent))
     elif entry.sip_uri:
         parsed = parse_sip_uri(entry.sip_uri)
         transport = next(
@@ -105,9 +107,16 @@ def _contact_rows(entry: RosterEntry) -> list[tuple[str, str, float]]:
             ),
             "udp",
         )
-        rows.append((str(parsed), transport, 1.0))
+        rows.append(
+            (
+                str(parsed),
+                transport,
+                1.0,
+                str((entry.metadata or {}).get("user_agent") or "").strip(),
+            )
+        )
 
-    unique: list[tuple[str, str, float]] = []
+    unique: list[tuple[str, str, float, str]] = []
     seen: set[str] = set()
     for row in rows:
         identity = row[0].lower()
@@ -141,7 +150,7 @@ def build_sip_contact_targets(
             q: index for index, q in enumerate(sorted({row[2] for row in contacts}, reverse=True))
         }
         base_tier = policy.member_tiers.get(str(member).strip().lower(), 0)
-        for contact_order, (uri, transport, q) in enumerate(contacts):
+        for contact_order, (uri, transport, q, user_agent) in enumerate(contacts):
             targets.append(
                 SipContactTarget(
                     candidate_id=f"{endpoint_id}:contact:{contact_order}",
@@ -152,6 +161,7 @@ def build_sip_contact_targets(
                     q=q,
                     tier=base_tier + q_tiers[q],
                     order=member_order * 1000 + contact_order,
+                    user_agent=user_agent,
                 )
             )
     if len({target.candidate_id for target in targets}) != len(targets):

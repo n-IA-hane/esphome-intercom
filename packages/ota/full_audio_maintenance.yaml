@@ -29,7 +29,11 @@ ota:
       - voice_assistant.stop:
       - micro_wake_word.stop:
       - voip_stack.stop:
-      - esp_audio_stack.stop_and_wait: audio_stack
+      - esp_audio_stack.stop: audio_stack
+      - wait_until:
+          condition:
+            esp_audio_stack.is_idle: audio_stack
+          timeout: 2s
     on_abort:
       - script.execute: ota_full_audio_restore
     on_error:

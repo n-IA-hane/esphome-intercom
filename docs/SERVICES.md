@@ -298,8 +298,9 @@ This action does not forward an already-ringing call. Use
 
 `event.voip_stack_call` is the browsable automation surface for call lifecycle,
 routing deadlines and in-call DTMF. Its state is the last occurrence timestamp;
-the occurrence type and call envelope are attributes. The legacy event-bus
-events remain available for compatibility.
+the occurrence type and call envelope are attributes. Raw event-bus messages
+are internal transport between the integration and its Event Entities, not a
+second public automation API.
 
 Each integration-owned phone Device also exposes a scoped call Event Entity
 and an enum call-state Sensor Entity. Prefer those entities for automations
@@ -316,26 +317,37 @@ and `extension` for locally originated calls. The selected sensor identifies
 the phone: an automation on Casa's sensor does not apply to every logical
 phone.
 
-## Experimental: In-call DTMF Automation Event
+## Experimental: In-call DTMF Event Entity Occurrence
 
 This event surface remains experimental in `2026.8.0`. Automations that operate
 gates, locks or other security-sensitive devices must validate the expected
 caller/source and digit rather than matching the digit alone.
 
 During an established call bridged by HA, each negotiated RFC 4733
-`telephone-event` key or compatible in-dialog SIP INFO key fires
-`voip_stack.dtmf`. This does not invoke the initial trunk extension router and
-does not transfer the active call.
+`telephone-event` key or compatible in-dialog SIP INFO key produces a `dtmf`
+occurrence on the involved phone Event Entity and on
+`event.voip_stack_call`. This does not invoke the initial trunk extension
+router and does not transfer the active call.
 Detection and event publication are HA-backend features; they add no DTMF
 parser, callback or media-loop work to ESP endpoints.
 
 ```yaml
 triggers:
-  - trigger: event
-    event_type: voip_stack.dtmf
-    event_data:
-      source: Cordless
-      digit: "1"
+  - trigger: event.received
+    target:
+      entity_id: event.casa_call
+    options:
+      event_type:
+        - dtmf
+conditions:
+  - condition: state
+    entity_id: event.casa_call
+    attribute: source
+    state: Cordless
+  - condition: state
+    entity_id: event.casa_call
+    attribute: digit
+    state: "1"
 actions:
   - action: lock.unlock
     target:
@@ -346,3 +358,7 @@ The event carries one key at a time plus both call IDs, caller, callee,
 `source`, `source_leg`, diagnostic `side`, and the transport (`rtp_event` or
 `sip_info`). It is available only for calls that pass through VoIP Stack in
 HA; direct peer-to-peer ESP calls remain invisible to HA.
+
+See the complete
+[in-call DTMF recipe](AUTOMATION_DIALPLAN.md#open-a-gate-with-in-call-dtmf)
+for source-leg filtering and security notes.

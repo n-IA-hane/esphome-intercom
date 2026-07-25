@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable
 
 from .audio_format import AudioFormat, HA_SIP_PCM_FORMATS, PcmFormat
 from . import g711
+from .codec_capabilities import supports_dahua_pcm
 from .g722_codec import G722Decoder, G722Encoder
 from .opus_codec import OpusDecoder, OpusEncoder
 from .session_cleanup import async_wait_for_cleanup
@@ -42,6 +43,10 @@ def _audio_format(fmt: AudioFormat | sdp.RtpPcmFormat) -> AudioFormat:
 
 def pcm_to_rtp_payload(data: bytes, fmt: AudioFormat | sdp.RtpPcmFormat) -> bytes:
     encoding = _rtp_encoding(fmt)
+    if encoding == "PCM":
+        if len(data) % 2:
+            raise ValueError("Dahua PCM frame length is not sample-aligned")
+        return data
     if encoding == "PCMA":
         return g711.s16le_to_alaw(data)
     if encoding == "PCMU":
@@ -80,6 +85,10 @@ def pcm_to_rtp_payload(data: bytes, fmt: AudioFormat | sdp.RtpPcmFormat) -> byte
 
 def rtp_payload_to_pcm(payload: bytes, fmt: AudioFormat | sdp.RtpPcmFormat) -> bytes:
     encoding = _rtp_encoding(fmt)
+    if encoding == "PCM":
+        if len(payload) % 2:
+            raise ValueError("Dahua PCM payload length is not sample-aligned")
+        return payload
     if encoding == "PCMA":
         return g711.alaw_to_s16le(payload)
     if encoding == "PCMU":
@@ -288,6 +297,7 @@ class SipCallClient:
         password: str = "",
         outbound_proxy: str = "",
         include_common_codecs: bool = False,
+        peer_user_agent: str = "",
         local_video_rtp_port: int = 0,
         video_format: sdp.RtpVideoFormat | None = None,
         video_formats: tuple[sdp.RtpVideoFormat, ...] | list[sdp.RtpVideoFormat] | None = None,
@@ -326,6 +336,8 @@ class SipCallClient:
         self.password = password
         self.outbound_proxy = outbound_proxy
         self.include_common_codecs = bool(include_common_codecs)
+        self.peer_user_agent = str(peer_user_agent or "").strip()
+        self.include_dahua_pcm = supports_dahua_pcm(self.peer_user_agent)
         self.local_video_rtp_port = int(local_video_rtp_port or 0)
         requested_video = tuple(video_formats or (() if video_format is None else (video_format,)))
         self.video_formats = requested_video if self.local_video_rtp_port > 0 else ()
@@ -969,6 +981,7 @@ class SipCallClient:
                 request.body,
                 self.supported_send_formats,
                 self.supported_recv_formats,
+                allow_dahua_pcm=self.include_dahua_pcm,
             )
             if selected is None:
                 return None
@@ -1183,6 +1196,7 @@ class SipCallClient:
             self.supported_send_formats,
             self.supported_recv_formats,
             include_common_codecs=self.include_common_codecs,
+            include_dahua_pcm=self.include_dahua_pcm,
             video_port=self.local_video_rtp_port,
             video_format=self.video_format,
             video_formats=self.video_formats,
@@ -1846,6 +1860,7 @@ class SipCallClient:
                 self.supported_recv_formats,
                 local_offer_direction=local_offer_direction,
                 local_offer_sdp=self._local_sdp_body or None,
+                allow_dahua_pcm=self.include_dahua_pcm,
             )
         except Exception as err:
             selected = None

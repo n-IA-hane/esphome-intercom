@@ -474,6 +474,14 @@ async def async_route_trunk_invite(
         supported_send_formats=sip_send_formats,
         supported_recv_formats=sip_recv_formats,
         signaling_transport=uri_transport(bridge_uri),
+        peer_user_agent=str(
+            (
+                (decision.entry.metadata or {}).get("user_agent")
+                if decision.entry is not None
+                else ""
+            )
+            or ""
+        ),
     )
     enable_reused_tcp_connection(
         hass,

@@ -1,4 +1,12 @@
-"""SIP in-dialog media renegotiation for active PBX calls."""
+"""SIP in-dialog media renegotiation for active PBX calls.
+
+Every accepted offer follows the same two-phase rule: validate and reserve
+without touching live media, send the SIP answer, then commit only while the
+original call generation and media owner are still current.  Rollback owns
+every staged resource until commit.  This keeps a concurrent BYE or hangup
+authoritative and preserves the previously negotiated media contract when a
+re-INVITE fails.
+"""
 
 from __future__ import annotations
 

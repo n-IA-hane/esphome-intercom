@@ -24,7 +24,7 @@ import time
 from typing import Any
 import urllib.error
 import urllib.request
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 try:
     from aioesphomeapi import APIClient
@@ -43,7 +43,27 @@ except (
 
 DEFAULT_HA_URL = "https://f0260ef3d722.sn.mynetname.net"
 DEFAULT_TOKEN_FILE = Path("/home/codex/.secrets/esphome-intercom/ha_token_codex")
+DEFAULT_AUTH_FILE = Path(
+    "/home/codex/.secrets/esphome-intercom/ha_home_auth.json"
+)
 OUT = Path("test_runs/live_voip_qualification")
+
+
+def _refresh_ha_token(auth_file: Path) -> str:
+    """Exchange the durable local refresh credential without printing it."""
+
+    auth = json.loads(auth_file.read_text(encoding="utf-8"))
+    token_url = f"{str(auth['hass_url']).rstrip('/')}/auth/token"
+    body = urlencode(
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": auth["refresh_token"],
+            "client_id": auth["client_id"],
+        }
+    ).encode()
+    request = urllib.request.Request(token_url, data=body, method="POST")
+    with urllib.request.urlopen(request, timeout=14) as response:
+        return str(json.load(response)["access_token"]).strip()
 
 
 def qualification_token(args: argparse.Namespace) -> str:
@@ -52,12 +72,16 @@ def qualification_token(args: argparse.Namespace) -> str:
         return str(args.token).strip()
     helper_path = Path(__file__).resolve().parents[1] / "test_runs/ha_playwright_auth.py"
     if not helper_path.is_file():
+        if args.auth_file.is_file():
+            return _refresh_ha_token(args.auth_file)
         return args.token_file.read_text(encoding="utf-8").strip()
     spec = importlib.util.spec_from_file_location(
         "_voip_live_ha_auth",
         helper_path,
     )
     if spec is None or spec.loader is None:
+        if args.auth_file.is_file():
+            return _refresh_ha_token(args.auth_file)
         return args.token_file.read_text(encoding="utf-8").strip()
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -980,6 +1004,12 @@ def parse_args() -> argparse.Namespace:
         help="Disable HTTPS certificate verification for an explicitly trusted HA endpoint.",
     )
     parser.add_argument("--token-file", type=Path, default=DEFAULT_TOKEN_FILE)
+    parser.add_argument(
+        "--auth-file",
+        type=Path,
+        default=DEFAULT_AUTH_FILE,
+        help="local HA OAuth JSON used when the private browser helper is absent",
+    )
     parser.add_argument("--token")
     parser.add_argument("--esp", choices=sorted(DEFAULT_ESPS), default="ws3")
     parser.add_argument(

@@ -1193,6 +1193,14 @@ async def async_forward_existing_call(
                 if bridge_to_trunk
                 else "",
                 include_common_codecs=bridge_to_trunk or bridge_to_registered,
+                peer_user_agent=(
+                    str(
+                        ((decision.entry.metadata or {}).get("user_agent"))
+                        or ""
+                    )
+                    if bridge_to_registered and decision.entry is not None
+                    else ""
+                ),
                 local_video_rtp_port=video_dest_port,
                 video_formats=(invite.video_format,) if video_relay is not None else (),
                 video_direction=(

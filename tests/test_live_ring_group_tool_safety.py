@@ -13,6 +13,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "tools" / "ring_group_live_matrix.py"
 LOCAL_TOOL = ROOT / "tools" / "local_softphone_live_matrix.py"
+SOFTPHONE_TOOL = ROOT / "tools" / "ha_softphone_matrix.py"
+INBOUND_TOOL = ROOT / "tools" / "inbound_routing_qualification.py"
+CARD_TRACE_TOOL = ROOT / "tools" / "ha_softphone_card_trace.py"
+LIVE_VOIP_TOOL = ROOT / "tools" / "live_voip_qualification.py"
 
 
 def _load_tool():
@@ -49,6 +53,31 @@ def test_local_softphone_help_is_side_effect_free_and_returns_immediately() -> N
     )
     assert completed.returncode == 0
     assert "--expect-video" in completed.stdout
+
+
+@pytest.mark.parametrize(
+    ("tool", "expected"),
+    [
+        (SOFTPHONE_TOOL, "--only"),
+        (INBOUND_TOOL, "--only"),
+        (CARD_TRACE_TOOL, "--url"),
+        (LIVE_VOIP_TOOL, "--auth-file"),
+    ],
+)
+def test_live_tool_help_does_not_require_private_auth_helper(
+    tool: Path,
+    expected: str,
+) -> None:
+    completed = subprocess.run(
+        [sys.executable, str(tool), "--help"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=3,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert expected in completed.stdout
 
 
 def test_live_matrix_rejects_concurrent_owners(tmp_path: Path) -> None:

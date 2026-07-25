@@ -62,7 +62,7 @@ ssh "$HA_HOST" "
   backup_dir='$HA_BACKUP_ROOT'/\$(date -u +%Y%m%dT%H%M%SZ)-predeploy
   if sudo -n test -d '$HA_COMPONENT_DIR'; then
     sudo -n mkdir -p \"\$backup_dir\"
-    sudo -n cp -a '$HA_COMPONENT_DIR'/.' \"\$backup_dir\"/
+    sudo -n cp -a '$HA_COMPONENT_DIR'/. \"\$backup_dir\"/
     echo \"Pre-deploy backup: \$backup_dir\"
   fi
   sudo -n mkdir -p '$HA_COMPONENT_DIR'

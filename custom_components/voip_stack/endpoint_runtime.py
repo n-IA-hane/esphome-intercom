@@ -1,4 +1,12 @@
-"""Runtime SIP endpoint/B2BUA orchestration for VoIP Stack."""
+"""Composition root for the HA-side SIP endpoint and B2BUA adapters.
+
+This module wires transports, routing, media owners and HA projections
+together.  It is intentionally not another call-state authority:
+``SipEndpointRuntime`` owns logical PBX lifetimes, SIP listener/client objects
+own transactions and dialogs, and staged media callbacks own offer/answer
+commit or rollback.  Keep new policy in the focused domain modules and pass it
+through the runtime dataclasses instead of rebuilding lifecycle state here.
+"""
 
 from __future__ import annotations
 
@@ -234,6 +242,10 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     bucket = hass.data.setdefault(DOMAIN, {})
     bucket["sip_registrar"] = registrar
     registry = _call_registry(hass)
+    # The explicit runtime owns call generations and ordered cleanup.  The
+    # registry remains the observable/resource compatibility index consumed by
+    # existing HA adapters; binding the projection keeps both views correlated
+    # without creating two independent FSMs.
     pbx_runtime = SipEndpointRuntime(projection=registry)
     pbx_runtime.attach_component("registrar", registrar)
     route_resolver = EndpointRouteResolver(
@@ -620,6 +632,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         local_rtp_port_index: int,
         uri_override: str = "",
         endpoint_id_override: str = "",
+        peer_user_agent_override: str = "",
         candidate_id: str = "",
         tier: int = 0,
         order: int = 0,
@@ -707,6 +720,17 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 supported_recv_formats=sip_recv_formats,
                 signaling_transport=_sip_uri_transport(uri),
                 include_common_codecs=bridge_to_softphone,
+                peer_user_agent=(
+                    str(peer_user_agent_override or "").strip()
+                    or str(
+                        (
+                            (member_entry.metadata or {}).get("user_agent")
+                            if member_entry is not None
+                            else ""
+                        )
+                        or ""
+                    ).strip()
+                ),
                 local_video_rtp_port=(
                     video_relay.right_port if video_relay is not None else 0
                 ),

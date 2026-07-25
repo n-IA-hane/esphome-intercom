@@ -265,7 +265,7 @@ route:
   fields:
     call_id:
       name: Call ID
-      description: Pending SIP Call-ID from voip_stack.route_request.
+      description: Pending SIP Call-ID from the route_requested Event Entity occurrence.
       required: true
       selector:
         text:

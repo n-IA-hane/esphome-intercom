@@ -102,6 +102,31 @@ leg to a compatible PCM format.
 - Confirm HA logs show REGISTER and a dynamic phonebook contact for the
   registered SIP endpoint.
 
+## Dahua VTO Registers But Calls Fail
+
+- Use the same VTO account/number configured on the door station when creating
+  its local SIP account in VoIP Stack. The dynamic phonebook entry must show
+  the current registered Contact.
+- Prefer TCP when the device registers over TCP. HA reuses the observed
+  REGISTER connection, including when the Contact advertises an address that
+  would not be reachable directly through NAT.
+- Enable debug logging and look for `SIP TCP connection reuse enabled`. If the
+  log instead says no live registered flow was found, confirm the registration
+  has not expired and that the phonebook route selects the current Contact.
+- Dahua `PCM/16000` is a vendor little-endian format, not RFC `L16`. It is
+  enabled automatically only for a `Dahua UAC/...` User-Agent. A generic peer
+  offering that token is rejected rather than globally changing PCM semantics.
+- If HA-to-VTO immediately returns `486 Busy Here`, give the originating HA
+  phone its own extension/name instead of making it appear to call from the
+  VTO's own account. Some firmware rejects an apparent self-call.
+- SIP `MESSAGE` door-control commands are not implemented. Use the VTO's
+  supported DTMF/relay mechanism or a Home Assistant automation instead.
+
+Current compatibility is capture- and simulator-qualified, not a claim that
+every Dahua firmware revision has been tested on physical hardware. When
+reporting a variant, attach sanitized REGISTER, INVITE/answer SDP, final status
+and RTP payload-size evidence.
+
 ## Busy Or DND
 
 DND and active-call contention should produce `486 Busy Here` or a terminal

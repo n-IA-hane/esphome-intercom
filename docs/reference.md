@@ -315,21 +315,21 @@ Version 1 config entries migrate without changing their effective behavior:
 an enabled non-zero DTMF configuration becomes `dtmf`, other configurations
 become `direct`, and automation routing remains disabled until selected.
 
-## HA SIP Events
+## Home Assistant Automation Events
 
 `event.voip_stack_call` is the preferred native automation surface. It exposes
 the call lifecycle, routing deadlines and DTMF through a browsable HA event
-entity. `voip_stack` also keeps these bus events for compatibility:
+entity. Each integration-owned phone Device also has a scoped call Event Entity
+for room-specific automations.
 
-- `voip_stack.call_state`: every SIP phone/bridge state update.
-- `voip_stack.incoming_call`: inbound call or route request.
-- `voip_stack.route_request`: HA dial-plan lookup request.
-- `voip_stack.call_ended`: terminal `ended`, `missed`, or `failed`.
-- `voip_stack.dtmf` (**experimental in 2026.8.0**): one DTMF key observed during an established HA-bridged
-  call. Initial trunk digit routing remains a separate pre-answer path.
-  This is implemented only in the HA backend and adds no DTMF processing to
-  ESP firmware.
-- `voip_stack.call_event`: aggregate SIP call event for frontend and automations.
+Public occurrence types are:
+
+- `route_requested`, `outgoing_call`, `calling`
+- `ringing`, `remote_ringing`, `forwarding`
+- `answered`, `connected`
+- `calling_timeout_requested`, `ringing_timeout_requested`
+- `dtmf`
+- `ended`, `missed`, `failed`, `state_changed`
 
 The payload includes the canonical SIP fields when available: `state`,
 `sip_state`, `type`, `call_id`, `sequence`, `previous_state`, `route_history`,
@@ -338,6 +338,11 @@ The payload includes the canonical SIP fields when available: `state`,
 `sip_status_code`, `terminal_reason`, `endpoint_id`, source/destination endpoint
 and Device IDs, stable `ingress` / `origin` (`trunk` or `extension`), selected
 media formats, and RTP counters.
+
+Use Home Assistant's native `event.received` trigger. Raw event-bus messages
+are internal plumbing between the integration, frontend and Event Entities and
+are not a second public automation API. See the
+[automation cookbook](AUTOMATION_DIALPLAN.md) for complete recipes.
 Completed calls are described automatically in the Home Assistant Logbook as
 compact entries such as `Cucina called Portone · 45 s`. Missed and failed calls
 use equally explicit summaries. `duration_seconds` is included in terminal

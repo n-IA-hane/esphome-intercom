@@ -20,14 +20,9 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, Callable
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import sync_playwright
-
-
 ROOT = Path(__file__).resolve().parents[1]
 TEST_CAPTURE_DIR = ROOT / "test_captures"
 sys.path.insert(0, str(ROOT / "test_runs"))
-from ha_playwright_auth import context_kwargs, ha_token  # noqa: E402
 
 
 HA_BASE = "http://192.168.1.10:8123"
@@ -353,6 +348,8 @@ class BareSip:
 
 
 def ha_request(path: str, data: dict[str, Any] | None = None) -> Any:
+    from ha_playwright_auth import ha_token
+
     body = None if data is None else json.dumps(data).encode()
     request = urllib.request.Request(
         f"{HA_BASE}{path}",
@@ -429,6 +426,10 @@ def main() -> int:
     )
     parser.add_argument("--only", action="append", default=[])
     args = parser.parse_args()
+    from ha_playwright_auth import context_kwargs
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    from playwright.sync_api import sync_playwright
+
     results: list[dict[str, Any]] = []
     active: list[BareSip] = []
     automation_states = {

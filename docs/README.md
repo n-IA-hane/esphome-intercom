@@ -15,8 +15,10 @@ Welcome. These pages cover everything beyond the project pitch on the [top-level
 
 - 🧾 **Release / upgrade notes**: [BREAKING_CHANGES.md](BREAKING_CHANGES.md)
   starts from the current SIP/VoIP breaking migration. The current
-  [2026.8.0 release notes](RELEASE_2026_8_0.md) describe the complete
-  user-visible delta. Published notes remain available for
+  [2026.8.1 pre-release notes](RELEASE_2026_8_1.md) describe the latest
+  interoperability and consolidation delta. The stable
+  [2026.8.0 release notes](RELEASE_2026_8_0.md) remain the complete illustrated
+  feature overview. Older published notes remain available for
   [2026.7.1](RELEASE_2026_7_1.md) and [2026.7.0](RELEASE_2026_7_0.md).
 
 - 📚 **Configuration reference**: [reference.md](reference.md) covers the ESP

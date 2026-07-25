@@ -276,8 +276,10 @@ Copyable, current recipes:
 
 - [route a trunk caller to a ring group](docs/AUTOMATION_DIALPLAN.md#route-only-providerpbx-trunk-calls-to-a-ring-group)
 - [forward an unanswered phone to Assist](docs/AUTOMATION_DIALPLAN.md#forward-an-unanswered-ha-call-to-assist)
+- [forward an unanswered phone to a mobile number](docs/AUTOMATION_DIALPLAN.md#forward-an-unanswered-call-to-a-mobile-number)
 - [route a known caller according to presence](docs/AUTOMATION_DIALPLAN.md#route-a-known-caller-according-to-presence)
 - [send an actionable mobile notification](docs/AUTOMATION_DIALPLAN.md#actionable-doorbell-notification)
+- [notify a no-answer timeout](docs/AUTOMATION_DIALPLAN.md#notify-a-no-answer-timeout)
 
 The assistant's personality is entirely up to your prompt. Professional
 receptionist and verbally abusive domestic secretary are both technically
@@ -302,7 +304,15 @@ Use per-phone state and Event Entities for room-specific behavior. Use
 `event.voip_stack_call` for the PBX-wide initial routing decision. The card's
 visible text is not an automation source of truth.
 
-Read the [automation cookbook and concurrency rules](docs/AUTOMATION_DIALPLAN.md).
+Start from a complete recipe:
+
+- [route calls during office hours](docs/AUTOMATION_DIALPLAN.md#route-to-reception-during-office-hours)
+- [dial a phonebook extension with initial DTMF](docs/AUTOMATION_DIALPLAN.md#dial-a-phonebook-extension-during-initial-trunk-routing)
+- [run an HA action from in-call DTMF](docs/AUTOMATION_DIALPLAN.md#open-a-gate-with-in-call-dtmf)
+
+Read the full [automation cookbook and concurrency rules](docs/AUTOMATION_DIALPLAN.md)
+for forwarding, presence routing, missed-call notifications and concurrent
+call controls.
 
 > [!WARNING]
 > Automation routing semantics may still change as more real installations are
@@ -383,21 +393,23 @@ Before every upgrade:
 Never assume an automation still has the same contract merely because the
 integration loaded successfully.
 
-## What's New In `2026.8.0`
+## What's New In `2026.8.1`
 
-`2026.8.0` promotes Home Assistant to a multi-phone SIP video system:
+`2026.8.1` is an interoperability and consolidation update:
 
-- multiple logical browser phones and room/kiosk Devices;
-- private browser-to-browser audio and video calls;
-- compatible video door station, softphone and trunk/PBX video;
-- persisted auto-answer and browser-camera transmission settings;
-- PBX-style ring groups and HA-hosted audio conferences;
-- optional automation routing preview and no-answer forwarding;
-- native call Event Entities, readable Logbook summaries and diagnostics;
-- monotonic call state, scoped browser media ownership and consolidated
-  signaling/media cleanup.
+- capability-gated G.722 on HA SIP legs, while ESP endpoints keep their native
+  high-quality PCM path;
+- automatic Dahua `PCM/16000` interoperability for matching registered
+  door-station profiles;
+- stronger SIP digest stale-nonce recovery and registered TCP-flow reuse;
+- faster vectorized G.711 conversion on HA;
+- smaller call-routing orchestrators with the existing single authoritative
+  call lifecycle preserved;
+- a substantially expanded, schema-checked automation cookbook.
 
-The complete illustrated delta is in
+The complete pre-release delta is in
+[`docs/RELEASE_2026_8_1.md`](docs/RELEASE_2026_8_1.md). The illustrated
+`2026.8.0` feature overview remains available in
 [`docs/RELEASE_2026_8_0.md`](docs/RELEASE_2026_8_0.md).
 
 ## Supported Hardware

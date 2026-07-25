@@ -67,6 +67,10 @@ def audio_payload_size_limit(fmt: _AudioRtpFormat) -> int:
             "PCMU": 1,
             "G722": 1,
             "L16": 2,
+            # Dahua UAC endpoints label their vendor S16LE payload as
+            # PCM/16000.  It is profile-gated during SDP negotiation, but once
+            # selected it has the same two-octet sample envelope as L16.
+            "PCM": 2,
             "L24": 3,
         }.get(encoding)
         if bytes_per_sample is None:

@@ -2,8 +2,10 @@
 """Deterministic SIP audio/video caller for the local VoIP Stack lab.
 
 This is a qualification peer, not a production softphone. It originates one
-UDP SIP call, sends continuous PCMA silence plus an FFmpeg test pattern in the
-requested RTP video codec, and records the real SIP/media outcome as JSON.
+UDP SIP call, sends continuous codec-native audio plus an FFmpeg test pattern
+in the requested RTP video codec, and records the real SIP/media outcome as
+JSON.  The optional Dahua profile reproduces the vendor's non-standard
+``PCM/16000`` little-endian media contract and User-Agent.
 """
 
 from __future__ import annotations
@@ -116,6 +118,29 @@ VIDEO_PROFILES = {
     },
 }
 
+AUDIO_PROFILES = {
+    "pcma": {
+        "payload_type": 8,
+        "rtpmap": "PCMA/8000",
+        "sample_rate": 8000,
+        "frame_samples": 160,
+        "frame_bytes": 160,
+        "silence": bytes([0xD5]) * 160,
+        "ffmpeg_codec": "pcm_alaw",
+        "ffmpeg_format": "alaw",
+    },
+    "dahua-pcm": {
+        "payload_type": 97,
+        "rtpmap": "PCM/16000",
+        "sample_rate": 16000,
+        "frame_samples": 320,
+        "frame_bytes": 640,
+        "silence": bytes(640),
+        "ffmpeg_codec": "pcm_s16le",
+        "ffmpeg_format": "s16le",
+    },
+}
+
 
 def _local_ip(remote_host: str, remote_port: int) -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -169,15 +194,18 @@ def _offer(
     direction: str,
     video_profile: str,
     audio_direction: str = "sendrecv",
+    audio_codec: str = "pcma",
 ) -> bytes:
+    audio = AUDIO_PROFILES[audio_codec]
+    audio_payload_type = int(audio["payload_type"])
     lines = [
         "v=0",
         f"o=- 1 1 IN IP4 {local_ip}",
         "s=VoIP Stack video qualification peer",
         f"c=IN IP4 {local_ip}",
         "t=0 0",
-        f"m=audio {audio_port} RTP/AVP 8 101",
-        "a=rtpmap:8 PCMA/8000",
+        f"m=audio {audio_port} RTP/AVP {audio_payload_type} 101",
+        f"a=rtpmap:{audio_payload_type} {audio['rtpmap']}",
         "a=rtpmap:101 telephone-event/8000",
         "a=fmtp:101 0-16",
         "a=ptime:20",
@@ -219,6 +247,7 @@ def _request_headers(
     branch: str,
     remote_to: str | None = None,
     content_type: str | None = None,
+    user_agent: str = "VoIP-Stack-Video-Lab/1",
 ) -> list[tuple[str, str]]:
     headers = [
         ("Via", f"SIP/2.0/UDP {local_ip}:{local_port};branch={branch};rport"),
@@ -229,7 +258,7 @@ def _request_headers(
         ("CSeq", f"{cseq} {method}"),
         ("Contact", f"<sip:{local_user}@{local_ip}:{local_port};transport=udp>"),
         ("Allow", "INVITE, ACK, BYE, CANCEL, INFO, OPTIONS"),
-        ("User-Agent", "VoIP-Stack-Video-Lab/1"),
+        ("User-Agent", user_agent),
     ]
     if content_type:
         headers.append(("Content-Type", content_type))
@@ -246,29 +275,32 @@ def _response_headers(request) -> list[tuple[str, str]]:
     ]
 
 
-async def _send_pcma(
+async def _send_audio_silence(
     sock: socket.socket,
     destination: tuple[str, int],
     stopped: asyncio.Event,
     counters: dict[str, int],
+    *,
+    payload_type: int,
+    frame_samples: int,
+    payload: bytes,
 ) -> None:
-    """Send an RTP clock with G.711 A-law silence without audible test tones."""
+    """Send a 20 ms RTP clock with codec-native digital silence."""
 
     loop = asyncio.get_running_loop()
     sequence = secrets.randbelow(65536)
     timestamp = secrets.randbelow(2**32)
     ssrc = secrets.randbelow(2**32 - 1) + 1
     next_send = loop.time()
-    payload = bytes([0xD5]) * 160
     while not stopped.is_set():
         await asyncio.sleep(max(0.0, next_send - loop.time()))
         packet = rtp.build_packet(
-            rtp.RtpPacket(8, sequence, timestamp, ssrc, payload)
+            rtp.RtpPacket(payload_type, sequence, timestamp, ssrc, payload)
         )
         await loop.sock_sendto(sock, packet, destination)
         counters["audio_tx_packets"] += 1
         sequence = (sequence + 1) & 0xFFFF
-        timestamp = (timestamp + 160) & 0xFFFFFFFF
+        timestamp = (timestamp + frame_samples) & 0xFFFFFFFF
         next_send += 0.020
         if next_send < loop.time():
             next_send = loop.time() + 0.020
@@ -286,19 +318,31 @@ async def _receive_audio(
         except TimeoutError:
             continue
         try:
-            rtp.parse_packet(raw)
+            packet = rtp.parse_packet(raw)
         except Exception:
             continue
         counters["audio_rx_packets"] += 1
+        counters["audio_rx_bytes"] += len(packet.payload)
+        counters["audio_rx_last_payload_type"] = packet.payload_type
 
 
-async def _start_audio_sender(video_file: str, duration: float):
+async def _start_audio_sender(
+    video_file: str,
+    duration: float,
+    *,
+    audio_codec: str,
+):
+    profile = AUDIO_PROFILES[audio_codec]
     command = [
         shutil.which("ffmpeg") or "ffmpeg", "-hide_banner", "-loglevel", "warning",
         "-nostdin", "-re", "-stream_loop", "-1", "-i", video_file,
         "-t", str(max(2.0, duration + 2.0)), "-vn",
         "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
-        "-ac", "1", "-ar", "8000", "-c:a", "pcm_alaw", "-f", "alaw", "pipe:1",
+        "-ac", "1",
+        "-ar", str(profile["sample_rate"]),
+        "-c:a", str(profile["ffmpeg_codec"]),
+        "-f", str(profile["ffmpeg_format"]),
+        "pipe:1",
     ]
     return await asyncio.create_subprocess_exec(
         *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -311,8 +355,12 @@ async def _send_audio_process(
     destination: tuple[str, int],
     stopped: asyncio.Event,
     counters: dict[str, int],
+    *,
+    payload_type: int,
+    frame_samples: int,
+    frame_bytes: int,
 ) -> None:
-    """Packetize raw A-law into the negotiated 20 ms PCMA RTP cadence."""
+    """Packetize codec-native audio into the negotiated 20 ms RTP cadence."""
     if process.stdout is None:
         raise RuntimeError("FFmpeg audio stdout is unavailable")
     loop = asyncio.get_running_loop()
@@ -321,14 +369,22 @@ async def _send_audio_process(
     ssrc = secrets.randbelow(2**32 - 1) + 1
     while not stopped.is_set():
         try:
-            payload = await process.stdout.readexactly(160)
+            payload = await process.stdout.readexactly(frame_bytes)
         except asyncio.IncompleteReadError:
             break
-        packet = rtp.build_packet(rtp.RtpPacket(8, sequence, timestamp, ssrc, payload))
+        packet = rtp.build_packet(
+            rtp.RtpPacket(
+                payload_type,
+                sequence,
+                timestamp,
+                ssrc,
+                payload,
+            )
+        )
         await loop.sock_sendto(sock, packet, destination)
         counters["audio_tx_packets"] += 1
         sequence = (sequence + 1) & 0xFFFF
-        timestamp = (timestamp + 160) & 0xFFFFFFFF
+        timestamp = (timestamp + frame_samples) & 0xFFFFFFFF
 
 
 async def _receive_rtcp(
@@ -493,6 +549,12 @@ async def async_main(args: argparse.Namespace) -> int:
     if add_video_mid_dialog and args.codec == "audio":
         raise ValueError("--add-video-after requires a video codec")
     initial_codec = "audio" if add_video_mid_dialog else args.codec
+    audio_profile = AUDIO_PROFILES[args.audio_codec]
+    peer_user_agent = (
+        args.user_agent
+        or ("Dahua UAC/3.0" if args.audio_codec == "dahua-pcm" else "")
+        or "VoIP-Stack-Video-Lab/1"
+    )
     local_ip = args.local_ip or _local_ip(args.host, args.port)
     sip_socket = _reserve_udp_socket(local_ip)
     audio_socket = _reserve_udp_socket(local_ip)
@@ -521,6 +583,7 @@ async def async_main(args: argparse.Namespace) -> int:
             cseq=1,
             branch=invite_branch,
             content_type="application/sdp",
+            user_agent=peer_user_agent,
         ),
         _offer(
             local_ip=local_ip,
@@ -529,11 +592,14 @@ async def async_main(args: argparse.Namespace) -> int:
             codec=initial_codec,
             direction=args.direction,
             video_profile=args.video_profile,
+            audio_codec=args.audio_codec,
         ),
     )
     result: dict = {
         "ok": False,
         "codec": args.codec,
+        "audio_codec": args.audio_codec,
+        "user_agent": peer_user_agent,
         "initial_codec": initial_codec,
         "add_video_after": args.add_video_after,
         "audio_hold_after": args.audio_hold_after,
@@ -546,6 +612,8 @@ async def async_main(args: argparse.Namespace) -> int:
         "sip_statuses": [],
         "audio_tx_packets": 0,
         "audio_rx_packets": 0,
+        "audio_rx_bytes": 0,
+        "audio_rx_last_payload_type": None,
         "video_tx_packets": 0,
         "video_tx_bytes": 0,
         "video_rx_packets": 0,
@@ -553,6 +621,7 @@ async def async_main(args: argparse.Namespace) -> int:
         "video_rtcp_rx_packets": 0,
         "video_rtcp_invalid_packets": 0,
         "video_rtcp_packet_types": [],
+        "bye_response_status": None,
     }
     video_process = None
     video_receiver_process = None
@@ -597,6 +666,20 @@ async def async_main(args: argparse.Namespace) -> int:
         result["answer_sdp"] = response.body.decode(errors="replace")
 
         answer_audio = sdp.parse_sdp(response.body)
+        answer_audio_formats = sdp.offered_pcm_formats(
+            response.body,
+            allow_dahua_pcm=args.audio_codec == "dahua-pcm",
+        )
+        if not answer_audio_formats:
+            raise RuntimeError("HA answered without a supported audio format")
+        selected_audio = answer_audio_formats[0]
+        expected_audio = "PCM" if args.audio_codec == "dahua-pcm" else "PCMA"
+        if selected_audio.encoding != expected_audio:
+            raise RuntimeError(
+                "HA selected unexpected audio format: "
+                f"{selected_audio.encoding}, expected {expected_audio}"
+            )
+        result["negotiated_audio"] = selected_audio.wire_token()
         answer_video = sdp.offered_video_formats(response.body)
         if (
             args.codec != "audio"
@@ -634,20 +717,46 @@ async def async_main(args: argparse.Namespace) -> int:
                 local_tag=local_tag,
                 cseq=1,
                 branch=f"z9hG4bK{secrets.token_hex(8)}",
+                user_agent=peer_user_agent,
             ),
         )
         await loop.sock_sendto(sip_socket, ack, (args.host, args.port))
         audio_destination = (str(answer_audio["connection_ip"]), int(answer_audio["media_port"]))
         if args.video_file:
-            audio_process = await _start_audio_sender(args.video_file, args.duration)
+            audio_process = await _start_audio_sender(
+                args.video_file,
+                args.duration,
+                audio_codec=args.audio_codec,
+            )
             tasks = [
-                asyncio.create_task(_send_audio_process(audio_process, audio_socket, audio_destination, stopped, result)),
+                asyncio.create_task(
+                    _send_audio_process(
+                        audio_process,
+                        audio_socket,
+                        audio_destination,
+                        stopped,
+                        result,
+                        payload_type=selected_audio.payload_type,
+                        frame_samples=int(audio_profile["frame_samples"]),
+                        frame_bytes=int(audio_profile["frame_bytes"]),
+                    )
+                ),
                 asyncio.create_task(_receive_audio(audio_socket, stopped, result)),
                 asyncio.create_task(_drain_stderr(audio_process, audio_stderr)),
             ]
         else:
             tasks = [
-                asyncio.create_task(_send_pcma(audio_socket, audio_destination, stopped, result)),
+                asyncio.create_task(
+                    _send_audio_silence(
+                        audio_socket,
+                        audio_destination,
+                        stopped,
+                        result,
+                        payload_type=selected_audio.payload_type,
+                        frame_samples=int(audio_profile["frame_samples"]),
+                        payload=bytes(audio_profile["silence"]),
+                    )
+                ),
                 asyncio.create_task(_receive_audio(audio_socket, stopped, result)),
             ]
         video_stderr: list[str] = []
@@ -741,6 +850,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     cseq=next_cseq,
                     branch=branch,
                     content_type="application/sdp",
+                    user_agent=peer_user_agent,
                 ),
                 _offer(
                     local_ip=local_ip,
@@ -749,6 +859,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     codec=args.codec,
                     direction=args.direction,
                     video_profile=args.video_profile,
+                    audio_codec=args.audio_codec,
                 ),
             )
             await loop.sock_sendto(sip_socket, request, (args.host, args.port))
@@ -800,6 +911,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     local_tag=local_tag,
                     cseq=next_cseq,
                     branch=branch,
+                    user_agent=peer_user_agent,
                 ),
             )
             await loop.sock_sendto(sip_socket, ack, (args.host, args.port))
@@ -850,6 +962,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     cseq=next_cseq,
                     branch=branch,
                     content_type="application/sdp",
+                    user_agent=peer_user_agent,
                 ),
                 _offer(
                     local_ip=local_ip,
@@ -859,6 +972,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     direction=args.direction,
                     video_profile=args.video_profile,
                     audio_direction=direction,
+                    audio_codec=args.audio_codec,
                 ),
             )
             await loop.sock_sendto(sip_socket, request, (args.host, args.port))
@@ -909,6 +1023,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     local_tag=local_tag,
                     cseq=next_cseq,
                     branch=branch,
+                    user_agent=peer_user_agent,
                 ),
             )
             await loop.sock_sendto(sip_socket, ack, (args.host, args.port))
@@ -982,10 +1097,45 @@ async def async_main(args: argparse.Namespace) -> int:
                     local_tag=local_tag,
                     cseq=next_cseq,
                     branch=f"z9hG4bK{secrets.token_hex(8)}",
+                    user_agent=peer_user_agent,
                 ),
             )
             await loop.sock_sendto(sip_socket, bye, (args.host, args.port))
             bye_sent = True
+            try:
+                async with asyncio.timeout(3.0):
+                    while result["bye_response_status"] is None:
+                        raw, addr = await loop.sock_recvfrom(sip_socket, 65535)
+                        message = sip.parse_message(raw)
+                        if message.header("Call-ID") != call_id:
+                            continue
+                        if message.method == "BYE":
+                            # A simultaneous remote hangup is a separate
+                            # transaction. Acknowledge it, then keep waiting
+                            # for the final response to our own BYE.
+                            await loop.sock_sendto(
+                                sip_socket,
+                                sip.build_response(
+                                    200, "OK", _response_headers(message)
+                                ),
+                                addr,
+                            )
+                            remote_bye = True
+                            continue
+                        if (
+                            message.status_code is not None
+                            and message.header("CSeq").upper().endswith(" BYE")
+                        ):
+                            result["bye_response_status"] = int(
+                                message.status_code
+                            )
+            except TimeoutError as err:
+                raise TimeoutError("SIP BYE was not acknowledged") from err
+            if not 200 <= int(result["bye_response_status"]) < 300:
+                raise RuntimeError(
+                    "SIP BYE failed: "
+                    f"{result['bye_response_status']} {message.reason}"
+                )
         if not reinvite_done:
             raise RuntimeError("call ended before the video re-INVITE was sent")
         if not hold_done or not resume_done:
@@ -1016,6 +1166,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     local_tag=local_tag,
                     cseq=1,
                     branch=invite_branch,
+                    user_agent=peer_user_agent,
                 ),
             )
             with contextlib.suppress(OSError):
@@ -1036,6 +1187,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     local_tag=local_tag,
                     cseq=next_cseq,
                     branch=f"z9hG4bK{secrets.token_hex(8)}",
+                    user_agent=peer_user_agent,
                 ),
             )
             with contextlib.suppress(OSError):
@@ -1100,7 +1252,21 @@ def main() -> int:
         help="SIP destination; defaults to the stable HA lab extension 2600",
     )
     parser.add_argument("--user", default="video-lab-peer")
+    parser.add_argument(
+        "--user-agent",
+        default="",
+        help=(
+            "SIP User-Agent; defaults to Dahua UAC/3.0 for --audio-codec "
+            "dahua-pcm and to the qualification peer identity otherwise"
+        ),
+    )
     parser.add_argument("--local-ip", default="")
+    parser.add_argument(
+        "--audio-codec",
+        choices=tuple(AUDIO_PROFILES),
+        default="pcma",
+        help="audio wire profile used by the simulated SIP peer",
+    )
     parser.add_argument("--codec", choices=("audio", *sorted(VIDEO_PROFILES)), required=True)
     parser.add_argument(
         "--direction",

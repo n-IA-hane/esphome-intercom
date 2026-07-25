@@ -141,7 +141,13 @@ class SessionTerminationResult:
 
 
 class EndpointCallSession:
-    """Authoritative owner of one PBX call and all of its resources."""
+    """Authoritative owner of one PBX call and all of its resources.
+
+    A session generation is immutable.  Async dial, media and UI callbacks
+    must present the current generation before mutating it, which turns late
+    completions into harmless stale observations.  Termination first closes
+    new mutation, then drains resources in ``CleanupStage`` order exactly once.
+    """
 
     def __init__(
         self,

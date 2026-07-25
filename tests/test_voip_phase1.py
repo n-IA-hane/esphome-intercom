@@ -58,6 +58,7 @@ sip_tcp_io = _load_intercom_module("sip_tcp_io")
 sip_listener = _load_intercom_module("sip_listener")
 sip_registrar = _load_intercom_module("sip_registrar")
 sip_auth = _load_intercom_module("sip_auth")
+sip_runtime = _load_intercom_module("sip_runtime")
 sip_rtp_bridge = _load_intercom_module("sip_rtp_bridge")
 sip_bridge = _load_intercom_module("sip_bridge")
 sip_trunk = _load_intercom_module("sip_trunk")
@@ -4392,6 +4393,171 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
 
 class SdpPcmProfileTest(unittest.TestCase):
+    def test_dahua_pcm_is_profile_gated_and_preserves_little_endian_samples(
+        self,
+    ) -> None:
+        offer = (
+            "v=0\r\n"
+            "o=- 0 0 IN IP4 192.0.2.10\r\n"
+            "s=Dahua\r\n"
+            "c=IN IP4 192.0.2.10\r\n"
+            "t=0 0\r\n"
+            "m=audio 20000 RTP/AVP 97 0\r\n"
+            "a=rtpmap:97 PCM/16000\r\n"
+            "a=rtpmap:0 PCMU/8000\r\n"
+            "a=ptime:20\r\n"
+            "a=sendrecv\r\n"
+        )
+        local = [audio_format.AudioFormat(16000, "s16le", 1, 20)]
+
+        self.assertIsNone(sdp.negotiate_directional(offer, local, local))
+        selected = sdp.negotiate_directional(
+            offer,
+            local,
+            local,
+            allow_dahua_pcm=True,
+        )
+
+        self.assertIsNotNone(selected)
+        assert selected is not None
+        self.assertEqual(selected.send.encoding, "PCM")
+        self.assertEqual(selected.send.audio_format, local[0])
+        samples = b"\xf7\xff\x0c\x00\x0e\x00\xf3\xff"
+        self.assertEqual(sip_client.pcm_to_rtp_payload(samples, selected.send), samples)
+        self.assertEqual(sip_client.rtp_payload_to_pcm(samples, selected.recv), samples)
+
+    def test_dahua_pcm_offer_is_explicit_and_does_not_replace_standard_l16(
+        self,
+    ) -> None:
+        local = [audio_format.AudioFormat(16000, "s16le", 1, 20)]
+
+        standard = sdp.build_offer_directional(
+            "192.0.2.20",
+            "192.0.2.20",
+            40000,
+            local,
+            local,
+        )
+        dahua = sdp.build_offer_directional(
+            "192.0.2.20",
+            "192.0.2.20",
+            40000,
+            local,
+            local,
+            include_dahua_pcm=True,
+        )
+
+        self.assertNotIn(" PCM/16000", standard)
+        self.assertIn(" L16/16000/1", standard)
+        self.assertIn(" PCM/16000/1", dahua)
+        self.assertIn(" L16/16000/1", dahua)
+        self.assertEqual(
+            [
+                item.encoding
+                for item in sdp.offered_pcm_formats(
+                    dahua,
+                    allow_dahua_pcm=True,
+                )
+            ],
+            ["PCM", "L16"],
+        )
+
+    def test_dahua_pcm_rejects_wrong_rate_channels_and_static_payload(self) -> None:
+        template = (
+            "v=0\r\n"
+            "c=IN IP4 192.0.2.10\r\n"
+            "t=0 0\r\n"
+            "m=audio 20000 RTP/AVP {payload}\r\n"
+            "a=rtpmap:{payload} PCM/{rate}/{channels}\r\n"
+            "a=ptime:20\r\n"
+        )
+        for payload, rate, channels in (
+            (97, 8000, 1),
+            (97, 16000, 2),
+            (0, 16000, 1),
+        ):
+            with self.subTest(payload=payload, rate=rate, channels=channels):
+                self.assertEqual(
+                    sdp.offered_pcm_formats(
+                        template.format(
+                            payload=payload,
+                            rate=rate,
+                            channels=channels,
+                        ),
+                        allow_dahua_pcm=True,
+                    ),
+                    [],
+                )
+
+    def test_dahua_user_agent_detection_is_narrow(self) -> None:
+        self.assertTrue(
+            codec_capabilities.supports_dahua_pcm("Dahua UAC/3.0")
+        )
+        self.assertTrue(
+            codec_capabilities.supports_dahua_pcm("  dahua uac/4.1 ")
+        )
+        self.assertFalse(codec_capabilities.supports_dahua_pcm("baresip v4.6.0"))
+        self.assertFalse(codec_capabilities.supports_dahua_pcm("Dahua Camera/1.0"))
+
+    def test_listener_accepts_dahua_pcm_only_for_the_dahua_uac_profile(self) -> None:
+        local = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        body = (
+            "v=0\r\n"
+            "o=- 0 0 IN IP4 192.0.2.85\r\n"
+            "s=Dahua\r\n"
+            "c=IN IP4 192.0.2.85\r\n"
+            "t=0 0\r\n"
+            "m=audio 20000 RTP/AVP 97\r\n"
+            "a=rtpmap:97 PCM/16000\r\n"
+            "a=ptime:20\r\n"
+            "a=sendrecv\r\n"
+        ).encode()
+
+        def request(user_agent: str) -> sip.SipMessage:
+            return sip.parse_message(
+                sip.build_request(
+                    "INVITE",
+                    "sip:HA@192.0.2.10",
+                    [
+                        ("Via", "SIP/2.0/UDP 192.0.2.85:5060;branch=z9hG4bKdahua"),
+                        ("From", "<sip:100@VDP>;tag=dahua"),
+                        ("To", "<sip:HA@192.0.2.10>"),
+                        ("Call-ID", f"dahua-{user_agent}"),
+                        ("CSeq", "1 INVITE"),
+                        ("Contact", "<sip:100@192.0.2.85:5060>"),
+                        ("User-Agent", user_agent),
+                        ("Content-Type", "application/sdp"),
+                    ],
+                    body,
+                )
+            )
+
+        async def on_invite(_invite):
+            return sip_listener.SipInviteResult(486, "Busy Here")
+
+        endpoint = sip_listener.SipUdpEndpoint(
+            local_ip="192.0.2.10",
+            local_sip_port=5060,
+            local_rtp_port=40000,
+            supported_formats=[local],
+            on_invite=on_invite,
+        )
+
+        accepted = endpoint._parse_invite(
+            request("Dahua UAC/3.0"),
+            ("192.0.2.85", 5060),
+        )
+        rejected = endpoint._parse_invite(
+            request("Generic SIP Phone/1.0"),
+            ("192.0.2.85", 5060),
+        )
+
+        self.assertIsNotNone(accepted)
+        assert accepted is not None
+        self.assertEqual(accepted.peer_profile, "dahua")
+        self.assertEqual(accepted.send_format.encoding, "PCM")
+        self.assertIsNone(rejected)
+
     def test_answer_cannot_remap_a_selected_dynamic_payload_type(self) -> None:
         offer = (
             "v=0\r\no=- 1 1 IN IP4 192.0.2.10\r\n"
@@ -5403,6 +5569,14 @@ class RtpProfileTest(unittest.TestCase):
         fmt = sdp.RtpPcmFormat(9, "G722", 8000, 1, 20)
 
         self.assertEqual(rtp.audio_payload_size_limit(fmt), 160)
+
+    def test_dahua_pcm_receive_limit_accepts_exact_twenty_ms_frame(self) -> None:
+        fmt = sdp.RtpPcmFormat(97, "PCM", 16000, 1, 20)
+
+        self.assertEqual(rtp.audio_payload_size_limit(fmt), 640)
+        rtp.validate_audio_payload_size(bytes(640), fmt)
+        with self.assertRaisesRegex(rtp.RtpError, r"642 bytes; max is 640"):
+            rtp.validate_audio_payload_size(bytes(642), fmt)
 
     def test_rfc4733_decoder_emits_one_event_per_press(self) -> None:
         decoder = dtmf.RtpDtmfDecoder(101)
@@ -8705,6 +8879,154 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entries[0].sip_uri, "sip:SmartphoneDany@192.168.1.50:5062;transport=udp")
         self.assertTrue(entries[0].metadata["registered"])
 
+    async def test_dahua_refresh_replay_rotates_nonce_with_stale_and_recovers(
+        self,
+    ) -> None:
+        registrar = sip_registrar.SipRegistrar(
+            enabled=True,
+            accounts=[sip_registrar.SipAccount("100", "Dahua VTO", "secret")],
+            local_ip="192.168.1.10",
+            local_sip_port=5060,
+        )
+        request_uri = "sip:192.168.1.10"
+        source = ("192.0.2.85", 5060)
+        base_headers = [
+            ("Via", "SIP/2.0/UDP 192.0.2.85:5060;branch=z9hG4bKdahua;rport"),
+            ("From", "<sip:100@VDP>;tag=dahua"),
+            ("To", "<sip:100@VDP>"),
+            ("Call-ID", "dahua-register"),
+            ("CSeq", "1 REGISTER"),
+            ("Contact", "<sip:100@192.0.2.85:5060>"),
+            ("Expires", "60"),
+            ("User-Agent", "Dahua UAC/3.0"),
+        ]
+        first = sip.parse_message(
+            sip.build_request("REGISTER", request_uri, base_headers, b"")
+        )
+        challenge = await registrar.handle_register(first, source, "UDP")
+        first_challenge = dict(challenge.headers)["WWW-Authenticate"]
+        first_nonce = sip_auth.parse_digest_challenge(first_challenge)["nonce"]
+        authorization = sip_auth.build_digest_authorization(
+            challenge_header=first_challenge,
+            username="100",
+            password="secret",
+            method="REGISTER",
+            uri=request_uri,
+        )
+        authenticated = sip.parse_message(
+            sip.build_request(
+                "REGISTER",
+                request_uri,
+                [*base_headers, ("Authorization", authorization)],
+                b"",
+            )
+        )
+        self.assertEqual(
+            (await registrar.handle_register(authenticated, source, "UDP")).status,
+            200,
+        )
+
+        refresh_headers = [
+            (name, "2 REGISTER" if name == "CSeq" else value)
+            for name, value in base_headers
+        ]
+        replayed_refresh = sip.parse_message(
+            sip.build_request(
+                "REGISTER",
+                request_uri,
+                [*refresh_headers, ("Authorization", authorization)],
+                b"",
+            )
+        )
+        stale = await registrar.handle_register(replayed_refresh, source, "UDP")
+        stale_challenge = dict(stale.headers)["WWW-Authenticate"]
+        stale_params = sip_auth.parse_digest_challenge(stale_challenge)
+
+        self.assertEqual(stale.status, 401)
+        self.assertEqual(stale_params["stale"], "true")
+        self.assertNotEqual(stale_params["nonce"], first_nonce)
+        self.assertEqual(len(registrar.registered_contacts("100")), 1)
+
+        refreshed_authorization = sip_auth.build_digest_authorization(
+            challenge_header=stale_challenge,
+            username="100",
+            password="secret",
+            method="REGISTER",
+            uri=request_uri,
+        )
+        recovered = sip.parse_message(
+            sip.build_request(
+                "REGISTER",
+                request_uri,
+                [
+                    *refresh_headers,
+                    ("Authorization", refreshed_authorization),
+                ],
+                b"",
+            )
+        )
+        self.assertEqual(
+            (await registrar.handle_register(recovered, source, "UDP")).status,
+            200,
+        )
+        registration = registrar.registered_contacts("100")[0]
+        self.assertEqual(registration.cseq, 2)
+        self.assertEqual(registration.user_agent, "Dahua UAC/3.0")
+        roster = registrar.roster_entries()
+        self.assertEqual(len(roster), 1)
+        self.assertEqual(roster[0].metadata["sip_profile"], "dahua")
+        self.assertEqual(
+            roster[0].metadata["sip_contacts"][0]["sip_profile"],
+            "dahua",
+        )
+        self.assertEqual(
+            roster[0].metadata["sip_contacts"][0]["user_agent"],
+            "Dahua UAC/3.0",
+        )
+
+    async def test_bad_register_password_does_not_claim_stale_nonce(self) -> None:
+        registrar = sip_registrar.SipRegistrar(
+            enabled=True,
+            accounts=[sip_registrar.SipAccount("100", "Dahua VTO", "secret")],
+            local_ip="192.168.1.10",
+            local_sip_port=5060,
+        )
+        request_uri = "sip:192.168.1.10"
+        challenge_header = registrar._challenge("UDP:192.0.2.85")[1]
+        bad_authorization = sip_auth.build_digest_authorization(
+            challenge_header=challenge_header,
+            username="100",
+            password="wrong",
+            method="REGISTER",
+            uri=request_uri,
+        )
+        request = sip.parse_message(
+            sip.build_request(
+                "REGISTER",
+                request_uri,
+                [
+                    ("Via", "SIP/2.0/UDP 192.0.2.85:5060;branch=z9hG4bKbad;rport"),
+                    ("From", "<sip:100@VDP>;tag=dahua"),
+                    ("To", "<sip:100@VDP>"),
+                    ("Call-ID", "dahua-bad-password"),
+                    ("CSeq", "1 REGISTER"),
+                    ("Contact", "<sip:100@192.0.2.85:5060>"),
+                    ("Expires", "60"),
+                    ("Authorization", bad_authorization),
+                ],
+                b"",
+            )
+        )
+
+        result = await registrar.handle_register(
+            request,
+            ("192.0.2.85", 5060),
+            "UDP",
+        )
+
+        self.assertEqual(result.status, 401)
+        self.assertNotIn("stale=true", dict(result.headers)["WWW-Authenticate"])
+
     async def test_register_contact_is_pinned_to_authenticated_source_flow(self) -> None:
         registrar = sip_registrar.SipRegistrar(
             enabled=True,
@@ -9866,6 +10188,184 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
             final = first if first.status_code == 200 else second
             self.assertIn(b"m=audio", final.body)
             self.assertTrue(seen["invite"])
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            await server.stop()
+
+    async def test_tcp_register_flow_can_carry_outbound_dahua_dialog(self) -> None:
+        """A registered TCP flow is reusable for a new HA-originated dialog."""
+
+        local = "127.0.0.1"
+        with _reserved_udp_ports(3) as ports:
+            sip_port, ha_rtp_port, dahua_rtp_port = ports
+        audio = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        registrar = sip_registrar.SipRegistrar(
+            enabled=True,
+            accounts=[sip_registrar.SipAccount("100", "Dahua VTO", "secret")],
+            local_ip=local,
+            local_sip_port=sip_port,
+        )
+
+        async def unexpected_invite(_invite):
+            raise AssertionError("registered client must receive, not originate, INVITE")
+
+        server = sip_listener.SipTcpServer(
+            host=local,
+            port=sip_port,
+            local_ip=local,
+            local_rtp_port=ha_rtp_port,
+            supported_formats=[audio],
+            on_invite=unexpected_invite,
+            on_register=registrar.handle_register,
+        )
+        self.assertTrue(await server.start())
+        reader, writer = await asyncio.open_connection(local, sip_port)
+        source = writer.get_extra_info("sockname")
+        assert source is not None
+        source_addr = (str(source[0]), int(source[1]))
+        request_uri = f"sip:{local}:{sip_port}"
+        base_headers = [
+            (
+                "Via",
+                f"SIP/2.0/TCP {local}:{source_addr[1]};"
+                "branch=z9hG4bKtcp-register;rport",
+            ),
+            ("From", "<sip:100@VDP>;tag=dahua-register"),
+            ("To", "<sip:100@VDP>"),
+            ("Call-ID", "dahua-tcp-register"),
+            ("CSeq", "1 REGISTER"),
+            (
+                "Contact",
+                "<sip:100@10.0.0.85:5060;transport=tcp>",
+            ),
+            ("Expires", "120"),
+            ("User-Agent", "Dahua UAC/3.0"),
+        ]
+
+        async def send_and_read(raw: bytes) -> sip.SipMessage:
+            writer.write(raw)
+            await writer.drain()
+            response = await asyncio.wait_for(
+                sip_listener._read_sip_stream_message(reader),
+                timeout=1,
+            )
+            assert response is not None
+            return sip.parse_message(response)
+
+        try:
+            challenge = await send_and_read(
+                sip.build_request("REGISTER", request_uri, base_headers, b"")
+            )
+            self.assertEqual(challenge.status_code, 401)
+            authorization = sip_auth.build_digest_authorization(
+                challenge_header=challenge.header("WWW-Authenticate"),
+                username="100",
+                password="secret",
+                method="REGISTER",
+                uri=request_uri,
+            )
+            registered = await send_and_read(
+                sip.build_request(
+                    "REGISTER",
+                    request_uri,
+                    [*base_headers, ("Authorization", authorization)],
+                    b"",
+                )
+            )
+            self.assertEqual(registered.status_code, 200)
+            binding = registrar.registered_contacts("100")[0]
+            self.assertEqual(
+                (binding.source_host, binding.source_port, binding.transport),
+                (source_addr[0], source_addr[1], "TCP"),
+            )
+
+            client = sip_client.SipCallClient(
+                local_ip=local,
+                local_name="HA-Test",
+                local_sip_port=sip_port,
+                local_rtp_port=ha_rtp_port,
+                supported_formats=[audio],
+                signaling_transport="TCP",
+                include_common_codecs=True,
+                peer_user_agent=binding.user_agent,
+            )
+            hass = types.SimpleNamespace(
+                data={
+                    "voip_stack": {
+                        "sip_endpoint": types.SimpleNamespace(
+                            tcp_server=server,
+                        )
+                    }
+                }
+            )
+            self.assertTrue(
+                sip_runtime.enable_reused_tcp_connection(
+                    hass,
+                    client,
+                    sip.parse_sip_uri(binding.contact_uri),
+                    target="Dahua VTO",
+                    default_sip_port=sip_port,
+                )
+            )
+
+            async def dahua_answer() -> None:
+                raw_invite = await asyncio.wait_for(
+                    sip_listener._read_sip_stream_message(reader),
+                    timeout=1,
+                )
+                assert raw_invite is not None
+                invite = sip.parse_message(raw_invite)
+                self.assertEqual(invite.method, "INVITE")
+                offered = sdp.offered_pcm_formats(
+                    invite.body,
+                    allow_dahua_pcm=True,
+                )
+                selected = next(item for item in offered if item.encoding == "PCM")
+                answer = sdp.build_answer_directional(
+                    local,
+                    local,
+                    dahua_rtp_port,
+                    selected,
+                    selected,
+                    remote_sdp=invite.body,
+                ).encode()
+                headers = sip_listener._response_headers(
+                    invite,
+                    addr=source_addr,
+                    to_tag="dahua-call",
+                )
+                headers.extend(
+                    (
+                        ("Contact", f"<sip:100@{local}:{source_addr[1]};transport=tcp>"),
+                        ("Content-Type", "application/sdp"),
+                    )
+                )
+                writer.write(sip.build_response(180, "Ringing", headers))
+                writer.write(sip.build_response(200, "OK", headers, answer))
+                await writer.drain()
+
+            answer_task = asyncio.create_task(dahua_answer())
+            result = await client.invite(
+                target="100",
+                remote_host=source_addr[0],
+                remote_sip_port=source_addr[1],
+                request_uri=(
+                    f"sip:100@{source_addr[0]}:{source_addr[1]};transport=tcp"
+                ),
+            )
+            if result == "ringing":
+                result = await client.wait_for_final()
+            await answer_task
+
+            self.assertEqual(result, "in_call")
+            self.assertIsNotNone(client.dialog)
+            assert client.dialog is not None
+            self.assertEqual(client.dialog.send_format.encoding, "PCM")
+            self.assertEqual(client.dialog.recv_format.encoding, "PCM")
+            client.bye()
+            await client.close()
+            self.assertEqual(server._dialog_queues, {})
         finally:
             writer.close()
             await writer.wait_closed()

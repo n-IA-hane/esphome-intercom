@@ -103,7 +103,7 @@ class RtpPcmFormat:
 
     @property
     def bits(self) -> int:
-        if self.encoding == "L16":
+        if self.encoding in {"L16", "PCM"}:
             return 16
         if self.encoding == "L24":
             return 24
@@ -127,7 +127,11 @@ class RtpPcmFormat:
             return AudioFormat(
                 48000, PcmFormat.S16LE, self.channels, self.frame_ms or 20
             )
-        pcm = PcmFormat.S16LE if self.encoding == "L16" else PcmFormat.S24LE
+        pcm = (
+            PcmFormat.S16LE
+            if self.encoding in {"L16", "PCM"}
+            else PcmFormat.S24LE
+        )
         return AudioFormat(self.sample_rate, pcm, self.channels, self.frame_ms)
 
     @property
@@ -996,6 +1000,23 @@ def _rtp_compatible_audio(
                 local.frame_ms,
             )
         return None
+    if offered.encoding == "PCM":
+        if (
+            local.pcm_format == PcmFormat.S16LE
+            and local.sample_rate == 16000
+            and local.channels == 1
+            and local.frame_ms == 20
+            and offered.sample_rate == 16000
+            and offered.channels == 1
+        ):
+            return RtpPcmFormat(
+                offered.payload_type,
+                "PCM",
+                16000,
+                1,
+                20,
+            )
+        return None
     if not is_rtp_pcm_mappable(local):
         return None
     if offered.encoding in {"PCMA", "PCMU"}:
@@ -1249,6 +1270,7 @@ def build_offer_directional(
     recv_formats: list[AudioFormat],
     *,
     include_common_codecs: bool = False,
+    include_dahua_pcm: bool = False,
     video_port: int = 0,
     video_format: RtpH264Format | None = None,
     video_formats: tuple[RtpVideoFormat, ...] | list[RtpVideoFormat] | None = None,
@@ -1269,7 +1291,13 @@ def build_offer_directional(
             "RTP-mappable PCM format"
         )
     rtp_formats = (
-        _common_codec_offer_formats(capability_formats) if include_common_codecs else []
+        _common_codec_offer_formats(
+            capability_formats,
+            include_common_codecs=include_common_codecs,
+            include_dahua_pcm=include_dahua_pcm,
+        )
+        if include_common_codecs or include_dahua_pcm
+        else []
     )
     next_payload = 96
     used_payloads = {fmt.payload_type for fmt in rtp_formats}
@@ -1318,21 +1346,40 @@ def build_offer_directional(
     return "\r\n".join(lines) + "\r\n"
 
 
-def _common_codec_offer_formats(formats: list[AudioFormat]) -> list[RtpPcmFormat]:
+def _common_codec_offer_formats(
+    formats: list[AudioFormat],
+    *,
+    include_common_codecs: bool = True,
+    include_dahua_pcm: bool = False,
+) -> list[RtpPcmFormat]:
     format_set = set(formats)
     capabilities = common_sip_codecs()
     out: list[RtpPcmFormat] = []
     if (
+        include_dahua_pcm
+        and AudioFormat(16000, PcmFormat.S16LE, 1, 20) in format_set
+    ):
+        # Dahua UAC endpoints use dynamic PT 97 for signed 16-bit
+        # little-endian samples.  It is intentionally not RFC 3551 L16.
+        out.append(RtpPcmFormat(97, "PCM", 16000, 1, 20))
+    if (
+        include_common_codecs
+        and
         "OPUS" in capabilities
         and AudioFormat(48000, PcmFormat.S16LE, 2, 20) in format_set
     ):
         out.append(RtpPcmFormat(98, "OPUS", 48000, 2, 20))
     if (
+        include_common_codecs
+        and
         "G722" in capabilities
         and AudioFormat(16000, PcmFormat.S16LE, 1, 20) in format_set
     ):
         out.append(RtpPcmFormat(9, "G722", 8000, 1, 20))
-    if AudioFormat(8000, PcmFormat.S16LE, 1, 20) in format_set:
+    if (
+        include_common_codecs
+        and AudioFormat(8000, PcmFormat.S16LE, 1, 20) in format_set
+    ):
         out.extend(
             (
                 RtpPcmFormat(8, "PCMA", 8000, 1, 20),
@@ -2526,7 +2573,11 @@ def _answer_with_offered_media_order(
     return "\r\n".join(lines) + "\r\n"
 
 
-def offered_pcm_formats(sdp: str | bytes) -> list[RtpPcmFormat]:
+def offered_pcm_formats(
+    sdp: str | bytes,
+    *,
+    allow_dahua_pcm: bool = False,
+) -> list[RtpPcmFormat]:
     parsed = parse_sdp(sdp)
     out: list[RtpPcmFormat] = []
     for pt in parsed["payload_order"]:
@@ -2534,7 +2585,16 @@ def offered_pcm_formats(sdp: str | bytes) -> list[RtpPcmFormat]:
         if spec is None:
             continue
         encoding, rate, channels = spec
-        if encoding not in {"L16", "L24", "PCMA", "PCMU", "OPUS", "G722"}:
+        if encoding == "PCM":
+            if (
+                not allow_dahua_pcm
+                or pt < 96
+                or rate != 16000
+                or channels != 1
+                or parsed["ptime"] not in {0, 20}
+            ):
+                continue
+        elif encoding not in {"L16", "L24", "PCMA", "PCMU", "OPUS", "G722"}:
             continue
         out.append(
             RtpPcmFormat(
@@ -2542,7 +2602,9 @@ def offered_pcm_formats(sdp: str | bytes) -> list[RtpPcmFormat]:
                 encoding,
                 rate,
                 channels,
-                parsed["ptime"],
+                20
+                if encoding == "PCM" and not parsed["ptime"]
+                else parsed["ptime"],
                 parsed["minptime"],
                 parsed["maxptime"],
             )
@@ -2665,6 +2727,8 @@ def negotiate_directional(
     remote_sdp: str | bytes,
     local_send_preferred: list[AudioFormat],
     local_recv_preferred: list[AudioFormat],
+    *,
+    allow_dahua_pcm: bool = False,
 ) -> RtpPcmDirection | None:
     parsed = parse_sdp(remote_sdp)
     local_direction = local_direction_for_offer(
@@ -2676,7 +2740,10 @@ def negotiate_directional(
         local_direction,
     )
     return _negotiate_for_local_direction(
-        offered_pcm_formats(remote_sdp),
+        offered_pcm_formats(
+            remote_sdp,
+            allow_dahua_pcm=allow_dahua_pcm,
+        ),
         local_send_preferred,
         local_recv_preferred,
         format_direction,
@@ -2691,6 +2758,7 @@ def negotiate_answer_directional(
     *,
     local_offer_direction: str = "sendrecv",
     local_offer_sdp: str | bytes | None = None,
+    allow_dahua_pcm: bool = False,
 ) -> RtpPcmDirection | None:
     """Negotiate one standards-compliant media contract from an SDP answer."""
 
@@ -2704,11 +2772,17 @@ def negotiate_answer_directional(
         local_direction,
         inactive_default=local_offer_direction,
     )
-    answered_formats = offered_pcm_formats(remote_sdp)
+    answered_formats = offered_pcm_formats(
+        remote_sdp,
+        allow_dahua_pcm=allow_dahua_pcm,
+    )
     if local_offer_sdp is not None:
         return _negotiate_answer_with_offer_payloads(
             answered_formats,
-            offered_pcm_formats(local_offer_sdp),
+            offered_pcm_formats(
+                local_offer_sdp,
+                allow_dahua_pcm=allow_dahua_pcm,
+            ),
             local_send_preferred,
             local_recv_preferred,
             format_direction,

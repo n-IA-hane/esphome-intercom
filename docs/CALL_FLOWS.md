@@ -257,10 +257,10 @@ Explicit DTMF extensions never enter this decision path. If no automation
 acts, the original phonebook decision continues. A forward action moves the
 same logical source call and does not create a second inbound call.
 
-The legacy `voip_stack.route_request` bus event remains for compatibility. The
-normal public surface is the `route_requested` type on
+The public surface is the `route_requested` type on
 `event.voip_stack_call`, consumed through Home Assistant's native
-`event.received` trigger.
+`event.received` trigger. Raw event-bus messages are integration plumbing, not
+a second automation API.
 
 The decision point is not expected for:
 

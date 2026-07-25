@@ -12,6 +12,8 @@ import pytest
 import voluptuous as vol
 import yaml
 
+from tests.support.service_schemas import load_service_schemas
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_FLOW = ROOT / "custom_components" / "voip_stack" / "config_flow.py"
@@ -49,74 +51,6 @@ def _load_disabled_trunk_data():
         namespace,
     )
     return namespace["_disabled_trunk_data"], namespace
-
-
-def _load_service_schemas() -> dict[str, vol.Schema]:
-    """Register services against a tiny HA facade and return their schemas."""
-
-    def boolean(value: object) -> bool:
-        if isinstance(value, bool):
-            return value
-        normalized = str(value).strip().lower()
-        if normalized in {"1", "true", "yes", "on", "enable"}:
-            return True
-        if normalized in {"0", "false", "no", "off", "disable"}:
-            return False
-        raise vol.Invalid("invalid boolean value")
-
-    source = SERVICES.read_text()
-    source = source.replace(
-        "from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse\n",
-        "HomeAssistant = object\nServiceCall = object\n"
-        "SupportsResponse = SimpleNamespace(OPTIONAL='optional', ONLY='only')\n",
-    )
-    source = source.replace(
-        "from homeassistant.helpers import config_validation as cv\n",
-        "",
-    )
-    source = source.replace(
-        "from .authorization import (\n"
-        "    async_require_service_admin,\n"
-        "    async_require_service_control,\n"
-        ")\n",
-        "async def async_require_service_admin(_hass, _call):\n"
-        "    return None\n\n"
-        "async def async_require_service_control(_hass, _call):\n"
-        "    return None\n",
-    )
-    source = source.replace(
-        "from .const import DOMAIN\n",
-        'DOMAIN = "voip_stack"\n',
-    )
-    namespace = {
-        "__name__": "voip_stack_services_schema_test",
-        "SimpleNamespace": SimpleNamespace,
-        "cv": SimpleNamespace(
-            string=str,
-            entity_id=str,
-            boolean=boolean,
-        ),
-    }
-    exec(compile(source, str(SERVICES), "exec"), namespace)
-
-    schemas: dict[str, vol.Schema] = {}
-
-    class ServiceRegistry:
-        def async_register(
-            self,
-            _domain,
-            service,
-            _handler,
-            *,
-            schema=None,
-            **_kwargs,
-        ):
-            if schema is not None:
-                schemas[service] = schema
-
-    hass = SimpleNamespace(services=ServiceRegistry())
-    asyncio.run(namespace["async_register_services"](hass, {}))
-    return schemas
 
 
 def _load_remove_entry_hook():
@@ -268,7 +202,7 @@ def test_everyday_call_actions_hide_technical_fields_in_collapsed_sections() -> 
 
 
 def test_home_assistant_call_actions_have_one_destination_vocabulary() -> None:
-    schemas = _load_service_schemas()
+    schemas = load_service_schemas()
 
     for service in ("call", "forward"):
         assert schemas[service]({"destination": "Kitchen"})["destination"] == "Kitchen"
@@ -286,7 +220,7 @@ def test_home_assistant_call_actions_have_one_destination_vocabulary() -> None:
 
 
 def test_phone_actions_have_one_device_selector() -> None:
-    schemas = _load_service_schemas()
+    schemas = load_service_schemas()
 
     for service in (
         "call",
@@ -377,14 +311,14 @@ def test_debug_option_discloses_private_audio_capture_and_retention(path: Path) 
 
 @pytest.mark.parametrize("status", [300, 486, 603, 699])
 def test_decline_schema_accepts_only_negative_final_sip_statuses(status: int) -> None:
-    schema = _load_service_schemas()["decline"]
+    schema = load_service_schemas()["decline"]
 
     assert schema({"status": status})["status"] == status
 
 
 @pytest.mark.parametrize("status", [-1, 0, 99, 100, 200, 299, 700, 999])
 def test_decline_schema_rejects_non_failure_sip_statuses(status: int) -> None:
-    schema = _load_service_schemas()["decline"]
+    schema = load_service_schemas()["decline"]
 
     with pytest.raises(vol.Invalid):
         schema({"status": status})
@@ -392,14 +326,14 @@ def test_decline_schema_rejects_non_failure_sip_statuses(status: int) -> None:
 
 @pytest.mark.parametrize("status", [0, 300, 486, 603, 699])
 def test_route_schema_accepts_default_or_negative_final_sip_status(status: int) -> None:
-    schema = _load_service_schemas()["route"]
+    schema = load_service_schemas()["route"]
 
     assert schema({"call_id": "call-1", "status": status})["status"] == status
 
 
 @pytest.mark.parametrize("status", [-1, 1, 100, 200, 299, 700, 999])
 def test_route_schema_rejects_invalid_override_status(status: int) -> None:
-    schema = _load_service_schemas()["route"]
+    schema = load_service_schemas()["route"]
 
     with pytest.raises(vol.Invalid):
         schema({"call_id": "call-1", "status": status})
@@ -421,14 +355,14 @@ def test_service_schemas_reject_oversized_or_invalid_resource_inputs(
     service: str,
     payload: dict[str, object],
 ) -> None:
-    schema = _load_service_schemas()[service]
+    schema = load_service_schemas()[service]
 
     with pytest.raises(vol.Invalid):
         schema(payload)
 
 
 def test_phonebook_schema_accepts_bounded_standard_media_fields() -> None:
-    schema = _load_service_schemas()["add_contact"]
+    schema = load_service_schemas()["add_contact"]
 
     validated = schema(
         {
