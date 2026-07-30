@@ -1547,7 +1547,15 @@ class SipCallClient:
                 if received is None:
                     return "timeout"
                 msg, addr = received
-            except Exception:
+            except (ConnectionError, OSError, RuntimeError) as err:
+                return self._transport_failure(
+                    err,
+                    self._pending_target,
+                    self._pending_remote_host,
+                    self._pending_remote_sip_port,
+                )
+            except (TypeError, ValueError) as err:
+                _LOGGER.info("SIP RX malformed while waiting for final response: %s", err)
                 continue
             if not msg.is_response or msg.status_code is None:
                 continue

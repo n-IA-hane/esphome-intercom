@@ -8783,6 +8783,55 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(await client._read_response(0.001))
 
+    async def test_final_response_waiter_stops_on_transport_failure(self) -> None:
+        client = sip_client.SipCallClient(
+            local_ip="192.168.1.10",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        client._pending_target = "P4"
+        client._pending_remote_host = "192.0.2.10"
+        client._pending_remote_sip_port = 5060
+        client._invite_transaction_active = True
+        reads = 0
+
+        async def read_response(_timeout: float):
+            nonlocal reads
+            reads += 1
+            raise OSError("socket closed")
+
+        client._read_response = read_response  # type: ignore[method-assign]
+
+        self.assertEqual(
+            await client.wait_for_final(timeout=1),
+            "transport_unreachable",
+        )
+        self.assertEqual(reads, 1)
+        self.assertFalse(client._invite_transaction_active)
+        self.assertEqual(client.last_sip_event, "TRANSPORT_ERROR")
+
+    async def test_final_response_waiter_skips_one_malformed_message(self) -> None:
+        client = sip_client.SipCallClient(
+            local_ip="192.168.1.10",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        reads = 0
+
+        async def read_response(_timeout: float):
+            nonlocal reads
+            reads += 1
+            if reads == 1:
+                raise sip.SipError("malformed packet")
+            return None
+
+        client._read_response = read_response  # type: ignore[method-assign]
+
+        self.assertEqual(await client.wait_for_final(timeout=1), "timeout")
+        self.assertEqual(reads, 2)
+
     def test_invite_auth_retry_rebuilds_transaction_headers(self) -> None:
         source = (PKG_DIR / "sip_client.py").read_text()
         auth_branch = source[
