@@ -53,6 +53,13 @@ def test_browser_probe_keeps_waits_light_and_bounded() -> None:
     assert "['ringing','in_call'].includes" in source
     assert 'sample("incoming_progress")' in source
     assert '== "ringing":' in source
+    assert "visible Answer button not found and auto-answer did not advance" in source
+    assert "['answering','connecting','in_call'].includes" in source
+    assert '"document_events": []' in source
+    assert '"websocket_events": []' in source
+    assert "call terminated before connection" in source
+    assert "'transport_unreachable'" in source
+    assert "terminal_reason: String(snapshot.terminal_reason || \"\")" in source
     start = source.split('START_OUTBOUND = r"""', 1)[1].split('"""', 1)[0]
     assert "Promise.resolve(card._startCall())" in start
     assert "await card._startCall()" not in start

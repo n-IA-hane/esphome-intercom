@@ -163,6 +163,8 @@ LIGHT_CARD_STATE = r"""
   const engine = globalThis.__voipStackEngine;
   return {
     card_state: String(snapshot.state || ""),
+    terminal_reason: String(snapshot.terminal_reason || ""),
+    card_error: String(card._errorMsg || globalThis.__voipStackProbeStartError || ""),
     call_id: String(snapshot.call_id || ""),
     video_active: Boolean(snapshot.video_active),
     video_offered: Boolean(snapshot.video_offered),
@@ -705,7 +707,13 @@ def main() -> int:
         context_options.update(context_kwargs())
 
     console: list[str] = []
-    result: dict = {"samples": [], "console": console, "audio_websockets": []}
+    result: dict = {
+        "samples": [],
+        "console": console,
+        "audio_websockets": [],
+        "document_events": [],
+        "websocket_events": [],
+    }
     failure: BaseException | None = None
     with sync_playwright() as playwright:
         launch_options = {
@@ -752,6 +760,16 @@ def main() -> int:
             )
         page = context.new_page()
         browser_started = time.monotonic()
+
+        def record_document_event(kind: str, url: str = "") -> None:
+            result["document_events"].append(
+                {
+                    "at_s": round(time.monotonic() - browser_started, 3),
+                    "kind": kind,
+                    "url": str(url or "").split("?", 1)[0],
+                }
+            )
+
         page.on(
             "console",
             lambda msg: console.append(
@@ -766,11 +784,37 @@ def main() -> int:
                 f"pageerror: {_sanitise_browser_message(error)}"
             ),
         )
+        page.on(
+            "framenavigated",
+            lambda frame: (
+                record_document_event("navigated", frame.url)
+                if frame == page.main_frame
+                else None
+            ),
+        )
+        page.on(
+            "domcontentloaded",
+            lambda: record_document_event("domcontentloaded", page.url),
+        )
+        page.on("load", lambda: record_document_event("load", page.url))
         cdp = context.new_cdp_session(page)
         cdp.send("Network.enable")
+        websocket_urls: dict[str, str] = {}
 
         def record_websocket_created(event: dict) -> None:
             url = str(event.get("url") or "")
+            request_id = str(event.get("requestId") or "")
+            if "/api/voip_stack/" not in url:
+                return
+            websocket_urls[request_id] = url
+            result["websocket_events"].append(
+                {
+                    "at_s": round(time.monotonic() - browser_started, 3),
+                    "kind": "created",
+                    "request_id": request_id,
+                    "url": _sanitise_browser_message(url),
+                }
+            )
             if "/api/voip_stack/ws?" not in url:
                 return
             initiator = event.get("initiator") or {}
@@ -791,7 +835,40 @@ def main() -> int:
                 }
             )
 
+        def record_websocket_closed(event: dict) -> None:
+            request_id = str(event.get("requestId") or "")
+            url = websocket_urls.pop(request_id, "")
+            if not url:
+                return
+            result["websocket_events"].append(
+                {
+                    "at_s": round(time.monotonic() - browser_started, 3),
+                    "kind": "closed",
+                    "request_id": request_id,
+                    "url": _sanitise_browser_message(url),
+                }
+            )
+
+        def record_websocket_error(event: dict) -> None:
+            request_id = str(event.get("requestId") or "")
+            url = websocket_urls.get(request_id, "")
+            if not url:
+                return
+            result["websocket_events"].append(
+                {
+                    "at_s": round(time.monotonic() - browser_started, 3),
+                    "kind": "error",
+                    "request_id": request_id,
+                    "url": _sanitise_browser_message(url),
+                    "error": _sanitise_browser_message(
+                        event.get("errorMessage") or ""
+                    ),
+                }
+            )
+
         cdp.on("Network.webSocketCreated", record_websocket_created)
+        cdp.on("Network.webSocketClosed", record_websocket_closed)
+        cdp.on("Network.webSocketFrameError", record_websocket_error)
         page.goto(args.url, wait_until="domcontentloaded", timeout=30_000)
         if _is_ha_auth_url(page.url):
             raise RuntimeError(
@@ -1024,13 +1101,32 @@ def main() -> int:
                 # valid completed answer, not a missing Answer button.
                 if str(incoming.get("card_state") or "").lower() == "ringing":
                     if not page.evaluate(CLICK_ANSWER):
-                        raise RuntimeError("visible Answer button not found")
+                        try:
+                            page.wait_for_function(
+                                f"() => ['answering','connecting','in_call'].includes((({LIGHT_CARD_STATE})()?.card_state || '').toLowerCase())",
+                                timeout=2_000,
+                                polling=100,
+                            )
+                        except PlaywrightTimeoutError as err:
+                            raise RuntimeError(
+                                "visible Answer button not found and auto-answer did not advance"
+                            ) from err
             page.wait_for_function(
-                f"() => (({LIGHT_CARD_STATE})()?.card_state || '').toLowerCase() === 'in_call'",
+                f"""() => {{
+                  const state = String((({LIGHT_CARD_STATE})()?.card_state || '')).toLowerCase();
+                  return ['in_call','idle','busy','declined','cancelled','media_incompatible','transport_unreachable','auth_required_unsupported','protocol_error','error'].includes(state);
+                }}""",
                 timeout=int(args.ring_timeout * 1000),
                 polling=100,
             )
-            sample("in_call")
+            connected = sample("in_call")
+            if str(connected.get("card_state") or "").lower() != "in_call":
+                raise RuntimeError(
+                    "call terminated before connection: "
+                    f"state={connected.get('card_state')!r} "
+                    f"reason={connected.get('terminal_reason')!r} "
+                    f"error={connected.get('card_error')!r}"
+                )
             if args.reload_in_call:
                 finish_responsiveness_monitor("before_reload_in_call")
                 page.reload(wait_until="domcontentloaded", timeout=30_000)
