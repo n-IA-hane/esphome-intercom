@@ -1,11 +1,11 @@
-# Deployment Guide
+# Deployment guide
 
 This guide maps the maintained YAMLs and the Home Assistant integration to the
 current VoIP model. The old TCP/UDP intercom split is gone: every device is a
 SIP phone, and `transport: udp` or `transport: tcp` only selects SIP signaling
 transport.
 
-## YAML Tree
+## YAML tree
 
 ```text
 yamls/
@@ -31,7 +31,7 @@ Use routable IP addresses in `phonebook` or let HA publish the central
 explicit advertised host remains the simplest deployment because SIP/RTP use
 inbound UDP/TCP sockets.
 
-## ESP Devices
+## ESP devices
 
 Choose SIP signaling transport per device. SIP is implicit; `transport` selects
 only whether signaling uses UDP or TCP:
@@ -63,7 +63,7 @@ device is not a VoIP phone and is rejected.
 
 ## Home Assistant
 
-### Install Through HACS
+### Install through HACS
 
 1. Search for **VoIP Stack** in HACS and select **Download**.
 2. Restart Home Assistant.
@@ -109,7 +109,7 @@ explicit extension. The assistant becomes a normal phonebook destination and
 uses that pipeline's existing STT, conversation agent and TTS configuration;
 no second SIP listener or separate Assist satellite is deployed.
 
-### Add And Bind A Browser Phone
+### Add and bind a browser phone
 
 Use **Add phone** to create each room phone, then select that phone Device in
 the card editor. The card's persisted settings update the same backend phone
@@ -136,7 +136,7 @@ refresh dashboards containing the card. In the Android Companion app use
 **Settings → Companion App → Troubleshooting → Reset frontend cache**. Read
 [`BREAKING_CHANGES.md`](BREAKING_CHANGES.md) before changing major versions.
 
-### ESPHome External Components
+### ESPHome external components
 
 Maintained YAMLs already reference the stable `main` branches. A custom
 lightweight AEC profile uses:
@@ -162,7 +162,7 @@ its C6 firmware/resource notes before changing LVGL or audio features.
 
 ![Waveshare P4 touch profile](images/p4-touch-overview.jpg)
 
-## Optional SIP Trunk
+## Optional SIP trunk
 
 The trunk is disabled by default. Leave it disabled for local-only VoIP
 installs; no registration, external route or DTMF collector is started.

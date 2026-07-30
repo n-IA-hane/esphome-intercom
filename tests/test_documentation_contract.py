@@ -23,6 +23,16 @@ MARKDOWN_FILES = (
     ROOT / "README.md",
     *sorted(path for path in DOCS.rglob("*.md") if "private" not in path.parts),
 )
+STYLE_MARKDOWN_FILES = (
+    ROOT / "README.md",
+    *sorted(DOCS.rglob("*.md")),
+    *sorted(
+        path
+        for base in (ROOT / "esphome" / "components", ROOT / "yamls")
+        for path in base.rglob("*.md")
+        if not any(part.startswith(".") for part in path.relative_to(ROOT).parts)
+    ),
+)
 CURRENT_SERVICE_DOCS = (
     ROOT / "README.md",
     DOCS / "AUTOMATION_DIALPLAN.md",
@@ -177,8 +187,6 @@ def test_local_markdown_links_resolve() -> None:
 def test_every_documentation_image_is_embedded() -> None:
     embedded: set[str] = set()
     for document in MARKDOWN_FILES:
-        if document.name == "MEDIA_SHOT_LIST.md":
-            continue
         text = document.read_text()
         for target in (*MARKDOWN_IMAGE.findall(text), *HTML_IMAGE.findall(text)):
             embedded.add(Path(urlsplit(target).path).name)
@@ -186,6 +194,50 @@ def test_every_documentation_image_is_embedded() -> None:
         image.name for image in (DOCS / "images").iterdir() if image.name not in embedded
     )
     assert not orphaned, "Unembedded docs/images assets: " + ", ".join(orphaned)
+
+
+def test_public_markdown_headings_use_sentence_case_without_emoji() -> None:
+    allowed_capitals = {
+        "Assistant",
+        "Assist",
+        "Dahua",
+        "Enhancement",
+        "ESPHome",
+        "Espressif",
+        "GitHub",
+        "HACS",
+        "Home",
+        "Stack",
+        "Voice",
+        "VoIP",
+        "YAMLs",
+    }
+    emoji = re.compile(r"[\u2600-\u27BF\U0001F000-\U0001FAFF]")
+    errors: list[str] = []
+    for document in STYLE_MARKDOWN_FILES:
+        for heading in MARKDOWN_HEADING.findall(document.read_text()):
+            if emoji.search(heading):
+                errors.append(f"{document.relative_to(ROOT)}: emoji in {heading!r}")
+            words = heading.split()
+            for raw_word in words[1:]:
+                word = raw_word.strip("`*_.,:;!?()[]{}")
+                if (
+                    not word
+                    or word in allowed_capitals
+                    or word.isupper()
+                    or word[0].isdigit()
+                    or not word[0].isupper()
+                ):
+                    continue
+                errors.append(
+                    f"{document.relative_to(ROOT)}: title case in {heading!r}"
+                )
+                break
+    assert not errors, "Markdown heading style errors:\n" + "\n".join(errors)
+
+
+def test_published_release_notes_are_not_duplicated_under_docs() -> None:
+    assert not tuple(DOCS.glob("RELEASE_*.md"))
 
 
 def test_ha_services_are_documented_and_examples_use_real_fields() -> None:

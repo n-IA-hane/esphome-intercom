@@ -1,10 +1,10 @@
-# Testing And Debug
+# Testing and debug
 
 This project has enough call paths that manual spot checks are not enough.
 Use this page as the standard regression checklist before release-level
 changes.
 
-## Automated Local Tests
+## Automated local tests
 
 Run the HA integration suite:
 
@@ -35,7 +35,7 @@ Important groups:
 - `tests/test_group_call_matrix.py`: PBX-style ring/conference group matrix.
 - `tests/test_conference.py`: conference mixer and lifecycle primitives.
 
-## HACS Release Archive
+## HACS release archive
 
 Build the release asset from the repository root:
 
@@ -72,7 +72,7 @@ unzip -o voip_stack.zip -d /config/custom_components/voip_stack
 After extraction, `/config/custom_components/voip_stack/manifest.json` must
 exist. Restart Home Assistant and hard-refresh dashboards containing the card.
 
-## Real SIP Matrix
+## Real SIP matrix
 
 The development environment can run local SIP endpoints against the real HA
 instance. The useful matrix is:
@@ -95,7 +95,7 @@ Expected route evidence:
 - no `SIP route requested` for registered endpoint calls to normal roster
   targets.
 
-## SIP Video Matrix
+## SIP video matrix
 
 Enable video only on the HA softphone and use a standard SIP peer. Cover at
 least:
@@ -159,7 +159,7 @@ Wait for `READY_FOR_VIDEO_CALL`, then start a deterministic audio/video caller:
 See [SIP Video](SIP_VIDEO.md) for an outgoing probe,
 the current codec profile and deliberate limitations.
 
-## Service Matrix
+## Service matrix
 
 Exercise all public services with temporary data:
 
@@ -187,7 +187,7 @@ Always restore:
 - temporary SIP accounts removed;
 - no pending HA softphone call.
 
-## Home Assistant Logs
+## Home Assistant logs
 
 To include the integration's DEBUG messages in Home Assistant logs, add this
 top-level block to `configuration.yaml` and restart Home Assistant:
@@ -224,7 +224,7 @@ Look for:
 - `SIP TX INVITE <target>@<contact>` for registered endpoint routes;
 - `SIP route requested` only for explicit automation fallback scenarios.
 
-## Phonebook Inspection
+## Phonebook inspection
 
 ```bash
 export HA_URL="https://home-assistant.example"
@@ -241,7 +241,7 @@ the repository.
 Use this after every group/extension/account change. The phonebook is the
 source of truth for dialing.
 
-## Runtime Snapshots
+## Runtime snapshots
 
 ESP devices expose useful SIP snapshots as sensors:
 
@@ -256,7 +256,7 @@ ESP devices expose useful SIP snapshots as sensors:
 For HA-side runtime, inspect call events, softphone state events and
 `sensor.voip_phonebook`.
 
-## Audio Debug
+## Audio debug
 
 When RTP relay debug is enabled, HA writes WAV captures under:
 
@@ -282,7 +282,7 @@ WAV/JSON data can still contain private conversation audio and call metadata:
 disable debug mode after the test and remove retained artifacts according to
 the deployment's privacy policy.
 
-## Serial And Device Debug
+## Serial and device debug
 
 For ESP debug:
 

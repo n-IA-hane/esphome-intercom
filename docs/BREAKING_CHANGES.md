@@ -6,10 +6,10 @@ an earlier development contract instead of carrying two parallel APIs. The
 config-entry migration preserves supported persisted settings, but copied card
 YAML and automations cannot be migrated by Home Assistant automatically.
 
-## 2026.8.0: Upgrade checklist
+## 2026.8.0: upgrade checklist
 
 1. Read the `2026.8.0` sections below and the
-   [`2026.8.0` release notes](RELEASE_2026_8_0.md).
+   [`2026.8.0` release notes](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.0).
 2. Update VoIP Stack, restart Home Assistant and open **Reconfigure** once.
    Confirm the incoming-routing, Assist and SIP-video choices.
 3. Open every additional phone under **VoIP Stack > Add phone** and verify its
@@ -24,7 +24,7 @@ Assistant phone subentry, carries forward its persisted DND/extension/group
 settings and converts existing local SIP registrar accounts into phone
 subentries. The old inline account list is removed after that migration.
 
-## 2026.8.0: Every logical phone is a separate Home Assistant Device
+## 2026.8.0: every logical phone is a separate Home Assistant device
 
 The former single HA softphone model is now a collection of native config
 subentries and Devices. The migrated default phone remains available, while
@@ -53,7 +53,7 @@ Card YAML may contain both `device_id` and the stable internal `endpoint_id` so
 the frontend can preserve its exact binding. Public Home Assistant actions use
 only `device_id`; `endpoint_id` is not an alternative action field.
 
-## 2026.8.0: One Home Assistant call-action vocabulary
+## 2026.8.0: one Home Assistant call-action vocabulary
 
 Home Assistant actions now use `destination` as the only call destination
 field. Replace `target:` or `call:` inside `voip_stack.call`,
@@ -107,7 +107,7 @@ API expose one predictable path. The development-only
 clients must use the standard Home Assistant `call_service` command with the
 `voip_stack.call` action.
 
-## 2026.8.0: Incoming trunk routing is explicit
+## 2026.8.0: incoming trunk routing is explicit
 
 Reconfigure the integration and choose one incoming-routing mode:
 
@@ -147,7 +147,7 @@ originating endpoint is excluded when it belongs to the destination group.
 Automations that previously expanded a group themselves should select the
 group name instead.
 
-## 2026.8.0: Use phone-scoped state for phone-scoped automations
+## 2026.8.0: use phone-scoped state for phone-scoped automations
 
 `event.voip_stack_call` is the aggregate PBX-wide Event Entity and is the
 correct trigger for `route_requested`. Each integration-owned phone also has a
@@ -187,7 +187,7 @@ events, replace that flow with an action response. Save a generated or rotated
 password immediately; it cannot be recovered later and must instead be
 rotated again.
 
-## 2026.8.0: Optional ESPHome entities are explicit platforms
+## 2026.8.0: optional ESPHome entities are explicit platforms
 
 The ESPHome `voip_stack` core no longer accepts `auto_entities`. ESPHome's
 upstream contribution rules prohibit using `AUTO_LOAD` for primary entity
@@ -197,7 +197,7 @@ Declare the required `platform: voip_stack` entities explicitly, or include
 Configurations that do not need those entities now compile without declaring
 empty platform sections.
 
-## 2026.7.1: Contract Updates
+## 2026.7.1: contract updates
 
 The stable `2026.7.0` migration below remains the main breaking change.
 `2026.7.1` additionally makes several previously implicit
@@ -238,8 +238,8 @@ automation, SIP client or card fork.
   UDP without SRTP. Do not expose an ESP listener directly to an untrusted
   network.
 
-The full change and validation summary is in
-[`RELEASE_2026_7_1.md`](RELEASE_2026_7_1.md).
+The full change and validation summary is in the
+[`2026.7.1` release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.7.1).
 
 ## 2026.7.0: ESPHome devices are SIP phones now
 

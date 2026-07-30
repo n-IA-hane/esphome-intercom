@@ -1,10 +1,10 @@
-# VoIP Test Matrix
+# VoIP test matrix
 
 This matrix is mandatory before claiming the VoIP refactor complete. A test
 passes only when protocol logs, backend state, card rendering and device state
 agree. Counters alone are not proof of audible bidirectional audio.
 
-## Global Gates
+## Global gates
 
 - No ESP firmware compile or OTA before local implementation and host checks.
 - `voip-pcm/1` profile documented and kept in sync with code.
@@ -24,7 +24,7 @@ agree. Counters alone are not proof of audible bidirectional audio.
 - The phonebook is an outbound dial plan, not an inbound caller allowlist.
   Unknown/unregistered callers remain valid live-test sources.
 
-## Local Contract Tests
+## Local contract tests
 
 Run after implementation is complete:
 
@@ -71,7 +71,7 @@ Required simulator scenarios:
 - `ha-softphone-remote-cancel`
 - `terminal-no-late-green`
 
-## HA Service Matrix
+## HA service matrix
 
 For every service, assert HA event bus output, logs and resulting entity/card
 state.
@@ -122,7 +122,7 @@ state.
   validate credential lifecycle, one-time secret handling, registrar refresh
   and redacted exports.
 
-## Live Device Call Matrix
+## Live device call matrix
 
 Run after HA deployment and only after local tests pass. Exercise every powered
 device in the qualification environment and record unavailable devices as not
@@ -175,7 +175,7 @@ P4 were therefore outside that physical run.
   separate L16 48 kHz case verifies high-rate PCM without implying that ESP
   endpoints support compressed codecs.
 
-## Real HA Qualification Runners
+## Real HA qualification runners
 
 - `tools/live_voip_qualification.py --all --allow-trunk`: HA, powered ESP,
   ring/conference, DND, self-busy and external cancellation paths.
@@ -202,7 +202,7 @@ it validates confirmed-dialog SIP INFO collection. Do not force an RTP-only
 test profile against an SDP offer that contains no named-event payload and then
 classify the missing digit as a PBX failure.
 
-## Card Visual Matrix
+## Card visual matrix
 
 Use Playwright/Chromium screenshots plus HA events/logs.
 
@@ -223,7 +223,7 @@ Use Playwright/Chromium screenshots plus HA events/logs.
 - ESP mirror incoming/ringing/in_call/declined/busy states match ESP entity
   snapshots.
 
-## LED/Presentation Matrix
+## LED/presentation matrix
 
 Sample LED entity effect/color at <=100 ms while calls transition.
 
@@ -237,7 +237,7 @@ Sample LED entity effect/color at <=100 ms while calls transition.
 - Media/MWW active then incoming VoIP call: VoIP owns audio and presentation
   remains consistent.
 
-## Required Artifacts
+## Required artifacts
 
 - `test_runs/` JSON from live matrix.
 - Playwright screenshots for both dashboards in idle, ringing and in_call.

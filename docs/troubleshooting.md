@@ -10,7 +10,7 @@ collect:
 - RTP packet/byte counters;
 - a short WAV capture when audio quality is in question.
 
-## ESP Does Not Ring
+## ESP does not ring
 
 - Confirm the peer sends a SIP `INVITE` to the ESP `sip_port`.
 - Check ESP `voip_stack` `transport` matches the peer signaling transport.
@@ -23,7 +23,7 @@ collect:
   Direct SIP only happens when the phonebook contains complete direct route
   data.
 
-## HA Softphone Does Not Ring
+## HA softphone does not ring
 
 - Confirm HA reports both implicit SIP listeners ready in logs:
   `SIP UDP listener ready`, `SIP TCP listener ready` and
@@ -36,7 +36,7 @@ collect:
 - For local registered SIP endpoints, confirm the REGISTER Contact is present in
   HA logs and the phonebook includes the registered SIP endpoint contact.
 
-## Unknown Or Unregistered Caller Is Rejected
+## Unknown or unregistered caller is rejected
 
 The phonebook is an outbound dial plan, not an inbound caller allowlist. An ESP
 or HA may therefore receive a compatible SIP INVITE from any peer that can
@@ -55,7 +55,7 @@ trusted-trunk origin.
   caller admission policy is required; the ESP profile does not provide
   SIP/TLS, SRTP or an inbound caller allowlist.
 
-## Call Fails With `media_incompatible`
+## Call fails with `media_incompatible`
 
 The SDP offer/answer did not produce a usable PCM RTP format, or HA could not
 build the required bridge conversion. Use explicit supported PCM profiles such
@@ -67,7 +67,7 @@ ESP devices are PCM-only. HA softphone/trunk legs can negotiate common VoIP
 codecs where supported, but the bridge must still be able to convert the ESP
 leg to a compatible PCM format.
 
-## HA Cannot Route A Name
+## HA cannot route a name
 
 - Ensure `sensor.voip_phonebook` contains the target.
 - If an ESP has just rebooted or been reflashed, check
@@ -87,7 +87,7 @@ leg to a compatible PCM format.
   ESP always go to HA; HA resolves `extension` as an internal target and
   `number` as an external trunk target.
 
-## Registered Softphone Cannot Register To HA
+## Registered softphone cannot register to HA
 
 - Confirm the always-on HA SIP UDP/TCP listener is reachable on the configured
   SIP port and that the client's selected transport matches.
@@ -102,7 +102,7 @@ leg to a compatible PCM format.
 - Confirm HA logs show REGISTER and a dynamic phonebook contact for the
   registered SIP endpoint.
 
-## Dahua VTO Registers But Calls Fail
+## Dahua VTO registers but calls fail
 
 - Use the same VTO account/number configured on the door station when creating
   its local SIP account in VoIP Stack. The dynamic phonebook entry must show
@@ -127,13 +127,13 @@ every Dahua firmware revision has been tested on physical hardware. When
 reporting a variant, attach sanitized REGISTER, INVITE/answer SDP, final status
 and RTP payload-size evidence.
 
-## Busy Or DND
+## Busy or DND
 
 DND and active-call contention should produce `486 Busy Here` or a terminal
 reason of `busy`. Decline should produce `603 Decline` or a configured SIP
 final response.
 
-## Hold, UPDATE Or Re-INVITE
+## Hold, UPDATE or re-INVITE
 
 ESP endpoints do not renegotiate established media. A hold or media-changing
 re-INVITE receives `488 Not Acceptable Here`; the original dialog and media
@@ -147,7 +147,7 @@ an accepted update, inspect `media_renegotiations`, the current directional
 formats and the WebSocket `media_update` notification. A re-INVITE 2xx also
 requires ACK; HA terminates the dialog if that ACK never arrives.
 
-## No Audio
+## No audio
 
 - Confirm RTP ports are reachable in both directions.
 - Check selected TX/RX formats in the SIP snapshot.
@@ -171,7 +171,7 @@ requires ACK; HA terminates the dialog if that ACK never arrives.
 - If one browser works and another does not, check which browser owns the HA
   softphone media WebSocket for that active call.
 
-## Trunk Does Not Register
+## Trunk does not register
 
 - Confirm `trunk_enabled` is on; when off, no trunk runtime is created.
 - Check `sip_trunk.trunk_status_code`, `trunk_status_reason` and
@@ -181,7 +181,7 @@ requires ACK; HA terminates the dialog if that ACK never arrives.
 - INFO logs should show REGISTER, challenge if present, and final registration
   status. DEBUG logs include the detailed SIP flow.
 
-## Inbound Trunk Call Routes To The Wrong Target
+## Inbound trunk call routes to the wrong target
 
 - Confirm the provider offers RFC2833/telephone-event DTMF in SDP.
 - Prefer negotiated RTP `telephone-event`. The widely deployed legacy SIP INFO
@@ -193,7 +193,7 @@ requires ACK; HA terminates the dialog if that ACK never arrives.
 - If digits arrive but do not resolve, HA logs them and terminates the answered
   trunk leg as `route_not_found`.
 
-## Card State Looks Wrong
+## Card state looks wrong
 
 - ESP mirror cards should follow ESPHome entity state and ESP buttons. They do
   not own RTP counters for the HA softphone leg.

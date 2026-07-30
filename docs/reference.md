@@ -20,7 +20,7 @@ voip_stack:
       rtp_port: 40000
 ```
 
-### ESP Component Options
+### ESP component options
 
 | Option | Meaning |
 | --- | --- |
@@ -48,7 +48,7 @@ voip_stack:
 | `network_socket_headroom` | Validation-only reservation for additional lwIP sockets in composite firmware. |
 | `audio_debug` | Verbose PCM-level diagnostics; keep off outside targeted tests. |
 
-### ESP Triggers
+### ESP triggers
 
 | Trigger | Meaning |
 | --- | --- |
@@ -65,7 +65,7 @@ voip_stack:
 | `on_destination_changed` | Selected phonebook destination changed. |
 | `on_phonebook_update` | Local phonebook content changed. |
 
-### ESP Actions
+### ESP actions
 
 - Call control: `voip_stack.start`, `voip_stack.stop`,
   `voip_stack.call_toggle`, `voip_stack.answer_call`,
@@ -112,7 +112,7 @@ small local contract: `name`, optional `ip`, `port`, `rtp_port`, and
 `address`, `sip_uri`, `extension`, `number`, groups, and media metadata. HA
 shapes that central data into the compact roster pushed to each ESP.
 
-### ESP Conditions
+### ESP conditions
 
 - `voip_stack.is_idle`
 - `voip_stack.is_calling`
@@ -123,7 +123,7 @@ shapes that central data into the compact roster pushed to each ESP.
 - `voip_stack.destination_is` (`destination`)
 - `voip_stack.is_ha_destination`
 
-## HA Logical Phones
+## HA logical phones
 
 The integration entry always owns a backward-compatible default Home Assistant
 phone. Add more under **Settings > Devices & services > VoIP Stack > Add
@@ -165,7 +165,7 @@ destinations remain audio-only even if the caller requests video. For
 video-capable browser calls, offer/answer direction and each browser's camera
 permission are independent.
 
-## HA Services
+## HA services
 
 - `voip_stack.call`
 - `voip_stack.answer`
@@ -255,7 +255,7 @@ answered member. A conference group creates an HA-hosted SIP conference room;
 calling the group joins immediately, while members with `conference_ring`
 enabled are invited when the room starts.
 
-## HA Setup Options
+## HA setup options
 
 The setup flow has two layers:
 
@@ -315,7 +315,7 @@ Version 1 config entries migrate without changing their effective behavior:
 an enabled non-zero DTMF configuration becomes `dtmf`, other configurations
 become `direct`, and automation routing remains disabled until selected.
 
-## Home Assistant Automation Events
+## Home Assistant automation events
 
 `event.voip_stack_call` is the preferred native automation surface. It exposes
 the call lifecycle, routing deadlines and DTMF through a browsable HA event
@@ -361,7 +361,7 @@ events or `sip_info` for the widely deployed legacy SIP INFO representation.
 HA can observe this only when VoIP Stack is a signaling/media participant in
 the call; direct ESP-to-ESP or third-party peer-to-peer calls bypass HA.
 
-## SIP State Values
+## SIP state values
 
 Public SIP call states: `idle`, `calling`, `remote_ringing`, `ringing`,
 `connecting`, `in_call`, `terminating`, `busy`, `declined`, `cancelled`,

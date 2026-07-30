@@ -1,4 +1,4 @@
-# Optional SIP Trunk
+# Optional SIP trunk
 
 Home Assistant can optionally register one SIP trunk account with a provider or
 PBX. This does not change the local contract: ESP devices remain direct SIP
@@ -7,7 +7,7 @@ phones and do not register to the provider.
 When the trunk is disabled, no trunk registration, external outbound routing or
 inbound DTMF collector is started.
 
-## Setup Flow
+## Setup flow
 
 The first VoIP Stack setup step configures HA's local SIP
 endpoint identity and media ports:
@@ -34,7 +34,7 @@ details:
 - optional experimental automation routing override
 - DTMF timeout and optional terminator
 
-## Outbound Routing
+## Outbound routing
 
 Local targets still resolve through the phonebook first.
 
@@ -48,7 +48,7 @@ Local targets still resolve through the phonebook first.
 If the trunk is configured but not registered, outbound unresolved targets fail
 as routing errors. There is no proprietary intercom compatibility route.
 
-## Inbound Routing
+## Inbound routing
 
 Provider inbound calls arrive at HA's SIP endpoint and use the shared phonebook
 as their default dial plan. **Inbound default target** accepts HA, a phonebook
@@ -93,7 +93,7 @@ The route collector prefers negotiated RTP `telephone-event` and also accepts
 the widely deployed legacy SIP INFO DTMF representation. Acoustic in-band
 tones are not decoded.
 
-## Experimental Automation Override
+## Experimental automation override
 
 **Allow experimental automation routing overrides** is a separate switch and
 is disabled by default. Enabling it adds one bounded `route_requested` decision

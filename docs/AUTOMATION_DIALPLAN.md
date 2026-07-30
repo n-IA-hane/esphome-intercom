@@ -1,4 +1,4 @@
-# Home Assistant Automation Cookbook And Dial Plan
+# Home Assistant automation cookbook and dial plan
 
 > [!WARNING]
 > Initial experimental preview in `2026.8.0`. The normal phonebook route
@@ -24,7 +24,7 @@ The examples target VoIP Stack `2026.8.0` or later. Repository checks validate
 their YAML structure, Home Assistant event types and the runtime schemas of
 every `voip_stack.*` action they invoke.
 
-## Choose The Correct Call Hook
+## Choose the correct call hook
 
 Routing and observation are separate. Use the hook that owns the phase you
 want to control:
@@ -67,7 +67,7 @@ is pending. `voip_stack.forward` works later, after a phone or group has already
 received the call. It releases or replaces the current destination and follows
 the configured `on_failure` policy.
 
-## Configure Incoming Trunk Routing
+## Configure incoming trunk routing
 
 Reconfigure VoIP Stack and choose one **Incoming routing** mode:
 
@@ -98,7 +98,7 @@ enabled and a non-zero timeout becomes DTMF mode. Other setups become Direct
 mode. Automation overrides remain disabled until explicitly enabled, while the
 existing credentials, target and timeout are preserved.
 
-## Override The Initial Destination
+## Override the initial destination
 
 This complete automation routes a trunk call to `Waveshare S3 Audio` before
 the fallback destination. It uses Home Assistant's native Event Entity trigger,
@@ -132,7 +132,7 @@ can route to an indoor ESP only while someone is home. If the condition is
 false, no action runs and the default target takes over when the short decision
 window expires.
 
-### Route A Known Caller According To Presence
+### Route a known caller according to presence
 
 This example uses only native Home Assistant conditions. Calls from Wildix
 extension `426` ring the kitchen ESP while Daniele is home; every other state,
@@ -181,7 +181,7 @@ The `caller` value is the resolved name or number shown by
 caller. The destinations may likewise be phonebook names, extensions, groups,
 registered SIP phones or Assist.
 
-### Route Only Provider/PBX Trunk Calls To A Ring Group
+### Route only provider/PBX trunk calls to a ring group
 
 `route_requested` may also describe an HA-owned extension call. Filter on the
 stable `ingress` attribute when an automation must affect only calls entering
@@ -222,7 +222,7 @@ routes, pass the `call_id` from the event explicitly. The configured fallback
 remains authoritative when no automation acts. Use `voip_stack.forward` only
 after a call has already been delivered to a ringing or connected endpoint.
 
-## Forward An Unanswered HA Call To Assist
+## Forward an unanswered HA call to Assist
 
 Initial routing and no-answer forwarding are separate operations. Once the HA
 softphone is ringing, its durable state sensor supports Home Assistant's native
@@ -303,7 +303,7 @@ actions:
       on_failure: resume
 ```
 
-## Common Automation Recipes
+## Common automation recipes
 
 Keep the initial destination decision and later call handling separate. These
 are the most common patterns. Complete copyable examples follow the table:
@@ -323,7 +323,7 @@ automation from replacing a destination deliberately dialled by the caller.
 Likewise, a false condition should normally perform no action: after the short
 decision window, VoIP Stack follows the configured fallback transparently.
 
-### Route To Reception During Office Hours
+### Route to reception during office hours
 
 This automation affects only calls entering from the provider/PBX trunk. During
 office hours it selects `Reception`; outside those hours it performs no action,
@@ -364,7 +364,7 @@ To send out-of-hours calls to Assist instead, configure Assist as the normal
 trunk fallback. This keeps one clear routing authority and avoids duplicating
 the same schedule in two automation branches.
 
-### Notify A No-Answer Timeout
+### Notify a no-answer timeout
 
 Use the Event Entity belonging to the phone you care about. This example sends
 one notification when `Casa` reaches its configured no-answer timeout:
@@ -396,7 +396,7 @@ currently means that the no-answer timeout expired. If the caller hangs up
 before that timeout, the Event Entity emits `ended`; the Logbook still presents
 that unanswered incoming call as missed.
 
-### Forward An Unanswered Call To A Mobile Number
+### Forward an unanswered call to a mobile number
 
 First create a phonebook contact containing only the public number. Run this
 once from **Developer tools > Actions**, or create the same contact through
@@ -438,7 +438,7 @@ VoIP channel. `on_failure: resume` leaves the original call available if the
 trunk call cannot be started. Remove the `ingress: trunk` condition if local
 extension calls should use the same fallback.
 
-## Actionable Doorbell Notification
+## Actionable doorbell notification
 
 Use the call Event Entity attached to the **receiving Home Assistant phone**.
 The `ringing` occurrence contains caller information, while the selected phone
@@ -516,9 +516,9 @@ The same automation is available as a standalone file:
 
 ![Answer a VoIP call from a Companion notification](images/mobile-notification-answer.gif)
 
-## Native Automation Entities
+## Native automation entities
 
-### Event Entity
+### Event entity
 
 Every integration-owned phone Device exposes its own call Event Entity, for
 example `event.casa_call` or `event.test_call` (the visible/entity names are
@@ -541,7 +541,7 @@ route kind, owner and controllability. The aggregate entity is useful for
 initial `route_requested` decisions and advanced inspection; prefer the phone's
 own Event Entity for room-specific logic.
 
-### Durable State Sensor
+### Durable state sensor
 
 Each logical browser/SIP-account phone exposes an enum call-state Sensor Entity.
 The default phone keeps `sensor.voip_stack_call_state` for backward
@@ -568,7 +568,7 @@ its triggerable state/event surfaces. The per-phone Event Entity, durable
 sensor, WebSocket stream and card are all derived from the same backend call
 session.
 
-## DTMF During A Connected Call
+## DTMF during a connected call
 
 Initial trunk extension selection and established-call DTMF are deliberately
 separate:
@@ -582,7 +582,7 @@ separate:
 This supports actions such as opening a gate when a participant presses a key,
 without turning the keypad into a second routing state machine.
 
-### Dial A Phonebook Extension During Initial Trunk Routing
+### Dial a phonebook extension during initial trunk routing
 
 This path does not need an automation:
 
@@ -599,7 +599,7 @@ Explicit digits are authoritative. A valid extension does not emit
 automation. If the caller enters no digits, the optional automation decision
 and then the configured fallback are evaluated as described above.
 
-### Open A Gate With In-Call DTMF
+### Open a gate with in-call DTMF
 
 During a connected call, this example presses a gate relay when the caller on
 the `Front Door` call presses `5`:
@@ -644,7 +644,7 @@ network. For locks and gates, restrict SIP access to a trusted LAN, VPN or
 authenticated trunk and add any authorization conditions required by the
 installation.
 
-## Advanced Concurrency Controls
+## Advanced concurrency controls
 
 Every HA-owned logical call has one owner and a monotonic `revision`. Control
 changes such as route selection, destination replacement and ownership handoff

@@ -1,4 +1,4 @@
-# Espressif Components And Licenses
+# Espressif components and licenses
 
 This project is MIT-licensed, but maintained VoIP YAMLs can also use audio
 components from the split
@@ -15,7 +15,7 @@ For repository-wide attribution, ESPHome-derived component notes and the
 Apache-2.0 license text used by local ESPHome compatibility forks, see
 [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
-## Runtime Components
+## Runtime components
 
 The current audio stack uses these Espressif components:
 
@@ -47,7 +47,7 @@ There is no P4 downgrade pin for `esp-sr`. The P4 full AFE target uses the same
 GMF/ESP-SR generation as the S3 dual-mic target, including the `esp32p4` and
 `esp32p4_less_v3` headers and prebuilt libraries shipped by Espressif.
 
-## Component Boundaries
+## Component boundaries
 
 The Espressif integrations are internal backends of existing ESPHome
 components, not new mandatory external components layered on top of each other.
@@ -67,7 +67,7 @@ The cross-component validation only runs when both `esp_audio_stack` and
 `voip_stack` appear in the same YAML, to prevent double ownership of AEC or
 DC-offset correction.
 
-## Naming And License Boundaries
+## Naming and license boundaries
 
 Most GMF/audio components used by the audio backend are not generic MIT
 libraries.
@@ -89,7 +89,7 @@ Project policy:
 | Branding | Do not use Espressif logos or trade dress in the component UI/docs. If a logo is ever used, follow Espressif's logo guidelines and include their trademark disclaimer. |
 | API wording | It is fine to say "uses Espressif ESP-IDF/GMF/ESP-SR components" when that is factually true. Avoid wording such as "official Espressif component" for this repository's own ESPHome component. |
 
-## Reference Components
+## Reference components
 
 These components are used as official reference material for board and codec
 conformance, but are not currently a replacement for `esp_audio_stack`:
@@ -99,7 +99,7 @@ conformance, but are not currently a replacement for `esp_audio_stack`:
 | `espressif/esp_board_manager` / `periph_i2s` | Reference for Espressif board-level I2S ownership | Espressif Modified MIT, restricted to Espressif products | Audited but not used by the active backend. The adapter uses official `esp_driver_i2s` internally, but currently hides DMA channel config and enables channels during peripheral ref, which does not fit this ESPHome lifecycle. |
 | Waveshare `esp32_p4_wifi6_touch_lcd_x` BSP | Reference for Waveshare P4 pinout, ES8311/ES7210 setup and PA control | See upstream BSP package | The BSP uses `esp_codec_dev` and standard I2S examples. Our full-duplex TDM path still needs custom ESPHome integration for mic/ref staging, mixer, VoIP calls and Home Assistant entities. |
 
-## Generated-Code Coverage
+## Generated-code coverage
 
 The current generated-code snapshots confirm:
 
@@ -127,7 +127,7 @@ The current generated-code snapshots confirm:
 
 ![Wake-word barge-in and media ducking](images/ducking-barge-in.gif)
 
-## Source Audit Findings
+## Source audit findings
 
 The current integration has been checked against the Espressif component sources
 resolved in the generated builds:
@@ -169,7 +169,7 @@ resolved in the generated builds:
   the ESPHome frame-spec revision if needed. This is a known integration edge to
   watch during runtime tests, not a reason to bypass the manager.
 
-## PSRAM Policy
+## PSRAM policy
 
 Do not treat all Espressif components the same:
 
@@ -203,7 +203,7 @@ Runtime test interpretation: PSRAM use inside GMF/esp-sr is expected. If a test
 crashes or glitches, first capture the stack and memory snapshot; do not fork or
 override Espressif allocation policy without evidence.
 
-## Migration Matrix
+## Migration matrix
 
 The current direction is to use Espressif code where it cleanly owns a problem,
 and keep ESPHome code where it owns board wiring, callbacks, Home Assistant
@@ -223,7 +223,7 @@ entities or device-specific data routing.
 | `esp_capture` audio sources | High-level capture sources, including codec AEC capture | Do not integrate now | It owns a capture pipeline and source lifecycle intended for recording/streaming. It conflicts with ESPHome's microphone, speaker, mixer and VoIP ownership. Useful as reference only. |
 | Waveshare BSP | Board pinout, codec, PA and display/touch setup | Copy patterns only | It validates hardware constants and codec setup style. Its audio examples are standard I2S/codec flows, not our 48 kHz full-duplex TDM with two mics plus reference. |
 
-## Exposed Capability Checklist
+## Exposed capability checklist
 
 The public `esp_audio_stack` surface is deliberately broad enough for custom
 audio boards while still keeping fake knobs out:
@@ -240,7 +240,7 @@ codec-private analog register scripts, and raw multi-channel microphone output
 as a standard ESPHome microphone. Those require separate backend/component work;
 exposing them as inert options would make custom builds harder to debug.
 
-## Future Work
+## Future work
 
 - **Dual I2S microphones with software AEC reference**: Espressif AFE can
   consume interleaved `MMR` frames (two microphone channels plus playback
@@ -251,7 +251,7 @@ exposing them as inert options would make custom builds harder to debug.
   only after release validation, because it changes the AFE feed layout and
   needs hardware tests with a real two-mic board.
 
-## Practical Rule
+## Practical rule
 
 When adding or updating audio features, prefer Espressif-provided managers and
 codec helpers when they fit the ESPHome architecture. Keep copyright and license

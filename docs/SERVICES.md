@@ -1,4 +1,4 @@
-# Home Assistant Services
+# Home Assistant services
 
 The `voip_stack.*` services are the public control surface for the HA
 softphone, central phonebook, local SIP endpoint accounts and automation
@@ -7,7 +7,7 @@ fallback routing.
 The card uses these services too. The card does not implement private routing
 logic.
 
-## Softphone Services
+## Softphone services
 
 The normal automation editor shows one optional `device_id` phone picker. If
 it is omitted, the default HA phone is selected. This is the only public phone
@@ -135,7 +135,7 @@ for conference calls entities, plus Auto answer and Send video switches. The
 Device entities, this action and the card all use the same persisted phone
 configuration.
 
-## Phonebook Services
+## Phonebook services
 
 ### `voip_stack.add_contact`
 
@@ -192,7 +192,7 @@ Remove unavailable ESPHome VoIP devices from the HA device registry.
 Without `device_id`, only unavailable/unknown devices older than
 `min_unavailable_hours` are purged. A large value is a safe no-op test.
 
-## Local SIP Endpoint Account Services
+## Local SIP endpoint account services
 
 These accounts are for standard SIP endpoints registering to HA: phones,
 softphones, ATAs, baresip, pjsua and similar clients.
@@ -245,7 +245,7 @@ once in the administrator-only action response.
 Return configured accounts without passwords in the administrator-only action
 response.
 
-## Automation Route Service
+## Automation route service
 
 ### `voip_stack.set_deadline` / `voip_stack.cancel_deadline`
 
@@ -294,7 +294,7 @@ pending. This is the normal automation action for initial trunk routing.
 This action does not forward an already-ringing call. Use
 `voip_stack.forward` for that later lifecycle operation.
 
-## Native Call Event Entity
+## Native call event entity
 
 `event.voip_stack_call` is the browsable automation surface for call lifecycle,
 routing deadlines and in-call DTMF. Its state is the last occurrence timestamp;
@@ -317,7 +317,7 @@ and `extension` for locally originated calls. The selected sensor identifies
 the phone: an automation on Casa's sensor does not apply to every logical
 phone.
 
-## Experimental: In-call DTMF Event Entity Occurrence
+## Experimental: in-call DTMF event entity occurrence
 
 This event surface remains experimental in `2026.8.0`. Automations that operate
 gates, locks or other security-sensitive devices must validate the expected

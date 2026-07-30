@@ -1,4 +1,4 @@
-# ESPHome Voice Assistant Fork Upstream Record
+# ESPHome Voice Assistant fork upstream record
 
 Upstream baseline: ESPHome upstream `dev` commit
 `5738c60206b2792634ac4dfe05712d675235d0ec`
@@ -11,7 +11,7 @@ Checked with:
 diff -ru /tmp/esphome-upstream/esphome/components/voice_assistant esphome/components/voice_assistant
 ```
 
-## Local Patch
+## Local patch
 
 1. `tts_playback_start_timeout`
 
@@ -27,7 +27,7 @@ diff -ru /tmp/esphome-upstream/esphome/components/voice_assistant esphome/compon
    Upstream path: viable as a narrow configuration option preserving existing
    default behavior.
 
-## Current Diff Summary
+## Current diff summary
 
 ```diff
 __init__.py

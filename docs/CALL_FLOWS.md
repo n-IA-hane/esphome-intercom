@@ -1,4 +1,4 @@
-# Call Flows
+# Call flows
 
 This document explains what happens on the wire and in Home Assistant for the
 main call paths. It is intentionally operational: when a call behaves oddly,
@@ -6,7 +6,7 @@ start here and compare the observed log path against the expected path.
 
 ![SIP call-flow sequences](images/call-flow-sequences.png)
 
-## Common Pieces
+## Common pieces
 
 Every call has these layers:
 
@@ -17,7 +17,7 @@ Every call has these layers:
   pending invite and softphone state.
 - Phonebook resolver: maps the dialed target to a route action.
 
-## ESP To ESP Direct
+## ESP to ESP direct
 
 1. ESP A selects `ESP B` from its synced phonebook.
 2. The entry has a direct address/SIP URI and does not require `ha_bridge`.
@@ -28,7 +28,7 @@ Every call has these layers:
 
 Expected HA behavior: no `route_requested` event.
 
-## ESP To HA Softphone
+## ESP to HA softphone
 
 1. ESP dials the HA softphone name or extension, for example `Casa` or `666`.
 2. ESP sends the call to HA.
@@ -48,7 +48,7 @@ session, HA returns `486 Busy Here`.
 
 ![Browser, Home Assistant and ESP media path](images/browser-ha-esp-path.png)
 
-## HA/Card To ESP
+## HA/Card to ESP
 
 1. The card sends `voip_stack.call` with the selected target.
 2. HA resolves the target from `sensor.voip_phonebook`.
@@ -64,7 +64,7 @@ the central roster and mirrors HA softphone state.
 
 ![Home Assistant calling an ESP endpoint](images/call-from-home-assistant-to-esp.gif)
 
-## ESP Mirror Card To Target
+## ESP mirror card to target
 
 1. The ESP mirror card is bound to one ESPHome device.
 2. Contact next/previous buttons press that ESP's own contact-cycler controls.
@@ -84,7 +84,7 @@ cycler.
 
 ![ESP route resolution](images/esp-route-decision.png)
 
-## Registered SIP Endpoint To Registered SIP Endpoint
+## Registered SIP endpoint to registered SIP endpoint
 
 1. Endpoint A registers to HA with a local SIP account.
 2. Endpoint B registers to HA with a local SIP account.
@@ -108,7 +108,7 @@ Unexpected log shape:
 
 ![SIP bridge across transport boundaries](images/cross-transport-bridge.gif)
 
-## Unknown Or Unregistered Caller
+## Unknown or unregistered caller
 
 1. Any SIP peer with network reachability sends INVITE to the ESP or HA
    listener; no phonebook or registration lookup is used as a source allowlist.
@@ -122,7 +122,7 @@ The HA registrar authenticates REGISTER and publishes the endpoint's current
 Contact. It does not make registered accounts the only callers HA or an ESP can
 receive. Use network policy when an installation needs that restriction.
 
-## In-Dialog Hold Or Media Update
+## In-dialog hold or media update
 
 1. A call is already established with its original negotiated media.
 2. One peer sends an in-dialog INVITE or UPDATE carrying an SDP offer.
@@ -143,7 +143,7 @@ An offerless UPDATE is accepted as a session refresh. An offerless re-INVITE is
 rejected because HA does not implement the delayed offer-in-2xx/answer-in-ACK
 exchange.
 
-## Registered SIP Endpoint To HA
+## Registered SIP endpoint to HA
 
 1. Registered endpoint calls `Casa` or HA's extension.
 2. HA resolves the target as `answer_ha`.
@@ -155,7 +155,7 @@ This path is a useful regression test for TCP SIP clients. The SIP listener
 must send the `180` response before any slow UI/event work can delay the
 transaction.
 
-## HA Forward To Registered SIP Endpoint
+## HA forward to registered SIP endpoint
 
 1. An HA-owned inbound/ringing call already exists.
 2. HA service `voip_stack.forward` is called with that `call_id`, or without it
@@ -170,7 +170,7 @@ appears as `route_requested`. That is a bug.
 
 Use `voip_stack.call`, not `forward`, when there is no existing source call.
 
-## Ring Group
+## Ring group
 
 1. Caller dials a group such as `RG Casa`.
 2. HA resolves a roster entry with `metadata.group_type = ring`.
@@ -185,7 +185,7 @@ Use `voip_stack.call`, not `forward`, when there is no existing source call.
 Caller cancellation before answer must cancel every fork and release every RTP
 reservation.
 
-## Conference Group
+## Conference group
 
 1. Caller dials a group such as `CG Casa`.
 2. HA resolves a roster entry with `metadata.group_type = conference`.
@@ -200,7 +200,7 @@ reservation.
 Conference media is HA-mixed. Each participant receives the N-1 mix: everyone
 except itself.
 
-## Trunk Outbound
+## Trunk outbound
 
 1. Caller dials an external number or a contact with `number`.
 2. HA checks that no internal `extension` owns that target.
@@ -210,7 +210,7 @@ except itself.
 
 If trunk is not registered, HA rejects with `trunk_unavailable`.
 
-## Trunk Inbound: Direct Mode
+## Trunk inbound: direct mode
 
 1. A provider or PBX sends an INVITE to the registered HA trunk account.
 2. HA replaces the provider Request-URI with the configured inbound default
@@ -224,7 +224,7 @@ If trunk is not registered, HA rejects with `trunk_unavailable`.
 
 There is no DTMF collection and no pre-answer delay in Direct mode.
 
-## Trunk Inbound: DTMF Mode
+## Trunk inbound: DTMF mode
 
 1. HA answers the trunk leg with its negotiated audio, telephone-event and,
    when offered and enabled, compatible video formats. Video sockets are
@@ -242,7 +242,7 @@ The initial extension digits are route selection, not established-call DTMF
 events. Once a bridged call is connected, later negotiated keys are published
 as individual `dtmf` occurrences without interrupting media.
 
-## Optional Automation Decision
+## Optional automation decision
 
 Automation routing is an experimental, independently configurable override.
 It is disabled by default.
@@ -270,7 +270,7 @@ The decision point is not expected for:
 - an explicit DTMF extension;
 - any inbound call while automation routing is disabled.
 
-## Unanswered HA Forward
+## Unanswered HA forward
 
 1. The default route places the HA-owned logical call in `ringing`.
 2. The call-state Sensor Entity attached to the destination phone publishes

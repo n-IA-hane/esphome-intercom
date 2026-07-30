@@ -1,94 +1,55 @@
 # Documentation
 
-Welcome. These pages cover everything beyond the project pitch on the [top-level README](../README.md).
+These pages cover installation, protocols, routing, media and diagnostics
+beyond the project overview in the [top-level README](../README.md).
 
 ## Pick your path
 
-- 🚀 **Start here**: [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) is the decision
-  tree that maps hardware and features (VoIP only, VA + MWW, touch display,
-  2-mic Speech Enhancement) to the right ready-to-flash config under
-  [`yamls/`](../yamls/).
+| Need | Document |
+|---|---|
+| Choose a board and maintained YAML | [Deployment guide](DEPLOYMENT_GUIDE.md) |
+| Complete the shortest supported setup | [Quick start](../README.md#fastest-start) |
+| Upgrade without breaking automations | [Breaking changes](BREAKING_CHANGES.md) |
+| Configure ESP and HA options | [Configuration reference](reference.md) |
+| Diagnose calls and media | [Testing and debug](TESTING_AND_DEBUG.md) |
+| Resolve a specific failure | [Troubleshooting](troubleshooting.md) |
 
-- 🧭 **Quick start**: the top-level [README](../README.md#fastest-start)
-  gives the shortest supported path from HACS and one maintained YAML to a
-  working call.
+Published release notes live with their immutable artifacts on GitHub:
+[2026.8.1](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.1),
+[2026.8.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.0),
+[2026.7.1](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.7.1)
+and
+[2026.7.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.7.0).
+The repository keeps only the current upgrade contract.
 
-- 🧾 **Release / upgrade notes**: [BREAKING_CHANGES.md](BREAKING_CHANGES.md)
-  starts from the current SIP/VoIP breaking migration. The current
-  [2026.8.1 pre-release notes](RELEASE_2026_8_1.md) describe the latest
-  interoperability and consolidation delta. The stable
-  [2026.8.0 release notes](RELEASE_2026_8_0.md) remain the complete illustrated
-  feature overview. Older published notes remain available for
-  [2026.7.1](RELEASE_2026_7_1.md) and [2026.7.0](RELEASE_2026_7_0.md).
+## Architecture and protocols
 
-- 📚 **Configuration reference**: [reference.md](reference.md) covers the ESP
-  `voip_stack` options, triggers, actions and conditions plus the Home Assistant
-  services, setup options, events and state vocabulary. Audio processor details
-  live in the linked `esphome-audio-stack` component references below.
+| Topic | Document |
+|---|---|
+| Component and lifecycle ownership | [Architecture](ARCHITECTURE.md) |
+| Canonical end-to-end paths | [Call flows](CALL_FLOWS.md) |
+| SIP, SDP and RTP endpoint contract | [ESP VoIP profile](voip_profile.md) |
+| Retired proprietary protocol boundary | [Intercom protocol](INTERCOM_PROTOCOL.md) |
+| Phonebook rows and media capabilities | [Phonebook protocol](PHONEBOOK_PROTOCOL.md) |
+| Name, extension, group and trunk resolution | [Dial-plan resolver](DIALPLAN_RESOLVER.md) |
+| ESP entities published to HA | [ESP entity surface](ESP_ENTITY_SURFACE.md) |
 
-- 🔌 **Wire protocol**: [INTERCOM_PROTOCOL.md](INTERCOM_PROTOCOL.md) is a
-  tombstone for the retired proprietary protocol. Current call control is SIP,
-  SDP and RTP.
+## Features
 
-- ☎️ **Optional SIP trunk**: [SIP_TRUNK.md](SIP_TRUNK.md) documents provider
-  registration, outbound external routing and inbound DTMF target selection.
+| Topic | Document |
+|---|---|
+| Home Assistant actions and side effects | [Services](SERVICES.md) |
+| Contextual routing recipes | [Automation cookbook](AUTOMATION_DIALPLAN.md) |
+| Ring and conference groups | [Groups](GROUPS.md) |
+| Provider registration and external routing | [SIP trunk](SIP_TRUNK.md) |
+| Browser and P4 video codec paths | [SIP video](SIP_VIDEO.md) |
 
-- 📒 **Phonebook protocol**: [PHONEBOOK_PROTOCOL.md](PHONEBOOK_PROTOCOL.md)
-  documents canonical endpoint rows, `audio_mode`, `tx_formats`/`rx_formats`
-  and how HA shapes direct SIP or HA-bridged routes for each ESP.
+## Qualification
 
-- 🧩 **ESP entity surface**: [ESP_ENTITY_SURFACE.md](ESP_ENTITY_SURFACE.md)
-  explains which `voip_stack` entities enable HA discovery, ESP mirror cards,
-  dynamic groups and debug.
-
-- 🧭 **Dial plan / resolver**: [DIALPLAN_RESOLVER.md](DIALPLAN_RESOLVER.md)
-  explains how HA resolves names, extensions, groups, registered SIP endpoints
-  and trunk numbers.
-
-- 📞 **Call flows**: [CALL_FLOWS.md](CALL_FLOWS.md) explains the expected
-  signaling/media path for ESP, HA, registered endpoint, group and trunk calls.
-
-- 🎥 **SIP video**:
-  [SIP_VIDEO.md](SIP_VIDEO.md) defines the opt-in
-  SIP video-phone profile for the HA softphone, its direct and optional
-  transcoded codec matrix, browser privacy controls, requirements and
-  deliberate limits. ESPHome endpoints remain audio-only.
-
-- 🧰 **HA services**: [SERVICES.md](SERVICES.md) documents every
-  `voip_stack.*` service and the expected side effects.
-
-- 🧭 **Automation cookbook**:
-  [AUTOMATION_DIALPLAN.md](AUTOMATION_DIALPLAN.md) contains copyable native HA
-  recipes for presence routing, ring groups, actionable notifications,
-  no-answer forwarding to Assist and connected-call DTMF.
-
-- 👥 **Groups**: [GROUPS.md](GROUPS.md) documents ring group and conference
-  group semantics, including `conference_ring`.
-
-- 🧪 **Testing and debug**: [TESTING_AND_DEBUG.md](TESTING_AND_DEBUG.md)
-  collects local pytest commands, real SIP matrix expectations, service-matrix
-  checks, log filters and audio-debug capture paths.
-
-- 🧱 **Architecture**: [ARCHITECTURE.md](ARCHITECTURE.md) describes component
-  ownership, SIP transactions/dialogs, routing and media boundaries, governed
-  SIP/TCP backpressure, frontend state projection and runtime diagnostics.
-
-- 🧯 **Troubleshooting**: [troubleshooting.md](troubleshooting.md) covers SIP
-  ringing, media negotiation, phonebook/routing, registration, trunk, audio and
-  card-state failures with concrete checks.
-
-- 🖼️ **Media catalogue**: [MEDIA_SHOT_LIST.md](MEDIA_SHOT_LIST.md) lists the
-  screenshots, photos, GIFs, diagrams and repeatable demo scenes currently
-  used to explain the project.
-
-- 📐 **Qualification model**: [voip_test_matrix.md](voip_test_matrix.md) and
-  [architecture/phase_00v_virtual_device.md](architecture/phase_00v_virtual_device.md)
-  separate deterministic protocol coverage from real ESP timing, browser
-  media and hardware-in-the-loop evidence.
-
-- 📡 **ESP SIP/RTP profile**: [voip_profile.md](voip_profile.md) defines the
-  lightweight standards-based endpoint contract; [ESPRESSIF_COMPONENTS.md](ESPRESSIF_COMPONENTS.md)
-  records the Espressif component and licensing boundary.
+[The test matrix](voip_test_matrix.md) separates deterministic protocol checks
+from real ESP timing, browser media and hardware-in-the-loop evidence.
+[Espressif components](ESPRESSIF_COMPONENTS.md) records component versions,
+local modifications and licensing boundaries.
 
 ## Per-component docs
 

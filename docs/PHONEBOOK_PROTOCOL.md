@@ -1,4 +1,4 @@
-# SIP Phonebook Contract
+# SIP phonebook contract
 
 The phonebook is the SIP dial plan shared by ESP devices, Home Assistant,
 registered local SIP endpoints and the optional trunk. SIP is implicit everywhere:
@@ -10,7 +10,7 @@ For behavior-level routing examples, see
 [CALL_FLOWS.md](CALL_FLOWS.md). For service calls that mutate the roster, see
 [SERVICES.md](SERVICES.md).
 
-## ESP Static Contacts
+## ESP static contacts
 
 Declare static local entries directly in `voip_stack` only when an ESP must
 have contacts before HA sync, work offline, or keep a tiny fixed local roster:
@@ -58,7 +58,7 @@ schema. Fields such as `address`, `sip_uri`, `extension`, `number`, group
 membership, and media capabilities are authored on HA or discovered from
 endpoint entities, then normalized before HA pushes the roster to ESPs.
 
-## HA Roster
+## HA roster
 
 HA owns the central `sensor.voip_phonebook` roster. It contains ESP peers,
 HA itself, local SIP endpoints registered to HA, manual phone endpoints,
@@ -198,7 +198,7 @@ devices can call them by name.
 - Missing or incompatible media routes must fail explicitly with SIP terminal
   reasons such as `media_incompatible` or `transport_unreachable`.
 
-## Default Routing Rules
+## Default routing rules
 
 ESP-origin calls:
 

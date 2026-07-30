@@ -1,4 +1,4 @@
-# SIP Architecture
+# SIP architecture
 
 This document describes the active VoIP architecture. It intentionally does not
 describe the retired proprietary intercom protocol except by omission: SIP,
@@ -6,7 +6,7 @@ SDP and RTP are the functional primitives.
 
 ![VoIP Stack SIP topology](images/sip-topology.png)
 
-## Product Model
+## Product model
 
 Every ESP running `voip_stack` is a SIP user agent:
 
@@ -66,7 +66,7 @@ Component ownership:
 - Cards never own the call FSM. They render state pushed by the owner and send
   user commands back to that owner.
 
-### HA Runtime Ownership Model
+### HA runtime ownership model
 
 The PBX ownership core is built alongside the existing SIP dispatcher as a
 migration seam; it is not a second router and a call never passes through two
@@ -118,7 +118,7 @@ moved behind these ownership primitives. This is intentionally a transitional
 boundary: new routing policy must enter the canonical dispatcher and must not
 create a parallel code path in the ownership core.
 
-## Call Control
+## Call control
 
 All call control is SIP:
 
@@ -329,7 +329,7 @@ contacts per ESP phonebook and replaces existing names in place. Larger rosters
 must be filtered by HA before push rather than relying on dynamic ESP heap
 growth during call handling.
 
-## SIP/TCP Backpressure
+## SIP/TCP backpressure
 
 Every SIP/TCP connection has one governed writer task. Producers enqueue SIP
 messages through `SipTcpWriter`; the writer owns `StreamWriter.write()` and
@@ -343,7 +343,7 @@ a replacement connection.
 This applies to outbound SIP clients, the TCP SIP listener and trunk
 registration/call legs. UDP signaling still sends datagrams directly.
 
-## Frontend Contract
+## Frontend contract
 
 Cards do not own call control state.
 

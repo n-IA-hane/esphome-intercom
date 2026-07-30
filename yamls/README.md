@@ -1,4 +1,4 @@
-# Device Configurations
+# Device configurations
 
 Ready-to-flash ESPHome YAML configurations for tested hardware. ESP32-S3
 presets are the compact reference targets; P4 YAMLs are hardware-specific full
@@ -39,7 +39,7 @@ Debug should be enabled through component options such as `debug: true`,
 for release builds. The repository does not publish separate debug device YAMLs;
 reusable opt-in debug packages can live under `packages/debug/`.
 
-## Single-bus vs Dual-bus
+## Single-bus vs dual-bus
 
 - **Single-bus**: mic and speaker share one I2S peripheral via `esp_audio_stack`. Used by devices with audio codecs (ES8311, ES7210+ES8311). Enables stereo AEC reference, TDM multi-mic, and 48kHz bus rate with Espressif `esp_ae_rate_cvt` conversion to 16kHz.
 

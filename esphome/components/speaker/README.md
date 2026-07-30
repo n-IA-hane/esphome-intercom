@@ -9,7 +9,7 @@ pipeline cleanly. Maintained full-experience YAMLs now use the source-based
 `speaker_source` media path instead; see
 `packages/media_player/full_mono_48k.yaml`.
 
-## What Changed
+## What changed
 
 The public addition is:
 
@@ -32,7 +32,7 @@ The fork also avoids a short stale-media burst when a stopped paused pipeline is
 unpaused or replaced by a new media item. Stop/unpause is deferred until the
 pipeline has actually reached `STOPPED`.
 
-## Why It Is Needed Here
+## Why it is needed here
 
 The maintained full-experience YAMLs run several speaker users together:
 
@@ -59,7 +59,7 @@ This fork is intentionally narrow:
 - native voip-only YAMLs that do not use `platform: speaker` media playback
   do not need it.
 
-## Maintained Usage
+## Maintained usage
 
 Current maintained full-experience YAMLs do not require this fork for their
 main media path. They use:
@@ -80,7 +80,7 @@ pause_releases_pipeline: true
 
 when they need media pause/resume to coexist with TTS, timers and intercom.
 
-## Upstream Compatibility
+## Upstream compatibility
 
 The fork should be treated as a compatibility layer until ESPHome upstream has a
 matching pause mode. Keep local changes minimal and rebase against upstream

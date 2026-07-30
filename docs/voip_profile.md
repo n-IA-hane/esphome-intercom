@@ -7,7 +7,7 @@ act as SIP user agents and exchange RTP PCM media. Home Assistant may provide
 roster distribution, routing, bridging and optional provider trunk registration,
 but direct ESP-to-ESP calls must work when a SIP URI is known.
 
-## Security And Registration
+## Security and registration
 
 The ESP profile intentionally does not implement SIP authentication or
 registration.
@@ -46,7 +46,7 @@ audio section but omits only trailing video sections; those omitted sections
 are treated as rejected without disabling video offers or later video
 re-INVITE negotiation.
 
-## SIP Core
+## SIP core
 
 Required SIP methods:
 
@@ -102,7 +102,7 @@ RTP and RTCP without transcoding when the codec and transport profile match. See
 [SIP Video](SIP_VIDEO.md) for the exact capability
 and security boundaries.
 
-## SDP And RTP
+## SDP and RTP
 
 ESP media is PCM-only.
 

@@ -34,7 +34,7 @@ phonebook. Each room phone still has its own identity and call state._
 > person. It is designed for trusted home and laboratory networks, not as an
 > emergency telephone service.
 
-## What Can You Build?
+## What can you build?
 
 ![Video doorbell and room-to-room calls through Home Assistant](docs/images/voip-doorbell-room-to-room.png)
 
@@ -50,7 +50,7 @@ phonebook. Each room phone still has its own identity and call state._
 | External calls | Register an optional provider/PBX trunk for inbound and outbound calls. | [SIP trunk](docs/SIP_TRUNK.md) |
 | Contextual routing | Use native HA entities, conditions and services for presence, schedules, no-answer forwarding and in-call DTMF. | [Automation cookbook](docs/AUTOMATION_DIALPLAN.md) |
 
-## Fastest Start
+## Fastest start
 
 1. Install **VoIP Stack** from HACS and restart Home Assistant.
 2. Add **VoIP Stack** from **Settings → Devices & services**.
@@ -74,7 +74,7 @@ phones, Assist and a trunk are optional layers.
 The [deployment guide](docs/DEPLOYMENT_GUIDE.md) explains how to choose between
 single-bus, dual-bus, lightweight AEC and full AFE profiles.
 
-## How It Works
+## How it works
 
 ![Home Assistant as a local SIP and PBX hub](docs/images/home-assistant-local-sip-pbx.png)
 
@@ -98,7 +98,7 @@ The detailed ownership and media model is in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Complete peer-to-peer and
 HA-bridged sequences are in [`docs/CALL_FLOWS.md`](docs/CALL_FLOWS.md).
 
-## Logical Home Assistant Phones
+## Logical Home Assistant phones
 
 The integration creates one default Home Assistant browser phone. Add more
 from:
@@ -137,7 +137,7 @@ Each room-to-room media endpoint needs a distinct browser or Companion session.
 Two cards in one browser tab can display two phones, but one tab still owns one
 physical microphone, speaker and camera pipeline.
 
-## ESP Endpoints And Media Roles
+## ESP endpoints and media roles
 
 ESP media roles are derived from the configured components; they are not a
 separate user mode.
@@ -168,7 +168,7 @@ Audio component details live in the companion projects:
 - [`voip_stack`](https://github.com/n-IA-hane/esphome-voip-stack)
 - [`runtime_controller`](https://github.com/n-IA-hane/esphome-runtime-controller)
 
-## Home Assistant As A SIP Video Phone
+## Home Assistant as a SIP video phone
 
 Video is available to compatible browser phones in current browsers and the
 Home Assistant Companion app. Standard SIP video door stations, video phones,
@@ -185,7 +185,7 @@ on a codec name printed on a product page.
 
 See the [capability matrix, privacy controls and limits](docs/SIP_VIDEO.md).
 
-## Phonebook And Routing
+## Phonebook and routing
 
 Home Assistant publishes the shared roster through
 `sensor.voip_phonebook`. It combines:
@@ -231,7 +231,7 @@ Membership declared by a phone becomes visible in HA dynamically. A group
 disappears when no current endpoint declares it. See
 [`docs/GROUPS.md`](docs/GROUPS.md) for declaration and collision rules.
 
-## Assist As A Phone Extension
+## Assist as a phone extension
 
 Enable **Include voice assistant** while configuring VoIP Stack, choose the
 pipeline and assign an extension. ESPs, registered SIP phones, browser phones
@@ -259,7 +259,7 @@ Voice intents may also resolve commands such as “Call Kitchen”, “Answer”
   </tr>
 </table>
 
-## Door Station And Unanswered Calls
+## Door station and unanswered calls
 
 ![Assist answers an unattended doorbell call](docs/images/assist-unanswered-doorbell.png)
 
@@ -285,7 +285,7 @@ The assistant's personality is entirely up to your prompt. Professional
 receptionist and verbally abusive domestic secretary are both technically
 valid configurations.
 
-## Automation Routing Preview
+## Automation routing preview
 
 The phonebook is always the normal dial plan. Advanced HA automation routing is
 an opt-in preview and is disabled by default.
@@ -319,7 +319,7 @@ call controls.
 > tested. Do not use preview routing as the only control path for emergency or
 > safety-critical access.
 
-## Optional SIP Trunk
+## Optional SIP trunk
 
 The trunk is disabled by default. Enable it only when HA must register to a
 provider or another PBX.
@@ -334,7 +334,7 @@ a trusted network.
 
 ## Installation
 
-### Home Assistant Through HACS
+### Home Assistant through HACS
 
 1. Search for **VoIP Stack** in HACS.
 2. Open the integration and select **Download**.
@@ -352,7 +352,7 @@ Manual source and release-archive installation, port requirements and network
 topologies are documented in the
 [deployment guide](docs/DEPLOYMENT_GUIDE.md#home-assistant).
 
-### ESPHome Components
+### ESPHome components
 
 Use the maintained YAML whenever possible. A minimal custom external-component
 declaration is:
@@ -393,7 +393,7 @@ Before every upgrade:
 Never assume an automation still has the same contract merely because the
 integration loaded successfully.
 
-## What's New In `2026.8.1`
+## What's new in `2026.8.1`
 
 `2026.8.1` is an interoperability and consolidation update:
 
@@ -407,12 +407,13 @@ integration loaded successfully.
   call lifecycle preserved;
 - a substantially expanded, schema-checked automation cookbook.
 
-The complete pre-release delta is in
-[`docs/RELEASE_2026_8_1.md`](docs/RELEASE_2026_8_1.md). The illustrated
-`2026.8.0` feature overview remains available in
-[`docs/RELEASE_2026_8_0.md`](docs/RELEASE_2026_8_0.md).
+The complete delta is in the
+[`2026.8.1` pre-release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.1).
+The illustrated
+[`2026.8.0` release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.0)
+remains the stable feature overview.
 
-## Supported Hardware
+## Supported hardware
 
 Ready profiles are examples of complete pin, codec and resource choices; they
 are not a claim that every board with the same chip has the same wiring.
@@ -475,7 +476,7 @@ Start with [`docs/troubleshooting.md`](docs/troubleshooting.md). It covers:
 When opening an issue, attach Home Assistant diagnostics and sanitized logs.
 Remove passwords, tokens, public numbers, private addresses and SIP credentials.
 
-## Support The Project
+## Support the project
 
 If this work is useful, consider
 [sponsoring it on GitHub](https://github.com/sponsors/n-IA-hane). Donations help

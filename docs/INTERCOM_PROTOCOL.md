@@ -1,4 +1,4 @@
-# Retired Proprietary Intercom Protocol
+# Retired proprietary intercom protocol
 
 This document is retained only as a tombstone for old links.
 

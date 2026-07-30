@@ -1,9 +1,9 @@
-# Ring Groups And Conference Groups
+# Ring groups and conference groups
 
 VoIP Stack implements two PBX-style group primitives on the HA side. ESP
 devices and SIP endpoints only declare membership and place normal SIP calls.
 
-## Ring Group
+## Ring group
 
 A ring group is the PBX "ring many, first answer wins" primitive.
 
@@ -23,7 +23,7 @@ Behavior:
 
 Use ring groups for "call anyone in this area".
 
-## Conference Group
+## Conference group
 
 A conference group is a SIP conference focus hosted by HA.
 
@@ -41,7 +41,7 @@ Behavior:
 
 Use conference groups for "join a shared room".
 
-## Ring On Conference
+## Ring on conference
 
 `conference_ring` is not a separate group type. It is a per-member preference
 inside a conference group.
@@ -56,7 +56,7 @@ This is useful when HA should ring as a central listener but ESP endpoints
 should only join on demand, or when mic-only endpoints should auto-answer into
 a monitoring conference.
 
-## Declaring Groups
+## Declaring groups
 
 ESP YAML:
 
@@ -123,7 +123,7 @@ ring_groups: "RG Casa, RG Garage"
 conference_groups: "CG Casa, CG Monitor"
 ```
 
-## Dynamic Group Lifecycle
+## Dynamic group lifecycle
 
 Groups are generated from declarations:
 
@@ -137,7 +137,7 @@ Groups are generated from declarations:
 Group entries are ordinary roster entries from the dial-plan point of view.
 The card and ESP devices see the same central phonebook.
 
-## Collision Rules
+## Collision rules
 
 - A group name must not collide with a real endpoint/contact name.
 - If the same group name is declared as both ring and conference, conference

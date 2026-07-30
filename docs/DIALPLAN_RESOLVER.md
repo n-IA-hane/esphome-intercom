@@ -1,4 +1,4 @@
-# Dial Plan And Resolver
+# Dial plan and resolver
 
 This document is the practical routing contract for VoIP Stack. The central
 idea is simple: Home Assistant owns the dial plan through
@@ -10,7 +10,7 @@ central dial plan. The card calls the HA softphone service with the selected
 target; ESP devices call targets from their synced phonebook; registered SIP
 endpoints send normal SIP INVITEs to HA. Home Assistant resolves the target.
 
-## Roster Sources
+## Roster sources
 
 The central roster is rebuilt from these sources:
 
@@ -32,7 +32,7 @@ If a source disappears, its dynamic roster entry disappears too. A registered
 SIP endpoint is callable only while it has an active registration. A dynamic
 group exists only while at least one endpoint/manual contact declares it.
 
-## Target Classes
+## Target classes
 
 Targets are classified before routing:
 
@@ -44,7 +44,7 @@ Targets are classified before routing:
 Matching is case-insensitive for names and IDs. Numeric matching first checks
 roster `extension`, then falls back to `number` or trunk rules where allowed.
 
-## Route Actions
+## Route actions
 
 The resolver returns one of these route actions:
 
@@ -56,7 +56,7 @@ The resolver returns one of these route actions:
 - `trunk`: the target is routed through the configured SIP trunk.
 - `reject`: no valid route exists or the target is disabled.
 
-## ESP Origin
+## ESP origin
 
 When an ESP calls:
 
@@ -77,7 +77,7 @@ Example: `WS3` calls `Garage`.
   the central route.
 - If `Garage` does not exist, HA rejects with route not found.
 
-## HA Softphone Origin
+## HA softphone origin
 
 When Home Assistant or the card calls:
 
@@ -93,7 +93,7 @@ registered SIP endpoint, HA keeps the endpoint's registration Contact as the
 bridge destination. It must not call itself via `ha_uri_for()`, otherwise the
 call re-enters the inbound router and becomes a `route_requested` loop.
 
-## Registered SIP Endpoint Origin
+## Registered SIP endpoint origin
 
 Local SIP endpoint accounts are standard SIP users registered to HA. They are
 not special card endpoints and they are not limited to softphones: Zoiper,
@@ -112,7 +112,7 @@ When a registered endpoint calls HA:
   targets. Registered SIP endpoints use the same central dial plan as ESP and
   HA-originated calls.
 
-## Trunk Fallback
+## Trunk fallback
 
 Trunk routing is only for targets that are not internal roster extensions and
 look like public numbers, or for contacts that explicitly carry `number`.
@@ -146,7 +146,7 @@ Conference group:
 - HA can be a member through its softphone settings.
 - The room stops when the last participant leaves.
 
-## Canonical Examples
+## Canonical examples
 
 `Garage` is an ESP:
 

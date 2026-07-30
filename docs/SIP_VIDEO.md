@@ -1,4 +1,4 @@
-# SIP Video
+# SIP video
 
 VoIP Stack can optionally turn the Home Assistant softphone card into a SIP
 video phone for standard SIP phones, softphones and door stations. SIP video
@@ -20,7 +20,7 @@ offers two independent capabilities:
 If video setup, decoding, camera permission or transcoding fails, the SIP
 dialog and browser audio remain active whenever audio negotiation succeeded.
 
-## Capability Matrix
+## Capability matrix
 
 The direct browser path does not decode and re-encode video on the HA server:
 
@@ -55,7 +55,7 @@ H.264 packetization mode, profile and RTP transport profile must match, and
 other codecs must have matching normalized format parameters. Different
 codecs are not transcoded between two SIP endpoints.
 
-## Direct, Trunk And PBX Calls
+## Direct, trunk and PBX calls
 
 SIP video is not limited to LAN or VPN SIP URIs. The HA softphone
 offers and accepts the same video profile when a call uses a configured SIP
@@ -107,7 +107,7 @@ has been qualified against public wire captures and an exact simulated peer,
 including bidirectional audio/video, re-INVITE and teardown; real-device
 firmware variants still need user feedback.
 
-## Card Behavior And Privacy
+## Card behavior and privacy
 
 Received video becomes the background of the in-call card. The caller,
 duration and call state move into a full-width hang-up bar at the bottom so the
@@ -127,7 +127,7 @@ and call controls continue independently. Reloading the dashboard during
 ringing or an established call transfers media ownership to the new card and
 releases the old WebSocket deterministically.
 
-## Direct And Transcoded Media Paths
+## Direct and transcoded media paths
 
 Direct receive path:
 
@@ -171,7 +171,7 @@ responsible for that binary under the
 [FFmpeg licensing guidance](https://ffmpeg.org/legal.html). This paragraph is
 informational, not legal advice.
 
-## Browser And Network Requirements
+## Browser and network requirements
 
 - Use Home Assistant through HTTPS or a browser-recognized secure local
   context. WebCodecs and camera capture are secure-context features.
@@ -184,7 +184,7 @@ informational, not legal advice.
 - Allow the configured HA RTP range through local firewalls. A video call
   reserves an additional even RTP/odd RTCP pair alongside audio media.
 
-## Deliberate Limits
+## Deliberate limits
 
 This profile does not claim support for:
 

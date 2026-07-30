@@ -1,4 +1,4 @@
-# ESPHome Speaker Fork Upstream Record
+# ESPHome speaker fork upstream record
 
 Upstream baseline: ESPHome upstream `dev` commit
 `5738c60206b2792634ac4dfe05712d675235d0ec`
@@ -13,7 +13,7 @@ diff -ru .venv/lib/python3.14/site-packages/esphome/components/speaker esphome/c
 diff -ru /tmp/esphome-upstream/esphome/components/speaker esphome/components/speaker
 ```
 
-## Local Patches
+## Local patches
 
 1. `pause_releases_pipeline`
 
@@ -41,7 +41,7 @@ diff -ru /tmp/esphome-upstream/esphome/components/speaker esphome/components/spe
 
    Upstream path: viable as a scheduler cleanup independent of Intercom.
 
-## Current Diff Summary
+## Current diff summary
 
 ```diff
 media_player/__init__.py

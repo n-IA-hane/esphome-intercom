@@ -1,4 +1,4 @@
-# ESP VoIP Entity Surface
+# ESP VoIP entity surface
 
 `voip_stack:` is the SIP/RTP engine. It can run headless: an ESP can call
 static contacts or direct SIP peers without exposing any Home Assistant entity.
@@ -80,7 +80,7 @@ switch:
       name: VoIP Ring On Conference
 ```
 
-## Debug Package
+## Debug package
 
 Optional diagnostics:
 
