@@ -29,6 +29,9 @@ Each live runner owns a distinct topology:
   matrix;
 - `ha_softphone_card_trace.py` records frontend state transitions.
 
+`live_voip_qualification.py --esp-host ADDRESS` overrides a stale DHCP address
+without changing the checked-in device matrix.
+
 The isolated Home Assistant environment and browser-token refresh workflow are
 documented in [`ha_voip_lab/README.md`](ha_voip_lab/README.md).
 

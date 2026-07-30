@@ -14,7 +14,7 @@ import argparse
 import asyncio
 from collections.abc import Awaitable, Callable
 import contextlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 import importlib.util
 import json
@@ -601,26 +601,30 @@ async def set_baseline(ctx: LiveContext) -> dict[str, Any]:
         "ha_conference_group": str(ha_groups.get("conference_group") or ""),
         "ha_conference_ring": bool(ha_groups.get("conference_ring", False)),
     }
-    await ctx.esp.text("voip_extension", ctx.args.esp_extension)
-    await ctx.esp.text("voip_ring_groups", ctx.args.ring_group)
-    await ctx.esp.text("voip_conference_groups", ctx.args.conference_group)
-    await ctx.esp.switch("voip_ring_on_conference", False)
-    await ctx.esp.switch("do_not_disturb", False)
-    await ctx.esp.switch("auto_answer", False)
-    await wait_phonebook_contains(ctx.ha, ctx.args.esp_extension)
-    await wait_phonebook_contains(ctx.ha, ctx.args.ring_group)
-    await wait_phonebook_contains(ctx.ha, ctx.args.conference_group)
-    await ctx.ha.service(
-        "voip_stack",
-        "set_ha_softphone_settings",
-        {
-            "extension": ctx.args.ha_extension,
-            "ring_group": "",
-            "conference_group": ctx.args.conference_group,
-            "conference_ring": False,
-        },
-    )
-    await wait_phonebook_contains(ctx.ha, ctx.args.ha_extension)
+    try:
+        await ctx.esp.text("voip_extension", ctx.args.esp_extension)
+        await ctx.esp.text("voip_ring_groups", ctx.args.ring_group)
+        await ctx.esp.text("voip_conference_groups", ctx.args.conference_group)
+        await ctx.esp.switch("voip_ring_on_conference", False)
+        await ctx.esp.switch("do_not_disturb", False)
+        await ctx.esp.switch("auto_answer", False)
+        await wait_phonebook_contains(ctx.ha, ctx.args.esp_extension)
+        await wait_phonebook_contains(ctx.ha, ctx.args.ring_group)
+        await wait_phonebook_contains(ctx.ha, ctx.args.conference_group)
+        await ctx.ha.service(
+            "voip_stack",
+            "set_ha_softphone_settings",
+            {
+                "extension": ctx.args.ha_extension,
+                "ring_group": "",
+                "conference_group": ctx.args.conference_group,
+                "conference_ring": False,
+            },
+        )
+        await wait_phonebook_contains(ctx.ha, ctx.args.ha_extension)
+    except BaseException:
+        await restore_baseline(ctx, original)
+        raise
     return original
 
 
@@ -654,9 +658,9 @@ async def scenario_ha_to_esp_extension_answer_hangup(ctx: LiveContext) -> None:
     await ctx.esp.button("call")
     await wait_esp_voip_state(ctx, {"in_call"}, timeout=12)
     soft = await wait_softphone_state(ctx, {"in_call"}, timeout=8)
-    if str(soft.get("peer_name") or "") not in {
-        ctx.esp.spec.name,
-        ctx.args.esp_extension,
+    if norm(soft.get("peer_name")) not in {
+        norm(ctx.esp.spec.name),
+        norm(ctx.args.esp_extension),
     }:
         raise AssertionError(
             f"HA softphone did not resolve ESP extension to ESP peer: {soft}"
@@ -924,6 +928,20 @@ def selected_scenarios(args: argparse.Namespace) -> list[Scenario]:
     return [SCENARIOS[name] for name in names]
 
 
+def apply_isolated_group_defaults(
+    args: argparse.Namespace,
+    *,
+    stamp: str | None = None,
+) -> None:
+    """Keep group scenarios isolated from other live household endpoints."""
+
+    suffix = stamp or datetime.now(UTC).strftime("%H%M%S")
+    if not args.ring_group:
+        args.ring_group = f"q-{args.esp}-ring-{suffix}"
+    if not args.conference_group:
+        args.conference_group = f"q-{args.esp}-conference-{suffix}"
+
+
 async def run(args: argparse.Namespace) -> int:
     if args.list:
         for scenario in SCENARIOS.values():
@@ -931,10 +949,18 @@ async def run(args: argparse.Namespace) -> int:
                 f"{scenario.id}: {scenario.title} requires={','.join(sorted(scenario.requires))}"
             )
         return 0
+    apply_isolated_group_defaults(args)
     token = qualification_token(args)
     ha = HaRest(args.ha_url, token, insecure=args.insecure)
     esp_spec = DEFAULT_ESPS[args.esp]
-    OUT.mkdir(parents=True, exist_ok=True)
+    if args.esp_host or args.esp_api_port:
+        esp_spec = replace(
+            esp_spec,
+            host=str(args.esp_host or esp_spec.host).strip(),
+            port=int(args.esp_api_port or esp_spec.port),
+        )
+    output_dir = Path(args.out_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
     async with HaWs(args.ha_url, token, insecure=args.insecure) as ws:
         async with EspApi(esp_spec) as esp:
@@ -985,7 +1011,7 @@ async def run(args: argparse.Namespace) -> int:
                     "events": ws.events,
                 }
                 path = (
-                    OUT
+                    output_dir
                     / f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}_{esp_spec.key}_live_matrix.json"
                 )
                 path.write_text(
@@ -1013,6 +1039,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--token")
     parser.add_argument("--esp", choices=sorted(DEFAULT_ESPS), default="ws3")
     parser.add_argument(
+        "--esp-host",
+        help="override the selected ESP native API host when DHCP changed",
+    )
+    parser.add_argument(
+        "--esp-api-port",
+        type=int,
+        help="override the selected ESP native API port",
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=OUT,
+        help=f"artifact directory (default: {OUT})",
+    )
+    parser.add_argument(
         "--scenario", choices=sorted(SCENARIOS), action="append", default=[]
     )
     parser.add_argument("--all", action="store_true")
@@ -1020,8 +1061,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--allow-trunk", action="store_true")
     parser.add_argument("--esp-extension", default="1000")
     parser.add_argument("--ha-extension", default="666")
-    parser.add_argument("--ring-group", default="RG Casa")
-    parser.add_argument("--conference-group", default="CG Casa")
+    parser.add_argument(
+        "--ring-group",
+        help="explicit ring group; omitted runs use a unique isolated group",
+    )
+    parser.add_argument(
+        "--conference-group",
+        help="explicit conference group; omitted runs use a unique isolated group",
+    )
     parser.add_argument("--trunk-number", default="3519968203")
     return parser.parse_args()
 
