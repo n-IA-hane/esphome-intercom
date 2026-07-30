@@ -64,6 +64,7 @@ async def async_cleanup_sip_runtime(
             watcher=watcher,
             terminate_client=terminate_client,
             relay_first=relay_first,
+            caller=asyncio.current_task(),
         ),
         name="voip-sip-runtime-cleanup",
     )
@@ -77,6 +78,7 @@ async def _async_cleanup_sip_runtime_impl(
     watcher: asyncio.Task | None = None,
     terminate_client: bool = True,
     relay_first: bool = False,
+    caller: asyncio.Task | None = None,
 ) -> SipRuntimeCleanupResult:
     """Perform one complete cleanup pass in a cancellation-isolated task."""
 
@@ -97,8 +99,14 @@ async def _async_cleanup_sip_runtime_impl(
         await _stop_relay()
 
     if watcher is not None:
+        # This pass always runs in its own task, so ``current_task`` is never
+        # the caller.  A watcher that is also the caller must therefore be
+        # recognised explicitly: cancelling it and awaiting it here deadlocks
+        # it against the cleanup it is itself awaiting.  Bridge termination
+        # runs inside the registered destination watcher, so the deadlock
+        # strands every step after the cleanup - including the source-leg BYE.
         current_task = asyncio.current_task()
-        if watcher is not current_task:
+        if watcher is not current_task and watcher is not caller:
             watcher.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await watcher

@@ -144,6 +144,35 @@ class SipRuntimeCleanupTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.client_closed)
         self.assertTrue(result.relay_stopped)
 
+    async def test_cleanup_never_cancels_the_caller_that_owns_it(self) -> None:
+        """A watcher that is also the caller must survive its own cleanup.
+
+        ``async_terminate_sip_bridge`` runs inside the task registered as the
+        destination watcher.  Cancelling and awaiting that task here would
+        deadlock it against the cleanup it is waiting for, and the source-leg
+        BYE that follows the cleanup would never be sent.
+        """
+
+        events: list[str] = []
+
+        async def bridge_termination() -> str:
+            await session_cleanup.async_cleanup_sip_runtime(
+                relay=FakeRelay(events),
+                client=FakeClient(events),
+                watcher=asyncio.current_task(),
+                terminate_client=True,
+                relay_first=True,
+            )
+            events.append("source.bye")
+            return "terminated"
+
+        task = asyncio.create_task(bridge_termination())
+        self.assertEqual(await asyncio.wait_for(task, timeout=5), "terminated")
+        self.assertEqual(
+            events,
+            ["relay.stop", "client.terminate", "client.close", "source.bye"],
+        )
+
     async def test_cleanup_can_stop_relay_first_and_close_without_terminate(self) -> None:
         events: list[str] = []
         result = await session_cleanup.async_cleanup_sip_runtime(
