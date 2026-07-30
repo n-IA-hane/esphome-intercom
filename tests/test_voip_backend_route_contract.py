@@ -735,6 +735,23 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("[:32]", websocket)
         self.assertIn('for raw in str(value or "").split(",")', websocket)
 
+    def test_phonebook_snapshot_keeps_enabled_softphones_without_connected_cards(
+        self,
+    ) -> None:
+        peer_snapshot = PEER_SNAPSHOT.read_text()
+        self.assertIn(
+            "endpoint.availability is not EndpointAvailability.UNAVAILABLE",
+            peer_snapshot,
+        )
+        self.assertNotIn(
+            "endpoint.availability is EndpointAvailability.AVAILABLE",
+            peer_snapshot,
+        )
+        self.assertIn(
+            "if not browser_endpoints and ha_endpoint is not None:",
+            peer_snapshot,
+        )
+
     def test_ha_softphone_settings_use_phone_subentries_as_the_only_store(self) -> None:
         websocket = WEBSOCKET_API.read_text()
         self.assertIn('runtime["config_entry_id"]', websocket)
@@ -1747,6 +1764,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "video_rtcp_pli_rx",
             "video_rtcp_fir_rx",
             "video_rtcp_keyframe_requests_to_browser",
+            "video_jpeg_normalized",
+            "video_jpeg_normalizer_errors",
         ):
             self.assertIn(f'"{name}"', counters)
         self.assertIn('"media_debug": media_debug', websocket)

@@ -57,6 +57,7 @@ export function directionalVideoContract(
     ? rawClockRate
     : 90000;
   const rawPayloadType = Number(value("payload_type", -1));
+  const rawMaxFramerate = Number(value("max_framerate", 0));
   return {
     codec: rawCodec || defaultCodec,
     encoding,
@@ -72,6 +73,9 @@ export function directionalVideoContract(
       ) || "",
     ).toLowerCase(),
     packetizationMode: Number(value("packetization_mode", 0)) || 0,
+    maxFramerate: Number.isFinite(rawMaxFramerate) && rawMaxFramerate > 0
+      ? rawMaxFramerate
+      : null,
     format: String(value("format", "") || ""),
   };
 }
@@ -151,6 +155,9 @@ export function cameraCaptureContract(send) {
     maxFs = positiveInteger(parameters.get("max-fs")) || maxFs;
     maxFr = Math.min(maxFr, positiveInteger(parameters.get("max-fr")) || maxFr);
   }
+  if (Number.isFinite(Number(send?.maxFramerate)) && Number(send.maxFramerate) > 0) {
+    maxFr = Math.min(maxFr, Number(send.maxFramerate));
+  }
 
   const candidates = [
     [1280, 720],
@@ -188,4 +195,33 @@ export function cameraCaptureContract(send) {
       frameRate: { ideal: Math.min(15, maxFr), max: maxFr },
     },
   };
+}
+
+export function cameraEncoderContract(capture, settings, encoding) {
+  const capturedWidth = Math.max(
+    16,
+    Number(settings?.width || capture.idealWidth) & ~1,
+  );
+  const capturedHeight = Math.max(
+    16,
+    Number(settings?.height || capture.idealHeight) & ~1,
+  );
+  // Mobile browsers commonly rotate the camera track after applying
+  // getUserMedia constraints. Preserve the resulting orientation: forcing a
+  // portrait VideoFrame into the landscape dimensions selected before
+  // capture makes WebCodecs rescale and distort the pixels. H.264 level
+  // admission is based on macroblocks, so the equivalent rotated envelope
+  // remains standards-compliant without an extra resize.
+  const width = capturedWidth;
+  const height = capturedHeight;
+  const macroblocks = Math.ceil(width / 16) * Math.ceil(height / 16);
+  const framerate = Math.max(
+    1,
+    Math.min(
+      capture.maxFr,
+      Math.floor(capture.maxMbps / Math.max(1, macroblocks)),
+      Number(settings?.frameRate || capture.maxFr),
+    ),
+  );
+  return { width, height, macroblocks, framerate };
 }

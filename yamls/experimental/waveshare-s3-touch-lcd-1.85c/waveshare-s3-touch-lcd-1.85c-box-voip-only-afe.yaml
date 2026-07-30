@@ -1,0 +1,607 @@
+# =============================================================================
+# Waveshare ESP32-S3-Touch-LCD-1.85C v2: BARE MINIMUM VoIP caller
+#
+# Tested by contributor; untested by maintainer.
+# Contributor: Noxeus
+# Source: https://github.com/n-IA-hane/esphome-intercom/issues/64
+#
+# This profile preserves the contributor's hardware-qualified audio path while
+# completing the call-state UI callbacks needed by the maintained VoIP FSM.
+# Compile validation does not constitute maintainer hardware qualification.
+#
+# One screen only: shows call/hangup button + status text, which switches
+# appearance depending on call state (idle / ringing in / ringing out /
+# in call). No voice assistant, no wake word, no settings page, no call
+# history navigation. Just call and hang up.
+# =============================================================================
+
+substitutions:
+  name: waveshare-s3-185c-voip
+  friendly_name: "Waveshare S3 Touch LCD 1.85C VoIP"
+
+  # Local sources keep repository builds reproducible. Release examples replace
+  # these with the corresponding pinned public component revisions.
+  voip_stack_components_source: "../../../../esphome-voip-stack/esphome/components"
+  audio_stack_components_source: "../../../../esphome-audio-stack/esphome/components"
+
+  i2s_mclk_pin: GPIO2
+  i2s_bclk_pin: GPIO48
+  i2s_lrclk_pin: GPIO38
+  i2s_din_pin: GPIO39
+  i2s_dout_pin: GPIO47
+  speaker_enable_pin: GPIO15
+
+external_components:
+  - source: ${voip_stack_components_source}
+    components: [voip_stack]
+  - source: ${audio_stack_components_source}
+    components: [esp_audio_stack, esp_afe]
+
+packages:
+  voip_transport: !include ../../../packages/voip/transport.yaml
+  phonebook_subscribe: !include ../../../packages/voip/phonebook_subscribe.yaml
+  ha_api: !include ../../../packages/voip/ha_api.yaml
+  ha_integration: !include ../../../packages/voip/ha_integration.yaml
+  afe_entities: !include ../../../packages/esp_afe/single_mic_entities.yaml
+
+esphome:
+  name: ${name}
+  name_add_mac_suffix: false
+  friendly_name: ${friendly_name}
+  platformio_options:
+    board_build.flash_mode: dio
+    board_build.arduino.memory_type: qio_opi
+  on_boot:
+    priority: 600
+    then:
+      - light.turn_on:
+          id: display_backlight
+          brightness: 100%
+      - output.turn_on: speaker_enable
+      - script.execute: draw_call_screen
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_AND_LWIP_STACKS_IN_EXTERNAL_RAM: "y"
+      CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL: "4096"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: DEBUG
+
+api:
+  on_client_connected:
+    - script.execute: draw_call_screen
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: NONE
+  on_connect:
+    - script.execute: draw_call_screen
+  on_disconnect:
+    - script.execute: draw_call_screen
+
+# =============================================================================
+# HARDWARE: I2C, I/O Expander, Display, Touch
+# =============================================================================
+
+i2c:
+  id: i2c_bus
+  sda: GPIO11
+  scl: GPIO10
+  scan: true
+
+pca9554:
+  - id: pca9554_device
+    address: 0x20
+
+output:
+  - platform: ledc
+    pin: GPIO5
+    id: backlight_pwm
+  - platform: gpio
+    id: speaker_enable
+    pin: ${speaker_enable_pin}
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    id: display_backlight
+    name: "Display Backlight"
+    restore_mode: ALWAYS_ON
+
+spi:
+  id: display_qspi
+  type: quad
+  clk_pin: GPIO40
+  data_pins: [GPIO46, GPIO45, GPIO42, GPIO41]
+
+display:
+  - platform: qspi_dbi
+    model: CUSTOM
+    data_rate: 80MHz
+    id: main_display
+    spi_id: display_qspi
+    color_order: rgb
+    invert_colors: true
+    dimensions:
+      height: 360
+      width: 360
+    cs_pin: GPIO21
+    reset_pin:
+      pca9554: pca9554_device
+      number: 2
+    auto_clear_enabled: false
+    update_interval: never
+    init_sequence:
+      - [0xF0, 0x28]
+      - [0xF2, 0x28]
+      - [0x73, 0xF0]
+      - [0x7C, 0xD1]
+      - [0x83, 0xE0]
+      - [0x84, 0x61]
+      - [0xF2, 0x82]
+      - [0xF0, 0x00]
+      - [0xF0, 0x01]
+      - [0xF1, 0x01]
+      - [0xB0, 0x56]
+      - [0xB1, 0x4D]
+      - [0xB2, 0x24]
+      - [0xB4, 0x87]
+      - [0xB5, 0x44]
+      - [0xB6, 0x8B]
+      - [0xB7, 0x40]
+      - [0xB8, 0x86]
+      - [0xBA, 0x00]
+      - [0xBB, 0x08]
+      - [0xBC, 0x08]
+      - [0xBD, 0x00]
+      - [0xC0, 0x80]
+      - [0xC1, 0x10]
+      - [0xC2, 0x37]
+      - [0xC3, 0x80]
+      - [0xC4, 0x10]
+      - [0xC5, 0x37]
+      - [0xC6, 0xA9]
+      - [0xC7, 0x41]
+      - [0xC8, 0x01]
+      - [0xC9, 0xA9]
+      - [0xCA, 0x41]
+      - [0xCB, 0x01]
+      - [0xD0, 0x91]
+      - [0xD1, 0x68]
+      - [0xD2, 0x68]
+      - [0xF5, 0x00, 0xA5]
+      - [0xDD, 0x4F]
+      - [0xDE, 0x4F]
+      - [0xF1, 0x10]
+      - [0xF0, 0x00]
+      - [0xF0, 0x02]
+      - [0xE0, 0xF0, 0x0A, 0x10, 0x09, 0x09, 0x36, 0x35, 0x33, 0x4A, 0x29, 0x15, 0x15, 0x2E, 0x34]
+      - [0xE1, 0xF0, 0x0A, 0x0F, 0x08, 0x08, 0x05, 0x34, 0x33, 0x4A, 0x39, 0x15, 0x15, 0x2D, 0x33]
+      - [0xF0, 0x10]
+      - [0xF3, 0x10]
+      - [0xE0, 0x07]
+      - [0xE1, 0x00]
+      - [0xE2, 0x00]
+      - [0xE3, 0x00]
+      - [0xE4, 0xE0]
+      - [0xE5, 0x06]
+      - [0xE6, 0x21]
+      - [0xE7, 0x01]
+      - [0xE8, 0x05]
+      - [0xE9, 0x02]
+      - [0xEA, 0xDA]
+      - [0xEB, 0x00]
+      - [0xEC, 0x00]
+      - [0xED, 0x0F]
+      - [0xEE, 0x00]
+      - [0xEF, 0x00]
+      - [0xF8, 0x00]
+      - [0xF9, 0x00]
+      - [0xFA, 0x00]
+      - [0xFB, 0x00]
+      - [0xFC, 0x00]
+      - [0xFD, 0x00]
+      - [0xFE, 0x00]
+      - [0xFF, 0x00]
+      - [0x60, 0x40]
+      - [0x61, 0x04]
+      - [0x62, 0x00]
+      - [0x63, 0x42]
+      - [0x64, 0xD9]
+      - [0x65, 0x00]
+      - [0x66, 0x00]
+      - [0x67, 0x00]
+      - [0x68, 0x00]
+      - [0x69, 0x00]
+      - [0x6A, 0x00]
+      - [0x6B, 0x00]
+      - [0x70, 0x40]
+      - [0x71, 0x03]
+      - [0x72, 0x00]
+      - [0x73, 0x42]
+      - [0x74, 0xD8]
+      - [0x75, 0x00]
+      - [0x76, 0x00]
+      - [0x77, 0x00]
+      - [0x78, 0x00]
+      - [0x79, 0x00]
+      - [0x7A, 0x00]
+      - [0x7B, 0x00]
+      - [0x80, 0x48]
+      - [0x81, 0x00]
+      - [0x82, 0x06]
+      - [0x83, 0x02]
+      - [0x84, 0xD6]
+      - [0x85, 0x04]
+      - [0x86, 0x00]
+      - [0x87, 0x00]
+      - [0x88, 0x48]
+      - [0x89, 0x00]
+      - [0x8A, 0x08]
+      - [0x8B, 0x02]
+      - [0x8C, 0xD8]
+      - [0x8D, 0x04]
+      - [0x8E, 0x00]
+      - [0x8F, 0x00]
+      - [0x90, 0x48]
+      - [0x91, 0x00]
+      - [0x92, 0x0A]
+      - [0x93, 0x02]
+      - [0x94, 0xDA]
+      - [0x95, 0x04]
+      - [0x96, 0x00]
+      - [0x97, 0x00]
+      - [0x98, 0x48]
+      - [0x99, 0x00]
+      - [0x9A, 0x0C]
+      - [0x9B, 0x02]
+      - [0x9C, 0xDC]
+      - [0x9D, 0x04]
+      - [0x9E, 0x00]
+      - [0x9F, 0x00]
+      - [0xA0, 0x48]
+      - [0xA1, 0x00]
+      - [0xA2, 0x05]
+      - [0xA3, 0x02]
+      - [0xA4, 0xD5]
+      - [0xA5, 0x04]
+      - [0xA6, 0x00]
+      - [0xA7, 0x00]
+      - [0xA8, 0x48]
+      - [0xA9, 0x00]
+      - [0xAA, 0x07]
+      - [0xAB, 0x02]
+      - [0xAC, 0xD7]
+      - [0xAD, 0x04]
+      - [0xAE, 0x00]
+      - [0xAF, 0x00]
+      - [0xB0, 0x48]
+      - [0xB1, 0x00]
+      - [0xB2, 0x09]
+      - [0xB3, 0x02]
+      - [0xB4, 0xD9]
+      - [0xB5, 0x04]
+      - [0xB6, 0x00]
+      - [0xB7, 0x00]
+      - [0xB8, 0x48]
+      - [0xB9, 0x00]
+      - [0xBA, 0x0B]
+      - [0xBB, 0x02]
+      - [0xBC, 0xDB]
+      - [0xBD, 0x04]
+      - [0xBE, 0x00]
+      - [0xBF, 0x00]
+      - [0xC0, 0x10]
+      - [0xC1, 0x47]
+      - [0xC2, 0x56]
+      - [0xC3, 0x65]
+      - [0xC4, 0x74]
+      - [0xC5, 0x88]
+      - [0xC6, 0x99]
+      - [0xC7, 0x01]
+      - [0xC8, 0xBB]
+      - [0xC9, 0xAA]
+      - [0xD0, 0x10]
+      - [0xD1, 0x47]
+      - [0xD2, 0x56]
+      - [0xD3, 0x65]
+      - [0xD4, 0x74]
+      - [0xD5, 0x88]
+      - [0xD6, 0x99]
+      - [0xD7, 0x01]
+      - [0xD8, 0xBB]
+      - [0xD9, 0xAA]
+      - [0xF3, 0x01]
+      - [0xF0, 0x00]
+      - [0x3A, 0x55]
+      - [0x36, 0x00]
+      - [0x2A, 0x00, 0x00, 0x01, 0x67]
+      - [0x2B, 0x00, 0x00, 0x01, 0x67]
+      - [0x21, 0x00]
+      - [0x11, 0x00]
+      - delay 120ms
+      - [0x29, 0x00]
+      - delay 20ms
+
+touchscreen:
+  platform: cst816
+  id: my_touchscreen
+  address: 0x15
+  interrupt_pin: GPIO4
+  skip_probe: true
+  transform:
+    mirror_x: true
+    mirror_y: true
+
+# =============================================================================
+# AUDIO: esp_audio_stack owns the shared I2S bus in full-duplex mode so mic
+# and speaker can run at the same time during a call (required for VoIP).
+# =============================================================================
+
+esp_audio_stack:
+  id: audio_stack
+  i2s_lrclk_pin: ${i2s_lrclk_pin}
+  i2s_bclk_pin: ${i2s_bclk_pin}
+  i2s_mclk_pin: ${i2s_mclk_pin}
+  i2s_din_pin: ${i2s_din_pin}
+  i2s_dout_pin: ${i2s_dout_pin}
+  sample_rate: 32000
+  output_sample_rate: 16000
+  bits_per_sample: 16
+  slot_bit_width: 32
+  correct_dc_offset: true
+  processor_id: afe_processor
+  audio_effects:
+    rate_cvt_complexity: 3
+    rate_cvt_perf_type: speed
+  num_channels: 2
+  codec:
+    i2c_id: i2c_bus
+    input:
+      type: es7210
+      address: 0x40
+      mic_selected: 0x0F
+      gain_db: 12.0
+    output:
+      type: es8311
+      address: 0x18
+      use_mclk: true
+      no_dac_ref: true
+  tdm_total_slots: 4
+  tdm_mic_slot: 0
+  use_tdm_reference: true
+  tdm_ref_slot: 1
+  buffers_in_psram: true
+  audio_task_stack_in_psram: true
+
+esp_afe:
+  id: afe_processor
+  type: vc              # voice communication profile (VoIP), not sr (wake word/ASR)
+  mode: low_cost         # lighter CPU load; switch to high_perf if quality needs it
+  mic_num: 1             # TDM mic_slot 0 is a single logical mic channel
+  aec_enabled: true
+  aec_filter_length: 4
+  aec_nlp_level: normal
+  se_enabled: false      # requires 2 independent mic channels, not available here
+  ns_enabled: true
+  vad_enabled: false
+  continuous_vad: true
+  agc_enabled: true
+  memory_alloc_mode: more_psram
+
+microphone:
+  - platform: esp_audio_stack
+    id: mic_afe
+    esp_audio_stack_id: audio_stack
+
+speaker:
+  - platform: esp_audio_stack
+    id: hw_speaker
+    esp_audio_stack_id: audio_stack
+    sample_rate: 32000
+    bits_per_sample: 16
+
+  - platform: resampler
+    id: voip_speaker_input
+    output_speaker: hw_speaker
+    bits_per_sample: 16
+
+number:
+  - platform: esp_audio_stack
+    esp_audio_stack_id: audio_stack
+    master_volume:
+      name: "Speaker Volume"
+      speaker_id: hw_speaker
+    mic_gain:
+      name: "Microphone Gain"
+
+
+# =============================================================================
+# FONTS AND ICONS
+# =============================================================================
+
+font:
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 700
+    id: font_title
+    size: 24
+    glyphsets:
+      - GF_Latin_Core
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 500
+    id: font_state
+    size: 28
+    glyphs: " ACDEGILNR"
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: call_icons
+    size: 48
+    glyphs:
+      - "\U000F03F2"
+      - "\U000F03F5"
+
+# =============================================================================
+# LVGL: ONE screen only. Content and button behaviour change depending on
+# the current call state (idle / ringing in / ringing out / in call).
+# =============================================================================
+
+lvgl:
+  displays:
+    - main_display
+  touchscreens:
+    - touchscreen_id: my_touchscreen
+  buffer_size: 50%
+  color_depth: 16
+  log_level: WARN
+  rotation: 180
+  pages:
+    - id: call_page
+      bg_color: 0x000000
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 30
+            text: "${friendly_name}"
+            text_color: 0xFFFFFF
+            text_font: font_title
+            text_align: CENTER
+        - label:
+            id: call_status_label
+            align: CENTER
+            y: -40
+            text: "IDLE"
+            text_color: 0x00FF00
+            text_font: font_state
+            text_align: CENTER
+        - label:
+            id: call_peer_label
+            align: CENTER
+            y: 10
+            text: "-"
+            text_color: 0xFFFFFF
+            text_font: font_title
+            text_align: CENTER
+            width: 260
+            long_mode: SCROLL
+        - button:
+            id: call_action_btn
+            align: CENTER
+            y: 100
+            width: 90
+            height: 90
+            bg_color: 0x00AA00
+            radius: 45
+            widgets:
+              - label:
+                  id: call_action_icon
+                  text: "\U000F03F2"
+                  align: CENTER
+                  text_color: 0xFFFFFF
+                  text_font: call_icons
+            on_short_click:
+              - voip_stack.call_toggle:
+
+# =============================================================================
+# UI update logic: one script re-reads the call state and updates the single
+# screen's text/color/button so it "switches" appearance during calls.
+# =============================================================================
+
+script:
+  - id: draw_call_screen
+    then:
+      - lambda: |-
+          auto s = id(phone).get_state_str();
+          std::string status_text = "IDLE";
+          uint32_t status_color = 0x00FF00;
+          uint32_t btn_color = 0x00AA00;
+          std::string icon = "\U000F03F2";
+          std::string peer = id(phone).get_current_destination();
+
+          if (s == "ringing") {
+            status_text = "RINGING";
+            status_color = 0xFFFF00;
+            btn_color = 0x00AA00;
+            icon = "\U000F03F2";
+          } else if (s == "calling" || s == "remote_ringing") {
+            status_text = "CALLING";
+            status_color = 0xFFFF00;
+            btn_color = 0xAA0000;
+            icon = "\U000F03F5";
+          } else if (s == "in_call" || s == "connecting") {
+            status_text = "IN CALL";
+            status_color = 0x00AAFF;
+            btn_color = 0xAA0000;
+            icon = "\U000F03F5";
+          } else {
+            status_text = "IDLE";
+            status_color = 0x00FF00;
+            btn_color = 0x00AA00;
+            icon = "\U000F03F2";
+          }
+
+          lv_label_set_text(id(call_status_label), status_text.c_str());
+          lv_obj_set_style_text_color(id(call_status_label), lv_color_hex(status_color), 0);
+          lv_label_set_text(id(call_peer_label), peer.empty() ? "-" : peer.c_str());
+          lv_label_set_text(id(call_action_icon), icon.c_str());
+          lv_obj_set_style_bg_color(id(call_action_btn), lv_color_hex(btn_color), 0);
+
+voip_stack:
+  id: phone
+  transport: udp
+  microphone: mic_afe
+  speaker: voip_speaker_input
+  buffers_in_psram: true
+  ringing_timeout: 30s
+  audio:
+    tx:
+      sample_rate: 16000
+      pcm_format: s16le
+      channels: 1
+      frame_ms: 20
+    rx:
+      sample_rate: 16000
+      pcm_format: s16le
+      channels: 1
+      frame_ms: 20
+  on_calling:
+    - script.execute: draw_call_screen
+  on_ringing:
+    - script.execute: draw_call_screen
+  on_dest_ringing:
+    - script.execute: draw_call_screen
+  on_in_call:
+    - script.execute: draw_call_screen
+  on_idle:
+    - script.execute: draw_call_screen
+  on_hangup:
+    - logger.log:
+        format: "Call ended: %s"
+        args: ['reason.c_str()']
+    - script.execute: draw_call_screen
+  on_call_failed:
+    - logger.log:
+        format: "Call failed: %s"
+        args: ['reason.c_str()']
+    - script.execute: draw_call_screen
+  on_phonebook_update:
+    - script.execute: draw_call_screen
+  on_destination_changed:
+    - script.execute: draw_call_screen

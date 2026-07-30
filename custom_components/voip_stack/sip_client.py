@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass, replace
 import logging
+import re
 import secrets
 import socket
 from typing import Any, Awaitable, Callable
@@ -272,6 +273,8 @@ class _InDialogResponse:
 
 
 _SipClientProtocol = SipDatagramQueueProtocol
+_MIN_INVITE_RETRY_AFTER = 0.2
+_MAX_INVITE_RETRY_AFTER = 2.0
 
 
 class SipCallClient:
@@ -347,6 +350,11 @@ class SipCallClient:
         self.media_reservation = media_reservation
         self.video_rtp_socket = video_rtp_socket
         self.video_rtcp_socket = video_rtcp_socket
+        # RTP source identity belongs to this SIP call and survives a
+        # dashboard media-owner handoff. The WebSocket views initialize the
+        # codec-specific state lazily to avoid coupling SIP signaling to them.
+        self.audio_rtp_source = None
+        self.video_rtp_source = None
         self._sdp_session_id = secrets.randbits(63) or 1
         self._local_sdp_body = ""
         self.transport: asyncio.DatagramTransport | None = None
@@ -370,6 +378,13 @@ class SipCallClient:
         self._pending_request_uri = ""
         self._pending_local_uri = ""
         self._pending_remote_uri = ""
+        self._pending_invite_body = b""
+        self._pending_invite_auth_header: tuple[str, str] | None = None
+        self._pending_invite_auth_challenge = ""
+        self._pending_invite_auth_header_name = ""
+        self._digest_nonce_count = 0
+        self._retry_after_used = False
+        self._invite_abort_event = asyncio.Event()
         self._invite_transaction_active = False
         self._cancel_requested = False
         self._cancel_sent = False
@@ -400,6 +415,7 @@ class SipCallClient:
         self.last_sip_event = ""
         self.last_sip_status_code = 0
         self.last_sip_reason = ""
+        self.connected_party = ""
 
     async def start(self) -> None:
         if self.signaling_transport == "TCP":
@@ -427,6 +443,7 @@ class SipCallClient:
 
     async def close(self) -> None:
         self._closing = True
+        self._invite_abort_event.set()
         if self._close_task is None:
             self._close_task = asyncio.create_task(
                 self._close(),
@@ -1093,6 +1110,121 @@ class SipCallClient:
         )
         return "transport_unreachable"
 
+    @staticmethod
+    def _retry_after_delay(message: sip.SipMessage) -> float | None:
+        """Return one bounded Retry-After delay accepted for an INVITE retry."""
+
+        if message.status_code not in {500, 503}:
+            return None
+        match = re.match(r"\s*(\d+)", message.header("Retry-After"))
+        if match is None:
+            return None
+        return min(
+            max(float(match.group(1)), _MIN_INVITE_RETRY_AFTER),
+            _MAX_INVITE_RETRY_AFTER,
+        )
+
+    def _build_pending_invite(self) -> bytes:
+        """Build the current initial-dialog INVITE transaction request."""
+
+        headers = sip.dialog_headers(
+            request_uri=self._pending_request_uri,
+            local_uri=self._pending_local_uri,
+            remote_uri=self._pending_remote_uri,
+            dialog=self.dialog_ids,
+            method="INVITE",
+            contact_uri=self._pending_local_uri,
+            content_type="application/sdp",
+            transport=self.signaling_transport,
+        )
+        caller_name = _sip_header_token(self.local_name)
+        dest_name = _sip_header_token(self._pending_target)
+        if caller_name:
+            headers.append(("X-Voip-Stack-Caller-Name", caller_name))
+            headers.append(("X-Voip-Stack-Caller-Route", caller_name))
+        if dest_name:
+            headers.append(("X-Voip-Stack-Dest-Name", dest_name))
+            headers.append(("X-Voip-Stack-Dest-Route", dest_name))
+        if self._pending_invite_auth_header is not None:
+            headers.append(self._pending_invite_auth_header)
+        return sip.build_request(
+            "INVITE",
+            self._pending_request_uri,
+            headers,
+            self._pending_invite_body,
+        )
+
+    def _refresh_pending_invite_authorization(self) -> None:
+        """Regenerate qop state when an authenticated INVITE gets a new CSeq."""
+
+        if (
+            not self._pending_invite_auth_challenge
+            or not self._pending_invite_auth_header_name
+        ):
+            return
+        self._digest_nonce_count += 1
+        auth_value = build_digest_authorization(
+            challenge_header=self._pending_invite_auth_challenge,
+            username=self.username,
+            auth_username=self.auth_username,
+            password=self.password,
+            method="INVITE",
+            uri=self._pending_request_uri,
+            nonce_count=self._digest_nonce_count,
+        )
+        self._pending_invite_auth_header = (
+            self._pending_invite_auth_header_name,
+            auth_value,
+        )
+
+    async def _retry_invite_after(
+        self,
+        message: sip.SipMessage,
+        *,
+        remote_host: str,
+        remote_sip_port: int,
+    ) -> bytes | None:
+        """Start at most one RFC-shaped replacement INVITE transaction."""
+
+        delay = self._retry_after_delay(message)
+        if (
+            delay is None
+            or self._retry_after_used
+            or self._cancel_requested
+            or self._closing
+            or self._closed
+        ):
+            return None
+        self._retry_after_used = True
+        _LOGGER.info(
+            "SIP %s Retry-After=%s, retrying INVITE once",
+            message.status_code,
+            message.header("Retry-After"),
+        )
+        try:
+            await asyncio.wait_for(self._invite_abort_event.wait(), timeout=delay)
+        except TimeoutError:
+            pass
+        if (
+            self._invite_abort_event.is_set()
+            or self._cancel_requested
+            or self._closing
+            or self._closed
+        ):
+            return None
+        # This is a new client transaction for the same logical dialog attempt:
+        # preserve Call-ID/From tag, advance CSeq and replace the Via branch.
+        self.dialog_ids.cseq += 1
+        self.dialog_ids.branch = sip.make_branch()
+        self._invite_cseq = self.dialog_ids.cseq
+        self._received_provisional = False
+        self._cancel_sent = False
+        self._refresh_pending_invite_authorization()
+        raw = self._build_pending_invite()
+        sip.mark_sip_event(self, "INVITE")
+        await self._send_raw(raw, remote_host, int(remote_sip_port))
+        return raw
+
     async def _read_response(self, timeout: float) -> tuple[sip.SipMessage, tuple[str, int]] | None:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.0, float(timeout))
@@ -1185,6 +1317,12 @@ class SipCallClient:
         self._pending_request_uri = request_uri
         self._pending_local_uri = local_uri
         self._pending_remote_uri = remote_uri
+        self._pending_invite_auth_header = None
+        self._pending_invite_auth_challenge = ""
+        self._pending_invite_auth_header_name = ""
+        self._digest_nonce_count = 0
+        self._retry_after_used = False
+        self._invite_abort_event.clear()
         self._invite_transaction_active = True
         self._cancel_requested = False
         self._cancel_sent = False
@@ -1205,26 +1343,9 @@ class SipCallClient:
         offer = sdp.rewrite_sdp_origin(offer, self._sdp_session_id, 0)
         self._local_sdp_body = offer
         body = offer.encode()
-        headers = sip.dialog_headers(
-            request_uri=request_uri,
-            local_uri=local_uri,
-            remote_uri=remote_uri,
-            dialog=self.dialog_ids,
-            method="INVITE",
-            contact_uri=local_uri,
-            content_type="application/sdp",
-            transport=self.signaling_transport,
-        )
-        caller_name = _sip_header_token(self.local_name)
-        dest_name = _sip_header_token(target)
-        if caller_name:
-            headers.append(("X-Voip-Stack-Caller-Name", caller_name))
-            headers.append(("X-Voip-Stack-Caller-Route", caller_name))
-        if dest_name:
-            headers.append(("X-Voip-Stack-Dest-Name", dest_name))
-            headers.append(("X-Voip-Stack-Dest-Route", dest_name))
+        self._pending_invite_body = body
         self._invite_cseq = self.dialog_ids.cseq
-        raw = sip.build_request("INVITE", request_uri, headers, body)
+        raw = self._build_pending_invite()
         sip.mark_sip_event(self, "INVITE")
         try:
             await self._send_raw(raw, remote_host, int(remote_sip_port))
@@ -1318,6 +1439,7 @@ class SipCallClient:
                 auth_header = "Proxy-Authorization" if msg.status_code == 407 else "Authorization"
                 challenge = msg.header("Proxy-Authenticate" if msg.status_code == 407 else "WWW-Authenticate")
                 try:
+                    self._digest_nonce_count = 1
                     auth_value = build_digest_authorization(
                         challenge_header=challenge,
                         username=self.username,
@@ -1325,6 +1447,7 @@ class SipCallClient:
                         password=self.password,
                         method="INVITE",
                         uri=request_uri,
+                        nonce_count=self._digest_nonce_count,
                     )
                 except Exception as err:
                     _LOGGER.info("SIP digest auth failed to build INVITE response: %s", err)
@@ -1332,24 +1455,10 @@ class SipCallClient:
                 self.dialog_ids.cseq += 1
                 self.dialog_ids.branch = sip.make_branch()
                 self._invite_cseq = self.dialog_ids.cseq
-                retry_headers = sip.dialog_headers(
-                    request_uri=request_uri,
-                    local_uri=local_uri,
-                    remote_uri=remote_uri,
-                    dialog=self.dialog_ids,
-                    method="INVITE",
-                    contact_uri=local_uri,
-                    content_type="application/sdp",
-                    transport=self.signaling_transport,
-                )
-                if caller_name:
-                    retry_headers.append(("X-Voip-Stack-Caller-Name", caller_name))
-                    retry_headers.append(("X-Voip-Stack-Caller-Route", caller_name))
-                if dest_name:
-                    retry_headers.append(("X-Voip-Stack-Dest-Name", dest_name))
-                    retry_headers.append(("X-Voip-Stack-Dest-Route", dest_name))
-                retry_headers.append((auth_header, auth_value))
-                raw = sip.build_request("INVITE", request_uri, retry_headers, body)
+                self._pending_invite_auth_challenge = challenge
+                self._pending_invite_auth_header_name = auth_header
+                self._pending_invite_auth_header = (auth_header, auth_value)
+                raw = self._build_pending_invite()
                 sip.mark_sip_event(self, "INVITE")
                 try:
                     await self._send_raw(raw, remote_host, int(remote_sip_port))
@@ -1360,7 +1469,24 @@ class SipCallClient:
                 continue
             if msg.status_code and msg.status_code >= 300:
                 self._send_invite_error_ack(msg, addr[0], addr[1])
+                try:
+                    retry_raw = await self._retry_invite_after(
+                        msg,
+                        remote_host=remote_host,
+                        remote_sip_port=int(remote_sip_port),
+                    )
+                except (ConnectionError, OSError, RuntimeError) as err:
+                    return self._transport_failure(
+                        err, target, remote_host, remote_sip_port
+                    )
+                if retry_raw is not None:
+                    raw = retry_raw
+                    transaction.restart_retransmissions()
+                    received_provisional = False
+                    continue
                 self._invite_transaction_active = False
+                if self._cancel_requested or self._closing or self._closed:
+                    return "cancelled"
                 return _sip_decline_reason(msg) or sip.sip_failure_reason(msg.status_code)
 
     async def wait_for_final(self, timeout: float = 60.0) -> str:
@@ -1392,12 +1518,32 @@ class SipCallClient:
         if self.dialog is not None:
             return "in_call"
         deadline = asyncio.get_running_loop().time() + timeout
+        retry_transaction: SipClientTransaction[
+            tuple[sip.SipMessage, tuple[str, int]]
+        ] | None = None
+        retry_raw: bytes | None = None
+        retry_received_provisional = False
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 return "timeout"
             try:
-                received = await self._read_response(remaining)
+                if retry_transaction is None:
+                    received = await self._read_response(remaining)
+                else:
+                    async def _retransmit_retry() -> None:
+                        assert retry_raw is not None
+                        await self._send_raw(
+                            retry_raw,
+                            self._pending_remote_host,
+                            self._pending_remote_sip_port,
+                        )
+
+                    received = await retry_transaction.receive(
+                        self._read_response,
+                        _retransmit_retry,
+                        retransmit_enabled=not retry_received_provisional,
+                    )
                 if received is None:
                     return "timeout"
                 msg, addr = received
@@ -1414,7 +1560,11 @@ class SipCallClient:
                 continue
             sip.mark_sip_event(self, "SIP_RESPONSE", int(msg.status_code), msg.reason)
             _LOGGER.info("SIP RX %s %s from %s:%s", msg.status_code, msg.reason, addr[0], addr[1])
-            if _is_invite_progress_response(msg.status_code):
+            if 100 <= msg.status_code < 200:
+                retry_received_provisional = True
+                self._received_provisional = True
+                if self._cancel_requested and not self._cancel_sent:
+                    self._send_cancel()
                 continue
             if 200 <= msg.status_code < 300:
                 if not self._commit_200_ok(
@@ -1434,7 +1584,35 @@ class SipCallClient:
                 return "in_call"
             if msg.status_code >= 300:
                 self._send_invite_error_ack(msg, addr[0], addr[1])
+                try:
+                    candidate = await self._retry_invite_after(
+                        msg,
+                        remote_host=self._pending_remote_host or addr[0],
+                        remote_sip_port=self._pending_remote_sip_port,
+                    )
+                except (ConnectionError, OSError, RuntimeError) as err:
+                    return self._transport_failure(
+                        err,
+                        self._pending_target,
+                        self._pending_remote_host or addr[0],
+                        self._pending_remote_sip_port,
+                    )
+                if candidate is not None:
+                    retry_raw = candidate
+                    retry_transaction = SipClientTransaction(
+                        transport=self.signaling_transport,
+                        timeout=max(
+                            0.05,
+                            deadline - asyncio.get_running_loop().time(),
+                        ),
+                        t1=SIP_T1,
+                        t2=SIP_T2,
+                    )
+                    retry_received_provisional = False
+                    continue
                 self._invite_transaction_active = False
+                if self._cancel_requested or self._closing or self._closed:
+                    return "cancelled"
                 return _sip_decline_reason(msg) or sip.sip_failure_reason(msg.status_code)
 
     async def _handle_dialog_media_request(
@@ -1807,6 +1985,30 @@ class SipCallClient:
         else:
             if contact_target:
                 remote_target_uri = contact_target
+        asserted_identity = next(
+            (
+                identity
+                for identity in (
+                    sip.name_addr_identity(msg.header("P-Asserted-Identity")),
+                    sip.name_addr_identity(msg.header("Remote-Party-ID")),
+                )
+                if identity
+            ),
+            "",
+        )
+        self.connected_party = asserted_identity or next(
+            (
+                identity
+                for identity in (
+                    sip.name_addr_display_name(msg.header("Contact")),
+                    sip.name_addr_display_name(msg.header("To")),
+                    sip.name_addr_identity(msg.header("Contact")),
+                    sip.name_addr_identity(msg.header("To")),
+                )
+                if identity
+            ),
+            str(target or "").strip(),
+        )
         try:
             route_set = sip.record_route_set(msg, reverse=True)
         except (TypeError, ValueError, sip.SipError):
@@ -2154,6 +2356,7 @@ class SipCallClient:
             )
             return False
         self._cancel_requested = True
+        self._invite_abort_event.set()
         if self._received_provisional:
             return self._send_cancel()
         return True
@@ -2232,9 +2435,9 @@ class SipCallClient:
         """Terminate the SIP dialog/transaction and wait for the SIP response.
 
         A confirmed dialog ends with BYE + 200 OK. An early INVITE transaction
-        ends with CANCEL + 200 OK to CANCEL and a final 487 for the INVITE.
-        Keeping the socket alive for that exchange avoids leaving ESP phones in
-        ringing state while HA already moved back to idle.
+        ends when its final response arrives after CANCEL. The CANCEL client
+        transaction is independent, so a final non-2xx INVITE response is
+        sufficient to stop waiting once it has been ACKed.
         """
         if self.dialog is not None:
             if not self.bye():
@@ -2276,11 +2479,33 @@ class SipCallClient:
                 invite_task.add_done_callback(self._schedule_deferred_close)
                 return "cancel_pending"
 
+        final_response_task = self._final_response_task
+        if final_response_task is not None:
+            deadline = asyncio.get_running_loop().time() + timeout
+            if not final_response_task.done():
+                if not self.request_cancel():
+                    return "transport_unreachable"
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(final_response_task),
+                        timeout=timeout,
+                    )
+                except asyncio.TimeoutError:
+                    return "cancel_pending"
+            if self.dialog is not None:
+                return await self.terminate(
+                    timeout=max(
+                        0.05,
+                        deadline - asyncio.get_running_loop().time(),
+                    )
+                )
+            if not self._invite_transaction_active:
+                return "cancelled"
+
         sent_cancel = self.cancel()
         if not sent_cancel:
             return "transport_unreachable"
         saw_cancel_ok = False
-        saw_invite_terminated = False
         cancel_race_bye_sent = False
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
@@ -2337,13 +2562,15 @@ class SipCallClient:
             elif cseq_method == "INVITE" and msg.status_code >= 300:
                 self._send_invite_error_ack(msg, addr[0], addr[1])
                 self._invite_transaction_active = False
-                saw_invite_terminated = True
+                # RFC 3261 makes the INVITE and CANCEL client transactions
+                # independent. A final INVITE response proves that the call
+                # attempt is over even if the 200 to CANCEL was lost or was
+                # consumed by the transaction owner just before teardown.
+                return "cancelled"
             elif cseq_method == "BYE" and cancel_race_bye_sent and 200 <= msg.status_code < 300:
                 self.dialog = None
                 return "cancelled"
-            if saw_cancel_ok and saw_invite_terminated:
-                return "cancelled"
-        if saw_cancel_ok or saw_invite_terminated or cancel_race_bye_sent:
+        if saw_cancel_ok or cancel_race_bye_sent:
             return "cancelled"
         return "timeout"
 

@@ -34,10 +34,29 @@ const {
   normaliseTransport,
   reasonKey,
   targetFromRosterEntry,
-  targetSupportsVideo,
+  terminalPeerLabel,
 } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 const HA_SOFTPHONE_DEVICE_ID = "__voip_stack_ha_softphone__";
 const DEFAULT_SOFTPHONE_ENDPOINT_ID = "default";
+const HANGUP_SERVICE_TIMEOUT_MS = 3000;
+
+function settleServiceWithin(promise, timeoutMs, timeoutMessage) {
+  let timer;
+  const schedule = globalThis.setTimeout || globalThis.window?.setTimeout;
+  const cancel = globalThis.clearTimeout || globalThis.window?.clearTimeout;
+  if (!schedule) return Promise.resolve(promise);
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_, reject) => {
+      timer = schedule(
+        () => reject(new Error(timeoutMessage)),
+        timeoutMs,
+      );
+    }),
+  ]).finally(() => {
+    if (timer && cancel) cancel(timer);
+  });
+}
 
 function installWheelScrollHandoff(scroller) {
   scroller.addEventListener("wheel", (event) => {
@@ -102,6 +121,10 @@ class VoipStackCard extends HTMLElement {
 
     this._cleanupTask = null;
     this._audioAttachTask = null;
+    this._nativeCameraCard = null;
+    this._nativeCameraEntityId = "";
+    this._nativeCameraMountTask = null;
+    this._nativeCameraMountGeneration = 0;
 
     // Device info
     this._activeDeviceInfo = null;
@@ -238,6 +261,7 @@ class VoipStackCard extends HTMLElement {
     voipStackEngine.clearRingtoneRequest(this._ringtoneRequestKey);
     voipStackEngine.releaseVideoCanvas(this);
     voipStackEngine.releaseSoftphoneController(this, this._softphoneRuntimeKey());
+    this._clearNativeCameraCard();
   }
 
   async _subscribeBusEvents() {
@@ -275,7 +299,11 @@ class VoipStackCard extends HTMLElement {
   }
 
   _normalPeerName(value) {
-    return String(value || "").trim().toLowerCase();
+    return String(value || "")
+      .normalize("NFKC")
+      .trim()
+      .toLocaleLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, "");
   }
 
   _samePeerName(a, b) {
@@ -323,7 +351,7 @@ class VoipStackCard extends HTMLElement {
     if (!["idle", "busy", "declined", "cancelled", "media_incompatible", "transport_unreachable", "auth_required_unsupported", "error"].includes(state)) return;
     this._mirroredConnectedPeer = "";
     const reason = data.terminal_reason || data.reason || state;
-    const peer = data.target || data.dialed_target || data.peer_name || data.callee || "";
+    const peer = terminalPeerLabel(data);
     this._captureEndReason("terminal", reason, data.actor || "remote", peer);
     this._render();
   }
@@ -394,7 +422,7 @@ class VoipStackCard extends HTMLElement {
     const ownedCallId = String(voipStackEngine.softphoneCallIdFor(endpointId) || "");
     // A delayed initial-state read from a card that HA is replacing must not
     // tear down a newer call owned by the page-level engine.
-    if (ownedCallId && terminalCallId !== ownedCallId) {
+    if (ownedCallId && terminalCallId && terminalCallId !== ownedCallId) {
       const activelyAttached = voipStackEngine.active &&
         voipStackEngine.endpointId === endpointId &&
         voipStackEngine.callId === ownedCallId;
@@ -526,7 +554,7 @@ class VoipStackCard extends HTMLElement {
           snapshot.state,
           terminalReason,
           String(snapshot.origin || "").toLowerCase(),
-          snapshot.dialed_target || snapshot.peer_name || snapshot.callee || snapshot.caller || "",
+          terminalPeerLabel(snapshot),
         );
       }
       this._cleanupAfterTerminalSession(snapshot);
@@ -539,6 +567,11 @@ class VoipStackCard extends HTMLElement {
   _ensureHaSoftphoneAudioPath(snapshot = {}) {
     if (!this._isSoftphoneController()) return;
     if (String(snapshot.state || "").toLowerCase() !== "in_call") return;
+    // Hangup deliberately closes the local media socket before the backend
+    // snapshot becomes idle. Engine cleanup emits synchronously, so without
+    // this gate the still-in-call snapshot can start a second audio attach
+    // while the first owner is being released (HTTP 409).
+    if (this._stopping || voipStackEngine.mediaCleanupPending) return;
     const endpointId = this._getSoftphoneEndpointId();
     const callId = String(snapshot.call_id || "");
     if (!this._ownsSoftphoneMedia(snapshot) && !voipStackEngine.tryRecoverSoftphoneSession(
@@ -707,6 +740,7 @@ class VoipStackCard extends HTMLElement {
   set hass(hass) {
     const oldHass = this._hass;
     this._hass = hass;
+    if (this._nativeCameraCard) this._nativeCameraCard.hass = hass;
     if (this._isPhonebookMode()) {
       this._render();
       return;
@@ -1194,6 +1228,135 @@ class VoipStackCard extends HTMLElement {
     return targets.find(d => d.device_id === wanted) || targets[0];
   }
 
+  _activeSoftphonePeerDevice() {
+    if (!this._isHaSoftphoneMode()) return null;
+    const snapshot = this._softphoneSnapshot || {};
+    const targetDeviceId = String(snapshot.target_device_id || "").trim();
+    if (targetDeviceId) {
+      const target = this._availableDevices.find(
+        (device) => String(device?.device_id || "") === targetDeviceId,
+      );
+      if (target) return target;
+      const rosterTarget = this._softphoneTargets().find(
+        (device) => String(device?.device_id || "") === targetDeviceId,
+      );
+      if (rosterTarget) return rosterTarget;
+    }
+
+    const peerName = String(
+      snapshot.peer_name || snapshot.connected_party ||
+      (snapshot.direction === "incoming" ? snapshot.caller : snapshot.callee) || "",
+    ).trim();
+    if (peerName) {
+      const rosterTarget = this._softphoneTargets().find(
+        (device) => this._samePeerName(device?.name, peerName),
+      );
+      if (rosterTarget) return rosterTarget;
+      const target = this._availableDevices.find(
+        (device) => this._samePeerName(device?.name, peerName),
+      );
+      if (target) return target;
+    }
+    return this._getSoftphoneTargetDevice();
+  }
+
+  _activeNativeCameraEntityId(espState) {
+    if (
+      !this._isHaSoftphoneMode() ||
+      String(espState || "").trim().toLowerCase() !== "in_call"
+    ) return "";
+    const peer = this._activeSoftphonePeerDevice();
+    if (!peer) return "";
+    const capabilities = this._formatListFromMetadata(peer.capabilities)
+      .map((value) => value.toLowerCase());
+    if (
+      String(peer.sip_video_codec || "").trim() ||
+      capabilities.includes("video")
+    ) return "";
+    const entityId = String(peer.camera_entity_id || "").trim();
+    if (!entityId.startsWith("camera.")) return "";
+    // ESPHome cameras do not publish an initial image state. After an HA
+    // restart their state machine can therefore remain "unavailable" until
+    // the first standard camera stream request arrives. Mount the native HA
+    // camera card whenever the entity exists so that request can bootstrap it.
+    if (!this._hass?.states?.[entityId]) return "";
+    return entityId;
+  }
+
+  _clearNativeCameraCard() {
+    this._nativeCameraMountGeneration++;
+    this._nativeCameraEntityId = "";
+    this._nativeCameraCard = null;
+    this._nativeCameraMountTask = null;
+    const host = this._els?.nativeCameraHost;
+    if (host) {
+      host.hidden = true;
+      host.replaceChildren();
+    }
+  }
+
+  _syncNativeCameraCard(entityId) {
+    const host = this._els?.nativeCameraHost;
+    if (!host) return false;
+    const wanted = String(entityId || "").trim();
+    if (!wanted) {
+      if (this._nativeCameraEntityId || this._nativeCameraCard || this._nativeCameraMountTask) {
+        this._clearNativeCameraCard();
+      } else {
+        host.hidden = true;
+      }
+      return false;
+    }
+
+    host.hidden = false;
+    if (wanted === this._nativeCameraEntityId) {
+      if (this._nativeCameraCard) {
+        this._nativeCameraCard.hass = this._hass;
+        if (this._nativeCameraCard.parentNode !== host) {
+          host.replaceChildren(this._nativeCameraCard);
+        }
+      }
+      return true;
+    }
+
+    const generation = ++this._nativeCameraMountGeneration;
+    this._nativeCameraEntityId = wanted;
+    this._nativeCameraCard = null;
+    host.replaceChildren();
+    this._nativeCameraMountTask = (async () => {
+      const helpers = await window.loadCardHelpers();
+      const card = helpers.createCardElement({
+        type: "picture-entity",
+        entity: wanted,
+        camera_image: wanted,
+        camera_view: "live",
+        show_name: false,
+        show_state: false,
+        tap_action: { action: "none" },
+        hold_action: { action: "none" },
+      });
+      if (
+        generation !== this._nativeCameraMountGeneration ||
+        wanted !== this._nativeCameraEntityId ||
+        !this.isConnected
+      ) return;
+      card.classList.add("native-camera-card");
+      card.hass = this._hass;
+      this._nativeCameraCard = card;
+      host.replaceChildren(card);
+    })().catch((err) => {
+      if (generation !== this._nativeCameraMountGeneration) return;
+      this._nativeCameraEntityId = "";
+      host.hidden = true;
+      console.warn("voip-stack-card: failed to mount native HA camera", err);
+    }).finally(() => {
+      if (generation === this._nativeCameraMountGeneration) {
+        this._nativeCameraMountTask = null;
+      }
+    });
+    return true;
+  }
+
   _loadSharedRoster() {
     const attr = this._hass?.states?.["sensor.voip_phonebook"]?.attributes || {};
     const raw = attr.roster_json || "";
@@ -1246,10 +1409,6 @@ class VoipStackCard extends HTMLElement {
 
   _targetFromRosterEntry(entry) {
     return targetFromRosterEntry(entry);
-  }
-
-  _targetSupportsVideo(target) {
-    return targetSupportsVideo(target);
   }
 
   _normaliseTransport(value) {
@@ -1660,10 +1819,14 @@ class VoipStackCard extends HTMLElement {
     const videoVisible = ownsVideoCanvas &&
       espState.toLowerCase() === "in_call" &&
       voipStackEngine.videoVisible;
-    els.card.classList.toggle("video-active", videoVisible);
+    const nativeCameraVisible = !videoVisible && this._syncNativeCameraCard(
+      this._activeNativeCameraEntityId(espState),
+    );
+    const visualMediaVisible = videoVisible || nativeCameraVisible;
+    els.card.classList.toggle("video-active", visualMediaVisible);
     els.videoCanvas.hidden = !videoVisible;
-    els.videoShade.hidden = !videoVisible;
-    this._syncVideoDurationTimer(videoVisible);
+    els.videoShade.hidden = !visualMediaVisible;
+    this._syncVideoDurationTimer(visualMediaVisible);
     if (els.hangupPeer) {
       const normalizedState = espState.toLowerCase();
       els.hangupState.textContent = this._stopping
@@ -1881,13 +2044,28 @@ class VoipStackCard extends HTMLElement {
         position: relative;
         isolation: isolate;
       }
-      .card > :not(.video-canvas):not(.video-shade) { position: relative; z-index: 2; }
+      /* :where() keeps this generic stacking rule below state-specific
+       * positioning in the cascade. Chained :not(.class) selectors otherwise
+       * contribute three class weights and can pin the video call bar back
+       * into normal flex flow instead of its absolute bottom layer. */
+      .card > :where(:not(.video-canvas):not(.native-camera):not(.video-shade)) {
+        position: relative;
+        z-index: 2;
+      }
       .video-canvas {
         position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%;
         max-width: 100%; max-height: 100%; object-fit: contain; background: #000;
         border-radius: inherit; pointer-events: none;
       }
-      .video-canvas[hidden], .video-shade[hidden] { display: none; }
+      .native-camera {
+        position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%;
+        overflow: hidden; background: #000; border-radius: inherit;
+        pointer-events: none;
+      }
+      .native-camera > .native-camera-card {
+        display: block; width: 100%; height: 100%; margin: 0;
+      }
+      .video-canvas[hidden], .native-camera[hidden], .video-shade[hidden] { display: none; }
       .video-shade {
         position: absolute; inset: 0; z-index: 1; pointer-events: none;
         border-radius: inherit;
@@ -2216,7 +2394,11 @@ class VoipStackCard extends HTMLElement {
     const videoShade = document.createElement("div");
     videoShade.className = "video-shade";
     videoShade.hidden = true;
+    const nativeCameraHost = document.createElement("div");
+    nativeCameraHost.className = "native-camera";
+    nativeCameraHost.hidden = true;
     card.appendChild(videoCanvas);
+    card.appendChild(nativeCameraHost);
     card.appendChild(videoShade);
 
     const header = document.createElement("div");
@@ -2542,7 +2724,7 @@ class VoipStackCard extends HTMLElement {
     root.appendChild(card);
 
     this._els = {
-      card, videoCanvas, videoShade,
+      card, videoCanvas, nativeCameraHost, videoShade,
       header, headerName,
       destRow, destValueWrap, destValue, destSelect, prevBtn, nextBtn, offlinePanel,
       keypadPanel, keypadInput, keypadKeys,
@@ -2862,7 +3044,6 @@ class VoipStackCard extends HTMLElement {
     this._activeDeviceInfo = sessionInfo;
     let sendVideo = Boolean(
       this._softphoneSupportsVideo() &&
-      this._targetSupportsVideo(target) &&
       this._softphoneSnapshot?.video_camera_send_enabled &&
       this._softphoneSnapshot?.send_video
     );
@@ -3045,6 +3226,15 @@ class VoipStackCard extends HTMLElement {
     this._starting = false;
     this._stopping = true;
     this._errorMsg = "";
+    if (wasSoftphone && callId) {
+      // Shed camera/decode/WebSocket work before waiting on HA call control.
+      // The engine keeps the SIP/audio claim, so a rejected request remains
+      // visible and Hangup can be retried.
+      void voipStackEngine.suspendVideoForHangup(
+        callId,
+        this._getSoftphoneEndpointId(),
+      );
+    }
     this._render();
     let hangupSucceeded = false;
 
@@ -3056,10 +3246,14 @@ class VoipStackCard extends HTMLElement {
       this._activeDeviceInfo = deviceInfo;
 
       if (wasSoftphone) {
-        await this._hass.callService("voip_stack", "hangup", {
-          ...this._softphoneServiceScope(),
-          call_id: callId,
-        });
+        await settleServiceWithin(
+          this._hass.callService("voip_stack", "hangup", {
+            ...this._softphoneServiceScope(),
+            call_id: callId,
+          }),
+          HANGUP_SERVICE_TIMEOUT_MS,
+          "Hangup request timed out; you can retry.",
+        );
       } else {
         // Mirror mode: Hangup is the ESP's Decline button. Firmware maps
         // decline during in_call to stop(), and idle is a no-op.
@@ -3083,7 +3277,7 @@ class VoipStackCard extends HTMLElement {
         if (
           voipStackEngine.endpointId === endpointId &&
           (!callId || voipStackEngine.callId === callId)
-        ) await voipStackEngine.close("hangup");
+        ) void voipStackEngine.close("hangup");
       }
       else voipStackEngine.releaseSoftphoneSession(callId, endpointId);
       if (operationId === this._callOperationId) await this._loadSoftphoneState();

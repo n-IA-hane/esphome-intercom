@@ -48,7 +48,64 @@ class _Hass:
         self.data: dict = {}
 
 
+def _parse_multipart_jpegs(data: bytes) -> list[bytes]:
+    """Extract length-delimited JPEGs from FFmpeg's mpjpeg test output."""
+
+    frames: list[bytes] = []
+    offset = 0
+    while offset < len(data):
+        header_end = data.find(b"\r\n\r\n", offset)
+        if header_end < 0:
+            break
+        content_length = 0
+        for line in data[offset:header_end].decode("ascii", errors="strict").splitlines():
+            name, separator, value = line.partition(":")
+            if separator and name.strip().lower() == "content-length":
+                content_length = int(value.strip())
+        if content_length <= 0:
+            raise AssertionError("FFmpeg mpjpeg frame has no Content-Length")
+        frame_start = header_end + 4
+        frame_end = frame_start + content_length
+        if frame_end > len(data):
+            raise AssertionError("FFmpeg mpjpeg frame is truncated")
+        frame = data[frame_start:frame_end]
+        if not frame.startswith(b"\xff\xd8") or not frame.endswith(b"\xff\xd9"):
+            raise AssertionError("FFmpeg mpjpeg part is not a complete JPEG")
+        frames.append(frame)
+        offset = frame_end
+    return frames
+
+
 class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _blocking_jpeg_process():
+        output_read = asyncio.Event()
+
+        async def block_output(_separator: bytes) -> bytes:
+            output_read.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        async def block_stderr() -> bytes:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        process = mock.Mock()
+        process.returncode = None
+        process.stdin = mock.Mock()
+        process.stdin.drain = mock.AsyncMock()
+        process.stdout = mock.Mock()
+        process.stdout.readuntil = mock.AsyncMock(side_effect=block_output)
+        process.stderr = mock.Mock()
+        process.stderr.readline = mock.AsyncMock(side_effect=block_stderr)
+
+        def terminate() -> None:
+            process.returncode = 0
+
+        process.terminate.side_effect = terminate
+        process.wait = mock.AsyncMock(return_value=0)
+        return process, output_read
+
     def test_ffmpeg_binary_prefers_home_assistant_manager(self) -> None:
         hass = _Hass()
         hass.data["ffmpeg"] = types.SimpleNamespace(binary=" /opt/ha/ffmpeg ")
@@ -108,6 +165,156 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(
             hass.data[video_transcoder.DOMAIN][video_transcoder._ACTIVE_TRANSCODER],
             active,
+        )
+
+    async def test_jpeg_normalizer_shares_and_releases_transcoder_slot(self) -> None:
+        hass = _Hass()
+        process, _output_read = self._blocking_jpeg_process()
+        normalizer = video_transcoder.FfmpegJpegNormalizer(
+            hass=hass,
+            call_id="jpeg-slot",
+        )
+        contender = video_transcoder.FfmpegVideoTranscoder(
+            hass=hass,
+            call_id="rtp-slot",
+            input_format=sdp.RtpVideoFormat(payload_type=34, encoding="H263"),
+            output_port=45678,
+        )
+
+        with (
+            mock.patch.object(video_transcoder, "_ffmpeg_binary", return_value="ffmpeg"),
+            mock.patch.object(
+                video_transcoder.asyncio,
+                "create_subprocess_exec",
+                new=mock.AsyncMock(return_value=process),
+            ),
+        ):
+            await normalizer.async_start()
+            self.assertIs(
+                hass.data[video_transcoder.DOMAIN][
+                    video_transcoder._ACTIVE_TRANSCODER
+                ],
+                normalizer,
+            )
+            with self.assertRaisesRegex(video_transcoder.VideoTranscoderError, "another"):
+                await contender.async_start()
+            self.assertIs(
+                hass.data[video_transcoder.DOMAIN][
+                    video_transcoder._ACTIVE_TRANSCODER
+                ],
+                normalizer,
+            )
+            await normalizer.async_close()
+
+        process.terminate.assert_called_once()
+        process.wait.assert_awaited_once()
+        self.assertNotIn(
+            video_transcoder._ACTIVE_TRANSCODER,
+            hass.data[video_transcoder.DOMAIN],
+        )
+
+    async def test_invalid_jpeg_is_rejected_before_process_start(self) -> None:
+        normalizer = video_transcoder.FfmpegJpegNormalizer(
+            hass=_Hass(),
+            call_id="invalid-jpeg",
+        )
+        spawn = mock.AsyncMock()
+        invalid_frames = (
+            b"not-a-jpeg",
+            b"\xff\xd8missing-eoi",
+            b"missing-soi\xff\xd9",
+            b"\xff\xd8"
+            + b"\x00" * (video_transcoder._JPEG_NORMALIZE_MAX_BYTES - 3)
+            + b"\xff\xd9",
+        )
+
+        with mock.patch.object(
+            video_transcoder.asyncio,
+            "create_subprocess_exec",
+            new=spawn,
+        ):
+            for frame in invalid_frames:
+                with (
+                    self.subTest(size=len(frame)),
+                    self.assertRaisesRegex(
+                        video_transcoder.VideoTranscoderError,
+                        "invalid browser JPEG",
+                    ),
+                ):
+                    await normalizer.async_normalize(frame)
+
+        spawn.assert_not_awaited()
+        self.assertNotIn(
+            video_transcoder._ACTIVE_TRANSCODER,
+            normalizer.hass.data.get(video_transcoder.DOMAIN, {}),
+        )
+
+    async def test_jpeg_normalizer_timeout_closes_process_and_releases_slot(
+        self,
+    ) -> None:
+        hass = _Hass()
+        process, output_read = self._blocking_jpeg_process()
+        normalizer = video_transcoder.FfmpegJpegNormalizer(
+            hass=hass,
+            call_id="jpeg-timeout",
+        )
+
+        with (
+            mock.patch.object(video_transcoder, "_ffmpeg_binary", return_value="ffmpeg"),
+            mock.patch.object(
+                video_transcoder.asyncio,
+                "create_subprocess_exec",
+                new=mock.AsyncMock(return_value=process),
+            ),
+            mock.patch.object(video_transcoder, "_JPEG_NORMALIZE_TIMEOUT", 0.01),
+        ):
+            with self.assertRaisesRegex(
+                video_transcoder.VideoTranscoderError,
+                "JPEG normalizer failed",
+            ):
+                await normalizer.async_normalize(b"\xff\xd8\xff\xd9")
+
+        self.assertTrue(output_read.is_set())
+        process.terminate.assert_called_once()
+        process.wait.assert_awaited_once()
+        self.assertIsNone(normalizer.process)
+        self.assertNotIn(
+            video_transcoder._ACTIVE_TRANSCODER,
+            hass.data[video_transcoder.DOMAIN],
+        )
+
+    async def test_cancelled_jpeg_normalization_cleans_up_process_and_slot(
+        self,
+    ) -> None:
+        hass = _Hass()
+        process, output_read = self._blocking_jpeg_process()
+        normalizer = video_transcoder.FfmpegJpegNormalizer(
+            hass=hass,
+            call_id="jpeg-cancel",
+        )
+
+        with (
+            mock.patch.object(video_transcoder, "_ffmpeg_binary", return_value="ffmpeg"),
+            mock.patch.object(
+                video_transcoder.asyncio,
+                "create_subprocess_exec",
+                new=mock.AsyncMock(return_value=process),
+            ),
+        ):
+            task = asyncio.create_task(
+                normalizer.async_normalize(b"\xff\xd8\xff\xd9")
+            )
+            await output_read.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        process.terminate.assert_called_once()
+        process.wait.assert_awaited_once()
+        self.assertIsNone(normalizer.process)
+        self.assertNotIn(
+            video_transcoder._ACTIVE_TRANSCODER,
+            hass.data[video_transcoder.DOMAIN],
         )
 
     async def test_failed_start_releases_the_transcoder_slot(self) -> None:
@@ -378,6 +585,108 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(process.wait_calls, 2)
         self.assertTrue(stderr_task.done())
+        self.assertNotIn(
+            video_transcoder._ACTIVE_TRANSCODER,
+            hass.data[video_transcoder.DOMAIN],
+        )
+
+
+@unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg is required for JPEG normalization")
+class JpegNormalizerFfmpegTests(unittest.IsolatedAsyncioTestCase):
+    async def _optimized_jpeg_frames(self, count: int) -> list[bytes]:
+        process = await asyncio.create_subprocess_exec(
+            shutil.which("ffmpeg") or "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=320x180:rate=3",
+            "-frames:v",
+            str(count),
+            "-an",
+            "-pix_fmt",
+            "yuvj420p",
+            "-c:v",
+            "mjpeg",
+            "-huffman",
+            "optimal",
+            "-q:v",
+            "5",
+            "-f",
+            "mpjpeg",
+            "-boundary_tag",
+            "source",
+            "pipe:1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        self.assertEqual(process.returncode, 0, stderr.decode(errors="replace"))
+        frames = _parse_multipart_jpegs(stdout)
+        self.assertEqual(len(frames), count)
+        return frames
+
+    async def test_three_optimized_frames_use_one_process_and_round_trip_rtp(
+        self,
+    ) -> None:
+        frames = await self._optimized_jpeg_frames(3)
+        for frame in frames:
+            with self.assertRaisesRegex(ValueError, "standard JPEG Huffman"):
+                video_rtp.packetize_jpeg(
+                    frame,
+                    payload_type=26,
+                    sequence=1,
+                    timestamp=1,
+                    ssrc=1,
+                )
+
+        hass = _Hass()
+        normalizer = video_transcoder.FfmpegJpegNormalizer(
+            hass=hass,
+            call_id="three-frames",
+        )
+        process_ids: set[int] = set()
+        try:
+            for index, frame in enumerate(frames):
+                normalized = await normalizer.async_normalize(frame)
+                self.assertIsNotNone(normalizer.process)
+                assert normalizer.process is not None
+                process_ids.add(normalizer.process.pid)
+
+                timestamp = 9000 + index * 3000
+                packets = video_rtp.packetize_jpeg(
+                    normalized,
+                    payload_type=26,
+                    sequence=65000 + index * 100,
+                    timestamp=timestamp,
+                    ssrc=0x12345678,
+                    max_payload=600,
+                )
+                self.assertGreater(len(packets), 1)
+                depacketizer = video_rtp.JpegDepacketizer()
+                result = None
+                for packet in packets:
+                    result = depacketizer.push(packet) or result
+                self.assertIsNotNone(result)
+                assert result is not None
+                self.assertEqual(result.encoding, "JPEG")
+                self.assertEqual(result.timestamp, timestamp)
+                self.assertTrue(result.data.startswith(b"\xff\xd8"))
+                self.assertTrue(result.data.endswith(b"\xff\xd9"))
+                video_rtp._parse_jpeg_for_rtp(result.data)
+
+            self.assertEqual(len(process_ids), 1)
+            self.assertIs(
+                hass.data[video_transcoder.DOMAIN][
+                    video_transcoder._ACTIVE_TRANSCODER
+                ],
+                normalizer,
+            )
+        finally:
+            await normalizer.async_close()
+
         self.assertNotIn(
             video_transcoder._ACTIVE_TRANSCODER,
             hass.data[video_transcoder.DOMAIN],

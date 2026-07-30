@@ -92,6 +92,7 @@ class SipEndpointParseTest(unittest.TestCase):
         assert parsed is not None
         self.assertEqual(parsed["extension"], "101")
         self.assertEqual(parsed["extras"], [])
+        self.assertEqual(parsed["sip_video_codec"], "")
 
     def test_parses_forward_compatible_endpoint_extras(self) -> None:
         base = (
@@ -110,6 +111,23 @@ class SipEndpointParseTest(unittest.TestCase):
             assert parsed is not None
             self.assertEqual(parsed["extension"], extension)
             self.assertEqual(parsed["extras"], extras)
+            self.assertEqual(parsed["sip_video_codec"], "")
+
+    def test_parses_compile_time_sip_video_codec_extra(self) -> None:
+        base = (
+            "P4 | 192.168.1.31 | 5060 | 40000 | "
+            "full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | sip_tcp | 104"
+        )
+        for suffix, expected in (
+            (" | video=jpeg", "jpeg"),
+            (" | video=H264", "h264"),
+            (" | video=vp8", ""),
+            (" | future=value | video=h264", "h264"),
+        ):
+            parsed = device_resolver.parse_voip_endpoint(base + suffix)
+            self.assertIsNotNone(parsed)
+            assert parsed is not None
+            self.assertEqual(parsed["sip_video_codec"], expected)
 
     def test_does_not_parse_group_membership_from_endpoint_extras(self) -> None:
         endpoint = (
@@ -140,6 +158,7 @@ class SipEndpointParseTest(unittest.TestCase):
         self.assertIn('"voip_ring_groups"', collect_entities)
         self.assertIn('"voip_conference_groups"', collect_entities)
         self.assertIn('"voip_ring_on_conference"', collect_entities)
+        self.assertIn('eid.startswith("camera.")', collect_entities)
 
     def test_list_devices_re_reads_live_endpoint_state(self) -> None:
         class FakeEntity:

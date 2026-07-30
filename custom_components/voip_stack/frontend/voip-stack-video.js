@@ -1,16 +1,36 @@
 import {
   cameraCaptureContract,
+  cameraEncoderContract,
   directionalVideoContract,
   emptyVideoStats,
   legacyVideoAliases,
-} from "./voip-stack-video-model.js";
+} from "./voip-stack-video-model.js?v=2";
 
 const VIDEO_ACCESS_UNIT = 1;
 const VIDEO_HEADER_BYTES = 6;
+const MAX_VIDEO_ACCESS_UNIT_BYTES = 1024 * 1024;
 const MAX_VIDEO_WS_BUFFER = 2 * 1024 * 1024;
 const MAX_PENDING_DECODE_BYTES = 8 * 1024 * 1024;
 const MAX_PENDING_DECODE_FRAMES = 60;
 const MAX_DECODE_QUEUE_FRAMES = 8;
+const CODEC_SETUP_TIMEOUT_MS = 3000;
+const MEDIA_CLEANUP_TIMEOUT_MS = 500;
+const JPEG_CAMERA_QUALITY = 0.72;
+
+function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
+  let timer;
+  const schedule = globalThis.setTimeout || globalThis.window?.setTimeout;
+  const cancel = globalThis.clearTimeout || globalThis.window?.clearTimeout;
+  if (!schedule) return Promise.resolve(promise).catch(() => {});
+  return Promise.race([
+    Promise.resolve(promise).catch(() => {}),
+    new Promise((resolve) => {
+      timer = schedule(resolve, timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timer && cancel) cancel(timer);
+  });
+}
 
 export class VoipStackVideo extends EventTarget {
   constructor() {
@@ -25,10 +45,18 @@ export class VoipStackVideo extends EventTarget {
     this._canSend = false;
     this._canvas = null;
     this._decoder = null;
+    this._decoderWorker = null;
+    this._decoderWorkerRequests = new Map();
+    this._decoderWorkerRequestId = 0;
+    this._pendingRenderedFrame = null;
+    this._renderFrameHandle = 0;
     this._encoder = null;
     this._cameraStream = null;
     this._cameraReader = null;
     this._encodeTask = null;
+    this._jpegEncoderWorker = null;
+    this._jpegEncodePending = false;
+    this._jpegQueuedFrame = null;
     this._forceCameraKeyFrame = true;
     this._sendDropUntilKeyFrame = false;
     this._encoding = "H264";
@@ -46,6 +74,7 @@ export class VoipStackVideo extends EventTarget {
     this._jpegDecodePending = false;
     this._jpegQueuedBuffer = null;
     this._jpegDecodeToken = null;
+    this._jpegDecodeErrorReported = 0;
     this._mediaUpdatePromise = Promise.resolve();
     this._generation = 0;
     this._senderGeneration = 0;
@@ -60,6 +89,368 @@ export class VoipStackVideo extends EventTarget {
 
   _emptyStats() {
     return emptyVideoStats();
+  }
+
+  _codecWorkerUrl() {
+    const url = new URL("./voip-stack-video-worker.js", import.meta.url);
+    try {
+      url.search = new URL(import.meta.url).search;
+    } catch (_) {}
+    return url;
+  }
+
+  async _createJpegEncoder(width, height, generation, senderGeneration) {
+    if (typeof Worker === "undefined") {
+      throw new Error("Browser cannot encode JPEG outside the UI thread");
+    }
+    const worker = new Worker(this._codecWorkerUrl(), { type: "module" });
+    const requestId = 1;
+    let resolveSetup;
+    let rejectSetup;
+    const setup = new Promise((resolve, reject) => {
+      resolveSetup = resolve;
+      rejectSetup = reject;
+    });
+    const encoder = {
+      state: "configuring",
+      kind: "jpeg",
+      encodeQueueSize: 0,
+      worker,
+      close() {
+        if (this.state === "closed") return;
+        this.state = "closed";
+        try { worker.postMessage({ type: "close" }); } catch (_) {}
+        try { worker.terminate(); } catch (_) {}
+      },
+    };
+    worker.onmessage = (event) => {
+      const message = event.data || {};
+      if (message.type === "reply" && Number(message.requestId || 0) === requestId) {
+        if (message.ok) resolveSetup(message);
+        else rejectSetup(new Error(message.error || "JPEG worker rejected setup"));
+        return;
+      }
+      this._handleJpegEncoderWorkerMessage(
+        worker,
+        encoder,
+        generation,
+        senderGeneration,
+        message,
+      );
+    };
+    worker.onerror = (event) => {
+      const error = new Error(
+        event?.message || "JPEG camera worker failed",
+      );
+      if (encoder.state === "configuring") rejectSetup(error);
+      if (
+        this._jpegEncoderWorker === worker &&
+        this._encoder === encoder &&
+        generation === this._generation &&
+        senderGeneration === this._senderGeneration
+      ) {
+        this._stats.dropped++;
+        void this._cleanupSender();
+        this._emit();
+      }
+    };
+    const schedule = globalThis.setTimeout || globalThis.window?.setTimeout;
+    const cancel = globalThis.clearTimeout || globalThis.window?.clearTimeout;
+    const timer = schedule?.(
+      () => rejectSetup(new Error("JPEG worker setup timed out")),
+      CODEC_SETUP_TIMEOUT_MS,
+    );
+    try {
+      worker.postMessage({
+        type: "configure_jpeg_encoder",
+        requestId,
+        generation,
+        width,
+        height,
+        quality: JPEG_CAMERA_QUALITY,
+      });
+      await setup;
+      if (!this._senderIsCurrent(generation, senderGeneration)) {
+        throw new Error("SIP video session was superseded or camera transmission was disabled");
+      }
+      encoder.state = "configured";
+      return encoder;
+    } catch (error) {
+      encoder.close();
+      throw error;
+    } finally {
+      if (timer && cancel) cancel(timer);
+    }
+  }
+
+  _handleJpegEncoderWorkerMessage(
+    worker,
+    encoder,
+    generation,
+    senderGeneration,
+    message,
+  ) {
+    if (
+      this._jpegEncoderWorker !== worker ||
+      this._encoder !== encoder ||
+      encoder.state !== "configured" ||
+      generation !== this._generation ||
+      senderGeneration !== this._senderGeneration ||
+      Number(message.generation || 0) !== generation ||
+      Number(message.senderGeneration || 0) !== senderGeneration
+    ) return;
+    if (message.type !== "jpeg_frame" && message.type !== "jpeg_error") return;
+
+    encoder.encodeQueueSize = 0;
+    this._jpegEncodePending = false;
+    if (
+      message.type === "jpeg_frame" &&
+      message.buffer &&
+      Number.isFinite(Number(message.buffer.byteLength))
+    ) {
+      this._sendEncodedAccessUnit(
+        new Uint8Array(message.buffer),
+        Number(message.timestamp || 0),
+        true,
+        generation,
+        senderGeneration,
+        encoder,
+      );
+      this._encodedFrames++;
+    } else if (message.type === "jpeg_error") {
+      this._stats.dropped++;
+      this._emit();
+    }
+
+    const queued = this._jpegQueuedFrame;
+    this._jpegQueuedFrame = null;
+    if (queued) {
+      this._dispatchJpegFrame(
+        queued,
+        worker,
+        encoder,
+        generation,
+        senderGeneration,
+      );
+    }
+  }
+
+  _dispatchJpegFrame(frame, worker, encoder, generation, senderGeneration) {
+    if (
+      !this._senderIsCurrent(generation, senderGeneration) ||
+      this._jpegEncoderWorker !== worker ||
+      this._encoder !== encoder ||
+      encoder.state !== "configured"
+    ) {
+      frame.close();
+      return;
+    }
+    if (this._jpegEncodePending) {
+      if (this._jpegQueuedFrame) {
+        this._jpegQueuedFrame.close();
+        this._stats.dropped++;
+      }
+      this._jpegQueuedFrame = frame;
+      return;
+    }
+    this._jpegEncodePending = true;
+    encoder.encodeQueueSize = 1;
+    try {
+      worker.postMessage({
+        type: "encode_jpeg",
+        generation,
+        senderGeneration,
+        timestamp: Number(frame.timestamp ?? performance.now() * 1000),
+        frame,
+      }, [frame]);
+    } catch (error) {
+      this._jpegEncodePending = false;
+      encoder.encodeQueueSize = 0;
+      frame.close();
+      throw error;
+    }
+  }
+
+  _createDecoderWorker(generation) {
+    if (typeof Worker === "undefined") return null;
+    const worker = new Worker(this._codecWorkerUrl(), { type: "module" });
+    worker.onmessage = (event) => this._handleDecoderWorkerMessage(
+      worker,
+      generation,
+      event.data || {},
+    );
+    worker.onerror = (event) => {
+      if (this._decoderWorker !== worker || generation !== this._generation) return;
+      this._stats.decode_errors++;
+      this._dropUntilKeyFrame = true;
+      this._requestKeyFrame();
+      console.warn(`voip-stack-video: decoder worker failed (${event?.message || "unknown error"})`);
+      this._emit();
+    };
+    this._decoderWorker = worker;
+    return worker;
+  }
+
+  _handleDecoderWorkerMessage(worker, generation, message) {
+    if (message.type === "reply") {
+      const pending = this._decoderWorkerRequests.get(Number(message.requestId || 0));
+      if (!pending) return;
+      this._decoderWorkerRequests.delete(Number(message.requestId || 0));
+      (globalThis.clearTimeout || globalThis.window?.clearTimeout)?.(pending.timer);
+      if (message.ok) pending.resolve(message);
+      else pending.reject(new Error(message.error || "decoder worker rejected request"));
+      return;
+    }
+    if (
+      this._decoderWorker !== worker ||
+      generation !== this._generation ||
+      Number(message.generation || 0) !== generation
+    ) {
+      message.frame?.close?.();
+      message.bitmap?.close?.();
+      return;
+    }
+    if (message.type === "frame" && message.frame) {
+      this._queueDecodedFrame(message.frame);
+      return;
+    }
+    if (message.type === "jpeg_bitmap" && message.bitmap) {
+      this._jpegDecodePending = false;
+      this._jpegDecodeToken = null;
+      this._stats.received++;
+      this._queueDecodedFrame({
+        bitmap: message.bitmap,
+        timestamp: Number(message.timestamp || 0),
+        displayWidth: message.bitmap.width,
+        displayHeight: message.bitmap.height,
+        close: () => message.bitmap.close(),
+      });
+      if ((this._stats.received & 31) === 0) this._emit();
+      const latest = this._jpegQueuedBuffer;
+      this._jpegQueuedBuffer = null;
+      if (latest) this._decodeJpegMessage(latest);
+      return;
+    }
+    if (message.type === "decode_queue" && this._decoder) {
+      this._decoder.decodeQueueSize = Math.max(0, Number(message.size || 0));
+      return;
+    }
+    if (message.type === "decoder_error") {
+      this._stats.decode_errors++;
+      this._dropUntilKeyFrame = true;
+      this._requestKeyFrame();
+      this._emit();
+    }
+    if (message.type === "jpeg_decoder_error") {
+      this._jpegDecodePending = false;
+      this._jpegDecodeToken = null;
+      const reported = Number(message.error_count);
+      let delta = 0;
+      if (Number.isSafeInteger(reported) && reported >= 0) {
+        delta = Math.max(0, reported - this._jpegDecodeErrorReported);
+        this._jpegDecodeErrorReported = Math.max(
+          this._jpegDecodeErrorReported,
+          reported,
+        );
+      } else {
+        // Compatibility with an older cached worker during frontend rollout.
+        delta = 1;
+        this._jpegDecodeErrorReported++;
+      }
+      this._stats.decode_errors += delta;
+      const latest = this._jpegQueuedBuffer;
+      this._jpegQueuedBuffer = null;
+      if (latest) this._decodeJpegMessage(latest);
+      if (delta > 0) this._emit();
+    }
+  }
+
+  _decoderWorkerRequest(worker, payload) {
+    const requestId = ++this._decoderWorkerRequestId;
+    return new Promise((resolve, reject) => {
+      const schedule = globalThis.setTimeout || globalThis.window?.setTimeout;
+      const timer = schedule(() => {
+        this._decoderWorkerRequests.delete(requestId);
+        reject(new Error("decoder worker setup timed out"));
+      }, CODEC_SETUP_TIMEOUT_MS);
+      this._decoderWorkerRequests.set(requestId, { resolve, reject, timer });
+      worker.postMessage({ ...payload, requestId });
+    });
+  }
+
+  async _setupDecoder(codec, generation) {
+    const decoderConfig = await this._supportedConfig(VideoDecoder, {
+      codec,
+      optimizeForLatency: true,
+    });
+    if (generation !== this._generation) {
+      throw new Error("SIP video session was superseded");
+    }
+    const worker = this._createDecoderWorker(generation);
+    if (worker) {
+      await this._decoderWorkerRequest(worker, {
+        type: "configure_decoder",
+        generation,
+        config: decoderConfig,
+      });
+      if (generation !== this._generation || this._decoderWorker !== worker) {
+        throw new Error("SIP video session was superseded");
+      }
+      // Lightweight proxy keeps the existing queue/backpressure contract.
+      this._decoder = { state: "configured", decodeQueueSize: 0, worker };
+      return;
+    }
+
+    // Compatibility fallback for older browsers. Current HA Companion builds
+    // use the worker path so codec stalls cannot monopolise the UI thread.
+    const support = await VideoDecoder.isConfigSupported(decoderConfig);
+    if (generation !== this._generation) {
+      throw new Error("SIP video session was superseded");
+    }
+    if (!support?.supported) throw new Error(`browser cannot decode ${codec}`);
+    let decoder;
+    decoder = new VideoDecoder({
+      output: (frame) => {
+        if (generation !== this._generation || this._decoder !== decoder) {
+          frame.close();
+          return;
+        }
+        this._queueDecodedFrame(frame);
+      },
+      error: () => {
+        if (generation !== this._generation || this._decoder !== decoder) return;
+        this._stats.decode_errors++;
+        this._dropUntilKeyFrame = true;
+        this._requestKeyFrame();
+        this._emit();
+      },
+    });
+    decoder.configure(support.config || decoderConfig);
+    this._decoder = decoder;
+  }
+
+  async _setupJpegDecoder(generation) {
+    if (typeof Worker === "undefined") {
+      throw new Error("Browser cannot decode JPEG outside the UI thread");
+    }
+    const worker = this._createDecoderWorker(generation);
+    if (!worker) {
+      throw new Error("Browser cannot create the JPEG decoder worker");
+    }
+    this._jpegDecodeErrorReported = 0;
+    await this._decoderWorkerRequest(worker, {
+      type: "configure_jpeg_decoder",
+      generation,
+    });
+    if (generation !== this._generation || this._decoderWorker !== worker) {
+      throw new Error("SIP video session was superseded");
+    }
+    this._decoder = {
+      state: "configured",
+      kind: "jpeg",
+      decodeQueueSize: 0,
+      worker,
+    };
   }
 
   configure(hass, clientId = "") {
@@ -100,8 +491,26 @@ export class VoipStackVideo extends EventTarget {
     // This only reconciles the active media sender. Persistent intent belongs
     // to the logical HA phone and arrives in the backend state snapshot.
     if (this._active && endpoint !== this._endpointId) return;
+    const changed = this._cameraEnabled !== selected;
     this._cameraEnabled = selected;
     if (!this._cameraEnabled) {
+      // Engine state events cause the owning card to reconcile the same
+      // authoritative snapshot.  A receive-only call therefore reaches this
+      // method repeatedly with `false`; emitting again when no sender exists
+      // feeds that state event straight back into reconciliation and can pin
+      // the browser main thread.  Cleanup and notify only for a real change
+      // or for resources that still need to be released.
+      const hasSenderResources = Boolean(
+        this._cameraReader ||
+        this._encodeTask ||
+        this._encoder ||
+        this._cameraStream ||
+        this._jpegEncoderWorker ||
+        this._jpegEncodePending ||
+        this._jpegQueuedFrame ||
+        this._canSend
+      );
+      if (!changed && !hasSenderResources) return;
       await this._cleanupSender();
       this._emit();
       return;
@@ -241,7 +650,16 @@ export class VoipStackVideo extends EventTarget {
       void this._cleanupMedia(cleanupGeneration);
     };
     try {
-      await opened;
+      await Promise.race([
+        opened,
+        new Promise((_, reject) => {
+          const schedule = globalThis.setTimeout || globalThis.window?.setTimeout;
+          schedule?.(
+            () => reject(new Error("SIP video WebSocket open timed out")),
+            CODEC_SETUP_TIMEOUT_MS,
+          );
+        }),
+      ]);
       const negotiated = await Promise.race([
         hello,
         new Promise((_, reject) => window.setTimeout(
@@ -355,6 +773,7 @@ export class VoipStackVideo extends EventTarget {
     this._jpegDecodePending = false;
     this._jpegQueuedBuffer = null;
     this._jpegDecodeToken = null;
+    this._jpegDecodeErrorReported = 0;
     await this._setupCodecs(negotiated, generation);
     if (this._ws !== ws || this._callId !== callId || generation !== this._generation) return;
     this._active = Boolean(this._canReceive || this._canSend || this._cameraAllowed);
@@ -372,9 +791,7 @@ export class VoipStackVideo extends EventTarget {
     if (negotiated?.can_receive) {
       try {
         if (receive.encoding === "JPEG") {
-          if (typeof createImageBitmap !== "function") {
-            throw new Error("browser cannot decode JPEG video frames");
-          }
+          await this._setupJpegDecoder(generation);
           this._canReceive = true;
           this._active = true;
           usablePaths++;
@@ -384,37 +801,7 @@ export class VoipStackVideo extends EventTarget {
           if (typeof VideoDecoder === "undefined") {
             throw new Error("WebCodecs VideoDecoder is unavailable");
           }
-          const decoderConfig = await this._supportedConfig(VideoDecoder, {
-            codec: receive.codec,
-            optimizeForLatency: true,
-          });
-          if (generation !== this._generation) throw new Error("SIP video session was superseded");
-          const support = await VideoDecoder.isConfigSupported(decoderConfig);
-          if (generation !== this._generation) throw new Error("SIP video session was superseded");
-          if (!support?.supported) throw new Error(`browser cannot decode ${receive.codec}`);
-          let decoder;
-          decoder = new VideoDecoder({
-            output: (frame) => {
-              if (generation !== this._generation || this._decoder !== decoder) {
-                frame.close();
-                return;
-              }
-              this._queueDecodedFrame(frame);
-            },
-            error: () => {
-              if (generation !== this._generation || this._decoder !== decoder) return;
-              this._stats.decode_errors++;
-              this._dropUntilKeyFrame = true;
-              this._requestKeyFrame();
-              this._emit();
-            },
-          });
-          decoder.configure(support.config || decoderConfig);
-          if (generation !== this._generation) {
-            decoder.close();
-            throw new Error("SIP video session was superseded");
-          }
-          this._decoder = decoder;
+          await this._setupDecoder(receive.codec, generation);
           this._canReceive = true;
           this._active = true;
           usablePaths++;
@@ -515,12 +902,14 @@ export class VoipStackVideo extends EventTarget {
   }
 
   async _setupEncoder(codec, generation, senderGeneration) {
+    const send = this._mediaContract("send");
     if (
-      typeof VideoEncoder === "undefined" ||
       typeof MediaStreamTrackProcessor === "undefined" ||
-      !navigator.mediaDevices?.getUserMedia
+      !navigator.mediaDevices?.getUserMedia ||
+      (send.encoding === "JPEG" && typeof Worker === "undefined") ||
+      (send.encoding !== "JPEG" && typeof VideoEncoder === "undefined")
     ) {
-      throw new Error("Browser cannot send SIP video with WebCodecs");
+      throw new Error("Browser cannot capture negotiated SIP video");
     }
     let stream = null;
     let encoder = null;
@@ -538,64 +927,64 @@ export class VoipStackVideo extends EventTarget {
       const track = stream.getVideoTracks()[0];
       if (!track) throw new Error("No browser camera track available");
       const settings = track.getSettings();
-      const width = Math.max(
-        16,
-        Number(settings.width || captureContract.idealWidth) & ~1,
-      );
-      const height = Math.max(
-        16,
-        Number(settings.height || captureContract.idealHeight) & ~1,
-      );
-      const macroblocks = Math.ceil(width / 16) * Math.ceil(height / 16);
-      const framerate = Math.max(
-        1,
-        Math.min(
-          captureContract.maxFr,
-          Math.floor(captureContract.maxMbps / Math.max(1, macroblocks)),
-          Number(settings.frameRate || captureContract.maxFr),
-        ),
+      const {
+        width,
+        height,
+        macroblocks,
+        framerate,
+      } = cameraEncoderContract(
+        captureContract,
+        settings,
+        send.encoding,
       );
       if (macroblocks > captureContract.maxFs) {
         throw new Error("Browser camera exceeds the negotiated SIP video frame size");
       }
-      const send = this._mediaContract("send");
-      const encoderConfig = await this._supportedConfig(VideoEncoder, {
-        codec,
-        width,
-        height,
-        framerate,
-        bitrate: 600000,
-        latencyMode: "realtime",
-        ...(send.encoding === "H264" ? { avc: { format: "annexb" } } : {}),
-      });
-      if (!this._senderIsCurrent(generation, senderGeneration)) {
-        throw new Error("SIP video session was superseded or camera transmission was disabled");
-      }
-      const support = await VideoEncoder.isConfigSupported(encoderConfig);
-      if (!this._senderIsCurrent(generation, senderGeneration)) {
-        throw new Error("SIP video session was superseded or camera transmission was disabled");
-      }
-      if (!support?.supported) {
-        throw new Error(`Browser cannot encode negotiated SIP video ${codec}`);
-      }
-      encoder = new VideoEncoder({
-        output: (chunk) => this._sendEncodedChunk(
-          chunk,
+      if (send.encoding === "JPEG") {
+        encoder = await this._createJpegEncoder(
+          width,
+          height,
           generation,
           senderGeneration,
-          encoder,
-        ),
-        error: () => {
-          if (
-            generation !== this._generation ||
-            senderGeneration !== this._senderGeneration ||
-            this._encoder !== encoder
-          ) return;
-          this._stats.dropped++;
-          this._emit();
-        },
-      });
-      encoder.configure(support.config || encoderConfig);
+        );
+      } else {
+        const encoderConfig = await this._supportedConfig(VideoEncoder, {
+          codec,
+          width,
+          height,
+          framerate,
+          bitrate: 600000,
+          ...(send.encoding === "H264" ? { avc: { format: "annexb" } } : {}),
+        }, send.encoding === "H264");
+        if (!this._senderIsCurrent(generation, senderGeneration)) {
+          throw new Error("SIP video session was superseded or camera transmission was disabled");
+        }
+        const support = await VideoEncoder.isConfigSupported(encoderConfig);
+        if (!this._senderIsCurrent(generation, senderGeneration)) {
+          throw new Error("SIP video session was superseded or camera transmission was disabled");
+        }
+        if (!support?.supported) {
+          throw new Error(`Browser cannot encode negotiated SIP video ${codec}`);
+        }
+        encoder = new VideoEncoder({
+          output: (chunk) => this._sendEncodedChunk(
+            chunk,
+            generation,
+            senderGeneration,
+            encoder,
+          ),
+          error: () => {
+            if (
+              generation !== this._generation ||
+              senderGeneration !== this._senderGeneration ||
+              this._encoder !== encoder
+            ) return;
+            this._stats.dropped++;
+            this._emit();
+          },
+        });
+        encoder.configure(support.config || encoderConfig);
+      }
       const processor = new MediaStreamTrackProcessor({ track });
       reader = processor.readable.getReader();
       if (!this._senderIsCurrent(generation, senderGeneration)) {
@@ -607,6 +996,9 @@ export class VoipStackVideo extends EventTarget {
       this._cameraStream = stream;
       this._encoder = encoder;
       this._cameraReader = reader;
+      this._jpegEncoderWorker = encoder.kind === "jpeg" ? encoder.worker : null;
+      this._jpegEncodePending = false;
+      this._jpegQueuedFrame = null;
       this._encodeTask = this._encodeCamera(
         framerate,
         reader,
@@ -627,15 +1019,26 @@ export class VoipStackVideo extends EventTarget {
     }
   }
 
-  async _supportedConfig(codecClass, base) {
-    // Hardware acceleration is a preference, not a media requirement. Some
-    // Chromium builds expose H.264 only through software WebCodecs; rejecting
-    // those browsers would needlessly turn a valid audio/video call into audio
-    // only. Keep the negotiated codec fixed and relax only the accelerator.
-    for (const hardwareAcceleration of ["prefer-hardware", "prefer-software", null]) {
-      const candidate = hardwareAcceleration
-        ? { ...base, hardwareAcceleration }
-        : { ...base };
+  async _supportedConfig(codecClass, base, realtimeHardware = false) {
+    // Keep camera encoding off the Android main CPU when MediaCodec can
+    // satisfy the exact negotiated profile. The software fallback uses
+    // quality mode: WebCodecs realtime mode may discard encoder inputs, and
+    // a frame_num gap in a dependent H.264 GOP is not recoverable by the P4
+    // decoder until the next IDR. Our bounded encode queue still drops raw
+    // frames before admission, which preserves a valid encoded dependency
+    // chain without allowing latency to grow.
+    const candidates = realtimeHardware
+      ? [
+          { ...base, hardwareAcceleration: "prefer-hardware", latencyMode: "realtime" },
+          { ...base, hardwareAcceleration: "prefer-software", latencyMode: "quality" },
+          { ...base, latencyMode: "quality" },
+        ]
+      : [
+          { ...base, hardwareAcceleration: "prefer-hardware", latencyMode: "realtime" },
+          { ...base, hardwareAcceleration: "prefer-software", latencyMode: "realtime" },
+          { ...base, latencyMode: "realtime" },
+        ];
+    for (const candidate of candidates) {
       try {
         const support = await codecClass.isConfigSupported(candidate);
         if (support?.supported) return support.config || candidate;
@@ -646,6 +1049,10 @@ export class VoipStackVideo extends EventTarget {
 
   async _encodeCamera(framerate, reader, encoder, generation, senderGeneration) {
     const keyInterval = Math.max(1, Math.round(framerate * 2));
+    const minimumFrameIntervalMs = 1000 / Math.max(1, framerate);
+    const minimumFrameIntervalUs = minimumFrameIntervalMs * 1000;
+    let lastAcceptedSourceTimestamp = null;
+    let nextAcceptedFrameAt = 0;
     try {
       while (
         this._senderIsCurrent(generation, senderGeneration) &&
@@ -653,7 +1060,8 @@ export class VoipStackVideo extends EventTarget {
         this._encoder === encoder &&
         encoder.state === "configured"
       ) {
-        const { value: frame, done } = await reader.read();
+        const { value, done } = await reader.read();
+        let frame = value;
         if (done || !frame) break;
         try {
           if (
@@ -663,7 +1071,41 @@ export class VoipStackVideo extends EventTarget {
           ) {
             break;
           }
-          if (encoder.encodeQueueSize > 2) {
+          const sourceTimestamp = Number(frame.timestamp);
+          if (Number.isFinite(sourceTimestamp) && sourceTimestamp >= 0) {
+            if (
+              lastAcceptedSourceTimestamp !== null &&
+              sourceTimestamp >= lastAcceptedSourceTimestamp &&
+              sourceTimestamp - lastAcceptedSourceTimestamp <
+                minimumFrameIntervalUs
+            ) {
+              this._stats.dropped++;
+              continue;
+            }
+            lastAcceptedSourceTimestamp = sourceTimestamp;
+          } else {
+            const now = performance.now();
+            if (now < nextAcceptedFrameAt) {
+              this._stats.dropped++;
+              continue;
+            }
+            nextAcceptedFrameAt = now + minimumFrameIntervalMs;
+          }
+          // getUserMedia constraints are advisory on some browsers. Enforce
+          // the negotiated SDP a=framerate envelope at the actual encoder
+          // admission point without a timer or an idle polling task.
+          if (encoder.kind === "jpeg") {
+            this._dispatchJpegFrame(
+              frame,
+              encoder.worker,
+              encoder,
+              generation,
+              senderGeneration,
+            );
+            // VideoFrame ownership is now either in the worker or in the
+            // single latest-frame coalescing slot.
+            frame = null;
+          } else if (encoder.encodeQueueSize > 2) {
             this._stats.dropped++;
           } else {
             const keyFrame = this._forceCameraKeyFrame || this._encodedFrames % keyInterval === 0;
@@ -672,7 +1114,7 @@ export class VoipStackVideo extends EventTarget {
             this._encodedFrames++;
           }
         } finally {
-          frame.close();
+          frame?.close();
         }
       }
     } catch (_) {
@@ -693,6 +1135,10 @@ export class VoipStackVideo extends EventTarget {
       ) {
         this._cameraReader = null;
         this._encoder = null;
+        this._jpegEncoderWorker = null;
+        this._jpegEncodePending = false;
+        this._jpegQueuedFrame?.close();
+        this._jpegQueuedFrame = null;
         this._cameraStream?.getTracks?.().forEach((track) => track.stop());
         this._cameraStream = null;
         this._encodeTask = null;
@@ -711,33 +1157,87 @@ export class VoipStackVideo extends EventTarget {
     senderGeneration = this._senderGeneration,
     encoder = this._encoder,
   ) {
-    if (
-      generation !== this._generation ||
-      senderGeneration !== this._senderGeneration ||
-      (encoder && this._encoder !== encoder)
-    ) return;
-    const ws = this._ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    if (ws.bufferedAmount > MAX_VIDEO_WS_BUFFER) {
+    const keyFrame = chunk.type === "key";
+    if (chunk.byteLength > MAX_VIDEO_ACCESS_UNIT_BYTES) {
       this._stats.dropped++;
       this._sendDropUntilKeyFrame = true;
       this._forceCameraKeyFrame = true;
       return;
     }
-    if (this._sendDropUntilKeyFrame && chunk.type !== "key") {
+    const ws = this._encodedAccessUnitSocket(
+      keyFrame,
+      generation,
+      senderGeneration,
+      encoder,
+    );
+    if (!ws) return;
+    const payload = new Uint8Array(chunk.byteLength);
+    chunk.copyTo(payload);
+    this._writeEncodedAccessUnit(
+      ws,
+      payload,
+      Number(chunk.timestamp || 0),
+      keyFrame,
+    );
+  }
+
+  _sendEncodedAccessUnit(
+    payload,
+    timestamp,
+    keyFrame,
+    generation = this._generation,
+    senderGeneration = this._senderGeneration,
+    encoder = this._encoder,
+  ) {
+    if (
+      !payload ||
+      payload.byteLength > MAX_VIDEO_ACCESS_UNIT_BYTES
+    ) {
       this._stats.dropped++;
+      this._sendDropUntilKeyFrame = true;
       this._forceCameraKeyFrame = true;
       return;
     }
-    if (chunk.type === "key") this._sendDropUntilKeyFrame = false;
-    const payload = new Uint8Array(chunk.byteLength);
-    chunk.copyTo(payload);
+    const ws = this._encodedAccessUnitSocket(
+      keyFrame,
+      generation,
+      senderGeneration,
+      encoder,
+    );
+    if (!ws) return;
+    this._writeEncodedAccessUnit(ws, payload, timestamp, keyFrame);
+  }
+
+  _encodedAccessUnitSocket(keyFrame, generation, senderGeneration, encoder) {
+    if (
+      generation !== this._generation ||
+      senderGeneration !== this._senderGeneration ||
+      (encoder && this._encoder !== encoder)
+    ) return null;
+    const ws = this._ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return null;
+    if (ws.bufferedAmount > MAX_VIDEO_WS_BUFFER) {
+      this._stats.dropped++;
+      this._sendDropUntilKeyFrame = true;
+      this._forceCameraKeyFrame = true;
+      return null;
+    }
+    if (this._sendDropUntilKeyFrame && !keyFrame) {
+      this._stats.dropped++;
+      this._forceCameraKeyFrame = true;
+      return null;
+    }
+    if (keyFrame) this._sendDropUntilKeyFrame = false;
+    return ws;
+  }
+
+  _writeEncodedAccessUnit(ws, payload, timestamp, keyFrame) {
     const frame = new Uint8Array(VIDEO_HEADER_BYTES + payload.byteLength);
     const view = new DataView(frame.buffer);
     frame[0] = VIDEO_ACCESS_UNIT;
-    frame[1] = chunk.type === "key" ? 1 : 0;
+    frame[1] = keyFrame ? 1 : 0;
     const rtpTimestamp = Math.round(
-      Number(chunk.timestamp || 0) * this._mediaContract("send").clockRate / 1000000,
+      Number(timestamp || 0) * this._mediaContract("send").clockRate / 1000000,
     ) >>> 0;
     view.setUint32(2, rtpTimestamp, false);
     frame.set(payload, VIDEO_HEADER_BYTES);
@@ -775,11 +1275,24 @@ export class VoipStackVideo extends EventTarget {
     const rtpTimestamp = new DataView(buffer).getUint32(2, false);
     const timestamp = this._unwrapRtpTimestamp(rtpTimestamp);
     try {
-      this._decoder.decode(new EncodedVideoChunk({
-        type: keyFrame ? "key" : "delta",
-        timestamp,
-        data: bytes.subarray(VIDEO_HEADER_BYTES),
-      }));
+      if (this._decoderWorker && this._decoder?.worker === this._decoderWorker) {
+        this._decoder.decodeQueueSize++;
+        this._decoderWorker.postMessage({
+          type: "decode",
+          generation: this._generation,
+          keyFrame,
+          timestamp,
+          buffer,
+          offset: VIDEO_HEADER_BYTES,
+          length: bytes.byteLength - VIDEO_HEADER_BYTES,
+        }, [buffer]);
+      } else {
+        this._decoder.decode(new EncodedVideoChunk({
+          type: keyFrame ? "key" : "delta",
+          timestamp,
+          data: bytes.subarray(VIDEO_HEADER_BYTES),
+        }));
+      }
       this._stats.received++;
       if ((this._stats.received & 31) === 0) this._emit();
     } catch (_) {
@@ -796,48 +1309,45 @@ export class VoipStackVideo extends EventTarget {
   }
 
   _decodeJpegMessage(buffer) {
+    if (
+      !this._decoderWorker ||
+      this._decoder?.worker !== this._decoderWorker ||
+      this._decoder?.kind !== "jpeg"
+    ) return;
+    const bytes = new Uint8Array(buffer);
+    if (bytes.byteLength <= VIDEO_HEADER_BYTES || bytes[0] !== VIDEO_ACCESS_UNIT) return;
     if (this._jpegDecodePending) {
       this._jpegQueuedBuffer = buffer;
       this._stats.dropped++;
       this._stats.dropped_render_coalesce++;
       return;
     }
-    const bytes = new Uint8Array(buffer);
-    if (bytes.byteLength <= VIDEO_HEADER_BYTES || bytes[0] !== VIDEO_ACCESS_UNIT) return;
     const rtpTimestamp = new DataView(buffer).getUint32(2, false);
     const timestamp = this._unwrapRtpTimestamp(rtpTimestamp);
     const generation = this._generation;
-    const token = {};
-    const payload = bytes.slice(VIDEO_HEADER_BYTES);
+    const worker = this._decoderWorker;
+    const token = worker;
     this._jpegDecodePending = true;
     this._jpegDecodeToken = token;
-    void createImageBitmap(new Blob([payload], { type: "image/jpeg" })).then((bitmap) => {
-      if (generation !== this._generation || !this._active) {
-        bitmap.close();
-        return;
-      }
-      this._stats.received++;
-      this._queueDecodedFrame({
-        bitmap,
+    try {
+      worker.postMessage({
+        type: "decode_jpeg",
+        generation,
         timestamp,
-        displayWidth: bitmap.width,
-        displayHeight: bitmap.height,
-        close: () => bitmap.close(),
-      });
-      if ((this._stats.received & 31) === 0) this._emit();
-    }).catch(() => {
-      if (generation === this._generation) this._stats.decode_errors++;
-    }).finally(() => {
-      // A decoder Promise from a superseded call can settle after the next
-      // call has already started decoding. It must not clear that call's
-      // pending flag or consume its coalesced frame.
-      if (generation !== this._generation || this._jpegDecodeToken !== token) return;
-      this._jpegDecodePending = false;
-      this._jpegDecodeToken = null;
-      const latest = this._jpegQueuedBuffer;
-      this._jpegQueuedBuffer = null;
-      if (latest) this._decodeJpegMessage(latest);
-    });
+        buffer,
+        offset: VIDEO_HEADER_BYTES,
+        length: bytes.byteLength - VIDEO_HEADER_BYTES,
+      }, [buffer]);
+    } catch (_) {
+      if (
+        generation === this._generation &&
+        this._jpegDecodeToken === token
+      ) {
+        this._jpegDecodePending = false;
+        this._jpegDecodeToken = null;
+        this._stats.decode_errors++;
+      }
+    }
   }
 
   _bufferDecodeMessage(buffer) {
@@ -916,22 +1426,47 @@ export class VoipStackVideo extends EventTarget {
     }
     this._lastDecodedAt = now;
     this._lastDecodedTimestamp = timestamp;
-    if (!this._drawFrame(frame)) {
+    if (!this._canvas) {
+      frame.close();
       this._stats.dropped++;
       this._stats.dropped_no_canvas++;
       return;
     }
-    if (this._lastRenderedAt) {
-      const gap = Math.round(now - this._lastRenderedAt);
-      this._stats.max_frame_gap_ms = Math.max(this._stats.max_frame_gap_ms, gap);
-      if (gap > 100) this._stats.render_gaps_over_100_ms++;
-      if (gap > 250) this._stats.render_gaps_over_250_ms++;
+    if (this._pendingRenderedFrame) {
+      this._pendingRenderedFrame.close();
+      this._stats.dropped++;
+      this._stats.dropped_render_coalesce++;
     }
-    this._lastRenderedAt = now;
-    this._lastRenderedTimestamp = timestamp;
-    const firstRenderedFrame = this._stats.rendered === 0;
-    this._stats.rendered++;
-    if (firstRenderedFrame) this._emit();
+    this._pendingRenderedFrame = frame;
+    if (this._renderFrameHandle) return;
+    const schedule = globalThis.requestAnimationFrame ||
+      ((callback) => window.setTimeout(() => callback(performance.now()), 0));
+    this._renderFrameHandle = schedule(() => {
+      this._renderFrameHandle = 0;
+      const latest = this._pendingRenderedFrame;
+      this._pendingRenderedFrame = null;
+      const timestamp = Number(latest?.timestamp || 0);
+      if (!latest || !this._drawFrame(latest)) {
+        if (latest) {
+          this._stats.dropped++;
+          this._stats.dropped_no_canvas++;
+        }
+        return;
+      }
+      const renderedAt = performance.now();
+      if (this._lastRenderedAt) {
+        const gap = Math.round(renderedAt - this._lastRenderedAt);
+        this._stats.max_frame_gap_ms = Math.max(this._stats.max_frame_gap_ms, gap);
+        if (gap > 100) this._stats.render_gaps_over_100_ms++;
+        if (gap > 250) this._stats.render_gaps_over_250_ms++;
+      }
+      this._lastRenderedAt = renderedAt;
+      this._lastRenderedTimestamp = timestamp;
+      const firstRenderedFrame = this._stats.rendered === 0;
+      this._stats.rendered++;
+      if (firstRenderedFrame) this._emit();
+    });
+    return;
   }
 
   _drawFrame(frame) {
@@ -987,6 +1522,7 @@ export class VoipStackVideo extends EventTarget {
       this._jpegDecodePending = false;
       this._jpegQueuedBuffer = null;
       this._jpegDecodeToken = null;
+      this._jpegDecodeErrorReported = 0;
       this._negotiated = null;
       this._cameraAllowed = false;
       this._lastRenderedAt = 0;
@@ -1009,11 +1545,16 @@ export class VoipStackVideo extends EventTarget {
     const encodeTask = this._encodeTask;
     const encoder = this._encoder;
     const stream = this._cameraStream;
+    const queuedJpegFrame = this._jpegQueuedFrame;
     this._cameraReader = null;
     this._encodeTask = null;
     this._encoder = null;
     this._cameraStream = null;
+    this._jpegEncoderWorker = null;
+    this._jpegEncodePending = false;
+    this._jpegQueuedFrame = null;
     this._canSend = false;
+    queuedJpegFrame?.close();
     let readerCancel = Promise.resolve();
     if (reader) {
       try {
@@ -1021,22 +1562,47 @@ export class VoipStackVideo extends EventTarget {
       } catch (_) {}
     }
     if (encoder && encoder.state !== "closed") {
+      // JPEG proxy close() synchronously terminates its DedicatedWorker.
       try { encoder.close(); } catch (_) {}
     }
     if (stream) stream.getTracks().forEach((track) => track.stop());
-    await Promise.all([
+    await settleWithin(Promise.all([
       readerCancel,
       encodeTask ? Promise.resolve(encodeTask).catch(() => {}) : Promise.resolve(),
-    ]);
+    ]));
   }
 
   _cleanupReceiver() {
-    if (this._decoder) {
+    const worker = this._decoderWorker;
+    this._decoderWorker = null;
+    if (worker) {
+      try { worker.postMessage({ type: "close" }); } catch (_) {}
+      try { worker.terminate(); } catch (_) {}
+    }
+    for (const pending of this._decoderWorkerRequests.values()) {
+      (globalThis.clearTimeout || globalThis.window?.clearTimeout)?.(pending.timer);
+      pending.reject(new Error("decoder worker closed"));
+    }
+    this._decoderWorkerRequests.clear();
+    if (this._decoder && this._decoder.worker !== worker) {
       if (this._decoder.state !== "closed") this._decoder.close();
-      this._decoder = null;
+    }
+    this._decoder = null;
+    if (this._pendingRenderedFrame) {
+      this._pendingRenderedFrame.close();
+      this._pendingRenderedFrame = null;
+    }
+    if (this._renderFrameHandle) {
+      const cancel = globalThis.cancelAnimationFrame || window.clearTimeout;
+      cancel(this._renderFrameHandle);
+      this._renderFrameHandle = 0;
     }
     this._pendingDecode = [];
     this._pendingDecodeBytes = 0;
+    this._jpegDecodePending = false;
+    this._jpegQueuedBuffer = null;
+    this._jpegDecodeToken = null;
+    this._jpegDecodeErrorReported = 0;
     this._canReceive = false;
   }
 }

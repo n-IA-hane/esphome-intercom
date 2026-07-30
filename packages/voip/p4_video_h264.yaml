@@ -1,0 +1,82 @@
+# Compile-time H.264 video path for the ESP32-P4 SIP-only videophone.
+#
+# Do not include this together with the JPEG package. Camera TX uses the P4
+# hardware encoder; RX uses Espressif's software decoder and PPA.
+
+substitutions:
+  # Keep the sensor/ISP in its native 800x800 mode, then crop and encode one
+  # square 400x400 frame. Compared with VGA this halves the pixels crossing the
+  # shared PPA/H.264/PSRAM path while preserving the camera's native aspect.
+  p4_video_width: "400"
+  p4_video_height: "400"
+  # Keep the independent software decoder within the measured CIF envelope
+  # advertised through RFC 6184 level asymmetry.
+  p4_video_rx_width: "352"
+  p4_video_rx_height: "288"
+  p4_video_fps: "10"
+  # The CSI source runs at 50 fps and accepts integer divisors. A 25 fps
+  # dequeue cadence lets the timestamp scheduler select an exact 10 fps even
+  # when a shared-PPA encode occasionally misses a 100 ms sensor interval.
+  p4_camera_fps: "25"
+  p4_camera_resolution: "800x800"
+  p4_camera_rotation: "270"
+  p4_h264_bitrate: "800000"
+  p4_h264_gop: "10"
+
+external_components:
+  - source: ${ext_components_source}
+    components: [esp_video_camera, esp_h264_video_source, p4_video_renderer]
+
+esp_video_camera:
+  id: p4_camera
+  name: P4 Camera
+  i2c_id: internal_i2c
+  device: csi
+  resolution: ${p4_camera_resolution}
+  max_framerate: ${p4_camera_fps}
+  rotation: ${p4_camera_rotation}
+
+esp_h264_video_source:
+  id: p4_h264_video
+  camera_id: p4_camera
+  width: ${p4_video_width}
+  height: ${p4_video_height}
+  framerate: ${p4_video_fps}
+  bitrate: ${p4_h264_bitrate}
+  gop: ${p4_h264_gop}
+
+p4_video_renderer:
+  id: p4_video
+  codec: h264
+  task_stacks_in_psram: true
+  width: ${p4_video_rx_width}
+  height: ${p4_video_rx_height}
+  framerate: ${p4_video_fps}
+  max_decode_width: ${p4_video_rx_width}
+  max_decode_height: ${p4_video_rx_height}
+  display_id: main_display
+  display_rotation: 270
+  on_first_frame:
+    - script.execute: show_video_page
+  on_video_ended:
+    - script.execute: show_phone_page
+
+voip_stack:
+  id: phone
+  # Keep signaling/video workers in PSRAM, but keep realtime audio stacks and
+  # staging in internal RAM. The hardware encoder synchronizes hundreds of KiB
+  # of PSRAM per frame; sharing that cache path with audio produced one complete
+  # 64 ms AFE-frame miss at H.264 TX boundaries.
+  task_stacks_in_psram: true
+  audio_task_stacks_in_psram: false
+  buffers_in_psram: false
+  video:
+    codec: h264
+    source: p4_h264_video
+    sink: p4_video
+    width: ${p4_video_width}
+    height: ${p4_video_height}
+    framerate: ${p4_video_fps}
+    rtp_port: 40002
+    offer_payload_type: 103
+    max_rtp_payload: 1400

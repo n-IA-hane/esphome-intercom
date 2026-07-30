@@ -13,22 +13,94 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
+from playwright.sync_api import (
+    Error as PlaywrightError,
+    TimeoutError as PlaywrightTimeoutError,
+    sync_playwright,
+)
+
+try:
+    from tools.ha_voip_lab.refresh_playwright_auth import (
+        playwright_storage_origin,
+        refresh_playwright_auth,
+    )
+except ModuleNotFoundError:  # Direct execution adds tools/, not the repo root.
+    from ha_voip_lab.refresh_playwright_auth import (
+        playwright_storage_origin,
+        refresh_playwright_auth,
+    )
+
+
+LOCAL_SECRET_ROOT = Path.home() / ".secrets/esphome-intercom"
+
+
+def _local_default(environment_name: str, filename: str) -> str:
+    configured = os.environ.get(environment_name, "")
+    if configured:
+        return configured
+    candidate = LOCAL_SECRET_ROOT / filename
+    return str(candidate) if candidate.is_file() else ""
 
 
 DEFAULT_URL = os.environ.get("HA_URL", "")
-DEFAULT_STORAGE_STATE = os.environ.get("PLAYWRIGHT_STORAGE_STATE", "")
+DEFAULT_STORAGE_STATE = _local_default(
+    "PLAYWRIGHT_STORAGE_STATE",
+    "ha_playwright_storage.json",
+)
 DEFAULT_CHROMIUM = os.environ.get("CHROMIUM_PATH", "")
+DEFAULT_REFRESH_CREDENTIALS = _local_default(
+    "HA_PLAYWRIGHT_REFRESH_CREDENTIALS",
+    "ha_home_auth.json",
+)
+DEFAULT_REFRESH_URL = os.environ.get("HA_PLAYWRIGHT_REFRESH_URL", "")
+DEFAULT_DASHBOARD_PATH = os.environ.get(
+    "HA_PLAYWRIGHT_DASHBOARD_PATH",
+    "/lovelace/test",
+)
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "test_runs"))
 
 
 class _ProbeComplete(Exception):
     """Internal successful short-circuit for a pre-answer cancellation test."""
+
+
+_SIGNED_QUERY_RE = re.compile(r"(?i)(authSig|access_token)=[^&'\"\s]+")
+
+
+def _sanitise_browser_message(value: object) -> str:
+    """Keep browser diagnostics useful without persisting signed credentials."""
+
+    return _SIGNED_QUERY_RE.sub(r"\1=<redacted>", str(value))
+
+
+def _dashboard_url(value: str, storage_path: Path | None, dashboard_path: str) -> str:
+    """Resolve the full Lovelace URL without changing its authenticated origin."""
+
+    resolved = str(value or "")
+    if not resolved:
+        if storage_path is None:
+            return ""
+        resolved = playwright_storage_origin(storage_path)
+    parsed = urlsplit(resolved)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return resolved
+    if parsed.path not in {"", "/"}:
+        return resolved
+    path = str(dashboard_path or "")
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def _is_ha_auth_url(value: str) -> bool:
+    path = urlsplit(value).path.rstrip("/")
+    return path.startswith("/auth/") or path == "/auth"
 
 DEEP_CARD = r"""
 () => {
@@ -39,8 +111,28 @@ DEEP_CARD = r"""
     }
     return found;
   };
-  return deep("voip-stack-card, intercom-card")
-    .find((card) => (card.config?.mode || card.config?.card_mode || "") === "ha_softphone");
+  const configured = (card) => Boolean(
+    card?.isConnected
+    && (card.config?.mode || card.config?.card_mode || "") === "ha_softphone"
+  );
+  const visible = (card) => Boolean(
+    configured(card) && card.getClientRects().length > 0
+  );
+  globalThis.__voipStackProbeFindCard = () => {
+    const current = globalThis.__voipStackProbeCard;
+    if (configured(current)) return current;
+    const cards = deep("voip-stack-card, intercom-card")
+      .filter((card) => (card.config?.mode || card.config?.card_mode || "") === "ha_softphone");
+    // Lovelace can briefly detach/recreate the card while the same global
+    // media engine keeps a call alive. Do not erase the last controller during
+    // that handoff; prefer a visible replacement as soon as it exists.
+    const next = cards.find(visible) || cards.find(configured) || cards[0] || current || null;
+    globalThis.__voipStackProbeCard = next;
+    const deviceId = String(next?.config?.device_id || "");
+    if (deviceId) globalThis.__voipStackProbeDeviceId = deviceId;
+    return next;
+  };
+  return globalThis.__voipStackProbeFindCard();
 }
 """
 
@@ -48,9 +140,45 @@ BACKEND_SAMPLE = r"""
 async () => {
   const hass = document.querySelector("home-assistant")?.hass;
   if (!hass?.connection) return {};
+  const card = globalThis.__voipStackProbeCard
+    || globalThis.__voipStackProbeFindCard?.()
+    || null;
+  const deviceId = String(
+    card?.config?.device_id || globalThis.__voipStackProbeDeviceId || ""
+  );
   return await hass.connection.sendMessagePromise({
     type: "voip_stack/ha_softphone_state",
+    ...(deviceId ? { device_id: deviceId } : {}),
   });
+}
+"""
+
+LIGHT_CARD_STATE = r"""
+() => {
+  const card = globalThis.__voipStackProbeCard
+    || globalThis.__voipStackProbeFindCard?.()
+    || null;
+  if (!card) return null;
+  const snapshot = card._softphoneSnapshot || {};
+  const engine = globalThis.__voipStackEngine;
+  return {
+    card_state: String(snapshot.state || ""),
+    call_id: String(snapshot.call_id || ""),
+    video_active: Boolean(snapshot.video_active),
+    video_offered: Boolean(snapshot.video_offered),
+    video_format: String(snapshot.video_format || ""),
+    video_direction: String(snapshot.video_direction || ""),
+    engine_state: String(engine?.state || ""),
+    engine_call_id: String(engine?.callId || ""),
+    engine_video_active: Boolean(engine?.videoActive),
+    engine_video_visible: Boolean(engine?.videoVisible),
+    owns_current_call: Boolean(engine?.ownsSoftphoneSession?.(snapshot.call_id)),
+    starting: Boolean(card._starting),
+    stopping: Boolean(card._stopping),
+    has_audio_attach_task: Boolean(card._audioAttachTask),
+    has_cleanup_task: Boolean(card._cleanupTask),
+    engine_stats: engine?.stats || null,
+  };
 }
 """
 
@@ -63,13 +191,14 @@ CARD_SAMPLE = r"""
     }
     return found;
   };
-  const card = deep("voip-stack-card, intercom-card")
-    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
+  const card = globalThis.__voipStackProbeFindCard?.() || null;
   if (!card) return null;
   const snapshot = card._softphoneSnapshot || {};
   const root = card.shadowRoot || card;
   const surface = deep("ha-card.card", root)[0] || null;
   const canvas = deep("canvas.video-canvas", card.shadowRoot || card)[0] || null;
+  const nativeCameraHost = deep(".native-camera", root)[0] || null;
+  const nativeCameraCard = nativeCameraHost?.querySelector?.(".native-camera-card") || null;
   const hangup = deep("button.hangup", root)[0] || null;
   const header = deep(".header", root)[0] || null;
   const stats = deep(".hangup-stats", root)[0] || null;
@@ -162,7 +291,146 @@ CARD_SAMPLE = r"""
       ),
     } : null,
     canvas: canvasEvidence,
+    native_camera: {
+      entity_id: String(card._nativeCameraEntityId || ""),
+      host_hidden: Boolean(nativeCameraHost?.hidden),
+      mounted: Boolean(nativeCameraCard),
+      card_tag: String(nativeCameraCard?.tagName || "").toLowerCase(),
+      layout: rect(nativeCameraHost, surface),
+    },
   };
+}
+"""
+
+INSTALL_RESPONSIVENESS_MONITOR = r"""
+() => {
+  if (globalThis.__voipProbeResponsiveness?.active) return true;
+  const state = {
+    active: true,
+    tick_interval_ms: 50,
+    last_tick_at: performance.now(),
+    tick_count: 0,
+    max_main_thread_gap_ms: 0,
+    max_main_thread_lag_ms: 0,
+    gaps_over_100_ms: 0,
+    gaps_over_250_ms: 0,
+    tick_timer: 0,
+    ws_ping_interval_ms: 1000,
+    ws_timeout_ms: 2000,
+    ws_timer: 0,
+    ws_rtt_in_flight: false,
+    ws_rtt_count: 0,
+    ws_rtt_errors: 0,
+    ws_rtt_timeouts: 0,
+    ws_rtt_stalled: false,
+    ws_rtt_sum_ms: 0,
+    last_ws_rtt_ms: 0,
+    max_ws_rtt_ms: 0,
+    last_hangup_dispatch_ms: 0,
+  };
+  globalThis.__voipProbeResponsiveness = state;
+
+  const tick = () => {
+    if (!state.active) return;
+    const now = performance.now();
+    const gap = Math.max(0, now - state.last_tick_at);
+    const lag = Math.max(0, gap - state.tick_interval_ms);
+    state.last_tick_at = now;
+    state.tick_count++;
+    state.max_main_thread_gap_ms = Math.max(state.max_main_thread_gap_ms, gap);
+    state.max_main_thread_lag_ms = Math.max(state.max_main_thread_lag_ms, lag);
+    if (gap >= 100) state.gaps_over_100_ms++;
+    if (gap >= 250) state.gaps_over_250_ms++;
+    state.tick_timer = setTimeout(tick, state.tick_interval_ms);
+  };
+
+  const schedulePing = () => {
+    if (!state.active) return;
+    state.ws_timer = setTimeout(ping, state.ws_ping_interval_ms);
+  };
+  const ping = async () => {
+    if (!state.active || state.ws_rtt_in_flight) return;
+    const hass = document.querySelector("home-assistant")?.hass;
+    if (!hass?.connection) {
+      schedulePing();
+      return;
+    }
+    state.ws_rtt_in_flight = true;
+    const started = performance.now();
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled || !state.active) return;
+      state.ws_rtt_timeouts++;
+      state.ws_rtt_stalled = true;
+    }, state.ws_timeout_ms);
+    try {
+      const card = globalThis.__voipStackProbeCard
+        || globalThis.__voipStackProbeFindCard?.()
+        || null;
+      const deviceId = String(
+        card?.config?.device_id || globalThis.__voipStackProbeDeviceId || ""
+      );
+      await hass.connection.sendMessagePromise({
+        type: "voip_stack/ha_softphone_state",
+        ...(deviceId ? { device_id: deviceId } : {}),
+      });
+      settled = true;
+      const elapsed = Math.max(0, performance.now() - started);
+      state.ws_rtt_count++;
+      state.ws_rtt_sum_ms += elapsed;
+      state.last_ws_rtt_ms = elapsed;
+      state.max_ws_rtt_ms = Math.max(state.max_ws_rtt_ms, elapsed);
+    } catch (_) {
+      settled = true;
+      state.ws_rtt_errors++;
+    } finally {
+      clearTimeout(timeout);
+      state.ws_rtt_in_flight = false;
+      schedulePing();
+    }
+  };
+
+  state.tick_timer = setTimeout(tick, state.tick_interval_ms);
+  schedulePing();
+  return true;
+}
+"""
+
+READ_RESPONSIVENESS_MONITOR = r"""
+() => {
+  const state = globalThis.__voipProbeResponsiveness;
+  if (!state) return {};
+  return {
+    tick_interval_ms: state.tick_interval_ms,
+    tick_count: state.tick_count,
+    max_main_thread_gap_ms: state.max_main_thread_gap_ms,
+    max_main_thread_lag_ms: state.max_main_thread_lag_ms,
+    gaps_over_100_ms: state.gaps_over_100_ms,
+    gaps_over_250_ms: state.gaps_over_250_ms,
+    ws_ping_interval_ms: state.ws_ping_interval_ms,
+    ws_timeout_ms: state.ws_timeout_ms,
+    ws_rtt_count: state.ws_rtt_count,
+    ws_rtt_errors: state.ws_rtt_errors,
+    ws_rtt_timeouts: state.ws_rtt_timeouts,
+    ws_rtt_stalled: state.ws_rtt_stalled,
+    average_ws_rtt_ms: state.ws_rtt_count
+      ? state.ws_rtt_sum_ms / state.ws_rtt_count
+      : 0,
+    last_ws_rtt_ms: state.last_ws_rtt_ms,
+    max_ws_rtt_ms: state.max_ws_rtt_ms,
+    last_hangup_dispatch_ms: state.last_hangup_dispatch_ms,
+  };
+}
+"""
+
+STOP_RESPONSIVENESS_MONITOR = r"""
+() => {
+  const state = globalThis.__voipProbeResponsiveness;
+  if (!state) return false;
+  state.active = false;
+  clearTimeout(state.tick_timer);
+  clearTimeout(state.ws_timer);
+  return true;
 }
 """
 
@@ -175,8 +443,7 @@ CLICK_ANSWER = r"""
     }
     return found;
   };
-  const card = deep("voip-stack-card, intercom-card")
-    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
+  const card = globalThis.__voipStackProbeFindCard?.() || null;
   const button = card && deep("button", card.shadowRoot || card)
     .find((item) => item.textContent.trim().toLowerCase() === "answer" && !item.hidden && !item.disabled);
   if (!button) return false;
@@ -194,13 +461,17 @@ CLICK_HANGUP = r"""
     }
     return found;
   };
-  const card = deep("voip-stack-card, intercom-card")
-    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
+  const card = globalThis.__voipStackProbeFindCard?.() || null;
   const button = card && deep("button", card.shadowRoot || card)
     .find((item) => item.classList.contains("hangup") && !item.hidden && !item.disabled);
   if (!button) return false;
+  const started = performance.now();
   button.click();
-  return true;
+  const dispatchMs = Math.max(0, performance.now() - started);
+  if (globalThis.__voipProbeResponsiveness) {
+    globalThis.__voipProbeResponsiveness.last_hangup_dispatch_ms = dispatchMs;
+  }
+  return { clicked: true, dispatch_ms: dispatchMs };
 }
 """
 
@@ -213,8 +484,7 @@ async () => {
     }
     return found;
   };
-  const card = deep("voip-stack-card, intercom-card")
-    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
+  const card = globalThis.__voipStackProbeFindCard?.() || null;
   if (!card) return false;
   if (globalThis.__voipStackEngine?.videoCameraEnabled) return true;
   let root = card.shadowRoot || card;
@@ -241,19 +511,18 @@ async () => {
 
 START_OUTBOUND = r"""
 async (destination) => {
-  const deep = (selector, root = document) => {
-    const found = [...root.querySelectorAll(selector)];
-    for (const node of root.querySelectorAll("*")) {
-      if (node.shadowRoot) found.push(...deep(selector, node.shadowRoot));
-    }
-    return found;
-  };
-  const card = deep("voip-stack-card, intercom-card")
-    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
+  const card = globalThis.__voipStackProbeFindCard?.() || null;
   if (!card) return false;
   card._softphoneKeypadOpen = true;
   card._softphoneManualTarget = String(destination || "");
-  await card._startCall();
+  // A real click does not await the whole asynchronous call operation. Keep
+  // the probe equivalent so a delayed HA service response cannot pin this
+  // page.evaluate() call and hide the still-usable Hang up control.
+  globalThis.__voipStackProbeStartError = "";
+  globalThis.__voipStackProbeStartPromise = Promise.resolve(card._startCall())
+    .catch((error) => {
+      globalThis.__voipStackProbeStartError = error?.message || String(error);
+    });
   return true;
 }
 """
@@ -264,12 +533,33 @@ def main() -> int:
     parser.add_argument(
         "--url",
         default=DEFAULT_URL,
-        help="authenticated Home Assistant dashboard URL (or set HA_URL)",
+        help=(
+            "authenticated Home Assistant dashboard URL; when omitted, the "
+            "origin is read from --storage-state"
+        ),
+    )
+    parser.add_argument(
+        "--dashboard-path",
+        default=DEFAULT_DASHBOARD_PATH,
+        help=(
+            "Lovelace path appended when --url is omitted or contains only "
+            "an origin (default: /lovelace/test)"
+        ),
     )
     parser.add_argument(
         "--storage-state",
         default=DEFAULT_STORAGE_STATE,
         help="Playwright storage-state JSON for an authenticated HA user",
+    )
+    parser.add_argument(
+        "--refresh-credentials",
+        default=DEFAULT_REFRESH_CREDENTIALS,
+        help="optional HA refresh-token file used before opening Chromium",
+    )
+    parser.add_argument(
+        "--refresh-url",
+        default=DEFAULT_REFRESH_URL,
+        help="optional HA token endpoint URL; defaults to the dashboard origin",
     )
     parser.add_argument(
         "--chromium",
@@ -307,6 +597,14 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--allow-dark-video",
+        action="store_true",
+        help=(
+            "allow an all-black decoded canvas when frame counters still prove "
+            "that remote video is being received and rendered"
+        ),
+    )
+    parser.add_argument(
         "--expect-audio-only",
         action="store_true",
         help="require a working browser audio call with no active video path",
@@ -331,6 +629,20 @@ def main() -> int:
         help="reload the HA page after the audio/video dialog is connected",
     )
     parser.add_argument(
+        "--startup-settle-seconds",
+        type=float,
+        default=10.0,
+        help=(
+            "wait for Home Assistant startup/auth resource reloads before "
+            "starting the call (default: 10 seconds)"
+        ),
+    )
+    parser.add_argument(
+        "--auth-check-only",
+        action="store_true",
+        help="verify authenticated dashboard/card access without starting a call",
+    )
+    parser.add_argument(
         "--outbound",
         metavar="DESTINATION",
         help="originate from the card instead of waiting for an incoming call",
@@ -353,25 +665,47 @@ def main() -> int:
         parser.error("--cancel-during-ring requires --outbound")
     if args.deny_camera:
         args.send_camera = True
+    storage_state = (
+        Path(args.storage_state).expanduser() if args.storage_state else None
+    )
+    if storage_state is not None and not storage_state.is_file():
+        parser.error(f"Playwright storage state does not exist: {storage_state}")
+    try:
+        args.url = _dashboard_url(args.url, storage_state, args.dashboard_path)
+    except (OSError, ValueError, json.JSONDecodeError) as err:
+        parser.error(f"Cannot resolve Playwright Home Assistant origin: {err}")
     if not args.url:
-        parser.error("--url or HA_URL is required")
+        parser.error("--url or an authenticated --storage-state is required")
+    parsed_url = urlsplit(args.url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        parser.error("--url must be an absolute HTTP(S) Home Assistant URL")
+    origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
     context_options: dict = {}
-    if args.storage_state:
-        storage_state = Path(args.storage_state).expanduser()
-        if not storage_state.is_file():
-            parser.error(f"Playwright storage state does not exist: {storage_state}")
+    if storage_state is not None:
+        if args.refresh_credentials:
+            try:
+                refresh_playwright_auth(
+                    token_url=str(args.refresh_url),
+                    credentials_path=Path(args.refresh_credentials).expanduser(),
+                    storage_path=storage_state,
+                    storage_hass_url=origin,
+                )
+            except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as err:
+                parser.error(f"Cannot refresh Playwright authentication: {err}")
+        try:
+            playwright_storage_origin(storage_state, preferred_url=origin)
+        except (OSError, ValueError, json.JSONDecodeError) as err:
+            parser.error(
+                f"Playwright storage state is incompatible with {origin}: {err}"
+            )
         context_options["storage_state"] = str(storage_state)
     else:
         from ha_playwright_auth import context_kwargs
 
         context_options.update(context_kwargs())
-    parsed_url = urlsplit(args.url)
-    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-        parser.error("--url must be an absolute HTTP(S) Home Assistant URL")
-    origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
     console: list[str] = []
-    result: dict = {"samples": [], "console": console}
+    result: dict = {"samples": [], "console": console, "audio_websockets": []}
     failure: BaseException | None = None
     with sync_playwright() as playwright:
         launch_options = {
@@ -392,6 +726,12 @@ def main() -> int:
             **context_options,
             viewport={"width": args.viewport_width, "height": args.viewport_height},
         )
+        # Lovelace can perform a same-view document reload while applying a
+        # freshly versioned custom-card resource. Install the card locator in
+        # every document so media qualification resumes after that handoff
+        # without polling the full shadow DOM during steady state.
+        context.add_init_script(f"({DEEP_CARD})()")
+        context.add_init_script(f"({INSTALL_RESPONSIVENESS_MONITOR})()")
         context.grant_permissions(["camera", "microphone"], origin=origin)
         if args.deny_camera:
             context.add_init_script(
@@ -411,12 +751,61 @@ def main() -> int:
                 """
             )
         page = context.new_page()
-        page.on("console", lambda msg: console.append(f"{msg.type}: {msg.text}"))
-        page.on("pageerror", lambda error: console.append(f"pageerror: {error}"))
+        browser_started = time.monotonic()
+        page.on(
+            "console",
+            lambda msg: console.append(
+                f"{time.monotonic() - browser_started:.3f}s "
+                f"{msg.type}: {_sanitise_browser_message(msg.text)}"
+            ),
+        )
+        page.on(
+            "pageerror",
+            lambda error: console.append(
+                f"{time.monotonic() - browser_started:.3f}s "
+                f"pageerror: {_sanitise_browser_message(error)}"
+            ),
+        )
+        cdp = context.new_cdp_session(page)
+        cdp.send("Network.enable")
+
+        def record_websocket_created(event: dict) -> None:
+            url = str(event.get("url") or "")
+            if "/api/voip_stack/ws?" not in url:
+                return
+            initiator = event.get("initiator") or {}
+            frames = ((initiator.get("stack") or {}).get("callFrames") or [])
+            result["audio_websockets"].append(
+                {
+                    "at_s": round(time.monotonic() - browser_started, 3),
+                    "url": _sanitise_browser_message(url),
+                    "stack": [
+                        {
+                            "function": str(frame.get("functionName") or ""),
+                            "url": str(frame.get("url") or "").split("?", 1)[0],
+                            "line": int(frame.get("lineNumber") or 0),
+                            "column": int(frame.get("columnNumber") or 0),
+                        }
+                        for frame in frames[:12]
+                    ],
+                }
+            )
+
+        cdp.on("Network.webSocketCreated", record_websocket_created)
         page.goto(args.url, wait_until="domcontentloaded", timeout=30_000)
-        page.wait_for_timeout(5_000)
+        if _is_ha_auth_url(page.url):
+            raise RuntimeError(
+                "Home Assistant redirected Playwright to OAuth after the "
+                "automatic token refresh; the stored refresh token or "
+                "dashboard origin is no longer valid"
+            )
+        page.wait_for_timeout(max(0, int(args.startup_settle_seconds * 1000)))
         try:
-            page.wait_for_function(f"() => Boolean(({DEEP_CARD})())", timeout=15_000)
+            page.wait_for_function(
+                f"() => Boolean(({DEEP_CARD})())",
+                timeout=15_000,
+                polling=100,
+            )
         except PlaywrightTimeoutError:
             # A lab browser can reach Lovelace during the short interval in
             # which HA is already serving HTTP but the custom-card resource
@@ -425,34 +814,101 @@ def main() -> int:
             # qualification failure.
             page.reload(wait_until="domcontentloaded", timeout=30_000)
             try:
-                page.wait_for_function(f"() => Boolean(({DEEP_CARD})())", timeout=45_000)
+                page.wait_for_function(
+                    f"() => Boolean(({DEEP_CARD})())",
+                    timeout=45_000,
+                    polling=100,
+                )
             except PlaywrightTimeoutError as err:
                 card_count = page.locator("voip-stack-card, intercom-card").count()
                 raise RuntimeError(
-                    "HA softphone card did not become ready after reload "
-                    f"(url={page.url!r}, card_count={card_count}, "
+                    f"VoIP card not found at {page.url!r}: pass the full "
+                    "Lovelace dashboard path, not the HA root "
+                    f"(card_count={card_count}, "
                     f"console_tail={console[-10:]!r})"
                 ) from err
 
+        monitor_active = False
+
+        def start_responsiveness_monitor() -> None:
+            nonlocal monitor_active
+            page.evaluate(INSTALL_RESPONSIVENESS_MONITOR)
+            monitor_active = True
+
+        def finish_responsiveness_monitor(label: str) -> dict:
+            nonlocal monitor_active
+            if not monitor_active:
+                return {}
+            metrics = page.evaluate(READ_RESPONSIVENESS_MONITOR) or {}
+            metrics["label"] = label
+            result.setdefault("responsiveness_segments", []).append(metrics)
+            result["responsiveness"] = metrics
+            page.evaluate(STOP_RESPONSIVENESS_MONITOR)
+            monitor_active = False
+            return metrics
+
+        start_responsiveness_monitor()
+
         def sample(label: str) -> dict:
-            item = page.evaluate(CARD_SAMPLE) or {}
-            item["backend_state"] = page.evaluate(BACKEND_SAMPLE) or {}
+            for attempt in range(3):
+                try:
+                    item = page.evaluate(CARD_SAMPLE) or {}
+                    item["backend_state"] = page.evaluate(BACKEND_SAMPLE) or {}
+                    break
+                except PlaywrightError as err:
+                    if (
+                        "Execution context was destroyed" not in str(err)
+                        or attempt == 2
+                    ):
+                        raise
+                    page.wait_for_load_state("domcontentloaded", timeout=30_000)
+                    page.wait_for_function(
+                        f"() => Boolean(({DEEP_CARD})())",
+                        timeout=30_000,
+                        polling=100,
+                    )
+                    page.evaluate(INSTALL_RESPONSIVENESS_MONITOR)
             item["label"] = label
             result["samples"].append(item)
             print(json.dumps(item, separators=(",", ":")), flush=True)
             return item
 
-        def wait_for_idle_cleanup(label: str) -> dict:
+        if args.auth_check_only:
+            sample("authenticated_card_ready")
+            result["ok"] = True
+            finish_responsiveness_monitor("auth_check")
+            Path(args.out).write_text(
+                json.dumps(result, indent=2, ensure_ascii=False)
+            )
+            context.close()
+            browser.close()
+            return 0
+
+        def wait_for_idle_cleanup(
+            label: str,
+            *,
+            hangup_started: float | None = None,
+            hangup_click: dict | None = None,
+        ) -> dict:
             page.wait_for_function(
                 f"""() => {{
-                  const x = ({CARD_SAMPLE})();
+                  const x = ({LIGHT_CARD_STATE})();
                   if (!x || String(x.card_state || '').toLowerCase() !== 'idle') return false;
                   if (x.engine_call_id || x.engine_video_active || x.engine_video_visible) return false;
                   if (x.has_audio_attach_task || x.has_cleanup_task) return false;
                   return true;
                 }}""",
                 timeout=15_000,
+                polling=100,
             )
+            hangup_timing = None
+            if hangup_started is not None:
+                hangup_timing = {
+                    "label": label,
+                    "dispatch_ms": float((hangup_click or {}).get("dispatch_ms") or 0),
+                    "to_ui_idle_ms": (time.monotonic() - hangup_started) * 1000,
+                }
+                result.setdefault("hangup_timings", []).append(hangup_timing)
             deadline = time.monotonic() + 15
             backend = {}
             while time.monotonic() < deadline:
@@ -475,6 +931,10 @@ def main() -> int:
                 page.wait_for_timeout(100)
             else:
                 raise RuntimeError(f"backend resources survived teardown: {backend}")
+            if hangup_timing is not None:
+                hangup_timing["to_backend_cleanup_ms"] = (
+                    time.monotonic() - hangup_started
+                ) * 1000
             cleaned = sample(label)
             backend = cleaned.get("backend_state") or {}
             if backend.get("pending_transactions") or backend.get("active_dialogs"):
@@ -483,12 +943,24 @@ def main() -> int:
                 raise RuntimeError(f"SIP call ids survived teardown: {cleaned}")
             return cleaned
 
+        def click_hangup_and_wait(label: str, unavailable: str) -> dict:
+            started = time.monotonic()
+            clicked = page.evaluate(CLICK_HANGUP)
+            if not clicked or not clicked.get("clicked"):
+                raise RuntimeError(unavailable)
+            return wait_for_idle_cleanup(
+                label,
+                hangup_started=started,
+                hangup_click=clicked,
+            )
+
         try:
             reload_rendered = 0
             if args.send_camera:
                 page.wait_for_function(
                     f"() => Boolean(({DEEP_CARD})()?._softphoneSnapshot?.video_camera_send_enabled)",
                     timeout=10_000,
+                    polling=100,
                 )
                 if not page.evaluate(CLICK_CAMERA_SEND):
                     raise RuntimeError("Send Camera option was not available before the video call")
@@ -497,52 +969,81 @@ def main() -> int:
                 print(f"PLACING_VIDEO_CALL {args.outbound}", flush=True)
                 if not page.evaluate(START_OUTBOUND, args.outbound):
                     raise RuntimeError("HA softphone card could not start the outbound call")
+                outbound_states = (
+                    "['remote_ringing']"
+                    if args.cancel_during_ring
+                    else "['calling','connecting','remote_ringing','in_call']"
+                )
                 page.wait_for_function(
-                    f"() => ['calling','connecting','remote_ringing','in_call'].includes((({CARD_SAMPLE})()?.card_state || '').toLowerCase())",
+                    f"() => {outbound_states}.includes((({LIGHT_CARD_STATE})()?.card_state || '').toLowerCase())",
                     timeout=15_000,
+                    polling=100,
                 )
                 sample("outbound_progress")
                 if args.reload_during_ring:
+                    finish_responsiveness_monitor("before_reload_during_ring")
                     page.reload(wait_until="domcontentloaded", timeout=30_000)
-                    page.wait_for_function(f"() => Boolean(({DEEP_CARD})())", timeout=30_000)
                     page.wait_for_function(
-                        f"() => ['calling','connecting','remote_ringing','in_call'].includes((({CARD_SAMPLE})()?.card_state || '').toLowerCase())",
+                        f"() => Boolean(({DEEP_CARD})())",
+                        timeout=30_000,
+                        polling=100,
+                    )
+                    start_responsiveness_monitor()
+                    page.wait_for_function(
+                        f"() => ['calling','connecting','remote_ringing','in_call'].includes((({LIGHT_CARD_STATE})()?.card_state || '').toLowerCase())",
                         timeout=15_000,
+                        polling=100,
                     )
                     sample("outbound_after_reload")
                 if args.cancel_during_ring:
-                    if not page.evaluate(CLICK_HANGUP):
-                        raise RuntimeError("outbound Hangup button was unavailable during ringing")
-                    wait_for_idle_cleanup("idle_after_outbound_cancel")
+                    click_hangup_and_wait(
+                        "idle_after_outbound_cancel",
+                        "outbound Hangup button was unavailable during ringing",
+                    )
                     result["ok"] = True
                     raise _ProbeComplete
                 print("WAITING_FOR_REMOTE_ANSWER", flush=True)
             else:
                 print("READY_FOR_VIDEO_CALL", flush=True)
                 page.wait_for_function(
-                    f"() => (({CARD_SAMPLE})()?.card_state || '').toLowerCase() === 'ringing'",
+                    f"() => ['ringing','in_call'].includes((({LIGHT_CARD_STATE})()?.card_state || '').toLowerCase())",
                     timeout=int(args.ring_timeout * 1000),
+                    polling=100,
                 )
-                ringing = sample("ringing")
+                incoming = sample("incoming_progress")
                 if (
                     not args.expect_audio_only
                     and not args.expect_video_reinvite
-                    and not ringing.get("video_offered")
+                    and not incoming.get("video_offered")
                 ):
-                    raise RuntimeError(f"incoming call did not offer video: {ringing}")
-                if not page.evaluate(CLICK_ANSWER):
-                    raise RuntimeError("visible Answer button not found")
+                    raise RuntimeError(
+                        f"incoming call did not offer video: {incoming}"
+                    )
+                # An enabled HA softphone auto-answer may cross ringing and
+                # reach in_call between two 100 ms observations. That is a
+                # valid completed answer, not a missing Answer button.
+                if str(incoming.get("card_state") or "").lower() == "ringing":
+                    if not page.evaluate(CLICK_ANSWER):
+                        raise RuntimeError("visible Answer button not found")
             page.wait_for_function(
-                f"() => (({CARD_SAMPLE})()?.card_state || '').toLowerCase() === 'in_call'",
+                f"() => (({LIGHT_CARD_STATE})()?.card_state || '').toLowerCase() === 'in_call'",
                 timeout=int(args.ring_timeout * 1000),
+                polling=100,
             )
             sample("in_call")
             if args.reload_in_call:
+                finish_responsiveness_monitor("before_reload_in_call")
                 page.reload(wait_until="domcontentloaded", timeout=30_000)
-                page.wait_for_function(f"() => Boolean(({DEEP_CARD})())", timeout=30_000)
                 page.wait_for_function(
-                    f"() => (({CARD_SAMPLE})()?.card_state || '').toLowerCase() === 'in_call'",
+                    f"() => Boolean(({DEEP_CARD})())",
+                    timeout=30_000,
+                    polling=100,
+                )
+                start_responsiveness_monitor()
+                page.wait_for_function(
+                    f"() => (({LIGHT_CARD_STATE})()?.card_state || '').toLowerCase() === 'in_call'",
                     timeout=15_000,
+                    polling=100,
                 )
                 after_reload = sample("in_call_after_reload")
                 reload_rendered = int(
@@ -552,13 +1053,15 @@ def main() -> int:
                 )
             if args.expect_audio_only:
                 page.wait_for_function(
-                    f"() => {{ const x = ({CARD_SAMPLE})(); const s = x?.engine_stats || {{}}; return s.sent > 0 && s.received > 0 && !x?.video_active && !x?.engine_video_active; }}",
+                    f"() => {{ const x = ({LIGHT_CARD_STATE})(); const s = x?.engine_stats || {{}}; return s.sent > 0 && s.received > 0 && !x?.video_active && !x?.engine_video_active; }}",
                     timeout=int(args.video_timeout * 1000),
+                    polling=100,
                 )
             else:
                 page.wait_for_function(
-                    f"() => {{ const x = ({CARD_SAMPLE})(); const d = String(x?.video_direction || 'sendrecv'); const v = x?.engine_stats?.video || {{}}; const rx = !['recvonly','sendrecv'].includes(d) || (v.received > 0 && x?.canvas?.width > 0); const tx = {str(args.deny_camera).lower()} || !['sendonly','sendrecv'].includes(d) || v.sent > 0; return x?.engine_video_active && rx && tx; }}",
+                    f"() => {{ const x = ({LIGHT_CARD_STATE})(); const d = String(x?.video_direction || 'sendrecv'); const v = x?.engine_stats?.video || {{}}; const rx = !['recvonly','sendrecv'].includes(d) || (v.received > 0 && (v.rendered > 0 || x?.engine_video_visible)); const tx = {str(args.deny_camera).lower()} || !['sendonly','sendrecv'].includes(d) || v.sent > 0; return x?.engine_video_active && rx && tx; }}",
                     timeout=int(args.video_timeout * 1000),
+                    polling=100,
                 )
             if args.sample_interval > 0:
                 deadline = time.monotonic() + args.hold_seconds
@@ -597,7 +1100,7 @@ def main() -> int:
                 and not args.expect_audio_only
                 and expects_receive
                 and video_stats.get("rendered", 0)
-                < reload_rendered + max(3, int(args.hold_seconds * 2))
+                < reload_rendered + 3
             ):
                 raise RuntimeError(
                     f"video did not continue rendering after page reload: {active}"
@@ -605,6 +1108,7 @@ def main() -> int:
             if (
                 not args.expect_audio_only
                 and expects_receive
+                and not args.allow_dark_video
                 and not (active.get("canvas") or {}).get("non_black")
             ):
                 raise RuntimeError(f"decoded canvas has no non-black sample: {active}")
@@ -639,9 +1143,10 @@ def main() -> int:
             if args.expect_remote_hangup:
                 wait_for_idle_cleanup("idle_after_remote_hangup")
             elif not args.no_hangup:
-                if not page.evaluate(CLICK_HANGUP):
-                    raise RuntimeError("visible Hangup button not found")
-                wait_for_idle_cleanup("idle_after_hangup")
+                click_hangup_and_wait(
+                    "idle_after_hangup",
+                    "visible Hangup button not found",
+                )
             result["ok"] = True
         except _ProbeComplete:
             pass
@@ -654,6 +1159,24 @@ def main() -> int:
             except BaseException:
                 pass
         finally:
+            if failure is not None:
+                try:
+                    state = page.evaluate(LIGHT_CARD_STATE) or {}
+                    if str(state.get("card_state") or "").lower() != "idle":
+                        click_hangup_and_wait(
+                            "idle_after_failure_cleanup",
+                            "failure cleanup could not find the Hangup button",
+                        )
+                except BaseException as cleanup_error:
+                    result["failure_cleanup_error"] = (
+                        f"{type(cleanup_error).__name__}: {cleanup_error}"
+                    )
+            try:
+                finish_responsiveness_monitor("final")
+            except BaseException as monitor_error:
+                result["responsiveness_error"] = (
+                    f"{type(monitor_error).__name__}: {monitor_error}"
+                )
             Path(args.out).write_text(json.dumps(result, indent=2, ensure_ascii=False))
             for line in console:
                 print(f"BROWSER {line}", flush=True)

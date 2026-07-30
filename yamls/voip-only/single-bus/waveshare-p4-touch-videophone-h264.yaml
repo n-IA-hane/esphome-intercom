@@ -1,0 +1,38 @@
+# Waveshare ESP32-P4 Touch 10.1: experimental H.264 SIP videophone.
+#
+# Exactly one codec package is merged with the common SIP-only runtime. JPEG
+# decoder/source symbols and buffers are absent from this firmware.
+
+substitutions:
+  # Encode a centered square crop from the native 800x800 sensor frame. This
+  # keeps the camera aspect and reduces shared PPA/PSRAM traffic versus VGA.
+  p4_video_width: "400"
+  p4_video_height: "400"
+  # Advertise the independently measured software-decoder envelope for the
+  # peer -> P4 leg.
+  p4_video_rx_width: "352"
+  p4_video_rx_height: "288"
+  p4_video_fps: "10"
+  p4_camera_fps: "25"
+  p4_camera_resolution: "800x800"
+  p4_camera_rotation: "270"
+  p4_h264_bitrate: "800000"
+  p4_h264_gop: "10"
+  # H.264 drives CSI, PPA, the hardware encoder, the software decoder and DSI
+  # over shared PSRAM. Keep Espressif's split-core pipeline ordering: the
+  # Core-0 feed bridge time-slices with the priority-19 I2S owner, while the
+  # Core-1 SE/fetch result path gets priority 20 so complete 64 ms frames reach
+  # the non-blocking consumer before its deadline. Raising feed above 19 can
+  # starve I2S completion handling; leaving it at 18 misses AFE output frames.
+  p4_afe_task_priority: "20"
+  p4_afe_feed_task_priority: "19"
+  p4_afe_fetch_task_priority: "20"
+
+packages:
+  base: !include waveshare-p4-touch-videophone-base.yaml
+  video: !include ../../../packages/voip/p4_video_h264.yaml
+
+# Codec profiles have different managed-component graphs and therefore must
+# not reuse generated CMake components from another profile.
+esphome:
+  build_path: .esphome/build/waveshare-p4-touch-videophone-h264

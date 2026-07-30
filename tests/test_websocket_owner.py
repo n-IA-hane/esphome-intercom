@@ -87,7 +87,7 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
         bucket: dict[str, object] = {}
         self.assertEqual(
             media_websocket_owner_status(
-                bucket, "call-1", "kitchen", "document-a"
+                bucket, _CallRegistry(), "call-1", "kitchen", "document-a"
             ),
             "available",
         )
@@ -96,20 +96,32 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(
             media_websocket_owner_status(
-                bucket, "call-1", "kitchen", "document-a"
+                bucket,
+                _CallRegistry("document-a"),
+                "call-1",
+                "kitchen",
+                "document-a",
             ),
             "self",
         )
         self.assertEqual(
             media_websocket_owner_status(
-                bucket, "call-1", "kitchen", "document-b"
+                bucket,
+                _CallRegistry("document-a"),
+                "call-1",
+                "kitchen",
+                "document-b",
             ),
             "other",
         )
         bucket["video_ws_owners"] = {key: object()}
         self.assertEqual(
             media_websocket_owner_status(
-                bucket, "call-1", "kitchen", "document-a"
+                bucket,
+                _CallRegistry("document-a"),
+                "call-1",
+                "kitchen",
+                "document-a",
             ),
             "other",
         )
@@ -176,7 +188,33 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
         )
         await handoff
 
-    async def test_disconnected_same_user_document_can_rebind_call_identity(
+    def test_pinned_originator_blocks_other_client_before_socket_attach(
+        self,
+    ) -> None:
+        bucket: dict[str, object] = {}
+        registry = _CallRegistry("android-originator")
+        self.assertEqual(
+            media_websocket_owner_status(
+                bucket,
+                registry,
+                "call-1",
+                "kitchen",
+                "pc-observer",
+            ),
+            "other",
+        )
+        self.assertEqual(
+            media_websocket_owner_status(
+                bucket,
+                registry,
+                "call-1",
+                "kitchen",
+                "android-originator",
+            ),
+            "available",
+        )
+
+    async def test_disconnected_other_document_cannot_rebind_call_identity(
         self,
     ) -> None:
         bucket: dict[str, object] = {}
@@ -186,26 +224,26 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
             client_id="reloaded-document",
         )
 
-        owners, _lock, owner_key = await async_claim_call_media_owner(
-            bucket,
-            registry,
-            "call-1",
-            "kitchen",
-            replacement,
-            channel="audio",
-            timeout=1.0,
-        )
+        with self.assertRaises(WebSocketOwnerBusyError):
+            await async_claim_call_media_owner(
+                bucket,
+                registry,
+                "call-1",
+                "kitchen",
+                replacement,
+                channel="audio",
+                timeout=1.0,
+            )
 
-        self.assertIs(owners[owner_key], replacement)
         self.assertEqual(
             registry.sessions["call-1"].metadata["media_client_id"],
-            "reloaded-document",
+            "closed-document",
         )
         self.assertEqual(
             registry.softphone_media["call-1"]["media_client_id"],
-            "reloaded-document",
+            "closed-document",
         )
-        self.assertEqual(registry.sessions["call-1"].revision, 2)
+        self.assertEqual(registry.sessions["call-1"].revision, 1)
 
     async def test_live_channel_blocks_other_document_identity_takeover(
         self,

@@ -1,8 +1,8 @@
 # Spotpear full-experience VoIP navigation.
 #
-# Vertical stack:
-#   VA screen --swipe up--> VoIP --swipe up--> Settings
-#   Settings --swipe down--> VoIP --swipe down--> VA screen
+# Base vertical stack:
+#   VA --swipe up--> contacts --swipe up--> settings
+# Device-specific pages may insert another screen between contacts and settings.
 #
 # Requires the full-experience scripts/globals:
 #   swipe_to_va, settings_open, nav_anim, nav_anim_ms.

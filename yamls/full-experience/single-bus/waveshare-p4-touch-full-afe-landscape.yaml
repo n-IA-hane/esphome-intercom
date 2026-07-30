@@ -158,7 +158,9 @@ packages:
   audio_stack_controls: !include ../../../packages/esp_audio_stack/controls.yaml
   speaker_power: !include ../../../packages/esp_audio_stack/speaker_power_output.yaml
   flac_codecs_psram: !include ../../../packages/audio/flac_codecs_psram.yaml
-  sendspin_artwork: !include ../../../packages/media_player/sendspin_artwork.yaml
+  # Temporarily disabled: ESPHome PR #16057 still pins sendspin-cpp 0.6.1,
+  # whose ESP-IDF WebSocket server can transmit before the HTTP 101 upgrade.
+  # Re-enable after the artwork PR is updated for sendspin-cpp 0.7.x.
   lvgl_p4_ppa: !include ../../../packages/lvgl/p4_ppa.yaml
   p4_va_cleanup: !include ../../../packages/lvgl/p4_va_cleanup.yaml
   # No carousel (lvgl_settings_navigation) on P4: the landscape display holds
@@ -177,6 +179,9 @@ packages:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
+  # This full native-camera profile has a different generated component graph
+  # from both SIP videophone codec profiles.
+  build_path: .esphome/build/waveshare-p4-touch-full-afe-landscape
   on_boot:
     - priority: 200
       then:
@@ -185,6 +190,9 @@ esphome:
       then:
         - logger.log: "Boot: late init start"
         - delay: 500ms
+        - number.set:
+            id: master_volume
+            value: 1
         - output.set_level:
             id: backlight_pwm
             level: 100%
@@ -219,7 +227,7 @@ external_components:
   - source: ${voip_stack_components_source}
     components: [voip_stack]
   - source: ${ext_components_source}
-    components: [speaker, voice_assistant, mipi_dsi]
+    components: [speaker, voice_assistant, mipi_dsi, esp_video_camera]
   - source: ${runtime_controller_components_source}
     components: [runtime_controller]
   - source: ${audio_stack_components_source}
@@ -283,6 +291,12 @@ api:
 ota:
   - platform: esphome
 
+# Development hardware: repeated video-call OTA qualification must not roll
+# back a valid image merely because the one-minute safe-mode gate has not
+# elapsed yet. Re-enable the production default before publishing this target.
+safe_mode:
+  disabled: true
+
 # UART logger. Keep VoIP domains visible at INFO; noisy entity/component domains
 # stay WARN unless the board is being actively debugged.
 
@@ -327,6 +341,25 @@ i2c:
     # fast-mode I2C, so keep init/control traffic at 400 kHz.
     frequency: 400kHz
     scan: false
+
+# Full-experience profile: expose the camera through ESPHome/Home Assistant only.
+# SIP remains audio-only in this firmware, so the display/assistant resources are
+# never shared with a remote-video decoder. The HA card may render this camera
+# entity alongside the call without changing the SIP/SDP media capabilities.
+esp_video_camera:
+  id: p4_camera
+  name: "P4 Camera"
+  i2c_id: internal_i2c
+  device: jpeg
+  # SC202CS exposes 800x800 as its square native mode. Requesting 400x400 is
+  # rejected by the sensor and still makes PPA read the full 800x800 frame, so
+  # it loses resolution without improving the measured camera cadence.
+  resolution: 800x800
+  jpeg_quality: 10
+  max_framerate: 10
+  # Camera is mounted portrait relative to the landscape front panel. Rotate
+  # once in the native ESPHome camera path consumed by Home Assistant.
+  rotation: 270
 
 # =============================================================================
 # OUTPUTS AND LIGHTS
@@ -624,6 +657,12 @@ voice_assistant:
 voip_stack:
   id: phone
   task_stacks_in_psram: true
+  # The TX/RX audio stacks reserve 24 KiB. H.264, AFE, API and Sendspin cannot
+  # all admit their boot-time internal allocations if those stacks stay in
+  # internal RAM, so keep the compile-time gate explicit for this PSRAM board.
+  # Audio deadline/jitter is qualified at runtime below; do not infer it from
+  # stack placement alone.
+  audio_task_stacks_in_psram: true
   # Set true to save roughly 5-8KB internal RAM from VoIP-owned staging
   # buffers. Keep false on P4 full AFE while there is enough heap, because these
   # buffers sit on the mic TX path during calls.
@@ -833,144 +872,172 @@ font:
 
 image:
   # VA state images
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/listening.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/listening.png
     id: img_listening
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/thinking.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/thinking.png
     id: img_thinking
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/error.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/error.png
     id: img_error
     resize: 400x400
     type: RGB565
     byte_order: little_endian
   # Mood backgrounds for replying (set based on LLM emoticon prefix)
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/happy.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/happy.png
     id: mood_happy
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/neutral.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/neutral.png
     id: mood_neutral
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/angry.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/angry.png
     id: mood_angry
     resize: 400x400
     type: RGB565
     byte_order: little_endian
   # Overlay page images
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/error_no_wifi.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/error_no_wifi.png
     id: error_no_wifi
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/error_no_ha.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/error_no_ha.png
     id: error_no_ha
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_00.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_00.png
     id: idle_00
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_01.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_01.png
     id: idle_01
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_02.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_02.png
     id: idle_02
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_03.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_03.png
     id: idle_03
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_04.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_04.png
     id: idle_04
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_05.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_05.png
     id: idle_05
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_06.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_06.png
     id: idle_06
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_07.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_07.png
     id: idle_07
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_08.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_08.png
     id: idle_08
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_09.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_09.png
     id: idle_09
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_10.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_10.png
     id: idle_10
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_11.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_11.png
     id: idle_11
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_12.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_12.png
     id: idle_12
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_13.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_13.png
     id: idle_13
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_14.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_14.png
     id: idle_14
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_15.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_15.png
     id: idle_15
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_16.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_16.png
     id: idle_16
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_17.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_17.png
     id: idle_17
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_18.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_18.png
     id: idle_18
     resize: 400x400
     type: RGB565
     byte_order: little_endian
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_19.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_19.png
     id: idle_19
     resize: 400x400
     type: RGB565
@@ -2577,7 +2644,6 @@ lvgl:
                               if (x == id(dnd_switch).state) return;
                               if (x) id(dnd_switch).turn_on();
                               else id(dnd_switch).turn_off();
-
               # ========================================================================
               # SECTION: ECHO CANCELLATION (AEC switch + Mode dropdown)
               # ========================================================================
@@ -3369,8 +3435,10 @@ script:
           // Settings page is user-driven (modal): never let the periodic
           // draw_display callers (VoIP state, idle phase, animations,
           // weather refresh, ...) snap the screen back to main_page while
-          // the user is interacting with the settings page.
-          if (active_scr == id(settings_p4_page)->obj) return;
+          // the user is interacting with the settings page. A live call still
+          // interrupts it, as it already does on the round target.
+          if (active_scr == id(settings_p4_page)->obj && !id(phone).is_active())
+            return;
 
           auto set_hidden = [](lv_obj_t *obj, bool hidden) {
             const bool is_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -3502,10 +3570,9 @@ script:
             set_hidden(id(call_in_call_group), false);
           } else {
             set_label(id(call_idle_peer_label), id(peer_name).c_str());
-            auto csv = id(phone).get_contacts_csv();
-            int count = csv.empty() ? 0 : (int)std::count(csv.begin(), csv.end(), ',') + 1;
             char buf[32];
-            snprintf(buf, sizeof(buf), "Contacts: %d", count);
+            snprintf(buf, sizeof(buf), "Contacts: %u",
+                     static_cast<unsigned>(id(phone).get_contact_count()));
             set_label(id(call_idle_contacts_label), buf);
             if (id(voip_keypad_visible)) {
               lv_obj_set_y(id(call_keypad_group), 0);
@@ -3536,7 +3603,8 @@ script:
           condition:
             lambda: |-
               std::string call_state = id(phone).get_state_str();
-              return id(current_mode) == 0 &&
+              return lv_disp_get_scr_act(nullptr) == id(main_page)->obj &&
+                     id(current_mode) == 0 &&
                      id(voice_assistant_phase) == ${voice_assist_idle_phase_id} &&
                      !id(init_in_progress) &&
                      (call_state == "idle" || call_state.empty());
@@ -3783,10 +3851,10 @@ script:
       - lvgl.label.update:
           id: call_idle_contacts_label
           text: !lambda |-
-            auto csv = id(phone).get_contacts_csv();
-            int count = csv.empty() ? 0 : (int)std::count(csv.begin(), csv.end(), ',') + 1;
             char buf[32];
-            snprintf(buf, sizeof(buf), "Contacts: %d", count);
+            snprintf(
+                buf, sizeof(buf), "Contacts: %u",
+                static_cast<unsigned>(id(phone).get_contact_count()));
             return std::string(buf);
 
   # VA end handler (mode: restart ensures barge-in cancels previous on_end)

@@ -1,0 +1,220 @@
+# Waveshare ESP32-P4 WiFi6 Touch LCD 10.1 hardware for the videophone profile.
+#
+# This package deliberately contains only the board, display and full-duplex
+# audio path. Camera/codec selection and the SIP lifecycle stay in separate
+# packages so a JPEG build never compiles H.264 (and vice versa).
+
+substitutions:
+  hosted_reset_pin: GPIO54
+  hosted_cmd_pin: GPIO19
+  hosted_clk_pin: GPIO18
+  hosted_d0_pin: GPIO14
+  hosted_d1_pin: GPIO15
+  hosted_d2_pin: GPIO16
+  hosted_d3_pin: GPIO17
+  codec_i2c_sda_pin: GPIO7
+  codec_i2c_scl_pin: GPIO8
+  i2s_mclk_pin: GPIO13
+  i2s_bclk_pin: GPIO12
+  i2s_lrclk_pin: GPIO10
+  i2s_din_pin: GPIO11
+  i2s_dout_pin: GPIO9
+  display_reset_pin: "27"
+  display_backlight_pin: GPIO26
+  speaker_enable_pin: GPIO53
+
+packages:
+  p4_base: !include ../platform/esp32p4_base.yaml
+  p4_c6_sdio: !include esp32p4_c6_sdio.yaml
+  lvgl_ppa: !include ../lvgl/p4_ppa.yaml
+
+psram:
+  mode: hex
+  speed: 200MHz
+
+esp_ldo:
+  - channel: 3
+    voltage: 2.5V
+
+network:
+  # Hosted SDIO, audio DMA, CSI and DSI need internal/DMA headroom more than
+  # oversized lwIP windows.
+  enable_high_performance: false
+
+esp32_hosted:
+  variant: ESP32C6
+  use_psram: true
+  reset_pin: ${hosted_reset_pin}
+  cmd_pin: ${hosted_cmd_pin}
+  clk_pin: ${hosted_clk_pin}
+  d0_pin: ${hosted_d0_pin}
+  d1_pin: ${hosted_d1_pin}
+  d2_pin: ${hosted_d2_pin}
+  d3_pin: ${hosted_d3_pin}
+  active_high: true
+
+# Espressif's high-throughput ESP32-P4 + C6 profile. A standard 800x800
+# RTP/JPEG access unit arrives as roughly 40-60 UDP datagrams; the ordinary
+# ESPHome queue depths can discard fragments before the RTP worker drains them.
+esp32:
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_WIFI_RMT_STATIC_RX_BUFFER_NUM: "16"
+      CONFIG_WIFI_RMT_DYNAMIC_RX_BUFFER_NUM: "64"
+      CONFIG_WIFI_RMT_DYNAMIC_TX_BUFFER_NUM: "64"
+      CONFIG_WIFI_RMT_TX_BA_WIN: "32"
+      CONFIG_WIFI_RMT_RX_BA_WIN: "32"
+      CONFIG_LWIP_TCPIP_RECVMBOX_SIZE: "64"
+
+i2c:
+  - id: internal_i2c
+    sda: ${codec_i2c_sda_pin}
+    scl: ${codec_i2c_scl_pin}
+    frequency: 400kHz
+    scan: false
+
+output:
+  - platform: ledc
+    id: backlight_pwm
+    pin: ${display_backlight_pin}
+    inverted: false
+    frequency: 1000Hz
+
+  - platform: gpio
+    id: speaker_enable
+    pin: ${speaker_enable_pin}
+
+light:
+  - platform: monochromatic
+    id: display_backlight
+    name: Display Backlight
+    output: backlight_pwm
+    restore_mode: ALWAYS_ON
+    default_transition_length: 250ms
+
+# ES7210/ES8311 share one 48 kHz TDM bus. Slots 0 and 2 are microphones;
+# slot 1 is the electrical playback reference used by the AFE AEC.
+esp_audio_stack:
+  id: audio_stack
+  audio_task_stack_in_psram: false
+  i2s_lrclk_pin: ${i2s_lrclk_pin}
+  i2s_bclk_pin: ${i2s_bclk_pin}
+  i2s_mclk_pin: ${i2s_mclk_pin}
+  i2s_din_pin: ${i2s_din_pin}
+  i2s_dout_pin: ${i2s_dout_pin}
+  sample_rate: 48000
+  output_sample_rate: 16000
+  processor_id: afe_processor
+  audio_effects:
+    rate_cvt_complexity: 3
+    rate_cvt_perf_type: speed
+  codec:
+    i2c_id: internal_i2c
+    input:
+      type: es7210
+      address: 0x40
+      mic_selected: 0x0F
+      gain_db: 30.0
+      ref_channel: 1
+      ref_gain_db: 24.0
+    output:
+      type: es8311
+      address: 0x18
+      use_mclk: true
+      no_dac_ref: true
+  slot_bit_width: 16
+  use_tdm_reference: true
+  tdm_total_slots: 4
+  tdm_mic_slots: [0, 2]
+  tdm_ref_slot: 1
+  buffers_in_psram: true
+  on_amplifier_required:
+    - script.stop: videophone_speaker_idle_powerdown
+    - if:
+        condition:
+          switch.is_off: speaker_mute
+        then:
+          - output.turn_on: speaker_enable
+  on_amplifier_idle:
+    - script.execute: videophone_speaker_idle_powerdown
+
+esp_afe:
+  id: afe_processor
+  task_priority: ${p4_afe_task_priority}
+  feed_task_priority: ${p4_afe_feed_task_priority}
+  fetch_task_priority: ${p4_afe_fetch_task_priority}
+  type: fd
+  mode: high_perf
+  mic_num: 2
+  input_format: MMNR
+  aec_enabled: true
+  aec_filter_length: 4
+  aec_nlp_level: normal
+  se_enabled: true
+  ns_enabled: true
+  # A videophone does not need standby VAD/wake-word analysis.
+  vad_enabled: false
+  continuous_vad: false
+  agc_enabled: false
+  feed_buf_in_psram: false
+  feed_ring_in_psram: false
+  fetch_ring_in_psram: false
+
+microphone:
+  - platform: esp_audio_stack
+    id: mic_main
+    esp_audio_stack_id: audio_stack
+
+speaker:
+  - platform: esp_audio_stack
+    id: hw_speaker
+    esp_audio_stack_id: audio_stack
+    sample_rate: 48000
+    bits_per_sample: 16
+    timeout: 1s
+    buffer_duration: 128ms
+
+  # There is no media/TTS mixer in this profile: VoIP PCM is converted once
+  # and written directly to the hardware speaker.
+  - platform: resampler
+    id: voip_speaker_input
+    output_speaker: hw_speaker
+    bits_per_sample: 16
+    task_stack_in_psram: false
+    buffer_duration: 128ms
+
+display:
+  - platform: mipi_dsi
+    id: main_display
+    model: WAVESHARE-10.1-DSI-TOUCH-A
+    reset_pin: ${display_reset_pin}
+    lane_bit_rate: 1500Mbps
+    vsync_back_porch: 10
+    dimensions:
+      width: 800
+      height: 1280
+    update_interval: never
+    auto_clear_enabled: false
+
+touchscreen:
+  - platform: gt911
+    id: main_touch
+    i2c_id: internal_i2c
+    address: 0x5D
+    display: main_display
+    on_touch:
+      - output.set_level:
+          id: backlight_pwm
+          level: 100%
+
+script:
+  - id: videophone_speaker_idle_powerdown
+    mode: restart
+    then:
+      - delay: ${audio_stack_speaker_idle_delay}
+      - if:
+          condition:
+            switch.is_off: speaker_mute
+          then:
+            - output.turn_off: speaker_enable

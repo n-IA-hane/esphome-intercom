@@ -47,6 +47,7 @@ async def async_track_outbound_sip_client(
     endpoint_id: str = DEFAULT_ENDPOINT_ID,
     local_name: str = "",
     session_device_id: str = HA_SOFTPHONE_DEVICE_ID,
+    target_device_id: str = "",
     video_requested: bool = False,
     video_failure_reason: str = "",
 ) -> None:
@@ -106,6 +107,9 @@ async def async_track_outbound_sip_client(
             )
             final = "error"
         public_final = sip_public_state(final)
+        connected_party = str(
+            getattr(client, "connected_party", "") or target
+        ).strip()
         if registry.sip_clients.get(client.dialog_ids.call_id) is not client:
             # Hangup/replacement already revoked this watcher. A queued final
             # response must never resurrect a detached call in the HA store.
@@ -151,9 +155,11 @@ async def async_track_outbound_sip_client(
                 session_device_id=session_device_id,
                 caller=local_name,
                 callee=target,
-                peer_name=target,
+                peer_name=connected_party,
+                connected_party=connected_party,
                 direction="outgoing",
                 call_id=client.dialog_ids.call_id,
+                target_device_id=target_device_id,
                 selected_tx_format=client.dialog.send_format.audio_format.wire_token(),
                 selected_rx_format=client.dialog.recv_format.audio_format.wire_token(),
                 selected_tx_rtp_format=client.dialog.send_format.wire_token(),
@@ -197,9 +203,11 @@ async def async_track_outbound_sip_client(
                 session_device_id=session_device_id,
                 caller=local_name,
                 callee=target,
-                peer_name=target,
+                peer_name=connected_party,
+                connected_party=connected_party,
                 direction="outgoing",
                 call_id=client.dialog_ids.call_id,
+                target_device_id=target_device_id,
                 reason=terminal_reason,
                 terminal_reason=terminal_reason,
                 sip_status_code=client.last_sip_status_code,
@@ -242,9 +250,11 @@ async def async_track_outbound_sip_client(
                 session_device_id=session_device_id,
                 caller=local_name,
                 callee=target,
-                peer_name=target,
+                peer_name=connected_party,
+                connected_party=connected_party,
                 direction="outgoing",
                 call_id=client.dialog_ids.call_id,
+                target_device_id=target_device_id,
                 reason=terminal_reason,
                 terminal_reason=terminal_reason,
                 origin="remote" if terminal == "remote_hangup" else "self",

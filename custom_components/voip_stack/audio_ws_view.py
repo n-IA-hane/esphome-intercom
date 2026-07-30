@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 import json
 import logging
 from pathlib import Path
-import secrets
 import threading
 from typing import Any, Callable
 import wave
@@ -88,6 +87,7 @@ class _SoftphoneMediaSession:
     conference_room: str = ""
     conference_queue: asyncio.Queue[bytes] | None = None
     local_ssrc: int = 0
+    rtp_source: rtp.AudioRtpSenderState | None = None
     media_generation: int = 0
     update_event: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -515,6 +515,12 @@ def _active_softphone_media_session(
     if call_id and call_id in inbound:
         item = inbound[call_id]
         if item.get("rtp_loopback"):
+            rtp_source = item.get("audio_rtp_source")
+            if not isinstance(rtp_source, rtp.AudioRtpSenderState):
+                rtp_source = rtp.AudioRtpSenderState.create(
+                    ssrc=int(item.get("local_ssrc") or 0)
+                )
+                item["audio_rtp_source"] = rtp_source
             return _SoftphoneMediaSession(
                 call_id=call_id,
                 local_rtp_port=0,
@@ -523,6 +529,7 @@ def _active_softphone_media_session(
                 send_format=item["send_format"],
                 recv_format=item["recv_format"],
                 local_ssrc=int(item.get("local_ssrc") or 0),
+                rtp_source=rtp_source,
             )
         conference_room = str(item.get("conference_room") or "")
         conference_queue = item.get("conference_queue")
@@ -542,6 +549,10 @@ def _active_softphone_media_session(
         invite = item.get("invite")
         local_rtp_port = int(item.get("local_rtp_port") or 0)
         if invite is not None and local_rtp_port:
+            rtp_source = item.get("audio_rtp_source")
+            if not isinstance(rtp_source, rtp.AudioRtpSenderState):
+                rtp_source = rtp.AudioRtpSenderState.create()
+                item["audio_rtp_source"] = rtp_source
             from .sdp import offered_dtmf_formats
 
             dtmf_formats = offered_dtmf_formats(invite.remote_sdp)
@@ -565,6 +576,7 @@ def _active_softphone_media_session(
                     dtmf_format.events if dtmf_format is not None else frozenset()
                 ),
                 on_dtmf=_dtmf_callback("left"),
+                rtp_source=rtp_source,
             )
 
     clients: dict[str, SipCallClient] = registry.sip_clients
@@ -572,6 +584,10 @@ def _active_softphone_media_session(
         client = clients[call_id]
         if client.dialog is not None:
             dialog = client.dialog
+            rtp_source = getattr(client, "audio_rtp_source", None)
+            if not isinstance(rtp_source, rtp.AudioRtpSenderState):
+                rtp_source = rtp.AudioRtpSenderState.create()
+                client.audio_rtp_source = rtp_source
             return _SoftphoneMediaSession(
                 call_id=dialog.call_id,
                 local_rtp_port=int(dialog.local_rtp_port),
@@ -587,6 +603,7 @@ def _active_softphone_media_session(
                 dtmf_payload_type=dialog.dtmf_payload_type,
                 dtmf_events=dialog.dtmf_events,
                 on_dtmf=_dtmf_callback("right"),
+                rtp_source=rtp_source,
             )
     return None
 
@@ -730,9 +747,13 @@ async def _run_audio_session(
         )
         await ws.close(code=1013, message=b"RTP port already in use")
         return
-    sequence = secrets.randbelow(0x10000)
-    timestamp = secrets.randbelow(0x100000000)
-    ssrc = int(session.local_ssrc) or secrets.randbelow(0x100000000)
+    rtp_source = session.rtp_source
+    if rtp_source is None:
+        rtp_source = rtp.AudioRtpSenderState.create(ssrc=session.local_ssrc)
+        session.rtp_source = rtp_source
+    sequence = int(rtp_source.sequence)
+    timestamp = int(rtp_source.timestamp)
+    ssrc = int(rtp_source.ssrc)
     closed = asyncio.Event()
     counters = {
         "ws_rx": 0,
@@ -1074,6 +1095,7 @@ async def _run_audio_session(
                     timestamp,
                     session.send_format.rtp_timestamp_step,
                 )
+                rtp_source.timestamp = timestamp
                 publish_counters()
                 next_send += frame_delay
                 if next_send <= loop.time():
@@ -1088,6 +1110,7 @@ async def _run_audio_session(
                     timestamp,
                     session.send_format.rtp_timestamp_step,
                 )
+                rtp_source.timestamp = timestamp
                 next_send = max(next_send + frame_delay, loop.time() + frame_delay)
                 continue
             if payload:
@@ -1111,10 +1134,12 @@ async def _run_audio_session(
                     counters["rtp_tx"] += 1
                     counters["rtp_tx_bytes"] += len(packet)
                 sequence = rtp.next_sequence(sequence)
+                rtp_source.sequence = sequence
             timestamp = rtp.next_timestamp(
                 timestamp,
                 session.send_format.rtp_timestamp_step,
             )
+            rtp_source.timestamp = timestamp
             publish_counters()
             next_send += frame_delay
             if next_send <= loop.time():

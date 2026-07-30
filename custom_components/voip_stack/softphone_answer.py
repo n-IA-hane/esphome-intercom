@@ -401,6 +401,8 @@ async def async_answer_browser_call(
         caller=invite.caller,
         callee=resolved_callee,
         peer_name=invite.caller,
+        connected_party=invite.caller,
+        answered_by=invite.caller,
         direction="incoming",
         call_id=call_id,
         dialed_target=invite.target,

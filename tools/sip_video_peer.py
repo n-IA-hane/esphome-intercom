@@ -56,6 +56,7 @@ def _load(name: str):
 sip = _load("sip")
 sdp = _load("sdp")
 rtp = _load("rtp")
+video_rtp = _load("video_rtp")
 video_rtcp = _load("video_rtcp")
 
 
@@ -65,8 +66,22 @@ VIDEO_PROFILES = {
         "rtpmap": "H264/90000",
         "fmtp": "profile-level-id=42e01f;packetization-mode=1;level-asymmetry-allowed=1",
         "encoder": "libx264",
-        "size": "320x180",
-        "args": ("-preset", "ultrafast", "-tune", "zerolatency", "-profile:v", "baseline"),
+        # TinyH264 on ESP32-P4 decodes macroblock-aligned test frames most
+        # predictably. Browser interoperability is qualified separately with
+        # ordinary cropped resolutions such as 640x360.
+        "size": "320x192",
+        "args": (
+            "-preset",
+            "ultrafast",
+            "-tune",
+            "zerolatency",
+            "-profile:v",
+            "baseline",
+            "-x264-params",
+            "repeat-headers=1:keyint=15:min-keyint=15:scenecut=0:slices=1",
+            "-threads",
+            "1",
+        ),
     },
     "h265": {
         "payload_type": 104,
@@ -98,7 +113,14 @@ VIDEO_PROFILES = {
         # RFC 2435 carries the standard Huffman tables implicitly. FFmpeg's
         # default MJPEG encoder optimizes them per frame, which the RTP muxer
         # correctly refuses to packetize.
-        "args": ("-huffman", "default", "-q:v", "5"),
+        "args": (
+            "-huffman",
+            "default",
+            "-force_duplicated_matrix",
+            "1",
+            "-q:v",
+            "5",
+        ),
     },
     "h263": {
         "payload_type": 34,
@@ -122,6 +144,8 @@ AUDIO_PROFILES = {
     "pcma": {
         "payload_type": 8,
         "rtpmap": "PCMA/8000",
+        "encoding": "PCMA",
+        "ptime": 20,
         "sample_rate": 8000,
         "frame_samples": 160,
         "frame_bytes": 160,
@@ -132,10 +156,24 @@ AUDIO_PROFILES = {
     "dahua-pcm": {
         "payload_type": 97,
         "rtpmap": "PCM/16000",
+        "encoding": "PCM",
+        "ptime": 20,
         "sample_rate": 16000,
         "frame_samples": 320,
         "frame_bytes": 640,
         "silence": bytes(640),
+        "ffmpeg_codec": "pcm_s16le",
+        "ffmpeg_format": "s16le",
+    },
+    "l16-16k": {
+        "payload_type": 96,
+        "rtpmap": "L16/16000/1",
+        "encoding": "L16",
+        "ptime": 16,
+        "sample_rate": 16000,
+        "frame_samples": 256,
+        "frame_bytes": 512,
+        "silence": bytes(512),
         "ffmpeg_codec": "pcm_s16le",
         "ffmpeg_format": "s16le",
     },
@@ -208,7 +246,7 @@ def _offer(
         f"a=rtpmap:{audio_payload_type} {audio['rtpmap']}",
         "a=rtpmap:101 telephone-event/8000",
         "a=fmtp:101 0-16",
-        "a=ptime:20",
+        f"a=ptime:{audio['ptime']}",
         f"a={audio_direction}",
     ]
     if codec == "audio":
@@ -327,15 +365,25 @@ async def _receive_audio(
 
 
 async def _start_audio_sender(
-    video_file: str,
+    audio_file: str,
     duration: float,
     *,
     audio_codec: str,
 ):
     profile = AUDIO_PROFILES[audio_codec]
+    input_args = (
+        ["-stream_loop", "-1", "-i", audio_file]
+        if audio_file
+        else [
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency=440:sample_rate={profile['sample_rate']}",
+        ]
+    )
     command = [
         shutil.which("ffmpeg") or "ffmpeg", "-hide_banner", "-loglevel", "warning",
-        "-nostdin", "-re", "-stream_loop", "-1", "-i", video_file,
+        "-nostdin", "-re", *input_args,
         "-t", str(max(2.0, duration + 2.0)), "-vn",
         "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
         "-ac", "1",
@@ -417,6 +465,7 @@ async def _relay_video(
     *,
     send_enabled: bool,
     capture_destination: tuple[str, int] | None = None,
+    jpeg_recorder=None,
 ) -> None:
     """Forward generated RTP and count media returned by the HA browser.
 
@@ -442,6 +491,8 @@ async def _relay_video(
             counters["video_rx_packets"] += 1
             counters["video_rx_bytes"] += len(raw)
             counters["video_rx_last_sequence"] = packet.sequence
+            if jpeg_recorder is not None:
+                jpeg_recorder.push(packet, counters)
             if capture_destination is not None:
                 await loop.sock_sendto(sock, raw, capture_destination)
             continue
@@ -451,6 +502,34 @@ async def _relay_video(
         counters["video_tx_bytes"] += len(raw)
         counters["video_last_sequence"] = packet.sequence
         await loop.sock_sendto(sock, raw, destination)
+
+
+class _JpegRtpRecorder:
+    """Record complete RFC 2435 access units without a second UDP/FFmpeg leg."""
+
+    def __init__(self, output: str, *, payload_type: int = 26) -> None:
+        self._payload_type = int(payload_type)
+        self._depacketizer = video_rtp.JpegDepacketizer()
+        self._stream = Path(output).open("wb")
+
+    def push(self, packet, counters: dict[str, int]) -> None:
+        if int(packet.payload_type) != self._payload_type:
+            counters["video_rx_capture_invalid_payloads"] += 1
+            return
+        if packet.marker:
+            counters["video_rx_marker_packets"] += 1
+        access_unit = self._depacketizer.push(packet)
+        if access_unit is None:
+            return
+        self._stream.write(access_unit.data)
+        counters["video_rx_frames"] += 1
+        counters["video_rx_frame_bytes"] += len(access_unit.data)
+
+    def close(self, counters: dict[str, int]) -> None:
+        self._stream.close()
+        counters["video_rx_dropped_access_units"] = (
+            self._depacketizer.dropped_access_units
+        )
 
 
 async def _drain_stderr(
@@ -618,6 +697,11 @@ async def async_main(args: argparse.Namespace) -> int:
         "video_tx_bytes": 0,
         "video_rx_packets": 0,
         "video_rx_bytes": 0,
+        "video_rx_frames": 0,
+        "video_rx_frame_bytes": 0,
+        "video_rx_marker_packets": 0,
+        "video_rx_dropped_access_units": 0,
+        "video_rx_capture_invalid_payloads": 0,
         "video_rtcp_rx_packets": 0,
         "video_rtcp_invalid_packets": 0,
         "video_rtcp_packet_types": [],
@@ -625,6 +709,7 @@ async def async_main(args: argparse.Namespace) -> int:
     }
     video_process = None
     video_receiver_process = None
+    jpeg_recorder = None
     audio_process = None
     tasks: list[asyncio.Task] = []
     stopped = asyncio.Event()
@@ -632,6 +717,7 @@ async def async_main(args: argparse.Namespace) -> int:
     remote_bye = False
     bye_sent = False
     remote_to = ""
+    next_cseq = 2
     started = time.monotonic()
     audio_stderr: list[str] = []
     video_receiver_stderr: list[str] = []
@@ -651,6 +737,32 @@ async def async_main(args: argparse.Namespace) -> int:
                     result["sip_statuses"].append(int(message.status_code))
                     print(f"SIP {message.status_code} {message.reason}", flush=True)
                     if message.status_code >= 300:
+                        # RFC 3261 17.1.1.3: every non-2xx final INVITE
+                        # response is ACKed inside the INVITE transaction.
+                        # Without this, a teardown/redial stress failure leaves
+                        # the DUT retransmitting that response for 64*T1 and
+                        # contaminates every following iteration.
+                        failure_ack = sip.build_request(
+                            "ACK",
+                            remote_uri,
+                            _request_headers(
+                                method="ACK",
+                                local_ip=local_ip,
+                                local_port=sip_port,
+                                local_user=args.user,
+                                remote_uri=remote_uri,
+                                remote_to=message.header("To"),
+                                call_id=call_id,
+                                local_tag=local_tag,
+                                cseq=1,
+                                branch=invite_branch,
+                                user_agent=peer_user_agent,
+                            ),
+                        )
+                        await loop.sock_sendto(
+                            sip_socket, failure_ack, (args.host, args.port)
+                        )
+                        result["failure_ack_sent"] = True
                         raise RuntimeError(
                             f"SIP call failed: {message.status_code} {message.reason}"
                         )
@@ -673,7 +785,7 @@ async def async_main(args: argparse.Namespace) -> int:
         if not answer_audio_formats:
             raise RuntimeError("HA answered without a supported audio format")
         selected_audio = answer_audio_formats[0]
-        expected_audio = "PCM" if args.audio_codec == "dahua-pcm" else "PCMA"
+        expected_audio = str(audio_profile["encoding"])
         if selected_audio.encoding != expected_audio:
             raise RuntimeError(
                 "HA selected unexpected audio format: "
@@ -722,73 +834,63 @@ async def async_main(args: argparse.Namespace) -> int:
         )
         await loop.sock_sendto(sip_socket, ack, (args.host, args.port))
         audio_destination = (str(answer_audio["connection_ip"]), int(answer_audio["media_port"]))
-        if args.video_file:
-            audio_process = await _start_audio_sender(
-                args.video_file,
-                args.duration,
-                audio_codec=args.audio_codec,
-            )
-            tasks = [
-                asyncio.create_task(
-                    _send_audio_process(
-                        audio_process,
-                        audio_socket,
-                        audio_destination,
-                        stopped,
-                        result,
-                        payload_type=selected_audio.payload_type,
-                        frame_samples=int(audio_profile["frame_samples"]),
-                        frame_bytes=int(audio_profile["frame_bytes"]),
-                    )
-                ),
-                asyncio.create_task(_receive_audio(audio_socket, stopped, result)),
-                asyncio.create_task(_drain_stderr(audio_process, audio_stderr)),
-            ]
-        else:
-            tasks = [
-                asyncio.create_task(
-                    _send_audio_silence(
-                        audio_socket,
-                        audio_destination,
-                        stopped,
-                        result,
-                        payload_type=selected_audio.payload_type,
-                        frame_samples=int(audio_profile["frame_samples"]),
-                        payload=bytes(audio_profile["silence"]),
-                    )
-                ),
-                asyncio.create_task(_receive_audio(audio_socket, stopped, result)),
-            ]
+        audio_process = await _start_audio_sender(
+            args.audio_file,
+            args.duration,
+            audio_codec=args.audio_codec,
+        )
+        tasks = [
+            asyncio.create_task(
+                _send_audio_process(
+                    audio_process,
+                    audio_socket,
+                    audio_destination,
+                    stopped,
+                    result,
+                    payload_type=selected_audio.payload_type,
+                    frame_samples=int(audio_profile["frame_samples"]),
+                    frame_bytes=int(audio_profile["frame_bytes"]),
+                )
+            ),
+            asyncio.create_task(_receive_audio(audio_socket, stopped, result)),
+            asyncio.create_task(_drain_stderr(audio_process, audio_stderr)),
+        ]
         video_stderr: list[str] = []
 
         async def _start_negotiated_video(parsed: dict | None) -> None:
-            nonlocal video_process, video_receiver_process
+            nonlocal video_process, video_receiver_process, jpeg_recorder
             if parsed is None or video_socket is None or rtcp_socket is None:
                 return
             capture_destination = None
             if args.video_rx_file:
-                capture_probe = _reserve_udp_socket(local_ip)
-                capture_port = int(capture_probe.getsockname()[1])
-                capture_probe.close()
-                video_receiver_process, capture_sdp = await _start_video_receiver(
-                    codec=args.codec,
-                    local_ip=local_ip,
-                    local_port=capture_port,
-                    output=args.video_rx_file,
-                )
-                assert video_receiver_process.stdin is not None
-                video_receiver_process.stdin.write(capture_sdp.encode())
-                await video_receiver_process.stdin.drain()
-                video_receiver_process.stdin.close()
-                capture_destination = (local_ip, capture_port)
-                tasks.append(
-                    asyncio.create_task(
-                        _drain_stderr(
-                            video_receiver_process,
-                            video_receiver_stderr,
+                if args.codec == "jpeg":
+                    if jpeg_recorder is not None:
+                        raise RuntimeError("JPEG recorder already active")
+                    jpeg_recorder = _JpegRtpRecorder(args.video_rx_file)
+                    result["video_rx_capture_backend"] = "rfc2435"
+                else:
+                    capture_probe = _reserve_udp_socket(local_ip)
+                    capture_port = int(capture_probe.getsockname()[1])
+                    capture_probe.close()
+                    video_receiver_process, capture_sdp = await _start_video_receiver(
+                        codec=args.codec,
+                        local_ip=local_ip,
+                        local_port=capture_port,
+                        output=args.video_rx_file,
+                    )
+                    assert video_receiver_process.stdin is not None
+                    video_receiver_process.stdin.write(capture_sdp.encode())
+                    await video_receiver_process.stdin.drain()
+                    video_receiver_process.stdin.close()
+                    capture_destination = (local_ip, capture_port)
+                    tasks.append(
+                        asyncio.create_task(
+                            _drain_stderr(
+                                video_receiver_process,
+                                video_receiver_stderr,
+                            )
                         )
                     )
-                )
             tasks.append(
                 asyncio.create_task(_receive_rtcp(rtcp_socket, stopped, result))
             )
@@ -804,6 +906,7 @@ async def async_main(args: argparse.Namespace) -> int:
                         result,
                         send_enabled=args.direction in {"sendonly", "sendrecv"},
                         capture_destination=capture_destination,
+                        jpeg_recorder=jpeg_recorder,
                     )
                 )
             )
@@ -830,8 +933,6 @@ async def async_main(args: argparse.Namespace) -> int:
         resume_at = float("inf")
         hold_done = not hold_enabled
         resume_done = not hold_enabled
-        next_cseq = 2
-
         async def _add_video() -> None:
             nonlocal next_cseq, remote_bye
             branch = f"z9hG4bK{secrets.token_hex(8)}"
@@ -1226,6 +1327,9 @@ async def async_main(args: argparse.Namespace) -> int:
             result["video_rx_file"] = args.video_rx_file
             if video_receiver_stderr:
                 result["video_receiver_stderr_tail"] = video_receiver_stderr
+        if jpeg_recorder is not None:
+            jpeg_recorder.close(result)
+            result["video_rx_file"] = args.video_rx_file
         if audio_stderr:
             result["audio_sender_stderr_tail"] = list(audio_stderr)
         if "video_stderr" in locals() and video_stderr:
@@ -1315,6 +1419,11 @@ def main() -> int:
         help="resume audio with sendrecv after this many seconds on hold",
     )
     parser.add_argument("--duration", type=float, default=15.0)
+    parser.add_argument(
+        "--audio-file",
+        default="",
+        help="optional looping audio source; defaults to a generated 440 Hz qualification tone",
+    )
     parser.add_argument("--video-file", default="")
     parser.add_argument(
         "--video-rx-file", default="",

@@ -27,6 +27,15 @@ The current audio stack uses these Espressif components:
 | `espressif/esp_audio_effects` | `esp_audio_stack` | Espressif MIT-style license, restricted to Espressif products | Provides `esp_ae_rate_cvt`, `esp_ae_bit_cvt` and data weaver APIs used for RX/TX conversion and layout. |
 | `espressif/esp_codec_dev` | `esp_audio_stack` codec-backed builds | Apache-2.0 | Provides codec control plus I2S read/write. P4 and WS3 use ES7210/ES8311 through it; Spotpear single-mic uses ES8311 input/output through it. The generic codec wrapper also exposes ES8388, ES8374 and ES8389 where the board wiring matches those drivers. Generic no-codec builds use direct `esp_driver_i2s` read/write instead. |
 
+The optional P4 H.264 profile additionally resolves
+`espressif/esp_h264` 1.3.6 for hardware encode/software decode and
+`espressif/esp_image_effects` 1.1.0 for its optimized I420-to-O_UYY_E_VYY
+conversion. `p4_video_renderer` feeds that PPA-native layout directly to the
+ESP-IDF PPA scale/rotate/color-conversion transaction; JPEG and audio-only
+profiles do not resolve either H.264 dependency. `esp_h264` is Apache-2.0;
+`esp_image_effects` uses Espressif Modified MIT and is restricted to Espressif
+products. The corresponding notices are retained under `licenses/`.
+
 Espressif component dependencies are intentionally latest-compatible unless a
 component wrapper needs a documented minimum API generation. `esp_aec` requires
 ESP-SR v2 because it wraps the `afe_aec_*` API, so it uses an ESP-SR v2

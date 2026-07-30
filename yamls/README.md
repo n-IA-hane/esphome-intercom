@@ -128,6 +128,14 @@ occasional glitches. Treat P4 as a hardware-specific target: hosted Wi-Fi/SDIO
 firmware, LVGL/PPA, media/TTS transport behavior and task scheduling matter
 more on P4 than on compact S3 boards.
 
+The experimental
+[`waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml`](full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml)
+profile combines SIP JPEG video, dual-microphone AFE and the full runtime.
+Those workloads are difficult to run concurrently with Micro Wake Word, so the
+profile suspends an enabled Wake Word switch only while negotiated video media
+is active. It restores the user's previous switch state when video ends.
+Audio-only calls leave Wake Word unchanged.
+
 If a P4 target resets, hangs, or loses Wi-Fi under media/TTS streaming, update
 the on-board ESP32-C6 hosted Wi-Fi firmware before chasing audio bugs. The
 root README's P4 section documents the validated recovery path: use a P4

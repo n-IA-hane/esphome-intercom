@@ -1,0 +1,10 @@
+# Native-camera benchmark overlay for the audio-only full-experience profile.
+# It keeps SIP audio-only and exposes the OV5647 800x800 JPEG stream solely
+# through the supported ESPHome camera entity consumed by Home Assistant.
+
+packages:
+  qualified_jpeg_baseline: !include waveshare-p4-touch-full-afe-landscape.yaml
+
+esp_video_camera:
+  resolution: 800x800
+  rotation: 0

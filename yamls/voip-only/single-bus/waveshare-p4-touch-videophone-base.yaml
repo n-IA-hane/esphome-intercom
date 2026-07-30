@@ -1,0 +1,228 @@
+# Waveshare ESP32-P4 Touch 10.1: common dedicated SIP videophone runtime.
+#
+# This target intentionally excludes Voice Assistant, micro_wake_word,
+# Sendspin, media_player, audio files and the full dashboard runtime. A thin
+# top-level target supplies exactly one compile-time video codec package.
+
+substitutions:
+  name: waveshare-p4-touch
+  # Preserve the existing HA/SIP endpoint identity when switching profiles.
+  friendly_name: Waveshare P4 Touch
+
+  ext_components_source: "../../../esphome/components"
+  voip_stack_components_source: "../../../../esphome-voip-stack/esphome/components"
+  audio_stack_components_source: "../../../../esphome-audio-stack/esphome/components"
+
+  voip_transport: udp
+  voip_sip_port: "5060"
+  voip_rtp_port: "40000"
+
+  p4_video_width: "800"
+  p4_video_height: "800"
+  p4_video_fps: "15"
+  p4_camera_rotation: "270"
+  p4_jpeg_quality: "10"
+  p4_video_max_decode_width: "800"
+  p4_video_max_decode_height: "800"
+
+  mic_gain_min: "-20"
+  mic_gain_max: "30"
+  audio_stack_speaker_idle_delay: 2s
+  # JPEG/default profile: keep the previously qualified AFE scheduler.
+  p4_afe_task_priority: "18"
+  p4_afe_feed_task_priority: "18"
+  p4_afe_fetch_task_priority: "18"
+
+packages:
+  hardware: !include ../../../packages/board/waveshare_p4_touch_10_1_videophone.yaml
+  ui: !include ../../../packages/lvgl/p4_videophone_ui.yaml
+  voip_entities: !include ../../../packages/voip/entities_full_duplex.yaml
+  call_settings: !include ../../../packages/voip/call_settings.yaml
+  ha_api: !include ../../../packages/voip/ha_api.yaml
+  ha_integration: !include ../../../packages/voip/ha_integration.yaml
+  phonebook: !include ../../../packages/voip/phonebook_subscribe.yaml
+  transport: !include ../../../packages/voip/transport.yaml
+  speaker_mute: !include ../../../packages/voip/speaker_mute.yaml
+  audio_controls: !include ../../../packages/esp_audio_stack/controls.yaml
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: false
+  on_boot:
+    - priority: -100
+      then:
+        - output.set_level:
+            id: backlight_pwm
+            level: 100%
+        - output.turn_off: speaker_enable
+        - number.set:
+            id: master_volume
+            value: 1
+        - lambda: |-
+            id(videophone_peer) =
+                id(phone).get_current_destination();
+        - script.execute: update_status
+        - script.execute: update_videophone_settings
+
+external_components:
+  - source: ${voip_stack_components_source}
+    components: [voip_stack]
+  - source: ${ext_components_source}
+    components: [speaker, mipi_dsi]
+  - source: ${audio_stack_components_source}
+    components: [esp_audio_stack, esp_afe]
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+  reboot_timeout: 10min
+  fast_connect: false
+  on_connect:
+    - logger.log: "WiFi connected"
+    - script.execute: update_status
+  on_disconnect:
+    - logger.log: "WiFi disconnected"
+    - script.execute: update_status
+
+api:
+  reboot_timeout: 15min
+
+ota:
+  - platform: esphome
+
+safe_mode:
+  # Development target: repeated call qualification should not roll back a
+  # healthy image before the normal one-minute success gate.
+  disabled: true
+
+logger:
+  hardware_uart: UART0
+  level: INFO
+  logs:
+    voip_stack: INFO
+    voip_stack.fsm: INFO
+    voip_stack.tcp: INFO
+    voip_stack.udp: INFO
+    voip_stack.audio: INFO
+    voip_stack.settings: INFO
+    sensor: WARN
+    text_sensor: WARN
+    binary_sensor: WARN
+    switch: WARN
+    number: WARN
+    button: WARN
+    api: WARN
+    api.connection: WARN
+    component: WARN
+
+preferences:
+  flash_write_interval: 5min
+
+# AEC remains available as a user setting. VAD/AGC/wake-word processing is not
+# part of this firmware.
+switch:
+  - platform: esp_afe
+    esp_afe_id: afe_processor
+    aec:
+      id: aec_switch
+      name: Echo Cancellation
+      icon: mdi:ear-hearing
+      restore_mode: ALWAYS_ON
+
+voip_stack:
+  id: phone
+  # With the full assistant/media runtime absent, all call-critical workers fit
+  # in internal RAM. Large frame/codec surfaces remain explicitly in PSRAM.
+  task_stacks_in_psram: false
+  audio_task_stacks_in_psram: false
+  buffers_in_psram: false
+  audio:
+    tx:
+      sample_rate: 16000
+      pcm_format: s16le
+      channels: 1
+      frame_ms: 10
+    tx_formats:
+      - sample_rate: 16000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 16
+    rx:
+      sample_rate: 48000
+      pcm_format: s16le
+      channels: 1
+      frame_ms: 10
+    rx_formats:
+      - sample_rate: 16000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 10
+      - sample_rate: 32000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 16
+      - sample_rate: 16000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 16
+      - sample_rate: 16000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 32
+  video_debug: true
+  microphone: mic_main
+  speaker: voip_speaker_input
+  ringing_timeout: 30s
+  delete_contact_missing_from:
+    updates_number: 1
+
+  on_calling:
+    - lambda: |-
+        id(videophone_terminal_notice).clear();
+        id(videophone_peer) = peer;
+    - script.execute: update_status
+
+  on_ringing:
+    - lambda: |-
+        id(videophone_terminal_notice).clear();
+        id(videophone_peer) = peer;
+    - script.execute: show_phone_page
+
+  on_dest_ringing:
+    - lambda: id(videophone_peer) = peer;
+    - script.execute: update_status
+
+  on_in_call:
+    - lambda: |-
+        id(videophone_terminal_notice).clear();
+        id(videophone_peer) = peer;
+    - script.execute: update_status
+
+  on_idle:
+    - script.execute: show_phone_page
+
+  on_hangup:
+    - lambda: |-
+        id(videophone_peer) = peer;
+        id(videophone_terminal_notice) =
+            std::string("CALL ENDED: ") + reason;
+    - script.execute: show_phone_page
+    - script.execute: clear_videophone_terminal_notice
+
+  on_call_failed:
+    - lambda: |-
+        id(videophone_peer) = peer;
+        id(videophone_terminal_notice) =
+            std::string("CALL FAILED: ") + reason;
+    - script.execute: show_phone_page
+    - script.execute: clear_videophone_terminal_notice
+
+  on_phonebook_update:
+    - lambda: id(videophone_peer) = destination;
+    - script.execute: update_status
+
+  on_destination_changed:
+    - lambda: id(videophone_peer) = destination;
+    - script.execute: update_status

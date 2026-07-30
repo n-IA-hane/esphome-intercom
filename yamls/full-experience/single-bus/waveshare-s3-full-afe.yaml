@@ -362,6 +362,9 @@ voice_assistant:
 
 voip_stack:
   task_stacks_in_psram: true   # save ~28KB internal heap on S3 PSRAM builds by placing task stacks in PSRAM
+  # Preserve internal/DMA heap for Wi-Fi/lwIP. The custom PCM backend owns two
+  # 12 KB realtime workers; S3 octal PSRAM supports their explicit task stacks.
+  audio_task_stacks_in_psram: true
   buffers_in_psram: true # VoIP staging buffers in PSRAM; AEC/AFE buffers live in esp_audio_stack
   conference_groups: "CG Casa"
   conference_ring: false

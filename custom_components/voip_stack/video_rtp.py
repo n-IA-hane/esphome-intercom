@@ -19,12 +19,70 @@ MAX_ACCESS_UNIT_FRAGMENTS = 4096
 DEFAULT_REORDER_DELAY = 0.020
 DEFAULT_REORDER_PACKETS = 128
 _DYNAMIC_RTP_PAYLOAD_TYPES = tuple(range(127, 95, -1))
+_JPEG_SOF_MARKERS = frozenset(
+    {
+        0xC0,
+        0xC1,
+        0xC2,
+        0xC3,
+        0xC5,
+        0xC6,
+        0xC7,
+        0xC9,
+        0xCA,
+        0xCB,
+        0xCD,
+        0xCE,
+        0xCF,
+    }
+)
 
 _T = TypeVar("_T")
 
 
 class H264RtpError(ValueError):
     """Malformed or unsupported RFC 6184 payload."""
+
+
+def jpeg_dimensions(access_unit: bytes) -> tuple[int, int]:
+    """Return bounded JPEG geometry without asking a decoder to allocate."""
+
+    data = bytes(access_unit)
+    if (
+        len(data) < 4
+        or not data.startswith(b"\xff\xd8")
+        or not data.endswith(b"\xff\xd9")
+    ):
+        raise ValueError("invalid JPEG access unit")
+    position = 2
+    while position < len(data) - 1:
+        if data[position] != 0xFF:
+            raise ValueError("invalid JPEG marker alignment")
+        while position < len(data) and data[position] == 0xFF:
+            position += 1
+        if position >= len(data):
+            break
+        marker = int(data[position])
+        position += 1
+        if marker in {0x00, 0xD9, 0xDA}:
+            break
+        if marker == 0x01 or 0xD0 <= marker <= 0xD7:
+            continue
+        if position + 2 > len(data):
+            raise ValueError("truncated JPEG segment")
+        segment_length = int.from_bytes(data[position : position + 2], "big")
+        if segment_length < 2 or position + segment_length > len(data):
+            raise ValueError("invalid JPEG segment length")
+        if marker in _JPEG_SOF_MARKERS:
+            if segment_length < 8:
+                raise ValueError("truncated JPEG frame header")
+            height = int.from_bytes(data[position + 3 : position + 5], "big")
+            width = int.from_bytes(data[position + 5 : position + 7], "big")
+            if width <= 0 or height <= 0:
+                raise ValueError("invalid JPEG dimensions")
+            return width, height
+        position += segment_length
+    raise ValueError("JPEG access unit has no dimensions")
 
 
 @dataclass(frozen=True, slots=True)
@@ -612,6 +670,171 @@ _JPEG_STANDARD_DHT = bytes.fromhex(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _RtpJpegFrame:
+    """Baseline JPEG fields representable by RFC 2435 types 0/1."""
+
+    scan: bytes
+    quantizers: bytes
+    width: int
+    height: int
+    jpeg_type: int
+    dri: int = 0
+
+
+def _jpeg_huffman_tables(segment: bytes) -> dict[int, bytes]:
+    """Parse one DHT payload into complete table definitions."""
+
+    tables: dict[int, bytes] = {}
+    offset = 0
+    while offset < len(segment):
+        start = offset
+        table_id = int(segment[offset])
+        offset += 1
+        if table_id not in {0x00, 0x01, 0x10, 0x11} or offset + 16 > len(segment):
+            raise ValueError("unsupported JPEG Huffman table")
+        value_count = sum(segment[offset : offset + 16])
+        offset += 16
+        if value_count <= 0 or offset + value_count > len(segment):
+            raise ValueError("truncated JPEG Huffman table")
+        offset += value_count
+        if table_id in tables:
+            raise ValueError("duplicate JPEG Huffman table")
+        tables[table_id] = bytes(segment[start:offset])
+    return tables
+
+
+_JPEG_STANDARD_HUFFMAN_TABLES = _jpeg_huffman_tables(_JPEG_STANDARD_DHT[4:])
+
+
+def _parse_jpeg_for_rtp(access_unit: bytes) -> _RtpJpegFrame:
+    """Parse the allocation-bounded RFC 2435 subset of one complete JPEG."""
+
+    data = bytes(access_unit)
+    if len(data) < 4 or not data.startswith(b"\xff\xd8"):
+        raise ValueError("not a JPEG access unit")
+
+    quantizers: dict[int, bytes] = {}
+    huffman_tables: dict[int, bytes] = {}
+    width = 0
+    height = 0
+    jpeg_type: int | None = None
+    chroma_quantizer = 1
+    dri = 0
+    position = 2
+    while position + 1 < len(data):
+        if data[position] != 0xFF:
+            raise ValueError("invalid JPEG marker alignment")
+        while position < len(data) and data[position] == 0xFF:
+            position += 1
+        if position >= len(data):
+            break
+        marker = int(data[position])
+        position += 1
+        if marker == 0xD9:
+            break
+        if marker == 0xD8 or marker == 0x01 or 0xD0 <= marker <= 0xD7:
+            continue
+        if position + 2 > len(data):
+            raise ValueError("truncated JPEG segment")
+        segment_length = int.from_bytes(data[position : position + 2], "big")
+        if segment_length < 2 or position + segment_length > len(data):
+            raise ValueError("invalid JPEG segment length")
+        segment = data[position + 2 : position + segment_length]
+
+        if marker == 0xDB:
+            offset = 0
+            while offset < len(segment):
+                descriptor = int(segment[offset])
+                offset += 1
+                precision = descriptor >> 4
+                table_id = descriptor & 0x0F
+                if precision != 0 or table_id not in {0, 1}:
+                    raise ValueError("unsupported JPEG quantization table")
+                if offset + 64 > len(segment) or table_id in quantizers:
+                    raise ValueError("invalid JPEG quantization table")
+                table = bytes(segment[offset : offset + 64])
+                if 0 in table:
+                    raise ValueError("invalid zero JPEG quantization coefficient")
+                quantizers[table_id] = table
+                offset += 64
+        elif marker == 0xC4:
+            for table_id, table in _jpeg_huffman_tables(segment).items():
+                if table_id in huffman_tables:
+                    raise ValueError("duplicate JPEG Huffman table")
+                huffman_tables[table_id] = table
+        elif marker == 0xC0:
+            if (
+                len(segment) != 15
+                or segment[0] != 8
+                or segment[5] != 3
+                or segment[6] != 1
+                or segment[8] != 0
+                or segment[9] != 2
+                or segment[10] != 0x11
+                or segment[11] not in {0, 1}
+                or segment[12] != 3
+                or segment[13] != 0x11
+                or segment[14] != segment[11]
+            ):
+                raise ValueError("unsupported JPEG component layout")
+            chroma_quantizer = int(segment[11])
+            height = int.from_bytes(segment[1:3], "big")
+            width = int.from_bytes(segment[3:5], "big")
+            if not 0 < width <= 2040 or not 0 < height <= 2040:
+                raise ValueError("unsupported JPEG dimensions")
+            if segment[7] == 0x21:
+                jpeg_type = 0
+            elif segment[7] == 0x22:
+                jpeg_type = 1
+            else:
+                raise ValueError("unsupported JPEG chroma subsampling")
+        elif marker == 0xDD:
+            if len(segment) != 2:
+                raise ValueError("invalid JPEG restart interval")
+            dri = int.from_bytes(segment, "big")
+            if dri == 0:
+                raise ValueError("invalid JPEG restart interval")
+        elif marker == 0xDA:
+            if (
+                jpeg_type is None
+                or 0 not in quantizers
+                or (chroma_quantizer == 1 and 1 not in quantizers)
+                or (
+                    chroma_quantizer == 0
+                    and 1 in quantizers
+                    and quantizers[1] != quantizers[0]
+                )
+                or len(segment) != 10
+                or segment != b"\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00"
+            ):
+                raise ValueError("unsupported JPEG scan layout")
+            if huffman_tables and huffman_tables != _JPEG_STANDARD_HUFFMAN_TABLES:
+                raise ValueError("RFC 2435 requires standard JPEG Huffman tables")
+            scan_start = position + segment_length
+            scan_end = data.rfind(b"\xff\xd9", scan_start)
+            if scan_end <= scan_start:
+                raise ValueError("JPEG scan has no EOI marker")
+            return _RtpJpegFrame(
+                scan=data[scan_start:scan_end],
+                quantizers=quantizers[0]
+                + (
+                    quantizers[1]
+                    if chroma_quantizer == 1
+                    else quantizers[0]
+                ),
+                width=width,
+                height=height,
+                jpeg_type=jpeg_type,
+                dri=dri,
+            )
+        elif 0xC1 <= marker <= 0xCF and marker not in {0xC4, 0xC8, 0xCC}:
+            raise ValueError("progressive/lossless JPEG is not RFC 2435 type 0/1")
+
+        position += segment_length
+    raise ValueError("JPEG access unit has no supported baseline scan")
+
+
 def _jpeg_quantizers(quality: int) -> bytes:
     if not 1 <= int(quality) <= 99:
         raise ValueError("reserved RFC 2435 JPEG quality")
@@ -658,7 +881,15 @@ def _jpeg_interchange_header(
 class JpegDepacketizer:
     """Reassemble RFC 2435 fragments into complete baseline JFIF frames."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        max_access_unit_bytes: int = MAX_ACCESS_UNIT_BYTES,
+    ) -> None:
+        limit = int(max_access_unit_bytes)
+        if not 1 <= limit <= MAX_ACCESS_UNIT_BYTES:
+            raise ValueError("invalid JPEG access-unit byte limit")
+        self._max_access_unit_bytes = limit
         self._timestamp: int | None = None
         self._frame_header: tuple[int, int, int, int, int, int] | None = None
         self._header = b""
@@ -707,27 +938,48 @@ class JpegDepacketizer:
             return None
         if offset == 0:
             try:
+                table_len = 0
                 if quality >= 128:
                     if len(payload) < cursor + 4:
                         raise ValueError("missing RFC 2435 quantization header")
+                    if payload[cursor] != 0:
+                        raise ValueError("invalid RFC 2435 quantization MBZ field")
                     precision = payload[cursor + 1]
                     table_len = int.from_bytes(payload[cursor + 2 : cursor + 4], "big")
                     cursor += 4
-                    if precision or table_len not in {0, 128}:
+                    if precision or table_len not in {0, 64, 128}:
                         raise ValueError("unsupported RFC 2435 quantization header")
                     if table_len:
                         if len(payload) < cursor + table_len:
                             raise ValueError("truncated RFC 2435 quantization tables")
                         quantizers = bytes(payload[cursor : cursor + table_len])
                         cursor += table_len
-                        if quality < 255:
-                            self._dynamic_quantizers[quality] = quantizers
                     else:
                         quantizers = self._dynamic_quantizers.get(quality, b"")
                         if not quantizers:
                             raise ValueError("unknown RFC 2435 quantization tables")
                 else:
                     quantizers = _jpeg_quantizers(quality)
+                # RFC 2435 types 0/1 require distinct luma/chroma matrices.
+                # FFmpeg's RTP/JPEG muxer is also commonly deployed without
+                # ``force_duplicated_matrix`` and then emits one table while
+                # warning about the violation.  Tolerate that receive-side
+                # quirk at this boundary, but keep every downstream helper and
+                # every locally generated packet on the strict 128-byte form.
+                if len(quantizers) == 64:
+                    quantizers += quantizers
+                if len(quantizers) != 128 or 0 in quantizers:
+                    raise ValueError("invalid RFC 2435 quantization tables")
+                if 128 <= quality < 255 and table_len:
+                    cached_quantizers = self._dynamic_quantizers.get(quality)
+                    if (
+                        cached_quantizers is not None
+                        and cached_quantizers != quantizers
+                    ):
+                        raise ValueError(
+                            "changed static RFC 2435 quantization tables"
+                        )
+                    self._dynamic_quantizers.setdefault(quality, quantizers)
                 self._header = _jpeg_interchange_header(
                     jpeg_type=jpeg_type,
                     width_blocks=width,
@@ -757,7 +1009,11 @@ class JpegDepacketizer:
             self._drop()
             return None
         frame_data = payload[cursor:]
-        if offset != len(self._scan) or len(self._scan) + len(frame_data) > MAX_ACCESS_UNIT_BYTES:
+        if (
+            offset != len(self._scan)
+            or len(self._header) + len(self._scan) + len(frame_data) + 2
+            > self._max_access_unit_bytes
+        ):
             self._drop()
             return None
         self._scan.extend(frame_data)
@@ -773,6 +1029,72 @@ class JpegDepacketizer:
         self._header = b""
         self._scan.clear()
         return VideoAccessUnit(data, timestamp, True, "JPEG")
+
+
+def packetize_jpeg(
+    access_unit: bytes,
+    *,
+    payload_type: int,
+    sequence: int,
+    timestamp: int,
+    ssrc: int,
+    max_payload: int = DEFAULT_MAX_RTP_PAYLOAD,
+) -> list[rtp.RtpPacket]:
+    """Packetize one baseline JPEG according to RFC 2435.
+
+    The browser and ESPHome camera both emit complete ordinary JPEG images.
+    Only the entropy scan is sent; quantization tables and geometry travel in
+    the standard RTP/JPEG header so every SIP peer sees plain PT 26 media.
+    """
+
+    if int(payload_type) != 26:
+        raise ValueError("RTP/JPEG uses static payload type 26")
+    if not 145 <= int(max_payload) <= rtp.MAX_RTP_PAYLOAD_BYTES:
+        raise ValueError("invalid RTP/JPEG payload limit")
+    frame = _parse_jpeg_for_rtp(access_unit)
+    width_blocks = (frame.width + 7) // 8
+    height_blocks = (frame.height + 7) // 8
+    current = int(sequence) & 0xFFFF
+    offset = 0
+    packets: list[rtp.RtpPacket] = []
+    while offset < len(frame.scan):
+        first = offset == 0
+        jpeg_type = frame.jpeg_type | (0x40 if frame.dri else 0)
+        header = bytearray(
+            (
+                0,
+                (offset >> 16) & 0xFF,
+                (offset >> 8) & 0xFF,
+                offset & 0xFF,
+                jpeg_type,
+                255,
+                width_blocks,
+                height_blocks,
+            )
+        )
+        if frame.dri:
+            header.extend(struct.pack("!HH", frame.dri, 0xFFFF))
+        if first:
+            header.extend(struct.pack("!BBH", 0, 0, len(frame.quantizers)))
+            header.extend(frame.quantizers)
+        room = int(max_payload) - len(header)
+        if room <= 0:
+            raise ValueError("RTP/JPEG header exceeds payload limit")
+        end = min(len(frame.scan), offset + room)
+        header.extend(frame.scan[offset:end])
+        packets.append(
+            rtp.RtpPacket(
+                payload_type=26,
+                sequence=current,
+                timestamp=int(timestamp) & 0xFFFFFFFF,
+                ssrc=int(ssrc) & 0xFFFFFFFF,
+                payload=bytes(header),
+                marker=end == len(frame.scan),
+            )
+        )
+        current = rtp.next_sequence(current)
+        offset = end
+    return packets
 
 
 def packetize_vp8(

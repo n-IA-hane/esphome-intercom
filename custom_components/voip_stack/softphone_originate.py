@@ -452,6 +452,11 @@ async def async_originate_call(
         sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
         sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
     entry_metadata = dict(route.entry.metadata or {}) if route.entry is not None else {}
+    target_device_id = str(
+        getattr(target_endpoint, "device_id", "")
+        or entry_metadata.get("device_id")
+        or ""
+    ).strip()
     native_audio_endpoint = bool(
         entry_metadata.get("local_ha")
         or entry_metadata.get("virtual_endpoint")
@@ -459,21 +464,24 @@ async def async_originate_call(
         or str(entry_metadata.get("endpoint_kind") or "").strip().lower()
         == EndpointKind.ESPHOME.value
     )
-    # SIP video is HA/browser-owned.  Native ESP audio endpoints deliberately
-    # stay outside this path, while direct SIP URIs, trunk calls, registered
-    # clients and manually configured standard SIP contacts may negotiate it.
+    esphome_sip_endpoint = (
+        str(entry_metadata.get("endpoint_kind") or "").strip().lower()
+        == EndpointKind.ESPHOME.value
+    )
+    # SIP video is HA/browser-owned.  Local HA/group endpoints stay outside
+    # this path.  An ESPHome endpoint is allowed to negotiate video and remains
+    # standards-compatible with audio-only firmware, which can reject the video
+    # media line while accepting the audio line.
     # A phonebook entry may carry ESP-style audio capability metadata while
     # its resolved route still exits through the SIP trunk.  The final route,
     # not those contact hints, decides whether browser-owned video is valid.
     source_video_enabled = browser_endpoint is None or browser_endpoint.supports(
         "video"
     )
-    target_video_enabled = target_endpoint is None or target_endpoint.supports("video")
     video_enabled = (
         bool(cfg.get(CONF_SIP_VIDEO, False))
         and source_video_enabled
-        and target_video_enabled
-        and (use_trunk or not native_audio_endpoint)
+        and (use_trunk or not native_audio_endpoint or esphome_sip_endpoint)
     )
     video_reservation = None
     video_rtp_socket = None
@@ -721,6 +729,7 @@ async def async_originate_call(
         peer_name=display_target,
         direction="outgoing",
         call_id=client.dialog_ids.call_id,
+        target_device_id=target_device_id,
         sip_transport=_sip_uri_transport(uri).lower(),
         last_sip_event="INVITE",
         sip_uri=route_uri,
@@ -763,6 +772,7 @@ async def async_originate_call(
             peer_name=display_target,
             direction="outgoing",
             call_id=client.dialog_ids.call_id,
+            target_device_id=target_device_id,
             reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
             terminal_reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
             last_sip_event="INVITE_ERROR",
@@ -803,11 +813,13 @@ async def async_originate_call(
             peer_name=display_target,
             direction="outgoing",
             call_id=client.dialog_ids.call_id,
+            target_device_id=target_device_id,
             sip_status_code=180,
             last_sip_event="SIP_RESPONSE",
             sip_uri=route_uri,
         )
     elif public_result == CallState.IN_CALL.value and client.dialog is not None:
+        connected_party = str(client.connected_party or display_target).strip()
         video_active = bool(
             client.dialog.video_format is not None
             and client.dialog.local_video_direction != "inactive"
@@ -831,9 +843,11 @@ async def async_originate_call(
             session_device_id=source_device_id,
             caller=local_name,
             callee=display_target,
-            peer_name=display_target,
+            peer_name=connected_party,
+            connected_party=connected_party,
             direction="outgoing",
             call_id=client.dialog_ids.call_id,
+            target_device_id=target_device_id,
             selected_tx_format=client.dialog.send_format.audio_format.wire_token(),
             selected_rx_format=client.dialog.recv_format.audio_format.wire_token(),
             selected_tx_rtp_format=client.dialog.send_format.wire_token(),
@@ -877,6 +891,7 @@ async def async_originate_call(
             peer_name=display_target,
             direction="outgoing",
             call_id=client.dialog_ids.call_id,
+            target_device_id=target_device_id,
             reason=terminal_reason,
             terminal_reason=terminal_reason,
             sip_status_code=client.last_sip_status_code,
@@ -892,6 +907,7 @@ async def async_originate_call(
         endpoint_id=endpoint_id,
         local_name=local_name,
         session_device_id=source_device_id,
+        target_device_id=target_device_id,
         video_requested=video_enabled,
         video_failure_reason=video_failure_reason,
     )

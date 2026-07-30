@@ -31,8 +31,10 @@ const BUS_SUBSCRIBE_RETRY_MS = 2000;
 const SOFTPHONE_MEDIA_SESSION_KEY = "voip_stack_owned_softphone_call";
 const SOFTPHONE_MEDIA_SESSIONS_KEY = "voip_stack_owned_softphone_calls";
 const MEDIA_CLIENT_GLOBAL_KEY = "__voipStackMediaClientId";
+const MEDIA_CLIENT_SESSION_KEY = "voip_stack_media_client_id";
 const MEDIA_RECONNECT_ATTEMPTS = 3;
 const MEDIA_RECONNECT_DELAY_MS = 250;
+const MEDIA_CLEANUP_TIMEOUT_MS = 750;
 const MAX_AUDIO_WS_BUFFER_MS = 120;
 const MIN_AUDIO_WS_BUFFER_FRAMES = 4;
 const ACTIVE_SOFTPHONE_STATES = new Set([
@@ -50,10 +52,32 @@ const TERMINAL_CALL_EVENT_TYPES = new Set([
   "failed",
 ]);
 
+function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
+  let timer;
+  const schedule = globalThis.setTimeout || globalThis.window?.setTimeout;
+  const cancel = globalThis.clearTimeout || globalThis.window?.clearTimeout;
+  if (!schedule) return Promise.resolve(promise).catch(() => {});
+  return Promise.race([
+    Promise.resolve(promise).catch(() => {}),
+    new Promise((resolve) => {
+      timer = schedule(resolve, timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timer && cancel) cancel(timer);
+  });
+}
+
 function mediaClientInstanceId() {
   try {
     const existing = String(globalThis[MEDIA_CLIENT_GLOBAL_KEY] || "");
     if (/^[A-Za-z0-9][A-Za-z0-9._~-]{15,127}$/.test(existing)) return existing;
+  } catch (_) {}
+  try {
+    const existing = String(sessionStorage.getItem(MEDIA_CLIENT_SESSION_KEY) || "");
+    if (/^[A-Za-z0-9][A-Za-z0-9._~-]{15,127}$/.test(existing)) {
+      try { globalThis[MEDIA_CLIENT_GLOBAL_KEY] = existing; } catch (_) {}
+      return existing;
+    }
   } catch (_) {}
   let generated = "";
   try {
@@ -64,10 +88,11 @@ function mediaClientInstanceId() {
     // Assistant signs the complete path including it before WebSocket use.
     generated = `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
   }
-  // sessionStorage is cloned by browsers when a tab is duplicated. Keeping
-  // this identity in document memory makes every tab distinct while all card
-  // instances inside the same page still share one media engine.
+  // Keep the media identity across a reload of this browsing context. The
+  // backend pins every call to this value, so another device cannot race the
+  // originating page and steal its microphone, camera, or RTP sockets.
   try { globalThis[MEDIA_CLIENT_GLOBAL_KEY] = generated; } catch (_) {}
+  try { sessionStorage.setItem(MEDIA_CLIENT_SESSION_KEY, generated); } catch (_) {}
   return generated;
 }
 
@@ -147,6 +172,7 @@ class VoipStackEngine extends EventTarget {
     this._videoAttachGeneration = 0;
     this._videoAttachPromise = null;
     this._videoAttachCallId = "";
+    this._videoHangupSuspendedKey = "";
     this._mediaCleanupPromise = null;
     this._ownedSessionReconcilePromise = null;
     this._pageHiding = false;
@@ -312,6 +338,10 @@ class VoipStackEngine extends EventTarget {
     return this._endpointId;
   }
 
+  get mediaCleanupPending() {
+    return this._mediaCleanupPromise !== null;
+  }
+
   _persistOwnedSoftphoneCalls() {
     const legacy = this._ownedSoftphoneCalls.get(DEFAULT_SOFTPHONE_ENDPOINT_ID) || "";
     this._ownedSoftphoneCallId = legacy;
@@ -455,12 +485,20 @@ class VoipStackEngine extends EventTarget {
 
   _mediaAttachNoLongerBelongsHere(snapshot, callId) {
     if (!snapshot) return false;
-    if (String(snapshot.media_owner || "") === "other") return true;
     const currentCallId = String(snapshot.call_id || "");
     const currentState = String(snapshot.state || "").toLowerCase();
     return (
       currentCallId !== String(callId || "") ||
       !ACTIVE_SOFTPHONE_STATES.has(currentState)
+    );
+  }
+
+  _mediaAttachOwnedByOther(snapshot, callId) {
+    if (!snapshot) return false;
+    return (
+      String(snapshot.media_owner || "") === "other" &&
+      String(snapshot.call_id || "") === String(callId || "") &&
+      ACTIVE_SOFTPHONE_STATES.has(String(snapshot.state || "").toLowerCase())
     );
   }
 
@@ -552,6 +590,31 @@ class VoipStackEngine extends EventTarget {
 
   get videoCanSend() {
     return Boolean(this._video?.canSend);
+  }
+
+  suspendVideoForHangup(
+    callId,
+    endpointId = DEFAULT_SOFTPHONE_ENDPOINT_ID,
+  ) {
+    const wantedCallId = String(callId || "");
+    const endpoint = String(endpointId || DEFAULT_SOFTPHONE_ENDPOINT_ID);
+    if (!wantedCallId) return Promise.resolve();
+    if (
+      this._callId &&
+      (this._callId !== wantedCallId || this._endpointId !== endpoint)
+    ) return Promise.resolve();
+    if (
+      this._video?.callId &&
+      this._video.callId !== wantedCallId
+    ) return Promise.resolve();
+    this._videoHangupSuspendedKey = `${endpoint}|${wantedCallId}`;
+    this._videoAttachGeneration++;
+    this._videoAttachPromise = null;
+    this._videoAttachCallId = "";
+    // close() synchronously detaches the WebSocket, camera and decoder workers
+    // before its first await. SIP/audio ownership remains authoritative so a
+    // failed service request can still be retried.
+    return this._video ? this._video.close() : Promise.resolve();
   }
 
   async prepareVideoCameraPermission({
@@ -1241,7 +1304,14 @@ class VoipStackEngine extends EventTarget {
     const callId = String(reply?.call_id || "");
     try {
       const beforeAttach = await this._mediaAttachState(callId, endpointId);
-      if (String(beforeAttach?.media_owner || "") === "other") {
+      if (this._mediaAttachOwnedByOther(beforeAttach, callId)) {
+        // Only the browser that originated or answered the call may attach
+        // media. A spectator can observe call state but must discard its
+        // optimistic local claim before it opens microphone/camera sockets.
+        this.releaseSoftphoneSession(callId, endpointId);
+        return false;
+      }
+      if (this._mediaAttachNoLongerBelongsHere(beforeAttach, callId)) {
         this.releaseSoftphoneSession(callId, endpointId);
         return false;
       }
@@ -1283,24 +1353,31 @@ class VoipStackEngine extends EventTarget {
       if (attachKey && this._sessionAttachKey !== attachKey) {
         return false;
       }
-      console.error("voip-stack-engine: audio setup failed", err);
       // A failed HTTP/WebSocket ownership claim (for example, a 409 while a
       // newer card takes over) never established a media path and therefore
       // must not terminate the live SIP dialog.  Once the socket opened, a
       // real browser media-format/setup failure is still fatal for this leg.
       if (!connected) {
         const afterFailure = await this._mediaAttachState(callId, endpointId);
-        const expectedSpectatorOrTerminalRace =
+        if (this._mediaAttachOwnedByOther(afterFailure, callId)) {
+          // The ownership race happened between preflight and WebSocket
+          // admission. `_connect()` already discarded its losing socket.
+          this.releaseSoftphoneSession(callId, endpointId);
+          return false;
+        }
+        const expectedTerminalRace =
           this._mediaAttachNoLongerBelongsHere(afterFailure, callId);
         this.releaseSoftphoneSession(callId, endpointId);
         await this.close("media_attach_conflict");
         this._forceIdle();
-        if (expectedSpectatorOrTerminalRace) return false;
+        if (expectedTerminalRace) return false;
+        console.error("voip-stack-engine: audio setup failed", err);
         this.dispatchEvent(new CustomEvent("error", {
           detail: "Call media is active in another tab or could not be attached.",
         }));
         return false;
       }
+      console.error("voip-stack-engine: audio setup failed", err);
       this.dispatchEvent(new CustomEvent("error", { detail: err?.message || String(err) }));
       if (
         (deviceId === HA_SOFTPHONE_DEVICE_ID || !!endpointId) &&
@@ -1468,11 +1545,33 @@ class VoipStackEngine extends EventTarget {
 
   async _ensureVideo(statePayload) {
     const wantedCallId = String(statePayload?.call_id || "");
+    const wantedEndpoint = String(
+      statePayload?.endpoint_id || this._endpointId ||
+      DEFAULT_SOFTPHONE_ENDPOINT_ID,
+    );
+    const wantedVideoKey = `${wantedEndpoint}|${wantedCallId}`;
+    if (
+      this._videoHangupSuspendedKey &&
+      this._videoHangupSuspendedKey !== wantedVideoKey
+    ) {
+      this._videoHangupSuspendedKey = "";
+    }
+    if (
+      wantedCallId &&
+      this._videoHangupSuspendedKey === wantedVideoKey
+    ) {
+      if (
+        this._video &&
+        (this._video.active || this._video.callId === wantedCallId)
+      ) await this._video.close();
+      return;
+    }
     if (!statePayload?.video_active) {
       if (wantedCallId && this._callId !== wantedCallId) return;
       this._videoAttachGeneration++;
       this._videoAttachPromise = null;
       this._videoAttachCallId = "";
+      this._videoHangupSuspendedKey = "";
       if (
         this._video &&
         (this._video.active || this._video.callId) &&
@@ -1542,11 +1641,11 @@ class VoipStackEngine extends EventTarget {
     const currentCleanup = new Promise((resolve) => { finishCleanup = resolve; });
     this._mediaCleanupPromise = currentCleanup;
     try {
-      if (previousCleanup) await previousCleanup.catch(() => {});
       if (!preserveConnect) this._connectGeneration++;
       this._videoAttachGeneration++;
       this._videoAttachPromise = null;
       this._videoAttachCallId = "";
+      this._videoHangupSuspendedKey = "";
       if (!preserveAttach) this._sessionAttachKey = "";
       const ws = this._ws;
       this._ws = null;
@@ -1558,7 +1657,11 @@ class VoipStackEngine extends EventTarget {
       // camera/encoder/AudioContext destruction from the previous call.
       const audioCleanup = this._cleanupAudio("close");
       const videoCleanup = this._video ? this._video.close() : Promise.resolve();
-      await Promise.allSettled([audioCleanup, videoCleanup]);
+      await settleWithin(Promise.allSettled([
+        previousCleanup || Promise.resolve(),
+        audioCleanup,
+        videoCleanup,
+      ]));
     } finally {
       finishCleanup();
       if (this._mediaCleanupPromise === currentCleanup) this._mediaCleanupPromise = null;
@@ -1606,7 +1709,9 @@ class VoipStackEngine extends EventTarget {
     try { resources.source?.disconnect(); } catch (_) {}
     try { resources.mediaStream?.getTracks?.().forEach((track) => track.stop()); } catch (_) {}
     try { resources.playbackNode?.disconnect(); } catch (_) {}
-    if (resources.audioContext) await resources.audioContext.close().catch(() => {});
+    if (resources.audioContext) {
+      await settleWithin(resources.audioContext.close());
+    }
   }
 
   async _cleanupAudio(_reason) {

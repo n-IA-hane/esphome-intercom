@@ -31,6 +31,8 @@ export function targetFromRosterEntry(entry) {
     endpoint_kind: String(metadata.endpoint_kind || "").trim().toLowerCase(),
     capabilities: formatListFromMetadata(metadata.capabilities)
       .map((value) => value.toLowerCase()),
+    camera_entity_id: String(metadata.camera_entity_id || "").trim(),
+    sip_video_codec: String(metadata.sip_video_codec || "").trim().toLowerCase(),
     audio_mode: metadata.audio_mode || "full_duplex",
     tx_formats: formatListFromMetadata(metadata.tx_formats),
     rx_formats: formatListFromMetadata(metadata.rx_formats),
@@ -41,15 +43,20 @@ export function targetFromRosterEntry(entry) {
   };
 }
 
-export function targetSupportsVideo(target) {
-  const capabilities = Array.isArray(target?.capabilities)
-    ? target.capabilities.map((value) => String(value).trim().toLowerCase()).filter(Boolean)
-    : [];
-  if (capabilities.length) return capabilities.includes("video");
+export function terminalPeerLabel(snapshot = {}) {
+  const connected = snapshot.connected_party || snapshot.answered_by || snapshot.peer_name;
+  if (connected) return String(connected);
 
-  // ESPHome endpoints are explicitly audio-only. Unknown/manual SIP targets
-  // remain eligible because their remote capabilities are learned through SDP.
-  return String(target?.endpoint_kind || "").trim().toLowerCase() !== "esphome";
+  const direction = String(snapshot.direction || "").trim().toLowerCase();
+  if (direction === "incoming") {
+    return String(snapshot.caller || snapshot.target || snapshot.dialed_target || snapshot.callee || "");
+  }
+  if (direction === "outgoing") {
+    return String(snapshot.callee || snapshot.target || snapshot.dialed_target || snapshot.caller || "");
+  }
+  return String(
+    snapshot.callee || snapshot.caller || snapshot.target || snapshot.dialed_target || "",
+  );
 }
 
 export function normaliseTransport(value) {

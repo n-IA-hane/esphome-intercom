@@ -10,6 +10,8 @@ import os
 import socket
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
 from unittest.mock import patch
@@ -1376,6 +1378,183 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hass.store["video_drop_error"], 1)
         self.assertEqual(hass.store["video_access_units_tx"], 1)
         self.assertEqual(hass.store["video_access_units_rx"], 1)
+
+    def test_video_udp_ingress_is_bounded_by_source_size_count_and_bytes(
+        self,
+    ) -> None:
+        video_ws_view = _load_video_ws_runtime_module()
+        queue = video_ws_view._ByteBudgetQueue(
+            maxsize=2,
+            max_bytes=6,
+            item_size=lambda item: len(item[0]),
+        )
+        protocol = video_ws_view._RtpVideoProtocol(
+            queue,
+            source_allowed=lambda host: host == "192.0.2.10",
+            min_datagram_bytes=2,
+            max_datagram_bytes=4,
+        )
+
+        protocol.datagram_received(b"bad", ("192.0.2.11", 4000))
+        protocol.datagram_received(b"12345", ("192.0.2.10", 4000))
+        protocol.datagram_received(b"abc", ("192.0.2.10", 4000))
+        protocol.datagram_received(b"def", ("192.0.2.10", 4000))
+        protocol.datagram_received(b"gh", ("192.0.2.10", 4000))
+
+        self.assertEqual(protocol.dropped_packets, 3)
+        self.assertEqual(protocol.take_drop_counts(), (1, 1, 1))
+        self.assertEqual(protocol.take_drop_counts(), (0, 0, 0))
+        self.assertEqual(queue.queued_bytes, 5)
+        self.assertEqual(queue.get_nowait()[0], b"def")
+        self.assertEqual(queue.queued_bytes, 2)
+        self.assertEqual(queue.get_nowait()[0], b"gh")
+        self.assertEqual(queue.queued_bytes, 0)
+
+    def test_video_access_unit_queue_tracks_a_byte_budget(self) -> None:
+        video_ws_view = _load_video_ws_runtime_module()
+        queue = video_ws_view._ByteBudgetQueue(
+            maxsize=3,
+            max_bytes=5,
+            item_size=lambda item: len(item.data),
+        )
+        first = types.SimpleNamespace(data=b"abc")
+        second = types.SimpleNamespace(data=b"de")
+        queue.put_nowait(first)
+        queue.put_nowait(second)
+
+        self.assertEqual(queue.queued_bytes, 5)
+        self.assertFalse(queue.can_fit(types.SimpleNamespace(data=b"f")))
+        self.assertIs(queue.get_nowait(), first)
+        self.assertEqual(queue.queued_bytes, 2)
+        self.assertTrue(queue.can_fit(types.SimpleNamespace(data=b"fgh")))
+        with self.assertRaises(asyncio.QueueFull):
+            queue.put_nowait(types.SimpleNamespace(data=b"toolarge"))
+        self.assertEqual(queue.queued_bytes, 2)
+
+    async def test_video_packetization_executor_preserves_call_control_deadline(
+        self,
+    ) -> None:
+        video_ws_view = _load_video_ws_runtime_module()
+        call_control_ran = asyncio.Event()
+
+        def slow_packetizer(*_args, **_kwargs):
+            time.sleep(0.08)
+            return [(b"rtp", 3)]
+
+        async def call_control() -> None:
+            await asyncio.sleep(0.005)
+            call_control_ran.set()
+
+        with patch.object(
+            video_ws_view,
+            "_packetize_browser_access_unit",
+            side_effect=slow_packetizer,
+        ):
+            packetize_task = asyncio.create_task(
+                video_ws_view._async_packetize_browser_access_unit(
+                    b"frame",
+                    encoding="VP8",
+                    payload_type=103,
+                    sequence=1,
+                    timestamp=9000,
+                    ssrc=7,
+                )
+            )
+            control_task = asyncio.create_task(call_control())
+            try:
+                await asyncio.wait_for(call_control_ran.wait(), timeout=0.04)
+                self.assertFalse(packetize_task.done())
+                self.assertEqual(await packetize_task, [(b"rtp", 3)])
+            finally:
+                await asyncio.gather(
+                    packetize_task,
+                    control_task,
+                    return_exceptions=True,
+                )
+
+    async def test_video_packetization_has_one_global_cpu_slot_and_skips_stale_work(
+        self,
+    ) -> None:
+        video_ws_view = _load_video_ws_runtime_module()
+        entered = threading.Event()
+        release = threading.Event()
+        calls = 0
+
+        def blocking_packetizer(*_args, **_kwargs):
+            nonlocal calls
+            calls += 1
+            entered.set()
+            release.wait(timeout=1)
+            return [(b"rtp", 3)]
+
+        current = True
+        with patch.object(
+            video_ws_view,
+            "_packetize_browser_access_unit",
+            side_effect=blocking_packetizer,
+        ):
+            first = asyncio.create_task(
+                video_ws_view._async_packetize_browser_access_unit(
+                    b"first",
+                    encoding="VP8",
+                    payload_type=103,
+                    sequence=1,
+                    timestamp=9000,
+                    ssrc=7,
+                )
+            )
+            await asyncio.to_thread(entered.wait, 1)
+            second = asyncio.create_task(
+                video_ws_view._async_packetize_browser_access_unit(
+                    b"stale",
+                    encoding="VP8",
+                    payload_type=103,
+                    sequence=2,
+                    timestamp=12000,
+                    ssrc=7,
+                    should_continue=lambda: current,
+                )
+            )
+            current = False
+            release.set()
+            self.assertEqual(await first, [(b"rtp", 3)])
+            self.assertIsNone(await second)
+        self.assertEqual(calls, 1)
+
+    async def test_video_rtp_send_burst_yields_to_call_end(self) -> None:
+        video_ws_view = _load_video_ws_runtime_module()
+
+        class Transport:
+            def __init__(self) -> None:
+                self.sent: list[bytes] = []
+
+            def sendto(self, raw: bytes, _target: tuple[str, int]) -> None:
+                self.sent.append(raw)
+
+        transport = Transport()
+        call_ended = asyncio.Event()
+        asyncio.get_running_loop().call_soon(call_ended.set)
+        sent: list[tuple[int, int]] = []
+        datagrams = [(bytes(12), 4)] * (
+            video_ws_view._VIDEO_RTP_SEND_BURST_PACKETS + 3
+        )
+
+        complete = await video_ws_view._send_packetized_datagrams(
+            transport,
+            datagrams,
+            ("192.0.2.10", 4000),
+            should_continue=lambda: not call_ended.is_set(),
+            on_sent=lambda raw_bytes, payload_bytes: sent.append(
+                (raw_bytes, payload_bytes)
+            ),
+        )
+
+        self.assertFalse(complete)
+        self.assertEqual(
+            len(transport.sent),
+            video_ws_view._VIDEO_RTP_SEND_BURST_PACKETS,
+        )
+        self.assertEqual(len(sent), len(transport.sent))
 
     async def test_debug_capture_tracks_home_assistant_executor_future(self) -> None:
         audio_ws_view = _load_audio_ws_runtime_module()
@@ -5939,12 +6118,14 @@ class RosterResolverTest(unittest.TestCase):
 
 
 class RouterContractTest(unittest.TestCase):
-    def test_trunk_route_keeps_sip_video_despite_audio_contact_hints(self) -> None:
+    def test_sip_video_offer_is_not_gated_by_target_roster_capabilities(self) -> None:
         source = (PKG_DIR / "softphone_originate.py").read_text()
         self.assertIn(
-            "use_trunk or not native_audio_endpoint",
+            "use_trunk or not native_audio_endpoint or esphome_sip_endpoint",
             source,
         )
+        self.assertNotIn("target_video_enabled", source)
+        self.assertNotIn('target_endpoint.supports("video")', source)
 
     def _matrix_entries(self):
         return roster.parse_roster_json(
@@ -7985,6 +8166,156 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await client.terminate(timeout=0.1), "cancelled")
         self.assertEqual([sip.parse_message(raw).method for raw, _addr in transport.sent], ["CANCEL", "ACK"])
 
+    async def test_cancelled_invite_final_response_does_not_wait_for_cancel_ok(
+        self,
+    ) -> None:
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+        client = sip_client.SipCallClient(
+            local_ip="127.0.0.1",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        transport = FakeTransport()
+        client.transport = transport  # type: ignore[assignment]
+        client._pending_remote_host = "127.0.0.2"
+        client._pending_remote_sip_port = 5060
+        client._pending_request_uri = "sip:ESP@127.0.0.2:5060"
+        client._pending_local_uri = "sip:HA@127.0.0.1:5060"
+        client._pending_remote_uri = "sip:ESP@127.0.0.2:5060"
+        client._invite_transaction_active = True
+        client._received_provisional = True
+        read_count = 0
+
+        async def read_response(_timeout: float):
+            nonlocal read_count
+            read_count += 1
+            if read_count > 1:
+                await asyncio.Future()
+            return (
+                sip.parse_message(
+                    sip.build_response(
+                        487,
+                        "Request Terminated",
+                        [
+                            (
+                                "Via",
+                                "SIP/2.0/UDP 127.0.0.1:5060;branch="
+                                f"{client.dialog_ids.branch}",
+                            ),
+                            (
+                                "From",
+                                "<sip:HA@127.0.0.1>;tag="
+                                f"{client.dialog_ids.local_tag}",
+                            ),
+                            ("To", "<sip:ESP@127.0.0.2>;tag=remote"),
+                            ("Call-ID", client.dialog_ids.call_id),
+                            ("CSeq", f"{client._invite_cseq} INVITE"),
+                        ],
+                    )
+                ),
+                ("127.0.0.2", 5060),
+            )
+
+        client._read_response = read_response  # type: ignore[method-assign]
+
+        self.assertEqual(
+            await asyncio.wait_for(client.terminate(timeout=10), timeout=0.1),
+            "cancelled",
+        )
+        self.assertEqual(read_count, 1)
+        self.assertEqual(
+            [sip.parse_message(raw).method for raw, _addr in transport.sent],
+            ["CANCEL", "ACK"],
+        )
+
+    async def test_cancel_awaits_existing_final_response_owner(self) -> None:
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+        client = sip_client.SipCallClient(
+            local_ip="127.0.0.1",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        transport = FakeTransport()
+        client.transport = transport  # type: ignore[assignment]
+        client._pending_remote_host = "127.0.0.2"
+        client._pending_remote_sip_port = 5060
+        client._pending_request_uri = "sip:ESP@127.0.0.2:5060"
+        client._pending_local_uri = "sip:HA@127.0.0.1:5060"
+        client._pending_remote_uri = "sip:ESP@127.0.0.2:5060"
+        client._invite_transaction_active = True
+        client._received_provisional = True
+        response_ready = asyncio.Event()
+        response_release = asyncio.Event()
+        read_count = 0
+
+        async def read_response(_timeout: float):
+            nonlocal read_count
+            read_count += 1
+            response_ready.set()
+            await response_release.wait()
+            return (
+                sip.parse_message(
+                    sip.build_response(
+                        487,
+                        "Request Terminated",
+                        [
+                            (
+                                "Via",
+                                "SIP/2.0/UDP 127.0.0.1:5060;branch="
+                                f"{client.dialog_ids.branch}",
+                            ),
+                            (
+                                "From",
+                                "<sip:HA@127.0.0.1>;tag="
+                                f"{client.dialog_ids.local_tag}",
+                            ),
+                            ("To", "<sip:ESP@127.0.0.2>;tag=remote"),
+                            ("Call-ID", client.dialog_ids.call_id),
+                            ("CSeq", f"{client._invite_cseq} INVITE"),
+                        ],
+                    )
+                ),
+                ("127.0.0.2", 5060),
+            )
+
+        client._read_response = read_response  # type: ignore[method-assign]
+
+        waiter = asyncio.create_task(client.wait_for_final(timeout=10))
+        await response_ready.wait()
+        waiter.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await waiter
+
+        async def release_response() -> None:
+            await asyncio.sleep(0)
+            response_release.set()
+
+        release = asyncio.create_task(release_response())
+        self.assertEqual(
+            await asyncio.wait_for(client.terminate(timeout=10), timeout=0.1),
+            "cancelled",
+        )
+        await release
+        self.assertEqual(read_count, 1)
+        self.assertEqual(
+            [sip.parse_message(raw).method for raw, _addr in transport.sent],
+            ["CANCEL", "ACK"],
+        )
+
     async def test_cancel_race_accepts_the_separate_bye_transaction(self) -> None:
         class FakeTransport:
             def __init__(self) -> None:
@@ -8460,10 +8791,385 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         ]
 
         self.assertIn("self.dialog_ids.branch = sip.make_branch()", auth_branch)
-        self.assertIn("retry_headers = sip.dialog_headers(", auth_branch)
-        self.assertIn("retry_headers.append((auth_header, auth_value))", auth_branch)
+        self.assertIn(
+            "self._pending_invite_auth_header = (auth_header, auth_value)",
+            auth_branch,
+        )
+        self.assertIn("raw = self._build_pending_invite()", auth_branch)
         self.assertIn("transaction.restart_retransmissions()", auth_branch)
-        self.assertNotIn("retry_headers = list(headers)", auth_branch)
+
+    async def test_invite_honors_retry_after_once_as_a_new_transaction(self) -> None:
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+        client = sip_client.SipCallClient(
+            local_ip="192.168.1.10",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        transport = FakeTransport()
+        client.transport = transport  # type: ignore[assignment]
+        response_count = 0
+
+        async def read_response(_timeout: float):
+            nonlocal response_count
+            response_count += 1
+            status, reason = (
+                (503, "Service Unavailable")
+                if response_count == 1
+                else (180, "Ringing")
+            )
+            headers = [
+                (
+                    "Via",
+                    "SIP/2.0/UDP 192.168.1.10:5060;"
+                    f"branch={client.dialog_ids.branch}",
+                ),
+                (
+                    "From",
+                    "<sip:HA@192.168.1.10:5060>;"
+                    f"tag={client.dialog_ids.local_tag}",
+                ),
+                ("To", "<sip:P4@192.0.2.10>;tag=remote"),
+                ("Call-ID", client.dialog_ids.call_id),
+                ("CSeq", f"{client._invite_cseq} INVITE"),
+            ]
+            if status == 503:
+                headers.append(("Retry-After", "0"))
+            return (
+                sip.parse_message(sip.build_response(status, reason, headers)),
+                ("192.0.2.10", 5060),
+            )
+
+        client._read_response = read_response  # type: ignore[method-assign]
+        with patch.object(sip_client, "_MIN_INVITE_RETRY_AFTER", 0.001):
+            result = await client.invite(
+                target="P4",
+                remote_host="192.0.2.10",
+                remote_sip_port=5060,
+                request_uri="sip:P4@192.0.2.10:5060;transport=udp",
+            )
+
+        self.assertEqual(result, "ringing")
+        messages = [sip.parse_message(raw) for raw, _addr in transport.sent]
+        self.assertEqual(
+            [message.method for message in messages],
+            ["INVITE", "ACK", "INVITE"],
+        )
+        first, _ack, second = messages
+        self.assertEqual(first.header("Call-ID"), second.header("Call-ID"))
+        self.assertEqual(first.header("From"), second.header("From"))
+        self.assertEqual(first.header("To"), second.header("To"))
+        self.assertEqual(
+            sip.parse_cseq(second.header("CSeq")).number,
+            sip.parse_cseq(first.header("CSeq")).number + 1,
+        )
+        self.assertNotEqual(
+            sip.parse_via(first.header("Via")).branch,
+            sip.parse_via(second.header("Via")).branch,
+        )
+
+    async def test_authenticated_retry_after_advances_digest_nonce_count(self) -> None:
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+        client = sip_client.SipCallClient(
+            local_ip="192.168.1.10",
+            local_name="17770000000",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            username="17770000000",
+            auth_username="17770000000",
+            password="secret",
+        )
+        transport = FakeTransport()
+        client.transport = transport  # type: ignore[assignment]
+        response_count = 0
+
+        async def read_response(_timeout: float):
+            nonlocal response_count
+            response_count += 1
+            if response_count == 1:
+                status, reason = 407, "Proxy Authentication Required"
+            elif response_count == 2:
+                status, reason = 503, "Service Unavailable"
+            else:
+                status, reason = 180, "Ringing"
+            headers = [
+                (
+                    "Via",
+                    "SIP/2.0/UDP 192.168.1.10:5060;"
+                    f"branch={client.dialog_ids.branch}",
+                ),
+                (
+                    "From",
+                    "<sip:17770000000@192.168.1.10:5060>;"
+                    f"tag={client.dialog_ids.local_tag}",
+                ),
+                ("To", "<sip:P4@sip.example>;tag=provider"),
+                ("Call-ID", client.dialog_ids.call_id),
+                ("CSeq", f"{client._invite_cseq} INVITE"),
+            ]
+            if status == 407:
+                headers.append(
+                    (
+                        "Proxy-Authenticate",
+                        'Digest realm="sip.example", nonce="nonce", qop="auth"',
+                    )
+                )
+            if status == 503:
+                headers.append(("Retry-After", "0"))
+            return (
+                sip.parse_message(sip.build_response(status, reason, headers)),
+                ("192.0.2.10", 5060),
+            )
+
+        client._read_response = read_response  # type: ignore[method-assign]
+        with patch.object(sip_client, "_MIN_INVITE_RETRY_AFTER", 0.001):
+            result = await client.invite(
+                target="P4",
+                remote_host="192.0.2.10",
+                remote_sip_port=5060,
+                request_uri="sip:P4@sip.example:5060;transport=udp",
+            )
+
+        self.assertEqual(result, "ringing")
+        messages = [sip.parse_message(raw) for raw, _addr in transport.sent]
+        invites = [message for message in messages if message.method == "INVITE"]
+        self.assertEqual(len(invites), 3)
+        first_auth = sip_auth.parse_digest_challenge(
+            invites[1].header("Proxy-Authorization")
+        )
+        retry_auth = sip_auth.parse_digest_challenge(
+            invites[2].header("Proxy-Authorization")
+        )
+        self.assertEqual(first_auth["nc"], "00000001")
+        self.assertEqual(retry_auth["nc"], "00000002")
+        self.assertNotEqual(first_auth["cnonce"], retry_auth["cnonce"])
+
+    async def test_invite_retry_after_is_limited_to_one_retry(self) -> None:
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+        client = sip_client.SipCallClient(
+            local_ip="192.168.1.10",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        transport = FakeTransport()
+        client.transport = transport  # type: ignore[assignment]
+
+        async def read_response(_timeout: float):
+            return (
+                sip.parse_message(
+                    sip.build_response(
+                        503,
+                        "Service Unavailable",
+                        [
+                            (
+                                "Via",
+                                "SIP/2.0/UDP 192.168.1.10:5060;"
+                                f"branch={client.dialog_ids.branch}",
+                            ),
+                            (
+                                "From",
+                                "<sip:HA@192.168.1.10:5060>;"
+                                f"tag={client.dialog_ids.local_tag}",
+                            ),
+                            ("To", "<sip:P4@192.0.2.10>;tag=remote"),
+                            ("Call-ID", client.dialog_ids.call_id),
+                            ("CSeq", f"{client._invite_cseq} INVITE"),
+                            ("Retry-After", "0"),
+                        ],
+                    )
+                ),
+                ("192.0.2.10", 5060),
+            )
+
+        client._read_response = read_response  # type: ignore[method-assign]
+        with patch.object(sip_client, "_MIN_INVITE_RETRY_AFTER", 0.001):
+            result = await client.invite(
+                target="P4",
+                remote_host="192.0.2.10",
+                remote_sip_port=5060,
+                request_uri="sip:P4@192.0.2.10:5060;transport=udp",
+            )
+
+        self.assertEqual(result, "sip_503")
+        messages = [sip.parse_message(raw) for raw, _addr in transport.sent]
+        self.assertEqual(
+            [message.method for message in messages],
+            ["INVITE", "ACK", "INVITE", "ACK"],
+        )
+
+    async def test_retry_after_also_replaces_a_proceeding_invite(self) -> None:
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+        pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        audio_rtp = sdp.audio_format_to_rtp(pcm, 96)
+        client = sip_client.SipCallClient(
+            local_ip="192.168.1.10",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            supported_formats=[pcm],
+        )
+        transport = FakeTransport()
+        client.transport = transport  # type: ignore[assignment]
+        response_count = 0
+
+        async def read_response(_timeout: float):
+            nonlocal response_count
+            response_count += 1
+            invite = next(
+                sip.parse_message(raw)
+                for raw, _addr in reversed(transport.sent)
+                if sip.parse_message(raw).method == "INVITE"
+            )
+            status, reason = (
+                (180, "Ringing")
+                if response_count == 1
+                else (503, "Service Unavailable")
+                if response_count == 2
+                else (200, "OK")
+            )
+            headers = [
+                ("Via", invite.header("Via")),
+                ("From", invite.header("From")),
+                ("To", "<sip:P4@192.0.2.10>;tag=remote"),
+                ("Call-ID", invite.header("Call-ID")),
+                ("CSeq", invite.header("CSeq")),
+            ]
+            body = b""
+            if status == 503:
+                headers.append(("Retry-After", "0"))
+            elif status == 200:
+                headers.extend(
+                    [
+                        ("Contact", "<sip:P4@192.0.2.10:5060>"),
+                        ("Content-Type", "application/sdp"),
+                    ]
+                )
+                body = sdp.build_answer_directional(
+                    "192.0.2.10",
+                    "192.0.2.10",
+                    42000,
+                    audio_rtp,
+                    audio_rtp,
+                    remote_sdp=invite.body,
+                ).encode()
+            return (
+                sip.parse_message(
+                    sip.build_response(status, reason, headers, body)
+                ),
+                ("192.0.2.10", 5060),
+            )
+
+        client._read_response = read_response  # type: ignore[method-assign]
+        self.assertEqual(
+            await client.invite(
+                target="P4",
+                remote_host="192.0.2.10",
+                remote_sip_port=5060,
+                request_uri="sip:P4@192.0.2.10:5060;transport=udp",
+            ),
+            "ringing",
+        )
+        with patch.object(sip_client, "_MIN_INVITE_RETRY_AFTER", 0.001):
+            self.assertEqual(await client.wait_for_final(), "in_call")
+
+        messages = [sip.parse_message(raw) for raw, _addr in transport.sent]
+        self.assertEqual(
+            [message.method for message in messages],
+            ["INVITE", "ACK", "INVITE", "ACK"],
+        )
+
+    async def test_direct_200_ok_prefers_remote_display_identity(self) -> None:
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+        pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        audio_rtp = sdp.audio_format_to_rtp(pcm, 96)
+        client = sip_client.SipCallClient(
+            local_ip="192.168.1.10",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            supported_formats=[pcm],
+        )
+        transport = FakeTransport()
+        client.transport = transport  # type: ignore[assignment]
+
+        async def read_response(_timeout: float):
+            invite = sip.parse_message(transport.sent[-1][0])
+            answer = sdp.build_answer_directional(
+                "192.0.2.10",
+                "192.0.2.10",
+                42000,
+                audio_rtp,
+                audio_rtp,
+                remote_sdp=invite.body,
+            ).encode()
+            return (
+                sip.parse_message(
+                    sip.build_response(
+                        200,
+                        "OK",
+                        [
+                            ("Via", invite.header("Via")),
+                            ("From", invite.header("From")),
+                            (
+                                "To",
+                                '"Portineria" <sip:1000@sip.example>;tag=remote',
+                            ),
+                            ("Call-ID", invite.header("Call-ID")),
+                            ("CSeq", invite.header("CSeq")),
+                            ("Contact", "<sip:1000@192.0.2.10:5060>"),
+                            ("Content-Type", "application/sdp"),
+                        ],
+                        answer,
+                    )
+                ),
+                ("192.0.2.10", 5060),
+            )
+
+        client._read_response = read_response  # type: ignore[method-assign]
+        result = await client.invite(
+            target="1000",
+            remote_host="192.0.2.10",
+            remote_sip_port=5060,
+            request_uri="sip:1000@sip.example:5060;transport=udp",
+        )
+
+        self.assertEqual(result, "in_call")
+        self.assertEqual(client.connected_party, "Portineria")
+        self.assertEqual(
+            sip.name_addr_identity("<sip:1000@sip.example>"),
+            "1000",
+        )
 
     async def test_proxy_auth_retry_uses_trunk_identity(self) -> None:
         class FakeTransport:

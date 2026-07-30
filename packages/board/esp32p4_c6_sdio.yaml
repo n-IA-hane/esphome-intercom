@@ -17,11 +17,15 @@ esp32:
       # Hosted creates several default tasks. Their stacks are not DMA buffers;
       # move them to PSRAM and keep internal memory for SDIO/I2S/MIPI DMA.
       CONFIG_ESP_HOSTED_DFLT_TASK_FROM_SPIRAM: "y"
-      # SDIO transport preallocates a DMA mempool from the RX queue size. The
-      # default 20/20 queue is throughput-oriented; 10/10 is Espressif's lighter
-      # OpenThread profile and leaves more internal heap for display + audio.
-      CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE: "10"
-      CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE: "10"
+      # ESP-IDF rejects external buffers passed to xTaskCreateStatic unless
+      # this companion gate is enabled. Hosted uses exactly that API for the
+      # PSRAM stacks above, so the two options are one indivisible contract.
+      CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY: "y"
+      # Match Espressif's normal 20/20 P4 SDIO profile. Its Kconfig explicitly
+      # warns that very small queues lower throughput; bidirectional RTP needs
+      # headroom in both directions and the transport mempool remains in PSRAM.
+      CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE: "20"
+      CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE: "20"
 
 # Native ESPHome coprocessor update path. Once the C6 runs current
 # ESP-Hosted network_adapter firmware, this keeps it current without opening

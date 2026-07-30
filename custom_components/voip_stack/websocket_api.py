@@ -732,6 +732,8 @@ _MEDIA_COUNTER_KEYS = (
     "video_rtcp_pli_rx",
     "video_rtcp_fir_rx",
     "video_rtcp_keyframe_requests_to_browser",
+    "video_jpeg_normalized",
+    "video_jpeg_normalizer_errors",
 )
 
 
@@ -1444,6 +1446,11 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
         endpoint_id = f"esphome:{device_id}"
         discovered_ids.add(endpoint_id)
         previous = registry.get(endpoint_id)
+        capabilities = frozenset(
+            str(value).strip().casefold()
+            for value in (device.get("capabilities") or ("audio", "dtmf"))
+            if str(value).strip()
+        )
         endpoint = PhoneEndpoint(
             endpoint_id=endpoint_id,
             name=name,
@@ -1456,7 +1463,7 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
                 if isinstance(value, str) and "." in value
             ),
             availability=EndpointAvailability.AVAILABLE,
-            capabilities=frozenset({"audio", "dtmf"}),
+            capabilities=capabilities,
             ring_group=str(device.get("ring_group") or ""),
             conference_group=str(device.get("conference_group") or ""),
             conference_ring=bool(device.get("conference_ring", False)),
@@ -1474,7 +1481,7 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
             continue
         device["endpoint_id"] = endpoint_id
         device["endpoint_type"] = EndpointKind.ESPHOME.value
-        device["capabilities"] = ["audio", "dtmf"]
+        device["capabilities"] = sorted(capabilities)
 
     # Keep physical devices represented when temporarily unreachable; only
     # their transport availability changes. VoIP Stack never creates/adopts
@@ -1744,6 +1751,7 @@ async def websocket_ha_softphone_state(
     if media_client_id:
         owner_status = media_websocket_owner_status(
             hass.data.get(DOMAIN, {}),
+            call_registry(hass),
             str(state.get("call_id") or ""),
             endpoint_id,
             media_client_id,

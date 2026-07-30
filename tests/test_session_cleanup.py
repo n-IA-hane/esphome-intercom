@@ -157,6 +157,27 @@ class SipRuntimeCleanupTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.client_closed)
         self.assertTrue(result.relay_stopped)
 
+    async def test_dialog_watcher_can_tear_down_its_own_bridge(self) -> None:
+        events: list[str] = []
+
+        async def remote_bye_watcher() -> session_cleanup.SipRuntimeCleanupResult:
+            result = await session_cleanup.async_cleanup_sip_runtime(
+                relay=FakeRelay(events),
+                client=FakeClient(events),
+                watcher=asyncio.current_task(),
+                terminate_client=False,
+                relay_first=True,
+            )
+            events.append("source.bye")
+            return result
+
+        result = await asyncio.wait_for(remote_bye_watcher(), timeout=1)
+
+        self.assertEqual(events, ["relay.stop", "client.close", "source.bye"])
+        self.assertFalse(result.watcher_cancelled)
+        self.assertTrue(result.client_closed)
+        self.assertTrue(result.relay_stopped)
+
     async def test_cleanup_attempts_every_resource_after_independent_failures(self) -> None:
         events: list[str] = []
         watcher = asyncio.create_task(_sleep_forever(events))

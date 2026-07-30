@@ -88,12 +88,16 @@ def _call_media_client_id(registry: Any, call_id: str) -> str:
 
 def media_websocket_owner_status(
     bucket: dict[str, Any],
+    registry: Any,
     call_id: str,
     endpoint_id: str,
     client_id: str,
 ) -> str:
     """Return whether this browser owns, may claim, or must observe media."""
 
+    expected_client_id = _call_media_client_id(registry, call_id)
+    if expected_client_id and expected_client_id != client_id:
+        return "other"
     owner_key = (
         f"{str(endpoint_id or '').strip()}|{str(call_id or '').strip()}"
     )
@@ -177,7 +181,7 @@ async def async_claim_call_media_owner(
         if pin_client_identity:
             expected_client_id = _call_media_client_id(registry, call_id)
             if expected_client_id != owner.client_id:
-                if live_owners:
+                if expected_client_id:
                     raise WebSocketOwnerBusyError(call_id)
                 _set_call_media_client_id(registry, call_id, owner.client_id)
         elif local_bridge is not None:

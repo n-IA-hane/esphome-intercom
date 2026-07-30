@@ -20,6 +20,42 @@ VIDEO_ENGINE = (
     / "voip-stack-video.js"
 )
 VIDEO_MODEL = VIDEO_ENGINE.with_name("voip-stack-video-model.js")
+VIDEO_WORKER = VIDEO_ENGINE.with_name("voip-stack-video-worker.js")
+BROWSER_PROBE = ROOT / "tools" / "sip_video_browser_probe.py"
+
+
+def test_browser_probe_keeps_waits_light_and_bounded() -> None:
+    source = BROWSER_PROBE.read_text()
+
+    assert "LIGHT_CARD_STATE = r" in source
+    assert "globalThis.__voipStackProbeCard = next" in source
+    assert "globalThis.__voipStackProbeFindCard = () =>" in source
+    light = source.split('LIGHT_CARD_STATE = r"""', 1)[1].split('"""', 1)[0]
+    assert "globalThis.__voipStackProbeCard" in light
+    assert "globalThis.__voipStackProbeFindCard?.()" in light
+    assert light.index("__voipStackProbeCard") < light.index("__voipStackProbeFindCard")
+    assert "querySelectorAll" not in light
+    assert "...(deviceId ? { device_id: deviceId } : {})" in source
+    assert "INSTALL_RESPONSIVENESS_MONITOR = r" in source
+    assert "READ_RESPONSIVENESS_MONITOR = r" in source
+    assert "STOP_RESPONSIVENESS_MONITOR = r" in source
+    assert "({CARD_SAMPLE})" not in source
+    assert source.count("page.evaluate(CARD_SAMPLE)") == 1
+    assert source.count("polling=100") == source.count("page.wait_for_function(")
+    assert "max_main_thread_gap_ms" in source
+    assert "max_ws_rtt_ms" in source
+    assert "to_ui_idle_ms" in source
+    assert "to_backend_cleanup_ms" in source
+    assert "--auth-check-only" in source
+    assert "--allow-dark-video" in source
+    assert "and not args.allow_dark_video" in source
+    assert 'sample("authenticated_card_ready")' in source
+    assert "['ringing','in_call'].includes" in source
+    assert 'sample("incoming_progress")' in source
+    assert '== "ringing":' in source
+    start = source.split('START_OUTBOUND = r"""', 1)[1].split('"""', 1)[0]
+    assert "Promise.resolve(card._startCall())" in start
+    assert "await card._startCall()" not in start
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
@@ -37,6 +73,8 @@ const context = vm.createContext({{
   performance,
   console,
   Blob,
+  setTimeout,
+  clearTimeout,
   CustomEvent: class CustomEvent extends Event {{
     constructor(type, init) {{ super(type); this.detail = init?.detail; }}
   }},
@@ -50,16 +88,79 @@ const context = vm.createContext({{
 const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
 const module = new vm.SourceTextModule(source, {{ context }});
 await module.link((specifier) => {{
-  if (specifier === "./voip-stack-video-model.js") return modelModule;
+  if (specifier === "./voip-stack-video-model.js?v=2") return modelModule;
   throw new Error(`unexpected import: ${{specifier}}`);
 }});
 await module.evaluate();
 const Video = module.namespace.VoipStackVideo;
+const {{ cameraEncoderContract }} = modelModule.namespace;
+
+// Android may expose a portrait camera track after accepting landscape
+// constraints. Both H.264 and JPEG preserve the native orientation; the
+// receiver admits the equivalent rotated macroblock envelope and letterboxes
+// it without stretching.
+const portraitSettings = {{ width: 288, height: 352, frameRate: 30 }};
+const level13Capture = {{
+  idealWidth: 352,
+  idealHeight: 288,
+  maxFs: 396,
+  maxMbps: 11880,
+  maxFr: 10,
+}};
+assert.deepEqual(
+  Object.values(cameraEncoderContract(level13Capture, portraitSettings, "H264")),
+  [288, 352, 396, 10],
+);
+assert.deepEqual(
+  Object.values(cameraEncoderContract(level13Capture, portraitSettings, "JPEG")),
+  [288, 352, 396, 10],
+);
+const encoderProbes = [];
+class ProbeEncoder {{
+  static async isConfigSupported(config) {{
+    encoderProbes.push([config.hardwareAcceleration || null, config.latencyMode]);
+    return {{ supported: true, config }};
+  }}
+}}
+const encoderPreference = new Video();
+const hardwareConfig = await encoderPreference._supportedConfig(
+  ProbeEncoder,
+  {{ codec: "avc1.42C00D" }},
+  true,
+);
+assert.deepEqual(encoderProbes, [["prefer-hardware", "realtime"]]);
+assert.equal(hardwareConfig.hardwareAcceleration, "prefer-hardware");
+assert.equal(hardwareConfig.latencyMode, "realtime");
+const fallbackProbes = [];
+class SoftwareFallbackEncoder {{
+  static async isConfigSupported(config) {{
+    fallbackProbes.push([config.hardwareAcceleration || null, config.latencyMode]);
+    return {{ supported: config.hardwareAcceleration === "prefer-software", config }};
+  }}
+}}
+const softwareConfig = await encoderPreference._supportedConfig(
+  SoftwareFallbackEncoder,
+  {{ codec: "avc1.42C00D" }},
+  true,
+);
+assert.deepEqual(fallbackProbes, [
+  ["prefer-hardware", "realtime"],
+  ["prefer-software", "quality"],
+]);
+assert.equal(softwareConfig.hardwareAcceleration, "prefer-software");
+assert.equal(softwareConfig.latencyMode, "quality");
 
 // Camera intent comes from the logical-phone snapshot, not localStorage.
 const preferences = new Video();
 assert.equal(preferences.cameraEnabled, false);
 assert.equal(cameraStorage.size, 0);
+// Reconciliation can project the same receive-only camera preference after
+// every engine state event. It must be a true no-op or it feeds another state
+// event back into reconciliation and spins the HA main thread.
+let receiveOnlyEvents = 0;
+preferences.addEventListener("state", () => receiveOnlyEvents++);
+await preferences.setCameraEnabled(false);
+assert.equal(receiveOnlyEvents, 0);
 preferences.close = async () => {{}};
 preferences._wsUrl = async () => "/signed";
 // start() projects send_video before any camera sender can be prepared.
@@ -180,14 +281,22 @@ camera._ws = {{ readyState: 1, send(value) {{ epochs.push(JSON.parse(value)); }}
 camera._sendTxEpoch();
 assert.equal(epochs.at(-1).type, "tx_epoch");
 
-// A JPEG decode Promise from call A must not clear call B's in-flight decode
-// or consume the frame that B coalesced behind it.
-const jpegResolvers = [];
-context.createImageBitmap = () => new Promise((resolve) => jpegResolvers.push(resolve));
+// A JPEG worker reply from call A must not clear call B's in-flight decode or
+// consume the frame that B coalesced behind it.
 const jpeg = new Video();
 jpeg._encoding = "JPEG";
 jpeg._active = true;
 jpeg._generation = 1;
+const jpegPostsA = [];
+const jpegWorkerA = {{
+  postMessage(message, transfer = []) {{ jpegPostsA.push([message, transfer]); }},
+}};
+jpeg._decoderWorker = jpegWorkerA;
+jpeg._decoder = {{
+  state: "configured",
+  kind: "jpeg",
+  worker: jpegWorkerA,
+}};
 const jpegFrame = (timestamp) => {{
   const value = new ArrayBuffer(8);
   const view = new Uint8Array(value);
@@ -202,22 +311,68 @@ const frameA = jpegFrame(1);
 const frameB = jpegFrame(2);
 const frameBLatest = jpegFrame(3);
 jpeg._decodeJpegMessage(frameA);
-assert.equal(jpegResolvers.length, 1);
+assert.equal(jpegPostsA.length, 1);
 jpeg._generation = 2;
 jpeg._jpegDecodePending = false;
 jpeg._jpegQueuedBuffer = null;
 jpeg._jpegDecodeToken = null;
+const jpegPostsB = [];
+const jpegWorkerB = {{
+  postMessage(message, transfer = []) {{ jpegPostsB.push([message, transfer]); }},
+}};
+jpeg._decoderWorker = jpegWorkerB;
+jpeg._decoder = {{
+  state: "configured",
+  kind: "jpeg",
+  worker: jpegWorkerB,
+}};
 jpeg._decodeJpegMessage(frameB);
 jpeg._decodeJpegMessage(frameBLatest);
-assert.equal(jpegResolvers.length, 2);
-jpegResolvers[0]({{ width: 1, height: 1, close() {{}} }});
-await new Promise((resolve) => setImmediate(resolve));
+assert.equal(jpegPostsB.length, 1);
+let staleBitmapClosed = false;
+jpeg._handleDecoderWorkerMessage(jpegWorkerA, 1, {{
+  type: "jpeg_bitmap",
+  generation: 1,
+  timestamp: 1,
+  bitmap: {{ width: 1, height: 1, close() {{ staleBitmapClosed = true; }} }},
+}});
+assert.equal(staleBitmapClosed, true);
 assert.equal(jpeg._jpegDecodePending, true);
 assert.equal(jpeg._jpegQueuedBuffer, frameBLatest);
-jpegResolvers[1]({{ width: 1, height: 1, close() {{}} }});
-await new Promise((resolve) => setImmediate(resolve));
-assert.equal(jpegResolvers.length, 3);
-jpegResolvers[2]({{ width: 1, height: 1, close() {{}} }});
+jpeg._handleDecoderWorkerMessage(jpegWorkerB, 2, {{
+  type: "jpeg_bitmap",
+  generation: 2,
+  timestamp: 2,
+  bitmap: {{ width: 1, height: 1, close() {{}} }},
+}});
+assert.equal(jpegPostsB.length, 2);
+
+// JPEG decoder errors are coalesced by the worker. The cumulative count keeps
+// the public counter exact without causing one card render per malformed AU.
+let jpegErrorEvents = 0;
+jpeg.addEventListener("state", () => {{ jpegErrorEvents++; }});
+jpeg._handleDecoderWorkerMessage(jpegWorkerB, 2, {{
+  type: "jpeg_decoder_error",
+  generation: 2,
+  error_count: 1,
+  error: "bad jpeg",
+}});
+jpeg._handleDecoderWorkerMessage(jpegWorkerB, 2, {{
+  type: "jpeg_decoder_error",
+  generation: 2,
+  error_count: 5,
+  error: "bad jpeg",
+}});
+assert.equal(jpeg._stats.decode_errors, 5);
+assert.equal(jpegErrorEvents, 2);
+jpeg._handleDecoderWorkerMessage(jpegWorkerB, 2, {{
+  type: "jpeg_decoder_error",
+  generation: 2,
+  error_count: 5,
+  error: "duplicate report",
+}});
+assert.equal(jpeg._stats.decode_errors, 5);
+assert.equal(jpegErrorEvents, 2);
 
 // A media update blocked in call A must not head-of-line block call B after
 // close/start ownership changes.
@@ -438,6 +593,20 @@ assert.equal(ownership._cameraStream, newStream);
 assert.equal(oldEncoder.state, "closed");
 assert.equal(oldTrack.stopped, true);
 
+// A browser implementation that never settles reader.cancel() must not hold
+// call teardown forever. Published media ownership is removed synchronously
+// and the one-shot cleanup deadline releases the caller.
+const stuckCleanup = new Video();
+stuckCleanup._cameraReader = {{ cancel: () => new Promise(() => {{}}) }};
+stuckCleanup._encodeTask = new Promise(() => {{}});
+stuckCleanup._encoder = {{ state: "configured", close() {{ this.state = "closed"; }} }};
+stuckCleanup._cameraStream = {{ getTracks: () => [{{ stop() {{}} }}] }};
+const stuckStarted = performance.now();
+await stuckCleanup._cleanupSender();
+assert.ok(performance.now() - stuckStarted < 1000);
+assert.equal(stuckCleanup._cameraReader, null);
+assert.equal(stuckCleanup._encoder, null);
+
 // Unexpected camera EOF releases the published sender immediately instead
 // of leaving the card in a false video-transmitting state.
 const cameraEof = new Video();
@@ -518,6 +687,26 @@ assert.deepEqual(
   [640, 360, 12],
 );
 
+const jpegLimited = new Video();
+jpegLimited._encoding = "JPEG";
+jpegLimited._negotiated = {{
+  send: {{
+    codec: "jpeg",
+    encoding: "JPEG",
+    max_framerate: 3,
+  }},
+  receive: {{
+    codec: "jpeg",
+    encoding: "JPEG",
+  }},
+}};
+const jpegContract = jpegLimited._cameraCaptureContract();
+assert.equal(jpegContract.maxFr, 3);
+assert.deepEqual(
+  [jpegContract.constraints.frameRate.ideal, jpegContract.constraints.frameRate.max],
+  [3, 3],
+);
+
 // Decoder output/error callbacks are owned by the generation that created
 // them. A delayed callback from A closes its frame and cannot mutate B.
 class TestDecoder {{
@@ -527,6 +716,73 @@ class TestDecoder {{
   close() {{ this.state = "closed"; }}
 }}
 context.VideoDecoder = TestDecoder;
+
+// Current HA/Companion builds decode in a DedicatedWorker. Codec output is
+// event-driven and teardown terminates the worker synchronously.
+const workerMessages = [];
+class TestWorker {{
+  constructor(url, options) {{
+    this.url = url;
+    this.options = options;
+    this.terminated = false;
+  }}
+  postMessage(message, transfer = []) {{
+    workerMessages.push([message, transfer]);
+    if (message.type === "configure_decoder") {{
+      queueMicrotask(() => this.onmessage({{
+        data: {{ type: "reply", requestId: message.requestId, ok: true }},
+      }}));
+    }}
+  }}
+  terminate() {{ this.terminated = true; }}
+}}
+context.Worker = TestWorker;
+const workerDecoder = new Video();
+workerDecoder._codecWorkerUrl = () => "/worker.js";
+workerDecoder._generation = 21;
+await workerDecoder._setupDecoder("avc1.42801F", 21);
+const decoderWorker = workerDecoder._decoderWorker;
+assert.equal(workerDecoder._decoder.worker, decoderWorker);
+assert.equal(decoderWorker.options.type, "module");
+workerDecoder._dropUntilKeyFrame = false;
+const workerFrame = new ArrayBuffer(8);
+new Uint8Array(workerFrame).set([1, 1]);
+new DataView(workerFrame).setUint32(2, 9000, false);
+workerDecoder._decodeMessage(workerFrame);
+assert.equal(workerMessages.at(-1)[0].type, "decode");
+assert.equal(workerMessages.at(-1)[1][0], workerFrame);
+workerDecoder._cleanupReceiver();
+assert.equal(decoderWorker.terminated, true);
+
+// Rendering is demand-driven by decoded frames and coalesces a burst to the
+// newest frame. No timer wakes up merely to ask whether a frame exists.
+let renderCallback;
+context.requestAnimationFrame = (callback) => {{
+  renderCallback = callback;
+  return 7;
+}};
+const rendered = new Video();
+let draws = 0;
+let firstClosed = 0;
+let secondClosed = 0;
+rendered._canvas = {{ getContext: () => ({{ drawImage() {{ draws++; }} }}) }};
+rendered._queueDecodedFrame({{
+  timestamp: 1, displayWidth: 1, displayHeight: 1,
+  close() {{ firstClosed++; }},
+}});
+rendered._queueDecodedFrame({{
+  timestamp: 2, displayWidth: 1, displayHeight: 1,
+  close() {{ secondClosed++; }},
+}});
+assert.equal(firstClosed, 1);
+assert.equal(draws, 0);
+renderCallback();
+assert.equal(draws, 1);
+assert.equal(secondClosed, 1);
+assert.equal(rendered._stats.rendered, 1);
+assert.equal(rendered._stats.dropped_render_coalesce, 1);
+
+context.Worker = undefined;
 const decoderOwner = new Video();
 decoderOwner._generation = 11;
 decoderOwner._encoding = "H264";
@@ -587,7 +843,7 @@ const context = vm.createContext({{
 const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
 const module = new vm.SourceTextModule(source, {{ context }});
 await module.link((specifier) => {{
-  if (specifier === "./voip-stack-video-model.js") return modelModule;
+  if (specifier === "./voip-stack-video-model.js?v=2") return modelModule;
   throw new Error(`unexpected import: ${{specifier}}`);
 }});
 await module.evaluate();
@@ -777,6 +1033,452 @@ assert.deepEqual(
             "node",
             "--no-warnings",
             "--experimental-vm-modules",
+            "--input-type=module",
+            "-e",
+            script,
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_jpeg_camera_sender_is_worker_driven_bounded_and_generation_safe() -> None:
+    script = f"""
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+
+const source = fs.readFileSync({json.dumps(str(VIDEO_ENGINE))}, "utf8");
+const modelSource = fs.readFileSync({json.dumps(str(VIDEO_MODEL))}, "utf8");
+const context = vm.createContext({{
+  EventTarget,
+  performance,
+  console,
+  Blob,
+  URL,
+  setTimeout,
+  clearTimeout,
+  CustomEvent: class CustomEvent extends Event {{
+    constructor(type, init) {{ super(type); this.detail = init?.detail; }}
+  }},
+  WebSocket: {{ OPEN: 1, CONNECTING: 0 }},
+  EncodedVideoChunk: class EncodedVideoChunk {{ constructor(init) {{ Object.assign(this, init); }} }},
+}});
+const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
+const module = new vm.SourceTextModule(source, {{ context }});
+await module.link((specifier) => {{
+  if (specifier === "./voip-stack-video-model.js?v=2") return modelModule;
+  throw new Error(`unexpected import: ${{specifier}}`);
+}});
+await module.evaluate();
+const Video = module.namespace.VoipStackVideo;
+
+class ControlledReader {{
+  constructor() {{
+    this.waiters = [];
+    this.cancelled = false;
+  }}
+  read() {{
+    if (this.cancelled) return Promise.resolve({{ done: true }});
+    return new Promise((resolve) => this.waiters.push(resolve));
+  }}
+  push(frame) {{
+    const resolve = this.waiters.shift();
+    assert.ok(resolve, "camera reader must be awaiting the next event-driven frame");
+    resolve({{ value: frame, done: false }});
+  }}
+  cancel() {{
+    this.cancelled = true;
+    for (const resolve of this.waiters.splice(0)) resolve({{ done: true }});
+    return Promise.resolve();
+  }}
+}}
+const reader = new ControlledReader();
+const track = {{
+  stopped: false,
+  getSettings() {{ return {{ width: 640, height: 360, frameRate: 15 }}; }},
+  stop() {{ this.stopped = true; }},
+}};
+context.navigator = {{
+  mediaDevices: {{
+    async getUserMedia() {{
+      return {{
+        getVideoTracks: () => [track],
+        getTracks: () => [track],
+      }};
+    }},
+  }},
+}};
+context.MediaStreamTrackProcessor = class {{
+  constructor(init) {{
+    assert.equal(init.track, track);
+    this.readable = {{ getReader: () => reader }};
+  }}
+}};
+
+const workers = [];
+class JpegWorker {{
+  constructor(url, options) {{
+    this.url = url;
+    this.options = options;
+    this.messages = [];
+    this.terminated = false;
+    workers.push(this);
+  }}
+  postMessage(message, transfer = []) {{
+    this.messages.push([message, transfer]);
+    if (message.type === "configure_jpeg_encoder") {{
+      queueMicrotask(() => this.onmessage({{
+        data: {{ type: "reply", requestId: message.requestId, ok: true }},
+      }}));
+    }}
+  }}
+  terminate() {{ this.terminated = true; }}
+}}
+context.Worker = JpegWorker;
+
+const sender = new Video();
+sender._codecWorkerUrl = () => "/voip-stack-video-worker.js";
+sender._generation = 3;
+sender._senderGeneration = 4;
+sender._cameraAllowed = true;
+sender._cameraEnabled = true;
+sender._negotiated = {{
+  can_send: true,
+  can_receive: false,
+  send: {{
+    codec: "jpeg",
+    encoding: "JPEG",
+    clock_rate: 90000,
+    payload_type: 26,
+  }},
+}};
+const wire = [];
+sender._ws = {{
+  readyState: 1,
+  bufferedAmount: 0,
+  send(value) {{ wire.push(value); }},
+}};
+await sender._setupEncoder("jpeg", 3, 4);
+assert.equal(workers.length, 1);
+assert.equal(sender._encoder.kind, "jpeg");
+assert.equal(sender._encoder.state, "configured");
+assert.equal(workers[0].options.type, "module");
+assert.equal(workers[0].messages[0][0].type, "configure_jpeg_encoder");
+assert.equal(typeof context.VideoEncoder, "undefined");
+
+const frame = (name, timestamp) => ({{
+  name,
+  timestamp,
+  closed: 0,
+  close() {{ this.closed++; }},
+}});
+const first = frame("first", 1000000);
+const middle = frame("middle", 1100000);
+const latest = frame("latest", 1200000);
+reader.push(first);
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(workers[0].messages.at(-1)[0].type, "encode_jpeg");
+assert.equal(workers[0].messages.at(-1)[0].frame, first);
+assert.equal(workers[0].messages.at(-1)[1].length, 1);
+assert.equal(workers[0].messages.at(-1)[1][0], first);
+
+reader.push(middle);
+await new Promise((resolve) => setImmediate(resolve));
+reader.push(latest);
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(middle.closed, 1);
+assert.equal(sender._jpegQueuedFrame, latest);
+assert.equal(
+  workers[0].messages.filter(([message]) => message.type === "encode_jpeg").length,
+  1,
+);
+
+first.close();
+workers[0].onmessage({{
+  data: {{
+    type: "jpeg_frame",
+    generation: 3,
+    senderGeneration: 4,
+    timestamp: first.timestamp,
+    buffer: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer,
+  }},
+}});
+assert.equal(
+  workers[0].messages.filter(([message]) => message.type === "encode_jpeg").length,
+  2,
+);
+assert.equal(workers[0].messages.at(-1)[0].frame, latest);
+assert.equal(wire.length, 2); // tx_epoch control followed by one binary AU.
+const sent = wire.at(-1);
+assert.equal(sent[0], 1);
+assert.equal(sent[1], 1);
+assert.equal(new DataView(sent.buffer).getUint32(2, false), 90000);
+assert.deepEqual([...sent.slice(6)], [0xff, 0xd8, 0xff, 0xd9]);
+
+const cleanup = sender._cleanupSender();
+assert.equal(sender._encoder, null);
+assert.equal(sender._jpegEncoderWorker, null);
+assert.equal(workers[0].terminated, true);
+assert.equal(track.stopped, true);
+await cleanup;
+const sentBeforeStaleCallback = wire.length;
+workers[0].onmessage({{
+  data: {{
+    type: "jpeg_frame",
+    generation: 3,
+    senderGeneration: 4,
+    timestamp: latest.timestamp,
+    buffer: new Uint8Array([1]).buffer,
+  }},
+}});
+assert.equal(wire.length, sentBeforeStaleCallback);
+"""
+    completed = subprocess.run(
+        [
+            "node",
+            "--no-warnings",
+            "--experimental-vm-modules",
+            "--input-type=module",
+            "-e",
+            script,
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_jpeg_worker_uses_offscreen_canvas_and_transfers_complete_frame() -> None:
+    script = f"""
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+
+const source = fs.readFileSync({json.dumps(str(VIDEO_WORKER))}, "utf8");
+const posted = [];
+let closed = false;
+let drawCount = 0;
+let encodedOptions;
+class TestOffscreenCanvas {{
+  constructor(width, height) {{
+    this.width = width;
+    this.height = height;
+  }}
+  getContext(kind, options) {{
+    assert.equal(kind, "2d");
+    assert.equal(options.alpha, false);
+    return {{
+      drawImage(frame, x, y, width, height) {{
+        assert.equal(frame.name, "camera-frame");
+        assert.deepEqual([x, y, width, height], [0, 0, 320, 240]);
+        drawCount++;
+      }},
+    }};
+  }}
+  async convertToBlob(options) {{
+    encodedOptions = options;
+    return new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], {{
+      type: "image/jpeg",
+    }});
+  }}
+}}
+const self = {{
+  postMessage(message, transfer = []) {{ posted.push([message, transfer]); }},
+  close() {{ closed = true; }},
+}};
+const context = vm.createContext({{
+  self,
+  Blob,
+  Uint8Array,
+  ArrayBuffer,
+  Number,
+  Math,
+  String,
+  Error,
+  OffscreenCanvas: TestOffscreenCanvas,
+}});
+vm.runInContext(source, context);
+await self.onmessage({{ data: {{
+  type: "configure_jpeg_encoder",
+  requestId: 7,
+  generation: 9,
+  width: 640,
+  height: 360,
+  quality: 0.72,
+}} }});
+assert.deepEqual(
+  [posted[0][0].type, posted[0][0].requestId, posted[0][0].ok],
+  ["reply", 7, true],
+);
+
+const frame = {{
+  name: "camera-frame",
+  timestamp: 123,
+  displayWidth: 320,
+  displayHeight: 240,
+  closed: 0,
+  close() {{ this.closed++; }},
+}};
+await self.onmessage({{ data: {{
+  type: "encode_jpeg",
+  generation: 9,
+  senderGeneration: 11,
+  timestamp: 123,
+  frame,
+}} }});
+assert.equal(drawCount, 1);
+assert.equal(frame.closed, 1);
+assert.equal(encodedOptions.type, "image/jpeg");
+assert.equal(encodedOptions.quality, 0.72);
+const encoded = posted.at(-1);
+assert.equal(encoded[0].type, "jpeg_frame");
+assert.equal(encoded[0].generation, 9);
+assert.equal(encoded[0].senderGeneration, 11);
+assert.equal(encoded[0].timestamp, 123);
+assert.deepEqual([...new Uint8Array(encoded[0].buffer)], [0xff, 0xd8, 0xff, 0xd9]);
+assert.equal(encoded[1].length, 1);
+assert.equal(encoded[1][0], encoded[0].buffer);
+
+await self.onmessage({{ data: {{ type: "close" }} }});
+assert.equal(closed, true);
+"""
+    completed = subprocess.run(
+        [
+            "node",
+            "--no-warnings",
+            "--input-type=module",
+            "-e",
+            script,
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_jpeg_worker_rejects_oversized_frame_before_browser_decode() -> None:
+    script = f"""
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+
+const source = fs.readFileSync({json.dumps(str(VIDEO_WORKER))}, "utf8");
+const posted = [];
+let decodeCalls = 0;
+let now = 0;
+let nextTimerId = 0;
+const timers = new Map();
+const self = {{
+  postMessage(message, transfer = []) {{ posted.push([message, transfer]); }},
+  close() {{}},
+}};
+const context = vm.createContext({{
+  self,
+  Blob,
+  Uint8Array,
+  ArrayBuffer,
+  Number,
+  Math,
+  String,
+  Error,
+  Set,
+  Date,
+  performance: {{ now: () => now }},
+  setTimeout(callback, delay) {{
+    const id = ++nextTimerId;
+    timers.set(id, {{ callback, delay }});
+    return id;
+  }},
+  clearTimeout(id) {{ timers.delete(id); }},
+  async createImageBitmap() {{
+    decodeCalls++;
+    return {{ width: 640, height: 480, close() {{}} }};
+  }},
+}});
+vm.runInContext(source, context);
+await self.onmessage({{ data: {{
+  type: "configure_jpeg_decoder",
+  requestId: 1,
+  generation: 4,
+}} }});
+
+function jpegHeader(width, height) {{
+  return new Uint8Array([
+    0xff, 0xd8,
+    0xff, 0xc0, 0x00, 0x08, 0x08,
+    (height >> 8) & 0xff, height & 0xff,
+    (width >> 8) & 0xff, width & 0xff,
+    0x01,
+    0xff, 0xd9,
+  ]);
+}}
+
+const oversized = jpegHeader(1920, 1080);
+await self.onmessage({{ data: {{
+  type: "decode_jpeg",
+  generation: 4,
+  timestamp: 10,
+  buffer: oversized.buffer,
+  length: oversized.byteLength,
+}} }});
+assert.equal(decodeCalls, 0);
+assert.equal(posted.at(-1)[0].type, "jpeg_decoder_error");
+assert.equal(posted.at(-1)[0].error_count, 1);
+assert.match(posted.at(-1)[0].error, /rendering budget/);
+
+now = 1;
+await self.onmessage({{ data: {{
+  type: "decode_jpeg",
+  generation: 4,
+  timestamp: 10,
+  buffer: oversized.buffer,
+  length: oversized.byteLength,
+}} }});
+assert.equal(
+  posted.filter(([message]) => message.type === "jpeg_decoder_error").length,
+  1,
+);
+assert.equal(timers.size, 1);
+now = 251;
+const scheduled = [...timers.values()][0];
+timers.clear();
+scheduled.callback();
+const errorReports = posted.filter(
+  ([message]) => message.type === "jpeg_decoder_error",
+);
+assert.equal(errorReports.length, 2);
+assert.equal(errorReports.at(-1)[0].error_count, 2);
+
+const valid = jpegHeader(640, 480);
+await self.onmessage({{ data: {{
+  type: "decode_jpeg",
+  generation: 4,
+  timestamp: 11,
+  buffer: valid.buffer,
+  length: valid.byteLength,
+}} }});
+assert.equal(decodeCalls, 1);
+assert.equal(posted.at(-1)[0].type, "jpeg_bitmap");
+assert.equal(posted.at(-1)[0].timestamp, 11);
+"""
+    completed = subprocess.run(
+        [
+            "node",
+            "--no-warnings",
             "--input-type=module",
             "-e",
             script,

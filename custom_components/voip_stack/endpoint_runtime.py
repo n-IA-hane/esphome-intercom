@@ -674,10 +674,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 invite is not None
                 and invite.video_format is not None
                 and bool(cfg.get(CONF_SIP_VIDEO, False))
-                and (
-                    target_endpoint is None
-                    or target_endpoint.supports("video")
-                )
             ):
                 video_reservation = None
                 sockets = ()

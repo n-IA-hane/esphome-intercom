@@ -47,7 +47,7 @@ source = source
       audioModeLabel, formatCallDuration, formatEndReason,
       formatKnownReason, formatListFromMetadata, formatVideoFailureReason,
       normaliseAudioMode, normaliseTransport, reasonKey,
-      targetFromRosterEntry, targetSupportsVideo,
+      targetFromRosterEntry, terminalPeerLabel,
     }} = globalThis.__cardModel;`,
   )
   .replace("class VoipStackCard extends HTMLElement", "export class VoipStackCard extends HTMLElement");
@@ -63,6 +63,7 @@ const engine = {{
   softphoneCallId: "",
   ownedSoftphoneCalls: new Map(),
   mediaIntent: null,
+  mediaCleanupPending: false,
   videoVisible: false,
   videoCameraEnabled: false,
   addEventListener() {{}},
@@ -120,6 +121,11 @@ const engine = {{
     this.active = false;
     this.callId = "";
   }},
+  suspendVideoForHangup(callId, endpointId = "default") {{
+    engineEvents.push(["video-suspend", callId, endpointId]);
+    this.videoVisible = false;
+    return Promise.resolve();
+  }},
   async reconcileSession() {{}},
   async resumeSession() {{ return true; }},
   async prepareVideoCameraPermission() {{ cameraPermissionChecks++; return false; }},
@@ -147,6 +153,10 @@ class FakeElement {{
     this.attributes = new Map();
   }}
   setAttribute(name, value) {{ this.attributes.set(name, String(value)); }}
+  replaceChildren(...children) {{
+    this.children = children;
+    for (const child of children) child.parentNode = this;
+  }}
   addEventListener() {{}}
   focus() {{}}
 }}
@@ -236,7 +246,7 @@ function elements() {{
     "prevBtn", "ringtoneCheckbox", "ringtoneRow", "runtimeControls",
     "settingsBtn", "settingsPanel", "softphoneGroupsPanel", "stats",
     "statusIndicator", "statusReason", "statusText", "videoCameraCheckbox",
-    "videoCameraRow", "videoCanvas", "videoShade",
+    "videoCameraRow", "videoCanvas", "nativeCameraHost", "videoShade",
   ];
   const result = Object.fromEntries(names.map((name) => [name, new FakeElement()]));
   result.keypadKeys = {{ one: new FakeElement() }};
@@ -276,6 +286,68 @@ const base = {{
   callee: "Home HA",
   peer_name: "Home HA",
 }};
+
+// Native ESPHome camera preview is a presentation fallback for an audio-only
+// ESP endpoint. A compile-time SIP video codec must always keep the true SIP
+// canvas path authoritative even when the same device also owns a camera entity.
+const nativePreview = makeCard();
+nativePreview._hass.states["camera.p4"] = {{ state: "idle" }};
+nativePreview._availableDevices = [{{
+  device_id: "device-p4",
+  name: "P4",
+  capabilities: ["audio", "dtmf", "camera_preview"],
+  camera_entity_id: "camera.p4",
+  sip_video_codec: "",
+}}];
+nativePreview._softphoneSnapshot = {{
+  state: "in_call",
+  target_device_id: "device-p4",
+  peer_name: "P4",
+}};
+assert.equal(nativePreview._activeNativeCameraEntityId("in_call"), "camera.p4");
+nativePreview._availableDevices[0].sip_video_codec = "jpeg";
+nativePreview._availableDevices[0].capabilities.push("video");
+assert.equal(nativePreview._activeNativeCameraEntityId("in_call"), "");
+nativePreview._availableDevices[0].sip_video_codec = "";
+nativePreview._availableDevices[0].capabilities = ["audio", "dtmf", "camera_preview"];
+assert.equal(nativePreview._activeNativeCameraEntityId("ringing"), "");
+nativePreview._hass.states["camera.p4"].state = "unavailable";
+assert.equal(nativePreview._activeNativeCameraEntityId("in_call"), "camera.p4");
+nativePreview._softphoneSnapshot = {{
+  state: "in_call",
+  target_device_id: "",
+  peer_name: "Waveshare_P4_Touch",
+}};
+nativePreview._availableDevices[0].name = "Waveshare P4 Touch";
+assert.equal(nativePreview._activeNativeCameraEntityId("in_call"), "camera.p4");
+
+// Engine cleanup emits before HA's terminal snapshot necessarily arrives.
+// A card already dispatching Hangup must not reconnect the same audio socket
+// from the briefly stale in-call snapshot.
+const stoppingCard = makeCard();
+stoppingCard._softphoneSnapshot = {{
+  endpoint_id: "default",
+  device_id: "__voip_stack_ha_softphone__",
+  session_device_id: "__voip_stack_ha_softphone__",
+  state: "in_call",
+  call_id: "stopping-call",
+}};
+engine.claimSoftphoneSession("stopping-call", "default");
+let stoppingAttachAttempts = 0;
+const savedResumeSession = engine.resumeSession;
+engine.resumeSession = async () => {{ stoppingAttachAttempts++; return true; }};
+stoppingCard._stopping = true;
+stoppingCard._ensureHaSoftphoneAudioPath(stoppingCard._softphoneSnapshot);
+await Promise.resolve();
+assert.equal(stoppingAttachAttempts, 0);
+stoppingCard._stopping = false;
+engine.mediaCleanupPending = true;
+stoppingCard._ensureHaSoftphoneAudioPath(stoppingCard._softphoneSnapshot);
+await Promise.resolve();
+assert.equal(stoppingAttachAttempts, 0);
+engine.mediaCleanupPending = false;
+engine.resumeSession = savedResumeSession;
+engine.releaseSoftphoneSession("stopping-call", "default");
 
 // Enabling Auto Answer on a HA browser phone must prove microphone access for
 // the local phone, regardless of the remote destination selected in the
@@ -810,6 +882,53 @@ incoming._render();
 assert.equal(incoming._els.statusText.textContent, "Call with Door ended.");
 assert.match(incoming._els.statusReason.textContent, /Local hangup/);
 
+// A dialed extension or local logical-phone name identifies routing, not the
+// remote participant shown after teardown.
+const outgoingEnded = makeCard();
+outgoingEnded._applySoftphoneSnapshot({{
+  state: "idle", direction: "outgoing", call_id: "outgoing-ended",
+  caller: "Casa", callee: "Waveshare S3 Audio",
+  peer_name: "Waveshare S3 Audio", dialed_target: "1000",
+  terminal_reason: "remote_hangup", sequence: 1,
+}});
+outgoingEnded._render();
+assert.equal(
+  outgoingEnded._els.statusText.textContent,
+  "Call with Waveshare S3 Audio ended.",
+);
+
+const incomingEnded = makeCard();
+incomingEnded._applySoftphoneSnapshot({{
+  state: "idle", direction: "incoming", call_id: "incoming-ended",
+  caller: "Waveshare S3 Audio", callee: "Test", dialed_target: "Test",
+  terminal_reason: "local_hangup", sequence: 1,
+}});
+incomingEnded._render();
+assert.equal(
+  incomingEnded._els.statusText.textContent,
+  "Call with Waveshare S3 Audio ended.",
+);
+
+// The authoritative endpoint-wide idle snapshot normally has no call_id.
+// It must still release and close the browser media session that owned the
+// just-ended call; an empty call_id is not a stale terminal for another call.
+engine.active = true;
+engine.endpointId = "default";
+engine.callId = "remote-ended";
+engine.claimSoftphoneSession("remote-ended", "default");
+const remoteEnded = makeCard();
+remoteEnded._applySoftphoneSnapshot({{
+  endpoint_id: "default",
+  state: "idle",
+  call_id: "",
+  terminal_reason: "remote_hangup",
+  sequence: 5,
+}});
+await Promise.resolve();
+assert.equal(engine.ownsSoftphoneSession("remote-ended", "default"), false);
+assert.equal(engine.active, false);
+assert.deepEqual(engineEvents.at(-1), ["close", "terminal", "remote-ended"]);
+
 // Media-engine failures are visible in the owning card instead of being
 // console-only diagnostics.
 const engineErrorCard = makeCard();
@@ -891,15 +1010,15 @@ const esp = model.targetFromRosterEntry({{
     capabilities: "audio;dtmf",
     sip_transport: "udp",
     audio_mode: "speaker_only",
+    camera_entity_id: "camera.kitchen_esp",
+    sip_video_codec: "",
   }},
 }});
 assert.equal(esp.route_id, "ws3");
 assert.equal(esp.endpoint_kind, "esphome");
 assert.deepEqual(esp.capabilities, ["audio", "dtmf"]);
-assert.equal(model.targetSupportsVideo(esp), false);
-assert.equal(model.targetSupportsVideo({{ endpoint_kind: "sip_account" }}), true);
-assert.equal(model.targetSupportsVideo({{ capabilities: ["audio", "VIDEO"] }}), true);
-assert.equal(model.targetSupportsVideo({{ capabilities: ["audio"] }}), false);
+assert.equal(esp.camera_entity_id, "camera.kitchen_esp");
+assert.equal(esp.sip_video_codec, "");
 
 assert.equal(model.normaliseTransport("sip_tcp"), "TCP");
 assert.equal(model.normaliseTransport(" UDP "), "UDP");

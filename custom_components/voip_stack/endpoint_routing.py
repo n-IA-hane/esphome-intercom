@@ -270,6 +270,12 @@ def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries
                     "endpoint_kind": peer.endpoint_kind,
                     "device_id": peer.device_id or "",
                     "capabilities": list(peer.capabilities),
+                    "camera_entity_id": str(
+                        (peer.device or {}).get("camera_entity_id") or ""
+                    ),
+                    "sip_video_codec": str(
+                        (peer.device or {}).get("sip_video_codec") or ""
+                    ),
                     "sip_transport": (
                         str((peer.device or {}).get("sip_transport") or "tcp").lower()
                         if peer.is_ha or peer.device is not None
@@ -307,34 +313,6 @@ def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries
                 }
             )
         entries.append(replace(registered, metadata=metadata))
-    if endpoint_registry is not None:
-        from .phone_endpoint import EndpointAvailability, EndpointKind
-
-        for endpoint in endpoint_registry.endpoints:
-            if (
-                endpoint.kind is not EndpointKind.SIP_ACCOUNT
-                or endpoint.endpoint_id in registered_endpoint_ids
-                or endpoint.availability is EndpointAvailability.UNAVAILABLE
-            ):
-                continue
-            entries.append(
-                RosterEntry(
-                    id=endpoint.username or endpoint.endpoint_id,
-                    name=endpoint.name,
-                    extension=endpoint.extension,
-                    enabled=True,
-                    metadata={
-                        "endpoint_id": endpoint.endpoint_id,
-                        "endpoint_kind": endpoint.kind.value,
-                        "device_id": endpoint.device_id,
-                        "capabilities": sorted(endpoint.capabilities),
-                        "registered": False,
-                        "conference_group": endpoint.conference_group,
-                        "conference_ring": endpoint.conference_ring,
-                        "ring_group": endpoint.ring_group,
-                    },
-                )
-            )
     assist = hass.data.get(DOMAIN, {}).get("assist_config", {})
     if assist.get(CONF_ASSIST_ENDPOINT_ENABLED) and assist.get(CONF_ASSIST_EXTENSION):
         extension = assist[CONF_ASSIST_EXTENSION]

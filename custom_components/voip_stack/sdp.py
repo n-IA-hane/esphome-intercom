@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from fractions import Fraction
 
@@ -195,6 +196,10 @@ class RtpVideoFormat:
     transport_profile: str = "RTP/AVP"
     fmtp: str = ""
     rtcp_feedback: tuple[str, ...] = ()
+    # RFC 8866 section 6.13 media-level maximum frame-rate recommendation.
+    # Keep it in the directional media contract so a browser sender cannot
+    # silently exceed the receive envelope selected by a SIP endpoint.
+    max_framerate: float | None = None
 
     def wire_token(self) -> str:
         token = f"pt={self.payload_type}:{self.encoding}/{self.clock_rate}"
@@ -205,6 +210,8 @@ class RtpVideoFormat:
             )
         elif self.fmtp:
             token += f";fmtp={self.fmtp}"
+        if self.max_framerate is not None:
+            token += f";framerate={self.max_framerate:g}"
         return (
             f"{token};rtp-profile={self.transport_profile};direction={self.direction}"
         )
@@ -315,8 +322,13 @@ RtpH264Format = RtpVideoFormat
 
 
 DEFAULT_H264_FORMAT = RtpH264Format()
+CONSTRAINED_BASELINE_H264_FORMAT = RtpH264Format(
+    payload_type=105,
+    profile_level_id="42c01f",
+)
 DEFAULT_VIDEO_FORMATS = (
     DEFAULT_H264_FORMAT,
+    CONSTRAINED_BASELINE_H264_FORMAT,
     RtpVideoFormat(
         payload_type=104,
         encoding="VP8",
@@ -332,7 +344,7 @@ def browser_video_send_supported(video_format: RtpVideoFormat | None) -> bool:
 
     if video_format is None:
         return False
-    return video_format.encoding == "VP8" or (
+    return video_format.encoding in {"VP8", "JPEG"} or (
         video_format.encoding == "H264" and video_format.packetization_mode == 1
     )
 
@@ -1544,6 +1556,7 @@ def _parse_media_sections(sdp_body: str | bytes) -> tuple[str, str, list[dict]]:
                 "rtcp_address_supported": True,
                 "rtcp_mux": False,
                 "rtcp_mux_only": False,
+                "framerate": None,
                 "direction": session_direction,
             }
             sections.append(current)
@@ -1605,6 +1618,11 @@ def _parse_media_sections(sdp_body: str | bytes) -> tuple[str, str, list[dict]]:
                 current["rtcp_mux"] = True
             elif line == "a=rtcp-mux-only":
                 current["rtcp_mux_only"] = True
+            elif line.startswith("a=framerate:"):
+                framerate = float(line.removeprefix("a=framerate:").strip())
+                if not math.isfinite(framerate) or framerate <= 0:
+                    raise SdpError(f"bad SDP video framerate: {line}")
+                current["framerate"] = framerate
         except ValueError as err:
             raise SdpError(f"bad SDP media attribute: {line}") from err
     for section in sections:
@@ -1870,6 +1888,7 @@ def parse_video_sdp(sdp_body: str | bytes) -> dict | None:
             "rtcp_address": str(section["rtcp_address"] or ""),
             "rtcp_mux": bool(section["rtcp_mux"]),
             "rtcp_mux_only": bool(section["rtcp_mux_only"]),
+            "framerate": section["framerate"],
             "direction": section["direction"],
             "connection_held": bool(section["connection_held"]),
         }
@@ -1981,6 +2000,7 @@ def offered_video_formats(sdp_body: str | bytes) -> list[RtpVideoFormat]:
                 rtcp_feedback=(
                     feedback if str(parsed["transport_profile"]) == "RTP/AVPF" else ()
                 ),
+                max_framerate=parsed["framerate"],
             )
         )
     return out
@@ -2442,6 +2462,8 @@ def _video_media_lines(
     if selected.transport_profile == "RTP/AVPF":
         for feedback in selected.rtcp_feedback:
             lines.append(f"a=rtcp-fb:{payload_type} {feedback}")
+    if selected.max_framerate is not None:
+        lines.append(f"a=framerate:{selected.max_framerate:g}")
     lines.append(f"a=rtcp:{int(media_port) + 1}")
     lines.append(f"a={direction}")
     return lines
@@ -2479,6 +2501,13 @@ def _video_media_lines_many(
             )
             for value in feedback:
                 lines.append(f"a=rtcp-fb:{payload_type} {value}")
+    frame_limits = [
+        item.max_framerate
+        for item in formats
+        if item.max_framerate is not None
+    ]
+    if frame_limits:
+        lines.append(f"a=framerate:{min(frame_limits):g}")
     lines.append(f"a=rtcp:{int(media_port) + 1}")
     lines.append(f"a={direction}")
     return lines

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import secrets
 import struct
 from typing import Protocol
 
@@ -39,6 +40,23 @@ class RtpPacket:
     ssrc: int
     payload: bytes
     marker: bool = False
+
+
+@dataclass(slots=True)
+class AudioRtpSenderState:
+    """RTP audio source identity owned by one SIP call, not one WebSocket."""
+
+    sequence: int
+    timestamp: int
+    ssrc: int
+
+    @classmethod
+    def create(cls, *, ssrc: int = 0) -> "AudioRtpSenderState":
+        return cls(
+            sequence=secrets.randbelow(0x10000),
+            timestamp=secrets.randbelow(0x100000000),
+            ssrc=int(ssrc) & 0xFFFFFFFF or secrets.randbelow(0xFFFFFFFF) + 1,
+        )
 
 
 def audio_payload_size_limit(fmt: _AudioRtpFormat) -> int:

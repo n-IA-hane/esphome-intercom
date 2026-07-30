@@ -56,6 +56,16 @@ def _parse_bool(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _sip_video_codec(extras: list[str]) -> str:
+    """Return the compile-time SIP video codec advertised by an ESP endpoint."""
+    for token in extras:
+        key, separator, value = token.partition("=")
+        if separator and key.strip().casefold() == "video":
+            codec = value.strip().casefold()
+            return codec if codec in {"jpeg", "h264"} else ""
+    return ""
+
+
 def parse_voip_endpoint(value: str | None) -> dict | None:
     """Parse the project endpoint standard published by ESP voip_stack.
 
@@ -111,6 +121,7 @@ def parse_voip_endpoint(value: str | None) -> dict | None:
     if transport_token not in ("sip_tcp", "sip_udp"):
         return None
     sip_transport = "tcp" if transport_token == "sip_tcp" else "udp"
+    extras = parts[9:] if len(parts) > 9 else []
     return {
         "name": name,
         "sip_transport": sip_transport,
@@ -121,7 +132,8 @@ def parse_voip_endpoint(value: str | None) -> dict | None:
         "tx_formats": tx_formats,
         "rx_formats": rx_formats,
         "extension": parts[8] if len(parts) >= 9 else "",
-        "extras": parts[9:] if len(parts) > 9 else [],
+        "extras": extras,
+        "sip_video_codec": _sip_video_codec(extras),
     }
 
 
@@ -209,6 +221,12 @@ class VoipDeviceResolver:
             ring_group = self._state_value(entities.get("voip_ring_groups"))
             conference_group = self._state_value(entities.get("voip_conference_groups"))
             extension = self._state_value(entities.get("voip_extension")) or endpoint.get("extension") or ""
+            camera_entity_id = entities.get("camera", "")
+            capabilities = {"audio", "dtmf"}
+            if endpoint.get("sip_video_codec"):
+                capabilities.add("video")
+            if camera_entity_id:
+                capabilities.add("camera_preview")
 
             out.append({
                 "device_id": device_id,
@@ -225,6 +243,9 @@ class VoipDeviceResolver:
                 "audio_mode": endpoint["audio_mode"],
                 "tx_formats": _format_tokens(endpoint["tx_formats"]),
                 "rx_formats": _format_tokens(endpoint["rx_formats"]),
+                "sip_video_codec": endpoint.get("sip_video_codec") or "",
+                "camera_entity_id": camera_entity_id,
+                "capabilities": sorted(capabilities),
                 "esphome_id": esphome_id,
                 "entities": entities,
             })
@@ -277,7 +298,9 @@ class VoipDeviceResolver:
         out: dict[str, str] = {}
         for entity in entities:
             eid = entity.entity_id
-            if "voip_state" in eid and "voip_state" not in out:
+            if eid.startswith("camera.") and "camera" not in out:
+                out["camera"] = eid
+            elif "voip_state" in eid and "voip_state" not in out:
                 out["voip_state"] = eid
             elif "voip_endpoint" in eid and "voip_endpoint" not in out:
                 out["voip_endpoint"] = eid

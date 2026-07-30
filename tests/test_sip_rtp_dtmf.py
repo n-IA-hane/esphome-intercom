@@ -40,6 +40,17 @@ rtp = _load("rtp")
 sip_rtp_bridge = _load("sip_rtp_bridge")
 
 
+class AudioRtpSenderStateTest(unittest.TestCase):
+    def test_source_identity_and_clock_are_mutable_across_handoffs(self) -> None:
+        source = rtp.AudioRtpSenderState.create(ssrc=0x12345678)
+        source.sequence = rtp.next_sequence(0xFFFF)
+        source.timestamp = rtp.next_timestamp(0xFFFFFF00, 256)
+
+        self.assertEqual(source.ssrc, 0x12345678)
+        self.assertEqual(source.sequence, 0)
+        self.assertEqual(source.timestamp, 0)
+
+
 class _Transport:
     def __init__(self) -> None:
         self.sent: list[tuple[bytes, tuple[str, int]]] = []

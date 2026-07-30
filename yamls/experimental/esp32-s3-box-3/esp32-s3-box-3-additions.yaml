@@ -1,0 +1,88 @@
+# =============================================================================
+# Box-3 additions - NOT part of esphome-intercom's core audio/VoIP path
+# =============================================================================
+# Tested by contributor; untested by maintainer.
+# Contributor: mwhdc
+# Source: https://github.com/n-IA-hane/esphome-intercom/issues/80
+#
+# Two independent, optional groups relative to the core profile
+# (esp32-s3-box-3-full-aec.yaml). Kept in one separate file, included via a
+# single `packages:` line, so dropping either (or both) means deleting
+# entries here rather than hunting through the core profile.
+#
+# Requires (defined in the parent yaml):
+#   i2c bus id `internal_i2c` - shared with the ES7210/ES8311 codec, GPIO8/18
+#     (the stock esp32-s3-box-3.yaml reference calls this bus `i2c_adc_dac`
+#     instead; renamed here to match this profile's naming)
+#   i2c bus id `external_i2c` - GPIO41 sda / GPIO40 scl, only needed for the
+#     ESP32-S3-BOX-3-SENSOR dock group below
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Display + touch - integral Box-3 hardware (every unit has this)
+# -----------------------------------------------------------------------------
+# Hardware wiring only, no pages/UI yet (that's the follow-up "icing on the
+# cake" step). update_interval: never means nothing renders until a page is
+# added and explicitly shown/updated. Home Button is a fixed capacitive zone
+# on the same GT911 touch controller, not a separate part.
+
+spi:
+  - id: spi_bus
+    clk_pin: 7
+    mosi_pin: 6
+
+display:
+  - platform: mipi_spi
+    id: s3_box_lcd
+    model: S3BOX
+    invert_colors: false
+    data_rate: 40MHz
+    cs_pin: 5
+    dc_pin: 4
+    reset_pin:
+      number: 48
+      inverted: true
+    update_interval: never
+
+touchscreen:
+  - id: gt911_touchscreen
+    platform: gt911
+    i2c_id: internal_i2c
+    address: 0x5D
+    interrupt_pin:
+      number: GPIO3
+      ignore_strapping_warning: true
+
+# -----------------------------------------------------------------------------
+# ESP32-S3-BOX-3-SENSOR dock - optional accessory, not present on every unit
+# -----------------------------------------------------------------------------
+# Presence/radar and AHT20 temp/humidity live on the separate sensor dock
+# that attaches via external_i2c (GPIO41/40) + GPIO21. Only keep the
+# radar_sensor entry below and the sensor: block further down if that dock is
+# physically attached.
+
+binary_sensor:
+  - id: home_button
+    platform: gt911
+    name: Home Button
+    index: 0
+  - id: radar_sensor
+    platform: gpio
+    pin: GPIO21
+    disabled_by_default: false
+    name: "Presence"
+    device_class: occupancy
+    filters:
+      - delayed_off: 120s
+
+sensor:
+  - platform: aht10
+    variant: AHT20
+    i2c_id: external_i2c
+    temperature:
+      name: "Temperature"
+      id: s3temp
+    humidity:
+      name: "Humidity"
+      id: s3hum
+    update_interval: 60s

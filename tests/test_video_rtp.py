@@ -400,6 +400,160 @@ class VideoTransportTest(unittest.TestCase):
         self.assertEqual(result.encoding, "JPEG")
         self.assertTrue(result.key_frame)
 
+    def test_rfc2435_jpeg_access_unit_budget_covers_complete_jfif(self) -> None:
+        scan = b"\x11\x22\x33\x44"
+        payload = b"\x00\x00\x00\x00\x00\x32\x28\x1e" + scan
+        jfif_header = video_rtp._jpeg_interchange_header(
+            jpeg_type=0,
+            width_blocks=40,
+            height_blocks=30,
+            quantizers=video_rtp._jpeg_quantizers(50),
+            dri=0,
+        )
+        exact_budget = len(jfif_header) + len(scan) + 2
+
+        depacketizer = video_rtp.JpegDepacketizer(
+            max_access_unit_bytes=exact_budget
+        )
+        result = depacketizer.push(
+            rtp.RtpPacket(26, 1, 9000, 7, payload, marker=True)
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(len(result.data), exact_budget)
+
+        depacketizer = video_rtp.JpegDepacketizer(
+            max_access_unit_bytes=exact_budget - 1
+        )
+        self.assertIsNone(
+            depacketizer.push(
+                rtp.RtpPacket(26, 1, 9000, 7, payload, marker=True)
+            )
+        )
+        self.assertEqual(depacketizer.dropped_access_units, 1)
+
+    def test_rfc2435_jpeg_rejects_invalid_access_unit_budgets(self) -> None:
+        for limit in (0, -1, video_rtp.MAX_ACCESS_UNIT_BYTES + 1):
+            with self.subTest(limit=limit), self.assertRaisesRegex(
+                ValueError, "access-unit byte limit"
+            ):
+                video_rtp.JpegDepacketizer(max_access_unit_bytes=limit)
+
+    def test_complete_jpeg_packetizer_round_trip(self) -> None:
+        quantizers = bytes((index * 13 + 1) & 0xFF or 1 for index in range(128))
+        scan = (b"\x11\x22\xff\x00\x33\x44" * 500) + b"\x55"
+        source = (
+            video_rtp._jpeg_interchange_header(
+                jpeg_type=1,
+                width_blocks=80,
+                height_blocks=45,
+                quantizers=quantizers,
+                dri=0,
+            )
+            + scan
+            + b"\xff\xd9"
+        )
+
+        packets = video_rtp.packetize_jpeg(
+            source,
+            payload_type=26,
+            sequence=65534,
+            timestamp=123456,
+            ssrc=0x12345678,
+            max_payload=300,
+        )
+
+        self.assertGreater(len(packets), 2)
+        self.assertEqual([item.sequence for item in packets[:3]], [65534, 65535, 0])
+        self.assertFalse(any(item.marker for item in packets[:-1]))
+        self.assertTrue(packets[-1].marker)
+        depacketizer = video_rtp.JpegDepacketizer()
+        result = None
+        for packet in packets:
+            result = depacketizer.push(packet) or result
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.data, source)
+        self.assertEqual(result.timestamp, 123456)
+
+    def test_complete_jpeg_packetizer_preserves_restart_interval(self) -> None:
+        quantizers = bytes(range(1, 129))
+        source = (
+            video_rtp._jpeg_interchange_header(
+                jpeg_type=0,
+                width_blocks=40,
+                height_blocks=30,
+                quantizers=quantizers,
+                dri=16,
+            )
+            + b"\x11\x22\x33\x44" * 400
+            + b"\xff\xd9"
+        )
+
+        packets = video_rtp.packetize_jpeg(
+            source,
+            payload_type=26,
+            sequence=1,
+            timestamp=9000,
+            ssrc=7,
+            max_payload=220,
+        )
+
+        self.assertTrue(all(packet.payload[4] == 0x40 for packet in packets))
+        self.assertTrue(all(packet.payload[8:12] == b"\x00\x10\xff\xff" for packet in packets))
+        depacketizer = video_rtp.JpegDepacketizer()
+        result = None
+        for packet in packets:
+            result = depacketizer.push(packet) or result
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.data, source)
+
+    def test_complete_jpeg_packetizer_rejects_nonstandard_huffman_tables(self) -> None:
+        source = bytearray(
+            video_rtp._jpeg_interchange_header(
+                jpeg_type=1,
+                width_blocks=80,
+                height_blocks=45,
+                quantizers=bytes(range(1, 129)),
+                dri=0,
+            )
+            + b"\x11\x22\x33"
+            + b"\xff\xd9"
+        )
+        dht = source.index(video_rtp._JPEG_STANDARD_DHT)
+        source[dht + len(video_rtp._JPEG_STANDARD_DHT) - 1] ^= 0x01
+
+        with self.assertRaisesRegex(ValueError, "standard JPEG Huffman"):
+            video_rtp.packetize_jpeg(
+                bytes(source),
+                payload_type=26,
+                sequence=1,
+                timestamp=9000,
+                ssrc=7,
+            )
+
+    def test_complete_jpeg_packetizer_requires_static_payload_type(self) -> None:
+        source = (
+            video_rtp._jpeg_interchange_header(
+                jpeg_type=1,
+                width_blocks=80,
+                height_blocks=45,
+                quantizers=bytes(range(1, 129)),
+                dri=0,
+            )
+            + b"\x11\x22\x33"
+            + b"\xff\xd9"
+        )
+        with self.assertRaisesRegex(ValueError, "static payload type 26"):
+            video_rtp.packetize_jpeg(
+                source,
+                payload_type=103,
+                sequence=1,
+                timestamp=9000,
+                ssrc=7,
+            )
+
     def test_rfc2435_jpeg_rejects_fragment_gap(self) -> None:
         depacketizer = video_rtp.JpegDepacketizer()
         first = b"\x00\x00\x00\x00\x00\x32\x28\x1eabc"
@@ -430,11 +584,179 @@ class VideoTransportTest(unittest.TestCase):
         )
         self.assertEqual(depacketizer.dropped_access_units, 1)
 
-    def test_rfc2435_jpeg_rejects_incomplete_dynamic_quantizers(self) -> None:
+    def test_rfc2435_jpeg_accepts_ffmpeg_single_dynamic_quantizer(self) -> None:
+        depacketizer = video_rtp.JpegDepacketizer()
+        quantizer = bytes(range(1, 65))
+        scan = b"\x11\x22\x33"
+        payload = (
+            b"\x00\x00\x00\x00\x01\xff\x28\x17"
+            b"\x00\x00\x00\x40" + quantizer + scan
+        )
+
+        result = depacketizer.push(
+            rtp.RtpPacket(26, 1, 9, 1, payload, marker=True)
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        parsed = video_rtp._parse_jpeg_for_rtp(result.data)
+        self.assertEqual(parsed.quantizers, quantizer + quantizer)
+        self.assertEqual(parsed.scan, scan)
+
+    def test_rfc2435_jpeg_static_quantizer_cache_is_immutable(self) -> None:
+        depacketizer = video_rtp.JpegDepacketizer()
+        quantizer = bytes(range(1, 65))
+        normalized = quantizer + quantizer
+        changed = bytes(reversed(range(1, 129)))
+
+        def payload(tables: bytes | None, scan: bytes) -> bytes:
+            table_data = tables or b""
+            return (
+                b"\x00\x00\x00\x00\x01\x80\x28\x17"
+                + b"\x00\x00"
+                + len(table_data).to_bytes(2, "big")
+                + table_data
+                + scan
+            )
+
+        first = depacketizer.push(
+            rtp.RtpPacket(
+                26,
+                1,
+                9,
+                1,
+                payload(quantizer, b"\x11"),
+                marker=True,
+            )
+        )
+        self.assertIsNotNone(first)
+        assert first is not None
+        self.assertEqual(
+            video_rtp._parse_jpeg_for_rtp(first.data).quantizers,
+            normalized,
+        )
+
+        equivalent = depacketizer.push(
+            rtp.RtpPacket(
+                26,
+                2,
+                10,
+                1,
+                payload(normalized, b"\x22"),
+                marker=True,
+            )
+        )
+        self.assertIsNotNone(equivalent)
+
+        self.assertIsNone(
+            depacketizer.push(
+                rtp.RtpPacket(
+                    26,
+                    3,
+                    11,
+                    1,
+                    payload(changed, b"\x33"),
+                    marker=True,
+                )
+            )
+        )
+        self.assertEqual(depacketizer.dropped_access_units, 1)
+
+        cached = depacketizer.push(
+            rtp.RtpPacket(
+                26,
+                4,
+                12,
+                1,
+                payload(None, b"\x44"),
+                marker=True,
+            )
+        )
+        self.assertIsNotNone(cached)
+        assert cached is not None
+        self.assertEqual(
+            video_rtp._parse_jpeg_for_rtp(cached.data).quantizers,
+            normalized,
+        )
+
+    def test_rfc2435_jpeg_quality_255_tables_remain_dynamic(self) -> None:
+        depacketizer = video_rtp.JpegDepacketizer()
+        first_quantizers = bytes(range(1, 129))
+        second_quantizers = bytes(reversed(range(1, 129)))
+
+        def payload(tables: bytes | None, scan: bytes) -> bytes:
+            table_data = tables or b""
+            return (
+                b"\x00\x00\x00\x00\x01\xff\x28\x17"
+                + b"\x00\x00"
+                + len(table_data).to_bytes(2, "big")
+                + table_data
+                + scan
+            )
+
+        for sequence, quantizers in enumerate(
+            (first_quantizers, second_quantizers),
+            start=1,
+        ):
+            result = depacketizer.push(
+                rtp.RtpPacket(
+                    26,
+                    sequence,
+                    sequence * 9,
+                    1,
+                    payload(quantizers, bytes((sequence,))),
+                    marker=True,
+                )
+            )
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(
+                video_rtp._parse_jpeg_for_rtp(result.data).quantizers,
+                quantizers,
+            )
+
+        self.assertIsNone(
+            depacketizer.push(
+                rtp.RtpPacket(
+                    26,
+                    3,
+                    27,
+                    1,
+                    payload(None, b"\x03"),
+                    marker=True,
+                )
+            )
+        )
+        self.assertEqual(depacketizer.dropped_access_units, 1)
+
+    def test_rfc2435_jpeg_rejects_nonzero_quantization_mbz(self) -> None:
+        depacketizer = video_rtp.JpegDepacketizer()
+        payload = (
+            b"\x00\x00\x00\x00\x01\xff\x28\x17"
+            b"\x01\x00\x00\x40" + bytes(range(1, 65)) + b"scan"
+        )
+
+        self.assertIsNone(
+            depacketizer.push(rtp.RtpPacket(26, 1, 9, 1, payload, marker=True))
+        )
+        self.assertEqual(depacketizer.dropped_access_units, 1)
+
+    def test_rfc2435_jpeg_rejects_zero_quantization_coefficient(self) -> None:
+        depacketizer = video_rtp.JpegDepacketizer()
+        payload = (
+            b"\x00\x00\x00\x00\x01\xff\x28\x17"
+            b"\x00\x00\x00\x40" + bytes(range(64)) + b"scan"
+        )
+
+        self.assertIsNone(
+            depacketizer.push(rtp.RtpPacket(26, 1, 9, 1, payload, marker=True))
+        )
+        self.assertEqual(depacketizer.dropped_access_units, 1)
+
+    def test_rfc2435_jpeg_rejects_invalid_dynamic_quantizer_length(self) -> None:
         depacketizer = video_rtp.JpegDepacketizer()
         payload = (
             b"\x00\x00\x00\x00\x00\x80\x28\x1e"
-            b"\x00\x00\x00\x40" + bytes(range(64)) + b"scan"
+            b"\x00\x00\x00\x60" + bytes(range(96)) + b"scan"
         )
 
         self.assertIsNone(
@@ -558,6 +880,11 @@ class VideoTransportTest(unittest.TestCase):
 class H264SdpTest(unittest.TestCase):
     AUDIO_FORMATS = [audio_format.AudioFormat(16000, "s16le", 1, 20)]
 
+    def test_browser_can_send_and_receive_standard_rtp_jpeg(self) -> None:
+        jpeg = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG")
+        self.assertTrue(sdp.browser_video_send_supported(jpeg))
+        self.assertTrue(sdp.browser_video_receive_supported(jpeg))
+
     def test_static_video_payload_type_cannot_be_remapped(self) -> None:
         invalid = (
             "v=0\r\nc=IN IP4 192.0.2.20\r\nt=0 0\r\n"
@@ -657,10 +984,18 @@ class H264SdpTest(unittest.TestCase):
             sdp.DEFAULT_H264_FORMAT.payload_type,
         )
 
-    def test_default_browser_video_envelope_matches_h264_and_vp8_sdp(self) -> None:
+    def test_default_browser_video_envelope_includes_p4_constrained_h264(self) -> None:
         self.assertEqual(sdp.DEFAULT_H264_FORMAT.profile_level_id, "42801f")
         self.assertEqual(
-            sdp.DEFAULT_VIDEO_FORMATS[1].fmtp,
+            sdp.CONSTRAINED_BASELINE_H264_FORMAT.payload_type,
+            105,
+        )
+        self.assertEqual(
+            sdp.CONSTRAINED_BASELINE_H264_FORMAT.profile_level_id,
+            "42c01f",
+        )
+        self.assertEqual(
+            sdp.DEFAULT_VIDEO_FORMATS[2].fmtp,
             "max-fr=20;max-fs=3600",
         )
         offer = sdp.build_offer_directional(
@@ -677,6 +1012,12 @@ class H264SdpTest(unittest.TestCase):
             "level-asymmetry-allowed=1",
             offer,
         )
+        self.assertIn(
+            "a=fmtp:105 profile-level-id=42c01f;packetization-mode=1;"
+            "level-asymmetry-allowed=1",
+            offer,
+        )
+        self.assertIn("m=video 40002 RTP/AVP 103 105 104 26", offer)
         self.assertIn("a=fmtp:104 max-fr=20;max-fs=3600", offer)
 
     def test_h264_sdp_serialization_preserves_complete_fmtp_contract(self) -> None:
@@ -1116,6 +1457,44 @@ class H264SdpTest(unittest.TestCase):
         assert selected is not None
         self.assertEqual(selected.payload_type, 102)
         self.assertEqual(selected.direction, "sendrecv")
+        self.assertEqual(selected.max_framerate, 15.0)
+
+    def test_jpeg_answer_framerate_limits_local_browser_sender(self) -> None:
+        offer = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG")
+        answer = (
+            "v=0\r\nc=IN IP4 192.0.2.57\r\nt=0 0\r\n"
+            "m=video 40002 RTP/AVP 26\r\n"
+            "a=rtpmap:26 JPEG/90000\r\n"
+            "a=framerate:3\r\n"
+            "a=sendrecv\r\n"
+        )
+
+        directional = sdp.negotiate_video_answer_directional(answer, offer)
+
+        self.assertIsNotNone(directional)
+        assert directional is not None
+        self.assertEqual(directional.send.max_framerate, 3.0)
+        self.assertIsNone(directional.recv.max_framerate)
+        self.assertIn("framerate=3", directional.send.wire_token())
+
+    def test_video_sdp_serializes_media_level_framerate(self) -> None:
+        video_format = sdp.RtpVideoFormat(
+            payload_type=26,
+            encoding="JPEG",
+            max_framerate=3,
+        )
+
+        answer = sdp.build_offer_directional(
+            "192.0.2.10",
+            "192.0.2.10",
+            40000,
+            [audio_format.AudioFormat(16000, "s16le", 1, 20)],
+            [audio_format.AudioFormat(16000, "s16le", 1, 20)],
+            video_port=40002,
+            video_formats=(video_format,),
+        )
+
+        self.assertIn("a=framerate:3\r\n", answer)
 
     def test_answer_cannot_select_an_unoffered_payload_type(self) -> None:
         answer = (

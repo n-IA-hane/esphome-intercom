@@ -15,7 +15,8 @@
 # Single GPIO0 button, page-aware:
 #   VA idle           : click=start VA      | long (1-3s)=switch to VoIP
 #   VA active         : click=stop VA
-#   VoIP idle     : click=call          | double=next contact | long=switch to VA
+#   VoIP idle         : click=call          | double=next contact | long=switch to VA
+#   VoIP dialer       : click=call number   | double=backspace    | long=switch to VA
 #   VoIP ring in  : click=answer        | double=decline      | long=switch to VA
 #   VoIP ring out : click=hangup        | long=switch to VA
 #   VoIP in call  : click=hangup        | long=switch to VA
@@ -138,7 +139,9 @@ packages:
   speaker_power: !include ../../../packages/esp_audio_stack/speaker_power_output.yaml
   speaker_mixer: !include ../../../packages/audio/shared_mono_mixer_48k.yaml
   flac_codecs_psram: !include ../../../packages/audio/flac_codecs_psram.yaml
-  sendspin_artwork: !include ../../../packages/media_player/sendspin_artwork.yaml
+  # Temporarily disabled: ESPHome PR #16057 still pins sendspin-cpp 0.6.1,
+  # whose ESP-IDF WebSocket server can transmit before the HTTP 101 upgrade.
+  # Re-enable after the artwork PR is updated for sendspin-cpp 0.7.x.
   lvgl_settings_nav: !include ../../../packages/lvgl/lvgl_settings_navigation.yaml
   lvgl_settings_sync_volumes: !include ../../../packages/lvgl/lvgl_settings_sync_volumes.yaml
   lvgl_settings_sync_mute: !include ../../../packages/lvgl/lvgl_settings_sync_mute.yaml
@@ -160,10 +163,8 @@ esphome:
       - light.turn_on:
           id: backlight
           brightness: 100%
-      - script.execute: compute_layout_metrics
-      - script.execute: reposition_widgets
-      # Settings is a single vertical scroll page. VoIP swipe-up opens it;
-      # swipe-down at scroll top returns to VoIP.
+      # Settings is a single vertical scroll page. The active dialer state is
+      # retained while settings temporarily owns the screen.
       - lambda: |-
           id(g_settings_pages).clear();
           id(g_settings_pages).push_back(id(settings_continuous_page)->obj);
@@ -221,6 +222,13 @@ external_components:
     components: [runtime_controller]
   - source: ${audio_stack_components_source}
     components: [esp_audio_stack, esp_afe]
+
+# The reducer owns large bounded rule/configuration tables but never touches
+# them from ISR or DMA contexts. Keep those tables in PSRAM on this constrained
+# full-audio S3 target while preserving the component's internal-RAM default.
+runtime_controller:
+  id: runtime
+  storage_in_psram: true
 
 # =============================================================================
 # CONNECTIVITY
@@ -728,6 +736,7 @@ font:
     extras:
       - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
         glyphs:
+          - "\U000F006E" # backspace
           - "\U000F06CB" # contacts (address book)
   - file:
       type: gfonts
@@ -917,6 +926,10 @@ lvgl:
   buffer_size: 50%
   color_depth: 16
   log_level: WARN
+  # Geometry that touches LVGL objects runs only after LVGL has created them.
+  on_boot:
+    - script.execute: compute_layout_metrics
+    - script.execute: reposition_widgets
   top_layer:
     widgets:
       # Timer overlay bar (hidden by default, shown on idle/listening/thinking/muted)
@@ -1352,9 +1365,8 @@ lvgl:
     # ========================================================================
     - id: call_idle_page
       bg_color: 0x0000FF
-      # Horizontal swipe = prev/next contact. Vertical navigation is supplied by
-      # the including firmware variant: full-experience goes VA <-> VoIP <->
-      # settings, voip-only keeps the voip/settings stack.
+      # Horizontal swipe = prev/next contact. The full-experience vertical
+      # stack is VA <-> contacts <-> dialer <-> settings.
       on_swipe_left:
         - voip_stack.next_contact:
         - script.execute: update_call_idle_labels
@@ -1362,7 +1374,7 @@ lvgl:
         - voip_stack.prev_contact:
         - script.execute: update_call_idle_labels
       on_swipe_up:
-        - script.execute: call_to_settings
+        - script.execute: call_to_dialer
       on_swipe_down:
         - script.execute: call_to_va
       widgets:
@@ -1680,6 +1692,180 @@ lvgl:
             text_align: CENTER
             long_mode: SCROLL
             width: ${call_ended_reason_text_width}
+
+    # ========================================================================
+    # VOIP: ROUND SIP DIALER PAGE
+    # ========================================================================
+    # Four one-row button matrices follow the usable chord of the panel while
+    # keeping the persistent LVGL object count low.
+    - id: call_dialer_page
+      bg_color: 0x10131C
+      on_swipe_down:
+        - script.execute: dialer_to_contacts
+      on_swipe_up:
+        - script.execute: call_to_settings
+      widgets:
+        # Short tap removes one digit; long press clears the fixed dial buffer.
+        - label:
+            id: call_dial_value_label
+            align: TOP_MID
+            y: 16
+            width: 1
+            height: 26
+            text: "Number / extension"
+            text_color: 0xFFFFFF
+            text_font: font_info
+            text_align: CENTER
+            long_mode: SCROLL
+            clickable: true
+            gesture_bubble: true
+            on_short_click:
+              - script.execute: voip_dial_backspace
+            on_long_press:
+              - script.execute: voip_dial_clear
+
+        - buttonmatrix:
+            id: call_dial_row_123
+            align: TOP_MID
+            y: 46
+            width: 1
+            height: 31
+            bg_opa: TRANSP
+            border_width: 0
+            pad_row: 0
+            pad_column: 5
+            gesture_bubble: true
+            items:
+              bg_color: 0x273142
+              text_color: 0xFFFFFF
+              text_font: font_title
+              radius: 16
+            rows:
+              - buttons:
+                  - text: "1"
+                  - text: "2"
+                  - text: "3"
+            on_click:
+              - script.execute:
+                  id: voip_dial_append
+                  dial_char: !lambda |-
+                    static constexpr char keys[] = "123";
+                    return x < 3 ? keys[x] : 0;
+
+        - buttonmatrix:
+            id: call_dial_row_456
+            align: TOP_MID
+            y: 81
+            width: 1
+            height: 31
+            bg_opa: TRANSP
+            border_width: 0
+            pad_row: 0
+            pad_column: 5
+            gesture_bubble: true
+            items:
+              bg_color: 0x273142
+              text_color: 0xFFFFFF
+              text_font: font_title
+              radius: 16
+            rows:
+              - buttons:
+                  - text: "4"
+                  - text: "5"
+                  - text: "6"
+            on_click:
+              - script.execute:
+                  id: voip_dial_append
+                  dial_char: !lambda |-
+                    static constexpr char keys[] = "456";
+                    return x < 3 ? keys[x] : 0;
+
+        - buttonmatrix:
+            id: call_dial_row_789
+            align: TOP_MID
+            y: 116
+            width: 1
+            height: 31
+            bg_opa: TRANSP
+            border_width: 0
+            pad_row: 0
+            pad_column: 5
+            gesture_bubble: true
+            items:
+              bg_color: 0x273142
+              text_color: 0xFFFFFF
+              text_font: font_title
+              radius: 16
+            rows:
+              - buttons:
+                  - text: "7"
+                  - text: "8"
+                  - text: "9"
+            on_click:
+              - script.execute:
+                  id: voip_dial_append
+                  dial_char: !lambda |-
+                    static constexpr char keys[] = "789";
+                    return x < 3 ? keys[x] : 0;
+
+        - buttonmatrix:
+            id: call_dial_row_del0hash
+            align: TOP_MID
+            y: 151
+            width: 1
+            height: 31
+            bg_opa: TRANSP
+            border_width: 0
+            pad_row: 0
+            pad_column: 5
+            gesture_bubble: true
+            items:
+              bg_color: 0x273142
+              text_color: 0xFFFFFF
+              text_font: font_title
+              radius: 16
+            rows:
+              - buttons:
+                  - text: "\U000F006E"
+                  - text: "0"
+                  - text: "#"
+            on_click:
+              - if:
+                  condition:
+                    lambda: return x == 0;
+                  then:
+                    - script.execute: voip_dial_backspace
+                  else:
+                    - script.execute:
+                        id: voip_dial_append
+                        dial_char: !lambda |-
+                          if (x == 1) return '0';
+                          if (x == 2) return '#';
+                          return 0;
+
+        - button:
+            id: call_dial_call_btn
+            align: TOP_MID
+            y: 187
+            width: 1
+            height: 43
+            bg_color: 0x22C55E
+            border_width: 0
+            shadow_opa: TRANSP
+            radius: 22
+            gesture_bubble: true
+            # LVGL may still complete short_click when a vertical swipe starts
+            # on this control. Begin page-navigation swipes outside the handset.
+            on_short_click:
+              - script.execute: voip_dial_call
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "\U000F03F2"
+                  text_color: 0xFFFFFF
+                  text_font: call_icons
+                  gesture_bubble: true
+
     # ========================================================================
     # SETTINGS PAGE (one vertical scroll surface for round displays)
     # ========================================================================
@@ -1916,8 +2102,10 @@ lvgl:
             y: 480
             width: ${settings_mid_width}
             options:
-              - SR low cost
-              - SR high perf
+              - sr_low_cost
+              - sr_high_perf
+              - fd_low_cost
+              - fd_high_perf
             on_value:
               - select.set_index:
                   id: aec_mode_select
@@ -2029,21 +2217,37 @@ globals:
     restore_value: false
     initial_value: "false"
 
-  # Chord widths for circular text wrapping (computed at boot)
+  # Fixed-size Spotpear geometry, computed once after LVGL is ready.
   - id: chord_widths_cache
-    type: std::vector<int>
+    type: "std::array<int16_t, 10>"
     restore_value: false
-  # Text row y-positions for circular display (computed at boot)
+    initial_value: "{0}"
   - id: text_row_y
-    type: std::vector<int>
+    type: "std::array<int16_t, 10>"
     restore_value: false
+    initial_value: "{0}"
   # UI grid y-positions (proportional, computed at boot from display height)
   # [0]=top, [1]=center, [2]=height, [3]=title, [4]=subtitle, [5]=state,
   # [6]=label, [7]=info, [8]=contacts, [9]=action_hint, [10]=bottom_info,
   # [11]=bottom_status, [12]=page_counter, [13]=timer_box_height
   - id: y_metrics
-    type: std::vector<int>
+    type: "std::array<int16_t, 14>"
     restore_value: false
+    initial_value: "{0}"
+
+  # Dial input stays allocation-free until the user actually starts a call.
+  - id: voip_dialer_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: voip_dial_buffer
+    type: "std::array<char, 33>"
+    restore_value: false
+    initial_value: "{0}"
+  - id: voip_dial_length
+    type: uint8_t
+    restore_value: false
+    initial_value: "0"
 
 script:
   - id: apply_media_artwork
@@ -2168,7 +2372,7 @@ script:
           condition:
             lambda: |-
               return id(ui_state) == ${ui_state_idle} && id(current_mode) == 1
-                     && id(phone).is_idle();
+                     && id(phone).is_idle() && !id(voip_dialer_active);
           then:
             - script.execute: update_call_idle_labels
       - script.execute: draw_display
@@ -2240,6 +2444,10 @@ script:
           id(peer_name) = peer;
           id(previous_mode) = id(current_mode);
           id(current_mode) = 1;
+          id(settings_active) = false;
+          id(voip_dialer_active) = false;
+          id(voip_dial_length) = 0;
+          id(voip_dial_buffer)[0] = '\0';
       - script.execute: backlight_timer
       # Update the relevant peer label for whichever call page will show
       - lvgl.label.update:
@@ -2307,103 +2515,127 @@ script:
             - lambda: lv_animimg_start(id(idle_anim));
             - delay: 25s
 
-  # Compute chord widths and text row positions from display dimensions (once at boot)
+  # Compute the fixed Spotpear text grid once LVGL is ready.
   - id: compute_layout_metrics
     then:
       - lambda: |-
-          const int w = ${display_width};
-          const int h = ${display_height};
+          static constexpr size_t kRoundTextRows = 10;
+          lv_disp_t *disp = lv_disp_get_default();
+          if (disp == nullptr) return;
+
+          const int w = lv_disp_get_hor_res(disp);
+          const int h = lv_disp_get_ver_res(disp);
+          if (w <= 0 || h <= 0) return;
+
           const int r = w / 2;
           const int cy = h / 2;
           const int side_margin = w / 40;
           const int line_h = h / 13;
           const int line_spacing = h / 60;
           const int top_pad = h / 24;
-          const int bottom_pad = h / 24;
 
-          // y_metrics: proportional UI grid (same formula as original)
-          id(y_metrics).clear();
-          id(y_metrics).reserve(14);
-          id(y_metrics).push_back(0);            // [0] top
-          id(y_metrics).push_back(h / 2);        // [1] center
-          id(y_metrics).push_back(h);             // [2] height
-          id(y_metrics).push_back(h / 8);         // [3] title
-          id(y_metrics).push_back(h * 7 / 24);    // [4] subtitle
-          id(y_metrics).push_back(h * 5 / 12);    // [5] state
-          id(y_metrics).push_back(h * 13 / 24);   // [6] label
-          id(y_metrics).push_back(h * 5 / 8);     // [7] info
-          id(y_metrics).push_back(h * 37 / 48);   // [8] contacts
-          id(y_metrics).push_back(h * 5 / 6);     // [9] action hint
-          id(y_metrics).push_back(h * 41 / 48);   // [10] bottom info
-          id(y_metrics).push_back(h - h / 16);    // [11] bottom status
-          id(y_metrics).push_back(h - 2);          // [12] page counter
-          id(y_metrics).push_back(h * 3 / 20);    // [13] timer box height
+          auto &ym = id(y_metrics);
+          ym[0] = 0;
+          ym[1] = h / 2;
+          ym[2] = h;
+          ym[3] = h / 8;
+          ym[4] = h * 7 / 24;
+          ym[5] = h * 5 / 12;
+          ym[6] = h * 13 / 24;
+          ym[7] = h * 5 / 8;
+          ym[8] = h * 37 / 48;
+          ym[9] = h * 5 / 6;
+          ym[10] = h * 41 / 48;
+          ym[11] = h - h / 16;
+          ym[12] = h - 2;
+          ym[13] = h * 3 / 20;
 
-          // text_row_y + chord_widths_cache: VA text rows for circular wrapping
-          id(text_row_y).clear();
-          id(chord_widths_cache).clear();
-          int y = top_pad;
-          while (y + line_h <= h - bottom_pad) {
-            id(text_row_y).push_back(y);
-            int mid_y = y + line_h / 2;
-            int dy = abs(mid_y - cy);
+          auto &row_y = id(text_row_y);
+          auto &chord_width = id(chord_widths_cache);
+          for (size_t row = 0; row < kRoundTextRows; row++) {
+            const int y = top_pad + static_cast<int>(row) * (line_h + line_spacing);
+            row_y[row] = y;
+            const int mid_y = y + line_h / 2;
+            const int dy = std::abs(mid_y - cy);
             int chord_w = 0;
             if (dy < r) {
-              chord_w = (int)(2.0f * sqrtf((float)(r * r - dy * dy))) - side_margin * 2;
+              chord_w = static_cast<int>(
+                  2.0f * sqrtf(static_cast<float>(r * r - dy * dy))
+              ) - side_margin * 2;
               if (chord_w < 0) chord_w = 0;
             }
-            id(chord_widths_cache).push_back(chord_w);
-            y += (line_h + line_spacing);
+            chord_width[row] = chord_w;
           }
 
-  # Reposition all widgets using computed y_metrics, text_row_y, chord_widths_cache
-  # Called once at boot after compute_layout_metrics. All YAML y/width are placeholders.
+  # Apply the cached text grid and calculate the six dialer bands directly.
+  # No circular LUT or rectangle cache remains allocated after this boot pass.
   - id: reposition_widgets
     then:
       - lambda: |-
+          static constexpr size_t kRoundTextRows = 10;
           const auto &ym = id(y_metrics);
           const auto &row_y = id(text_row_y);
           const auto &cw = id(chord_widths_cache);
-          if (ym.size() < 14 || row_y.empty()) return;
 
-          // Helper: position label at y_center (original uses TextAlign::CENTER)
-          // LVGL TOP_MID: y_top = y_center - font_line_height / 2
-          auto set_center_y = [](lv_obj_t* obj, int y_center) {
-            const lv_font_t* f = lv_obj_get_style_text_font(obj, LV_PART_MAIN);
-            int fh = lv_font_get_line_height(f);
-            lv_obj_set_y(obj, y_center - fh / 2);
-          };
-
-          // --- call pages: percentages + align handle positioning, no reposition needed ---
-
-          // --- Thinking page: chord-width labels (10 children after image) ---
           lv_obj_t* think[] = {
             id(think_line_0), id(think_line_1), id(think_line_2), id(think_line_3), id(think_line_4),
             id(think_line_5), id(think_line_6), id(think_line_7), id(think_line_8), id(think_line_9)
           };
-          for (size_t i = 0; i < row_y.size() && i < 10; i++) {
-            lv_obj_set_y(think[i], row_y[i]);
-            lv_obj_set_width(think[i], cw[i]);
-          }
-
-          // --- Replying page: chord-width labels ---
           lv_obj_t* reply[] = {
             id(reply_line_0), id(reply_line_1), id(reply_line_2), id(reply_line_3), id(reply_line_4),
             id(reply_line_5), id(reply_line_6), id(reply_line_7), id(reply_line_8), id(reply_line_9)
           };
-          for (size_t i = 0; i < row_y.size() && i < 10; i++) {
+          for (size_t i = 0; i < kRoundTextRows; i++) {
+            lv_obj_set_y(think[i], row_y[i]);
+            lv_obj_set_width(think[i], cw[i]);
             lv_obj_set_y(reply[i], row_y[i]);
             lv_obj_set_width(reply[i], cw[i]);
           }
 
-          // Page counter at bottom
           lv_obj_set_y(id(reply_page_counter), ym[12]);
-
-          // Timer overlay: dynamic height from y_metrics[13]
           lv_obj_set_height(id(timer_overlay), ym[13]);
-          lv_obj_set_width(id(timer_overlay), ym[2]);  // full width = h (square display)
+          lv_obj_set_width(id(timer_overlay), ym[2]);
           lv_obj_set_height(id(timer_bar), ym[13] - 4);
           lv_obj_set_width(id(timer_bar), ym[2] - 4);
+
+          lv_disp_t *disp = lv_disp_get_default();
+          if (disp == nullptr) return;
+          const int w = lv_disp_get_hor_res(disp);
+          const int h = lv_disp_get_ver_res(disp);
+          if (w <= 0 || h <= 0) return;
+
+          const int cy = h / 2;
+          const int radius = std::min(w, h) / 2 - 4;
+          auto width_for_band = [&](int y, int height, int margin) -> int {
+            const int bottom = y + height - 1;
+            const int distance = std::max(std::abs(y - cy), std::abs(bottom - cy));
+            if (distance >= radius) return 1;
+
+            const int radius_sq = radius * radius;
+            const int distance_sq = distance * distance;
+            int half = static_cast<int>(
+                floorf(sqrtf(static_cast<float>(radius_sq - distance_sq)))
+            ) - margin;
+            if (half < 1) half = 1;
+            return half * 2;
+          };
+          auto fit_centered_band = [&](lv_obj_t *obj, int y, int height, int margin) {
+            const int width = width_for_band(y, height, margin);
+            lv_obj_set_size(obj, width, height);
+            lv_obj_align(obj, LV_ALIGN_TOP_MID, 0, y);
+          };
+
+          const int number_y = h * 16 / 240;
+          const int number_h = std::max(24, h * 26 / 240);
+          const int row_h = std::max(29, h * 31 / 240);
+          const int call_y = h * 187 / 240;
+          const int call_h = std::max(40, h * 43 / 240);
+          fit_centered_band(id(call_dial_value_label), number_y, number_h, 6);
+          fit_centered_band(id(call_dial_row_123)->obj, h * 46 / 240, row_h, 6);
+          fit_centered_band(id(call_dial_row_456)->obj, h * 81 / 240, row_h, 6);
+          fit_centered_band(id(call_dial_row_789)->obj, h * 116 / 240, row_h, 6);
+          fit_centered_band(id(call_dial_row_del0hash)->obj, h * 151 / 240, row_h, 6);
+          fit_centered_band(id(call_dial_call_btn), call_y, call_h, 2);
 
 
   # Main display rendering: single lambda for page routing + animation control
@@ -2413,12 +2645,13 @@ script:
       - lambda: |-
           // Determine target page
           lv_obj_t* target = nullptr;
-          const std::string s = id(phone).get_state_str();
-          bool in_call = (s == "ringing" || s == "calling" ||
-                          s == "remote_ringing" || s == "connecting" ||
-                          s == "in_call");
-          if (in_call) {
-            id(settings_active) = false;  // call interrupts settings view
+          const bool phone_active = id(phone).is_active();
+          const bool phone_ringing = id(phone).is_ringing();
+          const bool phone_calling = id(phone).is_calling();
+          const bool phone_in_call = id(phone).is_in_call();
+          if (phone_active) {
+            id(settings_active) = false;
+            id(voip_dialer_active) = false;
           }
           // Timer ringing owns the UI while the alarm is active. This must use
           // the runtime_controller timer activity, not voice_assistant_phase, because media_player
@@ -2440,13 +2673,15 @@ script:
             target = id(no_ha_page)->obj;
           } else if (id(current_mode) == 1) {
             // VoIP mode
-            const std::string s = id(phone).get_state_str();
-            if (s == "ringing") {
+            if (phone_ringing) {
               target = id(call_ringing_in_page)->obj;
-            } else if (s == "calling" || s == "remote_ringing") {
+            } else if (phone_calling) {
               target = id(call_ringing_out_page)->obj;
-            } else if (s == "in_call" || s == "connecting") {
+            } else if (phone_in_call ||
+                       (phone_active && !phone_ringing && !phone_calling)) {
               target = id(call_in_call_page)->obj;
+            } else if (id(voip_dialer_active)) {
+              target = id(call_dialer_page)->obj;
             } else {
               target = id(call_idle_page)->obj;
             }
@@ -2480,6 +2715,7 @@ script:
           else if (target == id(error_page)->obj) page_name = "error";
           else if (target == id(muted_page)->obj) page_name = "muted";
           else if (target == id(call_idle_page)->obj) page_name = "call_idle";
+          else if (target == id(call_dialer_page)->obj) page_name = "call_dialer";
           else if (target == id(call_ringing_in_page)->obj) page_name = "call_ringing_in";
           else if (target == id(call_ringing_out_page)->obj) page_name = "call_ringing_out";
           else if (target == id(call_in_call_page)->obj) page_name = "call_in_call";
@@ -2518,8 +2754,11 @@ script:
           // the reducer selected its intended policy state.
           id(runtime_rendered_page) = page_name;
 
-          // Hide top layer status bar on replying/thinking pages (text overlap)
-          bool show_status = (target != id(replying_page)->obj && target != id(thinking_page)->obj);
+          // Dense text and the round dialer use the complete visible disk.
+          const bool show_status =
+              target != id(replying_page)->obj &&
+              target != id(thinking_page)->obj &&
+              target != id(call_dialer_page)->obj;
           if (show_status) {
             lv_obj_clear_flag(id(top_clock_label), LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(id(top_battery_label), LV_OBJ_FLAG_HIDDEN);
@@ -2558,7 +2797,7 @@ script:
           condition:
             lambda: |-
               return id(current_mode) == 1 && id(phone).is_idle()
-                     && !id(init_in_progress);
+                     && !id(voip_dialer_active) && !id(init_in_progress);
           then:
             - script.execute: update_call_idle_labels
       # Always sync timer overlay on redraw (on_timer_tick stops when timers expire)
@@ -2653,6 +2892,83 @@ script:
                       id: voice_assistant_phase
                       value: '${voice_assist_idle_phase_id}'
 
+  # Fixed-buffer SIP dialer. Digit entry and editing perform no heap
+  # allocation; the call action constructs the destination string once.
+  - id: voip_dial_refresh
+    mode: restart
+    then:
+      - lambda: |-
+          if (id(voip_dial_length) == 0) {
+            lv_label_set_text(id(call_dial_value_label), "Number / extension");
+          } else {
+            lv_label_set_text(id(call_dial_value_label), id(voip_dial_buffer).data());
+          }
+
+  - id: voip_dial_append
+    parameters:
+      dial_char: int
+    then:
+      - lambda: |-
+          if (dial_char == 0 || id(voip_dial_length) >= 32) return;
+          auto &buffer = id(voip_dial_buffer);
+          auto &length = id(voip_dial_length);
+          buffer[length++] = static_cast<char>(dial_char);
+          buffer[length] = '\0';
+          id(voip_dial_refresh).execute();
+
+  - id: voip_dial_backspace
+    then:
+      - lambda: |-
+          auto &length = id(voip_dial_length);
+          if (length == 0) return;
+          --length;
+          id(voip_dial_buffer)[length] = '\0';
+          id(voip_dial_refresh).execute();
+
+  - id: voip_dial_clear
+    then:
+      - lambda: |-
+          id(voip_dial_length) = 0;
+          id(voip_dial_buffer)[0] = '\0';
+          id(voip_dial_refresh).execute();
+
+  - id: voip_dial_call
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return id(phone).is_idle() && id(voip_dial_length) > 0;
+          then:
+            - voip_stack.call:
+                target: !lambda |-
+                  return std::string(
+                      id(voip_dial_buffer).data(),
+                      id(voip_dial_length)
+                  );
+
+  # Spotpear-only vertical stack:
+  # VA -> contacts -> dialer -> settings.
+  - id: call_to_dialer
+    then:
+      - if:
+          condition:
+            lambda: return id(phone).is_idle();
+          then:
+            - lambda: |-
+                id(voip_dialer_active) = true;
+                id(nav_anim) = LV_SCR_LOAD_ANIM_MOVE_TOP;
+                id(nav_anim_ms) = 300;
+            - script.execute: voip_dial_refresh
+            - script.execute: draw_display
+
+  - id: dialer_to_contacts
+    then:
+      - lambda: |-
+          id(voip_dialer_active) = false;
+          id(nav_anim) = LV_SCR_LOAD_ANIM_MOVE_BOTTOM;
+          id(nav_anim_ms) = 300;
+      - script.execute: draw_display
+
   # Swipe-driven mode switch: set the nav_anim hint, then delegate to the
   # existing switch_to_voip / switch_to_va scripts. They funnel into
   # draw_display, which honours nav_anim (animated transition) and resets
@@ -2675,6 +2991,7 @@ script:
   # Mode switching scripts
   - id: switch_to_va
     then:
+      - lambda: id(voip_dialer_active) = false;
       - globals.set:
           id: current_mode
           value: '0'
@@ -2696,6 +3013,7 @@ script:
   - id: switch_to_voip
     then:
       - script.stop: reply_pagination_timer
+      - lambda: id(voip_dialer_active) = false;
       - globals.set:
           id: current_mode
           value: '1'
@@ -2705,18 +3023,17 @@ script:
   # Update all dynamic labels on the VoIP idle page
   - id: update_call_idle_labels
     then:
-      - lambda: id(peer_name) = id(phone).get_current_destination();
-      - lvgl.label.update:
-          id: call_idle_peer_label
-          text: !lambda 'return id(peer_name);'
-      - lvgl.label.update:
-          id: call_idle_contacts_label
-          text: !lambda |-
-            auto csv = id(phone).get_contacts_csv();
-            int count = csv.empty() ? 0 : std::count(csv.begin(), csv.end(), ',') + 1;
-            char buf[16];
-            snprintf(buf, sizeof(buf), "\U000F06CB %d", count);
-            return std::string(buf);
+      - lambda: |-
+          id(peer_name) = id(phone).get_current_destination();
+          lv_label_set_text(id(call_idle_peer_label), id(peer_name).c_str());
+          char buf[16];
+          snprintf(
+              buf,
+              sizeof(buf),
+              "\U000F06CB %u",
+              static_cast<unsigned>(id(phone).get_contact_count())
+          );
+          lv_label_set_text(id(call_idle_contacts_label), buf);
 
   # Update clock and battery labels on idle page
   - id: update_idle_labels
@@ -2897,22 +3214,28 @@ binary_sensor:
               else:
                 - if:
                     condition:
-                      lambda: return id(current_mode) == 1 && id(phone).is_idle();
+                      lambda: |-
+                        return id(current_mode) == 1 &&
+                               id(phone).is_idle() &&
+                               id(voip_dialer_active);
                     then:
-                      - voip_stack.call_toggle:
+                      - script.execute: voip_dial_call
                     else:
                       - if:
                           condition:
-                            lambda: |-
-                              if (id(current_mode) != 1) return false;
-                              const std::string s = id(phone).get_state_str();
-                              return s != "idle";
+                            lambda: return id(current_mode) == 1 && id(phone).is_idle();
                           then:
                             - voip_stack.call_toggle:
                           else:
-                            - runtime_controller.event:
-                                id: runtime
-                                event: manual_voice_toggle
+                            - if:
+                                condition:
+                                  lambda: return id(current_mode) == 1 && id(phone).is_active();
+                                then:
+                                  - voip_stack.call_toggle:
+                                else:
+                                  - runtime_controller.event:
+                                      id: runtime
+                                      event: manual_voice_toggle
       # Double click: decline incoming or next contact
       - timing:
           - ON for 50ms to 500ms
@@ -2922,18 +3245,24 @@ binary_sensor:
         then:
           - if:
               condition:
-                lambda: |-
-                  if (id(current_mode) != 1) return false;
-                  const std::string s = id(phone).get_state_str();
-                  return s == "ringing";
+                lambda: return id(current_mode) == 1 && id(phone).is_ringing();
               then:
                 - voip_stack.decline_call:
               else:
                 - if:
                     condition:
-                      lambda: return id(current_mode) == 1 && id(phone).is_idle();
+                      lambda: |-
+                        return id(current_mode) == 1 &&
+                               id(phone).is_idle() &&
+                               id(voip_dialer_active);
                     then:
-                      - voip_stack.next_contact:
+                      - script.execute: voip_dial_backspace
+                    else:
+                      - if:
+                          condition:
+                            lambda: return id(current_mode) == 1 && id(phone).is_idle();
+                          then:
+                            - voip_stack.next_contact:
       # Long press (3s): switch VA <-> VoIP
       - timing:
           - ON for 1s to 3s
@@ -3010,12 +3339,13 @@ text_sensor:
     on_value:
       then:
         - lambda: |-
+            static constexpr size_t kRoundTextRows = 10;
             const std::string &text = x;
             lv_obj_t* lines[] = {
               id(think_line_0), id(think_line_1), id(think_line_2), id(think_line_3), id(think_line_4),
               id(think_line_5), id(think_line_6), id(think_line_7), id(think_line_8), id(think_line_9)
             };
-            for (size_t i = 0; i < 10; i++) lv_label_set_text(lines[i], "");
+            for (size_t i = 0; i < kRoundTextRows; i++) lv_label_set_text(lines[i], "");
             if (text == "...") return;
             std::vector<std::string> words;
             words.reserve(text.size()/5);
@@ -3026,9 +3356,9 @@ text_sensor:
                 start = i + 1;
               }
             }
-            if (words.empty() || id(chord_widths_cache).empty()) return;
+            if (words.empty()) return;
             const auto &chords = id(chord_widths_cache);
-            const size_t total_rows = chords.size();
+            const size_t total_rows = kRoundTextRows;
             const lv_font_t *font = lv_obj_get_style_text_font(id(think_line_0), LV_PART_MAIN);
             // Start from middle of display (row total_rows/2 - 3)
             size_t start_row = total_rows / 2 - 3;
@@ -3037,7 +3367,7 @@ text_sensor:
             size_t row = start_row;
             size_t word_idx = 0;
             const int avg_char_w = lv_font_get_line_height(font) * 2 / 3;  // ~60% of line height
-            while (row < total_rows && row < 10 && word_idx < words.size()) {
+            while (row < total_rows && word_idx < words.size()) {
               const int chord_w = chords[row];
               if (chord_w <= 0) { row++; continue; }
               const size_t sw = word_idx;
@@ -3066,6 +3396,7 @@ text_sensor:
     on_value:
       then:
         - lambda: |-
+            static constexpr size_t kRoundTextRows = 10;
             // Skip redundant "..." during replying phase (label text set by update_replying_text)
             if (x == "..." && id(voice_assistant_phase) == ${voice_assist_replying_phase_id}) {
               return;
@@ -3085,9 +3416,9 @@ text_sensor:
             id(reply_page_index) = 0;
             id(wrapped_lines_reply).clear();
             id(reply_total_pages) = 1;
-            if (words.empty() || id(chord_widths_cache).empty()) return;
+            if (words.empty()) return;
             const auto &chords = id(chord_widths_cache);
-            const size_t total_rows = chords.size();
+            const size_t total_rows = kRoundTextRows;
             const lv_font_t *font = lv_obj_get_style_text_font(id(reply_line_0), LV_PART_MAIN);
             const int avg_char_w = lv_font_get_line_height(font) * 2 / 3;
             size_t word_idx = 0;
@@ -3119,11 +3450,13 @@ text_sensor:
                 line_count++;
               }
             }
-            while (!id(wrapped_lines_reply).empty() && (id(wrapped_lines_reply).size() % 10) != 0) {
+            while (!id(wrapped_lines_reply).empty() &&
+                   (id(wrapped_lines_reply).size() % kRoundTextRows) != 0) {
               id(wrapped_lines_reply).push_back("");
             }
             line_count = id(wrapped_lines_reply).size();
-            id(reply_total_pages) = (line_count + 10 - 1) / 10;
+            id(reply_total_pages) =
+                (line_count + kRoundTextRows - 1) / kRoundTextRows;
             if (id(reply_total_pages) < 1) id(reply_total_pages) = 1;
 
 switch:

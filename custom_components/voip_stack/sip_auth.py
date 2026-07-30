@@ -35,6 +35,8 @@ def build_digest_authorization(
     method: str,
     uri: str,
     auth_username: str = "",
+    nonce_count: int = 1,
+    cnonce: str = "",
 ) -> str:
     challenge = parse_digest_challenge(challenge_header)
     realm = challenge.get("realm", "")
@@ -62,8 +64,10 @@ def build_digest_authorization(
         "algorithm": "MD5",
     }
     if qop:
-        cnonce = token_hex(8)
-        nc = "00000001"
+        if int(nonce_count) < 1:
+            raise ValueError("SIP digest nonce_count must be positive")
+        cnonce = cnonce or token_hex(8)
+        nc = f"{int(nonce_count):08x}"
         response = sip_digest_md5(f"{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}")
         params.update({"qop": qop, "nc": nc, "cnonce": cnonce, "response": response})
     else:

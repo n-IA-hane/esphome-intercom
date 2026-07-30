@@ -1,0 +1,557 @@
+# =============================================================================
+# ESP32-S3-BOX-3 VOIP + VA AEC LIGHT - Single I2S bus, ES7210/ES8311 codec
+# =============================================================================
+# Tested by contributor; untested by maintainer.
+# Contributor: mwhdc
+# Source: https://github.com/n-IA-hane/esphome-intercom/issues/80
+#
+# The maintainer does not own this board. Repository validation covers YAML and
+# compilation only; field behaviour remains based on the contributor's report.
+#
+# Adapted from yamls/full-experience/single-bus/generic-s3-full-aec.yaml and
+# esphome/wake-word-voice-assistants/esp32-s3-box-3/esp32-s3-box-3.yaml
+# 
+# Full-featured lightweight config: VoIP + Media Player + mixer + VA/MWW.
+# Box-3 has a real ES7210 ADC + ES8311 DAC codec (unlike the no-codec generic-s3
+# profile this file started from), so esp_audio_stack owns codec I2C init via
+# its `codec:` block instead of talking to raw ADC/DAC-less I2S pins.
+#
+# Audio pipeline:
+#   ES7210 mic → esp_audio_stack (48kHz) → esp_ae_rate_cvt x3 → esp_aec → mic_main → VA / VoIP TX / MWW
+#
+#   Media       → media_speaker_input (resampler) ────────────┐
+#   VA TTS      → tts_speaker_input (resampler) ──────────────┼── mixer (48kHz) → hw_speaker → ES8311 DAC → amp
+#   VoIP RX     → voip_speaker_input (resampler) ─────────────┘
+#
+# HARDWARE (ESP32-S3-BOX-3):
+#   - Board: esp32s3box (ESP32-S3R8, 16MB flash, octal PSRAM)
+#   - Codec: ES7210 ADC (single external mic) + ES8311 DAC, both on I2C
+#   - Mic and speaker SHARE BCLK + LRCLK (same I2S bus, full-duplex) + MCLK
+#   - Speaker amp has a dedicated enable GPIO that must be driven high
+#   - No addressable status LED on this board. runtime_controller's `outputs:
+#     led:` is hard-required by full_controller.yaml (not optional), so this
+#     profile repoints it at Box-3's own LCD backlight (monochromatic, GPIO47)
+#     instead of the generic profile's WS2812 status_led package. Effects that
+#     need an addressable strip (Ringing/Blink/pulses) silently no-op on a
+#     monochromatic light; state changes still show as backlight brightness
+#     steps.
+#
+# VERIFIED AGAINST COMPONENT SOURCE (esphome-audio-stack, esphome-runtime-
+# controller checked out locally):
+#   - codec.input.mic_selected passes straight through to Espressif's
+#     es7210_codec_cfg_t.mic_selected bitmask (bit0=MIC1). Box-3 wires a
+#     single external mic, so 0x01 (MIC1 only) is used rather than the
+#     component's own multi-mic-array default (0x0F = all 4 channels).
+#   - codec.input.gain_db left at this component's own default (30.0 dB)
+#     rather than copying Waveshare's tuned 24.0 dB, since Box-3's mic/PCB
+#     differs and there's no evidence 24.0 is the right number here.
+#   - slot_bit_width/correct_dc_offset from the no-codec generic-s3 profile
+#     were dropped: those exist to frame raw MEMS-mic I2S bitstreams with no
+#     codec register config. With ES7210/ES8311 present, esp_audio_stack's
+#     own "auto" slot width (matches bits_per_sample) is what the validated
+#     waveshare-s3-full-afe.yaml codec profile uses, so this follows suit.
+#
+# KNOWN OPEN QUESTIONS (monitor and adjust):
+#   - mic_selected/gain_db above are correct in shape but not volume-tested;
+#     adjust gain_db if capture is too quiet/clipped.
+#   - codec.output.no_dac_ref mirrors aec_reference: previous_frame (software
+#     reference instead of a hardware loopback reference); revisit together if
+#     echo cancellation performs poorly.
+#   - If perceived speaker volume seems too quiet in the low/mid range,
+#     esp_audio_stack.master_volume_min_db: -30.0 is a documented fix for the
+#     same ES8311 codec-dev default on waveshare-s3-full-afe.yaml; untested
+#     here since amp circuits differ.
+#
+# GPIO PINOUT (from esp32-s3-box-3.yaml):
+#   Codec I2C:  SDA=GPIO8, SCL=GPIO18
+#   Shared I2S: MCLK=GPIO2, BCLK=GPIO17, LRCLK=GPIO45, DIN=GPIO16 (mic), DOUT=GPIO15 (speaker)
+#   Speaker enable: GPIO46
+#
+# =============================================================================
+
+# =============================================================================
+# PROJECT SETUP
+# =============================================================================
+
+substitutions:
+  # Hardware-shared identity: dropping firmware-variant suffix keeps build cache
+  # and HA device entity stable across rebuilds.
+  name: esp32-s3-box-3
+  friendly_name: ESP32-S3-Box-3
+
+  # Local sources keep repository builds reproducible. Release examples replace
+  # these with the corresponding pinned public component revisions.
+  ext_components_source: "../../../esphome/components"
+  voip_stack_components_source: "../../../../esphome-voip-stack/esphome/components"
+  audio_stack_components_source: "../../../../esphome-audio-stack/esphome/components"
+  runtime_controller_components_source: "../../../../esphome-runtime-controller/esphome/components"
+
+  assets_base: "../../../"
+
+  # Microphone ID for package mute switch
+  mic_id: mic_main
+
+  # runtime_controller's full_controller.yaml hard-requires an `outputs: led:`
+  # light entity to exist (it is not optional there, even though the
+  # runtime_controller component itself treats it as optional). Box-3 has no
+  # addressable status LED, so this repoints it at the LCD backlight (`led`,
+  # defined further down) instead of the generic profile's WS2812 status_led.
+  # To detach the backlight from status and use a no-op entity instead (e.g.
+  # to keep the screen on constantly or manage it elsewhere), override this
+  # substitution and add the `status_led_null` light - see
+  # esp32-s3-box-3-detached-backlight.yaml.
+  runtime_controller_led_id: led
+  runtime_controller_led_preset: rgb_single
+
+  # ---------------------------------------------------------------------------
+  # Pinout: shared codec/control I2C bus
+  # ---------------------------------------------------------------------------
+  codec_i2c_sda_pin: GPIO8
+  codec_i2c_scl_pin: GPIO18
+
+  # ---------------------------------------------------------------------------
+  # Pinout: shared ES7210/ES8311 I2S bus
+  # ---------------------------------------------------------------------------
+  # BCLK/LRCLK/MCLK are shared by mic and speaker on this full-duplex bus.
+  i2s_mclk_pin: GPIO2
+  i2s_bclk_pin: GPIO17
+  i2s_lrclk_pin: GPIO45
+
+  # ---------------------------------------------------------------------------
+  # Pinout: microphone
+  # ---------------------------------------------------------------------------
+  i2s_din_pin: GPIO16
+
+  # ---------------------------------------------------------------------------
+  # Pinout: speaker
+  # ---------------------------------------------------------------------------
+  i2s_dout_pin: GPIO15
+
+packages:
+  full_voice_voip_runtime: !include ../../../packages/presets/full_voice_voip_runtime.yaml
+  runtime_controller: !include ../../../../esphome-runtime-controller/packages/runtime_controller/full_controller.yaml
+  voice_assistant_runtime_controls: !include ../../../packages/voice_assistant/runtime_controls.yaml
+  call_settings: !include ../../../packages/voip/call_settings.yaml
+  ha_api: !include ../../../packages/voip/ha_api_runtime.yaml
+  voice_assistant_local_commands: !include ../../../packages/voice_assistant/local_commands.yaml
+  ota_maintenance: !include ../../../packages/ota/full_audio_maintenance.yaml
+  voip_transport: !include ../../../packages/voip/transport.yaml
+  phonebook_subscribe: !include ../../../packages/voip/phonebook_subscribe.yaml
+  speaker_mute: !include ../../../packages/voip/speaker_mute_runtime.yaml
+  s3_base: !include ../../../packages/platform/esp32s3_base.yaml
+  native_diagnostics: !include ../../../packages/diagnostics/native.yaml
+  speaker_mixer: !include ../../../packages/audio/shared_mono_mixer_48k.yaml
+  speaker_media_player: !include ../../../packages/media_player/runtime_controller_mono_media_player_48k.yaml
+  va_timers: !include ../../../packages/voice_assistant/timers_runtime.yaml
+  audio_stack_controls: !include ../../../packages/esp_audio_stack/controls.yaml
+  aec_controls: !include ../../../packages/esp_audio_stack/aec_controls.yaml
+  # Not part of esphome-intercom - Box-3 display/touch hardware plus the
+  # optional ESP32-S3-BOX-3-SENSOR dock. Safe to delete this one line + its
+  # file on a headless build, a different board, or a unit without the dock.
+  box3_additions: !include esp32-s3-box-3-additions.yaml
+
+# =============================================================================
+# BOARD AND MEMORY
+# =============================================================================
+
+# Device identity exposed to ESPHome, HA and the shared VoIP phonebook.
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  # Required by the mipi_spi S3BOX display model, per the stock
+  # esp32-s3-box-3.yaml reference this hardware profile is derived from.
+  min_version: 2026.4.0
+  platformio_options:
+    board_build.flash_mode: dio
+
+# ESP32-S3-BOX-3 target and ESP-IDF tuning.
+
+esp32:
+  board: esp32s3box
+  flash_size: 16MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+    advanced:
+      compiler_optimization: PERF
+    sdkconfig_options:
+      # Allow mbedtls to allocate its working buffers in PSRAM.
+      CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: "y"
+      # Route ESP-IDF stdout (and ESPHome logger when hardware_uart=USB_SERIAL_JTAG)
+      # to the built-in USB-Serial-JTAG peripheral. Box-3's USB-C connector is
+      # wired to the S3's native USB-Serial-JTAG peripheral.
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+      # Keep Wi-Fi buffering below ESPHome's streaming high-performance preset
+      # (64 dynamic RX + 64 dynamic TX + BA windows 32), matching the validated
+      # waveshare-s3-full-afe.yaml profile's full-duplex resource-pressure
+      # handling (see network: enable_high_performance below). Not the fix for
+      # the Sendspin discovery issue - that's esphome#17742 / the ESP-IDF
+      # version pin above.
+      CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM: "10"
+      CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM: "32"
+      CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM: "32"
+      CONFIG_ESP_WIFI_TX_BA_WIN: "16"
+      CONFIG_ESP_WIFI_RX_BA_WIN: "16"
+
+# Box-3 uses octal PSRAM (not the quad PSRAM on generic devkit-style boards).
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+# Persist user settings without excessive flash writes.
+
+preferences:
+  flash_write_interval: 5min
+
+# =============================================================================
+# EXTERNAL COMPONENTS
+# =============================================================================
+
+# Project components for full VA/VoIP, runtime controller and codec AEC.
+
+external_components:
+  - source: ${voip_stack_components_source}
+    components: [voip_stack]
+  - source: ${ext_components_source}
+    components: [speaker, voice_assistant]
+  - source: ${runtime_controller_components_source}
+    components: [runtime_controller]
+  - source: ${audio_stack_components_source}
+    components: [esp_audio_stack, esp_aec]
+
+# =============================================================================
+# CONNECTIVITY
+# =============================================================================
+
+# The speaker media player requests high-performance networking by default,
+# which expands lwIP to 65KB TCP windows and 64-entry mailboxes. Matches the
+# validated waveshare-s3-full-afe.yaml profile, which disables this for the
+# same full-duplex audio + api + sendspin combination this profile also runs.
+
+network:
+  enable_high_performance: false
+
+# Normal Wi-Fi client mode. Power save is disabled for low-latency SIP/RTP and
+# reliable HA API updates.
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: NONE
+
+# Home Assistant native API for entities, service actions and phonebook sync.
+
+api:
+
+# OTA update endpoint used by ESPHome Dashboard and `esphome upload`.
+
+ota:
+  - platform: esphome
+
+# USB Serial/JTAG logger. VoIP and audio domains stay visible at INFO; noisy
+# entity domains stay WARN for normal field use.
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+  # DEBUG keeps SIP signaling + AEC/AFE/i2s lifecycle visible.
+  # Mute chatty ESPHome built-ins below; project components stay at DEBUG.
+  level: INFO
+  logs:
+    voip_stack: INFO
+    voip_stack.fsm: INFO
+    voip_stack.tcp: INFO
+    voip_stack.udp: INFO
+    voip_stack.audio: INFO
+    voip_stack.settings: INFO
+    sensor: WARN
+    text_sensor: WARN
+    binary_sensor: WARN
+    switch: WARN
+    number: WARN
+    button: WARN
+    api: WARN
+    api.connection: WARN
+    component: WARN
+    api.service: INFO
+    light: INFO
+    select: INFO
+    speaker: INFO
+    audio: INFO
+    micro_wake_word: INFO
+    voice_assistant: INFO
+    media_player: INFO
+    resampler: INFO
+    mixer_speaker: INFO
+    wifi: INFO
+    json: INFO
+
+# =============================================================================
+# BUSES
+# =============================================================================
+
+i2c:
+  - id: internal_i2c
+    sda: ${codec_i2c_sda_pin}
+    scl: ${codec_i2c_scl_pin}
+    scan: false
+  - id: external_i2c
+    sda: GPIO41
+    scl: GPIO40
+    scan: true
+    sda_pullup_enabled: true
+    scl_pullup_enabled: true
+    frequency: 50kHz
+
+# =============================================================================
+# AUDIO PIPELINE
+# =============================================================================
+
+esp_audio_stack:
+  id: audio_stack
+  i2s_lrclk_pin: ${i2s_lrclk_pin}
+  i2s_bclk_pin: ${i2s_bclk_pin}
+  i2s_mclk_pin: ${i2s_mclk_pin}
+  i2s_din_pin: ${i2s_din_pin}
+  i2s_dout_pin: ${i2s_dout_pin}
+  sample_rate: 48000
+  output_sample_rate: 16000
+  processor_id: aec_processor
+  # Software AEC reference (no hardware loopback/TDM reference slot on Box-3).
+  aec_reference: previous_frame
+  buffers_in_psram: true
+  codec:
+    i2c_id: internal_i2c
+    input:
+      type: es7210
+      address: 0x40
+      # Box-3 wires a single external mic to MIC1. mic_selected is Espressif's
+      # es7210_codec_cfg_t bitmask (bit0=MIC1); the component default (0x0F)
+      # is for 4-channel mic arrays like Waveshare's, not a single mic.
+      mic_selected: 0x01
+      # Component default (30.0dB); no board-specific data to justify changing it.
+      gain_db: 30.0
+    output:
+      type: es8311
+      address: 0x18
+      use_mclk: true
+      no_dac_ref: true
+
+esp_aec:
+  id: aec_processor
+  sample_rate: 16000
+  filter_length: 4
+  mode: fd_high_perf
+
+microphone:
+  - platform: esp_audio_stack
+    id: mic_main
+    esp_audio_stack_id: audio_stack
+
+speaker:
+  - platform: esp_audio_stack
+    id: hw_speaker
+    esp_audio_stack_id: audio_stack
+    sample_rate: 48000
+    bits_per_sample: 16
+    timeout: 1s
+
+# =============================================================================
+# MEDIA, ASSIST AND VOIP
+# =============================================================================
+
+micro_wake_word:
+  microphone: mic_main
+  models:
+    - model: alexa
+
+voice_assistant:
+  microphone: mic_main
+  media_player: speaker_media_player
+  micro_wake_word: mww
+  noise_suppression_level: 2
+  auto_gain: 31dBFS
+  volume_multiplier: 2.0
+
+voip_stack:
+  task_stacks_in_psram: true   # save ~28KB internal heap on S3 by placing task stacks in PSRAM
+  buffers_in_psram: true # VoIP staging buffers in PSRAM; AEC/AFE buffers live in esp_audio_stack
+  audio:
+    # Primary/preferred RTP profile: 48 kHz/10 ms toward the speaker, and a
+    # matching 10 ms TX reframe of the 16 kHz AEC mic for peers that negotiate
+    # ptime 10. 32 kHz/16 ms remains an alternate advertised format.
+    tx_formats:
+      - sample_rate: 16000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 10
+    rx:
+      sample_rate: 48000
+      pcm_format: s16le
+      channels: 1
+      frame_ms: 10
+    # Additional accepted RX formats for direct ESP-to-ESP calls. These are valid
+    # only because speaker: voip_speaker_input points at the resampler; do
+    # not advertise additional formats when wiring voip_stack directly to a
+    # fixed-rate mixer input.
+    rx_formats:
+      - sample_rate: 32000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 16
+      - sample_rate: 16000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 10
+      - sample_rate: 16000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 16
+      - sample_rate: 16000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 32
+  microphone: mic_main
+  speaker: voip_speaker_input
+  ringing_timeout: 30s
+  delete_contact_missing_from:
+    updates_number: 1
+
+# =============================================================================
+# RUNTIME LOGIC AND ENTITIES
+# =============================================================================
+
+# Local BOOT button: short press controls VA/call toggle, double press changes
+# contact, long press toggles microphone mute.
+
+binary_sensor:
+  # BOOT button (GPIO0), multi-click
+  - platform: gpio
+    name: Boot Button
+    id: boot_button
+    pin:
+      number: GPIO0
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_multi_click:
+      # Single click: call toggle if VoIP call active, otherwise VA start/stop
+      - timing:
+          - ON for at most 500ms
+          - OFF for at least 400ms
+        then:
+          - if:
+              condition:
+                not:
+                  - voip_stack.is_idle:
+              then:
+                - voip_stack.call_toggle:
+              else:
+                - runtime_controller.event:
+                    id: runtime
+                    event: wake_word
+      # Double click: next contact
+      - timing:
+          - ON for 50ms to 500ms
+          - OFF for at most 300ms
+          - ON for 50ms to 500ms
+          - OFF for at least 400ms
+        then:
+          - voip_stack.next_contact:
+      # Long press (1-3s): toggle mute
+      - timing:
+          - ON for 1s to 3s
+          - OFF for at least 300ms
+        then:
+          - switch.toggle: mute
+
+# LCD backlight, repurposed as the runtime_controller status LED (see
+# runtime_controller_led_id above) since Box-3 has no addressable RGB LED.
+
+output:
+  - platform: ledc
+    pin: GPIO47
+    id: backlight_output
+
+light:
+  - platform: monochromatic
+    id: led
+    name: Screen
+    icon: "mdi:television"
+    entity_category: config
+    output: backlight_output
+    restore_mode: RESTORE_DEFAULT_ON
+    default_transition_length: 250ms
+
+switch:
+  # Speaker amp enable. Box-3's class-D amp is gated by this GPIO; without it
+  # driven high the ES8311 DAC output never reaches the speaker.
+  - platform: gpio
+    name: Speaker Enable
+    id: speaker_enable
+    pin:
+      number: GPIO46
+      ignore_strapping_warning: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+
+select:
+  - platform: template
+    name: AEC Mode
+    id: aec_mode_select
+    icon: mdi:tune-vertical
+    # Keep runtime switching within the full-duplex AEC engine.
+    options:
+      - "fd_low_cost"
+      - "fd_high_perf"
+    initial_option: "fd_high_perf"
+    # Non-optimistic: HA reflects the live component mode, not the value the
+    # user clicked. If the switch is rejected (e.g. internal RAM fragmented)
+    # or the component falls back to the previous mode, the select shows the
+    # actual mode rather than a fictitious one.
+    optimistic: false
+    restore_value: true
+    set_action:
+      - if:
+          condition:
+            lambda: 'return id(init_in_progress);'
+          then:
+            - logger.log: "AEC mode select: skipping during boot"
+          else:
+            - if:
+                condition:
+                  or:
+                    - voice_assistant.is_running:
+                    - not:
+                        voip_stack.is_idle:
+                then:
+                  - logger.log:
+                      level: WARN
+                      format: "Cannot switch AEC mode during active VA/VoIP"
+                else:
+                  - logger.log:
+                      format: "Switching AEC mode to %s"
+                      args: ['x.c_str()']
+                  - micro_wake_word.stop:
+                  - esp_audio_stack.stop: audio_stack
+                  - wait_until:
+                      condition:
+                        esp_audio_stack.is_idle: audio_stack
+                      timeout: 2s
+                  - esp_aec.set_mode:
+                      id: aec_processor
+                      mode: !lambda 'return x;'
+                  - esp_audio_stack.start: audio_stack
+                  - delay: 300ms
+                  - if:
+                      condition:
+                        switch.is_off: mute
+                      then:
+                        - micro_wake_word.start:
+                        - script.execute: boost_mww_priority
+      # Reflect actual live mode (covers rejection and silent hardware mode).
+      - lambda: |-
+          id(aec_mode_select).publish_state(id(aec_processor).get_mode_name());

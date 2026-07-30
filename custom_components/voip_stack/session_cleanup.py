@@ -57,6 +57,13 @@ async def async_cleanup_sip_runtime(
 ) -> SipRuntimeCleanupResult:
     """Stop every SIP runtime resource before propagating caller cancellation."""
 
+    # A dialog watcher may be the task that observed remote BYE and entered
+    # bridge teardown.  Cleanup runs in a shielded child task, so comparing the
+    # watcher only with the child would make it cancel and await its own caller.
+    # Detach that self-owned watcher before crossing the task boundary.
+    if watcher is asyncio.current_task():
+        watcher = None
+
     task = asyncio.create_task(
         _async_cleanup_sip_runtime_impl(
             relay=relay,

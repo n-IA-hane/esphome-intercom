@@ -100,7 +100,7 @@ async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
                 host=host,
                 endpoint_id=str(device.get("endpoint_id") or ""),
                 endpoint_kind=EndpointKind.ESPHOME.value,
-                capabilities=("audio", "dtmf"),
+                capabilities=tuple(device.get("capabilities") or ("audio", "dtmf")),
                 sip_port=int(device.get("sip_port") or cfg["sip_port"]),
                 rtp_port=int(device.get("rtp_port") or cfg["rtp_port"]),
                 extension=str(device.get("extension") or ""),

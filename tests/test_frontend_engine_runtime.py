@@ -167,23 +167,25 @@ await liveVideoPreference._ensureVideo({{
 }});
 assert.deepEqual(cameraSelections, [[true, "kitchen"], [false, "kitchen"]]);
 
-// Media ownership identity is stable for this document and is part of the
-// Home Assistant signed path. A duplicated tab inherits sessionStorage, so a
-// copied legacy token must not become the new document's identity.
+// Media ownership identity survives a reload of the originating browsing
+// context and is part of the Home Assistant signed path. The backend rejects
+// every other client ID, including observers racing before the first socket.
 const signedPaths = [];
 const signingHass = {{
   callWS: async (msg) => {{ signedPaths.push(msg.path); return {{ path: msg.path }}; }},
 }};
 session.set("voip_stack_media_client_id", "copied-session-token-1234");
+context.__voipStackMediaClientId = undefined;
 const signedA = new Engine();
 signedA.configure(signingHass);
 await signedA._wsUrl("device", "signed-call");
+context.__voipStackMediaClientId = undefined;
 const signedB = new Engine();
 signedB.configure(signingHass);
 await signedB._wsUrl("device", "signed-call");
 assert.ok(signedA._mediaClientId.length >= 16);
 assert.equal(signedA._mediaClientId, signedB._mediaClientId);
-assert.notEqual(signedA._mediaClientId, "copied-session-token-1234");
+assert.equal(signedA._mediaClientId, "copied-session-token-1234");
 assert.equal(
   new URL(`https://ha.example${{signedPaths[0]}}`).searchParams.get("client_id"),
   signedA._mediaClientId,
@@ -393,20 +395,31 @@ assert.equal(ownership.ownsSoftphoneSession("call-A", "default"), false);
 assert.equal(ownership._state, "IDLE");
 assert.match(ownershipErrors.at(-1), /another tab|could not be attached/i);
 
-// A known live owner in another tab is an ordinary spectator state. The
-// backend remains authoritative and the card must not display a false media
-// error or retry an attach that cannot succeed.
+// A known owner in another browser makes this card a strict spectator. It
+// discards its optimistic local claim and never opens microphone/camera media.
 const spectator = new Engine();
 let spectatorConnects = 0;
 const spectatorErrors = [];
+let spectatorOwner = "other";
 spectator._hass = {{
   callWS: async () => ({{
     state: "in_call",
     call_id: "spectator-call",
-    media_owner: "other",
+    media_owner: spectatorOwner,
   }}),
 }};
-spectator._connect = async () => {{ spectatorConnects++; throw new Error("must not connect"); }};
+spectator._connect = async () => {{
+  spectatorConnects++;
+  spectator._callId = "spectator-call";
+  return {{
+    call_id: "spectator-call",
+    selected_tx_format: "48000:s16le:1:20",
+    selected_rx_format: "48000:s16le:1:20",
+    audio_direction: "sendrecv",
+  }};
+}};
+spectator._setupAudio = async () => {{}};
+spectator._reconcileAudioMedia = async () => {{}};
 spectator.addEventListener("error", (event) => spectatorErrors.push(event.detail));
 spectator.claimSoftphoneSession("spectator-call", "test");
 assert.equal(
@@ -564,6 +577,7 @@ closeRace._audioContext = {{ close: () => oldAudioGate }};
 closeRace._video = {{ close: () => oldVideoGate }};
 closeRace._callId = "A";
 const closingA = closeRace.close("test");
+assert.equal(closeRace.mediaCleanupPending, true);
 assert.equal(closeRace._audioContext, null);
 let bClosed = 0;
 const contextB = {{ close: async () => {{ bClosed++; }} }};
@@ -573,6 +587,7 @@ closeRace._state = "IN_CALL";
 releaseOldAudio();
 releaseOldVideo();
 await closingA;
+assert.equal(closeRace.mediaCleanupPending, false);
 assert.equal(bClosed, 0);
 assert.equal(closeRace._audioContext, contextB);
 assert.equal(closeRace._callId, "B");
@@ -813,6 +828,21 @@ releaseVideoCleanup();
 await closingVideo;
 await startingAudio;
 assert.equal(outboundStarts, 1);
+
+// Browser codec/AudioContext shutdown is best effort. A platform Promise that
+// never settles cannot keep the media gate or the next Hangup blocked forever.
+const stuckClose = new Engine();
+stuckClose._callId = "stuck-media";
+stuckClose._audioContext = {{ close: () => new Promise(() => {{}}) }};
+stuckClose._video = {{
+  configure() {{}},
+  close: () => new Promise(() => {{}}),
+}};
+const stuckCloseStarted = Date.now();
+await stuckClose.close("hangup");
+assert.ok(Date.now() - stuckCloseStarted < 1500);
+assert.equal(stuckClose._callId, "");
+assert.equal(stuckClose._audioContext, null);
 """
     completed = subprocess.run(
         [

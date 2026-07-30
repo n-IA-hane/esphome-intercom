@@ -1278,17 +1278,9 @@ async def route_invite(
             video_bridge_ports = None
             video_relay = None
             video_failure_reason = ""
-            source_video_enabled = (
-                source_endpoint is None or source_endpoint.supports("video")
-            )
-            target_video_enabled = (
-                target_endpoint is None or target_endpoint.supports("video")
-            )
             if (
                 bool(cfg.get(CONF_SIP_VIDEO, False))
                 and invite.video_format is not None
-                and source_video_enabled
-                and target_video_enabled
             ):
                 sockets = ()
                 try:

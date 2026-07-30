@@ -181,18 +181,15 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._eventConcernsThisCard(data)", body)
         self.assertIn('"busy"', body)
         self.assertIn("data.terminal_reason || data.reason || state", body)
-        self.assertIn("data.target || data.dialed_target || data.peer_name || data.callee", body)
+        self.assertIn("terminalPeerLabel(data)", body)
         self.assertIn(
             'this._captureEndReason("terminal", reason, data.actor || "remote", peer)',
             body,
         )
 
-    def test_ha_softphone_terminal_label_prefers_dialed_target(self) -> None:
+    def test_ha_softphone_terminal_label_uses_remote_peer(self) -> None:
         apply_snapshot = _method_body(self.source, "_applySoftphoneSnapshot")
-        self.assertIn(
-            "snapshot.dialed_target || snapshot.peer_name || snapshot.callee",
-            apply_snapshot,
-        )
+        self.assertIn("terminalPeerLabel(snapshot)", apply_snapshot)
 
     def test_ha_softphone_dnd_status_outweighs_terminal_history(self) -> None:
         render = _method_body(self.source, "_render")
@@ -458,6 +455,13 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._sessionCallId() !== callId", answer)
         self.assertIn("this._sessionCallId() !== callId", decline)
         self.assertIn("const ownedCallId = String(voipStackEngine.softphoneCallId", hangup)
+        self.assertIn("settleServiceWithin(", hangup)
+        self.assertIn("voipStackEngine.suspendVideoForHangup(", hangup)
+        self.assertLess(
+            hangup.index("voipStackEngine.suspendVideoForHangup("),
+            hangup.index("await this._getDeviceInfo()"),
+        )
+        self.assertIn('void voipStackEngine.close("hangup")', hangup)
         self.assertIn("this._sessionCallId() !== callId", auto_answer)
         self.assertIn("await this._answer({ callId, videoPermission })", auto_answer)
 
@@ -481,7 +485,7 @@ class FrontendCardContractTest(unittest.TestCase):
         )[0]
         self.assertNotIn("video_offered", wants_video)
         self.assertIn("this._softphoneSnapshot?.send_video", start)
-        self.assertIn("this._targetSupportsVideo(target)", start)
+        self.assertNotIn("targetSupportsVideo", start)
         self.assertIn("endpointId: this._getSoftphoneEndpointId()", answer)
         self.assertIn("endpointId: this._getSoftphoneEndpointId()", start)
         self.assertIn("persistentOnly: true", auto_answer)
@@ -493,16 +497,13 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("navigator.mediaDevices.getUserMedia", permission)
         self.assertIn("track.stop()", permission)
 
-    def test_outbound_video_preflight_respects_target_capabilities(self) -> None:
+    def test_outbound_video_uses_standard_sdp_negotiation(self) -> None:
         target = _method_body(self.source, "_targetFromRosterEntry")
-        supports = _method_body(self.source, "_targetSupportsVideo")
+        start = _method_body(self.source, "async _startHaSoftphoneCall")
 
         self.assertIn("targetFromRosterEntry(entry)", target)
-        self.assertIn("targetSupportsVideo(target)", supports)
-        self.assertIn("metadata.endpoint_kind", self.model_source)
-        self.assertIn("metadata.capabilities", self.model_source)
-        self.assertIn('capabilities.includes("video")', self.model_source)
-        self.assertIn('!== "esphome"', self.model_source)
+        self.assertIn("this._softphoneSnapshot?.send_video", start)
+        self.assertNotIn("targetSupportsVideo", start)
 
     def test_deep_link_answer_is_not_part_of_esp_mirror_state_updates(self) -> None:
         setter = _method_body(self.source, "set hass")
@@ -650,6 +651,8 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("let connected = false", setup)
         self.assertIn("connected = true", setup)
         self.assertIn("if (!connected)", setup)
+        self.assertIn("this._mediaAttachOwnedByOther(beforeAttach, callId)", setup)
+        self.assertIn("this._mediaAttachOwnedByOther(afterFailure, callId)", setup)
         self.assertIn("this.releaseSoftphoneSession(callId, endpointId)", setup)
         self.assertIn('await this.close("media_attach_conflict")', setup)
         self.assertLess(
@@ -683,9 +686,12 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn('if (!preserveAttach) this._sessionAttachKey = ""', engine)
         self.assertIn("if (this._sessionAttachPromise !== trackedPromise) return", engine)
         self.assertIn("const audioCleanup = this._cleanupAudio", engine)
-        self.assertIn("await Promise.allSettled([audioCleanup, videoCleanup])", engine)
+        self.assertIn("await settleWithin(Promise.allSettled([", engine)
+        self.assertIn("previousCleanup || Promise.resolve()", engine)
+        self.assertIn("MEDIA_CLEANUP_TIMEOUT_MS", engine)
         self.assertIn("await this._waitForMediaCleanup()", engine)
         self.assertIn("this._mediaCleanupPromise = currentCleanup", engine)
+        self.assertIn("get mediaCleanupPending()", engine)
         self.assertIn("(this._video.active || this._video.callId)", engine)
 
     def test_browser_audio_applies_negotiated_direction_and_media_updates(self) -> None:
@@ -758,10 +764,11 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn('const SOFTPHONE_MEDIA_SESSION_KEY = "voip_stack_owned_softphone_call"', engine)
         self.assertIn('const SOFTPHONE_MEDIA_SESSIONS_KEY = "voip_stack_owned_softphone_calls"', engine)
         self.assertIn('const MEDIA_CLIENT_GLOBAL_KEY = "__voipStackMediaClientId"', engine)
+        self.assertIn('const MEDIA_CLIENT_SESSION_KEY = "voip_stack_media_client_id"', engine)
         self.assertIn("globalThis[MEDIA_CLIENT_GLOBAL_KEY]", engine)
-        self.assertNotIn("sessionStorage.getItem(MEDIA_CLIENT_SESSION_KEY)", engine)
-        self.assertNotIn("sessionStorage.setItem(MEDIA_CLIENT_SESSION_KEY", engine)
-        self.assertIn("sessionStorage is cloned by browsers", engine)
+        self.assertIn("sessionStorage.getItem(MEDIA_CLIENT_SESSION_KEY)", engine)
+        self.assertIn("sessionStorage.setItem(MEDIA_CLIENT_SESSION_KEY", engine)
+        self.assertIn("backend pins every call to this value", engine)
         self.assertIn("client_id=${encodeURIComponent(this._mediaClientId)}", engine)
         self.assertIn("sessionStorage.getItem(SOFTPHONE_MEDIA_SESSION_KEY)", engine)
         self.assertIn("sessionStorage.setItem(SOFTPHONE_MEDIA_SESSION_KEY", engine)
@@ -798,6 +805,9 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("partial media support", video)
         self.assertIn("async _cleanupSender()", video)
         self.assertIn("_cleanupReceiver()", video)
+        self.assertIn("new Worker(this._codecWorkerUrl()", video)
+        self.assertIn("requestAnimationFrame", video)
+        self.assertIn("MEDIA_CLEANUP_TIMEOUT_MS", video)
         self.assertIn("this._generation", video)
         self.assertIn("SIP video session was superseded", video)
         self.assertIn("get videoVisible()", engine)
@@ -813,6 +823,14 @@ class FrontendCardContractTest(unittest.TestCase):
 
     def test_sip_video_layout_is_bounded_and_responsive(self) -> None:
         self.assertIn(".card.video-active { overflow: hidden;", self.source)
+        self.assertIn(
+            ".card > :where(:not(.video-canvas):not(.native-camera):not(.video-shade))",
+            self.source,
+        )
+        self.assertNotIn(
+            ".card > :not(.video-canvas):not(.native-camera):not(.video-shade)",
+            self.source,
+        )
         self.assertIn("ha-card.card.video-active > .button-container", self.source)
         self.assertIn("bottom: 0;", self.source)
         self.assertIn("width: 100%;", self.source)

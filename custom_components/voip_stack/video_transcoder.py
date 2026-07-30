@@ -1,8 +1,8 @@
-"""Bounded FFmpeg bridge for optional SIP video transcoding.
+"""Bounded FFmpeg helpers for optional SIP video interoperability.
 
 The normal video path never imports a codec library or starts a process.  This
-module is used only when the config-flow opt-in is enabled and the negotiated
-SIP codec cannot be rendered directly by the browser bridge.
+module is used either when config-flow opt-in permits receive transcoding or
+when a browser JPEG must be normalized to RFC 2435's fixed Huffman tables.
 """
 
 from __future__ import annotations
@@ -28,10 +28,34 @@ _ACTIVE_TRANSCODER = "video_transcoder_active"
 _TRANSCODER_LOCK = "video_transcoder_lock"
 _MAX_FMTP_LENGTH = 1024
 _PROCESS_STOP_TIMEOUT = 2.0
+_JPEG_NORMALIZE_TIMEOUT = 1.5
+_JPEG_NORMALIZE_MAX_BYTES = 1024 * 1024
+_JPEG_MULTIPART_INPUT_BOUNDARY = "voipstackin"
+_JPEG_MULTIPART_OUTPUT_BOUNDARY = "voipstackout"
 
 
 class VideoTranscoderError(RuntimeError):
     """The optional video transcoder could not be started or used."""
+
+
+async def _claim_transcoder_slot(hass: HomeAssistant, owner: object) -> None:
+    """Bound every FFmpeg video bridge to one integration-owned process slot."""
+
+    bucket = hass.data.setdefault(DOMAIN, {})
+    lock = bucket.setdefault(_TRANSCODER_LOCK, asyncio.Lock())
+    async with lock:
+        active = bucket.get(_ACTIVE_TRANSCODER)
+        if active is not None and active is not owner:
+            raise VideoTranscoderError("another SIP video transcode is active")
+        bucket[_ACTIVE_TRANSCODER] = owner
+
+
+async def _release_transcoder_slot(hass: HomeAssistant, owner: object) -> None:
+    bucket = hass.data.setdefault(DOMAIN, {})
+    lock = bucket.setdefault(_TRANSCODER_LOCK, asyncio.Lock())
+    async with lock:
+        if bucket.get(_ACTIVE_TRANSCODER) is owner:
+            bucket.pop(_ACTIVE_TRANSCODER, None)
 
 
 def _available_udp_port() -> int:
@@ -115,13 +139,7 @@ class FfmpegVideoTranscoder:
                     self._start_task = None
 
     async def _async_start_impl(self) -> None:
-        bucket = self.hass.data.setdefault(DOMAIN, {})
-        lock = bucket.setdefault(_TRANSCODER_LOCK, asyncio.Lock())
-        async with lock:
-            active = bucket.get(_ACTIVE_TRANSCODER)
-            if active is not None and active is not self:
-                raise VideoTranscoderError("another SIP video transcode is active")
-            bucket[_ACTIVE_TRANSCODER] = self
+        await _claim_transcoder_slot(self.hass, self)
         process: asyncio.subprocess.Process | None = None
         send_socket: socket.socket | None = None
         stderr_task: asyncio.Task[None] | None = None
@@ -216,11 +234,18 @@ class FfmpegVideoTranscoder:
     async def _drain_stderr(self, process: asyncio.subprocess.Process) -> None:
         if process.stderr is None:
             return
+        lines_seen = 0
         while line := await process.stderr.readline():
             text = line.decode(errors="replace").rstrip()
             self.stderr_tail.append(text)
             del self.stderr_tail[:-20]
-            _LOGGER.debug("FFmpeg SIP video: %s", text)
+            lines_seen += 1
+            if lines_seen & (lines_seen - 1) == 0:
+                _LOGGER.debug(
+                    "FFmpeg SIP video messages=%s latest=%s",
+                    lines_seen,
+                    text,
+                )
 
     async def async_close(self) -> None:
         """Finish one idempotent cleanup even if the waiting caller is cancelled."""
@@ -290,9 +315,248 @@ class FfmpegVideoTranscoder:
             # Never strand the single bounded transcode slot because FFmpeg
             # exited between the returncode check and process cleanup.
             if release_slot:
-                bucket = self.hass.data.setdefault(DOMAIN, {})
-                lock = bucket.setdefault(_TRANSCODER_LOCK, asyncio.Lock())
-                async with lock:
-                    if bucket.get(_ACTIVE_TRANSCODER) is self:
-                        bucket.pop(_ACTIVE_TRANSCODER, None)
+                await _release_transcoder_slot(self.hass, self)
             self._released = True
+
+
+@dataclass(slots=True)
+class FfmpegJpegNormalizer:
+    """Persistently re-encode browser JPEGs for RFC 2435 packetization.
+
+    Canvas encoders may optimize Huffman tables per frame, while RFC 2435
+    types 0/1 require JPEG Annex K's fixed tables. This bounded helper owns no
+    SIP or RTP state: it maps one complete JPEG to one complete JPEG and stays
+    subordinate to the existing video WebSocket media owner.
+    """
+
+    hass: HomeAssistant
+    call_id: str
+    process: asyncio.subprocess.Process | None = None
+    stderr_tail: list[str] = field(default_factory=list, init=False)
+    _stderr_task: asyncio.Task[None] | None = field(default=None, init=False)
+    _lifecycle_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+    _frame_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+    _cleanup_task: asyncio.Task[None] | None = field(default=None, init=False)
+    _close_requested: bool = field(default=False, init=False)
+    _released: bool = field(default=False, init=False)
+
+    async def async_start(self) -> None:
+        async with self._lifecycle_lock:
+            if self.process is not None and self.process.returncode is None:
+                return
+            if self._close_requested or self._released:
+                raise VideoTranscoderError("JPEG normalizer has already been closed")
+            await _claim_transcoder_slot(self.hass, self)
+            process: asyncio.subprocess.Process | None = None
+            stderr_task: asyncio.Task[None] | None = None
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    _ffmpeg_binary(self.hass),
+                    "-hide_banner",
+                    "-loglevel",
+                    "warning",
+                    "-nostdin",
+                    "-protocol_whitelist",
+                    "pipe",
+                    "-threads",
+                    "1",
+                    "-f",
+                    "mpjpeg",
+                    "-i",
+                    "pipe:0",
+                    "-map",
+                    "0:v:0",
+                    "-an",
+                    "-sn",
+                    "-dn",
+                    "-pix_fmt",
+                    "yuvj420p",
+                    "-c:v",
+                    "mjpeg",
+                    "-huffman",
+                    "default",
+                    "-force_duplicated_matrix",
+                    "1",
+                    "-q:v",
+                    "5",
+                    "-threads",
+                    "1",
+                    "-fps_mode",
+                    "passthrough",
+                    "-flush_packets",
+                    "1",
+                    "-f",
+                    "mpjpeg",
+                    "-boundary_tag",
+                    _JPEG_MULTIPART_OUTPUT_BOUNDARY,
+                    "pipe:1",
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    limit=_JPEG_NORMALIZE_MAX_BYTES * 2,
+                )
+                stderr_task = asyncio.create_task(
+                    self._drain_stderr(process),
+                    name=f"voip-jpeg-normalizer-stderr-{self.call_id}",
+                )
+                if self._close_requested:
+                    raise asyncio.CancelledError
+                self.process = process
+                self._stderr_task = stderr_task
+                process = None
+                stderr_task = None
+                _LOGGER.info(
+                    "Started SIP browser JPEG normalizer call_id=%s",
+                    self.call_id,
+                )
+            except BaseException:
+                await self._dispose(
+                    process=process,
+                    stderr_task=stderr_task,
+                    release_slot=True,
+                )
+                raise
+
+    async def async_normalize(self, frame: bytes) -> bytes:
+        """Normalize one JPEG with one in-flight frame and pipe backpressure."""
+
+        data = bytes(frame)
+        if (
+            not 4 <= len(data) <= _JPEG_NORMALIZE_MAX_BYTES
+            or not data.startswith(b"\xff\xd8")
+            or not data.endswith(b"\xff\xd9")
+        ):
+            raise VideoTranscoderError("invalid browser JPEG access unit")
+        async with self._frame_lock:
+            await self.async_start()
+            process = self.process
+            if (
+                process is None
+                or process.returncode is not None
+                or process.stdin is None
+                or process.stdout is None
+            ):
+                raise VideoTranscoderError("JPEG normalizer stopped")
+            prefix = (
+                f"--{_JPEG_MULTIPART_INPUT_BOUNDARY}\r\n"
+                "Content-Type: image/jpeg\r\n"
+                f"Content-Length: {len(data)}\r\n\r\n"
+            ).encode()
+            try:
+                async with asyncio.timeout(_JPEG_NORMALIZE_TIMEOUT):
+                    process.stdin.write(prefix)
+                    process.stdin.write(data)
+                    process.stdin.write(b"\r\n")
+                    await process.stdin.drain()
+                    header = await process.stdout.readuntil(b"\r\n\r\n")
+                    if len(header) > 4096:
+                        raise VideoTranscoderError(
+                            "JPEG normalizer emitted an oversized header"
+                        )
+                    content_length = 0
+                    content_type = ""
+                    for raw_line in header.decode("ascii", errors="strict").splitlines():
+                        name, separator, value = raw_line.partition(":")
+                        if not separator:
+                            continue
+                        if name.strip().lower() == "content-length":
+                            content_length = int(value.strip())
+                        elif name.strip().lower() == "content-type":
+                            content_type = value.strip().lower()
+                    if (
+                        content_type != "image/jpeg"
+                        or not 4 <= content_length <= _JPEG_NORMALIZE_MAX_BYTES
+                    ):
+                        raise VideoTranscoderError(
+                            "JPEG normalizer emitted an invalid multipart frame"
+                        )
+                    output = await process.stdout.readexactly(content_length)
+                if not output.startswith(b"\xff\xd8") or not output.endswith(b"\xff\xd9"):
+                    raise VideoTranscoderError("JPEG normalizer emitted invalid JPEG")
+                return output
+            except asyncio.CancelledError:
+                cleanup = asyncio.create_task(self.async_close())
+                await async_wait_for_cleanup(cleanup)
+                raise
+            except (
+                BrokenPipeError,
+                ConnectionError,
+                EOFError,
+                TimeoutError,
+                UnicodeError,
+                ValueError,
+                VideoTranscoderError,
+                asyncio.IncompleteReadError,
+                asyncio.LimitOverrunError,
+            ) as err:
+                cleanup = asyncio.create_task(self.async_close())
+                await async_wait_for_cleanup(cleanup)
+                raise VideoTranscoderError(
+                    f"JPEG normalizer failed: {err}"
+                ) from err
+
+    async def _drain_stderr(self, process: asyncio.subprocess.Process) -> None:
+        if process.stderr is None:
+            return
+        lines_seen = 0
+        while line := await process.stderr.readline():
+            text = line.decode(errors="replace").rstrip()
+            self.stderr_tail.append(text)
+            del self.stderr_tail[:-20]
+            lines_seen += 1
+            if lines_seen & (lines_seen - 1) == 0:
+                _LOGGER.debug(
+                    "FFmpeg SIP JPEG normalizer call_id=%s messages=%s latest=%s",
+                    self.call_id,
+                    lines_seen,
+                    text,
+                )
+
+    async def async_close(self) -> None:
+        async with self._lifecycle_lock:
+            self._close_requested = True
+            task = self._cleanup_task
+            if task is None:
+                process = self.process
+                self.process = None
+                stderr_task = self._stderr_task
+                self._stderr_task = None
+                task = asyncio.create_task(
+                    self._dispose(
+                        process=process,
+                        stderr_task=stderr_task,
+                        release_slot=True,
+                    ),
+                    name=f"voip-jpeg-normalizer-close-{self.call_id}",
+                )
+                self._cleanup_task = task
+        await async_wait_for_cleanup(task)
+
+    async def _dispose(
+        self,
+        *,
+        process: asyncio.subprocess.Process | None,
+        stderr_task: asyncio.Task[None] | None,
+        release_slot: bool,
+    ) -> None:
+        try:
+            if process is not None:
+                if process.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        process.terminate()
+                try:
+                    await asyncio.wait_for(
+                        process.wait(), timeout=_PROCESS_STOP_TIMEOUT
+                    )
+                except TimeoutError:
+                    with contextlib.suppress(ProcessLookupError):
+                        process.kill()
+                    await process.wait()
+        finally:
+            if stderr_task is not None:
+                stderr_task.cancel()
+                await asyncio.gather(stderr_task, return_exceptions=True)
+            if release_slot:
+                await _release_transcoder_slot(self.hass, self)
+            self._released = True
+        _LOGGER.info("Stopped SIP browser JPEG normalizer call_id=%s", self.call_id)

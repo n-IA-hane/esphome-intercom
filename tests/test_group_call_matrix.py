@@ -156,6 +156,37 @@ class _FakeHass:
 
 
 class GroupCallMatrixTest(unittest.TestCase):
+    def test_unregistered_sip_accounts_are_not_exported_to_esp_phonebooks(
+        self,
+    ) -> None:
+        hass = _FakeHass()
+        offline = types.SimpleNamespace(
+            endpoint_id="sip:offline",
+            username="offline",
+            name="Offline SIP",
+            extension="668",
+            kind=types.SimpleNamespace(value="sip_account"),
+            availability="offline",
+            device_id="device-offline",
+            capabilities=frozenset({"audio", "dtmf"}),
+            conference_group="",
+            conference_ring=False,
+            ring_group="",
+        )
+        hass.data[const.DOMAIN]["endpoint_registry"] = types.SimpleNamespace(
+            endpoints=(offline,),
+            by_username=lambda _username: None,
+        )
+
+        old_manual = endpoint_routing.manual_roster_entries
+        endpoint_routing.manual_roster_entries = lambda _hass: []
+        try:
+            entries = endpoint_routing.roster_from_peers(hass, [], [])
+        finally:
+            endpoint_routing.manual_roster_entries = old_manual
+
+        self.assertNotIn("Offline SIP", {entry.name for entry in entries})
+
     def test_video_degradation_is_explicit_and_can_recover(self) -> None:
         hass = _FakeHass()
         websocket_api._set_ha_softphone_call_state(

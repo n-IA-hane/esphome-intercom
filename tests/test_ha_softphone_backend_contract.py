@@ -258,8 +258,39 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("failures & (failures - 1) == 0", body)
         self.assertIn('counters["video_keepalive_task_errors"] += 1', body)
         self.assertIn("observe_nonfatal_task", body)
+
+    def test_dependent_browser_video_is_paced_without_dropping_a_gop(self) -> None:
+        body = VIDEO_WS.read_text(encoding="utf-8")
+        sender = body.split("async def browser_to_rtp()", 1)[1].split(
+            "async def symmetric_rtp_keepalive()", 1
+        )[0]
+        limiter = sender.split("max_framerate = send_format.max_framerate", 1)[1]
+        limiter = limiter.split("def media_current()", 1)[0]
+
+        self.assertIn('if send_format.encoding == "JPEG":', limiter)
+        self.assertIn("continue", limiter)
+        self.assertIn("await asyncio.wait_for(", limiter)
+        self.assertIn("closed.wait()", limiter)
+        self.assertLess(
+            limiter.index('if send_format.encoding == "JPEG":'),
+            limiter.index("await asyncio.wait_for("),
+        )
         self.assertIn("rtcp_task.add_done_callback", body)
         self.assertIn("keepalive_task.add_done_callback", body)
+
+    def test_video_media_floods_yield_and_share_one_rtp_source_lock(self) -> None:
+        body = VIDEO_WS.read_text(encoding="utf-8")
+
+        self.assertIn("rtp_send_lock = asyncio.Lock()", body)
+        self.assertGreaterEqual(body.count("async with rtp_send_lock:"), 4)
+        self.assertGreaterEqual(
+            body.count(">= _VIDEO_RTP_RECEIVE_BURST_PACKETS"), 4
+        )
+        self.assertIn("build_keepalive(", body)
+        self.assertIn("sequence = int(rtp_source.sequence)", body)
+        self.assertIn("browser video TX drops=%s", body)
+        self.assertIn("video RTP RX drops=%s", body)
+        self.assertIn("video transcode input drops=%s", body)
 
     def test_video_rtcp_reports_cover_send_only_and_use_current_rtp_clock(self) -> None:
         body = VIDEO_WS.read_text(encoding="utf-8")
@@ -475,12 +506,14 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         start = video_ws.index("    def store_counters(*, force: bool = False)")
         end = video_ws.index("    def queue_access_unit", start)
         body = video_ws[start:end]
-        drain = body.index(
-            'counters["video_rtcp_drop_queue"] += rtcp_protocol.dropped_packets'
-        )
+        drain = body.index("sync_protocol_drop_counters()")
         persist = body.index("store.update(counters)")
         self.assertLess(drain, persist)
-        self.assertIn("rtcp_protocol.dropped_packets = 0", body)
+        sync_start = video_ws.index("    def sync_protocol_drop_counters()")
+        sync_end = video_ws.index("    def sync_reorder_counters()", sync_start)
+        sync_body = video_ws[sync_start:sync_end]
+        self.assertIn("rtcp_protocol.take_drop_counts()", sync_body)
+        self.assertIn('counters["video_rtcp_drop_queue"] += queue_drops', sync_body)
         debug_line = next(
             line
             for line in body.splitlines()
@@ -560,6 +593,29 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         watcher = outbound.index("await _track_outbound_sip_client(")
         self.assertLess(initial_result, watcher)
         self.assertIn("fast peer can place 180 and 200", outbound)
+
+    def test_outbound_state_carries_resolved_target_device_identity(self) -> None:
+        """The card must not recover the physical peer from SIP display text."""
+
+        outbound = _function_body(self.softphone_originate, "async_originate_call")
+        self.assertIn('getattr(target_endpoint, "device_id", "")', outbound)
+        self.assertIn('entry_metadata.get("device_id")', outbound)
+        self.assertGreaterEqual(
+            outbound.count("target_device_id=target_device_id"),
+            6,
+        )
+        tracker = _function_body(
+            self.outbound_lifecycle,
+            "async_track_outbound_sip_client",
+        )
+        self.assertIn(
+            'target_device_id: str = ""',
+            self.outbound_lifecycle,
+        )
+        self.assertGreaterEqual(
+            tracker.count("target_device_id=target_device_id"),
+            3,
+        )
 
     def test_final_200_commits_registry_before_publishing_in_call(self) -> None:
         tracker = _function_body(
@@ -655,6 +711,30 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("_ha_softphone_store(hass, media_endpoint_id)", media_update)
         self.assertIn("endpoint_id=media_endpoint_id", media_update)
         self.assertNotIn("_ha_softphone_store(hass)", media_update)
+
+    def test_browser_video_send_is_independent_from_receive_transcoding(self) -> None:
+        video_ws = VIDEO_WS.read_text()
+        can_send = video_ws[
+            video_ws.index("    def can_send(self) -> bool:")
+            : video_ws.index("    @property\n    def can_receive", video_ws.index("    def can_send(self) -> bool:"))
+        ]
+        self.assertIn("self.camera_send_enabled", can_send)
+        self.assertIn("self.send_video_format", can_send)
+        self.assertNotIn("requires_receive_transcoding", can_send)
+        self.assertNotIn("requires_transcoding", video_ws)
+
+    def test_direct_calls_publish_remote_connected_identity(self) -> None:
+        answer = _function_body(self.softphone_answer, "async_answer_browser_call")
+        self.assertIn("connected_party=invite.caller", answer)
+        self.assertIn("answered_by=invite.caller", answer)
+
+        outbound = _function_body(
+            self.outbound_lifecycle,
+            "async_track_outbound_sip_client",
+        )
+        self.assertIn('getattr(client, "connected_party", "") or target', outbound)
+        self.assertIn("peer_name=connected_party", outbound)
+        self.assertIn("connected_party=connected_party", outbound)
 
     def test_inbound_answer_preserves_logical_phone_as_callee(self) -> None:
         answer = _function_body(self.softphone_answer, "async_answer_browser_call")
@@ -843,9 +923,32 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn('"recv_format": invite.send_format', ring_group)
         self.assertIn('item.get("rtp_loopback")', audio_ws)
         self.assertIn("local_rtp_port=0", audio_ws)
-        self.assertIn("int(session.local_ssrc) or secrets.randbelow", audio_ws)
+        self.assertIn(
+            "rtp.AudioRtpSenderState.create(ssrc=session.local_ssrc)",
+            audio_ws,
+        )
         self.assertIn("registry.take_media(source_call_id)", bridge_manager)
         self.assertIn("release_media_reservation(media)", bridge_manager)
+
+    def test_rtp_sender_identity_survives_browser_media_handoff(self) -> None:
+        audio_ws = (
+            ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
+        ).read_text()
+        video_ws = (
+            ROOT / "custom_components" / "voip_stack" / "video_ws_view.py"
+        ).read_text()
+        sip_client = (
+            ROOT / "custom_components" / "voip_stack" / "sip_client.py"
+        ).read_text()
+
+        self.assertIn("self.audio_rtp_source = None", sip_client)
+        self.assertIn("self.video_rtp_source = None", sip_client)
+        self.assertIn('item["audio_rtp_source"] = rtp_source', audio_ws)
+        self.assertIn("client.audio_rtp_source = rtp_source", audio_ws)
+        self.assertIn("rtp_source.sequence = sequence", audio_ws)
+        self.assertIn("rtp_source.timestamp = timestamp", audio_ws)
+        self.assertIn("client.video_rtp_source = rtp_source", video_ws)
+        self.assertIn("rtp_source=rtp_source", video_ws)
 
     def test_conference_checks_softphone_busy_and_websocket_does_not_own_call(
         self,

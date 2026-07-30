@@ -345,6 +345,59 @@ def _split_comma_header_values(value: str) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _name_addr_identity_parts(value: str) -> tuple[str, str]:
+    """Return the display name and SIP user from one standard name-address."""
+
+    raw = str(value or "").strip()
+    if not raw:
+        return "", ""
+    try:
+        item = _split_comma_header_values(raw)[0]
+    except SipError:
+        return "", ""
+    display = ""
+    uri_text = item
+    if "<" in item and ">" in item:
+        left = item.index("<")
+        right = item.index(">", left + 1)
+        display = item[:left].strip()
+        uri_text = item[left + 1 : right].strip()
+    if display:
+        if len(display) >= 2 and display[0] == display[-1] == '"':
+            quoted = display[1:-1]
+            out: list[str] = []
+            escaped = False
+            for char in quoted:
+                if escaped:
+                    out.append(char)
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                else:
+                    out.append(char)
+            if escaped:
+                return "", ""
+            display = "".join(out).strip()
+    try:
+        user = parse_sip_uri(uri_text).user.strip()
+    except (TypeError, ValueError, SipError):
+        user = ""
+    return display, user
+
+
+def name_addr_display_name(value: str) -> str:
+    """Return only the optional display name from a SIP name-address."""
+
+    return _name_addr_identity_parts(value)[0]
+
+
+def name_addr_identity(value: str) -> str:
+    """Return the display name or SIP user from one standard name-address."""
+
+    display, user = _name_addr_identity_parts(value)
+    return display or user
+
+
 def record_route_set(
     message: SipMessage,
     *,

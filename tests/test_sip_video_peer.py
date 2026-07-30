@@ -82,6 +82,34 @@ def test_dahua_profile_request_identity_is_explicit() -> None:
     assert ("User-Agent", "Dahua UAC/3.0") in headers
 
 
+def test_p4_l16_profile_matches_firmware_packet_cadence() -> None:
+    peer = _load_tool()
+
+    offer = peer._offer(
+        local_ip="127.0.0.1",
+        audio_port=40000,
+        video_port=40002,
+        codec="h264",
+        direction="sendrecv",
+        video_profile="RTP/AVP",
+        audio_codec="l16-16k",
+    )
+
+    assert b"a=rtpmap:96 L16/16000/1\r\n" in offer
+    assert b"a=ptime:16\r\n" in offer
+    assert peer.AUDIO_PROFILES["l16-16k"]["frame_samples"] == 256
+    assert peer.AUDIO_PROFILES["l16-16k"]["frame_bytes"] == 512
+
+
+def test_h264_peer_repeats_parameter_sets_at_random_access_points() -> None:
+    peer = _load_tool()
+
+    encoder_args = peer.VIDEO_PROFILES["h264"]["args"]
+
+    assert "-x264-params" in encoder_args
+    assert any("repeat-headers=1" in value for value in encoder_args)
+
+
 def test_audio_hold_mode_rejects_video_qualification() -> None:
     completed = subprocess.run(
         [
@@ -115,3 +143,93 @@ def test_media_peer_requires_bye_acknowledgement() -> None:
 
     assert '"bye_response_status": None' in source
     assert 'raise TimeoutError("SIP BYE was not acknowledged")' in source
+
+
+def test_media_peer_acks_non_successful_invite_finals() -> None:
+    source = TOOL.read_text()
+    failure = source[
+        source.index("if message.status_code >= 300:") :
+        source.index('raise RuntimeError(', source.index("if message.status_code >= 300:"))
+    ]
+
+    assert 'sip.build_request(' in failure
+    assert '"ACK"' in failure
+    assert "branch=invite_branch" in failure
+    assert 'result["failure_ack_sent"] = True' in failure
+
+
+def test_jpeg_capture_records_complete_rfc2435_frames_without_ffmpeg(
+    tmp_path: Path,
+) -> None:
+    peer = _load_tool()
+    quantizers = bytes(range(1, 129))
+    frame = (
+        peer.video_rtp._jpeg_interchange_header(
+            jpeg_type=1,
+            width_blocks=40,
+            height_blocks=30,
+            quantizers=quantizers,
+            dri=0,
+        )
+        + (b"\x11\x22\x33\x44" * 400)
+        + b"\xff\xd9"
+    )
+    packets = peer.video_rtp.packetize_jpeg(
+        frame,
+        payload_type=26,
+        sequence=65534,
+        timestamp=9000,
+        ssrc=7,
+        max_payload=220,
+    )
+    output = tmp_path / "capture.mjpeg"
+    counters = {
+        "video_rx_frames": 0,
+        "video_rx_frame_bytes": 0,
+        "video_rx_marker_packets": 0,
+        "video_rx_dropped_access_units": 0,
+        "video_rx_capture_invalid_payloads": 0,
+    }
+
+    recorder = peer._JpegRtpRecorder(str(output))
+    for packet in packets:
+        recorder.push(packet, counters)
+    recorder.close(counters)
+
+    assert output.read_bytes() == frame
+    assert counters["video_rx_frames"] == 1
+    assert counters["video_rx_frame_bytes"] == len(frame)
+    assert counters["video_rx_marker_packets"] == 1
+    assert counters["video_rx_dropped_access_units"] == 0
+    assert counters["video_rx_capture_invalid_payloads"] == 0
+
+
+def test_jpeg_capture_rejects_wrong_payload_type(tmp_path: Path) -> None:
+    peer = _load_tool()
+    output = tmp_path / "capture.mjpeg"
+    counters = {
+        "video_rx_frames": 0,
+        "video_rx_frame_bytes": 0,
+        "video_rx_marker_packets": 0,
+        "video_rx_dropped_access_units": 0,
+        "video_rx_capture_invalid_payloads": 0,
+    }
+    recorder = peer._JpegRtpRecorder(str(output))
+
+    recorder.push(
+        peer.rtp.RtpPacket(103, 1, 9000, 7, b"not-jpeg", marker=True),
+        counters,
+    )
+    recorder.close(counters)
+
+    assert output.read_bytes() == b""
+    assert counters["video_rx_frames"] == 0
+    assert counters["video_rx_marker_packets"] == 0
+    assert counters["video_rx_capture_invalid_payloads"] == 1
+
+
+def test_jpeg_capture_path_does_not_start_ffmpeg_receiver() -> None:
+    source = TOOL.read_text()
+
+    assert 'if args.codec == "jpeg":' in source
+    assert 'result["video_rx_capture_backend"] = "rfc2435"' in source

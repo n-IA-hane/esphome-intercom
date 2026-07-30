@@ -1,0 +1,151 @@
+# Experimental full-experience P4 profile with bidirectional SIP JPEG video.
+#
+# The base profile remains unchanged. Removing this file removes the complete
+# experiment. Camera TX reuses the JPEG frame already produced by
+# esp_video_camera. Remote RX uses the P4 JPEG decoder, PPA scaling and direct
+# MIPI DSI presentation, with no software image conversion in the media path.
+
+substitutions:
+  p4_sip_jpeg_width: "800"
+  p4_sip_jpeg_height: "800"
+  p4_sip_jpeg_fps: "10"
+
+globals:
+  - id: restore_mww_after_video_call
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+packages:
+  full_experience_base: !include waveshare-p4-touch-full-afe-landscape.yaml
+
+esphome:
+  build_path: .esphome/build/waveshare-p4-touch-full-afe-landscape-sip-jpeg
+
+external_components:
+  - source: ${ext_components_source}
+    components: [esp_jpeg_video_source, p4_video_renderer]
+
+esp_jpeg_video_source:
+  id: p4_jpeg_video
+  camera_id: p4_camera
+  width: ${p4_sip_jpeg_width}
+  height: ${p4_sip_jpeg_height}
+  framerate: ${p4_sip_jpeg_fps}
+
+p4_video_renderer:
+  id: p4_video
+  codec: jpeg
+  task_stacks_in_psram: false
+  width: ${p4_sip_jpeg_width}
+  height: ${p4_sip_jpeg_height}
+  framerate: ${p4_sip_jpeg_fps}
+  max_decode_width: 800
+  max_decode_height: 800
+  display_id: main_display
+  display_rotation: 270
+  on_first_frame:
+    - script.execute: draw_display
+  on_video_ended:
+    - script.execute: draw_display
+
+voip_stack:
+  id: phone
+  video:
+    codec: jpeg
+    source: p4_jpeg_video
+    sink: p4_video
+    width: ${p4_sip_jpeg_width}
+    height: ${p4_sip_jpeg_height}
+    framerate: ${p4_sip_jpeg_fps}
+    rtp_port: 40002
+    offer_payload_type: 26
+    max_rtp_payload: 1400
+  video_debug: true
+  on_video_start:
+    - lambda: |-
+        id(restore_mww_after_video_call) = id(g_wake_word_enabled);
+    - if:
+        condition:
+          lambda: return id(restore_mww_after_video_call);
+        then:
+          - switch.turn_off: wake_word_switch
+  on_video_end:
+    - if:
+        condition:
+          lambda: return id(restore_mww_after_video_call);
+        then:
+          - globals.set:
+              id: restore_mww_after_video_call
+              value: "false"
+          - switch.turn_on: wake_word_switch
+
+lvgl:
+  on_boot:
+    - lambda: |-
+        id(p4_video).attach_video_container(id(call_video_surface));
+  pages:
+    - id: call_video_page
+      bg_color: 0x000000
+      widgets:
+        - obj:
+            id: call_video_surface
+            align: TOP_MID
+            width: 1280
+            height: 720
+            bg_color: 0x000000
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+        - obj:
+            align: BOTTOM_MID
+            width: 1280
+            height: 80
+            bg_color: 0x10131C
+            border_width: 0
+            pad_all: 8
+            scrollable: false
+            widgets:
+              - label:
+                  id: call_video_peer_label
+                  align: LEFT_MID
+                  x: 24
+                  width: 900
+                  text: "Video call"
+                  text_color: 0xFFFFFF
+                  text_font: font_ui_medium
+                  long_mode: DOT
+              - button:
+                  align: RIGHT_MID
+                  x: -24
+                  width: 220
+                  height: 60
+                  bg_color: 0xEF4444
+                  border_width: 0
+                  radius: 10
+                  on_click:
+                    - voip_stack.call_toggle:
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "HANG UP"
+                        text_color: 0xFFFFFF
+                        text_font: font_ui_medium
+
+script:
+  - id: !extend draw_display
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return id(phone).is_in_call() &&
+                     id(p4_video).has_remote_frame();
+          then:
+            - lambda: |-
+                const char *peer = id(peer_name).empty()
+                                       ? "Video call"
+                                       : id(peer_name).c_str();
+                lv_label_set_text(id(call_video_peer_label), peer);
+                if (lv_disp_get_scr_act(nullptr) != id(call_video_page)->obj)
+                  lv_disp_load_scr(id(call_video_page)->obj);
+                id(runtime_rendered_page) = "call_video";
