@@ -35,6 +35,18 @@ Important groups:
 - `tests/test_group_call_matrix.py`: PBX-style ring/conference group matrix.
 - `tests/test_conference.py`: conference mixer and lifecycle primitives.
 
+For an explicitly authorized live deployment, use the repository helper
+instead of copying the component by hand:
+
+```bash
+tools/deploy_ha_voip_stack.sh
+```
+
+It stages the exact local component, creates a timestamped remote backup,
+installs through the configured SSH alias, restarts Home Assistant and waits
+for a terminal service state. Environment overrides are documented by
+`tools/deploy_ha_voip_stack.sh --help`.
+
 ## HACS release archive
 
 Build the release asset from the repository root:
@@ -324,6 +336,13 @@ never treat a JTAG capture as an audio-quality test. Full SystemView/AppTrace
 instrumentation must be memory-qualified first; if it consumes enough internal
 or DMA RAM to cause AFE, SPI or I2S failures, those failures are instrumentation
 artifacts until reproduced on the production firmware.
+
+The checked-in capture and summary tools keep this workflow reproducible:
+
+```bash
+./.venv/bin/python tools/jtag_snapshots.py --help
+./.venv/bin/python tools/analyze_jtag_snapshots.py --help
+```
 
 On ESPHome 2026.7 and newer native ESP-IDF builds, custom partition tables use
 `esp32.partitions`; `board_build.partitions` under `platformio_options` is not
