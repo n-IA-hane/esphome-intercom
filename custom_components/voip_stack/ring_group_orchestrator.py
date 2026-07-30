@@ -1401,7 +1401,13 @@ async def run_ring_group_call(
             if terminal == "remote_hangup"
             else _sip_terminal_reason(terminal, _sip_public_state(terminal))
         )
-        await _terminate_sip_bridge(
+        (
+            _bridge_handled,
+            _source_call_id,
+            _dest_call_id,
+            _client_closed,
+            source_bye,
+        ) = await _terminate_sip_bridge(
             hass,
             client.dialog_ids.call_id,
             endpoint_id=(origin_endpoint_id if ha_origin else DEFAULT_ENDPOINT_ID),
@@ -1409,6 +1415,14 @@ async def run_ring_group_call(
                 origin_device_id if ha_origin else HA_SOFTPHONE_DEVICE_ID
             ),
             terminal_reason=terminal_reason,
+        )
+        _LOGGER.info(
+            "SIP ring group destination ended call_id=%s dest_call_id=%s "
+            "reason=%s source_bye=%s",
+            invite.call_id,
+            client.dialog_ids.call_id,
+            terminal_reason,
+            source_bye,
         )
     except asyncio.CancelledError:
         _settle_browser_candidates(
