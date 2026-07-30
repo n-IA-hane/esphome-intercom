@@ -80,13 +80,13 @@ single-bus, dual-bus, lightweight AEC and full AFE profiles.
 
 The system has one call model and four main surfaces:
 
-- **ESP endpoint** — a lightweight SIP/SDP/RTP phone with a microphone,
+- **ESP endpoint:** A lightweight SIP/SDP/RTP phone with a microphone,
   speaker or both.
-- **Home Assistant runtime** — logical browser phones, routing, media bridges,
+- **Home Assistant runtime:** Logical browser phones, routing, media bridges,
   groups, local registration, Assist and the optional trunk.
-- **Central phonebook** — names, extensions, groups, registered clients,
+- **Central phonebook:** Names, extensions, groups, registered clients,
   routable SIP endpoints and external numbers.
-- **Lovelace card** — a UI bound to one phone Device; it projects backend state
+- **Lovelace card:** A UI bound to one phone Device; it projects backend state
   and invokes normal HA services instead of running a second call controller.
 
 SIP dialogs, transactions and transports have separate lifecycles. Logical

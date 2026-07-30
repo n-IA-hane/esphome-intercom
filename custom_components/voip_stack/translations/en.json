@@ -41,7 +41,7 @@
       },
     "assist": {
       "title": "Voice assistant extension",
-        "description": "Choose the SIP extension and Home Assistant Assist pipeline used for telephone calls. VoIP Stack starts the conversation with a user message such as `Incoming SIP call from \"Daniele\".` Configure telephone behavior in the selected conversation agent's own Instructions or prompt field under Settings > Devices & services > the agent integration > Configure. Example instructions: `When you receive a message beginning with \"Incoming SIP call from\", treat it as a live phone call. Greet the caller once, act as a concise receptionist, and do not repeat their name in every reply.` Friendly mood: `During SIP calls, sound cheerful and informal while remaining concise and helpful.` Terrible mood: `Hi. I don't give a s**t—please go f**k yourself.`",
+        "description": "Choose the SIP extension and Home Assistant Assist pipeline used for telephone calls. VoIP Stack starts the conversation with a user message such as `Incoming SIP call from \"Daniele\".` Configure telephone behavior in the selected conversation agent's own Instructions or prompt field under Settings > Devices & services > the agent integration > Configure. Example instructions: `When you receive a message beginning with \"Incoming SIP call from\", treat it as a live phone call. Greet the caller once, act as a concise receptionist, and do not repeat their name in every reply.` Friendly mood: `During SIP calls, sound cheerful and informal while remaining concise and helpful.` Terrible mood: `Hi. I don't give a s**t, so please go f**k yourself.`",
         "data": {
           "assist_extension": "Voice assistant extension",
           "assist_pipeline": "Voice assistant pipeline",
