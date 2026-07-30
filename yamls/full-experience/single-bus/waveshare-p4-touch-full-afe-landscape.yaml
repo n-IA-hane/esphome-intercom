@@ -286,17 +286,6 @@ api:
     - delay: 5s
     - script.execute: fetch_forecast
 
-# OTA update endpoint used by ESPHome Dashboard and `esphome upload`.
-
-ota:
-  - platform: esphome
-
-# Development hardware: repeated video-call OTA qualification must not roll
-# back a valid image merely because the one-minute safe-mode gate has not
-# elapsed yet. Re-enable the production default before publishing this target.
-safe_mode:
-  disabled: true
-
 # UART logger. Keep VoIP domains visible at INFO; noisy entity/component domains
 # stay WARN unless the board is being actively debugged.
 
@@ -3437,8 +3426,10 @@ script:
           // weather refresh, ...) snap the screen back to main_page while
           // the user is interacting with the settings page. A live call still
           // interrupts it, as it already does on the round target.
-          if (active_scr == id(settings_p4_page)->obj && !id(phone).is_active())
+          if (active_scr == id(settings_p4_page)->obj && !id(phone).is_active()) {
+            id(runtime_rendered_page) = "settings";
             return;
+          }
 
           auto set_hidden = [](lv_obj_t *obj, bool hidden) {
             const bool is_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -3466,11 +3457,13 @@ script:
 
           // Overlay pages (full-screen, cover everything)
           if (!wifi::global_wifi_component->is_connected()) {
+            id(runtime_rendered_page) = "no_wifi";
             if (active_scr != id(no_wifi_page)->obj)
               lv_disp_load_scr(id(no_wifi_page)->obj);
             return;
           }
           if (!api::global_api_server->is_connected()) {
+            id(runtime_rendered_page) = "no_ha";
             if (active_scr != id(no_ha_page)->obj)
               lv_disp_load_scr(id(no_ha_page)->obj);
             return;
@@ -3478,6 +3471,7 @@ script:
           int phase = id(voice_assistant_phase);
           const int state = id(ui_state);
           if (phase == ${voice_assist_not_ready_phase_id}) {
+            id(runtime_rendered_page) = "no_ha";
             if (active_scr != id(no_ha_page)->obj)
               lv_disp_load_scr(id(no_ha_page)->obj);
             return;
@@ -3486,6 +3480,7 @@ script:
           // Use the runtime_controller timer activity instead of voice_assistant_phase because the
           // alarm sound is played through media_player and may update the phase.
           if (id(runtime).is_activity_active("timer_ringing")) {
+            id(runtime_rendered_page) = "timer_finished";
             if (active_scr != id(timer_finished_page)->obj)
               lv_disp_load_scr(id(timer_finished_page)->obj);
             return;
@@ -3603,7 +3598,7 @@ script:
           condition:
             lambda: |-
               std::string call_state = id(phone).get_state_str();
-              return lv_disp_get_scr_act(nullptr) == id(main_page)->obj &&
+              return id(runtime_rendered_page).rfind("main:idle:", 0) == 0 &&
                      id(current_mode) == 0 &&
                      id(voice_assistant_phase) == ${voice_assist_idle_phase_id} &&
                      !id(init_in_progress) &&

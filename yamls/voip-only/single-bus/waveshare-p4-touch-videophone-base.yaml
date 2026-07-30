@@ -92,11 +92,6 @@ api:
 ota:
   - platform: esphome
 
-safe_mode:
-  # Development target: repeated call qualification should not roll back a
-  # healthy image before the normal one-minute success gate.
-  disabled: true
-
 logger:
   hardware_uart: UART0
   level: INFO
@@ -171,7 +166,6 @@ voip_stack:
         pcm_format: s16le
         channels: 1
         frame_ms: 32
-  video_debug: true
   microphone: mic_main
   speaker: voip_speaker_input
   ringing_timeout: 30s

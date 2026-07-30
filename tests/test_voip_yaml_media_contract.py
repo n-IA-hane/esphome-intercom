@@ -210,10 +210,7 @@ def test_p4_full_profile_is_audio_only_with_native_ha_camera() -> None:
     assert re.search(
         r"(?m)^  audio_task_stacks_in_psram: true$", block
     )
-    assert re.search(
-        r"(?ms)^safe_mode:\n  disabled: true\n",
-        text,
-    )
+    assert not re.search(r"(?m)^safe_mode:", text)
     assert "id(phone).get_contact_count()" in text
     assert "get_contacts_csv()" not in text
     assert re.search(
@@ -307,6 +304,40 @@ def test_p4_codec_profiles_have_isolated_generated_builds() -> None:
         "build_path: .esphome/build/waveshare-p4-touch-full-afe-landscape"
         in full
     )
+
+
+def test_p4_production_profiles_keep_video_debug_off_and_safe_mode_on() -> None:
+    profile_dir = YAMLS / "voip-only" / "single-bus"
+    dedicated = (
+        profile_dir / "waveshare-p4-touch-videophone-base.yaml"
+    ).read_text()
+    full = P4_LANDSCAPE_FULL_AFE.read_text()
+    full_jpeg = (
+        YAMLS
+        / "full-experience"
+        / "single-bus"
+        / "waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml"
+    ).read_text()
+
+    assert "video_debug:" not in dedicated
+    assert "video_debug:" not in full_jpeg
+    assert not re.search(r"(?m)^safe_mode:", dedicated)
+    assert not re.search(r"(?m)^safe_mode:", full)
+    assert not re.search(r"(?m)^ota:", full)
+    assert "ota_maintenance:" in full
+
+
+def test_p4_idle_animation_uses_rendered_page_state() -> None:
+    text = P4_LANDSCAPE_FULL_AFE.read_text()
+    lifecycle = text[
+        text.index("      # Animation lifecycle") :
+        text.index("      # Self-heal: ensure MWW is active when idle")
+    ]
+
+    assert 'id(runtime_rendered_page).rfind("main:idle:", 0) == 0' in lifecycle
+    assert "lv_disp_get_scr_act" not in lifecycle
+    for rendered_page in ("settings", "no_wifi", "no_ha", "timer_finished"):
+        assert f'id(runtime_rendered_page) = "{rendered_page}";' in text
 
 
 def test_p4_videophone_contact_navigation_waits_for_owner_callback() -> None:

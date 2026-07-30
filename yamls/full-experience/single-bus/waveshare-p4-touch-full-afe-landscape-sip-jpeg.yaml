@@ -61,7 +61,6 @@ voip_stack:
     rtp_port: 40002
     offer_payload_type: 26
     max_rtp_payload: 1400
-  video_debug: true
   on_video_start:
     - lambda: |-
         id(restore_mww_after_video_call) = id(g_wake_word_enabled);
