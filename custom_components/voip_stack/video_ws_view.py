@@ -19,22 +19,21 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from . import rtp, sdp
-from .authorization import (
-    async_require_media_controller,
-    require_http_control,
-    require_media_client_id,
-)
-from .call_registry import CallRegistry
 from .const import (
     CONF_DEBUG_MODE,
     CONF_VIDEO_TRANSCODING,
     DOMAIN,
 )
+from .call_registry import CallRegistry
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .local_softphone_bridge import LocalCallStateError
 from .media_debug import merge_media_debug
 from .media_call_lifetime import active_media_call, listen_for_media_call_end
-from .media_ws_session import async_media_websocket_session
+from .media_ws_session import (
+    async_authorize_media_websocket_request,
+    async_media_websocket_session,
+    resolve_media_websocket_request,
+)
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import SipCallClient
 from .video_rtcp import (
@@ -437,35 +436,12 @@ class VoipVideoWebSocketView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.WebSocketResponse:
-        user_id = require_http_control(request)
-        try:
-            client_id = require_media_client_id(request)
-        except ValueError as err:
-            raise web.HTTPBadRequest(text=str(err)) from err
-        hass: HomeAssistant = request.app["hass"]
-        device_id = str(request.query.get("device_id") or "")
-        requested_endpoint_id = str(request.query.get("endpoint_id") or "")
-        from .websocket_api import _endpoint_id_from_selector
-
-        try:
-            endpoint_id = _endpoint_id_from_selector(
-                hass,
-                endpoint_id=requested_endpoint_id,
-                device_id=device_id,
-            )
-        except ValueError as err:
-            raise web.HTTPNotFound(text=str(err)) from err
-        requested_call_id = str(request.query.get("call_id") or "").strip()
-        if not requested_call_id:
-            raise web.HTTPBadRequest(text="call_id is required")
-        from .local_softphone_runtime import local_softphone_bridge
-
-        local_bridge = local_softphone_bridge(hass)
-        local_call = (
-            local_bridge.get_call(requested_call_id)
-            if local_bridge is not None
-            else None
-        )
+        context = resolve_media_websocket_request(request)
+        hass: HomeAssistant = context.hass
+        endpoint_id = context.endpoint_id
+        requested_call_id = context.call_id
+        local_bridge = context.local_bridge
+        local_call = context.current_local_call()
         if local_call is not None:
             try:
                 local_state = local_call.state_for(endpoint_id)
@@ -482,15 +458,9 @@ class VoipVideoWebSocketView(HomeAssistantView):
                 raise web.HTTPConflict(
                     text="HA softphone has no matching video dialog"
                 )
-        registry = hass.data.get(DOMAIN, {}).get("call_registry")
-        if not isinstance(registry, CallRegistry):
-            raise web.HTTPConflict(text="HA softphone call registry is unavailable")
-        await async_require_media_controller(
-            hass,
-            registry,
-            requested_call_id,
-            request.get("hass_user"),
-            endpoint_id=endpoint_id,
+        registry = await async_authorize_media_websocket_request(
+            context,
+            request,
         )
 
         ws = web.WebSocketResponse(
@@ -499,8 +469,8 @@ class VoipVideoWebSocketView(HomeAssistantView):
         owner = MediaWebSocketOwner(
             websocket=ws,
             transport=request.transport,
-            user_id=user_id,
-            client_id=client_id,
+            user_id=context.user_id,
+            client_id=context.client_id,
         )
         bucket = hass.data.setdefault(DOMAIN, {})
         shutdown_event = bucket.setdefault("media_shutdown", asyncio.Event())
@@ -522,17 +492,15 @@ class VoipVideoWebSocketView(HomeAssistantView):
             ) as media_owner:
                 # Re-resolve after the previous owner's teardown barrier: it may
                 # have consumed/closed a pre-bound socket or applied a re-INVITE.
-                local_call = (
-                    local_bridge.get_call(requested_call_id)
-                    if local_bridge is not None
-                    else None
-                )
+                local_call = context.current_local_call()
                 if local_call is not None:
                     from .local_softphone_bridge import LocalBridgeError
 
                     try:
                         lease = local_bridge.acquire_media(
-                            requested_call_id, endpoint_id, client_id
+                            requested_call_id,
+                            endpoint_id,
+                            context.client_id,
                         )
                     except LocalBridgeError as err:
                         raise web.HTTPConflict(text=str(err)) from err

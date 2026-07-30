@@ -9,6 +9,9 @@ from pathlib import Path
 import sys
 import types
 import unittest
+from unittest.mock import patch
+
+from aiohttp import web
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,13 +63,149 @@ class _Lease:
 class _Bridge:
     def __init__(self) -> None:
         self.releases: list[tuple[str, str, object]] = []
+        self.calls: list[str] = []
 
     def release_media(self, call_id: str, endpoint_id: str, token: object) -> bool:
         self.releases.append((call_id, endpoint_id, token))
         return True
 
+    def get_call(self, call_id: str) -> object:
+        self.calls.append(call_id)
+        return {"call_id": call_id, "generation": len(self.calls)}
+
+
+class _Request:
+    def __init__(self, hass: object) -> None:
+        self.app = {"hass": hass}
+        self.query = {
+            "client_id": "browser-document-1234",
+            "endpoint_id": "kitchen",
+            "device_id": "",
+            "call_id": "call-1",
+        }
+        self._user = object()
+
+    def get(self, key: str) -> object | None:
+        if key == "hass_user":
+            return self._user
+        return None
+
 
 class MediaWebSocketSessionTest(unittest.IsolatedAsyncioTestCase):
+    def test_request_resolution_is_shared_and_reloads_local_call(self) -> None:
+        hass = types.SimpleNamespace(data={})
+        bridge = _Bridge()
+        request = _Request(hass)
+        authorization = types.ModuleType(f"{PKG_NAME}.authorization")
+        authorization.require_http_control = lambda _request: "user-1"
+        authorization.require_media_client_id = (
+            lambda _request: "browser-document-1234"
+        )
+        local_runtime = types.ModuleType(f"{PKG_NAME}.local_softphone_runtime")
+        local_runtime.local_softphone_bridge = lambda _hass: bridge
+        websocket_api = types.ModuleType(f"{PKG_NAME}.websocket_api")
+        websocket_api._endpoint_id_from_selector = (
+            lambda _hass, *, endpoint_id, device_id: endpoint_id or device_id
+        )
+
+        with patch.dict(
+            sys.modules,
+            {
+                authorization.__name__: authorization,
+                local_runtime.__name__: local_runtime,
+                websocket_api.__name__: websocket_api,
+            },
+        ):
+            context = media_ws_session.resolve_media_websocket_request(request)
+
+        self.assertIs(context.hass, hass)
+        self.assertEqual(context.user_id, "user-1")
+        self.assertEqual(context.client_id, "browser-document-1234")
+        self.assertEqual(context.endpoint_id, "kitchen")
+        self.assertEqual(context.call_id, "call-1")
+        self.assertEqual(context.current_local_call()["generation"], 1)
+        self.assertEqual(context.current_local_call()["generation"], 2)
+        self.assertEqual(bridge.calls, ["call-1", "call-1"])
+
+    def test_request_resolution_rejects_invalid_media_identity(self) -> None:
+        request = _Request(types.SimpleNamespace(data={}))
+        authorization = types.ModuleType(f"{PKG_NAME}.authorization")
+        authorization.require_http_control = lambda _request: "user-1"
+
+        def invalid_client_id(_request) -> str:
+            raise ValueError("invalid client")
+
+        authorization.require_media_client_id = invalid_client_id
+        with patch.dict(sys.modules, {authorization.__name__: authorization}):
+            with self.assertRaises(web.HTTPBadRequest) as raised:
+                media_ws_session.resolve_media_websocket_request(request)
+        self.assertEqual(raised.exception.text, "invalid client")
+
+    async def test_controller_authorization_runs_after_channel_validation(self) -> None:
+        calls: list[tuple[object, ...]] = []
+
+        class CallRegistry:
+            pass
+
+        registry = CallRegistry()
+        hass = types.SimpleNamespace(
+            data={"voip_stack": {"call_registry": registry}}
+        )
+        request = _Request(hass)
+        context = media_ws_session.MediaWebSocketRequestContext(
+            hass=hass,
+            user_id="user-1",
+            client_id="browser-document-1234",
+            endpoint_id="kitchen",
+            call_id="call-1",
+            local_bridge=None,
+        )
+        authorization = types.ModuleType(f"{PKG_NAME}.authorization")
+
+        async def authorize(
+            authorized_hass,
+            authorized_registry,
+            call_id,
+            user,
+            *,
+            endpoint_id,
+        ) -> None:
+            calls.append(
+                (
+                    authorized_hass,
+                    authorized_registry,
+                    call_id,
+                    user,
+                    endpoint_id,
+                )
+            )
+
+        authorization.async_require_media_controller = authorize
+        call_registry = types.ModuleType(f"{PKG_NAME}.call_registry")
+        call_registry.CallRegistry = CallRegistry
+        const = types.ModuleType(f"{PKG_NAME}.const")
+        const.DOMAIN = "voip_stack"
+        with patch.dict(
+            sys.modules,
+            {
+                authorization.__name__: authorization,
+                call_registry.__name__: call_registry,
+                const.__name__: const,
+            },
+        ):
+            result = (
+                await media_ws_session.async_authorize_media_websocket_request(
+                    context,
+                    request,
+                )
+            )
+
+        self.assertIs(result, registry)
+        self.assertEqual(
+            calls,
+            [(hass, registry, "call-1", request._user, "kitchen")],
+        )
+
     async def test_context_claims_and_releases_audio_owner_then_publishes(self) -> None:
         bucket: dict = {}
         owner = websocket_owner.MediaWebSocketOwner(user_id="u", client_id="c")

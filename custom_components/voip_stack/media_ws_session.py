@@ -77,6 +77,91 @@ class MediaWebSocketSession:
         await async_wait_for_cleanup(self._close_task)
 
 
+@dataclass(frozen=True, slots=True)
+class MediaWebSocketRequestContext:
+    """Authenticated request identity and its selected logical phone."""
+
+    hass: Any
+    user_id: str
+    client_id: str
+    endpoint_id: str
+    call_id: str
+    local_bridge: Any | None
+
+    def current_local_call(self) -> Any | None:
+        """Resolve the local call again after a media ownership handoff."""
+
+        if self.local_bridge is None:
+            return None
+        return self.local_bridge.get_call(self.call_id)
+
+
+def resolve_media_websocket_request(request: Any) -> MediaWebSocketRequestContext:
+    """Resolve the shared authenticated parameters of a media WebSocket."""
+
+    from aiohttp import web
+
+    from .authorization import require_http_control, require_media_client_id
+
+    user_id = require_http_control(request)
+    try:
+        client_id = require_media_client_id(request)
+    except ValueError as err:
+        raise web.HTTPBadRequest(text=str(err)) from err
+
+    from .websocket_api import _endpoint_id_from_selector
+
+    hass = request.app["hass"]
+    try:
+        endpoint_id = _endpoint_id_from_selector(
+            hass,
+            endpoint_id=str(request.query.get("endpoint_id") or ""),
+            device_id=str(request.query.get("device_id") or ""),
+        )
+    except ValueError as err:
+        raise web.HTTPNotFound(text=str(err)) from err
+
+    call_id = str(request.query.get("call_id") or "").strip()
+    if not call_id:
+        raise web.HTTPBadRequest(text="call_id is required")
+
+    from .local_softphone_runtime import local_softphone_bridge
+
+    return MediaWebSocketRequestContext(
+        hass=hass,
+        user_id=user_id,
+        client_id=client_id,
+        endpoint_id=endpoint_id,
+        call_id=call_id,
+        local_bridge=local_softphone_bridge(hass),
+    )
+
+
+async def async_authorize_media_websocket_request(
+    context: MediaWebSocketRequestContext,
+    request: Any,
+) -> Any:
+    """Authorize the selected call after channel-specific state validation."""
+
+    from aiohttp import web
+
+    from .authorization import async_require_media_controller
+    from .call_registry import CallRegistry
+    from .const import DOMAIN
+
+    registry = context.hass.data.get(DOMAIN, {}).get("call_registry")
+    if not isinstance(registry, CallRegistry):
+        raise web.HTTPConflict(text="HA softphone call registry is unavailable")
+    await async_require_media_controller(
+        context.hass,
+        registry,
+        context.call_id,
+        request.get("hass_user"),
+        endpoint_id=context.endpoint_id,
+    )
+    return registry
+
+
 @asynccontextmanager
 async def async_media_websocket_session(
     bucket: dict[str, Any],

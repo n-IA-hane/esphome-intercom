@@ -579,22 +579,23 @@ def test_all_external_surfaces_apply_authorization_and_ws_context() -> None:
     services = (ROOT / "custom_components" / "voip_stack" / "services.py").read_text()
     audio = (ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py").read_text()
     video = (ROOT / "custom_components" / "voip_stack" / "video_ws_view.py").read_text()
+    media_session = (
+        ROOT / "custom_components" / "voip_stack" / "media_ws_session.py"
+    ).read_text()
 
     assert websocket.count("require_websocket_read(connection)") >= 5
     assert "require_websocket_control(connection)" not in websocket
     assert "hass.services.async_call(" not in websocket
     assert "async_require_service_control" in services
     assert "async_require_service_admin" in services
-    assert "require_http_control(request)" in audio
-    assert "require_http_control(request)" in video
-    assert "require_media_client_id(request)" in audio
-    assert "require_media_client_id(request)" in video
-    assert "async_require_media_controller(" in audio
-    assert "async_require_media_controller(" in video
-    assert "user_id=user_id" in audio
-    assert "client_id=client_id" in audio
-    assert "user_id=user_id" in video
-    assert "client_id=client_id" in video
+    for view in (audio, video):
+        assert "resolve_media_websocket_request(request)" in view
+        assert "async_authorize_media_websocket_request(" in view
+        assert "user_id=context.user_id" in view
+        assert "client_id=context.client_id" in view
+    assert "require_http_control(request)" in media_session
+    assert "require_media_client_id(request)" in media_session
+    assert "async_require_media_controller(" in media_session
 
     for service in ("route", "set_deadline", "cancel_deadline"):
         assert f'"{service}",' in services[
