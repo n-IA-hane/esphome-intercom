@@ -38,7 +38,8 @@ def termination(monkeypatch):
 
     call_state = SimpleNamespace(IDLE=SimpleNamespace(value="idle"))
     terminal_reason = SimpleNamespace(
-        LOCAL_HANGUP=SimpleNamespace(value="local_hangup")
+        LOCAL_HANGUP=SimpleNamespace(value="local_hangup"),
+        REMOTE_HANGUP=SimpleNamespace(value="remote_hangup"),
     )
     dependencies = {
         "bridge_manager": {"async_terminate_sip_bridge": AsyncMock()},
@@ -50,7 +51,11 @@ def termination(monkeypatch):
                 "DOMAIN": "voip_stack",
                 "HA_SOFTPHONE_DEVICE_ID": "ha-device",
             },
-        "fsm": {"CallState": call_state, "TerminalReason": terminal_reason},
+        "fsm": {
+            "CallState": call_state,
+            "TerminalReason": terminal_reason,
+            "sip_public_state": Mock(return_value="idle"),
+        },
             "media_ports": {"release_media_reservation": Mock()},
             "phone_endpoint": {"DEFAULT_ENDPOINT_ID": "default"},
         "route_decisions": {"set_pending_route_decision": Mock()},
@@ -65,6 +70,7 @@ def termination(monkeypatch):
             "_ha_softphone_store": Mock(return_value={}),
             "_set_ha_softphone_call_state": Mock(),
             "_set_sip_bridge_call_state": Mock(),
+            "_sip_bridge_store": Mock(return_value={}),
         },
         "local_softphone_bridge": {
             "LocalBridgeError": type("LocalBridgeError", (Exception,), {})
@@ -127,10 +133,23 @@ def test_bridge_projection_is_scoped_to_matching_softphone(termination) -> None:
             "direction": "incoming",
         }
     )
+    termination._sip_bridge_store = Mock(
+        return_value={
+            "state": "in_call",
+            "call_id": "source-call",
+            "dest_call_id": "dest-call",
+            "caller": "Alice",
+            "callee": "Casa",
+            "peer_name": "Alice",
+            "direction": "incoming",
+            "route_kind": "sip",
+        }
+    )
     termination.async_terminate_sip_bridge = AsyncMock(
         return_value=(True, "source-call", "dest-call", True, True)
     )
     termination._set_ha_softphone_call_state = Mock()
+    termination._set_sip_bridge_call_state = Mock()
 
     result = asyncio.run(
         termination.async_terminate_sip_bridge_session(
@@ -146,3 +165,66 @@ def test_bridge_projection_is_scoped_to_matching_softphone(termination) -> None:
     assert termination._set_ha_softphone_call_state.call_args.kwargs["call_id"] == (
         "source-call"
     )
+    termination._set_sip_bridge_call_state.assert_called_once()
+    bridge = termination._set_sip_bridge_call_state.call_args
+    assert bridge.args[1] == "idle"
+    assert bridge.kwargs["call_id"] == "source-call"
+    assert bridge.kwargs["dest_call_id"] == "dest-call"
+    assert bridge.kwargs["terminal_reason"] == "local_hangup"
+    assert bridge.kwargs["route_kind"] == "sip"
+
+
+def test_bridge_projection_does_not_overwrite_another_active_call(termination) -> None:
+    hass = SimpleNamespace(data={})
+    termination._ha_softphone_store = Mock(return_value={})
+    termination._sip_bridge_store = Mock(
+        return_value={
+            "state": "in_call",
+            "call_id": "other-source",
+            "dest_call_id": "other-dest",
+        }
+    )
+    termination.async_terminate_sip_bridge = AsyncMock(
+        return_value=(True, "source-call", "dest-call", True, True)
+    )
+    termination._set_sip_bridge_call_state = Mock()
+
+    asyncio.run(
+        termination.async_terminate_sip_bridge_session(
+            hass,
+            "source-call",
+        )
+    )
+
+    termination._set_sip_bridge_call_state.assert_not_called()
+
+
+def test_remote_bridge_bye_publishes_remote_terminal_reason(termination) -> None:
+    hass = SimpleNamespace(data={})
+    termination._ha_softphone_store = Mock(return_value={})
+    termination._sip_bridge_store = Mock(
+        return_value={
+            "state": "in_call",
+            "call_id": "source-call",
+            "dest_call_id": "dest-call",
+            "caller": "Alice",
+            "callee": "Kitchen",
+        }
+    )
+    termination.async_terminate_sip_bridge = AsyncMock(
+        return_value=(True, "source-call", "dest-call", True, True)
+    )
+    termination._set_sip_bridge_call_state = Mock()
+
+    asyncio.run(
+        termination.async_terminate_sip_bridge_session(
+            hass,
+            "dest-call",
+            terminal_reason="remote_hangup",
+        )
+    )
+
+    bridge = termination._set_sip_bridge_call_state.call_args
+    assert bridge.kwargs["terminal_reason"] == "remote_hangup"
+    assert bridge.kwargs["origin"] == "remote"
+    assert bridge.kwargs["last_sip_event"] == "SIP_BYE"

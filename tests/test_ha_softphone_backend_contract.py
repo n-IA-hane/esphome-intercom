@@ -113,12 +113,12 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             direction.index('("incoming" if active_session is not None else "")'),
         )
 
-    def test_bridge_hangup_does_not_publish_ha_softphone_session(self) -> None:
+    def test_bridge_hangup_uses_central_terminal_projection(self) -> None:
         body = _function_body(
             self.softphone_termination, "async_hangup_browser_call"
         )
         bridge_branch = body.split("if bridge_handled:", 1)[1].split("return", 1)[0]
-        self.assertIn("_set_sip_bridge_call_state(", bridge_branch)
+        self.assertNotIn("_set_sip_bridge_call_state(", bridge_branch)
         self.assertNotIn("_set_ha_softphone_call_state(", bridge_branch)
 
     def test_bridge_teardown_clears_only_its_matching_softphone_session(self) -> None:
@@ -133,6 +133,8 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("_set_ha_softphone_call_state(", matching_branch)
         self.assertIn("CallState.IDLE.value", matching_branch)
         self.assertIn('last_sip_event="SIP_BYE"', matching_branch)
+        self.assertIn("projected_call_ids.intersection", body)
+        self.assertIn("_set_sip_bridge_call_state(", body)
 
     def test_inbound_bridge_completion_does_not_mutate_ha_softphone(self) -> None:
         body = _function_body(INVITE_ROUTER.read_text(), "route_invite")

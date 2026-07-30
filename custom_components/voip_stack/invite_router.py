@@ -1758,23 +1758,6 @@ async def route_invite(
                     terminal_reason=terminal_reason,
                 )
                 if bridge_handled:
-                    _set_sip_bridge_call_state(
-                        hass,
-                        _sip_public_state(terminal),
-                        caller=invite.caller,
-                        callee=resolved_callee,
-                        peer_name=resolved_callee,
-                        call_id=source_call_id or invite.call_id,
-                        dest_call_id=dest_call_id,
-                        direction="incoming",
-                        reason=terminal_reason,
-                        terminal_reason=terminal_reason,
-                        origin="remote",
-                        sip_status_code=client.last_sip_status_code,
-                        last_sip_event=client.last_sip_event or "BYE",
-                        route_kind=decision.action.value,
-                        sip_uri=str(decision_uri),
-                    )
                     _LOGGER.info(
                         "SIP bridge destination ended call_id=%s dest_call_id=%s reason=%s source_bye=%s",
                         source_call_id,
