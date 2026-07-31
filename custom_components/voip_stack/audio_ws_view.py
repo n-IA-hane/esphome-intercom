@@ -43,11 +43,9 @@ from .queue_utils import put_drop_oldest
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder, SipCallClient
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
-from .local_softphone_bridge import LocalCallStateError
 from .media_ws_session import (
-    async_authorize_media_websocket_request,
     async_claimed_media_websocket,
-    resolve_media_websocket_request,
+    async_prepare_media_websocket_request,
 )
 from .websocket_api import (
     _ha_softphone_store,
@@ -345,40 +343,25 @@ class VoipAudioWebSocketView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.WebSocketResponse:
-        context = resolve_media_websocket_request(request)
+        prepared = await async_prepare_media_websocket_request(
+            request,
+            active_session_resolver=_active_softphone_media_session,
+            missing_dialog_text="HA softphone has no matching SIP/RTP dialog",
+        )
+        context = prepared.context
         hass: HomeAssistant = context.hass
         endpoint_id = context.endpoint_id
-        requested_call_id = context.call_id
         local_bridge = context.local_bridge
-        local_call = context.current_local_call()
-        if local_call is not None:
-            try:
-                local_state = local_call.state_for(endpoint_id)
-            except (ValueError, LocalCallStateError) as err:
-                raise web.HTTPConflict(text=str(err)) from err
-            if local_state.value != "in_call":
-                raise web.HTTPConflict(text="local phone call has not been answered")
-            session = None
-        else:
-            session = _active_softphone_media_session(hass, endpoint_id)
-            if session is None or requested_call_id != session.call_id:
-                raise web.HTTPConflict(
-                    text="HA softphone has no matching SIP/RTP dialog"
-                )
-        registry = await async_authorize_media_websocket_request(
-            context,
-            request,
-        )
 
         try:
             async with async_claimed_media_websocket(
                 request,
                 context,
-                registry,
+                prepared.registry,
                 channel="audio",
                 max_msg_size=_MAX_BROWSER_AUDIO_MESSAGE_BYTES,
                 timeout=_AUDIO_OWNER_HANDOFF_TIMEOUT,
-                local_call=local_call,
+                local_call=prepared.local_call,
                 publish_state=lambda: _publish_ha_softphone_state(
                     hass, endpoint_id=endpoint_id
                 ),
@@ -386,22 +369,9 @@ class VoipAudioWebSocketView(HomeAssistantView):
                 ws = claimed.websocket
                 owner = claimed.owner
                 media_owner = claimed.media_session
-                # The old owner may have consumed and released RTP resources while
-                # this request waited. Resolve the live dialog again after the
-                # ownership barrier instead of reusing a stale session snapshot.
-                local_call = context.current_local_call()
+                local_call, session = prepared.resolve_current()
                 if local_call is not None:
-                    from .local_softphone_bridge import LocalBridgeError
-
-                    try:
-                        lease = local_bridge.acquire_media(
-                            requested_call_id,
-                            endpoint_id,
-                            context.client_id,
-                        )
-                    except LocalBridgeError as err:
-                        raise web.HTTPConflict(text=str(err)) from err
-                    media_owner.own_local_lease(local_bridge, lease)
+                    lease = prepared.acquire_local_lease(media_owner)
                     await ws.prepare(request)
                     await _run_local_audio_session(
                         hass,
@@ -410,11 +380,7 @@ class VoipAudioWebSocketView(HomeAssistantView):
                         lease,
                     )
                 else:
-                    session = _active_softphone_media_session(hass, endpoint_id)
-                    if session is None or requested_call_id != session.call_id:
-                        raise web.HTTPConflict(
-                            text="HA softphone has no matching SIP/RTP dialog"
-                        )
+                    assert session is not None
                     await ws.prepare(request)
                     await _run_audio_session(
                         hass,

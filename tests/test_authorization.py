@@ -589,9 +589,10 @@ def test_all_external_surfaces_apply_authorization_and_ws_context() -> None:
     assert "async_require_service_control" in services
     assert "async_require_service_admin" in services
     for view in (audio, video):
-        assert "resolve_media_websocket_request(request)" in view
-        assert "async_authorize_media_websocket_request(" in view
+        assert "async_prepare_media_websocket_request(" in view
         assert "async_claimed_media_websocket(" in view
+    assert "resolve_media_websocket_request(request)" in media_session
+    assert "async_authorize_media_websocket_request(context, request)" in media_session
     assert "require_http_control(request)" in media_session
     assert "require_media_client_id(request)" in media_session
     assert "async_require_media_controller(" in media_session

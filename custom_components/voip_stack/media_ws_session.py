@@ -97,6 +97,68 @@ class MediaWebSocketRequestContext:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedMediaWebSocketRequest:
+    """Validated request plus the channel-specific live session resolver."""
+
+    context: MediaWebSocketRequestContext
+    registry: Any
+    local_call: Any | None
+    active_session_resolver: Callable[[Any, str], Any | None]
+    missing_dialog_text: str
+    require_local_video: bool = False
+
+    def resolve_current(self) -> tuple[Any | None, Any | None]:
+        """Resolve media again after a previous owner's teardown barrier."""
+
+        from aiohttp import web
+
+        from .local_softphone_bridge import LocalCallStateError
+
+        local_call = self.context.current_local_call()
+        if local_call is not None:
+            try:
+                local_state = local_call.state_for(self.context.endpoint_id)
+            except (ValueError, LocalCallStateError) as err:
+                raise web.HTTPConflict(text=str(err)) from err
+            if local_state.value != "in_call":
+                raise web.HTTPConflict(
+                    text="local phone call has not been answered"
+                )
+            if self.require_local_video and not local_call.video_enabled:
+                raise web.HTTPConflict(text="local phone call is audio-only")
+            return local_call, None
+
+        session = self.active_session_resolver(
+            self.context.hass,
+            self.context.endpoint_id,
+        )
+        if session is None or self.context.call_id != session.call_id:
+            raise web.HTTPConflict(text=self.missing_dialog_text)
+        return None, session
+
+    def acquire_local_lease(
+        self,
+        media_session: MediaWebSocketSession,
+    ) -> Any:
+        """Bind the current local bridge lease to the shared media owner."""
+
+        from aiohttp import web
+
+        from .local_softphone_bridge import LocalBridgeError
+
+        try:
+            lease = self.context.local_bridge.acquire_media(
+                self.context.call_id,
+                self.context.endpoint_id,
+                self.context.client_id,
+            )
+        except LocalBridgeError as err:
+            raise web.HTTPConflict(text=str(err)) from err
+        media_session.own_local_lease(self.context.local_bridge, lease)
+        return lease
+
+
+@dataclass(frozen=True, slots=True)
 class ClaimedMediaWebSocket:
     """One HTTP WebSocket bound to its authenticated media owner."""
 
@@ -214,6 +276,36 @@ async def async_authorize_media_websocket_request(
         endpoint_id=context.endpoint_id,
     )
     return registry
+
+
+async def async_prepare_media_websocket_request(
+    request: Any,
+    *,
+    active_session_resolver: Callable[[Any, str], Any | None],
+    missing_dialog_text: str,
+    require_local_video: bool = False,
+) -> PreparedMediaWebSocketRequest:
+    """Resolve, validate and authorize one audio or video media request."""
+
+    context = resolve_media_websocket_request(request)
+    prepared = PreparedMediaWebSocketRequest(
+        context=context,
+        registry=None,
+        local_call=None,
+        active_session_resolver=active_session_resolver,
+        missing_dialog_text=missing_dialog_text,
+        require_local_video=require_local_video,
+    )
+    local_call, _session = prepared.resolve_current()
+    registry = await async_authorize_media_websocket_request(context, request)
+    return PreparedMediaWebSocketRequest(
+        context=context,
+        registry=registry,
+        local_call=local_call,
+        active_session_resolver=active_session_resolver,
+        missing_dialog_text=missing_dialog_text,
+        require_local_video=require_local_video,
+    )
 
 
 @asynccontextmanager

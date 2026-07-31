@@ -674,14 +674,16 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "if len(browser_endpoint_ids) + len(attempts) >= available_legs:",
             self.conference_ringing,
         )
-        for relative in ("audio_ws_view.py", "video_ws_view.py"):
-            view = (
-                Path(__file__).resolve().parents[1]
-                / "custom_components"
-                / "voip_stack"
-                / relative
-            ).read_text(encoding="utf-8")
-            self.assertIn("except (ValueError, LocalCallStateError) as err:", view)
+        media_session = (
+            Path(__file__).resolve().parents[1]
+            / "custom_components"
+            / "voip_stack"
+            / "media_ws_session.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "except (ValueError, LocalCallStateError) as err:",
+            media_session,
+        )
 
     def test_bridge_invite_does_not_register_after_caller_cancel(self) -> None:
         generic_bridge = self.inbound_bridge.index(

@@ -74,6 +74,20 @@ class _Bridge:
         return {"call_id": call_id, "generation": len(self.calls)}
 
 
+class _LocalState:
+    value = "in_call"
+
+
+class _LocalCall:
+    def __init__(self, *, video_enabled: bool = True) -> None:
+        self.video_enabled = video_enabled
+
+    @staticmethod
+    def state_for(endpoint_id: str) -> _LocalState:
+        assert endpoint_id == "kitchen"
+        return _LocalState()
+
+
 class _Request:
     def __init__(self, hass: object) -> None:
         self.app = {"hass": hass}
@@ -92,6 +106,49 @@ class _Request:
 
 
 class MediaWebSocketSessionTest(unittest.IsolatedAsyncioTestCase):
+    def test_prepared_request_rechecks_local_video_capability(self) -> None:
+        context = media_ws_session.MediaWebSocketRequestContext(
+            hass=object(),
+            user_id="user-1",
+            client_id="browser-document-1234",
+            endpoint_id="kitchen",
+            call_id="call-1",
+            local_bridge=types.SimpleNamespace(
+                get_call=lambda _call_id: _LocalCall(video_enabled=False)
+            ),
+        )
+        prepared = media_ws_session.PreparedMediaWebSocketRequest(
+            context=context,
+            registry=_Registry(),
+            local_call=None,
+            active_session_resolver=lambda _hass, _endpoint_id: None,
+            missing_dialog_text="missing video dialog",
+            require_local_video=True,
+        )
+        with self.assertRaises(web.HTTPConflict) as raised:
+            prepared.resolve_current()
+        self.assertEqual(raised.exception.text, "local phone call is audio-only")
+
+    def test_prepared_request_rejects_missing_remote_dialog(self) -> None:
+        context = media_ws_session.MediaWebSocketRequestContext(
+            hass=object(),
+            user_id="user-1",
+            client_id="browser-document-1234",
+            endpoint_id="kitchen",
+            call_id="call-1",
+            local_bridge=None,
+        )
+        prepared = media_ws_session.PreparedMediaWebSocketRequest(
+            context=context,
+            registry=_Registry(),
+            local_call=None,
+            active_session_resolver=lambda _hass, _endpoint_id: None,
+            missing_dialog_text="missing media dialog",
+        )
+        with self.assertRaises(web.HTTPConflict) as raised:
+            prepared.resolve_current()
+        self.assertEqual(raised.exception.text, "missing media dialog")
+
     def test_request_resolution_is_shared_and_reloads_local_call(self) -> None:
         hass = types.SimpleNamespace(data={})
         bridge = _Bridge()

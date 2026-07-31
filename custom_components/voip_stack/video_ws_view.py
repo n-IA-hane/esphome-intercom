@@ -26,13 +26,11 @@ from .const import (
 )
 from .call_registry import CallRegistry
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
-from .local_softphone_bridge import LocalCallStateError
 from .media_debug import merge_media_debug
 from .media_call_lifetime import active_media_call, listen_for_media_call_end
 from .media_ws_session import (
-    async_authorize_media_websocket_request,
     async_claimed_media_websocket,
-    resolve_media_websocket_request,
+    async_prepare_media_websocket_request,
 )
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import SipCallClient
@@ -435,65 +433,37 @@ class VoipVideoWebSocketView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.WebSocketResponse:
-        context = resolve_media_websocket_request(request)
+        prepared = await async_prepare_media_websocket_request(
+            request,
+            active_session_resolver=_active_video_session,
+            missing_dialog_text="HA softphone has no matching video dialog",
+            require_local_video=True,
+        )
+        context = prepared.context
         hass: HomeAssistant = context.hass
         endpoint_id = context.endpoint_id
-        requested_call_id = context.call_id
         local_bridge = context.local_bridge
-        local_call = context.current_local_call()
-        if local_call is not None:
-            try:
-                local_state = local_call.state_for(endpoint_id)
-            except (ValueError, LocalCallStateError) as err:
-                raise web.HTTPConflict(text=str(err)) from err
-            if local_state.value != "in_call":
-                raise web.HTTPConflict(text="local phone call has not been answered")
-            if not local_call.video_enabled:
-                raise web.HTTPConflict(text="local phone call is audio-only")
-            session = None
-        else:
-            session = _active_video_session(hass, endpoint_id)
-            if session is None or requested_call_id != session.call_id:
-                raise web.HTTPConflict(
-                    text="HA softphone has no matching video dialog"
-                )
-        registry = await async_authorize_media_websocket_request(
-            context,
-            request,
-        )
 
         try:
             async with async_claimed_media_websocket(
                 request,
                 context,
-                registry,
+                prepared.registry,
                 channel="video",
                 max_msg_size=(
                     _MAX_BROWSER_ACCESS_UNIT_BYTES + _VIDEO_HEADER.size
                 ),
                 timeout=_VIDEO_OWNER_HANDOFF_TIMEOUT,
-                local_call=local_call,
+                local_call=prepared.local_call,
                 publish_state=lambda: _publish_ha_softphone_state(
                     hass, endpoint_id=endpoint_id
                 ),
             ) as claimed:
                 ws = claimed.websocket
                 media_owner = claimed.media_session
-                # Re-resolve after the previous owner's teardown barrier: it may
-                # have consumed/closed a pre-bound socket or applied a re-INVITE.
-                local_call = context.current_local_call()
+                local_call, session = prepared.resolve_current()
                 if local_call is not None:
-                    from .local_softphone_bridge import LocalBridgeError
-
-                    try:
-                        lease = local_bridge.acquire_media(
-                            requested_call_id,
-                            endpoint_id,
-                            context.client_id,
-                        )
-                    except LocalBridgeError as err:
-                        raise web.HTTPConflict(text=str(err)) from err
-                    media_owner.own_local_lease(local_bridge, lease)
+                    lease = prepared.acquire_local_lease(media_owner)
                     await ws.prepare(request)
                     await _run_local_video_session(
                         hass,
@@ -502,11 +472,7 @@ class VoipVideoWebSocketView(HomeAssistantView):
                         lease,
                     )
                 else:
-                    session = _active_video_session(hass, endpoint_id)
-                    if session is None or requested_call_id != session.call_id:
-                        raise web.HTTPConflict(
-                            text="HA softphone has no matching video dialog"
-                        )
+                    assert session is not None
                     await ws.prepare(request)
                     _detach_video_socket(hass, session)
                     await _run_video_session(
