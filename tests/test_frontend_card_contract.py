@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CARD = ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-stack-card.js"
+CARD_EDITOR = CARD.with_name("voip-stack-card-editor.js")
 CARD_MODEL = CARD.with_name("voip-stack-card-model.js")
 PHONEBOOK_CARD = ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-phonebook-card.js"
 ENDPOINT_DEVICE = ROOT / "custom_components" / "voip_stack" / "endpoint_device.py"
@@ -44,6 +45,7 @@ class FrontendCardContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = CARD.read_text()
+        cls.editor_source = CARD_EDITOR.read_text()
         cls.model_source = CARD_MODEL.read_text()
 
     def test_esp_contact_call_is_a_pure_button_press(self) -> None:
@@ -367,7 +369,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn('customElements.define("voip-stack-phonebook-view"', source)
         self.assertNotIn('customElements.define("voip-phonebook-card"', source)
         self.assertNotIn('type: "voip-phonebook-card"', source)
-        self.assertIn('phonebookOpt.value = "phonebook"', self.source)
+        self.assertIn('phonebookOpt.value = "phonebook"', self.editor_source)
         self.assertIn('this._isPhonebookMode()', self.source)
         self.assertIn('document.createElement("voip-stack-phonebook-view")', self.source)
 
@@ -531,7 +533,7 @@ class FrontendCardContractTest(unittest.TestCase):
 
         selector = _method_body(self.source, "_getConfigSelector")
         device_id = _method_body(self.source, "_getConfigDeviceId")
-        editor = _method_body(self.source, "_deviceChanged")
+        editor = _method_body(self.editor_source, "_deviceChanged")
 
         self.assertIn("this.config?.entity_id || this.config?.device_id", selector)
         self.assertIn("this._resolvedDeviceId || this._getConfigSelector()", device_id)
@@ -741,13 +743,13 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("background-color: Canvas;", source)
 
     def test_editor_lists_mirrors_and_logical_softphones_and_cleans_retry_timer(self) -> None:
-        editor = self.source[self.source.index("class VoipStackCardEditor") :]
+        editor = self.editor_source
         self.assertIn("const selectableDevices = this._devices.filter", editor)
-        self.assertIn("this._isSoftphoneDevice(d)", editor)
+        self.assertIn("this._isSoftphoneDevice(device)", editor)
         self.assertIn("newConfig.endpoint_id = selected.endpoint_id", editor)
         self.assertIn("Default Home Assistant softphone", editor)
         self.assertIn(
-            'String(d.endpoint_id || "") !== DEFAULT_SOFTPHONE_ENDPOINT_ID',
+            'String(device.endpoint_id || "") !== DEFAULT_SOFTPHONE_ENDPOINT_ID',
             editor,
         )
         self.assertIn("const configuredMissingPhone = softphoneMode", editor)
@@ -756,7 +758,13 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("clearTimeout(this._devicesRetryTimer)", editor)
         self.assertIn(
             'if (!window.customCards.some(card => card.type === "voip-stack-card"))',
-            editor,
+            self.source,
+        )
+
+    def test_main_card_loads_editor_with_same_cache_version(self) -> None:
+        self.assertIn(
+            'import(`./voip-stack-card-editor.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`)',
+            self.source,
         )
 
     def test_softphone_media_ownership_survives_card_recreation_in_same_tab(self) -> None:

@@ -37,6 +37,7 @@ const cardModel = await import(pathToFileURL({json.dumps(str(CARD_MODEL))}));
 let source = fs.readFileSync({json.dumps(str(CARD))}, "utf8");
 source = source
   .replace(/await import\(`\.\/voip-phonebook-card\.js[^;]+;/, "")
+  .replace(/await import\(`\.\/voip-stack-card-editor\.js[^;]+;/, "")
   .replace(
     /const \{{ voipStackEngine \}} = await import\(`\.\/voip-stack-engine\.js[^;]+;/,
     "const {{ voipStackEngine }} = globalThis.__engine;",
