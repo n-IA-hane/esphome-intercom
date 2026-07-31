@@ -25,6 +25,7 @@ from .audio_format import (
     HA_SIP_PCM_TX_FORMATS,
 )
 from .assist_endpoint import AssistEndpoint
+from .bridge_media_updates import BridgeMediaUpdateBinder
 from .call_forwarder import ForwardRuntime, async_forward_existing_call
 from .config_entry_runtime import (
     async_refresh_and_push_phonebook as _refresh_and_push_phonebook,
@@ -81,10 +82,6 @@ from .phonebook_runtime import registered_roster_entries as _registered_roster_e
 from .router import RouteReason
 from .ring_group_orchestrator import RingGroupRuntime, run_ring_group_call
 from .session_cleanup import async_cleanup_sip_runtime
-from .sip_bridge import (
-    dialog_rtp_peer,
-    dialog_video_rtp_peer,
-)
 from .store import sip_accounts as _sip_accounts
 from .trunk_inbound_router import (
     TrunkInboundRuntime,
@@ -143,11 +140,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         uri_transport as _sip_uri_transport,
     )
     from .dtmf import parse_sip_info_digit
-    from .sdp import (
-        video_formats_passthrough_compatible,
-    )
     from .sip import parse_sip_uri
-    from .sip_client import SipCallClient
     from .sip_endpoint import SipEndpointManager
     from .sip_listener import SipInvite, SipInviteResult
     from .pbx_runtime import SipEndpointRuntime
@@ -241,93 +234,8 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     _ha_router_decision = route_resolver.route
     _logical_endpoint_for_member = route_resolver.logical_endpoint
 
-    def _attach_client_media_update(
-        client: SipCallClient,
-        relay,
-        *,
-        source_call_id: str,
-    ) -> None:
-        """Bind remote re-offers on an outbound dialog to its live relay leg."""
-
-        async def _prepare(previous, updated, method):
-            registry = _call_registry(hass)
-            session = registry.sessions.get(
-                registry.resolve_session_id(source_call_id)
-            )
-            if session is None:
-                return None
-            call_generation = session.generation
-            try:
-                previous_audio_peer = relay.right
-                commit_audio = relay.prepare_peer_reconfiguration(
-                    "right", dialog_rtp_peer(updated)
-                )
-            except (TypeError, ValueError):
-                return None
-
-            video_relay = getattr(relay, "video_relay", None)
-            previous_video_peer = (
-                video_relay.right if video_relay is not None else None
-            )
-            previous_video = previous.video_format
-            updated_video = updated.video_format
-            if (previous_video is None) != (updated_video is None):
-                return None
-            next_video_peer = None
-            commit_video = None
-            if updated_video is not None:
-                next_video_peer = dialog_video_rtp_peer(updated)
-                if (
-                    video_relay is None
-                    or not video_formats_passthrough_compatible(
-                        video_relay.left.recv_format,
-                        next_video_peer.send_format,
-                    )
-                    or not video_formats_passthrough_compatible(
-                        next_video_peer.recv_format,
-                        video_relay.left.send_format,
-                    )
-                    or updated.remote_video_rtp_port <= 0
-                ):
-                    return None
-                commit_video = video_relay.prepare_peer_reconfiguration(
-                    "right", next_video_peer
-                )
-
-            async def _commit() -> None:
-                if not registry.is_generation_current(
-                    source_call_id, call_generation
-                ):
-                    raise RuntimeError(
-                        "SIP bridge media update belongs to a terminated call"
-                    )
-                if relay.right is not previous_audio_peer or (
-                    video_relay is not None
-                    and previous_video_peer is not None
-                    and video_relay.right is not previous_video_peer
-                ):
-                    raise RuntimeError(
-                        "SIP bridge media owner changed before commit"
-                    )
-                commit_audio()
-                if commit_video is not None:
-                    commit_video()
-                _LOGGER.info(
-                    "SIP bridge outbound %s committed source_call_id=%s dest_call_id=%s remote_rtp=%s:%s audio_direction=%s video_direction=%s",
-                    method,
-                    source_call_id,
-                    client.dialog_ids.call_id,
-                    updated.remote_rtp_host,
-                    updated.remote_rtp_port,
-                    updated.remote_audio_direction,
-                    updated_video.direction
-                    if updated_video is not None
-                    else "inactive",
-                )
-
-            return _commit
-
-        client.on_media_update = _prepare
+    bridge_media_updates = BridgeMediaUpdateBinder(hass)
+    _attach_client_media_update = bridge_media_updates.attach
 
     async def _on_register(request, addr, transport):
         result = await registrar.handle_register(request, addr, transport)
