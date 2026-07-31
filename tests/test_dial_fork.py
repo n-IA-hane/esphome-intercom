@@ -267,6 +267,63 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events, ["first", "second"])
         self.assertEqual(result.winner.candidate_id, "second")
 
+    async def test_answered_control_wins_over_pending_media_branch(self) -> None:
+        session = endpoint_session.EndpointCallSession("call-1", 1)
+        branch_started = asyncio.Event()
+        keep_branch_pending = asyncio.Event()
+        closed: list[tuple[str, object]] = []
+        committed: list[str] = []
+
+        async def dial_branch():
+            branch_started.set()
+            await keep_branch_pending.wait()
+            return dial_fork.DialOutcome(
+                dial_fork.DialDisposition.BUSY
+            )
+
+        async def answer_browser():
+            await branch_started.wait()
+            return dial_fork.DialOutcome(
+                dial_fork.DialDisposition.ANSWERED,
+                200,
+            )
+
+        async def close(candidate_id: str, mode) -> None:
+            closed.append((candidate_id, mode))
+
+        branch = dial_fork.DialCandidate(
+            "sip-branch",
+            dial_branch,
+            lambda mode: close("sip-branch", mode),
+        )
+        browser = dial_fork.DialCandidate(
+            "browser-control",
+            answer_browser,
+            lambda mode: close("browser-control", mode),
+            order=-1,
+            control=True,
+        )
+
+        result = await dial_fork.DialForkController(
+            session,
+            (branch, browser),
+        ).run(
+            lambda candidate, _outcome: not committed.append(
+                candidate.candidate_id
+            )
+        )
+
+        self.assertIs(result.winner, browser)
+        self.assertEqual(committed, ["browser-control"])
+        self.assertIn(
+            ("sip-branch", dial_fork.LegCloseMode.CANCEL_OR_BYE),
+            closed,
+        )
+        self.assertNotIn(
+            ("browser-control", dial_fork.LegCloseMode.CLOSE),
+            closed,
+        )
+
     async def test_sequential_source_cancel_arbitrates_before_winner_commit(self) -> None:
         session = endpoint_session.EndpointCallSession("call-1", 1)
         gate = asyncio.Event()

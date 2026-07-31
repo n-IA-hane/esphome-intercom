@@ -1226,9 +1226,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         self.assertIn("completed_controls", fork_source)
         self.assertIn("DialDisposition.SOURCE_CANCELLED", fork_source)
+        arbitration_start = fork_source.index(
+            "while pending_controls and not branch_task.done():"
+        )
         self.assertLess(
-            fork_source.index("completed_controls"),
-            fork_source.index("if branch_task.done():"),
+            fork_source.index("completed_controls", arbitration_start),
+            fork_source.index("result = await branch_task", arbitration_start),
         )
         self.assertIn("_reduce_failures(failures)", fork_source)
 
