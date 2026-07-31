@@ -390,6 +390,29 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(releases, [("call-1", "kitchen", "lease")])
 
+    async def test_local_lease_release_failure_is_visible_in_debug_log(
+        self,
+    ) -> None:
+        def fail_release(_call_id: str, _endpoint_id: str, _token: str) -> None:
+            raise RuntimeError("call ended before release")
+
+        bridge = types.SimpleNamespace(release_media=fail_release)
+        lease = types.SimpleNamespace(
+            call_id="call-1",
+            endpoint_id="kitchen",
+            token="lease",
+        )
+
+        with self.assertLogs(OWNER_MODULE._LOGGER.name, level="DEBUG") as logs:
+            released = await async_release_local_media_if_unowned(
+                {},
+                bridge,
+                lease,
+            )
+
+        self.assertFalse(released)
+        self.assertIn("call_id=call-1 endpoint_id=kitchen", "\n".join(logs.output))
+
     async def test_reconnect_revokes_then_waits_for_previous_teardown(self) -> None:
         owners: dict[str, object] = {}
         lock = asyncio.Lock()

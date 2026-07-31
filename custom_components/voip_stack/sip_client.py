@@ -2456,7 +2456,11 @@ class SipCallClient:
                     received = await self._read_response(max(0.05, deadline - asyncio.get_running_loop().time()))
                 except asyncio.TimeoutError:
                     break
-                except Exception:
+                except sip.SipError as err:
+                    _LOGGER.debug(
+                        "Ignoring malformed SIP response while waiting for BYE: %s",
+                        err,
+                    )
                     continue
                 if received is None:
                     break
@@ -2521,7 +2525,11 @@ class SipCallClient:
                 received = await self._read_response(max(0.05, deadline - asyncio.get_running_loop().time()))
             except asyncio.TimeoutError:
                 break
-            except Exception:
+            except sip.SipError as err:
+                _LOGGER.debug(
+                    "Ignoring malformed SIP response while waiting for CANCEL: %s",
+                    err,
+                )
                 continue
             if received is None:
                 break

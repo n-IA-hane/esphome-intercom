@@ -1710,6 +1710,45 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await client.terminate(timeout=0.1), "cancelled")
         self.assertEqual([sip.parse_message(raw).method for raw, _addr in transport.sent], ["CANCEL", "ACK"])
 
+    async def test_confirmed_terminate_propagates_unexpected_reader_failure(
+        self,
+    ) -> None:
+        client = sip_client.SipCallClient(
+            local_ip="127.0.0.1",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        client.dialog = types.SimpleNamespace()  # type: ignore[assignment]
+        client.bye = lambda: True  # type: ignore[method-assign]
+
+        async def read_response(_timeout: float):
+            raise RuntimeError("reader invariant")
+
+        client._read_response = read_response  # type: ignore[method-assign]
+
+        with self.assertRaisesRegex(RuntimeError, "reader invariant"):
+            await client.terminate(timeout=0.1)
+
+    async def test_cancel_terminate_propagates_unexpected_reader_failure(
+        self,
+    ) -> None:
+        client = sip_client.SipCallClient(
+            local_ip="127.0.0.1",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        client.cancel = lambda: True  # type: ignore[method-assign]
+
+        async def read_response(_timeout: float):
+            raise RuntimeError("reader invariant")
+
+        client._read_response = read_response  # type: ignore[method-assign]
+
+        with self.assertRaisesRegex(RuntimeError, "reader invariant"):
+            await client.terminate(timeout=0.1)
+
     async def test_cancelled_invite_final_response_does_not_wait_for_cancel_ok(
         self,
     ) -> None:

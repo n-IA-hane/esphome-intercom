@@ -250,6 +250,12 @@ async def async_release_local_media_if_unowned(
                 )
             )
         except Exception:  # noqa: BLE001 - the call may have ended first.
+            _LOGGER.debug(
+                "Failed to release unowned local media call_id=%s endpoint_id=%s",
+                lease.call_id,
+                lease.endpoint_id,
+                exc_info=True,
+            )
             return False
 
 
