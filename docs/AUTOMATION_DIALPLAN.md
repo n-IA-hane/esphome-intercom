@@ -31,10 +31,10 @@ want to control:
 
 In plain language:
 
-- `route_requested` means: “A new call has arrived, but the PBX has not chosen
-  which phone should ring yet.”
-- `voip_stack.select_inbound_destination` answers that request: “Send this new
-  call to this phone, group, extension or Assist.”
+- `route_requested` means: "A new call has arrived, but the PBX has not chosen
+  which phone should ring yet."
+- `voip_stack.select_inbound_destination` answers that request: "Send this new
+  call to this phone, group, extension or Assist."
 - `ringing` means that the call has already been delivered to a specific phone.
 - `voip_stack.forward` moves that already-delivered call somewhere else.
 

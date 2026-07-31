@@ -29,7 +29,7 @@ jobs:
           ruff==0.15.21
           voluptuous==0.15.2
       - name: Lint Python
-        run: python -m ruff check custom_components scripts tests
+        run: python -m ruff check custom_components esphome scripts tests tools
       - name: Parse browser modules
         run: >-
           find custom_components/voip_stack/frontend -name '*.js' -print0

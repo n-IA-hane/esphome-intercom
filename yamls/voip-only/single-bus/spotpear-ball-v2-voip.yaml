@@ -7,10 +7,10 @@
 #
 # Audio pipeline (mixer topology shared with the Spotpear full builds):
 #
-#   I2S RX 48kHz stereo (L=DAC ref, R=ADC mic) ─esp_ae_rate_cvt x3─> esp_aec @16k ──> mic_main ──> VoIP TX
+#   I2S RX 48kHz stereo (L=DAC ref, R=ADC mic) -> esp_ae_rate_cvt x3 -> esp_aec @16k -> mic_main -> VoIP TX
 #
-#   VoIP RX (16kHz) ──> voip_speaker_input  (resampler 16→48) ─┐
-#   Ringtone   (FLAC)   ──> ringtone_speaker  (resampler 16→48) ─┴─> audio_mixer (48k) ──> hw_speaker ──> ES8311 DAC
+#   VoIP RX (16kHz) -> voip_speaker_input (resampler 16->48) -> audio_mixer (48k)
+#   Ringtone (FLAC) -> ringtone_speaker (resampler 16->48) -> audio_mixer -> hw_speaker -> ES8311 DAC
 #
 # Single GPIO0 button (voip-only, no VA mode):
 #   short  : call (idle) / answer (ringing in) / hangup (in call/calling)

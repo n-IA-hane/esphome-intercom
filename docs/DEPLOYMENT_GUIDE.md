@@ -9,10 +9,10 @@ transport.
 
 ```text
 yamls/
-├── voip-only/       SIP phone + audio stack, no wake word or VA
-├── full-experience/     SIP phone + audio stack + MWW/Voice Assistant/media
-├── experimental/        bring-up/reference profiles
-└── host/                local-only ESPHome host test YAMLs, gitignored
+|-- voip-only/          SIP phone + audio stack, no wake word or VA
+|-- full-experience/    SIP phone + audio stack + MWW/Voice Assistant/media
+|-- experimental/       bring-up/reference profiles
+`-- host/               local-only ESPHome host test YAMLs, gitignored
 ```
 
 Choose the maintained YAML closest to the hardware and edit identity, pins and

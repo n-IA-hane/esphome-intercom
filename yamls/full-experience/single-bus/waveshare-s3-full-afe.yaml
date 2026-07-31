@@ -29,12 +29,12 @@
 #   - slot 3 = near-silent / unused on this board revision
 #
 # Dual-mic target:
-#   ES7210 TDM slots [0, 2]          → esp_ae_rate_cvt x3 ──┐
-#   ES7210 TDM slot 1 (DAC ref)      → esp_ae_rate_cvt x3 ──┴── esp_afe (AEC + Speech Enhancement + VAD) → mono mic_main → VA / VoIP TX / MWW
+#   ES7210 TDM slots [0, 2]     -> esp_ae_rate_cvt x3
+#   ES7210 TDM slot 1 (DAC ref) -> esp_ae_rate_cvt x3 -> esp_afe (AEC + Speech Enhancement + VAD) -> mono mic_main -> VA / VoIP TX / MWW
 #
-#   Music/radio → media_speaker_input (resampler) ────────────┐
-#   VA TTS      → tts_speaker_input (resampler) ──────────────┼── mixer (48kHz) → hw_speaker → ES8311 DAC
-#   VoIP RX     → voip_speaker_input (resampler) ─────────────┘
+#   Music/radio -> media_speaker_input (resampler) -> mixer (48kHz)
+#   VA TTS      -> tts_speaker_input (resampler)   -> mixer -> hw_speaker
+#   VoIP RX     -> voip_speaker_input (resampler)  -> mixer -> ES8311 DAC
 #
 # =============================================================================
 

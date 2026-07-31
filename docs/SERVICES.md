@@ -304,8 +304,8 @@ second public automation API.
 
 Each integration-owned phone Device also exposes a scoped call Event Entity
 and an enum call-state Sensor Entity. Prefer those entities for automations
-about one room/handset, such as “Casa has rung for 30 seconds” or “Test missed
-an incoming call”. Use the aggregate entity for PBX-wide logic and
+about one room/handset, such as "Casa has rung for 30 seconds" or "Test missed
+an incoming call". Use the aggregate entity for PBX-wide logic and
 `route_requested`. The default phone's state sensor keeps the historical
 `sensor.voip_stack_call_state` entity ID for compatibility even though it is
 now attached to that phone Device.

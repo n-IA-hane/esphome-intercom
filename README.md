@@ -119,8 +119,8 @@ mode: ha_softphone
 device_id: <phone_device_id>
 ```
 
-`device_id` answers “which local phone owns this card or action?”.
-`destination` answers “who should this phone call?”. The central phonebook
+`device_id` answers "which local phone owns this card or action?".
+`destination` answers "who should this phone call?". The central phonebook
 resolves the destination, so a normal call does not require the destination's
 Device ID:
 
@@ -251,8 +251,8 @@ Optional advanced call context appends caller ID, phonebook match, ingress and
 called extension once. Treat those fields as untrusted call metadata, not
 authentication.
 
-Voice intents may also resolve commands such as “Call Kitchen”, “Answer” and
-“Hang up” against the live phonebook and the satellite's selected phone.
+Voice intents may also resolve commands such as "Call Kitchen", "Answer" and
+"Hang up" against the live phonebook and the satellite's selected phone.
 
 <table>
   <tr>

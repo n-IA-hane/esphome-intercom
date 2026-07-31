@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # yaml_paths.sh - switch device YAML paths between local checkout and remote release refs.
 #
-# ─── Convention ───
+# Convention
 # Each YAML carries ONE active value per resource: ext_components_source,
 # voip_stack_components_source, audio_stack_components_source,
 # runtime_controller_components_source, assets_base, and each `packages:` entry.
@@ -19,7 +19,7 @@
 #   each repository independently when their release versions differ.
 # - Advanced/custom remote refs remain available through `remote`.
 #
-# ─── How it works ───
+# How it works
 # Rewrite targets per YAML:
 #   1. ext_components_source              → string substitution (single line)
 #   2. voip_stack_components_source      → string substitution (single line,
@@ -41,7 +41,7 @@
 # For (5): per-line awk replacement, because the path conversion needs
 # `realpath --relative-to` per yaml (each yaml lives at a different depth).
 #
-# ─── ESPHome conventions we rely on ───
+# ESPHome conventions we rely on
 # - `external_components: source: github://OWNER/REPO@BRANCH` defaults to
 #   looking up components in the repo's `esphome/components/` subfolder.
 #   So local equivalent must be `<reldepth>/esphome/components` (full path
@@ -53,7 +53,7 @@
 #   own `image:`/`font:` blocks. Local: `<reldepth>/`. Remote: full HTTPS
 #   raw URL `https://github.com/OWNER/REPO/raw/BRANCH/`.
 #
-# ─── Edge cases handled ───
+# Edge cases handled
 # - Package keys with digits (`s3_base`, `status_led`): regex uses
 #   `[a-zA-Z_][a-zA-Z0-9_]*` (identifier shape, not just letters).
 # - Yaml depth varies (3 or 4 levels deep under `yamls/`): all paths
@@ -64,7 +64,7 @@
 
 set -euo pipefail
 
-# ────────── Defaults ──────────
+# Defaults
 DEFAULT_URL="github://n-IA-hane/esphome-intercom"
 DEFAULT_INTERCOM_BRANCH="main"
 DEFAULT_VOIP_STACK_URL="github://n-IA-hane/esphome-voip-stack"
@@ -78,7 +78,7 @@ DEFAULT_RUNTIME_CONTROLLER_BRANCH="main"
 RUNTIME_CONTROLLER_ROOT_DEFAULT="../esphome-runtime-controller"
 ASSETS_HOST="https://github.com"   # for assets_base remote URL composition
 
-# ────────── Helpers ──────────
+# Helpers
 err()  { echo "error: $*" >&2; exit 1; }
 log()  { echo "$*" >&2; }
 note() { echo "  $*" >&2; }
@@ -324,7 +324,7 @@ to_remote() {
   fi
 }
 
-# ────────── Commands ──────────
+# Commands
 cmd_status() {
   local root branch
   root=$(repo_root)
@@ -536,7 +536,7 @@ Examples:
 EOF
 }
 
-# ────────── Arg parsing ──────────
+# Argument parsing
 [[ $# -lt 1 ]] && { usage; exit 1; }
 
 REMOTE_PROFILE=""

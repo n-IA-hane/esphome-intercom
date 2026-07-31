@@ -19,9 +19,9 @@
 # Audio pipeline:
 #   ES7210 mic → esp_audio_stack (48kHz) → esp_ae_rate_cvt x3 → esp_aec → mic_main → VA / VoIP TX / MWW
 #
-#   Media       → media_speaker_input (resampler) ────────────┐
-#   VA TTS      → tts_speaker_input (resampler) ──────────────┼── mixer (48kHz) → hw_speaker → ES8311 DAC → amp
-#   VoIP RX     → voip_speaker_input (resampler) ─────────────┘
+#   Media       -> media_speaker_input (resampler) -> mixer (48kHz)
+#   VA TTS      -> tts_speaker_input (resampler)   -> mixer -> hw_speaker
+#   VoIP RX     -> voip_speaker_input (resampler)  -> mixer -> ES8311 DAC -> amp
 #
 # HARDWARE (ESP32-S3-BOX-3):
 #   - Board: esp32s3box (ESP32-S3R8, 16MB flash, octal PSRAM)

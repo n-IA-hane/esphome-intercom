@@ -7,9 +7,9 @@
 # Audio pipeline:
 #   MEMS mic → esp_audio_stack (48kHz) → esp_ae_rate_cvt x3 → esp_afe (AEC+NS+AGC) → mic_main → VA / VoIP TX / MWW
 #
-#   Media       → media_speaker_input (resampler) ────────────┐
-#   VA TTS      → tts_speaker_input (resampler) ──────────────┼── mixer (48kHz) → hw_speaker → class-D amp
-#   VoIP RX     → voip_speaker_input (resampler) ─────────────┘
+#   Media       -> media_speaker_input (resampler) -> mixer (48kHz)
+#   VA TTS      -> tts_speaker_input (resampler)   -> mixer -> hw_speaker
+#   VoIP RX     -> voip_speaker_input (resampler)  -> mixer -> class-D amp
 #
 # HARDWARE (adapt GPIOs to YOUR board):
 #   - Board: Any ESP32-S3 with PSRAM

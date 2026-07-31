@@ -28,12 +28,12 @@
 #
 # Audio pipeline (esp_audio_stack at 48kHz, TDM + Espressif rate conversion to 16kHz):
 #
-#   ES7210 TDM [mic=slot0, ref=slot1, mic=slot2, nc=slot3] → esp_ae_rate_cvt x3 ──────┐
-#                                                                         └── esp_afe FD/MMNR (AEC + Speech Enhancement + VAD) → mic_afe → VA / VoIP TX / MWW
+#   ES7210 TDM [mic=slot0, ref=slot1, mic=slot2, nc=slot3] -> esp_ae_rate_cvt x3
+#   esp_ae_rate_cvt -> esp_afe FD/MMNR (AEC + Speech Enhancement + VAD) -> mic_afe -> VA / VoIP TX / MWW
 #
-#   Music/radio → media_speaker_input (resampler) ────────────┐
-#   VA TTS      → tts_speaker_input (resampler) ──────────────┼── mixer (48kHz) → hw_speaker → ES8311
-#   VoIP RX     → voip_speaker_input (resampler) ─────────────┘
+#   Music/radio -> media_speaker_input (resampler) -> mixer (48kHz)
+#   VA TTS      -> tts_speaker_input (resampler)   -> mixer -> hw_speaker
+#   VoIP RX     -> voip_speaker_input (resampler)  -> mixer -> ES8311
 #
 # Touch UI:
 #   Main page:      weather, VoIP and voice assistant dashboard
