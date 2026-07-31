@@ -313,6 +313,89 @@ def _response_headers(request) -> list[tuple[str, str]]:
     ]
 
 
+async def _cancel_pending_invite(
+    sip_socket: socket.socket,
+    destination: tuple[str, int],
+    *,
+    local_ip: str,
+    local_port: int,
+    local_user: str,
+    remote_uri: str,
+    call_id: str,
+    local_tag: str,
+    invite_branch: str,
+    user_agent: str,
+    result: dict,
+) -> None:
+    """Complete the client side of one pending INVITE cancellation."""
+
+    loop = asyncio.get_running_loop()
+    cancel = sip.build_request(
+        "CANCEL",
+        remote_uri,
+        _request_headers(
+            method="CANCEL",
+            local_ip=local_ip,
+            local_port=local_port,
+            local_user=local_user,
+            remote_uri=remote_uri,
+            call_id=call_id,
+            local_tag=local_tag,
+            cseq=1,
+            branch=invite_branch,
+            user_agent=user_agent,
+        ),
+    )
+    await loop.sock_sendto(sip_socket, cancel, destination)
+    deadline = loop.time() + 3.0
+    while loop.time() < deadline:
+        try:
+            raw, _addr = await asyncio.wait_for(
+                loop.sock_recvfrom(sip_socket, 65535),
+                max(0.05, deadline - loop.time()),
+            )
+        except TimeoutError:
+            break
+        message = sip.parse_message(raw)
+        if message.header("Call-ID") != call_id or message.status_code is None:
+            continue
+        cseq = message.header("CSeq").upper()
+        status = int(message.status_code)
+        if cseq.endswith(" CANCEL"):
+            result["cancel_response_status"] = status
+        elif cseq.endswith(" INVITE") and status >= 300:
+            result["cancel_invite_status"] = status
+            ack = sip.build_request(
+                "ACK",
+                remote_uri,
+                _request_headers(
+                    method="ACK",
+                    local_ip=local_ip,
+                    local_port=local_port,
+                    local_user=local_user,
+                    remote_uri=remote_uri,
+                    remote_to=message.header("To"),
+                    call_id=call_id,
+                    local_tag=local_tag,
+                    cseq=1,
+                    branch=invite_branch,
+                    user_agent=user_agent,
+                ),
+            )
+            await loop.sock_sendto(sip_socket, ack, destination)
+            result["cancel_ack_sent"] = True
+        if (
+            result.get("cancel_response_status") is not None
+            and result.get("cancel_invite_status") is not None
+        ):
+            break
+    result["cancel_transaction_complete"] = bool(
+        result.get("cancel_response_status") is not None
+        and result.get("cancel_invite_status") is not None
+        and result.get("cancel_ack_sent")
+    )
+
+
 async def _send_audio_silence(
     sock: socket.socket,
     destination: tuple[str, int],
@@ -706,6 +789,10 @@ async def async_main(args: argparse.Namespace) -> int:
         "video_rtcp_invalid_packets": 0,
         "video_rtcp_packet_types": [],
         "bye_response_status": None,
+        "cancel_response_status": None,
+        "cancel_invite_status": None,
+        "cancel_ack_sent": False,
+        "cancel_transaction_complete": False,
     }
     video_process = None
     video_receiver_process = None
@@ -1254,25 +1341,20 @@ async def async_main(args: argparse.Namespace) -> int:
         if not answered and not any(
             int(status) >= 200 for status in result.get("sip_statuses", [])
         ):
-            cancel = sip.build_request(
-                "CANCEL",
-                remote_uri,
-                _request_headers(
-                    method="CANCEL",
+            with contextlib.suppress(OSError):
+                await _cancel_pending_invite(
+                    sip_socket,
+                    (args.host, args.port),
                     local_ip=local_ip,
                     local_port=sip_port,
                     local_user=args.user,
                     remote_uri=remote_uri,
                     call_id=call_id,
                     local_tag=local_tag,
-                    cseq=1,
-                    branch=invite_branch,
+                    invite_branch=invite_branch,
                     user_agent=peer_user_agent,
-                ),
-            )
-            with contextlib.suppress(OSError):
-                await loop.sock_sendto(sip_socket, cancel, (args.host, args.port))
-                await asyncio.sleep(0.05)
+                    result=result,
+                )
         elif answered and not remote_bye and not bye_sent and remote_to:
             bye = sip.build_request(
                 "BYE",

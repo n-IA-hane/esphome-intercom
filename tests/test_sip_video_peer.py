@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 from pathlib import Path
+import socket
 import subprocess
 import sys
 
@@ -156,6 +158,74 @@ def test_media_peer_acks_non_successful_invite_finals() -> None:
     assert '"ACK"' in failure
     assert "branch=invite_branch" in failure
     assert 'result["failure_ack_sent"] = True' in failure
+
+
+def test_media_peer_completes_cancel_transaction_and_acks_invite_final() -> None:
+    peer = _load_tool()
+
+    async def run_transaction() -> tuple[dict, str]:
+        loop = asyncio.get_running_loop()
+        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        for sock in (client, server):
+            sock.setblocking(False)
+            sock.bind(("127.0.0.1", 0))
+        call_id = "cancel-transaction@127.0.0.1"
+        result: dict = {}
+
+        async def answer_cancel() -> str:
+            raw, address = await loop.sock_recvfrom(server, 65535)
+            request = peer.sip.parse_message(raw)
+            assert request.method == "CANCEL"
+            headers = peer._response_headers(request)
+            await loop.sock_sendto(
+                server,
+                peer.sip.build_response(200, "OK", headers),
+                address,
+            )
+            invite_headers = [
+                (name, "1 INVITE" if name == "CSeq" else value)
+                for name, value in headers
+            ]
+            await loop.sock_sendto(
+                server,
+                peer.sip.build_response(
+                    487,
+                    "Request Terminated",
+                    invite_headers,
+                ),
+                address,
+            )
+            ack, _address = await loop.sock_recvfrom(server, 65535)
+            return peer.sip.parse_message(ack).method or ""
+
+        try:
+            server_task = asyncio.create_task(answer_cancel())
+            await peer._cancel_pending_invite(
+                client,
+                server.getsockname(),
+                local_ip="127.0.0.1",
+                local_port=client.getsockname()[1],
+                local_user="caller",
+                remote_uri=f"sip:2600@127.0.0.1:{server.getsockname()[1]}",
+                call_id=call_id,
+                local_tag="from-tag",
+                invite_branch="z9hG4bKcancel",
+                user_agent="VoIP-Stack-Test",
+                result=result,
+            )
+            return result, await server_task
+        finally:
+            client.close()
+            server.close()
+
+    result, ack_method = asyncio.run(run_transaction())
+
+    assert result["cancel_response_status"] == 200
+    assert result["cancel_invite_status"] == 487
+    assert result["cancel_ack_sent"] is True
+    assert result["cancel_transaction_complete"] is True
+    assert ack_method == "ACK"
 
 
 def test_jpeg_capture_records_complete_rfc2435_frames_without_ffmpeg(
