@@ -46,7 +46,7 @@ from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .local_softphone_bridge import LocalCallStateError
 from .media_ws_session import (
     async_authorize_media_websocket_request,
-    async_media_websocket_session,
+    async_claimed_media_websocket,
     resolve_media_websocket_request,
 )
 from .websocket_api import (
@@ -54,7 +54,6 @@ from .websocket_api import (
     _publish_ha_softphone_state,
 )
 from .websocket_owner import (
-    MediaWebSocketOwner,
     WebSocketOwnerBusyError,
 )
 
@@ -371,31 +370,22 @@ class VoipAudioWebSocketView(HomeAssistantView):
             request,
         )
 
-        ws = web.WebSocketResponse(max_msg_size=_MAX_BROWSER_AUDIO_MESSAGE_BYTES)
-        owner = MediaWebSocketOwner(
-            websocket=ws,
-            transport=request.transport,
-            user_id=context.user_id,
-            client_id=context.client_id,
-        )
-        bucket = hass.data.setdefault(DOMAIN, {})
-        shutdown_event = bucket.setdefault("media_shutdown", asyncio.Event())
         try:
-            async with async_media_websocket_session(
-                bucket,
+            async with async_claimed_media_websocket(
+                request,
+                context,
                 registry,
-                requested_call_id,
-                endpoint_id,
-                owner,
                 channel="audio",
+                max_msg_size=_MAX_BROWSER_AUDIO_MESSAGE_BYTES,
                 timeout=_AUDIO_OWNER_HANDOFF_TIMEOUT,
-                shutdown_event=shutdown_event,
-                pin_client_identity=local_call is None,
-                local_bridge=(local_bridge if local_call is not None else None),
+                local_call=local_call,
                 publish_state=lambda: _publish_ha_softphone_state(
                     hass, endpoint_id=endpoint_id
                 ),
-            ) as media_owner:
+            ) as claimed:
+                ws = claimed.websocket
+                owner = claimed.owner
+                media_owner = claimed.media_session
                 # The old owner may have consumed and released RTP resources while
                 # this request waited. Resolve the live dialog again after the
                 # ownership barrier instead of reusing a stale session snapshot.
@@ -436,7 +426,7 @@ class VoipAudioWebSocketView(HomeAssistantView):
                     )
         except WebSocketOwnerBusyError as err:
             raise web.HTTPConflict(text="HA softphone media is already attached") from err
-        return ws
+        return claimed.websocket
 
 
 def async_register_audio_ws_view(hass: HomeAssistant) -> None:

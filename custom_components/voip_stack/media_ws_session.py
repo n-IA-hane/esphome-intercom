@@ -96,6 +96,60 @@ class MediaWebSocketRequestContext:
         return self.local_bridge.get_call(self.call_id)
 
 
+@dataclass(frozen=True, slots=True)
+class ClaimedMediaWebSocket:
+    """One HTTP WebSocket bound to its authenticated media owner."""
+
+    websocket: Any
+    owner: MediaWebSocketOwner
+    media_session: MediaWebSocketSession
+
+
+@asynccontextmanager
+async def async_claimed_media_websocket(
+    request: Any,
+    context: MediaWebSocketRequestContext,
+    registry: Any,
+    *,
+    channel: str,
+    max_msg_size: int,
+    timeout: float,
+    local_call: Any | None,
+    publish_state: Callable[[], None],
+):
+    """Create and claim one audio or video WebSocket through the shared owner."""
+
+    from aiohttp import web
+
+    from .const import DOMAIN
+
+    ws = web.WebSocketResponse(max_msg_size=max_msg_size)
+    owner = MediaWebSocketOwner(
+        websocket=ws,
+        transport=request.transport,
+        user_id=context.user_id,
+        client_id=context.client_id,
+    )
+    bucket = context.hass.data.setdefault(DOMAIN, {})
+    shutdown_event = bucket.setdefault("media_shutdown", asyncio.Event())
+    async with async_media_websocket_session(
+        bucket,
+        registry,
+        context.call_id,
+        context.endpoint_id,
+        owner,
+        channel=channel,
+        timeout=timeout,
+        shutdown_event=shutdown_event,
+        pin_client_identity=local_call is None,
+        local_bridge=(
+            context.local_bridge if local_call is not None else None
+        ),
+        publish_state=publish_state,
+    ) as media_session:
+        yield ClaimedMediaWebSocket(ws, owner, media_session)
+
+
 def resolve_media_websocket_request(request: Any) -> MediaWebSocketRequestContext:
     """Resolve the shared authenticated parameters of a media WebSocket."""
 

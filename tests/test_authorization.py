@@ -591,11 +591,12 @@ def test_all_external_surfaces_apply_authorization_and_ws_context() -> None:
     for view in (audio, video):
         assert "resolve_media_websocket_request(request)" in view
         assert "async_authorize_media_websocket_request(" in view
-        assert "user_id=context.user_id" in view
-        assert "client_id=context.client_id" in view
+        assert "async_claimed_media_websocket(" in view
     assert "require_http_control(request)" in media_session
     assert "require_media_client_id(request)" in media_session
     assert "async_require_media_controller(" in media_session
+    assert "user_id=context.user_id" in media_session
+    assert "client_id=context.client_id" in media_session
 
     for service in ("route", "set_deadline", "cancel_deadline"):
         assert f'"{service}",' in services[

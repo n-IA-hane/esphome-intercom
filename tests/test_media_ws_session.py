@@ -230,6 +230,51 @@ class MediaWebSocketSessionTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(owner.released.is_set())
         self.assertEqual(published, ["published"])
 
+    async def test_shared_claim_builds_the_channel_websocket_and_owner(self) -> None:
+        hass = types.SimpleNamespace(data={"voip_stack": {}})
+        context = media_ws_session.MediaWebSocketRequestContext(
+            hass=hass,
+            user_id="user-1",
+            client_id="browser-document-1234",
+            endpoint_id="phone",
+            call_id="call-1",
+            local_bridge=None,
+        )
+        request = types.SimpleNamespace(transport=object())
+        const = types.ModuleType(f"{PKG_NAME}.const")
+        const.DOMAIN = "voip_stack"
+        published: list[str] = []
+
+        with patch.dict(sys.modules, {const.__name__: const}):
+            async with media_ws_session.async_claimed_media_websocket(
+                request,
+                context,
+                _Registry(),
+                channel="audio",
+                max_msg_size=4096,
+                timeout=0.1,
+                local_call=object(),
+                publish_state=lambda: published.append("published"),
+            ) as claimed:
+                self.assertIsInstance(claimed.websocket, web.WebSocketResponse)
+                self.assertEqual(claimed.owner.user_id, "user-1")
+                self.assertEqual(
+                    claimed.owner.client_id,
+                    "browser-document-1234",
+                )
+                self.assertIs(
+                    hass.data["voip_stack"]["audio_ws_owners"][
+                        "phone|call-1"
+                    ],
+                    claimed.owner,
+                )
+
+        self.assertEqual(
+            hass.data["voip_stack"]["audio_ws_owners"],
+            {},
+        )
+        self.assertEqual(published, ["published"])
+
     async def test_local_lease_releases_only_after_both_media_owners_are_gone(self) -> None:
         bucket: dict = {}
         bridge = _Bridge()
