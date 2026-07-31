@@ -39,7 +39,7 @@ from .media_call_lifetime import (
     active_media_call,
     listen_for_media_call_end as _listen_for_call_end,
 )
-from .queue_utils import put_drop_oldest
+from .queue_utils import drain_queue, put_drop_oldest
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder, SipCallClient
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
@@ -791,15 +791,6 @@ async def _run_audio_session(
         if message_type:
             payload["type"] = message_type
         return payload
-
-    def drain_queue(target: asyncio.Queue[Any]) -> int:
-        drained = 0
-        while True:
-            try:
-                target.get_nowait()
-                drained += 1
-            except asyncio.QueueEmpty:
-                return drained
 
     async def refresh_media_state(generation: int) -> None:
         nonlocal applied_media_generation, remote_rtp_host, remote_rtp_port

@@ -32,6 +32,7 @@ from .media_ws_session import (
     async_claimed_media_websocket,
     async_prepare_media_websocket_request,
 )
+from .queue_utils import drain_queue
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import SipCallClient
 from .video_rtcp import (
@@ -835,6 +836,225 @@ def _sdp_parameter_sets(video_format: sdp.RtpVideoFormat) -> list[bytes]:
     return out
 
 
+def _video_format_payload(
+    video_format: sdp.RtpVideoFormat,
+) -> dict[str, object]:
+    return {
+        "codec": video_format.browser_codec,
+        "encoding": video_format.encoding,
+        "clock_rate": video_format.clock_rate,
+        "payload_type": video_format.payload_type,
+        "fmtp": video_format.fmtp,
+        "profile_level_id": video_format.profile_level_id,
+        "packetization_mode": video_format.packetization_mode,
+        "max_framerate": video_format.max_framerate,
+        "format": video_format.wire_token(),
+    }
+
+
+def _video_negotiation_payload(
+    session: _VideoMediaSession,
+    *,
+    message_type: str = "",
+) -> dict[str, object]:
+    current_browser_receive = session.browser_receive_format
+    current_browser_send = session.browser_send_format
+    payload: dict[str, object] = {
+        "state": "in_call",
+        "call_id": session.call_id,
+        # Flat keys remain an RX/decoder compatibility alias for older cards.
+        # New cards must use the directional objects.
+        **_video_format_payload(current_browser_receive),
+        "send": _video_format_payload(current_browser_send),
+        "receive": _video_format_payload(current_browser_receive),
+        "source_format": session.recv_video_format.wire_token(),
+        "sip_send_format": session.send_video_format.wire_token(),
+        "sip_receive_format": session.recv_video_format.wire_token(),
+        "direction": session.local_direction,
+        "can_send": session.can_send,
+        "can_receive": session.can_receive,
+        "remote_connection_held": session.remote_connection_held,
+        "camera_send_enabled": session.camera_send_enabled,
+        "transcoding_enabled": session.transcoding_enabled,
+        "debug": session.debug_mode,
+        "media_generation": session.media_generation,
+    }
+    if message_type:
+        payload["type"] = message_type
+    return payload
+
+
+def _make_video_depacketizer(
+    session: _VideoMediaSession,
+    browser_format: sdp.RtpVideoFormat,
+    registry: object,
+    cached_parameter_sets: tuple[bytes, ...],
+):
+    if browser_format.encoding == "H264":
+        parameter_sets = cached_parameter_sets
+        if isinstance(registry, CallRegistry):
+            parameter_sets = registry.video_parameter_sets.get(
+                session.call_id, parameter_sets
+            )
+        # A current SDP sprop is authoritative over parameter sets learned
+        # from the preceding RTP generation.
+        return H264Depacketizer(
+            [*parameter_sets, *_sdp_parameter_sets(browser_format)]
+        )
+    if browser_format.encoding == "VP8":
+        return Vp8Depacketizer()
+    if browser_format.encoding == "JPEG":
+        return JpegDepacketizer(
+            max_access_unit_bytes=_MAX_BROWSER_RECEIVE_ACCESS_UNIT_BYTES
+        )
+    return None
+
+
+def _sync_video_protocol_drop_counters(
+    counters: dict[str, int],
+    protocol: _RtpVideoProtocol,
+    rtcp_protocol: _RtpVideoProtocol,
+    transcode_protocol: _RtpVideoProtocol | None,
+) -> None:
+    """Project pre-queue filtering without double-counting snapshots."""
+
+    rtp_protocols = [protocol]
+    if transcode_protocol is not None:
+        rtp_protocols.append(transcode_protocol)
+    for candidate in rtp_protocols:
+        queue_drops, source_drops, size_drops = candidate.take_drop_counts()
+        counters["video_rtp_drop_queue"] += queue_drops
+        counters["video_drop_addr"] += source_drops
+        counters["video_drop_error"] += size_drops
+    queue_drops, source_drops, size_drops = rtcp_protocol.take_drop_counts()
+    counters["video_rtcp_drop_queue"] += queue_drops
+    counters["video_rtcp_drop_addr"] += source_drops
+    counters["video_rtcp_drop_error"] += size_drops
+
+
+def _sync_video_reorder_counters(
+    counters: dict[str, int],
+    session: _VideoMediaSession,
+    reorder: RtpReorderBuffer,
+    input_reorder: RtpReorderBuffer,
+) -> None:
+    """Publish loss state even when a timeout is the final media event."""
+
+    active_reorder = input_reorder if session.requires_receive_transcoding else reorder
+    counters["video_reordered_packets"] = active_reorder.reordered
+    counters["video_lost_packets"] = active_reorder.lost
+    counters["video_duplicate_packets"] = active_reorder.duplicates
+
+
+async def _video_access_units_to_ws(
+    ws: web.WebSocketResponse,
+    closed: asyncio.Event,
+    access_units: _ByteBudgetQueue,
+    ws_send_lock: asyncio.Lock,
+) -> None:
+    last_jpeg_sent = 0.0
+    loop = asyncio.get_running_loop()
+    while not closed.is_set():
+        access_unit = await access_units.get()
+        if access_unit.encoding == "JPEG":
+            due = last_jpeg_sent + (1.0 / _JPEG_BROWSER_MAX_FPS)
+            wait_seconds = max(0.0, due - loop.time())
+            if wait_seconds:
+                try:
+                    await asyncio.wait_for(closed.wait(), timeout=wait_seconds)
+                    return
+                except TimeoutError:
+                    pass
+            # A newer independent JPEG may have arrived while pacing.
+            while True:
+                try:
+                    access_unit = access_units.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+        flags = 1 if access_unit.key_frame else 0
+        async with ws_send_lock:
+            await ws.send_bytes(
+                _VIDEO_HEADER.pack(
+                    _VIDEO_ACCESS_UNIT, flags, access_unit.timestamp
+                )
+                + access_unit.data
+            )
+        if access_unit.encoding == "JPEG":
+            last_jpeg_sent = loop.time()
+
+
+class _BrowserJpegNormalizer:
+    """Own the optional persistent browser JPEG normalization process."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        session: _VideoMediaSession,
+        counters: dict[str, int],
+    ) -> None:
+        self.hass = hass
+        self.session = session
+        self.counters = counters
+        self.normalizer: FfmpegJpegNormalizer | None = None
+        self.disabled = False
+
+    async def normalize(
+        self,
+        access_unit: bytes,
+        *,
+        media_current: Callable[[], bool],
+    ) -> bytes | None:
+        if self.disabled:
+            raise VideoTranscoderError("JPEG normalization is unavailable")
+        await _async_validate_browser_jpeg(access_unit)
+        if not media_current():
+            return None
+        if self.normalizer is None:
+            self.normalizer = FfmpegJpegNormalizer(
+                hass=self.hass,
+                call_id=self.session.call_id,
+            )
+        try:
+            normalized = await self.normalizer.async_normalize(access_unit)
+        except (OSError, RuntimeError, VideoTranscoderError) as err:
+            self.disabled = True
+            self.counters["video_jpeg_normalizer_errors"] += 1
+            raise VideoTranscoderError(
+                f"browser JPEG normalization unavailable: {err}"
+            ) from err
+        if not media_current():
+            return None
+        self.counters["video_jpeg_normalized"] += 1
+        return normalized
+
+    async def async_close(self) -> None:
+        if self.normalizer is not None:
+            await self.normalizer.async_close()
+
+
+def _observe_nonfatal_video_task(
+    task: asyncio.Task,
+    *,
+    counter: str,
+    counters: dict[str, int],
+    session: _VideoMediaSession,
+    store_counters: Callable[[], None],
+) -> None:
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is None:
+        return
+    counters[counter] += 1
+    _LOGGER.warning(
+        "HA softphone non-fatal video task stopped call_id=%s task=%s error=%s",
+        session.call_id,
+        task.get_name(),
+        error,
+    )
+    store_counters()
+
+
 async def _run_video_session(
     hass: HomeAssistant,
     ws: web.WebSocketResponse,
@@ -926,7 +1146,7 @@ async def _run_video_session(
     transcode_transport: asyncio.DatagramTransport | None = None
     transcode_protocol: _RtpVideoProtocol | None = None
     transcoder: FfmpegVideoTranscoder | None = None
-    jpeg_normalizer: FfmpegJpegNormalizer | None = None
+    jpeg_normalizer: _BrowserJpegNormalizer | None = None
 
     async def close_setup_resources() -> None:
         """Release media acquired before the long-lived task guard exists."""
@@ -1004,27 +1224,12 @@ async def _run_video_session(
     cached_parameter_sets: tuple[bytes, ...] = ()
     if isinstance(registry, CallRegistry):
         cached_parameter_sets = registry.video_parameter_sets.get(session.call_id, ())
-    def make_depacketizer():
-        if browser_format.encoding == "H264":
-            parameter_sets = cached_parameter_sets
-            if isinstance(registry, CallRegistry):
-                parameter_sets = registry.video_parameter_sets.get(
-                    session.call_id, parameter_sets
-                )
-            # A current SDP sprop is authoritative over parameter sets learned
-            # from the preceding RTP generation.
-            return H264Depacketizer(
-                [*parameter_sets, *_sdp_parameter_sets(browser_format)]
-            )
-        if browser_format.encoding == "VP8":
-            return Vp8Depacketizer()
-        if browser_format.encoding == "JPEG":
-            return JpegDepacketizer(
-                max_access_unit_bytes=_MAX_BROWSER_RECEIVE_ACCESS_UNIT_BYTES
-            )
-        return None
-
-    depacketizer = make_depacketizer()
+    depacketizer = _make_video_depacketizer(
+        session,
+        browser_format,
+        registry,
+        cached_parameter_sets,
+    )
     reorder: RtpReorderBuffer[rtp.RtpPacket] = RtpReorderBuffer()
     input_reorder: RtpReorderBuffer[tuple[bytes, rtp.RtpPacket]] = RtpReorderBuffer()
     access_units = _ByteBudgetQueue(
@@ -1096,80 +1301,7 @@ async def _run_video_session(
         "video_jpeg_normalized": 0,
         "video_jpeg_normalizer_errors": 0,
     }
-
-    def sync_protocol_drop_counters() -> None:
-        """Project pre-queue filtering without double-counting snapshots."""
-
-        rtp_protocols = [protocol]
-        if transcode_protocol is not None:
-            rtp_protocols.append(transcode_protocol)
-        for candidate in rtp_protocols:
-            queue_drops, source_drops, size_drops = candidate.take_drop_counts()
-            counters["video_rtp_drop_queue"] += queue_drops
-            counters["video_drop_addr"] += source_drops
-            counters["video_drop_error"] += size_drops
-        queue_drops, source_drops, size_drops = rtcp_protocol.take_drop_counts()
-        counters["video_rtcp_drop_queue"] += queue_drops
-        counters["video_rtcp_drop_addr"] += source_drops
-        counters["video_rtcp_drop_error"] += size_drops
-
-    def sync_reorder_counters() -> None:
-        """Publish loss state even when a timeout is the final media event."""
-
-        active_reorder = (
-            input_reorder if session.requires_receive_transcoding else reorder
-        )
-        counters["video_reordered_packets"] = active_reorder.reordered
-        counters["video_lost_packets"] = active_reorder.lost
-        counters["video_duplicate_packets"] = active_reorder.duplicates
-
-    def negotiation_payload(*, message_type: str = "") -> dict[str, object]:
-        current_browser_receive = session.browser_receive_format
-        current_browser_send = session.browser_send_format
-
-        def format_payload(video_format: sdp.RtpVideoFormat) -> dict[str, object]:
-            return {
-                "codec": video_format.browser_codec,
-                "encoding": video_format.encoding,
-                "clock_rate": video_format.clock_rate,
-                "payload_type": video_format.payload_type,
-                "fmtp": video_format.fmtp,
-                "profile_level_id": video_format.profile_level_id,
-                "packetization_mode": video_format.packetization_mode,
-                "max_framerate": video_format.max_framerate,
-                "format": video_format.wire_token(),
-            }
-
-        payload: dict[str, object] = {
-            "state": "in_call",
-            "call_id": session.call_id,
-            # Flat keys remain an RX/decoder compatibility alias for older
-            # cards.  New cards must use the directional objects.
-            **format_payload(current_browser_receive),
-            "send": format_payload(current_browser_send),
-            "receive": format_payload(current_browser_receive),
-            "source_format": session.recv_video_format.wire_token(),
-            "sip_send_format": session.send_video_format.wire_token(),
-            "sip_receive_format": session.recv_video_format.wire_token(),
-            "direction": session.local_direction,
-            "can_send": session.can_send,
-            "can_receive": session.can_receive,
-            "remote_connection_held": session.remote_connection_held,
-            "camera_send_enabled": session.camera_send_enabled,
-            "transcoding_enabled": session.transcoding_enabled,
-            "debug": session.debug_mode,
-            "media_generation": session.media_generation,
-        }
-        if message_type:
-            payload["type"] = message_type
-        return payload
-
-    def _drain_queue(target: asyncio.Queue) -> None:
-        while True:
-            try:
-                target.get_nowait()
-            except asyncio.QueueEmpty:
-                return
+    jpeg_normalizer = _BrowserJpegNormalizer(hass, session, counters)
 
     async def refresh_media_state(generation: int) -> bool:
         """Atomically discard packets and codec state from an older SDP generation."""
@@ -1189,7 +1321,9 @@ async def _run_video_session(
                 return True
             if _video_pipeline_signature(session) != active_pipeline_signature:
                 if restart_notified_generation != generation:
-                    payload = negotiation_payload(message_type="media_update")
+                    payload = _video_negotiation_payload(
+                        session, message_type="media_update"
+                    )
                     payload["restart_required"] = True
                     payload["restart_reason"] = "video_pipeline_changed"
                     async with ws_send_lock:
@@ -1215,13 +1349,18 @@ async def _run_video_session(
             latched_source = None
             latched_ssrc = None
             latched_rtcp_source = None
-            depacketizer = make_depacketizer()
+            depacketizer = _make_video_depacketizer(
+                session,
+                browser_format,
+                registry,
+                cached_parameter_sets,
+            )
             reorder = RtpReorderBuffer()
             input_reorder = RtpReorderBuffer()
-            _drain_queue(queue)
+            drain_queue(queue)
             if media_queue is not queue:
-                _drain_queue(media_queue)
-            _drain_queue(access_units)
+                drain_queue(media_queue)
+            drain_queue(access_units)
             needs_key_frame = True
             extended_sequence.reset()
             highest_sequence = 0
@@ -1232,7 +1371,7 @@ async def _run_video_session(
             return True
 
     try:
-        await ws.send_json(negotiation_payload())
+        await ws.send_json(_video_negotiation_payload(session))
     except asyncio.CancelledError:
         await close_setup_resources()
         raise
@@ -1268,7 +1407,12 @@ async def _run_video_session(
         if not force and now - last_counter_event < interval:
             return
         last_counter_event = now
-        sync_protocol_drop_counters()
+        _sync_video_protocol_drop_counters(
+            counters,
+            protocol,
+            rtcp_protocol,
+            transcode_protocol,
+        )
         store = _ha_softphone_store(hass, endpoint_id)
         current_call_id = str(store.get("call_id") or "")
         if current_call_id:
@@ -1485,7 +1629,9 @@ async def _run_video_session(
                 if input_reorder.lost > lost_before:
                     needs_key_frame = True
                     request_key_frame(local_loop.time())
-                sync_reorder_counters()
+                _sync_video_reorder_counters(
+                    counters, session, reorder, input_reorder
+                )
                 continue
             dequeued_in_burst += 1
             if dequeued_in_burst >= _VIDEO_RTP_RECEIVE_BURST_PACKETS:
@@ -1536,7 +1682,9 @@ async def _run_video_session(
                 if input_reorder.lost > lost_before:
                     needs_key_frame = True
                     request_key_frame(local_loop.time())
-                sync_reorder_counters()
+                _sync_video_reorder_counters(
+                    counters, session, reorder, input_reorder
+                )
             except (OSError, RuntimeError, ValueError) as err:
                 counters["video_drop_error"] += 1
                 drop_logs += 1
@@ -1570,7 +1718,9 @@ async def _run_video_session(
                 if reorder.lost > lost_before:
                     needs_key_frame = True
                     request_key_frame(loop.time())
-                sync_reorder_counters()
+                _sync_video_reorder_counters(
+                    counters, session, reorder, input_reorder
+                )
                 continue
             dequeued_in_burst += 1
             if dequeued_in_burst >= _VIDEO_RTP_RECEIVE_BURST_PACKETS:
@@ -1635,7 +1785,9 @@ async def _run_video_session(
                 if reorder.lost > lost_before:
                     needs_key_frame = True
                     request_key_frame(loop.time())
-                sync_reorder_counters()
+                _sync_video_reorder_counters(
+                    counters, session, reorder, input_reorder
+                )
             except Exception as err:  # noqa: BLE001 - a bad frame must not stop audio/call control.
                 counters["video_drop_error"] += 1
                 drop_logs += 1
@@ -1645,37 +1797,6 @@ async def _run_video_session(
                         drop_logs,
                         err,
                     )
-
-    async def access_units_to_ws() -> None:
-        last_jpeg_sent = 0.0
-        loop = asyncio.get_running_loop()
-        while not closed.is_set():
-            access_unit = await access_units.get()
-            if access_unit.encoding == "JPEG":
-                due = last_jpeg_sent + (1.0 / _JPEG_BROWSER_MAX_FPS)
-                wait_seconds = max(0.0, due - loop.time())
-                if wait_seconds:
-                    try:
-                        await asyncio.wait_for(
-                            closed.wait(), timeout=wait_seconds
-                        )
-                        return
-                    except TimeoutError:
-                        pass
-                # A newer independent JPEG may have arrived while pacing.
-                while True:
-                    try:
-                        access_unit = access_units.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-            flags = 1 if access_unit.key_frame else 0
-            async with ws_send_lock:
-                await ws.send_bytes(
-                    _VIDEO_HEADER.pack(_VIDEO_ACCESS_UNIT, flags, access_unit.timestamp)
-                    + access_unit.data
-                )
-            if access_unit.encoding == "JPEG":
-                last_jpeg_sent = loop.time()
 
     async def rtcp_reports() -> None:
         while not closed.is_set():
@@ -1842,11 +1963,6 @@ async def _run_video_session(
         hass, session.call_id, endpoint_id
     )
 
-    async def close_on_call_end() -> None:
-        """Wake the media owner as soon as the authoritative call ends."""
-
-        await call_ended.wait()
-
     async def session_updates_to_ws() -> None:
         """Apply committed re-INVITEs and notify the attached browser."""
 
@@ -1863,42 +1979,14 @@ async def _run_video_session(
                 return
             observed_generation = generation
             async with ws_send_lock:
-                await ws.send_json(negotiation_payload(message_type="media_update"))
+                await ws.send_json(
+                    _video_negotiation_payload(
+                        session, message_type="media_update"
+                    )
+                )
 
     jpeg_normalization_required = False
-    jpeg_normalization_disabled = False
     browser_tx_drop_logs = 0
-
-    async def normalize_browser_jpeg(
-        access_unit: bytes,
-        *,
-        media_current: Callable[[], bool],
-    ) -> bytes | None:
-        """Use one persistent FFmpeg process only after direct RFC 2435 fails."""
-
-        nonlocal jpeg_normalizer, jpeg_normalization_disabled
-        if jpeg_normalization_disabled:
-            raise VideoTranscoderError("JPEG normalization is unavailable")
-        await _async_validate_browser_jpeg(access_unit)
-        if not media_current():
-            return None
-        if jpeg_normalizer is None:
-            jpeg_normalizer = FfmpegJpegNormalizer(
-                hass=hass,
-                call_id=session.call_id,
-            )
-        try:
-            normalized = await jpeg_normalizer.async_normalize(access_unit)
-        except (OSError, RuntimeError, VideoTranscoderError) as err:
-            jpeg_normalization_disabled = True
-            counters["video_jpeg_normalizer_errors"] += 1
-            raise VideoTranscoderError(
-                f"browser JPEG normalization unavailable: {err}"
-            ) from err
-        if not media_current():
-            return None
-        counters["video_jpeg_normalized"] += 1
-        return normalized
 
     async def browser_to_rtp() -> None:
         nonlocal sequence, remote_host, remote_port, latched_source, latched_ssrc
@@ -1980,7 +2068,7 @@ async def _run_video_session(
                         send_format.encoding == "JPEG"
                         and jpeg_normalization_required
                     ):
-                        access_unit = await normalize_browser_jpeg(
+                        access_unit = await jpeg_normalizer.normalize(
                             access_unit,
                             media_current=media_current,
                         )
@@ -2043,7 +2131,7 @@ async def _run_video_session(
                                         last_regular_rtp_tx_at = loop.time()
                         if not retry_with_normalized_jpeg:
                             break
-                        access_unit = await normalize_browser_jpeg(
+                        access_unit = await jpeg_normalizer.normalize(
                             access_unit,
                             media_current=media_current,
                         )
@@ -2203,38 +2291,37 @@ async def _run_video_session(
                 await asyncio.sleep(_SYMMETRIC_RTP_KEEPALIVE_INTERVAL)
 
     rx_task = asyncio.create_task(rtp_to_access_units())
-    ws_task = asyncio.create_task(access_units_to_ws())
+    ws_task = asyncio.create_task(
+        _video_access_units_to_ws(ws, closed, access_units, ws_send_lock)
+    )
     rtcp_task = asyncio.create_task(
         rtcp_reports(), name=f"voip-video-rtcp-{session.call_id}"
     )
     rtcp_input_task = asyncio.create_task(rtcp_to_browser_feedback())
-    lifetime_task = asyncio.create_task(close_on_call_end())
+    lifetime_task = asyncio.create_task(call_ended.wait())
     update_task = asyncio.create_task(session_updates_to_ws())
     browser_task = asyncio.create_task(browser_to_rtp())
     keepalive_task = asyncio.create_task(
         symmetric_rtp_keepalive(), name=f"voip-video-keepalive-{session.call_id}"
     )
 
-    def observe_nonfatal_task(task: asyncio.Task, counter: str) -> None:
-        if task.cancelled():
-            return
-        error = task.exception()
-        if error is None:
-            return
-        counters[counter] += 1
-        _LOGGER.warning(
-            "HA softphone non-fatal video task stopped call_id=%s task=%s error=%s",
-            session.call_id,
-            task.get_name(),
-            error,
-        )
-        store_counters()
-
     rtcp_task.add_done_callback(
-        lambda task: observe_nonfatal_task(task, "video_rtcp_task_errors")
+        lambda task: _observe_nonfatal_video_task(
+            task,
+            counter="video_rtcp_task_errors",
+            counters=counters,
+            session=session,
+            store_counters=store_counters,
+        )
     )
     keepalive_task.add_done_callback(
-        lambda task: observe_nonfatal_task(task, "video_keepalive_task_errors")
+        lambda task: _observe_nonfatal_video_task(
+            task,
+            counter="video_keepalive_task_errors",
+            counters=counters,
+            session=session,
+            store_counters=store_counters,
+        )
     )
     transcode_input_task = (
         asyncio.create_task(rtp_to_transcoder()) if transcoder is not None else None
@@ -2329,7 +2416,9 @@ async def _run_video_session(
             counters["video_rtp_dropped_packets"] = protocol.dropped_packets + int(
                 transcode_protocol.dropped_packets if transcode_protocol is not None else 0
             )
-            sync_reorder_counters()
+            _sync_video_reorder_counters(
+                counters, session, reorder, input_reorder
+            )
             store_counters(force=True)
             _LOGGER.info(
                 "HA softphone video websocket detached call_id=%s counters=%s",

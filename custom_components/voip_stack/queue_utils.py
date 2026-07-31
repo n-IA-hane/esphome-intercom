@@ -9,6 +9,18 @@ from typing import TypeVar
 _T = TypeVar("_T")
 
 
+def drain_queue(queue: asyncio.Queue[_T]) -> int:
+    """Discard every currently queued item and return the removed count."""
+
+    removed = 0
+    while True:
+        try:
+            queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return removed
+        removed += 1
+
+
 def put_drop_oldest(queue: asyncio.Queue[_T], item: _T) -> bool:
     """Enqueue without blocking, keeping the most recent bounded data.
 

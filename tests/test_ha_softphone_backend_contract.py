@@ -249,12 +249,16 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             body.index('counters["video_rtp_dropped_packets"]'),
         )
         self.assertIn(
-            "sync_reorder_counters()", body[input_timeout : input_timeout + 500]
+            "_sync_video_reorder_counters(",
+            body[input_timeout : input_timeout + 500],
         )
         self.assertIn(
-            "sync_reorder_counters()", body[direct_timeout : direct_timeout + 500]
+            "_sync_video_reorder_counters(",
+            body[direct_timeout : direct_timeout + 500],
         )
-        self.assertIn("sync_reorder_counters()", body[final_store - 200 : final_store])
+        self.assertIn(
+            "_sync_video_reorder_counters(", body[final_store - 300 : final_store]
+        )
 
     def test_nonfatal_video_rtcp_and_keepalive_failures_are_observable(self) -> None:
         body = VIDEO_WS.read_text(encoding="utf-8")
@@ -264,7 +268,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn('record_rtcp_send_error("report", err)', body)
         self.assertIn("failures & (failures - 1) == 0", body)
         self.assertIn('counters["video_keepalive_task_errors"] += 1', body)
-        self.assertIn("observe_nonfatal_task", body)
+        self.assertIn("_observe_nonfatal_video_task", body)
 
     def test_dependent_browser_video_is_paced_without_dropping_a_gop(self) -> None:
         body = VIDEO_WS.read_text(encoding="utf-8")
@@ -513,11 +517,11 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         start = video_ws.index("    def store_counters(*, force: bool = False)")
         end = video_ws.index("    def queue_access_unit", start)
         body = video_ws[start:end]
-        drain = body.index("sync_protocol_drop_counters()")
+        drain = body.index("_sync_video_protocol_drop_counters(")
         persist = body.index("store.update(counters)")
         self.assertLess(drain, persist)
-        sync_start = video_ws.index("    def sync_protocol_drop_counters()")
-        sync_end = video_ws.index("    def sync_reorder_counters()", sync_start)
+        sync_start = video_ws.index("def _sync_video_protocol_drop_counters(")
+        sync_end = video_ws.index("def _sync_video_reorder_counters(", sync_start)
         sync_body = video_ws[sync_start:sync_end]
         self.assertIn("rtcp_protocol.take_drop_counts()", sync_body)
         self.assertIn('counters["video_rtcp_drop_queue"] += queue_drops', sync_body)
