@@ -33,10 +33,7 @@ from .endpoint_routing import (
     roster_from_peers as _roster_from_peers,
     sip_target_audio_profile as _sip_target_audio_profile,
 )
-from .fsm import (
-    CallState,
-    TerminalReason,
-)
+from .fsm import TerminalReason
 from .inbound_routing.automation import (
     automation_rejection,
     request_route_override,
@@ -47,19 +44,16 @@ from .inbound_routing.softphone import (
     answer_inbound_ha_softphone,
     defer_browser_softphone_invite,
 )
+from .inbound_routing.targets import (
+    reject_route_decision,
+    resolve_inbound_target,
+    validate_target_endpoint,
+)
 from .inbound_routing.trunk import prepare_trunk_preanswer
 from .pbx_routing import roster_entry_for_target as _roster_entry_for_target
-from .phone_endpoint import (
-    EndpointAvailability,
-    EndpointKind,
-    OfflinePolicy,
-)
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
-from .router import RouteAction, RouteReason
+from .router import RouteAction
 from .sip_listener import SipInviteResult
-from .websocket_api import (
-    _set_sip_bridge_call_state,
-)
 
 if TYPE_CHECKING:
     from .sip_listener import SipInvite
@@ -374,57 +368,23 @@ async def route_invite(
         fallback_destination,
     )
 
-    def _decision_endpoint(current_decision):
-        if endpoint_registry is None or current_decision.entry is None:
-            return None
-        endpoint_id = str(
-            (current_decision.entry.metadata or {}).get("endpoint_id") or ""
-        ).strip()
-        return endpoint_registry.get(endpoint_id) if endpoint_id else None
-
-    # Offline forwarding is a logical dial-plan operation. Resolve it
-    # before any SIP leg is created and guard loops across endpoint names,
-    # extensions and usernames through stable endpoint IDs.
-    visited_endpoint_ids: set[str] = set()
-    while True:
-        candidate_endpoint = _decision_endpoint(decision)
-        if (
-            candidate_endpoint is None
-            or candidate_endpoint.availability is EndpointAvailability.AVAILABLE
-            or candidate_endpoint.kind is EndpointKind.BROWSER
-            or candidate_endpoint.offline_policy is not OfflinePolicy.FORWARD
-        ):
-            break
-        if candidate_endpoint.endpoint_id in visited_endpoint_ids:
-            _LOGGER.warning(
-                "Offline forward loop rejected call_id=%s endpoint=%s visited=%s",
-                invite.call_id,
-                candidate_endpoint.endpoint_id,
-                sorted(visited_endpoint_ids),
-            )
-            return SipInviteResult(
-                480,
-                "Temporarily Unavailable",
-                to_tag="",
-                decline_reason="forward_loop",
-            )
-        visited_endpoint_ids.add(candidate_endpoint.endpoint_id)
-        forward_target = candidate_endpoint.offline_forward_target
-        if not forward_target:
-            break
-        decision = _ha_router_decision(forward_target, roster_entries)
-        _LOGGER.info(
-            "Offline endpoint forward call_id=%s endpoint=%s destination=%s route=%s",
-            invite.call_id,
-            candidate_endpoint.endpoint_id,
-            forward_target,
-            decision.action.value,
-        )
-
-    target_endpoint = _decision_endpoint(decision)
-
+    target_resolution = resolve_inbound_target(
+        invite=invite,
+        decision=decision,
+        endpoint_registry=endpoint_registry,
+        roster_entries=roster_entries,
+        route_resolver=_ha_router_decision,
+    )
+    if target_resolution.failure is not None:
+        return target_resolution.failure
+    decision = target_resolution.decision
+    target_endpoint = target_resolution.endpoint
     resolved_callee = str(
-        (decision.entry.display_name if decision.entry is not None else decision.target)
+        (
+            decision.entry.display_name
+            if decision.entry is not None
+            else decision.target
+        )
         or invite.target
     ).strip()
 
@@ -435,90 +395,22 @@ async def route_invite(
         getattr(trunk, "registered", False)
     )
     bridge_to_trunk = bool(
-        not force_ha_softphone and decision.action is RouteAction.TRUNK and trunk_ready
+        not force_ha_softphone
+        and decision.action is RouteAction.TRUNK
+        and trunk_ready
     )
-    if target_endpoint is not None:
-        if target_endpoint.dnd:
-            _LOGGER.info(
-                "SIP INVITE rejected by endpoint DND call_id=%s endpoint=%s",
-                invite.call_id,
-                target_endpoint.endpoint_id,
-            )
-            return SipInviteResult(
-                486,
-                "Busy Here",
-                to_tag="",
-                decline_reason="dnd",
-            )
-        if (
-            target_endpoint.active_call_id
-            and target_endpoint.active_call_id != invite.call_id
+    if invalid_target := validate_target_endpoint(
+        invite=invite,
+        endpoint=target_endpoint,
+    ):
+        return invalid_target
+    if not force_ha_softphone:
+        if rejected_route := reject_route_decision(
+            hass=hass,
+            invite=invite,
+            decision=decision,
         ):
-            return SipInviteResult(
-                486,
-                "Busy Here",
-                to_tag="",
-                decline_reason=TerminalReason.BUSY.value,
-            )
-        if target_endpoint.availability is EndpointAvailability.UNAVAILABLE:
-            return SipInviteResult(
-                480,
-                "Temporarily Unavailable",
-                to_tag="",
-                decline_reason=RouteReason.TARGET_DISABLED.value,
-            )
-        if (
-            target_endpoint.availability is EndpointAvailability.OFFLINE
-            and target_endpoint.kind is not EndpointKind.BROWSER
-        ):
-            # Registrar phones persist as Devices while offline, but a
-            # missing Contact cannot receive a standards SIP dialog.
-            return SipInviteResult(
-                480,
-                "Temporarily Unavailable",
-                to_tag="",
-                decline_reason=RouteReason.TARGET_UNREACHABLE.value,
-            )
-        # A browser card is a media attachment, not the logical phone.
-        # Keep an offline browser endpoint ringable so HA automations can
-        # observe ringing/missed-call state and apply their own timeout or
-        # forwarding policy. DND and administrative UNAVAILABLE remain
-        # authoritative above.
-    if not force_ha_softphone and decision.action is RouteAction.REJECT:
-        if decision.reason is RouteReason.TARGET_DISABLED:
-            status = 403
-            sip_reason = "Forbidden"
-        elif decision.reason in {
-            RouteReason.TRUNK_UNAVAILABLE,
-            RouteReason.TARGET_UNREACHABLE,
-        }:
-            status = 480
-            sip_reason = "Temporarily Unavailable"
-        else:
-            status = 404
-            sip_reason = "Not Found"
-        _set_sip_bridge_call_state(
-            hass,
-            CallState.TRANSPORT_UNREACHABLE.value if status == 480 else "declined",
-            caller=invite.caller,
-            callee=invite.target,
-            peer_name=invite.caller,
-            call_id=invite.call_id,
-            reason=decision.reason.value
-            if decision.reason
-            else TerminalReason.DECLINED.value,
-            origin="self",
-            sip_status_code=status,
-            last_sip_event="SIP_RESPONSE",
-        )
-        return SipInviteResult(
-            status,
-            sip_reason,
-            to_tag="",
-            decline_reason=decision.reason.value
-            if decision.reason
-            else TerminalReason.DECLINED.value,
-        )
+            return rejected_route
     if (
         not force_ha_softphone
         and decision.action is RouteAction.TRUNK

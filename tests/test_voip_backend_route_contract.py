@@ -96,6 +96,13 @@ INBOUND_AUTOMATION = (
     / "inbound_routing"
     / "automation.py"
 )
+INBOUND_TARGETS = (
+    ROOT
+    / "custom_components"
+    / "voip_stack"
+    / "inbound_routing"
+    / "targets.py"
+)
 
 
 class VoipBackendRouteContractTest(unittest.TestCase):
@@ -124,6 +131,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.inbound_local = INBOUND_LOCAL.read_text()
         cls.inbound_trunk = INBOUND_TRUNK.read_text()
         cls.inbound_automation = INBOUND_AUTOMATION.read_text()
+        cls.inbound_targets = INBOUND_TARGETS.read_text()
         spec = importlib.util.spec_from_file_location(
             "voip_stack_automation_routing_test", AUTOMATION_ROUTING
         )
@@ -371,13 +379,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "decline_reason=TerminalReason.BUSY.value",
             answer_ha_branch,
         )
-        target_guard = source[
-            source.index("if target_endpoint is not None:") : source.index(
-                "if not force_ha_softphone and decision.action is RouteAction.REJECT:"
-            )
-        ]
-        self.assertIn("target_endpoint.active_call_id", target_guard)
-        self.assertIn("target_endpoint.active_call_id != invite.call_id", target_guard)
+        target_guard = self.inbound_targets
+        self.assertIn("endpoint.active_call_id", target_guard)
+        self.assertIn("endpoint.active_call_id != invite.call_id", target_guard)
         sip_route_start = self.inbound_bridge.index("logical_source_endpoint =")
         sip_route = self.inbound_bridge[
             sip_route_start : self.inbound_bridge.index(
@@ -393,14 +397,15 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertGreaterEqual(sip_route.count("registry.finish_and_pop("), 3)
 
     def test_ha_softphone_dnd_declines_with_dnd_reason(self) -> None:
-        start = self.invite_router.index("if target_endpoint.dnd:")
-        dnd_branch = self.invite_router[
-            start : self.invite_router.index(
-                "if (\n            target_endpoint.active_call_id", start
+        start = self.inbound_targets.index("if endpoint.dnd:")
+        dnd_branch = self.inbound_targets[
+            start : self.inbound_targets.index(
+                "if endpoint.active_call_id", start
             )
         ]
         self.assertIn('decline_reason="dnd"', dnd_branch)
-        self.assertIn('486,\n                "Busy Here"', dnd_branch)
+        self.assertIn("486,", dnd_branch)
+        self.assertIn('"Busy Here"', dnd_branch)
         self.assertNotIn("TerminalReason.BUSY.value", dnd_branch)
 
     def test_retransmitted_invite_is_not_rejected_as_busy(self) -> None:
@@ -1478,16 +1483,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_offline_browser_remains_a_logical_ringing_destination(self) -> None:
-        on_invite = self.invite_router
-        target_checks = on_invite[
-            on_invite.index("if target_endpoint is not None:") :
-            on_invite.index("if not force_ha_softphone and decision.action is RouteAction.REJECT:")
-        ]
+        target_checks = self.inbound_targets
         self.assertNotIn(
-            "target_endpoint.offline_policy is OfflinePolicy.UNAVAILABLE",
+            "endpoint.offline_policy is OfflinePolicy.UNAVAILABLE",
             target_checks,
         )
-        self.assertIn("target_endpoint.kind is not EndpointKind.BROWSER", target_checks)
+        self.assertIn("endpoint.kind is not EndpointKind.BROWSER", target_checks)
 
     def test_video_invites_preserve_video_during_dtmf_preanswer(self) -> None:
         trunk_branch = self.inbound_trunk
