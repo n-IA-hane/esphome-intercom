@@ -82,6 +82,20 @@ INBOUND_LOCAL = (
     / "inbound_routing"
     / "local.py"
 )
+INBOUND_TRUNK = (
+    ROOT
+    / "custom_components"
+    / "voip_stack"
+    / "inbound_routing"
+    / "trunk.py"
+)
+INBOUND_AUTOMATION = (
+    ROOT
+    / "custom_components"
+    / "voip_stack"
+    / "inbound_routing"
+    / "automation.py"
+)
 
 
 class VoipBackendRouteContractTest(unittest.TestCase):
@@ -108,6 +122,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.inbound_softphone = INBOUND_SOFTPHONE.read_text()
         cls.inbound_bridge = INBOUND_BRIDGE.read_text()
         cls.inbound_local = INBOUND_LOCAL.read_text()
+        cls.inbound_trunk = INBOUND_TRUNK.read_text()
+        cls.inbound_automation = INBOUND_AUTOMATION.read_text()
         spec = importlib.util.spec_from_file_location(
             "voip_stack_automation_routing_test", AUTOMATION_ROUTING
         )
@@ -402,16 +418,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("if route_bucket or pending", busy_guard)
 
     def test_registered_sip_callers_bypass_route_requested(self) -> None:
-        on_invite = self.invite_router
-        branch_start = on_invite.index(
-            "if (\n        registered_source"
-        )
-        pre_route = on_invite[:branch_start]
-        registered_branch = on_invite[
-            branch_start : on_invite.index(
-                'if route_action in {"decline", "busy", "cancel"}:'
-            )
-        ]
+        pre_route = self.invite_router
+        registered_branch = self.inbound_automation
         self.assertIn(
             "registered_entries = _registered_roster_entries(hass)", pre_route
         )
@@ -435,16 +443,17 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "SIP caller uses central dialplan without automation window",
             registered_branch,
         )
-        self.assertIn("else:", registered_branch)
-        route_requested_branch = registered_branch[registered_branch.index("else:") :]
+        route_requested_branch = registered_branch[
+            registered_branch.index("hass = runtime.hass") :
+        ]
         self.assertIn("CallState.CONNECTING.value", route_requested_branch)
         self.assertIn("route_request=True", route_requested_branch)
         self.assertIn(
-            "route_decision = await asyncio.wait_for(",
+            "payload = await asyncio.wait_for(",
             route_requested_branch,
         )
         self.assertIn(
-            "future, timeout=SIP_ROUTE_DECISION_TIMEOUT",
+            "timeout=SIP_ROUTE_DECISION_TIMEOUT",
             route_requested_branch,
         )
 
@@ -468,7 +477,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_route_requested_exposes_fallback_and_deadline(self) -> None:
-        routing_sources = self.source + self.invite_router + self.trunk_routing
+        routing_sources = (
+            self.source
+            + self.invite_router
+            + self.inbound_automation
+            + self.trunk_routing
+        )
         self.assertGreaterEqual(routing_sources.count("fallback_destination="), 2)
         self.assertGreaterEqual(routing_sources.count("decision_deadline="), 2)
         self.assertIn(
@@ -1073,7 +1087,14 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         strings = STRINGS_JSON.read_text()
         const = (ROOT / "custom_components" / "voip_stack" / "const.py").read_text()
 
-        for source in (config_flow, strings, const, self.source, self.invite_router):
+        for source in (
+            config_flow,
+            strings,
+            const,
+            self.source,
+            self.invite_router,
+            self.inbound_trunk,
+        ):
             self.assertNotIn("CONF_TRUNK_DTMF_ROUTES", source)
             self.assertNotIn("trunk_dtmf_routes", source)
             self.assertNotIn("parse_dtmf_route_map", source)
@@ -1092,12 +1113,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn('invite.call_id in bucket.get("trunk_closed_calls", set())', after_collect)
         self.assertIn("bridge_ports.release()", after_collect)
         self.assertIn("remote_host=invite.remote_rtp_host", self.trunk_dtmf)
-        preanswer = self.invite_router[
-            self.invite_router.index("if trunk_invite:") : self.invite_router.index(
-                'route_action = "default"',
-                self.invite_router.index("if trunk_invite:"),
-            )
-        ]
+        preanswer = self.inbound_trunk
         self.assertIn(
             'bucket.setdefault("trunk_closed_calls", set()).discard(invite.call_id)',
             preanswer,
@@ -1399,15 +1415,13 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_trunk_without_dtmf_preanswer_does_not_allocate_relay_ports(self) -> None:
         on_invite = self.invite_router
-        loop_index = on_invite.index("loop = asyncio.get_running_loop()")
-        trunk_index = on_invite.rindex("if trunk_invite:", 0, loop_index)
-        trunk_branch = on_invite[
-            trunk_index:loop_index
-        ]
+        trunk_branch = self.inbound_trunk
         no_dtmf_branch = trunk_branch[
-            trunk_branch.index("if not dtmf_preanswer:") : trunk_branch.index("else:")
+            trunk_branch.index("if not dtmf_preanswer:") :
+            trunk_branch.index("hass = runtime.hass")
         ]
-        dtmf_branch = trunk_branch[trunk_branch.index("else:") :]
+        dtmf_branch = trunk_branch[trunk_branch.index("hass = runtime.hass") :]
+        self.assertIn("return None", no_dtmf_branch)
         self.assertNotIn("RtpPortReservation.allocate", no_dtmf_branch)
         self.assertIn("RtpPortReservation.allocate(hass)", dtmf_branch)
 
@@ -1419,7 +1433,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_route_requests_expose_pbx_ingress_provenance(self) -> None:
-        on_invite = self.invite_router
+        on_invite = self.inbound_automation
         self.assertIn(
             'ingress="trunk" if trunk_invite else "extension"',
             on_invite,
@@ -1476,12 +1490,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("target_endpoint.kind is not EndpointKind.BROWSER", target_checks)
 
     def test_video_invites_preserve_video_during_dtmf_preanswer(self) -> None:
-        on_invite = self.invite_router
-        trunk_branch = on_invite[
-            on_invite.index("if trunk_invite:") : on_invite.index(
-                "loop = asyncio.get_running_loop()"
-            )
-        ]
+        trunk_branch = self.inbound_trunk
         self.assertNotIn("and invite.video_format is None", trunk_branch)
         self.assertIn("reserve_sip_video_media(hass)", trunk_branch)
         self.assertIn('"local_video_rtp_port": source_video_port', trunk_branch)
@@ -1532,14 +1541,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("_release_media_reservation(preanswered)", guarded)
         self.assertIn("_sip_send_bye(hass, invite.call_id)", guarded)
         self.assertIn("registry.finish_and_pop(", guarded)
-        on_invite = self.invite_router
-        loop_index = on_invite.index("loop = asyncio.get_running_loop()")
-        trunk_index = on_invite.rindex("if trunk_invite:", 0, loop_index)
-        creator = on_invite[
-            on_invite.index("create_runtime_task(", trunk_index) :
-            on_invite.index("return SipInviteResult(200", trunk_index)
+        creator = self.inbound_trunk[
+            self.inbound_trunk.index("create_runtime_task(") :
+            self.inbound_trunk.index("return SipInviteResult(200")
         ]
-        self.assertIn("_run_trunk_inbound_route_guarded(", creator)
+        self.assertIn("runtime.run_trunk_inbound_route_guarded(", creator)
 
     def test_unknown_dtmf_route_finishes_the_preanswered_session(self) -> None:
         runner = self.trunk_inbound_router
@@ -1665,12 +1671,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.assertIn(field, bridge)
 
     def test_route_request_publishes_a_canonical_connecting_state(self) -> None:
-        route_branch = self.invite_router[
-            self.invite_router.index(
-                "if (\n        registered_source"
-            ) :
-            self.invite_router.index("route_action = (")
-        ]
+        route_branch = self.inbound_automation
         self.assertIn("CallState.CONNECTING.value", route_branch)
         self.assertIn("route_request=True", route_branch)
         self.assertNotIn('"route_requested",\n                caller=', route_branch)
@@ -1737,23 +1738,17 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_dtmf_preanswer_selects_final_response_by_negotiated_transport(
         self,
     ) -> None:
-        invite = self.invite_router[
-            self.invite_router.index(
+        invite = self.inbound_trunk[
+            self.inbound_trunk.index(
                 "dtmf_formats = sip_sdp.offered_dtmf_formats("
             ) :
-            self.invite_router.index(
-                'route_action = "default"',
-                self.invite_router.index(
-                    "dtmf_formats = sip_sdp.offered_dtmf_formats("
-                ),
-            )
         ]
         self.assertIn("confirm_for_sip_info = dtmf_format is None", invite)
         self.assertIn(
             'return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")',
             invite,
         )
-        self.assertIn('183,\n                "Session Progress"', invite)
+        self.assertIn('183,\n        "Session Progress"', invite)
         self.assertIn("defer_final=True", invite)
 
     def test_assist_handoff_preserves_session_transport_provenance(self) -> None:

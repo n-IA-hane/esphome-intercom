@@ -9,10 +9,8 @@ quietly grow a second registry or cleanup path.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, replace
 import logging
-import time
 from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
@@ -21,7 +19,6 @@ from . import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
-    CONF_SIP_VIDEO,
     CONF_TRUNK_DTMF_ENABLED,
     CONF_TRUNK_DTMF_TIMEOUT_MS,
     CONF_TRUNK_INBOUND_DEFAULT_TARGET,
@@ -29,7 +26,7 @@ from .const import (
     DOMAIN,
     TRUNK_INBOUND_MODE_DTMF,
 )
-from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
+from .endpoint_lifecycle import call_registry as _call_registry
 from .endpoint_routing import (
     peer_audio_formats as _peer_audio_formats,
     peer_for_target as _peer_for_target,
@@ -40,16 +37,17 @@ from .fsm import (
     CallState,
     TerminalReason,
 )
+from .inbound_routing.automation import (
+    automation_rejection,
+    request_route_override,
+)
 from .inbound_routing.bridge import route_sip_bridge
 from .inbound_routing.local import route_local_assist, route_local_group
 from .inbound_routing.softphone import (
     answer_inbound_ha_softphone,
     defer_browser_softphone_invite,
 )
-from .media_ports import (
-    RtpPortReservation,
-    reserve_sip_video_media,
-)
+from .inbound_routing.trunk import prepare_trunk_preanswer
 from .pbx_routing import roster_entry_for_target as _roster_entry_for_target
 from .phone_endpoint import (
     EndpointAvailability,
@@ -58,10 +56,6 @@ from .phone_endpoint import (
 )
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .router import RouteAction, RouteReason
-from .sdp import (
-    build_answer_directional,
-    constrained_video_direction,
-)
 from .sip_listener import SipInviteResult
 from .websocket_api import (
     _set_sip_bridge_call_state,
@@ -72,8 +66,6 @@ if TYPE_CHECKING:
     from .sip_registrar import SipRegistrar
 
 _LOGGER = logging.getLogger(__name__)
-SIP_ROUTE_DECISION_TIMEOUT = 1.5
-MAX_TRUNK_INFO_DIGITS = 16
 MAX_PENDING_HA_INVITES = 64
 
 
@@ -117,10 +109,8 @@ async def route_invite(
     invite: SipInvite,
 ) -> SipInviteResult:
     hass = runtime.hass
-    cfg = runtime.config
     local_ip = runtime.local_ip
     registrar = runtime.registrar
-    _ha_peer_name = runtime.ha_peer_name
     _get_trunk_config = runtime.get_trunk_config
     _trunk_enabled = runtime.trunk_enabled
     _is_trunk_invite = runtime.is_trunk_invite
@@ -129,7 +119,6 @@ async def route_invite(
     _inbound_route_decision = runtime.inbound_route_decision
     _async_build_peer_snapshot = runtime.build_peer_snapshot
     _defer_invite_to_ha_softphone = runtime.defer_invite_to_softphone
-    _run_trunk_inbound_route_guarded = runtime.run_trunk_inbound_route_guarded
     peers = await _async_build_peer_snapshot(hass)
     caller_identity = str(
         (invite.caller_uri.user if invite.caller_uri is not None else "")
@@ -292,303 +281,38 @@ async def route_invite(
             registry=registry,
         )
     if trunk_invite:
-        trunk_cfg = _get_trunk_config(hass)
-        dtmf_timeout_ms = max(0, int(trunk_cfg.get(CONF_TRUNK_DTMF_TIMEOUT_MS) or 0))
-        dtmf_preanswer = bool(
-            trunk_cfg.get(CONF_TRUNK_INBOUND_MODE) == TRUNK_INBOUND_MODE_DTMF
-            and trunk_cfg.get(CONF_TRUNK_DTMF_ENABLED)
-            and dtmf_timeout_ms > 0
+        trunk_result = prepare_trunk_preanswer(
+            runtime=runtime,
+            invite=invite,
+            trunk_config=_get_trunk_config(hass),
+            direct_route_preprocessed=trunk_direct_preprocessed,
+            registry=registry,
         )
-        if not dtmf_preanswer:
-            if not trunk_direct_preprocessed:
-                raise RuntimeError("direct trunk route was not preprocessed")
-            # Continue through the normal dialplan. The optional route
-            # window below is opened only when automation overrides are
-            # explicitly enabled.
-            source_relay_port = 0
-        else:
-            # Clear a theoretically reused Call-ID before handing control
-            # back to the event loop. A BYE received after this point must
-            # remain visible to the background DTMF/router task.
-            bucket.setdefault("trunk_closed_calls", set()).discard(invite.call_id)
-            bucket.setdefault("trunk_info_queues", {})[invite.call_id] = asyncio.Queue(
-                maxsize=MAX_TRUNK_INFO_DIGITS
+        if trunk_result is not None:
+            return trunk_result
+    automation_route = await request_route_override(
+        runtime=runtime,
+        invite=invite,
+        decision=decision,
+        route_bucket=route_bucket,
+        registered_source=registered_source,
+        caller_is_trusted_endpoint=caller_is_trusted_endpoint,
+        automation_routing_enabled=bool(
+            _get_trunk_config(hass).get(
+                CONF_AUTOMATION_ROUTING_ENABLED,
+                False,
             )
-            try:
-                bridge_ports = RtpPortReservation.allocate(hass)
-            except RuntimeError as err:
-                _LOGGER.warning("SIP trunk RTP bridge port allocation failed: %s", err)
-                return SipInviteResult(503, "Service Unavailable", to_tag="")
-            source_relay_port, _dest_relay_port = bridge_ports.ports
-            video_media_reservation = None
-            video_rtp_socket = None
-            video_rtcp_socket = None
-            source_video_port = 0
-            video_failure_reason = ""
-            if invite.video_format is not None and cfg.get(CONF_SIP_VIDEO, False):
-                try:
-                    (
-                        video_media_reservation,
-                        video_rtp_socket,
-                        video_rtcp_socket,
-                    ) = reserve_sip_video_media(hass)
-                    _unused_audio_port, source_video_port = (
-                        video_media_reservation.ports
-                    )
-                except (OSError, RuntimeError) as err:
-                    video_failure_reason = "local_video_resources_unavailable"
-                    _LOGGER.warning(
-                        "SIP trunk DTMF video socket unavailable; collecting digits audio-only: %s",
-                        err,
-                    )
-            registry.pending_invites[invite.call_id] = invite
-            preanswered_media = {
-                # Early media is provisional.  The winning endpoint still
-                # owns the final 200/SDP answer and may narrow or enable
-                # media according to its actual capabilities and user's
-                # camera choice.
-                "final_response_sent": False,
-                "local_rtp_port": source_relay_port,
-                "local_video_rtp_port": source_video_port,
-                "video_direction": ("recvonly" if source_video_port else "inactive"),
-                "rtp_reservation": bridge_ports,
-                "video_rtp_reservation": video_media_reservation,
-                "video_rtp_socket": video_rtp_socket,
-                "video_rtcp_socket": video_rtcp_socket,
-                "video_failure_reason": video_failure_reason,
-            }
-            registry.upsert(
-                invite.call_id,
-                state=CallState.CONNECTING.value,
-                owner="router",
-                caller=invite.caller,
-                callee=str(trunk_cfg.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "HA"),
-                route_kind="trunk",
-                ingress="trunk",
-                origin="trunk",
-            )
-            registry.attach_media(
-                invite.call_id,
-                preanswered_media,
-                provisional=True,
-            )
-            expires_at = time.time() + (float(dtmf_timeout_ms) / 1000.0)
-            dtmf_format = None
-            dtmf_formats = sip_sdp.offered_dtmf_formats(invite.remote_sdp)
-            dtmf_format = dtmf_formats[0] if dtmf_formats else None
-            # RFC 4733 can carry digits in provisional early media. SIP
-            # INFO is an in-dialog compatibility transport and common
-            # user agents do not expose keypad input until a final 2xx.
-            # Confirm only the INFO-only branch; keep RFC 4733 routing
-            # provisional so the selected endpoint owns the final answer.
-            confirm_for_sip_info = dtmf_format is None
-            preanswered_media["final_response_sent"] = confirm_for_sip_info
-            preanswer_video_direction = (
-                constrained_video_direction(
-                    invite.video_format.direction,
-                    allow_send=True,
-                )
-                if source_video_port and invite.video_format is not None
-                else "inactive"
-            )
-            registry.preanswered[invite.call_id]["video_direction"] = (
-                preanswer_video_direction
-            )
-            answer = build_answer_directional(
-                local_ip,
-                local_ip,
-                source_relay_port,
-                invite.send_format,
-                invite.recv_format,
-                dtmf=dtmf_format,
-                remote_sdp=invite.remote_sdp,
-                video_port=source_video_port,
-                video_format=(
-                    invite.answer_video_format if source_video_port else None
-                ),
-                # Advertising the supported direction establishes a
-                # standards-valid media contract; it does not grant
-                # browser camera access. Actual camera RTP remains gated
-                # by the explicit per-card answer choice.
-                video_direction=preanswer_video_direction,
-            )
-            registry.preanswered[invite.call_id]["early_answer_sdp"] = answer
-            _set_sip_bridge_call_state(
-                hass,
-                CallState.CONNECTING.value,
-                caller=invite.caller,
-                callee=str(trunk_cfg.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "HA"),
-                peer_name=invite.caller,
-                call_id=invite.call_id,
-                selected_tx_format=invite.send_format.audio_format.wire_token(),
-                selected_rx_format=invite.recv_format.audio_format.wire_token(),
-                selected_tx_rtp_format=invite.send_format.wire_token(),
-                selected_rx_rtp_format=invite.recv_format.wire_token(),
-                audio_mode="full_duplex",
-                route_kind="trunk",
-                sip_status_code=200 if confirm_for_sip_info else 183,
-                last_sip_event="INVITE",
-                direction="incoming",
-                scope="sip_trunk",
-                phase="dtmf_route",
-                source_host=invite.source_host,
-                expires_at=expires_at,
-                decision_timeout_ms=dtmf_timeout_ms,
-                video_requested=bool(invite.video_format is not None),
-                video_negotiated=bool(source_video_port),
-                video_status=(
-                    "degraded"
-                    if video_failure_reason
-                    else "active"
-                    if source_video_port
-                    else "rejected"
-                    if invite.video_format is not None
-                    else "inactive"
-                ),
-                video_failure_reason=video_failure_reason,
-            )
-            create_runtime_task(
-                hass,
-                _run_trunk_inbound_route_guarded(
-                    invite,
-                    bridge_ports=bridge_ports,
-                ),
-            )
-            if confirm_for_sip_info:
-                return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")
-            return SipInviteResult(
-                183,
-                "Session Progress",
-                answer_sdp=answer,
-                to_tag="",
-                defer_final=True,
-            )
-    route_action = "default"
-    route_destination = ""
-    route_status = 0
-    route_reason = ""
-    route_decline_reason = ""
-    automation_routing_enabled = bool(
-        _get_trunk_config(hass).get(CONF_AUTOMATION_ROUTING_ENABLED, False)
+        ),
+        trunk_invite=trunk_invite,
     )
-    if (
-        registered_source
-        or not caller_is_trusted_endpoint
-        or not automation_routing_enabled
+    if rejected := automation_rejection(
+        hass=hass,
+        invite=invite,
+        route=automation_route,
     ):
-        _LOGGER.debug(
-            "SIP caller uses central dialplan without automation window caller=%s target=%s route=%s uri=%s",
-            invite.caller or invite.source_host,
-            invite.target,
-            decision.action.value,
-            decision.sip_uri or "-",
-        )
-    else:
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future = loop.create_future()
-        expires_at = time.time() + SIP_ROUTE_DECISION_TIMEOUT
-        route_bucket[invite.call_id] = {
-            "future": future,
-            "invite": invite,
-            "decision": decision,
-            "created_at": time.time(),
-            "expires_at": expires_at,
-            "decision_deadline": expires_at,
-            "fallback_destination": decision.target,
-        }
-        _set_sip_bridge_call_state(
-            hass,
-            CallState.CONNECTING.value,
-            caller=invite.caller,
-            callee=invite.target,
-            peer_name=invite.caller,
-            local_name=_ha_peer_name(hass),
-            call_id=invite.call_id,
-            selected_tx_format=invite.send_format.audio_format.wire_token(),
-            selected_rx_format=invite.recv_format.audio_format.wire_token(),
-            selected_tx_rtp_format=invite.send_format.wire_token(),
-            selected_rx_rtp_format=invite.recv_format.wire_token(),
-            audio_mode="full_duplex",
-            route_kind=decision.action.value,
-            sip_uri=decision.sip_uri,
-            sip_status_code=100,
-            last_sip_event="INVITE",
-            direction="incoming",
-            ingress="trunk" if trunk_invite else "extension",
-            origin="trunk" if trunk_invite else "extension",
-            route_request=True,
-            phase="route_decision",
-            source_host=invite.source_host,
-            target=decision.target,
-            default_destination=decision.target,
-            fallback_destination=decision.target,
-            expires_at=expires_at,
-            decision_deadline=expires_at,
-            decision_timeout_ms=int(SIP_ROUTE_DECISION_TIMEOUT * 1000),
-            rtp_format=(
-                f"{invite.selected_format.encoding}/"
-                f"{invite.selected_format.sample_rate}/"
-                f"{invite.selected_format.channels}"
-            ),
-        )
-        _LOGGER.info(
-            "SIP route requested: caller=%s target=%s route=%s uri=%s media=%s/%s",
-            invite.caller or invite.source_host,
-            invite.target,
-            decision.action.value,
-            decision.sip_uri or "-",
-            invite.selected_format.encoding,
-            invite.selected_format.sample_rate,
-        )
-        try:
-            route_decision = await asyncio.wait_for(
-                future, timeout=SIP_ROUTE_DECISION_TIMEOUT
-            )
-        except asyncio.TimeoutError:
-            route_decision = {}
-        finally:
-            route_bucket.pop(invite.call_id, None)
-        if isinstance(route_decision, dict):
-            route_action = (
-                str(route_decision.get("action") or "default").strip().lower()
-            )
-            route_destination = str(route_decision.get("destination") or "").strip()
-            route_status = int(route_decision.get("status") or 0)
-            route_reason = str(route_decision.get("reason") or "").strip()
-            route_decline_reason = str(
-                route_decision.get("decline_reason") or ""
-            ).strip()
-
-    if route_action in {"decline", "busy", "cancel"}:
-        if route_action == "busy":
-            status = route_status or 486
-            reason = route_reason or "Busy Here"
-            app_reason = TerminalReason.BUSY.value
-        elif route_action == "cancel":
-            status = route_status or 487
-            reason = route_reason or "Request Terminated"
-            app_reason = TerminalReason.CANCELLED.value
-        else:
-            status = route_status or 603
-            reason = route_reason or "Decline"
-            app_reason = route_decline_reason or TerminalReason.DECLINED.value
-        _set_sip_bridge_call_state(
-            hass,
-            CallState.BUSY.value
-            if app_reason == TerminalReason.BUSY.value
-            else CallState.CANCELLED.value
-            if status == 487
-            else "declined",
-            caller=invite.caller,
-            callee=invite.target,
-            peer_name=invite.caller,
-            call_id=invite.call_id,
-            reason=app_reason,
-            origin="self",
-            sip_status_code=status,
-            last_sip_event="SIP_RESPONSE",
-        )
-        return SipInviteResult(status, reason, to_tag="", decline_reason=app_reason)
+        return rejected
+    route_action = automation_route.action
+    route_destination = automation_route.destination
 
     fallback_destination = decision.target or invite.target
     if route_action in {"forward", "bridge"} and route_destination:
