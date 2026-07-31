@@ -61,6 +61,13 @@ RING_GROUP_ORCHESTRATOR = (
     ROOT / "custom_components" / "voip_stack" / "ring_group_orchestrator.py"
 )
 INVITE_ROUTER = ROOT / "custom_components" / "voip_stack" / "invite_router.py"
+INBOUND_SOFTPHONE = (
+    ROOT
+    / "custom_components"
+    / "voip_stack"
+    / "inbound_routing"
+    / "softphone.py"
+)
 
 
 class VoipBackendRouteContractTest(unittest.TestCase):
@@ -84,6 +91,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.call_forwarder = CALL_FORWARDER.read_text()
         cls.ring_group = RING_GROUP_ORCHESTRATOR.read_text()
         cls.invite_router = INVITE_ROUTER.read_text()
+        cls.inbound_softphone = INBOUND_SOFTPHONE.read_text()
         spec = importlib.util.spec_from_file_location(
             "voip_stack_automation_routing_test", AUTOMATION_ROUTING
         )
@@ -96,16 +104,23 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         marker = (
             "if not force_ha_softphone and decision.action is RouteAction.ANSWER_HA:"
         )
-        fallback = "local_rtp_port = _allocate_sip_rtp_port(hass)"
+        fallback = "return answer_inbound_ha_softphone("
         self.assertIn(marker, source)
         self.assertLess(source.index(marker), source.index(fallback))
         answer_ha_branch = source[source.index(marker) : source.index(fallback)]
-        self.assertIn("_defer_invite_to_ha_softphone(", answer_ha_branch)
-        self.assertIn("route_kind=decision.action.value", answer_ha_branch)
-        self.assertIn("callee=resolved_callee", answer_ha_branch)
+        self.assertIn("return defer_browser_softphone_invite(", answer_ha_branch)
+        self.assertIn(
+            "defer_invite=_defer_invite_to_ha_softphone",
+            answer_ha_branch,
+        )
+        self.assertIn(
+            "route_kind=decision.action.value",
+            self.inbound_softphone,
+        )
+        self.assertIn("callee=resolved_callee", self.inbound_softphone)
         self.assertIn(
             'return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)',
-            answer_ha_branch,
+            self.inbound_softphone,
         )
         self.assertNotIn('return SipInviteResult(200, "OK"', answer_ha_branch)
         self.assertIn("def _defer_invite_to_ha_softphone(", self.source)
@@ -316,11 +331,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "if not force_ha_softphone and decision.action is RouteAction.ANSWER_HA:"
         )
         self.assertIn(answer_ha, source)
-        answer_ha_branch = source[
-            source.index(answer_ha) : source.index(
-                "local_rtp_port = _allocate_sip_rtp_port(hass)"
-            )
-        ]
+        answer_ha_branch = self.inbound_softphone
 
         self.assertIn("except EndpointBusyError:", answer_ha_branch)
         self.assertIn(

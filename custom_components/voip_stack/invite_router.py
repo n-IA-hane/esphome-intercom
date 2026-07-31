@@ -37,7 +37,6 @@ from .const import (
     CONF_TRUNK_TRANSPORT,
     CONF_TRUNK_USERNAME,
     DOMAIN,
-    HA_SOFTPHONE_DEVICE_ID,
     TRUNK_INBOUND_MODE_DTMF,
 )
 from .conference import conference_manager
@@ -59,9 +58,12 @@ from .fsm import (
     sip_terminal_reason as _sip_terminal_reason,
 )
 from .groups import GROUP_TYPE_CONFERENCE, GROUP_TYPE_RING
+from .inbound_routing.softphone import (
+    answer_inbound_ha_softphone,
+    defer_browser_softphone_invite,
+)
 from .media_ports import (
     RtpPortReservation,
-    allocate_sip_rtp_port as _allocate_sip_rtp_port,
     release_sip_rtp_port_pair as _release_sip_rtp_port_pair,
     reserve_sip_video_media,
     reserve_sip_video_relay_media,
@@ -71,7 +73,6 @@ from .outbound_attempts import (
 )
 from .pbx_routing import roster_entry_for_target as _roster_entry_for_target
 from .phone_endpoint import (
-    DEFAULT_ENDPOINT_ID,
     EndpointAvailability,
     EndpointKind,
     OfflinePolicy,
@@ -91,7 +92,6 @@ from .sip_bridge import (
 from .sip_client import SIP_TIMER_B, SipCallClient
 from .sip_listener import SipInviteResult
 from .websocket_api import (
-    _set_ha_softphone_call_state,
     _set_sip_bridge_call_state,
 )
 
@@ -1773,278 +1773,25 @@ async def route_invite(
             )
             return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)
     if not force_ha_softphone and decision.action is RouteAction.ANSWER_HA:
-        browser_endpoint = target_endpoint
-        if browser_endpoint is None and endpoint_registry is not None:
-            browser_endpoint = endpoint_registry.get(DEFAULT_ENDPOINT_ID)
-        endpoint_id = (
-            browser_endpoint.endpoint_id
-            if browser_endpoint is not None
-            else DEFAULT_ENDPOINT_ID
+        return defer_browser_softphone_invite(
+            registry=registry,
+            endpoint_registry=endpoint_registry,
+            invite=invite,
+            decision=decision,
+            resolved_callee=resolved_callee,
+            source_endpoint=source_endpoint,
+            target_endpoint=target_endpoint,
+            defer_invite=_defer_invite_to_ha_softphone,
         )
-        endpoint_device_id = str(
-            getattr(browser_endpoint, "device_id", "")
-            or HA_SOFTPHONE_DEVICE_ID
-        )
-        try:
-            if (
-                source_endpoint is not None
-                and source_endpoint.kind is not EndpointKind.BROWSER
-            ):
-                registry.upsert(
-                    invite.call_id,
-                    state=CallState.RINGING.value,
-                    owner="router",
-                    caller=invite.caller,
-                    callee=resolved_callee,
-                    route_kind=decision.action.value,
-                    source_endpoint_id=source_endpoint.endpoint_id,
-                )
-                registry.claim_endpoint(
-                    invite.call_id,
-                    source_endpoint.endpoint_id,
-                    role="source",
-                    adopt_transport=True,
-                )
-            _defer_invite_to_ha_softphone(
-                invite,
-                route_kind=decision.action.value,
-                endpoint_id=endpoint_id,
-                endpoint_device_id=endpoint_device_id,
-                callee=resolved_callee,
-                sip_uri=decision.sip_uri,
-            )
-        except EndpointBusyError:
-            registry.finish_and_pop(
-                invite.call_id,
-                reason=TerminalReason.BUSY.value,
-                state=CallState.BUSY.value,
-            )
-            return SipInviteResult(
-                486,
-                "Busy Here",
-                to_tag="",
-                decline_reason=TerminalReason.BUSY.value,
-            )
-        return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)
-    browser_endpoint = (
-        target_endpoint
-        if target_endpoint is not None
-        and target_endpoint.kind is EndpointKind.BROWSER
-        else (
-            endpoint_registry.get(DEFAULT_ENDPOINT_ID)
-            if endpoint_registry is not None
-            else None
-        )
+    return answer_inbound_ha_softphone(
+        hass=hass,
+        local_ip=local_ip,
+        registry=registry,
+        endpoint_registry=endpoint_registry,
+        invite=invite,
+        decision=decision,
+        resolved_callee=resolved_callee,
+        source_endpoint=source_endpoint,
+        target_endpoint=target_endpoint,
+        dtmf_format=_invite_dtmf_format(invite),
     )
-    endpoint_id = (
-        browser_endpoint.endpoint_id
-        if browser_endpoint is not None
-        else DEFAULT_ENDPOINT_ID
-    )
-    endpoint_device_id = str(
-        getattr(browser_endpoint, "device_id", "") or HA_SOFTPHONE_DEVICE_ID
-    )
-    if browser_endpoint is not None:
-        if browser_endpoint.dnd or (
-            browser_endpoint.active_call_id
-            and browser_endpoint.active_call_id != invite.call_id
-        ):
-            return SipInviteResult(
-                486,
-                "Busy Here",
-                to_tag="",
-                decline_reason=TerminalReason.BUSY.value,
-            )
-        if browser_endpoint.availability is EndpointAvailability.UNAVAILABLE:
-            return SipInviteResult(
-                480,
-                "Temporarily Unavailable",
-                to_tag="",
-                decline_reason=RouteReason.TARGET_UNREACHABLE.value,
-            )
-    registry.upsert(
-        invite.call_id,
-        state=CallState.CONNECTING.value,
-        owner="ha_softphone",
-        caller=invite.caller,
-        callee=resolved_callee,
-        route_kind=decision.action.value,
-        endpoint_id=endpoint_id,
-        session_device_id=endpoint_device_id,
-        source_endpoint_id=(
-            source_endpoint.endpoint_id
-            if source_endpoint is not None
-            and source_endpoint.kind is not EndpointKind.BROWSER
-            else ""
-        ),
-    )
-    try:
-        if (
-            source_endpoint is not None
-            and source_endpoint.kind is not EndpointKind.BROWSER
-        ):
-            registry.claim_endpoint(
-                invite.call_id,
-                source_endpoint.endpoint_id,
-                role="source",
-                adopt_transport=True,
-            )
-        registry.claim_endpoint(
-            invite.call_id,
-            endpoint_id,
-            role="destination",
-        )
-    except EndpointBusyError:
-        registry.finish_and_pop(
-            invite.call_id,
-            reason=TerminalReason.BUSY.value,
-            state=CallState.BUSY.value,
-        )
-        return SipInviteResult(
-            486,
-            "Busy Here",
-            to_tag="",
-            decline_reason=TerminalReason.BUSY.value,
-        )
-    media_reservation = None
-    local_video_rtp_port = 0
-    video_rtp_socket = None
-    video_rtcp_socket = None
-    video_failure_reason = ""
-    endpoint_video_enabled = (
-        browser_endpoint is None or browser_endpoint.supports("video")
-    )
-    if invite.video_format is not None and endpoint_video_enabled:
-        try:
-            (
-                media_reservation,
-                video_rtp_socket,
-                video_rtcp_socket,
-            ) = reserve_sip_video_media(hass)
-            local_rtp_port, local_video_rtp_port = media_reservation.ports
-        except (OSError, RuntimeError) as err:
-            _LOGGER.warning(
-                "SIP video socket unavailable, answering audio-only: %s", err
-            )
-            media_reservation = None
-            video_failure_reason = "local_video_resources_unavailable"
-            local_rtp_port = _allocate_sip_rtp_port(hass)
-            local_video_rtp_port = 0
-    else:
-        local_rtp_port = _allocate_sip_rtp_port(hass)
-    video_direction = (
-        constrained_video_direction(
-            invite.video_format.direction,
-            # An automation-side answer has no browser permission or
-            # per-card camera choice attached to it.  It may receive
-            # video, but only the explicit answer/call actions carrying
-            # send_video are allowed to advertise a camera direction.
-            allow_send=False,
-        )
-        if invite.video_format is not None and endpoint_video_enabled
-        else "inactive"
-    )
-    answer = build_answer_directional(
-        local_ip,
-        local_ip,
-        local_rtp_port,
-        invite.send_format,
-        invite.recv_format,
-        dtmf=_invite_dtmf_format(invite),
-        remote_sdp=invite.remote_sdp,
-        video_port=local_video_rtp_port,
-        video_format=(
-            invite.answer_video_format if endpoint_video_enabled else None
-        ),
-        video_direction=video_direction,
-    )
-    softphone_media = {
-        "invite": invite,
-        "local_rtp_port": local_rtp_port,
-        "local_video_rtp_port": local_video_rtp_port,
-        "video_direction": video_direction,
-        "camera_send_authorized": False,
-        "video_rtp_socket": video_rtp_socket,
-        "video_rtcp_socket": video_rtcp_socket,
-        "rtp_reservation": media_reservation,
-        "endpoint_id": endpoint_id,
-        "video_failure_reason": video_failure_reason,
-    }
-    registry.upsert(
-        invite.call_id,
-        state=CallState.IN_CALL.value,
-        owner="ha_softphone",
-        caller=invite.caller,
-        callee=resolved_callee,
-        route_kind=decision.action.value,
-        endpoint_id=endpoint_id,
-        session_device_id=endpoint_device_id,
-    )
-    registry.attach_media(invite.call_id, softphone_media)
-    registry.add_leg(
-        invite.call_id,
-        invite.call_id,
-        role="ha_softphone",
-        state=CallState.IN_CALL.value,
-    )
-    video_active = bool(
-        invite.video_format is not None
-        and local_video_rtp_port
-        and video_direction != "inactive"
-    )
-    _set_ha_softphone_call_state(
-        hass,
-        CallState.IN_CALL.value,
-        endpoint_id=endpoint_id,
-        session_device_id=endpoint_device_id,
-        caller=invite.caller,
-        callee=resolved_callee,
-        peer_name=invite.caller,
-        direction="incoming",
-        call_id=invite.call_id,
-        selected_tx_format=invite.send_format.audio_format.wire_token(),
-        selected_rx_format=invite.recv_format.audio_format.wire_token(),
-        selected_tx_rtp_format=invite.send_format.wire_token(),
-        selected_rx_rtp_format=invite.recv_format.wire_token(),
-        audio_direction=invite.local_audio_direction,
-        audio_connection_held=invite.remote_audio_connection_held,
-        video_active=video_active,
-        video_requested=bool(invite.video_format is not None),
-        video_negotiated=bool(
-            invite.video_format is not None and local_video_rtp_port
-        ),
-        video_status=(
-            "degraded"
-            if video_failure_reason
-            else "active"
-            if video_active
-            else "rejected"
-            if invite.video_format is not None
-            else "inactive"
-        ),
-        video_failure_reason=video_failure_reason,
-        video_format=(
-            invite.video_format.wire_token() if invite.video_format else ""
-        ),
-        video_send_format=(
-            invite.send_video_format.wire_token()
-            if invite.send_video_format is not None
-            else ""
-        ),
-        video_receive_format=(
-            invite.recv_video_format.wire_token()
-            if invite.recv_video_format is not None
-            else ""
-        ),
-        video_direction=(
-            video_direction
-            if invite.video_format is not None and local_video_rtp_port
-            else "inactive"
-        ),
-        audio_mode="full_duplex",
-        route_kind=decision.action.value,
-        sip_uri=decision.sip_uri,
-        sip_status_code=200,
-        last_sip_event="SIP_RESPONSE",
-    )
-    return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")
