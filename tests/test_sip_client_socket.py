@@ -3486,4 +3486,3 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         decision = router.resolve_esp_origin("Cucina", entries, "sip:Cucina@192.168.1.10:5060;transport=tcp")
         self.assertEqual(decision.action, router.RouteAction.DIRECT)
         self.assertEqual(decision.sip_uri, "sip:Cucina@192.168.1.31")
-

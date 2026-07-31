@@ -1136,4 +1136,3 @@ class SdpPcmProfileTest(unittest.TestCase):
         )
         self.assertIsNotNone(selected)
         self.assertEqual(selected.send.audio_format, baseline)
-

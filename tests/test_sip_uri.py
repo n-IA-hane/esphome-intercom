@@ -223,4 +223,3 @@ class SipUriTest(unittest.TestCase):
         )
         with self.assertRaises(sip.SipError):
             sip.record_route_set(routed)
-

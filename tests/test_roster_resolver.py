@@ -107,4 +107,3 @@ class RosterResolverTest(unittest.TestCase):
             ).sip_uri,
             "sip:Salotto@192.168.1.10;transport=tcp",
         )
-

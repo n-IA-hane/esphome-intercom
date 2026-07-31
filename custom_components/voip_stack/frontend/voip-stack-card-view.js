@@ -814,4 +814,3 @@ export function buildUnconfiguredCardSkeleton(cardVersion) {
     this._els = { header, headerName };
     this._observeLayout();
   }
-

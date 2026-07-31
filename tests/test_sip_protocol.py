@@ -2987,4 +2987,3 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "ringing")
         self.assertEqual(client.last_sip_status_code, 183)
         self.assertTrue(sent)
-

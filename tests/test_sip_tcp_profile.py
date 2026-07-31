@@ -469,4 +469,3 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
             client.bye()
             await client.close()
             await server.stop()
-

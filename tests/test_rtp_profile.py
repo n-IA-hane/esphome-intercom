@@ -336,4 +336,3 @@ class RtpProfileTest(unittest.TestCase):
         self.assertIs(relay.right, updated_right)
         self.assertEqual(relay.left.host, "198.51.100.10")
         self.assertEqual(relay.right.host, "198.51.100.20")
-

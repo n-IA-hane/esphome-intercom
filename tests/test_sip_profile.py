@@ -704,4 +704,3 @@ class SipProfileTest(unittest.TestCase):
             sip_transport.sip_failure_response("dnd"),
             (486, "Busy Here", "dnd", "declined"),
         )
-

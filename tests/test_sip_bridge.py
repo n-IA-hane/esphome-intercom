@@ -451,4 +451,3 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
             caller_transport.close()
             for task in tasks:
                 task.cancel()
-

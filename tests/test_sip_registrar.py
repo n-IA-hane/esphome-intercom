@@ -977,4 +977,3 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
             [binding.snapshot() for binding in registrar.registrations.values()],
             before,
         )
-

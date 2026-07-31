@@ -10,7 +10,7 @@
 #
 # Adapted from yamls/full-experience/single-bus/generic-s3-full-aec.yaml and
 # esphome/wake-word-voice-assistants/esp32-s3-box-3/esp32-s3-box-3.yaml
-# 
+#
 # Full-featured lightweight config: VoIP + Media Player + mixer + VA/MWW.
 # Box-3 has a real ES7210 ADC + ES8311 DAC codec (unlike the no-codec generic-s3
 # profile this file started from), so esp_audio_stack owns codec I2C init via

@@ -375,4 +375,3 @@ class RouterContractTest(unittest.TestCase):
         decision = router.resolve_ha_router("WS3", entries, trunk_ready=False)
         self.assertEqual(decision.action, router.RouteAction.REJECT)
         self.assertEqual(decision.reason, router.RouteReason.TARGET_DISABLED)
-
