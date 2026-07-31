@@ -30,7 +30,9 @@ Important groups:
 
 - `tests/test_voip_backend_route_contract.py`: static contracts for SIP route
   branches and service registration.
-- `tests/test_voip_phase1.py`: resolver, registrar, RTP relay and protocol
+- `tests/test_sip_*.py`, `tests/test_sdp_pcm_profile.py`,
+  `tests/test_rtp_profile.py`, `tests/test_roster_resolver.py` and
+  `tests/test_router_contract.py`: resolver, registrar, RTP relay and protocol
   behavior.
 - `tests/test_group_call_matrix.py`: PBX-style ring/conference group matrix.
 - `tests/test_conference.py`: conference mixer and lifecycle primitives.

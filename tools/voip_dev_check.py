@@ -11,6 +11,19 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = ROOT / ".venv/bin/python"
+SIP_PROFILE_TESTS = [
+    "tests/test_sip_uri.py",
+    "tests/test_sip_profile.py",
+    "tests/test_sip_client_socket.py",
+    "tests/test_sdp_pcm_profile.py",
+    "tests/test_rtp_profile.py",
+    "tests/test_roster_resolver.py",
+    "tests/test_router_contract.py",
+    "tests/test_sip_protocol.py",
+    "tests/test_sip_registrar.py",
+    "tests/test_sip_bridge.py",
+    "tests/test_sip_tcp_profile.py",
+]
 
 
 def run(cmd: list[str]) -> None:
@@ -33,7 +46,7 @@ def main() -> int:
          "custom_components/voip_stack/websocket_api.py",
          "tools/sip_video_browser_probe.py",
          "tests/support/qualification_matrix.py"])
-    run([py, "tests/test_voip_phase1.py"])
+    run([py, "-m", "pytest", "-q", *SIP_PROFILE_TESTS])
     run([py, "tests/test_device_resolver_sip.py"])
     run([py, "tests/test_frontend_card_contract.py"])
     run([py, "-m", "pytest", "-q", "tests/test_ha_softphone_backend_contract.py"])
