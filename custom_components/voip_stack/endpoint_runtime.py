@@ -11,7 +11,6 @@ through the runtime dataclasses instead of rebuilding lifecycle state here.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from functools import partial
 import logging
 import secrets
@@ -57,8 +56,6 @@ from .endpoint_termination import EndpointTerminationHandler
 from .fsm import (
     CallState,
     TerminalReason,
-    sip_public_state as _sip_public_state,
-    sip_terminal_reason as _sip_terminal_reason,
 )
 from .media_ports import (
     RtpPortReservation,
@@ -66,19 +63,10 @@ from .media_ports import (
 )
 from .media_renegotiation import async_prepare_media_update
 from .invite_router import InviteRuntime, route_invite
-from .outbound_attempts import (
-    OutboundLeg,
-    async_close_outbound_leg as _close_outbound_leg,
-)
 from .endpoint_registry import EndpointBusyError
 from .phone_endpoint import (
     DEFAULT_ENDPOINT_ID,
-    EndpointAvailability,
     EndpointKind,
-)
-from .pbx_routing import (
-    caller_matches_group_member as _caller_matches_member,
-    unique_group_members as _unique_group_members,
 )
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .router import RouteReason
@@ -99,17 +87,8 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 SIP_ROUTE_DECISION_TIMEOUT = 1.5
-RING_GROUP_TIMEOUT_S = 30.0
-MAX_RING_GROUP_ATTEMPTS = 16
 MAX_TRUNK_INFO_DIGITS = 16
 MAX_PENDING_HA_INVITES = 64
-
-
-def _source_dialog_is_answered(early_media: dict | None) -> bool:
-    """Return whether the inbound source already received a final 2xx."""
-    return early_media is not None and bool(
-        early_media.get("final_response_sent", True)
-    )
 
 
 async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
@@ -138,7 +117,10 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     from .sip_listener import SipInvite, SipInviteResult
     from .pbx_runtime import SipEndpointRuntime
     from .sip_registrar import SipRegistrar
-    from .conference import MAX_CONFERENCE_LEGS, conference_manager
+    from .conference_ringing import (
+        ConferenceRingRuntime,
+        async_ring_conference_members,
+    )
     from .groups import GROUP_TYPE_CONFERENCE, GROUP_TYPE_RING
 
     if hass.data.get(DOMAIN, {}).get("sip_endpoint") is not None:
@@ -530,202 +512,22 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         roster_entries: list[RosterEntry],
         owner_call_id: str = "",
     ) -> None:
-        manager = conference_manager(
-            hass,
-            local_ip=local_ip,
-            on_inbound_timeout=_on_conference_inbound_timeout,
-        )
-        registry = _call_registry(hass)
-        endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-        owner_session = registry.sessions.get(
-            registry.resolve_session_id(str(owner_call_id or "").strip())
-        )
-        source_endpoint_id = str(
-            ((owner_session.metadata if owner_session is not None else {}) or {}).get(
-                "source_endpoint_id"
-            )
-            or ((owner_session.metadata if owner_session is not None else {}) or {}).get(
-                "endpoint_id"
-            )
-            or ""
-        ).strip()
-        room = manager.rooms.get(str(room_name or "").strip())
-        available_legs = max(
-            0,
-            MAX_CONFERENCE_LEGS
-            - (len(room.legs) if room is not None and not room._closed else 0),
-        )
-        members = _unique_group_members(entry.metadata.get("ring_members"))
-        attempts: list[OutboundLeg] = []
-        browser_endpoint_ids: list[str] = []
-        for member in members:
-            if _caller_matches_member(
-                caller,
-                source_host,
-                member,
-                peers,
-                source_endpoint_id=source_endpoint_id,
-            ):
-                continue
-            browser_leg = _browser_leg_for_member(member, peers, roster_entries)
-            if browser_leg is not None:
-                if (
-                    browser_leg.endpoint_id != source_endpoint_id
-                    and browser_leg.endpoint_id not in browser_endpoint_ids
-                    and len(browser_endpoint_ids) + len(attempts) < available_legs
-                ):
-                    browser_endpoint_ids.append(browser_leg.endpoint_id)
-                continue
-            if len(browser_endpoint_ids) + len(attempts) >= available_legs:
-                _LOGGER.warning(
-                    "SIP conference %s has no capacity for additional ring members; excess members were skipped",
-                    room_name,
-                )
-                break
-            try:
-                leg = _prepare_outbound_leg(
-                    member=member,
-                    peers=peers,
-                    roster_entries=roster_entries,
-                    local_name=room_name,
-                    local_rtp_port_index=0,
-                )
-            except RuntimeError as err:
-                _LOGGER.warning(
-                    "SIP conference member RTP port allocation failed member=%s: %s",
-                    member,
-                    err,
-                )
-                break
-            if leg is not None:
-                if leg.endpoint_id == source_endpoint_id:
-                    await _close_outbound_leg(leg)
-                    continue
-                endpoint = (
-                    endpoint_registry.get(leg.endpoint_id)
-                    if endpoint_registry is not None and leg.endpoint_id
-                    else None
-                )
-                if endpoint is not None and (
-                    endpoint.dnd
-                    or endpoint.availability
-                    is not EndpointAvailability.AVAILABLE
-                ):
-                    await _close_outbound_leg(leg)
-                    continue
-                leg_call_id = leg.client.dialog_ids.call_id
-                registry.upsert(
-                    leg_call_id,
-                    state=CallState.CALLING.value,
-                    owner="bridge",
-                    caller=room_name,
-                    callee=member,
-                    route_kind=GROUP_TYPE_CONFERENCE,
-                    source_call_id=owner_call_id,
-                    dest_endpoint_id=leg.endpoint_id,
-                )
-                try:
-                    if leg.endpoint_id:
-                        registry.claim_endpoint(
-                            leg_call_id,
-                            leg.endpoint_id,
-                            role="conference_member",
-                            adopt_transport=(
-                                endpoint is not None
-                                and endpoint.kind is EndpointKind.ESPHOME
-                            ),
-                        )
-                except EndpointBusyError:
-                    registry.finish_and_pop(
-                        leg_call_id,
-                        reason=TerminalReason.BUSY.value,
-                        state=CallState.BUSY.value,
-                    )
-                    await _close_outbound_leg(leg)
-                    continue
-                attempts.append(leg)
-
-        if browser_endpoint_ids:
-            manager.ring_ha_endpoints(
-                room_name,
-                tuple(browser_endpoint_ids),
-                caller=caller,
-            )
-
-        async def _dial(attempt: OutboundLeg) -> None:
-            client = attempt.client
-            uri = attempt.uri
-            owned_by_room = False
-            cleanup_reason = TerminalReason.TRANSPORT_UNREACHABLE.value
-            try:
-                result = await client.invite(
-                    target=uri.user or attempt.member,
-                    remote_host=uri.host,
-                    remote_sip_port=uri.port or int(cfg["sip_port"]),
-                    request_uri=str(uri),
-                    timeout=8.0,
-                )
-                if result == "ringing":
-                    result = await client.wait_for_final(timeout=RING_GROUP_TIMEOUT_S)
-                if result != "in_call" or client.dialog is None:
-                    return
-                owned_by_room = await manager.add_client_leg(
-                    room_name,
-                    call_id=client.dialog_ids.call_id,
-                    caller=attempt.member,
-                    client=client,
-                    port_reservation=attempt.ports,
-                    role="auto_invited",
-                )
-                if not owned_by_room:
-                    return
-                terminal = await client.wait_for_dialog_termination()
-                terminal_reason = (
-                    TerminalReason.REMOTE_HANGUP.value
-                    if terminal == "remote_hangup"
-                    else _sip_terminal_reason(terminal, _sip_public_state(terminal))
-                )
-                cleanup_reason = terminal_reason
-                await manager.leave_call(
-                    client.dialog_ids.call_id, reason=terminal_reason
-                )
-                registry.finish_and_pop(
-                    client.dialog_ids.call_id,
-                    reason=terminal_reason,
-                    state=CallState.IDLE.value,
-                )
-            except asyncio.CancelledError:
-                cleanup_reason = TerminalReason.CANCELLED.value
-                raise
-            except Exception as err:
-                _LOGGER.debug(
-                    "SIP conference member invite failed member=%s: %s",
-                    attempt.member,
-                    err,
-                )
-            finally:
-                if owned_by_room:
-                    with contextlib.suppress(Exception, asyncio.CancelledError):
-                        await manager.leave_call(
-                            client.dialog_ids.call_id,
-                            reason=cleanup_reason,
-                        )
-                    registry.finish_and_pop(
-                        client.dialog_ids.call_id,
-                        reason=cleanup_reason,
-                        state=CallState.IDLE.value,
-                    )
-                else:
-                    with contextlib.suppress(Exception):
-                        await _close_outbound_leg(attempt, bye_or_cancel=True)
-                    registry.finish_and_pop(
-                        attempt.client.dialog_ids.call_id,
-                        reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-                        state=CallState.TRANSPORT_UNREACHABLE.value,
-                    )
-
-        await asyncio.gather(
-            *(_dial(attempt) for attempt in attempts), return_exceptions=True
+        await async_ring_conference_members(
+            ConferenceRingRuntime(
+                hass=hass,
+                config=cfg,
+                local_ip=local_ip,
+                on_inbound_timeout=_on_conference_inbound_timeout,
+                browser_leg_for_member=_browser_leg_for_member,
+                prepare_outbound_leg=_prepare_outbound_leg,
+            ),
+            room_name=room_name,
+            caller=caller,
+            source_host=source_host,
+            entry=entry,
+            peers=peers,
+            roster_entries=roster_entries,
+            owner_call_id=owner_call_id,
         )
 
     async def _ring_conference_members_from_ha(

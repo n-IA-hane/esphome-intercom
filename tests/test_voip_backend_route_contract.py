@@ -71,6 +71,9 @@ RING_GROUP_CANDIDATES = (
 RING_GROUP_FORK = (
     ROOT / "custom_components" / "voip_stack" / "ring_group_fork.py"
 )
+CONFERENCE_RINGING = (
+    ROOT / "custom_components" / "voip_stack" / "conference_ringing.py"
+)
 INVITE_ROUTER = ROOT / "custom_components" / "voip_stack" / "invite_router.py"
 INBOUND_SOFTPHONE = (
     ROOT
@@ -139,6 +142,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.ring_group = RING_GROUP_ORCHESTRATOR.read_text()
         cls.ring_group_candidates = RING_GROUP_CANDIDATES.read_text()
         cls.ring_group_fork = RING_GROUP_FORK.read_text()
+        cls.conference_ringing = CONFERENCE_RINGING.read_text()
         cls.invite_router = INVITE_ROUTER.read_text()
         cls.inbound_softphone = INBOUND_SOFTPHONE.read_text()
         cls.inbound_bridge = INBOUND_BRIDGE.read_text()
@@ -657,11 +661,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn('call_id = f"ha-{int(time.time() * 1000):x}"', self.source)
         self.assertIn(
             "len(browser_endpoint_ids) + len(attempts) < available_legs",
-            self.source,
+            self.conference_ringing,
         )
         self.assertIn(
             "if len(browser_endpoint_ids) + len(attempts) >= available_legs:",
-            self.source,
+            self.conference_ringing,
         )
         for relative in ("audio_ws_view.py", "video_ws_view.py"):
             view = (
@@ -988,7 +992,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ).read_text()
         self.assertIn("role: str", conference)
         self.assertIn('role="owner" if was_empty else "manual"', conference)
-        self.assertIn('role="auto_invited"', self.source)
+        self.assertIn('role="auto_invited"', self.conference_ringing)
         self.assertNotIn('await self.close(reason="owner_left")', conference)
         self.assertNotIn("self._owner_call_id", conference)
         self.assertIn("port_reservation: RtpPortReservation", conference)
