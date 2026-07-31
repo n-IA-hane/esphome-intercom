@@ -203,7 +203,7 @@ def test_p4_full_profile_is_audio_only_with_native_ha_camera() -> None:
         r".*?^  device: jpeg\n"
         r".*?^  resolution: 800x800\n"
         r".*?^  jpeg_quality: 10\n"
-        r".*?^  max_framerate: 10\n"
+        r".*?^  max_framerate: 5\n"
         r".*?^  rotation: 270\n",
         text,
     )

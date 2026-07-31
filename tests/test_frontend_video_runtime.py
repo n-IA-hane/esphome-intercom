@@ -48,7 +48,9 @@ def test_browser_probe_keeps_waits_light_and_bounded() -> None:
     assert "to_backend_cleanup_ms" in source
     assert "--auth-check-only" in source
     assert "--allow-dark-video" in source
+    assert "--expect-native-camera" in source
     assert "and not args.allow_dark_video" in source
+    assert 'shutil.which("chromium")' in source
     assert 'sample("authenticated_card_ready")' in source
     assert "['ringing','in_call'].includes" in source
     assert 'sample("incoming_progress")' in source
@@ -60,6 +62,11 @@ def test_browser_probe_keeps_waits_light_and_bounded() -> None:
     assert "call terminated before connection" in source
     assert "'transport_unreachable'" in source
     assert "terminal_reason: String(snapshot.terminal_reason || \"\")" in source
+    assert "native ESPHome camera was not mounted by the HA card" in source
+    assert "media_ready" in source
+    assert "browser audio TX dropped frames" in source
+    assert "browser audio playout dropped frames" in source
+    assert "browser audio playout underrun" in source
     start = source.split('START_OUTBOUND = r"""', 1)[1].split('"""', 1)[0]
     assert "Promise.resolve(card._startCall())" in start
     assert "await card._startCall()" not in start

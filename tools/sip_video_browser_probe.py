@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 import time
 from urllib.parse import urlsplit, urlunsplit
@@ -52,7 +53,7 @@ DEFAULT_STORAGE_STATE = _local_default(
     "PLAYWRIGHT_STORAGE_STATE",
     "ha_playwright_storage.json",
 )
-DEFAULT_CHROMIUM = os.environ.get("CHROMIUM_PATH", "")
+DEFAULT_CHROMIUM = os.environ.get("CHROMIUM_PATH", "") or shutil.which("chromium") or ""
 DEFAULT_REFRESH_CREDENTIALS = _local_default(
     "HA_PLAYWRIGHT_REFRESH_CREDENTIALS",
     "ha_home_auth.json",
@@ -201,6 +202,9 @@ CARD_SAMPLE = r"""
   const canvas = deep("canvas.video-canvas", card.shadowRoot || card)[0] || null;
   const nativeCameraHost = deep(".native-camera", root)[0] || null;
   const nativeCameraCard = nativeCameraHost?.querySelector?.(".native-camera-card") || null;
+  const nativeCameraMedia = nativeCameraCard
+    ? deep("img, video", nativeCameraCard.shadowRoot || nativeCameraCard)[0] || null
+    : null;
   const hangup = deep("button.hangup", root)[0] || null;
   const header = deep(".header", root)[0] || null;
   const stats = deep(".hangup-stats", root)[0] || null;
@@ -297,7 +301,15 @@ CARD_SAMPLE = r"""
       entity_id: String(card._nativeCameraEntityId || ""),
       host_hidden: Boolean(nativeCameraHost?.hidden),
       mounted: Boolean(nativeCameraCard),
+      mount_pending: Boolean(card._nativeCameraMountTask),
       card_tag: String(nativeCameraCard?.tagName || "").toLowerCase(),
+      entity_state: String(
+        card._hass?.states?.[card._nativeCameraEntityId || ""]?.state || ""
+      ),
+      media_tag: String(nativeCameraMedia?.tagName || "").toLowerCase(),
+      media_ready: Boolean(
+        Number(nativeCameraMedia?.naturalWidth || nativeCameraMedia?.videoWidth || 0) > 0
+      ),
       layout: rect(nativeCameraHost, surface),
     },
   };
@@ -612,6 +624,14 @@ def main() -> int:
         help="require a working browser audio call with no active video path",
     )
     parser.add_argument(
+        "--expect-native-camera",
+        action="store_true",
+        help=(
+            "require the audio-only peer's ESPHome camera to be mounted through "
+            "Home Assistant's native camera card"
+        ),
+    )
+    parser.add_argument(
         "--expect-video-reinvite",
         action="store_true",
         help="allow audio-only ringing and require video to appear after answer",
@@ -661,6 +681,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.expect_audio_only and (args.send_camera or args.deny_camera):
         parser.error("--expect-audio-only cannot be combined with camera options")
+    if args.expect_native_camera and not args.expect_audio_only:
+        parser.error("--expect-native-camera requires --expect-audio-only")
     if args.expect_remote_hangup and args.no_hangup:
         parser.error("--expect-remote-hangup cannot be combined with --no-hangup")
     if args.cancel_during_ring and not args.outbound:
@@ -1153,6 +1175,23 @@ def main() -> int:
                     timeout=int(args.video_timeout * 1000),
                     polling=100,
                 )
+                if args.expect_native_camera:
+                    page.wait_for_function(
+                        f"""() => {{
+                          const card = ({LIGHT_CARD_STATE})();
+                          const controller = globalThis.__voipStackProbeCard
+                            || globalThis.__voipStackProbeFindCard?.()
+                            || null;
+                          return Boolean(
+                            card?.card_state === 'in_call'
+                            && String(controller?._nativeCameraEntityId || '').startsWith('camera.')
+                            && controller?._nativeCameraCard
+                            && !controller?._els?.nativeCameraHost?.hidden
+                          );
+                        }}""",
+                        timeout=int(args.video_timeout * 1000),
+                        polling=100,
+                    )
             else:
                 page.wait_for_function(
                     f"() => {{ const x = ({LIGHT_CARD_STATE})(); const d = String(x?.video_direction || 'sendrecv'); const v = x?.engine_stats?.video || {{}}; const rx = !['recvonly','sendrecv'].includes(d) || (v.received > 0 && (v.rendered > 0 || x?.engine_video_visible)); const tx = {str(args.deny_camera).lower()} || !['sendonly','sendrecv'].includes(d) || v.sent > 0; return x?.engine_video_active && rx && tx; }}",
@@ -1169,14 +1208,32 @@ def main() -> int:
             else:
                 page.wait_for_timeout(int(args.hold_seconds * 1000))
             active = sample("video_flowing")
-            video_stats = (active.get("engine_stats") or {}).get("video") or {}
+            engine_stats = active.get("engine_stats") or {}
+            video_stats = engine_stats.get("video") or {}
+            if engine_stats.get("tx_dropped", 0) != 0:
+                raise RuntimeError(f"browser audio TX dropped frames: {active}")
+            if engine_stats.get("frames_drop", 0) != 0:
+                raise RuntimeError(f"browser audio playout dropped frames: {active}")
+            if engine_stats.get("underruns", 0) != 0:
+                raise RuntimeError(f"browser audio playout underrun: {active}")
             if args.expect_audio_only:
                 if active.get("video_active") or active.get("engine_video_active"):
                     raise RuntimeError(f"audio-only call unexpectedly attached video: {active}")
-                if (active.get("engine_stats") or {}).get("sent", 0) <= 0:
+                if engine_stats.get("sent", 0) <= 0:
                     raise RuntimeError(f"audio-only call did not transmit browser audio: {active}")
-                if (active.get("engine_stats") or {}).get("received", 0) <= 0:
+                if engine_stats.get("received", 0) <= 0:
                     raise RuntimeError(f"audio-only call did not receive SIP audio: {active}")
+                if args.expect_native_camera:
+                    native_camera = active.get("native_camera") or {}
+                    if (
+                        not str(native_camera.get("entity_id") or "").startswith("camera.")
+                        or native_camera.get("host_hidden")
+                        or not native_camera.get("mounted")
+                        or not native_camera.get("media_ready")
+                    ):
+                        raise RuntimeError(
+                            f"native ESPHome camera was not mounted by the HA card: {active}"
+                        )
             direction = str(active.get("video_direction") or "sendrecv")
             expects_receive = direction in {"recvonly", "sendrecv"}
             expects_send = direction in {"sendonly", "sendrecv"}
