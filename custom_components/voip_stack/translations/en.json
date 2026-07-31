@@ -22,20 +22,20 @@
         "assist_intents": "Register optional Assist handlers for call, hang up, answer and decline (\"Hey Jarvis, call Kitchen\"). Spoken contact names are resolved dynamically against the live VoIP phonebook.",
         "assist_endpoint_enabled": "Add a SIP extension backed directly by a Home Assistant Assist pipeline. No separate VoIP integration or SIP listener is required.",
           "debug_mode": "Enables detailed SIP/RTP/media diagnostics and logs. It also records private call audio automatically: up to 15 seconds per HA-softphone direction and 8 seconds per relay leg, stored as WAV/JSON in ~/.cache/voip_stack_debug (mode 0700) and pruned to 24 files / 64 MiB. Disable it after testing.",
-          "experimental_sip_video": "Let the Home Assistant softphone negotiate SIP video with compatible standard phones, softphones and door stations. H.264, VP8 and JPEG use a direct browser path. ESP audio endpoints remain audio-only. Requires HTTPS and a compatible browser.",
+          "experimental_sip_video": "Let the Home Assistant softphone negotiate SIP video with compatible standard phones, softphones and door stations. H.264, VP8 and JPEG use the browser media path. Standard ESP endpoints remain audio-only; qualified ESP32-P4 profiles can negotiate JPEG or H.264. Requires HTTPS and a compatible browser.",
           "sip_registrar_enabled": "Accept REGISTER from local SIP endpoints such as VoIP phones, Zoiper, Linphone or baresip using accounts managed by VoIP Stack services.",
           "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration, external route or DTMF collector starts."
         }
       },
       "video": {
         "title": "SIP video",
-        "description": "Video is optional and applies only to the Home Assistant softphone and standard SIP endpoints. ESP endpoints remain audio-only.",
+        "description": "Video is optional. The Home Assistant softphone and standard SIP endpoints support it, and qualified ESP32-P4 profiles can negotiate JPEG or H.264. Other ESP endpoints remain audio-only.",
         "data": {
           "video_transcoding_enabled": "Enable video transcoding",
           "video_camera_send_enabled": "Allow browser camera transmission"
         },
         "data_description": {
-          "video_transcoding_enabled": "Allow the HA softphone to use the available FFmpeg binary for receive-only H.263, H.263-1998 or H.265 video. Direct H.264, VP8 and JPEG never use it. Failure leaves the audio call running.",
+          "video_transcoding_enabled": "Allow the HA softphone to use the available FFmpeg binary for receive-only H.263, H.263-1998 or H.265 video. H.264 and VP8 remain direct. JPEG receive is direct; browser JPEG send may use one bounded FFmpeg normalizer when RFC 2435 requires it. Failure leaves the audio call running.",
           "video_camera_send_enabled": "Expose a Send Camera choice in the card. Each logical Home Assistant phone keeps its choice; camera permission remains local to each browser. Receiving video never requires camera access."
         }
       },

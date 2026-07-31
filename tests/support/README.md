@@ -1,4 +1,4 @@
-# VoIP Test Support
+# VoIP test support
 
 `voip_matrix.py` is the fast local SIP/PBX model used to validate broad call
 semantics before deploying to Home Assistant or ESP devices.

@@ -1,4 +1,4 @@
-# Third-Party Notices
+# Third-party notices
 
 Project-authored code in this repository is MIT-licensed unless a file states
 otherwise. ESPHome-derived runtime files retain ESPHome's GPLv3 terms; Python
@@ -7,7 +7,7 @@ and non-runtime files in those component families retain MIT terms.
 This file only records the third-party code or build-time dependencies that
 matter for normal source and firmware redistribution.
 
-## ESPHome-Derived Code
+## ESPHome-derived code
 
 ESPHome's license is included in `licenses/ESPHOME-LICENSE.txt`.
 
@@ -28,7 +28,7 @@ available.
 |---|---|---|
 | `esphome/components/esp_video_camera/` | Snapshot shared by GitHub user `Psix-anp`, derived from ESPHome PR 16944 and retaining `@youkorr` as code owner | ESPHome split license, GPLv3 for C/C++ runtime files and MIT for Python and other files. The published upstream `LICENSE` and `NOTICE` confirm the origin and terms. The complete ESPHome license is included in `licenses/ESPHOME-LICENSE.txt`; see `PROVENANCE.md`. |
 
-## Runtime Python Dependency
+## Runtime Python dependency
 
 | Dependency | Used by | License |
 |---|---|---|
@@ -37,7 +37,7 @@ available.
 `numpy` is installed by Home Assistant from the package index; it is not
 vendored in this repository.
 
-## IDF Component Manager Dependencies
+## IDF Component Manager dependencies
 
 ESP firmware builds may resolve these dependencies through ESPHome/ESP-IDF
 Component Manager. They are not vendored here; their upstream licenses apply.
@@ -56,7 +56,7 @@ Component Manager. They are not vendored here; their upstream licenses apply.
 Firmware using Espressif-restricted components is intended for Espressif
 products/SoCs.
 
-## Documentation Assets
+## Documentation assets
 
 Images and videos under `docs/images/` are project documentation assets unless
 a file-specific notice says otherwise.

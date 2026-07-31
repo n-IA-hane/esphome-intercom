@@ -24,13 +24,16 @@ dialog and browser audio remain active whenever audio negotiation succeeded.
 
 ## Capability matrix
 
-The direct browser path does not decode and re-encode video on the HA server:
+The browser path keeps H.264 and VP8 encoded media off the HA decoder. JPEG
+camera frames are encoded in a browser worker. If a browser emits Huffman
+tables that RFC 2435 cannot carry, HA lazily normalizes those JPEG frames with
+one bounded FFmpeg worker before RTP packetization.
 
 | Negotiated SIP codec | Receive in card | Send browser camera | Server transcode |
 | --- | --- | --- | --- |
 | H.264 Baseline, Main or High | Direct when supported by the browser | Direct for packetization mode 1 | No |
 | VP8 | Direct | Direct | No |
-| JPEG over RTP | Direct | No | No |
+| JPEG over RTP | Direct | Direct, with bounded normalization when required | Send normalization only when required |
 | H.263 | Optional | No | Receive-only to VP8 |
 | H.263-1998 / H.263-2000 | Optional | No | Receive-only to VP8 |
 | H.265 / HEVC | Optional | No | Receive-only to VP8 |
@@ -163,6 +166,10 @@ Direct camera path:
 ```text
 browser camera -> WebCodecs H.264/VP8 encoder -> authenticated HA WebSocket
                -> RTP packetizer -> SIP peer
+
+browser camera -> browser JPEG worker -> authenticated HA WebSocket
+               -> optional bounded JPEG normalizer -> RTP/JPEG packetizer
+               -> SIP peer
 ```
 
 Optional legacy-codec receive path:
@@ -210,7 +217,8 @@ informational, not legal advice.
 
 This profile does not claim support for:
 
-- video on ESPHome endpoints;
+- video on ESPHome endpoints other than the explicitly qualified ESP32-P4
+  profiles;
 - video through Assist, conference rooms or ring-group legs that traverse
   standard SIP/RTP endpoints (a local HA browser caller can retain direct
   browser video when another local browser phone wins the ring group);
@@ -233,11 +241,12 @@ stale updates preserve the previous media contract.
 
 ## Qualification
 
-The `2026.8.0` release passes **1102 tests plus 99 subtests**. SIP video has
-also been exercised on real browser-to-browser, HA-to-HA and video-capable
-trunk calls, including bidirectional media, re-INVITE and cleanup.
-Compatibility with a particular third-party phone or door station still
-depends on its exact codec, SDP and RTP behavior.
+SIP video is covered by the maintained test matrix and has been exercised on
+real browser-to-browser, HA-to-HA and video-capable trunk calls, including
+bidirectional media, re-INVITE and cleanup. Qualified ESP32-P4 JPEG and H.264
+profiles have also passed real incoming and outgoing bidirectional calls with
+clean teardown. Compatibility with a particular third-party phone or door
+station still depends on its exact codec, SDP and RTP behavior.
 
 The protocol work follows
 [RFC 3264 offer/answer](https://www.rfc-editor.org/rfc/rfc3264),

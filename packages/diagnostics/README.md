@@ -1,4 +1,4 @@
-# Diagnostics Packages
+# Diagnostics packages
 
 These packages expose production-safe Home Assistant diagnostic entities.
 
