@@ -24,6 +24,15 @@ SIP_PROFILE_TESTS = [
     "tests/test_sip_bridge.py",
     "tests/test_sip_tcp_profile.py",
 ]
+COMPILE_PROFILES = [
+    "yamls/voip-only/single-bus/generic-s3-voip.yaml",
+    "yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml",
+    "yamls/full-experience/single-bus/spotpear-ball-v2-full-afe.yaml",
+    "yamls/voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml",
+    "yamls/voip-only/single-bus/waveshare-p4-touch-videophone-h264.yaml",
+    "yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-jpeg-native-800.yaml",
+    "yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml",
+]
 
 
 def run(cmd: list[str]) -> None:
@@ -46,6 +55,7 @@ def main() -> int:
          "custom_components/voip_stack/websocket_api.py",
          "tools/sip_video_browser_probe.py",
          "tests/support/qualification_matrix.py"])
+    run([py, "-m", "ruff", "check", "custom_components", "scripts", "tests", "tools"])
     run([py, "-m", "pytest", "-q", *SIP_PROFILE_TESTS])
     run([py, "tests/test_device_resolver_sip.py"])
     run([py, "tests/test_frontend_card_contract.py"])
@@ -53,15 +63,17 @@ def main() -> int:
     run([py, "tests/test_qualification_matrix.py"])
     run([py, "tests/test_runtime_controller_target_model.py"])
     run([py, "tests/support/qualification_matrix.py", "--validate", "--summary"])
-    run(["node", "--check", "custom_components/voip_stack/frontend/voip-stack-card.js"])
-    run(["node", "--check", "custom_components/voip_stack/frontend/voip-stack-engine.js"])
-    run(["node", "--check", "custom_components/voip_stack/frontend/voip-stack-video.js"])
+    for module in sorted(
+        (ROOT / "custom_components/voip_stack/frontend").glob("*.js")
+    ):
+        run(["node", "--check", str(module.relative_to(ROOT))])
+    run(["./scripts/yaml_paths.sh", "check"])
     run(["git", "diff", "--check"])
 
     if args.compile_profiles:
         esphome = str(ROOT / ".venv/bin/esphome")
-        run([esphome, "compile", "yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml"])
-        run([esphome, "compile", "yamls/full-experience/single-bus/spotpear-ball-v2-full-afe.yaml"])
+        for profile in COMPILE_PROFILES:
+            run([esphome, "compile", profile])
     return 0
 
 

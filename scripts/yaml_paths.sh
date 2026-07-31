@@ -450,8 +450,12 @@ cmd_check() {
     local rel mode
     rel=$(realpath --relative-to="$root" "$f")
     mode=$(detect_mode "$f")
-    if [[ "$mode" == "mixed" || "$mode" == "unknown" ]]; then
+    if [[ "$mode" == "mixed" ]]; then
       log "FAIL: $rel ($mode)"
+      rc=1
+    elif [[ "$mode" == "unknown" ]] \
+      && grep -qE '^esphome:[[:space:]]*$' "$f"; then
+      log "FAIL: $rel (standalone YAML is not path-managed)"
       rc=1
     fi
     if grep -qE '^[[:space:]]*-[[:space:]]*!include[[:space:]]+' "$f"; then

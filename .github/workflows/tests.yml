@@ -34,5 +34,7 @@ jobs:
         run: >-
           find custom_components/voip_stack/frontend -name '*.js' -print0
           | xargs -0 -n1 node --check
+      - name: Check YAML source paths
+        run: ./scripts/yaml_paths.sh check
       - name: Run test suite
         run: python -m pytest tests/ -q
