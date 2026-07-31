@@ -68,6 +68,13 @@ INBOUND_SOFTPHONE = (
     / "inbound_routing"
     / "softphone.py"
 )
+INBOUND_BRIDGE = (
+    ROOT
+    / "custom_components"
+    / "voip_stack"
+    / "inbound_routing"
+    / "bridge.py"
+)
 
 
 class VoipBackendRouteContractTest(unittest.TestCase):
@@ -92,6 +99,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.ring_group = RING_GROUP_ORCHESTRATOR.read_text()
         cls.invite_router = INVITE_ROUTER.read_text()
         cls.inbound_softphone = INBOUND_SOFTPHONE.read_text()
+        cls.inbound_bridge = INBOUND_BRIDGE.read_text()
         spec = importlib.util.spec_from_file_location(
             "voip_stack_automation_routing_test", AUTOMATION_ROUTING
         )
@@ -318,6 +326,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertEqual(
             self.source.count("_attach_dtmf_event_bridge(")
             + self.invite_router.count("_attach_dtmf_event_bridge(")
+            + self.inbound_bridge.count("attach_dtmf_event_bridge(")
             + self.trunk_inbound_router.count("attach_dtmf_event_bridge(")
             + self.call_forwarder.count("_attach_dtmf_event_bridge(")
             + self.ring_group.count("_attach_dtmf_event_bridge("),
@@ -345,9 +354,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ]
         self.assertIn("target_endpoint.active_call_id", target_guard)
         self.assertIn("target_endpoint.active_call_id != invite.call_id", target_guard)
-        sip_route_start = source.index("logical_source_endpoint =")
-        sip_route = source[
-            sip_route_start : source.index("async def _finish_bridge", sip_route_start)
+        sip_route_start = self.inbound_bridge.index("logical_source_endpoint =")
+        sip_route = self.inbound_bridge[
+            sip_route_start : self.inbound_bridge.index(
+                "async def finish_bridge",
+                sip_route_start,
+            )
         ]
         self.assertIn("registry.claim_endpoint(", sip_route)
         self.assertIn('role="source"', sip_route)
@@ -420,7 +432,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("CallState.CONNECTING.value", route_requested_branch)
         self.assertIn("route_request=True", route_requested_branch)
         self.assertIn(
-            "await asyncio.wait_for(future, timeout=SIP_ROUTE_DECISION_TIMEOUT)",
+            "route_decision = await asyncio.wait_for(",
+            route_requested_branch,
+        )
+        self.assertIn(
+            "future, timeout=SIP_ROUTE_DECISION_TIMEOUT",
             route_requested_branch,
         )
 
@@ -537,17 +553,16 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("needs_key_frame = True", video_ws)
 
     def test_entryless_sip_uri_route_is_guarded_and_uses_fallback_uri(self) -> None:
-        start = self.invite_router.index("routeable_sip_target =")
-        bridge_path = self.invite_router[
-            start : self.invite_router.index(
-                "points_to_local_listener = sip_uri_targets_listener(", start
-            )
-        ]
+        bridge_path = self.inbound_bridge
         self.assertIn(
             "decision.entry is not None and decision.entry.sip_uri", bridge_path
         )
         self.assertIn(
-            "decision.entry is not None and not decision.entry.metadata.get",
+            "decision.entry is not None",
+            bridge_path,
+        )
+        self.assertIn(
+            'and not decision.entry.metadata.get("local_ha")',
             bridge_path,
         )
         self.assertIn(
@@ -560,6 +575,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         routing_sources = (
             self.source
             + self.invite_router
+            + self.inbound_bridge
             + self.trunk_inbound_router
             + self.call_forwarder
         )
@@ -614,13 +630,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.assertIn("except (ValueError, LocalCallStateError) as err:", view)
 
     def test_bridge_invite_does_not_register_after_caller_cancel(self) -> None:
-        start = self.invite_router.index("async def route_invite(")
-        generic_bridge = self.invite_router.index(
+        generic_bridge = self.inbound_bridge.index(
             "result = await client.invite(",
-            self.invite_router.index("decision_uri", start),
         )
-        bridge_path = self.invite_router[
-            generic_bridge : self.invite_router.index(
+        bridge_path = self.inbound_bridge[
+            generic_bridge : self.inbound_bridge.index(
                 'if result not in {"ringing", "in_call"}:', generic_bridge
             )
         ]
@@ -631,10 +645,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             'bucket["trunk_closed_calls"].discard(invite.call_id)', bridge_path
         )
         self.assertIn(
-            "await _close_client_and_release(client, bridge_ports, bye=True)", bridge_path
+            "await async_close_client_and_release(client, bridge_ports, bye=True)",
+            bridge_path,
         )
         self.assertIn(
-            'return SipInviteResult(\n                    487,\n                    "Request Terminated"',
+            'return SipInviteResult(\n            487,\n            "Request Terminated"',
             bridge_path,
         )
         self.assertNotIn(
@@ -1236,12 +1251,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.assertIn(f'"{field}",', terminal)
 
     def test_esp_origin_forward_to_same_source_host_is_rejected(self) -> None:
-        self.assertIn("and sip_endpoints_equal(", self.invite_router)
-        self.assertIn("invite.source_host,", self.invite_router)
-        self.assertIn("invite.source_port,", self.invite_router)
-        self.assertIn('SipInviteResult(486, "Busy Here"', self.invite_router)
+        self.assertIn("and sip_endpoints_equal(", self.inbound_bridge)
+        self.assertIn("invite.source_host,", self.inbound_bridge)
+        self.assertIn("invite.source_port,", self.inbound_bridge)
+        self.assertIn('"Busy Here"', self.inbound_bridge)
         self.assertIn(
-            "decline_reason=TerminalReason.BUSY.value", self.invite_router
+            "decline_reason=TerminalReason.BUSY.value", self.inbound_bridge
         )
 
     def test_local_loop_detection_uses_host_and_listener_port(self) -> None:
@@ -1644,7 +1659,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.invite_router.index(
                 "if (\n        registered_source"
             ) :
-            self.invite_router.index('route_action = str(route_decision.get("action")')
+            self.invite_router.index("route_action = (")
         ]
         self.assertIn("CallState.CONNECTING.value", route_branch)
         self.assertIn("route_request=True", route_branch)
@@ -1672,11 +1687,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_inbound_bridge_publishes_remote_ringing_with_direction(self) -> None:
-        bridge = self.invite_router[
-            self.invite_router.index('if result == "ringing":') :
-            self.invite_router.index(
-                "async def _finish_bridge",
-                self.invite_router.index('if result == "ringing":'),
+        bridge = self.inbound_bridge[
+            self.inbound_bridge.index('if result == "ringing":') :
+            self.inbound_bridge.index(
+                "async def finish_bridge",
+                self.inbound_bridge.index('if result == "ringing":'),
             )
         ]
         self.assertIn("CallState.REMOTE_RINGING.value", bridge)
@@ -1746,7 +1761,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.invite_router.index("resolved_callee = str(") :
         ]
         self.assertIn("callee=resolved_callee", route)
-        self.assertIn("peer_name=resolved_callee", route)
+        self.assertIn("peer_name=resolved_callee", self.inbound_bridge)
 
     def test_softphone_snapshot_exposes_video_rtp_diagnostics(self) -> None:
         websocket = WEBSOCKET_API.read_text()

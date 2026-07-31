@@ -12,6 +12,13 @@ ROOT = Path(__file__).resolve().parents[1]
 INIT = ROOT / "custom_components" / "voip_stack" / "__init__.py"
 ENDPOINT_RUNTIME = ROOT / "custom_components" / "voip_stack" / "endpoint_runtime.py"
 INVITE_ROUTER = ROOT / "custom_components" / "voip_stack" / "invite_router.py"
+INBOUND_BRIDGE = (
+    ROOT
+    / "custom_components"
+    / "voip_stack"
+    / "inbound_routing"
+    / "bridge.py"
+)
 RING_GROUP_ORCHESTRATOR = (
     ROOT / "custom_components" / "voip_stack" / "ring_group_orchestrator.py"
 )
@@ -137,12 +144,10 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("_set_sip_bridge_call_state(", body)
 
     def test_inbound_bridge_completion_does_not_mutate_ha_softphone(self) -> None:
-        body = _function_body(INVITE_ROUTER.read_text(), "route_invite")
-        bridge_path = body.split("routeable_sip_target =", 1)[1]
-        bridge_path = bridge_path.split(
-            "if not force_ha_softphone and decision.action is RouteAction.ANSWER_HA:",
-            1,
-        )[0]
+        bridge_path = _function_body(
+            INBOUND_BRIDGE.read_text(),
+            "route_sip_bridge",
+        )
         self.assertIn("_set_sip_bridge_call_state(", bridge_path)
         self.assertNotIn("_set_ha_softphone_call_state(", bridge_path)
 
