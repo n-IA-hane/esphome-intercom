@@ -1,6 +1,8 @@
 # Third-Party Notices
 
-Project code in this repository is MIT-licensed unless a file states otherwise.
+Project-authored code in this repository is MIT-licensed unless a file states
+otherwise. ESPHome-derived runtime files retain ESPHome's GPLv3 terms; Python
+and non-runtime files in those component families retain MIT terms.
 
 This file only records the third-party code or build-time dependencies that
 matter for normal source and firmware redistribution.
@@ -20,11 +22,11 @@ ESPHome's license is included in `licenses/ESPHOME-LICENSE.txt`.
 When rebasing a fork, update its `UPSTREAM.md` and keep the ESPHome license
 available.
 
-## Contributed Camera Component
+## Contributed camera component
 
-| Local path | Origin | License status |
+| Local path | Origin | License |
 |---|---|---|
-| `esphome/components/esp_video_camera/` | Snapshot shared by GitHub user `Psix-anp`, derived from ESPHome PR 16944 and retaining `@youkorr` as code owner | The shared attachment had no standalone license or source history. See `PROVENANCE.md`; confirm both with the contributor before external redistribution. |
+| `esphome/components/esp_video_camera/` | Snapshot shared by GitHub user `Psix-anp`, derived from ESPHome PR 16944 and retaining `@youkorr` as code owner | ESPHome split license, GPLv3 for C/C++ runtime files and MIT for Python and other files. The published upstream `LICENSE` and `NOTICE` confirm the origin and terms. The complete ESPHome license is included in `licenses/ESPHOME-LICENSE.txt`; see `PROVENANCE.md`. |
 
 ## Runtime Python Dependency
 

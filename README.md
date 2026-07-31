@@ -40,7 +40,7 @@ phonebook. Each room phone still has its own identity and call state._
 
 | Goal | What VoIP Stack provides | Start here |
 |---|---|---|
-| Video doorbell | A SIP video door station can ring a browser phone in a dashboard or Companion app. ESP members in the same system remain audio-only. | [SIP video](docs/SIP_VIDEO.md) · [door-station recipe](#door-station-and-unanswered-calls) |
+| Video doorbell | A SIP video door station can ring a browser phone in a dashboard or Companion app. Standard ESP profiles remain audio-only; qualified ESP32-P4 profiles can also send and receive SIP video. | [SIP video](docs/SIP_VIDEO.md) · [door-station recipe](#door-station-and-unanswered-calls) |
 | Room-to-room calls | Create a logical HA phone and dedicated dashboard view for each kiosk or tablet. Calls may be private audio or video. | [Logical phones](#logical-home-assistant-phones) |
 | ESP room phones | Flash one maintained VoIP YAML per room. ESPs can call names and extensions from the shared phonebook. | [Deployment guide](docs/DEPLOYMENT_GUIDE.md) |
 | Existing SIP equipment | Register Zoiper, Linphone, baresip, an IP phone or an ATA directly to HA. | [Local accounts](docs/SERVICES.md#local-sip-endpoint-account-services) |
@@ -149,9 +149,11 @@ separate user mode.
 | `speaker_only` | speaker RX | Paging or announcement target |
 
 An endpoint must have at least one real media direction. ESP VoIP intentionally
-uses uncompressed PCM on its local leg and remains audio-only. HA performs
-format conversion when a standard SIP peer negotiates another supported audio
-codec; ESP firmware is not downgraded to a telephone codec for that purpose.
+uses uncompressed PCM for audio. Standard profiles are audio-only; qualified
+ESP32-P4 videophone profiles compile exactly one video codec, JPEG or H.264.
+HA performs format conversion when a standard SIP peer negotiates another
+supported audio codec; ESP firmware is not downgraded to a telephone codec for
+that purpose.
 
 The maintained full-experience profiles share one processed post-AEC microphone
 surface between VoIP, Micro Wake Word and Voice Assistant. Music, TTS, ringtone
@@ -179,7 +181,9 @@ Receiving video does not require camera permission. Sending the browser camera
 is a separate persisted phone setting and still requires browser permission.
 Audio remains usable when video is unavailable or deliberately disabled.
 
-ESP endpoints and audio conferences remain audio-only. Video compatibility
+Audio-only ESP endpoints and audio conferences remain audio-only. Qualified
+ESP32-P4 videophone profiles can negotiate RTP/JPEG or H.264 directly, while
+the full P4 profile supports bidirectional RTP/JPEG. Video compatibility
 depends on the actual offer/answer, packetization and browser decoder, not only
 on a codec name printed on a product page.
 

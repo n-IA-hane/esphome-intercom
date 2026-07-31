@@ -2,7 +2,9 @@
 
 VoIP Stack can optionally turn the Home Assistant softphone card into a SIP
 video phone for standard SIP phones, softphones and door stations. SIP video
-is a supported `2026.8.0` capability. ESPHome endpoints remain audio-only.
+is a supported `2026.8.0` capability. Standard ESPHome profiles remain
+audio-only. Qualified ESP32-P4 profiles can send and receive RTP/JPEG or H.264
+video without changing the audio contract.
 
 Video is disabled by default and does not alter an audio-only installation.
 Open the VoIP Stack integration, choose **Reconfigure**, then enable
@@ -33,6 +35,26 @@ The direct browser path does not decode and re-encode video on the HA server:
 | H.263-1998 / H.263-2000 | Optional | No | Receive-only to VP8 |
 | H.265 / HEVC | Optional | No | Receive-only to VP8 |
 | Audio-only or unsupported video | Audio continues | No | No |
+
+## ESP32-P4 video endpoints
+
+P4 video is compile-gated. A firmware includes exactly one SIP video codec:
+
+- the VoIP-only JPEG profile uses the hardware JPEG camera path and the P4 JPEG
+  decoder;
+- the VoIP-only H.264 profile uses the P4 hardware encoder and the maintained
+  receive decoder path;
+- the full-experience SIP profile uses JPEG so video can coexist with AFE,
+  Voice Assistant, Micro Wake Word and the landscape UI.
+
+The native-camera full profile is a separate one-way case. It publishes the
+standard ESPHome camera entity to Home Assistant while its SIP call remains
+audio-only. Home Assistant renders that camera through the normal camera
+platform rather than treating it as negotiated SIP video.
+
+Do not enable both JPEG and H.264 in one P4 firmware. The YAML codec choice
+gates the unused source, decoder, buffers and managed libraries at compile
+time.
 
 The profile supports:
 

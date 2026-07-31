@@ -122,19 +122,23 @@ Public YAMLs ship with `logger.level: INFO`. INFO covers all user-visible call-l
 
 Waveshare P4 Touch YAMLs build and boot with the maintained audio/LVGL state
 model, FD high-perf AFE defaults and the current ESPHome/ESP-Hosted baseline.
-The landscape full profile has been field-tested with hosted Wi-Fi, phonebook
-sync and VoIP calls, but audio playback still needs follow-up tuning for
-occasional glitches. Treat P4 as a hardware-specific target: hosted Wi-Fi/SDIO
-firmware, LVGL/PPA, media/TTS transport behavior and task scheduling matter
-more on P4 than on compact S3 boards.
+The following profiles have distinct, qualified media roles:
 
-The experimental
-[`waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml`](full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml)
-profile combines SIP JPEG video, dual-microphone AFE and the full runtime.
-Those workloads are difficult to run concurrently with Micro Wake Word, so the
-profile suspends an enabled Wake Word switch only while negotiated video media
-is active. It restores the user's previous switch state when video ends.
-Audio-only calls leave Wake Word unchanged.
+- [`waveshare-p4-touch-full-afe-landscape-jpeg-native-800.yaml`](full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-jpeg-native-800.yaml)
+  keeps SIP audio-only and publishes the native ESPHome camera to Home
+  Assistant;
+- [`waveshare-p4-touch-videophone-jpeg.yaml`](voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml)
+  is the lightweight bidirectional RTP/JPEG videophone;
+- [`waveshare-p4-touch-videophone-h264.yaml`](voip-only/single-bus/waveshare-p4-touch-videophone-h264.yaml)
+  is the lightweight bidirectional H.264 videophone;
+- [`waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml`](full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml)
+  combines bidirectional RTP/JPEG, dual-microphone AFE and the full runtime.
+
+The full SIP/JPEG profile suspends an enabled Wake Word switch only while
+negotiated video media is active, then restores the user's previous state.
+Audio-only calls leave Wake Word unchanged. Treat P4 as a hardware-specific
+target: hosted Wi-Fi/SDIO firmware, LVGL/PPA, media transport and task
+scheduling matter more on P4 than on compact S3 boards.
 
 If a P4 target resets, hangs, or loses Wi-Fi under media/TTS streaming, update
 the on-board ESP32-C6 hosted Wi-Fi firmware before chasing audio bugs. The
