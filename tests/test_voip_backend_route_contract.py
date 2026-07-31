@@ -75,6 +75,13 @@ INBOUND_BRIDGE = (
     / "inbound_routing"
     / "bridge.py"
 )
+INBOUND_LOCAL = (
+    ROOT
+    / "custom_components"
+    / "voip_stack"
+    / "inbound_routing"
+    / "local.py"
+)
 
 
 class VoipBackendRouteContractTest(unittest.TestCase):
@@ -100,6 +107,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.invite_router = INVITE_ROUTER.read_text()
         cls.inbound_softphone = INBOUND_SOFTPHONE.read_text()
         cls.inbound_bridge = INBOUND_BRIDGE.read_text()
+        cls.inbound_local = INBOUND_LOCAL.read_text()
         spec = importlib.util.spec_from_file_location(
             "voip_stack_automation_routing_test", AUTOMATION_ROUTING
         )
@@ -666,9 +674,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ]
         self.assertNotIn("RouteAction.GROUP", routeable)
         self.assertIn("if decision.action is RouteAction.GROUP:", on_invite)
-        self.assertIn("ring_endpoint_ids = tuple(", on_invite)
-        self.assertIn("_browser_leg_for_member(", on_invite)
-        self.assertIn("ring_endpoint_ids=ring_endpoint_ids", on_invite)
+        self.assertIn("return await route_local_group(", on_invite)
+        self.assertIn("ring_endpoint_ids = tuple(", self.inbound_local)
+        self.assertIn("runtime.browser_leg_for_member(", self.inbound_local)
+        self.assertIn("ring_endpoint_ids=ring_endpoint_ids", self.inbound_local)
         self.assertIn("async def _ring_conference_members_from_ha", self.source)
         self.assertIn(
             'hass.data.setdefault(DOMAIN, {})["async_ring_conference_members"] = _ring_conference_members_from_ha',
@@ -676,14 +685,14 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         self.assertIn("caller=_ha_peer_name(hass)", self.source)
         self.assertIn("source_host=local_ip", self.source)
-        self.assertIn("_ring_conference_members(", on_invite)
+        self.assertIn("runtime.ring_conference_members(", self.inbound_local)
         self.assertIn(
-            "_run_ring_group_call(invite, decision.entry, peers, roster_entries)",
-            on_invite,
+            "runtime.run_ring_group_call(",
+            self.inbound_local,
         )
         self.assertIn(
             'return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)',
-            on_invite,
+            self.inbound_local,
         )
 
     def test_ha_softphone_runtime_settings_publish_virtual_endpoint(self) -> None:
@@ -1431,11 +1440,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         override = on_invite[on_invite.index("fallback_destination =") :]
         group_dispatch = override[
             override.index("if decision.action is RouteAction.GROUP:") :
-            override.index('return SipInviteResult(480, "Temporarily Unavailable"')
+            override.index('    _LOGGER.info(\n        "Inbound route selected')
         ]
-        self.assertIn("_run_ring_group_call(", group_dispatch)
-        self.assertIn("conference_manager(", group_dispatch)
-        self.assertIn("replace(\n                            invite,", group_dispatch)
+        self.assertIn("return await route_local_group(", group_dispatch)
+        self.assertIn("runtime.run_ring_group_call(", self.inbound_local)
+        self.assertIn("conference_manager(", self.inbound_local)
+        self.assertIn("routed_invite = replace(", group_dispatch)
 
     def test_ha_origin_ring_group_uses_local_media_without_sip_answer(self) -> None:
         ring_group = self.ring_group

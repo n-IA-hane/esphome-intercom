@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any, Callable
 from homeassistant.core import HomeAssistant
 
 from . import sdp as sip_sdp
-from .call_registry import TERMINAL_STATES
 from .call_scope import pending_routes as _pending_routes
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
@@ -30,9 +29,7 @@ from .const import (
     DOMAIN,
     TRUNK_INBOUND_MODE_DTMF,
 )
-from .conference import conference_manager
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
-from .endpoint_registry import EndpointBusyError
 from .endpoint_routing import (
     peer_audio_formats as _peer_audio_formats,
     peer_for_target as _peer_for_target,
@@ -42,10 +39,9 @@ from .endpoint_routing import (
 from .fsm import (
     CallState,
     TerminalReason,
-    sip_public_state as _sip_public_state,
 )
-from .groups import GROUP_TYPE_CONFERENCE, GROUP_TYPE_RING
 from .inbound_routing.bridge import route_sip_bridge
+from .inbound_routing.local import route_local_assist, route_local_group
 from .inbound_routing.softphone import (
     answer_inbound_ha_softphone,
     defer_browser_softphone_invite,
@@ -132,18 +128,8 @@ async def route_invite(
     _ha_router_decision = runtime.ha_router_decision
     _inbound_route_decision = runtime.inbound_route_decision
     _async_build_peer_snapshot = runtime.build_peer_snapshot
-    _attach_client_media_update = runtime.attach_client_media_update
-    _browser_leg_for_member = runtime.browser_leg_for_member
     _defer_invite_to_ha_softphone = runtime.defer_invite_to_softphone
-    _enable_reused_sip_tcp_connection = runtime.enable_reused_sip_tcp_connection
-    _on_conference_inbound_timeout = runtime.on_conference_inbound_timeout
-    _ring_conference_members = runtime.ring_conference_members
-    _run_ring_group_call = runtime.run_ring_group_call
     _run_trunk_inbound_route_guarded = runtime.run_trunk_inbound_route_guarded
-    _sip_send_final_response = runtime.send_final_response
-    _sip_uri_transport = runtime.sip_uri_transport
-    _start_local_assist_bridge = runtime.start_local_assist_bridge
-    _terminate_sip_bridge = runtime.terminate_sip_bridge
     peers = await _async_build_peer_snapshot(hass)
     caller_identity = str(
         (invite.caller_uri.user if invite.caller_uri is not None else "")
@@ -278,214 +264,33 @@ async def route_invite(
             to_tag="",
             decline_reason="capacity_exhausted",
         )
-    if decision.action is RouteAction.ASSIST and any(
-        session.route_kind == RouteAction.ASSIST.value
-        and session.state not in TERMINAL_STATES
-        for session in registry.sessions.values()
-    ):
-        return SipInviteResult(
-            486, "Busy Here", to_tag="", decline_reason=TerminalReason.BUSY.value
-        )
     if decision.action is RouteAction.ASSIST:
-        if (
-            source_endpoint is not None
-            and source_endpoint.kind is not EndpointKind.BROWSER
-        ):
-            registry.upsert(
-                invite.call_id,
-                state=CallState.CONNECTING.value,
-                owner="router",
-                caller=invite.caller,
-                callee=invite.target,
-                route_kind=RouteAction.ASSIST.value,
-                source_endpoint_id=source_endpoint.endpoint_id,
-            )
-            try:
-                registry.claim_endpoint(
-                    invite.call_id,
-                    source_endpoint.endpoint_id,
-                    role="source",
-                    adopt_transport=True,
-                )
-            except EndpointBusyError:
-                registry.finish_and_pop(
-                    invite.call_id,
-                    reason=TerminalReason.BUSY.value,
-                    state=CallState.BUSY.value,
-                )
-                return SipInviteResult(
-                    486,
-                    "Busy Here",
-                    to_tag="",
-                    decline_reason=TerminalReason.BUSY.value,
-                )
-        try:
-            assist_ports = RtpPortReservation.allocate(hass)
-        except RuntimeError as err:
-            _LOGGER.warning("Assist RTP port allocation failed: %s", err)
-            registry.finish_and_pop(
-                invite.call_id,
-                reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-                state=CallState.TRANSPORT_UNREACHABLE.value,
-            )
-            return SipInviteResult(503, "Service Unavailable", to_tag="")
-        assist_rtp_port = assist_ports.ports[0]
-        try:
-            await _start_local_assist_bridge(
-                invite,
-                reservation=assist_ports,
-                local_rtp_port=assist_rtp_port,
-                roster_entries=roster_entries,
-                source="sip",
-                called_extension=str(decision.entry.extension or invite.target)
-                if decision.entry is not None
-                else invite.target,
-            )
-        except Exception:
-            _LOGGER.exception("Assist bridge failed call_id=%s", invite.call_id)
-            assist_ports.release()
-            registry.finish_and_pop(
-                invite.call_id,
-                reason=TerminalReason.PROTOCOL_ERROR.value,
-                state=CallState.TRANSPORT_UNREACHABLE.value,
-            )
-            return SipInviteResult(
-                500,
-                "Server Internal Error",
-                to_tag="",
-                decline_reason=TerminalReason.PROTOCOL_ERROR.value,
-            )
-        answer = build_answer_directional(
-            local_ip,
-            local_ip,
-            assist_rtp_port,
-            invite.send_format,
-            invite.recv_format,
-            remote_sdp=invite.remote_sdp,
-        )
-        return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")
-    if decision.action is RouteAction.GROUP:
-        if (
-            source_endpoint is not None
-            and source_endpoint.kind is not EndpointKind.BROWSER
-        ):
-            registry.upsert(
-                invite.call_id,
-                state=CallState.RINGING.value,
-                owner="router",
-                caller=invite.caller,
-                callee=invite.target,
-                route_kind=RouteAction.GROUP.value,
-                source_endpoint_id=source_endpoint.endpoint_id,
-            )
-            try:
-                registry.claim_endpoint(
-                    invite.call_id,
-                    source_endpoint.endpoint_id,
-                    role="source",
-                    adopt_transport=True,
-                )
-            except EndpointBusyError:
-                registry.finish_and_pop(
-                    invite.call_id,
-                    reason=TerminalReason.BUSY.value,
-                    state=CallState.BUSY.value,
-                )
-                return SipInviteResult(
-                    486,
-                    "Busy Here",
-                    to_tag="",
-                    decline_reason=TerminalReason.BUSY.value,
-                )
-        group_type = (
-            str((decision.entry.metadata or {}).get("group_type") or "")
+        called_extension = (
+            str(decision.entry.extension or invite.target)
             if decision.entry is not None
-            else ""
+            else invite.target
         )
-        if group_type == GROUP_TYPE_CONFERENCE:
-            ring_members = [
-                str(member).strip()
-                for member in (
-                    (decision.entry.metadata or {}).get("ring_members") or []
-                )
-            ]
-            ring_endpoint_ids = tuple(
-                leg.endpoint_id
-                for member in ring_members
-                if (leg := _browser_leg_for_member(member, peers, roster_entries))
-                is not None
-                and leg.endpoint_id != source_endpoint_id
-            )
-            result = await conference_manager(
-                hass,
-                local_ip=local_ip,
-                on_inbound_timeout=_on_conference_inbound_timeout,
-            ).join(
-                invite,
-                decision.entry,
-                ring_endpoint_ids=ring_endpoint_ids,
-            )
-            if result.status == 200:
-                registry.upsert(
-                    invite.call_id,
-                    state=CallState.IN_CALL.value,
-                    owner="bridge",
-                    caller=invite.caller,
-                    callee=invite.target,
-                    route_kind=GROUP_TYPE_CONFERENCE,
-                )
-                registry.add_leg(
-                    invite.call_id,
-                    invite.call_id,
-                    role="caller",
-                    state=CallState.IN_CALL.value,
-                )
-                create_runtime_task(
-                    hass,
-                    _ring_conference_members(
-                        room_name=str(
-                            decision.entry.name or decision.entry.id or invite.target
-                        ),
-                        caller=invite.caller,
-                        source_host=invite.source_host,
-                        entry=decision.entry,
-                        peers=peers,
-                        roster_entries=roster_entries,
-                        owner_call_id=invite.call_id,
-                    ),
-                )
-            else:
-                registry.finish_and_pop(
-                    invite.call_id,
-                    reason=result.decline_reason
-                    or TerminalReason.TRANSPORT_UNREACHABLE.value,
-                    state=_sip_public_state(
-                        result.decline_reason
-                        or TerminalReason.TRANSPORT_UNREACHABLE.value
-                    ),
-                )
-            return result
-        if group_type == GROUP_TYPE_RING and decision.entry is not None:
-            registry.upsert(
-                invite.call_id,
-                state=CallState.RINGING.value,
-                owner="router",
-                caller=invite.caller,
-                callee=invite.target,
-                route_kind=GROUP_TYPE_RING,
-            )
-            registry.add_leg(
-                invite.call_id,
-                invite.call_id,
-                role="caller",
-                state=CallState.RINGING.value,
-            )
-            create_runtime_task(
-                hass,
-                _run_ring_group_call(invite, decision.entry, peers, roster_entries),
-            )
-            return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)
-        return SipInviteResult(480, "Temporarily Unavailable", to_tag="")
+        return await route_local_assist(
+            runtime=runtime,
+            invite=invite,
+            decision=decision,
+            roster_entries=roster_entries,
+            source_endpoint=source_endpoint,
+            registry=registry,
+            source="sip",
+            called_extension=called_extension,
+        )
+    if decision.action is RouteAction.GROUP:
+        return await route_local_group(
+            runtime=runtime,
+            invite=invite,
+            decision=decision,
+            peers=peers,
+            roster_entries=roster_entries,
+            source_endpoint=source_endpoint,
+            source_endpoint_id=source_endpoint_id,
+            registry=registry,
+        )
     if trunk_invite:
         trunk_cfg = _get_trunk_config(hass)
         dtmf_timeout_ms = max(0, int(trunk_cfg.get(CONF_TRUNK_DTMF_TIMEOUT_MS) or 0))
@@ -801,158 +606,37 @@ async def route_invite(
         # shortcut. Re-enter the canonical PBX dispatcher for destination
         # types that were resolved before the automation window.
         if decision.action is RouteAction.ASSIST:
-            try:
-                assist_ports = RtpPortReservation.allocate(hass)
-            except RuntimeError as err:
-                _LOGGER.warning("Assist RTP port allocation failed: %s", err)
-                return SipInviteResult(503, "Service Unavailable", to_tag="")
-            assist_rtp_port = assist_ports.ports[0]
-            try:
-                await _start_local_assist_bridge(
-                    invite,
-                    reservation=assist_ports,
-                    local_rtp_port=assist_rtp_port,
-                    roster_entries=roster_entries,
-                    source="trunk" if trunk_invite else "sip",
-                    called_extension=str(decision.entry.extension or route_destination)
-                    if decision.entry is not None
-                    else route_destination,
-                )
-            except Exception:
-                _LOGGER.exception("Assist bridge failed call_id=%s", invite.call_id)
-                assist_ports.release()
-                return SipInviteResult(
-                    500,
-                    "Server Internal Error",
-                    to_tag="",
-                    decline_reason=TerminalReason.PROTOCOL_ERROR.value,
-                )
-            answer = build_answer_directional(
-                local_ip,
-                local_ip,
-                assist_rtp_port,
-                invite.send_format,
-                invite.recv_format,
-                remote_sdp=invite.remote_sdp,
+            called_extension = (
+                str(decision.entry.extension or route_destination)
+                if decision.entry is not None
+                else route_destination
             )
-            return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")
+            return await route_local_assist(
+                runtime=runtime,
+                invite=invite,
+                decision=decision,
+                roster_entries=roster_entries,
+                source_endpoint=source_endpoint,
+                registry=registry,
+                source="trunk" if trunk_invite else "sip",
+                called_extension=called_extension,
+            )
 
         if decision.action is RouteAction.GROUP:
-            group_type = (
-                str((decision.entry.metadata or {}).get("group_type") or "")
-                if decision.entry is not None
-                else ""
+            routed_invite = replace(
+                invite,
+                target=decision.target or route_destination,
             )
-            if group_type == GROUP_TYPE_RING and decision.entry is not None:
-                registry.upsert(
-                    invite.call_id,
-                    state=CallState.RINGING.value,
-                    owner="router",
-                    caller=invite.caller,
-                    callee=decision.target or route_destination,
-                    route_kind=GROUP_TYPE_RING,
-                    source_endpoint_id=source_endpoint_id,
-                )
-                if source_endpoint is not None:
-                    try:
-                        registry.claim_endpoint(
-                            invite.call_id,
-                            source_endpoint.endpoint_id,
-                            role="source",
-                            adopt_transport=True,
-                        )
-                    except EndpointBusyError:
-                        registry.finish_and_pop(
-                            invite.call_id,
-                            reason=TerminalReason.BUSY.value,
-                            state=CallState.BUSY.value,
-                        )
-                        return SipInviteResult(
-                            486,
-                            "Busy Here",
-                            to_tag="",
-                            decline_reason=TerminalReason.BUSY.value,
-                        )
-                registry.add_leg(
-                    invite.call_id,
-                    invite.call_id,
-                    role="caller",
-                    state=CallState.RINGING.value,
-                )
-                create_runtime_task(
-                    hass,
-                    _run_ring_group_call(
-                        replace(
-                            invite,
-                            target=decision.target or route_destination,
-                        ),
-                        decision.entry,
-                        peers,
-                        roster_entries,
-                    ),
-                )
-                return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)
-            if group_type == GROUP_TYPE_CONFERENCE and decision.entry is not None:
-                ring_members = [
-                    str(member).strip()
-                    for member in (
-                        (decision.entry.metadata or {}).get("ring_members") or []
-                    )
-                ]
-                ring_endpoint_ids = tuple(
-                    leg.endpoint_id
-                    for member in ring_members
-                    if (leg := _browser_leg_for_member(member, peers, roster_entries))
-                    is not None
-                    and leg.endpoint_id != source_endpoint_id
-                )
-                routed_invite = replace(
-                    invite,
-                    target=decision.target or route_destination,
-                )
-                result = await conference_manager(
-                    hass,
-                    local_ip=local_ip,
-                    on_inbound_timeout=_on_conference_inbound_timeout,
-                ).join(
-                    routed_invite,
-                    decision.entry,
-                    ring_endpoint_ids=ring_endpoint_ids,
-                )
-                if result.status == 200:
-                    registry.upsert(
-                        invite.call_id,
-                        state=CallState.IN_CALL.value,
-                        owner="bridge",
-                        caller=invite.caller,
-                        callee=routed_invite.target,
-                        route_kind=GROUP_TYPE_CONFERENCE,
-                        source_endpoint_id=source_endpoint_id,
-                    )
-                    registry.add_leg(
-                        invite.call_id,
-                        invite.call_id,
-                        role="caller",
-                        state=CallState.IN_CALL.value,
-                    )
-                    create_runtime_task(
-                        hass,
-                        _ring_conference_members(
-                            room_name=str(
-                                decision.entry.name
-                                or decision.entry.id
-                                or routed_invite.target
-                            ),
-                            caller=invite.caller,
-                            source_host=invite.source_host,
-                            entry=decision.entry,
-                            peers=peers,
-                            roster_entries=roster_entries,
-                            owner_call_id=invite.call_id,
-                        ),
-                    )
-                return result
-            return SipInviteResult(480, "Temporarily Unavailable", to_tag="")
+            return await route_local_group(
+                runtime=runtime,
+                invite=routed_invite,
+                decision=decision,
+                peers=peers,
+                roster_entries=roster_entries,
+                source_endpoint=source_endpoint,
+                source_endpoint_id=source_endpoint_id,
+                registry=registry,
+            )
 
     _LOGGER.info(
         "Inbound route selected call_id=%s source=%s destination=%s fallback=%s",
