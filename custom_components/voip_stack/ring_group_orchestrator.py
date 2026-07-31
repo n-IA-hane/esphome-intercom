@@ -43,6 +43,8 @@ from .outbound_attempts import (
 from .pbx_routing import unique_group_members as _unique_group_members
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .ring_group import (
+    publish_browser_candidates_ringing as _publish_browser_candidates_ringing,
+    publish_ring_group_origin_state as _publish_ring_group_origin_state,
     settle_browser_candidates as _settle_ring_browser_candidates,
 )
 from .ring_group_candidates import (
@@ -268,51 +270,19 @@ async def run_ring_group_call(
         "declined_endpoint_ids": set(),
     }
     try:
-        if browser_legs:
-            registry.upsert(
-                invite.call_id,
-                state=CallState.RINGING.value,
-                owner="ha_softphone",
-                caller=invite.caller,
-                callee=entry.display_name,
-                route_kind=GROUP_TYPE_RING,
-                endpoint_id=(origin_endpoint_id if ha_origin else ""),
-                source_endpoint_id=source_endpoint_id,
-                ring_endpoint_ids=tuple(
-                    leg.endpoint_id for leg in browser_legs
-                ),
-                media_client_id=origin_media_client_id,
-            )
-            for browser_leg in browser_legs:
-                registry.add_leg(
-                    invite.call_id,
-                    f"browser:{browser_leg.endpoint_id}",
-                    role="ha_softphone",
-                    state=CallState.RINGING.value,
-                )
-                _set_ha_softphone_call_state(
-                    hass,
-                    CallState.RINGING.value,
-                    endpoint_id=browser_leg.endpoint_id,
-                    session_device_id=browser_leg.device_id,
-                    caller=invite.caller,
-                    callee=entry.display_name,
-                    peer_name=invite.caller,
-                    direction="incoming",
-                    call_id=invite.call_id,
-                    selected_tx_format=(
-                        invite.send_format.audio_format.wire_token()
-                    ),
-                    selected_rx_format=(
-                        invite.recv_format.audio_format.wire_token()
-                    ),
-                    selected_tx_rtp_format=invite.send_format.wire_token(),
-                    selected_rx_rtp_format=invite.recv_format.wire_token(),
-                    audio_mode="full_duplex",
-                    route_kind=GROUP_TYPE_RING,
-                    sip_status_code=180,
-                    last_sip_event="INVITE",
-                )
+        _publish_browser_candidates_ringing(
+            hass,
+            registry,
+            browser_legs,
+            invite=invite,
+            callee=entry.display_name,
+            route_kind=GROUP_TYPE_RING,
+            origin_endpoint_id=(
+                origin_endpoint_id if ha_origin else ""
+            ),
+            source_endpoint_id=source_endpoint_id,
+            origin_media_client_id=origin_media_client_id,
+        )
     except asyncio.CancelledError:
         _pending_routes(hass).pop(invite.call_id, None)
         _settle_browser_candidates(
@@ -353,24 +323,22 @@ async def run_ring_group_call(
         return
     if not attempts and not browser_legs and not preflight_failures:
         _pending_routes(hass).pop(invite.call_id, None)
-        if ha_origin:
-            _set_ha_softphone_call_state(
-                hass,
-                CallState.TRANSPORT_UNREACHABLE.value,
-                endpoint_id=origin_endpoint_id,
-                session_device_id=origin_device_id,
-                caller=origin_name,
-                callee=entry.display_name,
-                peer_name=entry.display_name,
-                direction="outgoing",
-                call_id=invite.call_id,
-                reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-                terminal_reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-                origin="remote",
-                sip_status_code=480,
-                last_sip_event="SIP_RESPONSE",
-                route_kind=GROUP_TYPE_RING,
-            )
+        _publish_ring_group_origin_state(
+            hass,
+            enabled=ha_origin,
+            state=CallState.TRANSPORT_UNREACHABLE.value,
+            endpoint_id=origin_endpoint_id,
+            device_id=origin_device_id,
+            caller=origin_name,
+            callee=entry.display_name,
+            peer_name=entry.display_name,
+            call_id=invite.call_id,
+            reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
+            origin="remote",
+            route_kind=GROUP_TYPE_RING,
+            last_sip_event="SIP_RESPONSE",
+            sip_status_code=480,
+        )
         _sip_send_final_response(
             hass,
             invite.call_id,
@@ -572,24 +540,22 @@ async def run_ring_group_call(
             status_code, sip_reason, terminal_reason, public_state = (
                 _sip_failure_response(final_result)
             )
-            if ha_origin:
-                _set_ha_softphone_call_state(
-                    hass,
-                    public_state,
-                    endpoint_id=origin_endpoint_id,
-                    session_device_id=origin_device_id,
-                    caller=origin_name,
-                    callee=entry.display_name,
-                    peer_name=entry.display_name,
-                    direction="outgoing",
-                    call_id=invite.call_id,
-                    reason=terminal_reason,
-                    terminal_reason=terminal_reason,
-                    origin="remote",
-                    sip_status_code=status_code,
-                    last_sip_event="SIP_RESPONSE",
-                    route_kind=GROUP_TYPE_RING,
-                )
+            _publish_ring_group_origin_state(
+                hass,
+                enabled=ha_origin,
+                state=public_state,
+                endpoint_id=origin_endpoint_id,
+                device_id=origin_device_id,
+                caller=origin_name,
+                callee=entry.display_name,
+                peer_name=entry.display_name,
+                call_id=invite.call_id,
+                reason=terminal_reason,
+                origin="remote",
+                route_kind=GROUP_TYPE_RING,
+                last_sip_event="SIP_RESPONSE",
+                sip_status_code=status_code,
+            )
             _sip_send_final_response(
                 hass,
                 invite.call_id,
@@ -763,24 +729,22 @@ async def run_ring_group_call(
                 "Server Internal Error",
                 decline_reason=TerminalReason.PROTOCOL_ERROR.value,
             )
-            if ha_origin:
-                _set_ha_softphone_call_state(
-                    hass,
-                    CallState.TRANSPORT_UNREACHABLE.value,
-                    endpoint_id=origin_endpoint_id,
-                    session_device_id=origin_device_id,
-                    caller=origin_name,
-                    callee=entry.display_name,
-                    peer_name=entry.display_name,
-                    direction="outgoing",
-                    call_id=invite.call_id,
-                    reason=TerminalReason.PROTOCOL_ERROR.value,
-                    terminal_reason=TerminalReason.PROTOCOL_ERROR.value,
-                    origin="self",
-                    sip_status_code=500,
-                    last_sip_event="SIP_RESPONSE",
-                    route_kind=GROUP_TYPE_RING,
-                )
+            _publish_ring_group_origin_state(
+                hass,
+                enabled=ha_origin,
+                state=CallState.TRANSPORT_UNREACHABLE.value,
+                endpoint_id=origin_endpoint_id,
+                device_id=origin_device_id,
+                caller=origin_name,
+                callee=entry.display_name,
+                peer_name=entry.display_name,
+                call_id=invite.call_id,
+                reason=TerminalReason.PROTOCOL_ERROR.value,
+                origin="self",
+                route_kind=GROUP_TYPE_RING,
+                last_sip_event="SIP_RESPONSE",
+                sip_status_code=500,
+            )
             registry.finish_and_pop(
                 invite.call_id,
                 reason=TerminalReason.PROTOCOL_ERROR.value,
@@ -870,24 +834,22 @@ async def run_ring_group_call(
                 "Not Acceptable Here",
                 decline_reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
             )
-            if ha_origin:
-                _set_ha_softphone_call_state(
-                    hass,
-                    CallState.MEDIA_INCOMPATIBLE.value,
-                    endpoint_id=origin_endpoint_id,
-                    session_device_id=origin_device_id,
-                    caller=origin_name,
-                    callee=entry.display_name,
-                    peer_name=str(winner.member or entry.display_name),
-                    direction="outgoing",
-                    call_id=invite.call_id,
-                    reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-                    terminal_reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-                    origin="self",
-                    sip_status_code=488,
-                    last_sip_event="SIP_RESPONSE",
-                    route_kind=GROUP_TYPE_RING,
-                )
+            _publish_ring_group_origin_state(
+                hass,
+                enabled=ha_origin,
+                state=CallState.MEDIA_INCOMPATIBLE.value,
+                endpoint_id=origin_endpoint_id,
+                device_id=origin_device_id,
+                caller=origin_name,
+                callee=entry.display_name,
+                peer_name=str(winner.member or entry.display_name),
+                call_id=invite.call_id,
+                reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
+                origin="self",
+                route_kind=GROUP_TYPE_RING,
+                last_sip_event="SIP_RESPONSE",
+                sip_status_code=488,
+            )
             registry.discard_bridge_session(
                 invite.call_id,
                 client.dialog_ids.call_id,
@@ -1055,24 +1017,22 @@ async def run_ring_group_call(
             CallState.CANCELLED.value,
             TerminalReason.CANCELLED.value,
         )
-        if ha_origin:
-            with contextlib.suppress(Exception):
-                _set_ha_softphone_call_state(
-                    hass,
-                    CallState.CANCELLED.value,
-                    endpoint_id=origin_endpoint_id,
-                    session_device_id=origin_device_id,
-                    caller=origin_name,
-                    callee=entry.display_name,
-                    peer_name=entry.display_name,
-                    direction="outgoing",
-                    call_id=invite.call_id,
-                    reason=TerminalReason.CANCELLED.value,
-                    terminal_reason=TerminalReason.CANCELLED.value,
-                    origin="self",
-                    last_sip_event="CANCEL",
-                    route_kind=GROUP_TYPE_RING,
-                )
+        with contextlib.suppress(Exception):
+            _publish_ring_group_origin_state(
+                hass,
+                enabled=ha_origin,
+                state=CallState.CANCELLED.value,
+                endpoint_id=origin_endpoint_id,
+                device_id=origin_device_id,
+                caller=origin_name,
+                callee=entry.display_name,
+                peer_name=entry.display_name,
+                call_id=invite.call_id,
+                reason=TerminalReason.CANCELLED.value,
+                origin="self",
+                route_kind=GROUP_TYPE_RING,
+                last_sip_event="CANCEL",
+            )
         await _cleanup_ring_resources(TerminalReason.CANCELLED.value)
         raise
     except Exception as err:
@@ -1085,25 +1045,23 @@ async def run_ring_group_call(
             CallState.TRANSPORT_UNREACHABLE.value,
             TerminalReason.PROTOCOL_ERROR.value,
         )
-        if ha_origin:
-            with contextlib.suppress(Exception):
-                _set_ha_softphone_call_state(
-                    hass,
-                    CallState.TRANSPORT_UNREACHABLE.value,
-                    endpoint_id=origin_endpoint_id,
-                    session_device_id=origin_device_id,
-                    caller=origin_name,
-                    callee=entry.display_name,
-                    peer_name=entry.display_name,
-                    direction="outgoing",
-                    call_id=invite.call_id,
-                    reason=TerminalReason.PROTOCOL_ERROR.value,
-                    terminal_reason=TerminalReason.PROTOCOL_ERROR.value,
-                    origin="self",
-                    sip_status_code=500,
-                    last_sip_event="SIP_RESPONSE",
-                    route_kind=GROUP_TYPE_RING,
-                )
+        with contextlib.suppress(Exception):
+            _publish_ring_group_origin_state(
+                hass,
+                enabled=ha_origin,
+                state=CallState.TRANSPORT_UNREACHABLE.value,
+                endpoint_id=origin_endpoint_id,
+                device_id=origin_device_id,
+                caller=origin_name,
+                callee=entry.display_name,
+                peer_name=entry.display_name,
+                call_id=invite.call_id,
+                reason=TerminalReason.PROTOCOL_ERROR.value,
+                origin="self",
+                route_kind=GROUP_TYPE_RING,
+                last_sip_event="SIP_RESPONSE",
+                sip_status_code=500,
+            )
         _sip_send_final_response(
             hass,
             invite.call_id,

@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 import types
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 import pytest
 
@@ -34,6 +34,10 @@ class _Kind(Enum):
     ESPHOME = "esphome"
 
 
+class _CallState(Enum):
+    RINGING = "ringing"
+
+
 @pytest.fixture
 def ring_group(monkeypatch):
     package_name = "voip_stack_ring_group_test"
@@ -50,6 +54,7 @@ def ring_group(monkeypatch):
 
     dependencies = {
         "dial_fork": {"DialDisposition": _Disposition},
+        "fsm": {"CallState": _CallState},
         "outbound_attempts": {"BrowserLeg": object},
         "phone_endpoint": {
             "EndpointAvailability": _Availability,
@@ -140,6 +145,112 @@ def test_settlement_releases_every_loser_even_if_one_observer_fails(
         (("call-1", "ws3"),),
     ]
     assert ring_group._set_ha_softphone_call_state.call_count == 2
+
+
+def test_browser_ringing_projection_publishes_each_candidate(
+    ring_group,
+) -> None:
+    registry = SimpleNamespace(upsert=Mock(), add_leg=Mock())
+    legs = [
+        SimpleNamespace(endpoint_id="casa", device_id="device-casa"),
+        SimpleNamespace(endpoint_id="test", device_id="device-test"),
+    ]
+    send_format = SimpleNamespace(
+        audio_format=SimpleNamespace(wire_token=lambda: "L16/16000/1"),
+        wire_token=lambda: "pt=96:L16/16000/1/20ms",
+    )
+    recv_format = SimpleNamespace(
+        audio_format=SimpleNamespace(wire_token=lambda: "L16/16000/1"),
+        wire_token=lambda: "pt=96:L16/16000/1/20ms",
+    )
+    invite = SimpleNamespace(
+        call_id="call-1",
+        caller="Door",
+        send_format=send_format,
+        recv_format=recv_format,
+    )
+
+    ring_group.publish_browser_candidates_ringing(
+        SimpleNamespace(),
+        registry,
+        legs,
+        invite=invite,
+        callee="RG Casa",
+        route_kind="ring",
+        origin_endpoint_id="hall",
+        source_endpoint_id="hall",
+        origin_media_client_id="browser-owner",
+    )
+
+    registry.upsert.assert_called_once_with(
+        "call-1",
+        state="ringing",
+        owner="ha_softphone",
+        caller="Door",
+        callee="RG Casa",
+        route_kind="ring",
+        endpoint_id="hall",
+        source_endpoint_id="hall",
+        ring_endpoint_ids=("casa", "test"),
+        media_client_id="browser-owner",
+    )
+    assert registry.add_leg.call_count == 2
+    assert ring_group._set_ha_softphone_call_state.call_count == 2
+    published = ring_group._set_ha_softphone_call_state.call_args_list[0]
+    assert published.args[1] == "ringing"
+    assert published.kwargs["endpoint_id"] == "casa"
+    assert published.kwargs["selected_tx_rtp_format"].endswith("/20ms")
+    assert published.kwargs["sip_status_code"] == 180
+
+
+def test_origin_projection_is_gated_and_preserves_terminal_metadata(
+    ring_group,
+) -> None:
+    common = {
+        "state": "transport_unreachable",
+        "endpoint_id": "hall",
+        "device_id": "device-hall",
+        "caller": "Casa",
+        "callee": "RG Casa",
+        "peer_name": "RG Casa",
+        "call_id": "call-1",
+        "reason": "protocol_error",
+        "origin": "self",
+        "route_kind": "ring",
+        "last_sip_event": "SIP_RESPONSE",
+        "sip_status_code": 500,
+    }
+
+    ring_group.publish_ring_group_origin_state(
+        SimpleNamespace(),
+        enabled=False,
+        **common,
+    )
+    ring_group._set_ha_softphone_call_state.assert_not_called()
+
+    ring_group.publish_ring_group_origin_state(
+        SimpleNamespace(),
+        enabled=True,
+        **common,
+    )
+
+    ring_group._set_ha_softphone_call_state.assert_called_once_with(
+        ANY,
+        "transport_unreachable",
+        endpoint_id="hall",
+        session_device_id="device-hall",
+        caller="Casa",
+        callee="RG Casa",
+        peer_name="RG Casa",
+        direction="outgoing",
+        call_id="call-1",
+        reason="protocol_error",
+        terminal_reason="protocol_error",
+        origin="self",
+        last_sip_event="SIP_RESPONSE",
+        route_kind="ring",
+        sip_status_code=500,
+    )
 
 
 def test_esphome_transport_adoption_is_explicit(ring_group) -> None:
