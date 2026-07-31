@@ -388,9 +388,9 @@ bool EspH264VideoSource::transform_to_encoder_yuv_(
     const esp_video_camera::RawVideoFrame &frame, uint8_t *target) {
   const bool swaps_dimensions =
       frame.rotation_degrees == 90 || frame.rotation_degrees == 270;
-  const uint16_t input_block_width =
+  const uint16_t target_block_width =
       swaps_dimensions ? this->height_ : this->width_;
-  const uint16_t input_block_height =
+  const uint16_t target_block_height =
       swaps_dimensions ? this->width_ : this->height_;
   const bool rgb565 =
       frame.pixel_format ==
@@ -404,8 +404,7 @@ bool EspH264VideoSource::transform_to_encoder_yuv_(
           : static_cast<size_t>(frame.width) * frame.height * 3 / 2;
   if (frame.data == nullptr || target == nullptr || this->ppa_ == nullptr ||
       (!rgb565 && !optimized_yuv420) ||
-      frame.width < input_block_width ||
-      frame.height < input_block_height ||
+      frame.width == 0 || frame.height == 0 ||
       (rgb565 &&
        frame.stride_bytes < frame.width * sizeof(uint16_t)) ||
       (optimized_yuv420 &&
@@ -416,6 +415,34 @@ bool EspH264VideoSource::transform_to_encoder_yuv_(
        frame.rotation_degrees != 180 && frame.rotation_degrees != 270)) {
     return false;
   }
+
+  // Preserve the largest centered camera area with the encoder's aspect ratio.
+  // The native 800x800 P4 stream therefore reaches the 400x400 encoder through
+  // one hardware 0.5x PPA pass instead of discarding its outer three quarters.
+  uint16_t input_block_width = frame.width;
+  uint16_t input_block_height = frame.height;
+  const uint64_t input_aspect =
+      static_cast<uint64_t>(frame.width) * target_block_height;
+  const uint64_t target_aspect =
+      static_cast<uint64_t>(frame.height) * target_block_width;
+  if (input_aspect > target_aspect) {
+    input_block_width = static_cast<uint16_t>(
+        static_cast<uint64_t>(frame.height) * target_block_width /
+        target_block_height);
+  } else if (input_aspect < target_aspect) {
+    input_block_height = static_cast<uint16_t>(
+        static_cast<uint64_t>(frame.width) * target_block_height /
+        target_block_width);
+  }
+  input_block_width &= ~1U;
+  input_block_height &= ~1U;
+  if (input_block_width == 0 || input_block_height == 0)
+    return false;
+
+  const float scale_x =
+      static_cast<float>(target_block_width) / input_block_width;
+  const float scale_y =
+      static_cast<float>(target_block_height) / input_block_height;
   ppa_srm_oper_config_t config{};
   config.in.buffer = frame.data;
   config.in.pic_w = frame.width;
@@ -435,8 +462,8 @@ bool EspH264VideoSource::transform_to_encoder_yuv_(
   config.out.yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601;
   config.rotation_angle =
       ppa_rotation_for_clockwise(frame.rotation_degrees);
-  config.scale_x = 1.0f;
-  config.scale_y = 1.0f;
+  config.scale_x = scale_x;
+  config.scale_y = scale_y;
   config.rgb_swap = false;
   config.byte_swap = false;
   config.mode = PPA_TRANS_MODE_BLOCKING;
@@ -480,16 +507,15 @@ bool EspH264VideoSource::encode_frame_(
       this->encoded_max_bytes_, static_cast<uint32_t>(output.length));
 #endif
 
-  std::string profile;
-  if (voip_stack::h264_profile_level_id_from_annex_b(
-          output.raw_data.buffer, output.length, &profile)) {
-    if (!voip_stack::h264_same_subprofile(profile, "42c01e")) {
-      ESP_LOGE(TAG, "Encoder emitted unsupported H.264 subprofile %s",
-               profile.c_str());
+  if (this->profile_level_id_.empty()) {
+    std::string profile;
+    if (!voip_stack::h264_profile_level_id_from_annex_b(
+            output.raw_data.buffer, output.length, &profile) ||
+        !voip_stack::h264_same_subprofile(profile, "42c01e")) {
+      ESP_LOGE(TAG, "Encoder probe emitted no supported H.264 SPS");
       return false;
     }
-    if (this->profile_level_id_.empty())
-      this->profile_level_id_ = profile;
+    this->profile_level_id_ = profile;
   }
 
   if (publish) {

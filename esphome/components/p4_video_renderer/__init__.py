@@ -41,6 +41,11 @@ _CODECS = {
 
 def _validate_dimensions(config):
     if config[CONF_CODEC] == "h264":
+        if CONF_DISPLAY_ID not in config:
+            raise cv.Invalid(
+                "p4_video_renderer H.264 requires display_id for direct "
+                "presentation"
+            )
         for key in (CONF_WIDTH, CONF_HEIGHT):
             if config[key] % 16 != 0:
                 raise cv.Invalid(
@@ -102,9 +107,8 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ON_VIDEO_ENDED): automation.validate_automation(
                 single=True
             ),
-            # Optional P4 fast path: keep LVGL as the page/UI owner, but rotate
-            # and submit decoded pixels through the configured display driver
-            # instead of asking LVGL to redraw the image every frame.
+            # JPEG may use LVGL directly. H.264 requires this direct P4 path so
+            # decoded surfaces never pass through a second LVGL scaling path.
             cv.Optional(CONF_DISPLAY_ID): cv.use_id(display.Display),
             cv.Optional(CONF_DISPLAY_ROTATION, default=0): cv.one_of(
                 0, 90, 180, 270, int=True

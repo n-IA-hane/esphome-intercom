@@ -663,6 +663,9 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert direct_display.index("this->present_surface_direct_(pending)") < (
         direct_display.index("this->pending_surface_.compare_exchange_strong(")
     )
+    assert direct_display.index("if (presented)") < direct_display.index(
+        "this->remote_frame_visible_.exchange("
+    )
     assert "display_id: main_display" in h264_package
     assert "display_rotation: 270" in h264_package
     refresh_ready = renderer_cpp[
@@ -690,7 +693,8 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "kH264Level30MaxMacroblocks = 1620" in renderer_header
     assert "h264_receive_profile_level_id_" in renderer_header
     assert "h264_optimized_yuv_bytes_() const" in renderer_header
-    assert "kTaskStopTimeoutMs = 500" in renderer_header
+    assert "kTaskStopTimeoutTicks" in renderer_header
+    assert "pdMS_TO_TICKS" not in renderer_cpp
     assert "const bool rotated_orientation" in renderer_cpp
     assert "!configured_orientation && !rotated_orientation" in renderer_cpp
     assert "macroblocks_w * macroblocks_h <=" in renderer_cpp
@@ -762,17 +766,13 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         "                                    static_cast<uint16_t>(resolution.height)"
         in renderer_cpp
     )
-    assert (
-        "std::min(static_cast<float>(kH264SurfaceWidth) / width,\n"
-        "               static_cast<float>(kH264SurfaceHeight) / height)"
-        in render_i420
-    )
+    assert "this->compute_h264_surface_geometry_(" in render_i420
+    assert "config.out.pic_w = geometry.surface_width;" in render_i420
+    assert "config.out.pic_h = geometry.surface_height;" in render_i420
+    assert "geometry.scale_units" in render_i420
     assert "config.scale_x = scale;" in render_i420
     assert "config.scale_y = scale;" in render_i420
-    assert "uint16_t surface_width = output_width;" in render_i420
-    assert "uint16_t surface_height = output_height;" in render_i420
-    assert "surface_width = output_height;" in render_i420
-    assert "surface_height = output_width;" in render_i420
+    assert "kH264SurfaceWidth) / width" not in render_i420
     assert "config.out.block_offset_x =" not in render_i420
     assert "config.out.block_offset_y =" not in render_i420
     assert "memset(this->surfaces_[output_index], 0, kSurfaceBytes)" not in (
@@ -787,7 +787,9 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
             ),
         )
     ]
-    assert "static black bars remain owned by" in direct_present
+    assert "this->surface_layout_area_[index] != layout_area" in direct_present
+    assert "this->surface_native_size_[index] != native_size" in direct_present
+    assert "expected_bytes > this->surface_capacity_bytes_" in direct_present
     assert "this->surface_content_width_[index]" in direct_present
     assert "this->surface_content_height_[index]" in direct_present
     assert "const int content_width = kH264SurfaceWidth;" not in (
@@ -819,6 +821,23 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "capture_pixel_format_" in camera_cpp
     assert "h264_profile_level_id_from_annex_b" in source_cpp
     assert "h264_same_subprofile" in source_cpp
+    transform_start = source_cpp.index(
+        "bool EspH264VideoSource::transform_to_encoder_yuv_("
+    )
+    transform_end = source_cpp.index(
+        "bool EspH264VideoSource::encode_frame_(", transform_start
+    )
+    transform = source_cpp[transform_start:transform_end]
+    assert "uint16_t input_block_width = frame.width;" in transform
+    assert "uint16_t input_block_height = frame.height;" in transform
+    assert "static_cast<float>(target_block_width) / input_block_width" in transform
+    assert "config.scale_x = 1.0f;" not in transform
+    profile_gate = source_cpp.index("if (this->profile_level_id_.empty())")
+    profile_parse = source_cpp.index("h264_profile_level_id_from_annex_b")
+    assert profile_gate < profile_parse
+    assert "p4_video_renderer H.264 requires display_id" in renderer_config
+    assert "rx_au_copy_max_us_" in renderer_header
+    assert "copy_total_bytes=%llu" in renderer_cpp
     assert "esp_h264_enc_set_bitrate" in source_cpp
     assert "extern \"C\" void *__wrap_esp_h264_calloc_prefer(" in source_cpp
     assert "bytes >= kLargeAllocationBytes" in source_cpp

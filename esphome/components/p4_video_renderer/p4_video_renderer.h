@@ -32,6 +32,11 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
+#if defined(USE_P4_VIDEO_RENDERER_H264) &&                                  \
+    !defined(USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY)
+#error "P4 H.264 rendering requires the direct display path"
+#endif
+
 namespace esphome::p4_video_renderer {
 
 /// Encoded video display adapter for ESP32-P4.
@@ -102,7 +107,8 @@ protected:
   // Match Espressif's dual-task decoder priority. Audio/AFE stays above it at
   // 18-19, while the two decoder halves can run in parallel on separate cores.
   static constexpr uint8_t kTaskPriority = 17;
-  static constexpr uint32_t kTaskStopTimeoutMs = 500;
+  static constexpr TickType_t kTaskStopTimeoutTicks =
+      configTICK_RATE_HZ >= 2 ? configTICK_RATE_HZ / 2 : 1;
 
   bool allocate_session_resources_();
 #ifdef USE_P4_VIDEO_RENDERER_H264
@@ -124,8 +130,19 @@ protected:
   bool init_direct_display_ppa_();
 #endif
 #ifdef USE_P4_VIDEO_RENDERER_H264
+  struct H264SurfaceGeometry {
+    uint16_t scale_units{0};
+    uint16_t surface_width{0};
+    uint16_t surface_height{0};
+    int16_t native_x{0};
+    int16_t native_y{0};
+    uint64_t layout_area{0};
+    uint32_t native_size{0};
+  };
+
   // H.264 Baseline Level 3.0 limits a decoded picture to 1620 macroblocks.
   static constexpr size_t kH264Level30MaxMacroblocks = 1620;
+  static constexpr uint16_t kPpaScaleUnits = 16;
   static const char *h264_receive_profile_level_id_(uint16_t width,
                                                      uint16_t height,
                                                      uint8_t max_fps);
@@ -140,15 +157,16 @@ protected:
                                 uint32_t session_generation,
                                 uint32_t loss_generation);
   bool configure_i420_converter_(uint16_t width, uint16_t height);
+  bool refresh_direct_display_layout_();
+  bool compute_h264_surface_geometry_(uint16_t width, uint16_t height,
+                                      H264SurfaceGeometry *geometry) const;
   bool render_i420_(const uint8_t *i420, size_t size, uint16_t width,
                     uint16_t height);
 #endif
   void free_codec_resources_();
   void free_unpublished_surfaces_();
 #ifdef USE_P4_VIDEO_RENDERER_H264
-  void prepare_surface_(int index, uint16_t surface_width,
-                        uint16_t surface_height, uint16_t content_width,
-                        uint16_t content_height);
+  void prepare_surface_(int index, const H264SurfaceGeometry &geometry);
 #endif
 
   static void rx_task_trampoline_(void *ctx);
@@ -203,6 +221,10 @@ protected:
 #ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
   display::Display *direct_display_{nullptr};
   uint16_t display_rotation_{0};
+#ifdef USE_P4_VIDEO_RENDERER_H264
+  std::atomic<uint64_t> direct_layout_area_{0};
+  std::atomic<uint32_t> direct_layout_native_size_{0};
+#endif
 #ifdef USE_P4_VIDEO_RENDERER_JPEG
   ppa_client_handle_t direct_display_ppa_{nullptr};
 #endif
@@ -231,6 +253,12 @@ protected:
   uint16_t surface_stride_bytes_[2]{0, 0};
   uint16_t surface_content_width_[2]{0, 0};
   uint16_t surface_content_height_[2]{0, 0};
+#ifdef USE_P4_VIDEO_RENDERER_H264
+  int16_t surface_native_x_[2]{0, 0};
+  int16_t surface_native_y_[2]{0, 0};
+  uint64_t surface_layout_area_[2]{0, 0};
+  uint32_t surface_native_size_[2]{0, 0};
+#endif
 
   voip_stack::VideoCapability rx_capability_{};
   std::atomic<bool> rx_running_{false};
@@ -297,6 +325,10 @@ protected:
   std::atomic<uint32_t> rx_queue_high_watermark_{0};
   std::atomic<uint32_t> rx_queue_wait_max_us_{0};
   std::atomic<uint32_t> rx_dependency_drops_{0};
+  std::atomic<uint32_t> rx_geometry_drops_{0};
+  std::atomic<uint32_t> rx_au_copy_max_us_{0};
+  std::atomic<uint64_t> rx_au_copy_total_us_{0};
+  std::atomic<uint64_t> rx_au_copy_total_bytes_{0};
 #endif
 #endif
   Trigger<> first_frame_trigger_;

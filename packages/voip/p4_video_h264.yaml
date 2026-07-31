@@ -4,9 +4,8 @@
 # hardware encoder; RX uses Espressif's software decoder and PPA.
 
 substitutions:
-  # Keep the sensor/ISP in its native 800x800 mode, then crop and encode one
-  # square 400x400 frame. Compared with VGA this halves the pixels crossing the
-  # shared PPA/H.264/PSRAM path while preserving the camera's native aspect.
+  # Keep the sensor/ISP in its native 800x800 mode and let PPA scale the full
+  # field of view to the square 400x400 encoder input in hardware.
   p4_video_width: "400"
   p4_video_height: "400"
   # Keep the independent software decoder within the measured CIF envelope

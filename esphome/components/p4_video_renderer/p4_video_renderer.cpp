@@ -146,6 +146,11 @@ void P4VideoRenderer::loop() {
   if (this->video_ended_pending_.exchange(false, std::memory_order_acq_rel))
     this->video_ended_trigger_.trigger();
 
+#if defined(USE_P4_VIDEO_RENDERER_H264) &&                                  \
+    defined(USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY)
+  this->refresh_direct_display_layout_();
+#endif
+
   bool first_frame = false;
   xSemaphoreTake(this->presentation_mutex_, portMAX_DELAY);
   const int pending = this->pending_surface_.load(std::memory_order_acquire);
@@ -156,8 +161,6 @@ void P4VideoRenderer::loop() {
       this->surfaces_[pending] != nullptr) {
 #ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
     if (this->video_container_ != nullptr) {
-      first_frame = !this->remote_frame_visible_.exchange(
-          true, std::memory_order_acq_rel);
       const bool page_active =
           lv_obj_get_screen(this->video_container_) ==
           lv_disp_get_scr_act(nullptr);
@@ -167,6 +170,8 @@ void P4VideoRenderer::loop() {
       const bool presented =
           page_active && this->present_surface_direct_(pending);
       if (presented) {
+        first_frame = !this->remote_frame_visible_.exchange(
+            true, std::memory_order_acq_rel);
         this->surface_ever_presented_.store(true, std::memory_order_release);
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
         this->rx_presented_frames_.fetch_add(1, std::memory_order_relaxed);
@@ -203,12 +208,6 @@ void P4VideoRenderer::loop() {
                       this->surface_content_width_[pending],
                       this->surface_content_height_[pending]);
       lv_obj_center(this->video_image_);
-#else
-      this->image_descriptor_.data_size = kH264SurfaceBytes;
-      this->image_descriptor_.header.w = kH264SurfaceWidth;
-      this->image_descriptor_.header.h = kH264SurfaceHeight;
-      this->image_descriptor_.header.stride =
-          kH264SurfaceWidth * sizeof(uint16_t);
 #endif
       lv_image_set_src(this->video_image_, &this->image_descriptor_);
       this->presentation_in_flight_.store(true, std::memory_order_release);
@@ -244,6 +243,22 @@ void P4VideoRenderer::dump_config() {
   ESP_LOGCONFIG(TAG, "  Decode admission: <= %ux%u and <= %u macroblocks",
                 this->max_decode_width_, this->max_decode_height_,
                 static_cast<unsigned>(kH264Level30MaxMacroblocks));
+  const size_t surface_bytes = 2 * kH264SurfaceBytes;
+  const size_t access_unit_bytes =
+      kH264AccessUnitQueueDepth * kMaxAccessUnitBytes;
+  const size_t optimized_yuv_bytes = this->h264_optimized_yuv_bytes_();
+  ESP_LOGCONFIG(TAG,
+                "  Reserved RX buffers: %u bytes (surfaces=%u, AU=%u, YUV=%u)",
+                static_cast<unsigned>(surface_bytes + access_unit_bytes +
+                                      optimized_yuv_bytes),
+                static_cast<unsigned>(surface_bytes),
+                static_cast<unsigned>(access_unit_bytes),
+                static_cast<unsigned>(optimized_yuv_bytes));
+  ESP_LOGCONFIG(TAG, "  PSRAM after setup: free=%u, largest=%u",
+                static_cast<unsigned>(
+                    heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
+                static_cast<unsigned>(
+                    heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
 #else
   ESP_LOGCONFIG(TAG, "  Decode admission: <= %ux%u", this->max_decode_width_,
                 this->max_decode_height_);
@@ -263,6 +278,11 @@ void P4VideoRenderer::attach_video_container(lv_obj_t *container) {
     return;
   this->video_container_ = container;
 #ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
+#ifdef USE_P4_VIDEO_RENDERER_H264
+  if (!this->refresh_direct_display_layout_()) {
+    ESP_LOGW(TAG, "P4 H.264 display layout is not ready at LVGL attach");
+  }
+#endif
   if (this->pending_surface_.load(std::memory_order_acquire) >= 0)
     this->enable_loop();
   return;
@@ -270,9 +290,6 @@ void P4VideoRenderer::attach_video_container(lv_obj_t *container) {
   this->video_image_ = lv_image_create(container);
 #ifdef USE_P4_VIDEO_RENDERER_JPEG
   lv_obj_set_size(this->video_image_, this->width_, this->height_);
-#else
-  lv_obj_set_size(this->video_image_, kH264SurfaceWidth,
-                  kH264SurfaceHeight);
 #endif
   lv_obj_center(this->video_image_);
   lv_obj_clear_flag(this->video_image_, LV_OBJ_FLAG_SCROLLABLE);
@@ -285,11 +302,6 @@ void P4VideoRenderer::attach_video_container(lv_obj_t *container) {
   this->image_descriptor_.header.h = this->height_;
   this->image_descriptor_.header.stride =
       this->width_ * sizeof(uint16_t);
-#else
-  this->image_descriptor_.header.w = kH264SurfaceWidth;
-  this->image_descriptor_.header.h = kH264SurfaceHeight;
-  this->image_descriptor_.header.stride =
-      kH264SurfaceWidth * sizeof(uint16_t);
 #endif
   lv_display_t *display = lv_obj_get_display(this->video_image_);
   if (display == nullptr) {
@@ -432,47 +444,74 @@ bool P4VideoRenderer::init_direct_display_ppa_() {
 
 #ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
 bool P4VideoRenderer::present_surface_direct_(int index) {
+#ifdef USE_P4_VIDEO_RENDERER_H264
   if (index < 0 || index > 1 || this->direct_display_ == nullptr ||
-#ifdef USE_P4_VIDEO_RENDERER_JPEG
-      this->direct_display_ppa_ == nullptr ||
-#endif
-      this->video_container_ == nullptr || this->surfaces_[index] == nullptr
-#ifdef USE_P4_VIDEO_RENDERER_JPEG
-      ||
+      this->surfaces_[index] == nullptr ||
       this->surface_content_width_[index] == 0 ||
-      this->surface_content_height_[index] == 0 ||
-      this->decoded_storage_width_ == 0 ||
-      this->decoded_storage_height_ == 0
-#endif
-  ) {
+      this->surface_content_height_[index] == 0) {
     return false;
   }
 
-#ifdef USE_P4_VIDEO_RENDERER_JPEG
+  const uint64_t layout_area =
+      this->direct_layout_area_.load(std::memory_order_acquire);
+  const uint32_t native_size =
+      this->direct_layout_native_size_.load(std::memory_order_acquire);
+  const int output_width = this->surface_content_width_[index];
+  const int output_height = this->surface_content_height_[index];
+  const int native_x = this->surface_native_x_[index];
+  const int native_y = this->surface_native_y_[index];
+  const int native_width = static_cast<int>(native_size >> 16U);
+  const int native_height = static_cast<int>(native_size & 0xffffU);
+  const size_t expected_bytes =
+      static_cast<size_t>(output_width) * output_height * sizeof(uint16_t);
+  if (layout_area == 0 || native_size == 0 ||
+      this->surface_layout_area_[index] != layout_area ||
+      this->surface_native_size_[index] != native_size ||
+      this->surface_stride_bytes_[index] !=
+          output_width * sizeof(uint16_t) ||
+      this->surface_data_size_[index] != expected_bytes ||
+      expected_bytes > this->surface_capacity_bytes_ ||
+      native_x < 0 || native_y < 0 ||
+      native_x + output_width > native_width ||
+      native_y + output_height > native_height) {
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
+    this->rx_geometry_drops_.fetch_add(1, std::memory_order_relaxed);
+#endif
+    return false;
+  }
+
+  int expected = index;
+  if (!this->pending_surface_.compare_exchange_strong(
+          expected, -1, std::memory_order_acq_rel)) {
+    return false;
+  }
+  this->front_surface_.store(index, std::memory_order_release);
+  this->direct_display_->draw_pixels_at(
+      native_x, native_y, output_width, output_height,
+      this->surfaces_[index], display::COLOR_ORDER_RGB,
+      display::COLOR_BITNESS_565, false);
+  return true;
+#else
+  if (index < 0 || index > 1 || this->direct_display_ == nullptr ||
+      this->direct_display_ppa_ == nullptr ||
+      this->video_container_ == nullptr || this->surfaces_[index] == nullptr ||
+      this->surface_content_width_[index] == 0 ||
+      this->surface_content_height_[index] == 0 ||
+      this->decoded_storage_width_ == 0 ||
+      this->decoded_storage_height_ == 0) {
+    return false;
+  }
+
   const int scratch = 1 - index;
   if (this->surfaces_[scratch] == nullptr)
     return false;
-#endif
 
   lv_area_t container_area{};
   lv_obj_get_coords(this->video_container_, &container_area);
-#ifdef USE_P4_VIDEO_RENDERER_JPEG
   const int content_width = this->surface_content_width_[index];
   const int content_height = this->surface_content_height_[index];
   const int input_width = this->decoded_storage_width_;
   const int input_height = this->decoded_storage_height_;
-#else
-  // H.264's PPA pass produces a tightly packed, aspect-correct RGB565 frame.
-  // The LVGL video surface already supplies the black background, so sending
-  // only the live picture avoids reading and transferring static letterbox
-  // pixels over the shared PSRAM/DSI path on every frame.
-  const bool swaps_dimensions =
-      this->display_rotation_ == 90 || this->display_rotation_ == 270;
-  const int input_width = this->surface_content_width_[index];
-  const int input_height = this->surface_content_height_[index];
-  const int content_width = swaps_dimensions ? input_height : input_width;
-  const int content_height = swaps_dimensions ? input_width : input_height;
-#endif
   const int container_width = lv_area_get_width(&container_area);
   const int container_height = lv_area_get_height(&container_area);
   if (container_width <= 0 || container_height <= 0)
@@ -569,23 +608,6 @@ bool P4VideoRenderer::present_surface_direct_(int index) {
     return false;
   }
 
-#ifdef USE_P4_VIDEO_RENDERER_H264
-  // render_i420_ has already performed color conversion, aspect-preserving
-  // scaling and physical rotation in one PPA transaction. Hand the tightly
-  // packed live rectangle straight to DSI; static black bars remain owned by
-  // the LVGL page and consume no per-frame PSRAM bandwidth.
-  this->front_surface_.store(index, std::memory_order_release);
-  int expected = index;
-  if (!this->pending_surface_.compare_exchange_strong(
-          expected, -1, std::memory_order_acq_rel)) {
-    return false;
-  }
-  this->direct_display_->draw_pixels_at(
-      native_x, native_y, output_width, output_height,
-      this->surfaces_[index], display::COLOR_ORDER_RGB,
-      display::COLOR_BITNESS_565, false);
-  return true;
-#else
   ppa_srm_oper_config_t config{};
   config.in.buffer = this->surfaces_[index];
   config.in.pic_w = input_width;
@@ -753,17 +775,15 @@ bool P4VideoRenderer::allocate_session_resources_() {
       return false;
     }
     memset(this->surfaces_[index], 0, surface_bytes);
-#ifdef USE_P4_VIDEO_RENDERER_H264
-    this->surface_data_size_[index] = kH264SurfaceBytes;
-    this->surface_stride_bytes_[index] =
-        kH264SurfaceWidth * sizeof(uint16_t);
-    this->surface_content_width_[index] = kH264SurfaceWidth;
-    this->surface_content_height_[index] = kH264SurfaceHeight;
-#else
     this->surface_data_size_[index] = 0;
     this->surface_stride_bytes_[index] = 0;
     this->surface_content_width_[index] = 0;
     this->surface_content_height_[index] = 0;
+#ifdef USE_P4_VIDEO_RENDERER_H264
+    this->surface_native_x_[index] = 0;
+    this->surface_native_y_[index] = 0;
+    this->surface_layout_area_[index] = 0;
+    this->surface_native_size_[index] = 0;
 #endif
   }
   return true;
@@ -890,6 +910,10 @@ bool P4VideoRenderer::start_video(
   this->rx_queue_high_watermark_.store(0, std::memory_order_release);
   this->rx_queue_wait_max_us_.store(0, std::memory_order_release);
   this->rx_dependency_drops_.store(0, std::memory_order_release);
+  this->rx_geometry_drops_.store(0, std::memory_order_release);
+  this->rx_au_copy_max_us_.store(0, std::memory_order_release);
+  this->rx_au_copy_total_us_.store(0, std::memory_order_release);
+  this->rx_au_copy_total_bytes_.store(0, std::memory_order_release);
 #endif
 #endif
   this->rx_active_.store(false, std::memory_order_release);
@@ -988,7 +1012,17 @@ bool P4VideoRenderer::consume_video_access_unit(
   }
 
   auto &slot = this->h264_au_slots_[slot_index];
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
+  const uint32_t copy_started_us = micros();
+#endif
   memcpy(slot.data, access_unit.data, access_unit.size);
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
+  const uint32_t copy_us = micros() - copy_started_us;
+  update_max(this->rx_au_copy_max_us_, copy_us);
+  this->rx_au_copy_total_us_.fetch_add(copy_us, std::memory_order_relaxed);
+  this->rx_au_copy_total_bytes_.fetch_add(access_unit.size,
+                                          std::memory_order_relaxed);
+#endif
   slot.size = access_unit.size;
   slot.timestamp = access_unit.timestamp_90khz;
   slot.key_frame = access_unit.key_frame;
@@ -1358,7 +1392,7 @@ void P4VideoRenderer::rx_task_() {
 
 #ifdef USE_P4_VIDEO_RENDERER_H264
 bool P4VideoRenderer::configure_i420_converter_(uint16_t width,
-                                                uint16_t height) {
+                                                 uint16_t height) {
   if (this->i420_converter_ != nullptr &&
       this->i420_converter_width_ == width &&
       this->i420_converter_height_ == height) {
@@ -1391,6 +1425,125 @@ bool P4VideoRenderer::configure_i420_converter_(uint16_t width,
   return true;
 }
 
+bool P4VideoRenderer::refresh_direct_display_layout_() {
+  if (this->video_container_ == nullptr || this->direct_display_ == nullptr)
+    return false;
+  lv_area_t area{};
+  lv_obj_get_coords(this->video_container_, &area);
+  const int width = lv_area_get_width(&area);
+  const int height = lv_area_get_height(&area);
+  const int native_width = this->direct_display_->get_native_width();
+  const int native_height = this->direct_display_->get_native_height();
+  if (width <= 0 || height <= 0 || native_width <= 0 || native_height <= 0 ||
+      area.x1 < INT16_MIN || area.x1 > INT16_MAX ||
+      area.y1 < INT16_MIN || area.y1 > INT16_MAX ||
+      width > UINT16_MAX || height > UINT16_MAX ||
+      native_width > UINT16_MAX || native_height > UINT16_MAX) {
+    this->direct_layout_area_.store(0, std::memory_order_release);
+    this->direct_layout_native_size_.store(0, std::memory_order_release);
+    return false;
+  }
+  const uint64_t packed_area =
+      (static_cast<uint64_t>(static_cast<uint16_t>(area.x1)) << 48U) |
+      (static_cast<uint64_t>(static_cast<uint16_t>(area.y1)) << 32U) |
+      (static_cast<uint64_t>(static_cast<uint16_t>(width)) << 16U) |
+      static_cast<uint16_t>(height);
+  const uint32_t packed_native =
+      (static_cast<uint32_t>(static_cast<uint16_t>(native_width)) << 16U) |
+      static_cast<uint16_t>(native_height);
+  this->direct_layout_native_size_.store(packed_native,
+                                         std::memory_order_release);
+  this->direct_layout_area_.store(packed_area, std::memory_order_release);
+  return true;
+}
+
+bool P4VideoRenderer::compute_h264_surface_geometry_(
+    uint16_t width, uint16_t height, H264SurfaceGeometry *geometry) const {
+  if (width == 0 || height == 0 || geometry == nullptr)
+    return false;
+  const uint64_t layout_area =
+      this->direct_layout_area_.load(std::memory_order_acquire);
+  const uint32_t native_size =
+      this->direct_layout_native_size_.load(std::memory_order_acquire);
+  if (layout_area == 0 || native_size == 0)
+    return false;
+
+  const int container_x = static_cast<int16_t>(layout_area >> 48U);
+  const int container_y =
+      static_cast<int16_t>((layout_area >> 32U) & 0xffffU);
+  const int container_width = static_cast<int>((layout_area >> 16U) & 0xffffU);
+  const int container_height = static_cast<int>(layout_area & 0xffffU);
+  const int native_width = static_cast<int>(native_size >> 16U);
+  const int native_height = static_cast<int>(native_size & 0xffffU);
+  if (container_width <= 0 || container_height <= 0 ||
+      native_width <= 0 || native_height <= 0)
+    return false;
+
+  int scale_units = std::min(
+      container_width * static_cast<int>(kPpaScaleUnits) / width,
+      container_height * static_cast<int>(kPpaScaleUnits) / height);
+  const bool swaps_dimensions =
+      this->display_rotation_ == 90 || this->display_rotation_ == 270;
+  const auto output_fits = [&](int units) {
+    const size_t logical_width =
+        static_cast<size_t>(width) * units / kPpaScaleUnits;
+    const size_t logical_height =
+        static_cast<size_t>(height) * units / kPpaScaleUnits;
+    return logical_width > 0 && logical_height > 0 &&
+           logical_width <= UINT16_MAX && logical_height <= UINT16_MAX &&
+           logical_width <=
+               this->surface_capacity_bytes_ /
+                   (logical_height * sizeof(uint16_t));
+  };
+  while (scale_units > 0 && !output_fits(scale_units))
+    scale_units--;
+  if (scale_units <= 0)
+    return false;
+
+  const int logical_width =
+      static_cast<int>(width) * scale_units / kPpaScaleUnits;
+  const int logical_height =
+      static_cast<int>(height) * scale_units / kPpaScaleUnits;
+  const int logical_x =
+      container_x + (container_width - logical_width) / 2;
+  const int logical_y =
+      container_y + (container_height - logical_height) / 2;
+  int native_x = logical_x;
+  int native_y = logical_y;
+  int surface_width = swaps_dimensions ? logical_height : logical_width;
+  int surface_height = swaps_dimensions ? logical_width : logical_height;
+  switch (this->display_rotation_) {
+  case 90:
+    native_x = native_width - logical_y - logical_height;
+    native_y = logical_x;
+    break;
+  case 180:
+    native_x = native_width - logical_x - logical_width;
+    native_y = native_height - logical_y - logical_height;
+    break;
+  case 270:
+    native_x = logical_y;
+    native_y = native_height - logical_x - logical_width;
+    break;
+  default:
+    break;
+  }
+  if (native_x < 0 || native_y < 0 || native_x > INT16_MAX ||
+      native_y > INT16_MAX || surface_width <= 0 || surface_height <= 0 ||
+      native_x + surface_width > native_width ||
+      native_y + surface_height > native_height)
+    return false;
+
+  geometry->scale_units = static_cast<uint16_t>(scale_units);
+  geometry->surface_width = static_cast<uint16_t>(surface_width);
+  geometry->surface_height = static_cast<uint16_t>(surface_height);
+  geometry->native_x = static_cast<int16_t>(native_x);
+  geometry->native_y = static_cast<int16_t>(native_y);
+  geometry->layout_area = layout_area;
+  geometry->native_size = native_size;
+  return true;
+}
+
 bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
                                    uint16_t width, uint16_t height) {
   const size_t decoded_bytes = static_cast<size_t>(width) * height * 3 / 2;
@@ -1399,6 +1552,13 @@ bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
       this->optimized_yuv420_capacity_ < decoded_bytes ||
       this->ppa_ == nullptr ||
       this->pending_surface_.load(std::memory_order_acquire) >= 0) {
+    return false;
+  }
+  H264SurfaceGeometry geometry{};
+  if (!this->compute_h264_surface_geometry_(width, height, &geometry)) {
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
+    this->rx_geometry_drops_.fetch_add(1, std::memory_order_relaxed);
+#endif
     return false;
   }
   if (!this->configure_i420_converter_(width, height))
@@ -1429,37 +1589,20 @@ bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
   }
   const int output_index =
       1 - this->front_surface_.load(std::memory_order_acquire);
-  const float scale =
-      std::min(static_cast<float>(kH264SurfaceWidth) / width,
-               static_cast<float>(kH264SurfaceHeight) / height);
-  const uint16_t output_width =
-      static_cast<uint16_t>(static_cast<float>(width) * scale);
-  const uint16_t output_height =
-      static_cast<uint16_t>(static_cast<float>(height) * scale);
-  uint16_t surface_width = output_width;
-  uint16_t surface_height = output_height;
   ppa_srm_rotation_angle_t rotation = PPA_SRM_ROTATION_ANGLE_0;
-#ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
   switch (this->display_rotation_) {
   case 90:
-    surface_width = output_height;
-    surface_height = output_width;
     rotation = PPA_SRM_ROTATION_ANGLE_270;
     break;
   case 180:
     rotation = PPA_SRM_ROTATION_ANGLE_180;
     break;
   case 270:
-    surface_width = output_height;
-    surface_height = output_width;
     rotation = PPA_SRM_ROTATION_ANGLE_90;
     break;
   default:
     break;
   }
-#endif
-  this->prepare_surface_(output_index, surface_width, surface_height,
-                         surface_width, surface_height);
   ppa_srm_oper_config_t config{};
   config.in.buffer = this->optimized_yuv420_;
   config.in.pic_w = width;
@@ -1471,10 +1614,12 @@ bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
   config.in.yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601;
   config.out.buffer = this->surfaces_[output_index];
   config.out.buffer_size = kH264SurfaceBytes;
-  config.out.pic_w = surface_width;
-  config.out.pic_h = surface_height;
+  config.out.pic_w = geometry.surface_width;
+  config.out.pic_h = geometry.surface_height;
   config.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
   config.rotation_angle = rotation;
+  const float scale =
+      static_cast<float>(geometry.scale_units) / kPpaScaleUnits;
   config.scale_x = scale;
   config.scale_y = scale;
   config.mode = PPA_TRANS_MODE_BLOCKING;
@@ -1489,6 +1634,7 @@ bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
       !this->rx_active_.load(std::memory_order_acquire)) {
     return false;
   }
+  this->prepare_surface_(output_index, geometry);
   this->pending_surface_.store(output_index, std::memory_order_release);
   this->enable_loop_soon_any_context();
   return true;
@@ -1496,24 +1642,23 @@ bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
 #endif
 
 #ifdef USE_P4_VIDEO_RENDERER_H264
-void P4VideoRenderer::prepare_surface_(int index, uint16_t surface_width,
-                                       uint16_t surface_height,
-                                       uint16_t content_width,
-                                       uint16_t content_height) {
+void P4VideoRenderer::prepare_surface_(
+    int index, const H264SurfaceGeometry &geometry) {
   if (index < 0 || index > 1 || this->surfaces_[index] == nullptr)
     return;
-  if (this->surface_content_width_[index] == content_width &&
-      this->surface_content_height_[index] == content_height) {
-    return;
-  }
   // H.264 direct presentation always fills a tightly packed output rectangle.
   // The unused capacity is never read or sent to the display.
-  this->surface_stride_bytes_[index] = surface_width * sizeof(uint16_t);
+  this->surface_stride_bytes_[index] =
+      geometry.surface_width * sizeof(uint16_t);
   this->surface_data_size_[index] =
-      static_cast<size_t>(surface_width) * surface_height *
+      static_cast<size_t>(geometry.surface_width) * geometry.surface_height *
       sizeof(uint16_t);
-  this->surface_content_width_[index] = content_width;
-  this->surface_content_height_[index] = content_height;
+  this->surface_content_width_[index] = geometry.surface_width;
+  this->surface_content_height_[index] = geometry.surface_height;
+  this->surface_native_x_[index] = geometry.native_x;
+  this->surface_native_y_[index] = geometry.native_y;
+  this->surface_layout_area_[index] = geometry.layout_area;
+  this->surface_native_size_[index] = geometry.native_size;
 }
 #endif
 
@@ -1523,8 +1668,7 @@ bool P4VideoRenderer::stop_rx_task_() {
     xTaskNotifyGive(this->rx_task_handle_);
   bool stopped = this->reap_rx_task_();
   if (!stopped && !this->rx_done_observed_ && this->rx_done_ != nullptr &&
-      xSemaphoreTake(this->rx_done_, pdMS_TO_TICKS(kTaskStopTimeoutMs)) ==
-          pdTRUE) {
+      xSemaphoreTake(this->rx_done_, kTaskStopTimeoutTicks) == pdTRUE) {
     this->rx_done_observed_ = true;
     stopped = this->reap_rx_task_();
   }
@@ -1629,6 +1773,12 @@ void P4VideoRenderer::free_unpublished_surfaces_() {
     this->surface_stride_bytes_[index] = 0;
     this->surface_content_width_[index] = 0;
     this->surface_content_height_[index] = 0;
+#ifdef USE_P4_VIDEO_RENDERER_H264
+    this->surface_native_x_[index] = 0;
+    this->surface_native_y_[index] = 0;
+    this->surface_layout_area_[index] = 0;
+    this->surface_native_size_[index] = 0;
+#endif
   }
   this->surface_capacity_bytes_ = 0;
   this->front_surface_.store(0, std::memory_order_release);
@@ -1650,6 +1800,7 @@ void P4VideoRenderer::stop_video() {
       TAG,
       "H.264 RX stats: admitted=%u rendered=%u rate_drop=%u "
       "busy_drop=%u dependency_drop=%u decode_drop=%u "
+      "geometry_drop=%u "
       "presented=%u refresh_done=%u refresh_max_ms=%u "
       "dec_max_us=%u convert_max_us=%u "
       "ppa_max_us=%u present_ppa_max_us=%u "
@@ -1660,6 +1811,7 @@ void P4VideoRenderer::stop_video() {
       (unsigned)this->rx_busy_drops_.load(std::memory_order_relaxed),
       (unsigned)this->rx_dependency_drops_.load(std::memory_order_relaxed),
       (unsigned)this->rx_decode_drops_.load(std::memory_order_relaxed),
+      (unsigned)this->rx_geometry_drops_.load(std::memory_order_relaxed),
       (unsigned)this->rx_presented_frames_.load(std::memory_order_relaxed),
       (unsigned)this->rx_refresh_completed_.load(std::memory_order_relaxed),
       (unsigned)this->rx_refresh_max_ms_.load(std::memory_order_relaxed),
@@ -1670,10 +1822,17 @@ void P4VideoRenderer::stop_video() {
           std::memory_order_relaxed),
       (unsigned)this->rx_au_work_max_us_.load(std::memory_order_relaxed));
   ESP_LOGI(
-      TAG, "H.264 RX queue: peak=%u wait_max_us=%u",
+      TAG,
+      "H.264 RX queue: peak=%u wait_max_us=%u copy_max_us=%u "
+      "copy_total_us=%llu copy_total_bytes=%llu",
       (unsigned)this->rx_queue_high_watermark_.load(
           std::memory_order_relaxed),
       (unsigned)this->rx_queue_wait_max_us_.load(
+          std::memory_order_relaxed),
+      (unsigned)this->rx_au_copy_max_us_.load(std::memory_order_relaxed),
+      (unsigned long long)this->rx_au_copy_total_us_.load(
+          std::memory_order_relaxed),
+      (unsigned long long)this->rx_au_copy_total_bytes_.load(
           std::memory_order_relaxed));
 #else
   ESP_LOGI(
