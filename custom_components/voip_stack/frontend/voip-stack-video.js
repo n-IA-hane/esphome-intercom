@@ -1,10 +1,20 @@
-import {
+const VIDEO_MODULE_VERSION = (() => {
+  try {
+    return new URL(import.meta.url).searchParams.get("v") || "dev";
+  } catch (_) {
+    return "dev";
+  }
+})();
+
+const {
   cameraCaptureContract,
   cameraEncoderContract,
   directionalVideoContract,
   emptyVideoStats,
   legacyVideoAliases,
-} from "./voip-stack-video-model.js?v=2";
+} = await import(
+  `./voip-stack-video-model.js?v=${encodeURIComponent(VIDEO_MODULE_VERSION)}`
+);
 
 const VIDEO_ACCESS_UNIT = 1;
 const VIDEO_HEADER_BYTES = 6;

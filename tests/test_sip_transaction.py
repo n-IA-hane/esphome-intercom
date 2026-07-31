@@ -112,7 +112,7 @@ class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
 
                 result = await sip_transaction.async_run_server_transaction(
                     send=send,
-                    active=lambda: active,
+                    active=lambda current=active: current,
                     transport=transport,
                     timeout=0.007,
                     t1=0.001,

@@ -1531,10 +1531,14 @@ class SipCallClient:
                 if retry_transaction is None:
                     received = await self._read_response(remaining)
                 else:
-                    async def _retransmit_retry() -> None:
-                        assert retry_raw is not None
+                    retry_payload = retry_raw
+
+                    async def _retransmit_retry(
+                        payload: bytes | None = retry_payload,
+                    ) -> None:
+                        assert payload is not None
                         await self._send_raw(
-                            retry_raw,
+                            payload,
                             self._pending_remote_host,
                             self._pending_remote_sip_port,
                         )

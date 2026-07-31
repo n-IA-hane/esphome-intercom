@@ -1999,12 +1999,12 @@ async def _run_video_session(
                             now = loop.time()
                         last_access_unit_at = now
 
-                    def media_current() -> bool:
+                    def media_current(generation: int = packet_generation) -> bool:
                         return bool(
                             not closed.is_set()
                             and not call_ended.is_set()
                             and not session.removed
-                            and packet_generation == session.media_generation
+                            and generation == session.media_generation
                             and session.can_send
                             and not session.remote_connection_held
                         )

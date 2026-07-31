@@ -87,6 +87,7 @@ const context = vm.createContext({{
   performance,
   console,
   Blob,
+  URL,
   setTimeout,
   clearTimeout,
   CustomEvent: class CustomEvent extends Event {{
@@ -100,10 +101,20 @@ const context = vm.createContext({{
   EncodedVideoChunk: class EncodedVideoChunk {{ constructor(init) {{ Object.assign(this, init); }} }},
 }});
 const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
-const module = new vm.SourceTextModule(source, {{ context }});
+await modelModule.link(() => {{ throw new Error("video model has no imports"); }});
+await modelModule.evaluate();
+const module = new vm.SourceTextModule(source, {{
+  context,
+  initializeImportMeta(meta) {{
+    meta.url = "https://ha.example/voip-stack-video.js?v=runtime-contract";
+  }},
+  importModuleDynamically: async (specifier) => {{
+    assert.equal(specifier, "./voip-stack-video-model.js?v=runtime-contract");
+    return modelModule;
+  }},
+}});
 await module.link((specifier) => {{
-  if (specifier === "./voip-stack-video-model.js?v=2") return modelModule;
-  throw new Error(`unexpected import: ${{specifier}}`);
+  throw new Error(`unexpected static import: ${{specifier}}`);
 }});
 await module.evaluate();
 const Video = module.namespace.VoipStackVideo;
@@ -847,6 +858,7 @@ const context = vm.createContext({{
   performance,
   console,
   Blob,
+  URL,
   CustomEvent: class CustomEvent extends Event {{
     constructor(type, init) {{ super(type); this.detail = init?.detail; }}
   }},
@@ -855,10 +867,20 @@ const context = vm.createContext({{
   EncodedVideoChunk: class EncodedVideoChunk {{ constructor(init) {{ Object.assign(this, init); }} }},
 }});
 const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
-const module = new vm.SourceTextModule(source, {{ context }});
+await modelModule.link(() => {{ throw new Error("video model has no imports"); }});
+await modelModule.evaluate();
+const module = new vm.SourceTextModule(source, {{
+  context,
+  initializeImportMeta(meta) {{
+    meta.url = "https://ha.example/voip-stack-video.js?v=runtime-contract";
+  }},
+  importModuleDynamically: async (specifier) => {{
+    assert.equal(specifier, "./voip-stack-video-model.js?v=runtime-contract");
+    return modelModule;
+  }},
+}});
 await module.link((specifier) => {{
-  if (specifier === "./voip-stack-video-model.js?v=2") return modelModule;
-  throw new Error(`unexpected import: ${{specifier}}`);
+  throw new Error(`unexpected static import: ${{specifier}}`);
 }});
 await module.evaluate();
 const Video = module.namespace.VoipStackVideo;
@@ -1084,10 +1106,20 @@ const context = vm.createContext({{
   EncodedVideoChunk: class EncodedVideoChunk {{ constructor(init) {{ Object.assign(this, init); }} }},
 }});
 const modelModule = new vm.SourceTextModule(modelSource, {{ context }});
-const module = new vm.SourceTextModule(source, {{ context }});
+await modelModule.link(() => {{ throw new Error("video model has no imports"); }});
+await modelModule.evaluate();
+const module = new vm.SourceTextModule(source, {{
+  context,
+  initializeImportMeta(meta) {{
+    meta.url = "https://ha.example/voip-stack-video.js?v=runtime-contract";
+  }},
+  importModuleDynamically: async (specifier) => {{
+    assert.equal(specifier, "./voip-stack-video-model.js?v=runtime-contract");
+    return modelModule;
+  }},
+}});
 await module.link((specifier) => {{
-  if (specifier === "./voip-stack-video-model.js?v=2") return modelModule;
-  throw new Error(`unexpected import: ${{specifier}}`);
+  throw new Error(`unexpected static import: ${{specifier}}`);
 }});
 await module.evaluate();
 const Video = module.namespace.VoipStackVideo;

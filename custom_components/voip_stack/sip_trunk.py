@@ -700,14 +700,28 @@ class SipTrunkClient:
                 t1=SIP_T1,
                 t2=SIP_T2,
             )
+            register_cseq = self.cseq
+            register_branch = expected_branch
+            register_raw = raw
+
+            async def _read_register_response(
+                read_timeout: float,
+                cseq: int = register_cseq,
+                branch: str = register_branch,
+            ) -> sip.SipMessage | None:
+                return await self._read_response(
+                    read_timeout,
+                    expected_cseq=cseq,
+                    expected_branch=branch,
+                )
+
+            async def _retransmit_register(payload: bytes = register_raw) -> None:
+                await self._send_raw(payload)
+
             try:
                 msg = await transaction.receive(
-                    lambda read_timeout: self._read_response(
-                        read_timeout,
-                        expected_cseq=self.cseq,
-                        expected_branch=expected_branch,
-                    ),
-                    lambda: self._send_raw(raw),
+                    _read_register_response,
+                    _retransmit_register,
                 )
                 if msg is None:
                     raise asyncio.TimeoutError
