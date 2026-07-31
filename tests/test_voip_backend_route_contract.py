@@ -359,7 +359,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             'client.on_info_dtmf = lambda digit: _emit("right", digit, "sip_info")',
             self.dtmf_events,
         )
-        self.assertIn('callback("left", digit, "sip_info")', self.source)
+        self.assertIn('callback("left", digit, "sip_info")', self.dtmf_events)
         self.assertIn("relay.relay_dtmf(side, digit)", self.dtmf_events)
         self.assertNotIn("send_dtmf_info", self.source)
         # Five established HA-anchored bridge paths keep in-call DTMF.

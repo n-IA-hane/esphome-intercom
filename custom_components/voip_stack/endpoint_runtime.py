@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from functools import partial
 import logging
 import secrets
 from typing import TYPE_CHECKING, Any
@@ -46,7 +47,7 @@ from .endpoint_lifecycle import (
 from .endpoint_dialing import EndpointDialer
 from .dtmf_events import (
     attach_dtmf_event_bridge as _attach_dtmf_event_bridge,
-    publish_dtmf_event as _publish_dtmf_event,
+    handle_sip_info,
 )
 from .endpoint_routing import (
     EndpointRouteResolver,
@@ -137,7 +138,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         send_final_response as _sip_send_final_response,
         uri_transport as _sip_uri_transport,
     )
-    from .dtmf import parse_sip_info_digit
     from .sip import parse_sip_uri
     from .sip_endpoint import SipEndpointManager
     from .sip_listener import SipInvite, SipInviteResult
@@ -241,71 +241,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             await _refresh_and_push_phonebook(hass)
         return result
 
-    async def _on_info(request, addr, transport) -> None:
-        digit = parse_sip_info_digit(request.header("Content-Type"), request.body)
-        if not digit:
-            _LOGGER.info(
-                "SIP INFO ignored call_id=%s content_type=%s",
-                request.header("Call-ID"),
-                request.header("Content-Type") or "-",
-            )
-            return
-        call_id = request.header("Call-ID")
-        queue = (
-            hass.data.setdefault(DOMAIN, {})
-            .setdefault("trunk_info_queues", {})
-            .get(call_id)
-        )
-        if queue is None:
-            registry = _call_registry(hass)
-            relay = registry.relays.get(call_id)
-            callback = getattr(relay, "on_dtmf", None)
-            if callback is not None:
-                callback("left", digit, "sip_info")
-                _LOGGER.info(
-                    "SIP in-call INFO DTMF RX call_id=%s digit=%s transport=%s",
-                    call_id,
-                    digit,
-                    transport,
-                )
-                return
-            if relay is not None or call_id in registry.softphone_media:
-                session = registry.sessions.get(registry.resolve_session_id(call_id))
-                _publish_dtmf_event(
-                    hass,
-                    call_id=call_id,
-                    dest_call_id=registry.bridge_clients.get(call_id, ""),
-                    caller=session.caller if session is not None else "",
-                    callee=session.callee if session is not None else "",
-                    side="left",
-                    digit=digit,
-                    transport="sip_info",
-                )
-                _LOGGER.info(
-                    "SIP local in-call INFO DTMF RX call_id=%s digit=%s transport=%s",
-                    call_id,
-                    digit,
-                    transport,
-                )
-                return
-            _LOGGER.info(
-                "SIP INFO DTMF arrived outside active call call_id=%s digit=%s",
-                call_id,
-                digit,
-            )
-            return
-        if queue.full():
-            _LOGGER.warning(
-                "SIP INFO DTMF queue full call_id=%s; digit ignored", call_id
-            )
-            return
-        queue.put_nowait(digit)
-        _LOGGER.info(
-            "SIP trunk INFO DTMF RX call_id=%s digit=%s transport=%s",
-            call_id,
-            digit,
-            transport,
-        )
+    _on_info = partial(handle_sip_info, hass)
 
     def _is_trunk_invite(invite: SipInvite) -> bool:
         trunk_cfg = _get_trunk_config(hass)

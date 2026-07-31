@@ -2,12 +2,94 @@
 
 from __future__ import annotations
 
+import logging
+
 from homeassistant.core import HomeAssistant
 
 from .automation_routing import CALL_EVENT_SCHEMA_VERSION, canonical_call_origin
+from .const import DOMAIN
+from .dtmf import parse_sip_info_digit
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState
 from .websocket_api import SIP_DTMF_EVENT
+
+
+_LOGGER = logging.getLogger(__name__)
+
+
+async def handle_sip_info(
+    hass: HomeAssistant,
+    request,
+    _addr,
+    transport,
+) -> None:
+    """Route one in-dialog SIP INFO digit to its active media owner."""
+
+    digit = parse_sip_info_digit(request.header("Content-Type"), request.body)
+    if not digit:
+        _LOGGER.info(
+            "SIP INFO ignored call_id=%s content_type=%s",
+            request.header("Call-ID"),
+            request.header("Content-Type") or "-",
+        )
+        return
+    call_id = request.header("Call-ID")
+    queue = (
+        hass.data.setdefault(DOMAIN, {})
+        .setdefault("trunk_info_queues", {})
+        .get(call_id)
+    )
+    if queue is None:
+        registry = call_registry(hass)
+        relay = registry.relays.get(call_id)
+        callback = getattr(relay, "on_dtmf", None)
+        if callback is not None:
+            callback("left", digit, "sip_info")
+            _LOGGER.info(
+                "SIP in-call INFO DTMF RX call_id=%s digit=%s transport=%s",
+                call_id,
+                digit,
+                transport,
+            )
+            return
+        if relay is not None or call_id in registry.softphone_media:
+            session = registry.sessions.get(registry.resolve_session_id(call_id))
+            publish_dtmf_event(
+                hass,
+                call_id=call_id,
+                dest_call_id=registry.bridge_clients.get(call_id, ""),
+                caller=session.caller if session is not None else "",
+                callee=session.callee if session is not None else "",
+                side="left",
+                digit=digit,
+                transport="sip_info",
+            )
+            _LOGGER.info(
+                "SIP local in-call INFO DTMF RX call_id=%s digit=%s transport=%s",
+                call_id,
+                digit,
+                transport,
+            )
+            return
+        _LOGGER.info(
+            "SIP INFO DTMF arrived outside active call call_id=%s digit=%s",
+            call_id,
+            digit,
+        )
+        return
+    if queue.full():
+        _LOGGER.warning(
+            "SIP INFO DTMF queue full call_id=%s; digit ignored",
+            call_id,
+        )
+        return
+    queue.put_nowait(digit)
+    _LOGGER.info(
+        "SIP trunk INFO DTMF RX call_id=%s digit=%s transport=%s",
+        call_id,
+        digit,
+        transport,
+    )
 
 
 def publish_dtmf_event(
@@ -27,9 +109,7 @@ def publish_dtmf_event(
     registry = call_registry(hass)
     event_context = registry.event_context(call_id)
     state = (
-        event_context.state
-        if event_context is not None
-        else CallState.IN_CALL.value
+        event_context.state if event_context is not None else CallState.IN_CALL.value
     )
     session = registry.sessions.get(registry.resolve_session_id(call_id))
     session_metadata = session.metadata if session is not None else {}

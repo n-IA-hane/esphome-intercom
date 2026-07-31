@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 from pathlib import Path
 import sys
@@ -24,6 +25,10 @@ def _load_dtmf_events(monkeypatch):
     automation = types.ModuleType("custom_components.voip_stack.automation_routing")
     automation.CALL_EVENT_SCHEMA_VERSION = 1
     automation.canonical_call_origin = lambda origin, _route: origin or "extension"
+    const = types.ModuleType("custom_components.voip_stack.const")
+    const.DOMAIN = "voip_stack"
+    dtmf = types.ModuleType("custom_components.voip_stack.dtmf")
+    dtmf.parse_sip_info_digit = lambda _content_type, body: body.decode("ascii").strip()
     lifecycle = types.ModuleType("custom_components.voip_stack.endpoint_lifecycle")
     lifecycle.call_registry = lambda _hass: None
     fsm = types.ModuleType("custom_components.voip_stack.fsm")
@@ -36,6 +41,8 @@ def _load_dtmf_events(monkeypatch):
         "custom_components": package,
         "custom_components.voip_stack": voip_stack,
         "custom_components.voip_stack.automation_routing": automation,
+        "custom_components.voip_stack.const": const,
+        "custom_components.voip_stack.dtmf": dtmf,
         "custom_components.voip_stack.endpoint_lifecycle": lifecycle,
         "custom_components.voip_stack.fsm": fsm,
         "custom_components.voip_stack.websocket_api": websocket,
@@ -160,3 +167,65 @@ def test_direct_outbound_client_projects_info_from_callee(monkeypatch) -> None:
     assert payload["side"] == "right"
     assert payload["transport"] == "sip_info"
     assert payload["direction"] == "outgoing"
+
+
+class _InfoRequest:
+    def __init__(self, call_id: str, digit: str) -> None:
+        self.call_id = call_id
+        self.body = digit.encode()
+
+    def header(self, name: str) -> str:
+        if name == "Call-ID":
+            return self.call_id
+        if name == "Content-Type":
+            return "application/dtmf-relay"
+        return ""
+
+
+def test_sip_info_prefers_the_live_relay_callback(monkeypatch) -> None:
+    dtmf_events = _load_dtmf_events(monkeypatch)
+    received: list[tuple[str, str, str]] = []
+    relay = SimpleNamespace(
+        on_dtmf=lambda side, digit, transport: received.append((side, digit, transport))
+    )
+    registry = SimpleNamespace(
+        relays={"call-1": relay},
+        softphone_media={},
+        sessions={},
+        bridge_clients={},
+        resolve_session_id=lambda call_id: call_id,
+    )
+    monkeypatch.setattr(dtmf_events, "call_registry", lambda _hass: registry)
+    hass = SimpleNamespace(data={"voip_stack": {}})
+
+    asyncio.run(
+        dtmf_events.handle_sip_info(
+            hass,
+            _InfoRequest("call-1", "5"),
+            ("192.0.2.10", 5060),
+            "udp",
+        )
+    )
+
+    assert received == [("left", "5", "sip_info")]
+
+
+def test_sip_info_queues_trunk_digits_without_touching_the_relay(
+    monkeypatch,
+) -> None:
+    dtmf_events = _load_dtmf_events(monkeypatch)
+    queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
+    hass = SimpleNamespace(
+        data={"voip_stack": {"trunk_info_queues": {"call-2": queue}}}
+    )
+
+    asyncio.run(
+        dtmf_events.handle_sip_info(
+            hass,
+            _InfoRequest("call-2", "9"),
+            ("198.51.100.20", 5060),
+            "tcp",
+        )
+    )
+
+    assert queue.get_nowait() == "9"
