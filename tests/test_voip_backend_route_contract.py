@@ -68,6 +68,9 @@ RING_GROUP_ORCHESTRATOR = (
 RING_GROUP_CANDIDATES = (
     ROOT / "custom_components" / "voip_stack" / "ring_group_candidates.py"
 )
+RING_GROUP_FORK = (
+    ROOT / "custom_components" / "voip_stack" / "ring_group_fork.py"
+)
 INVITE_ROUTER = ROOT / "custom_components" / "voip_stack" / "invite_router.py"
 INBOUND_SOFTPHONE = (
     ROOT
@@ -135,6 +138,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.call_forwarder = CALL_FORWARDER.read_text()
         cls.ring_group = RING_GROUP_ORCHESTRATOR.read_text()
         cls.ring_group_candidates = RING_GROUP_CANDIDATES.read_text()
+        cls.ring_group_fork = RING_GROUP_FORK.read_text()
         cls.invite_router = INVITE_ROUTER.read_text()
         cls.inbound_softphone = INBOUND_SOFTPHONE.read_text()
         cls.inbound_bridge = INBOUND_BRIDGE.read_text()
@@ -1141,7 +1145,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("discard(invite.call_id)", task_prelude)
 
     def test_ring_group_treats_ha_member_as_parallel_contender(self) -> None:
-        ring_group = self.ring_group + self.ring_group_candidates
+        ring_group = (
+            self.ring_group
+            + self.ring_group_candidates
+            + self.ring_group_fork
+        )
         self.assertIn(
             "await async_prepare_ring_group_candidates(",
             self.ring_group,
@@ -1157,9 +1165,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn('role="group_candidate"', ring_group)
         self.assertIn("_set_ha_softphone_call_state(", ring_group)
         self.assertIn("async def _wait_browser()", ring_group)
-        self.assertIn('browser_candidate_id = "browser:route-control"', ring_group)
+        self.assertIn(
+            'control_candidate_id = "browser:route-control"',
+            ring_group,
+        )
         self.assertIn("DialCandidate(", ring_group)
-        self.assertIn("_dial_browser", ring_group)
+        self.assertIn("_dial_control", ring_group)
         self.assertIn("registry.attach_media(invite.call_id, media)", ring_group)
 
     def test_initial_automation_group_selection_keeps_ha_members(self) -> None:

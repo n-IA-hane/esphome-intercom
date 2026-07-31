@@ -16,11 +16,8 @@ from .call_scope import pending_routes as _pending_routes
 from .config import debug_mode as _debug_mode
 from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
 from .dial_fork import (
-    DialCandidate,
     DialDisposition,
     DialForkController,
-    DialOutcome,
-    LegCloseMode,
 )
 from .dial_plan import RingPolicy
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
@@ -54,6 +51,7 @@ from .ring_group_candidates import (
     RingGroupCandidates,
     async_prepare_ring_group_candidates,
 )
+from .ring_group_fork import build_ring_group_fork
 from .sdp import build_answer_directional
 from .session_cleanup import async_cleanup_sip_runtime, async_wait_for_cleanup
 from .sip_bridge import (
@@ -73,7 +71,6 @@ if TYPE_CHECKING:
     from .sip_listener import SipInvite
 
 _LOGGER = logging.getLogger(__name__)
-RING_GROUP_TIMEOUT_S = 30.0
 
 
 def _invite_dtmf_format(invite):
@@ -109,7 +106,6 @@ async def run_ring_group_call(
     enable_caller_video_send: bool = False,
 ) -> None:
     hass = runtime.hass
-    cfg = runtime.config
     local_ip = runtime.local_ip
     _ha_peer_name = runtime.ha_peer_name
     _browser_leg_for_member = runtime.browser_leg_for_member
@@ -395,219 +391,23 @@ async def run_ring_group_call(
         )
         return
 
-    async def _dial(attempt: OutboundLeg) -> tuple[str, OutboundLeg]:
-        client = attempt.client
-        uri = attempt.uri
-        result = await client.invite(
-            target=uri.user or attempt.member,
-            remote_host=uri.host,
-            remote_sip_port=uri.port or int(cfg["sip_port"]),
-            request_uri=str(uri),
-            timeout=8.0,
-        )
-        if result == "ringing":
-            result = await client.wait_for_final(timeout=RING_GROUP_TIMEOUT_S)
-        return result, attempt
-
-    browser_decision: dict[str, Any] = {}
-
-    async def _wait_browser() -> tuple[str, BrowserLeg | dict]:
-        try:
-            decision = await asyncio.wait_for(
-                route_future, timeout=RING_GROUP_TIMEOUT_S
-            )
-        except asyncio.TimeoutError:
-            return "timeout", {"member": "__browser__", "browser": True}
-        action = str((decision or {}).get("action") or "").strip().lower()
-        browser_decision.update(decision or {})
-        selected_endpoint_id = str(
-            (decision or {}).get("endpoint_id") or ""
-        ).strip()
-        selected = next(
-            (
-                leg
-                for leg in browser_legs
-                if leg.endpoint_id == selected_endpoint_id
-            ),
-            None,
-        )
-        if action in {"answer_ha", "default"}:
-            if selected is None:
-                return "declined", {
-                    "member": "__browser__",
-                    "browser": True,
-                }
-            return "in_call_browser", selected
-        if action in {"forward", "bridge"}:
-            return "reroute", dict(decision or {})
-        if action == "busy":
-            return "busy", selected or {
-                "member": "__browser__",
-                "browser": True,
-            }
-        if action == "cancel":
-            return "cancelled", selected or {
-                "member": "__caller__",
-                "caller_control": True,
-            }
-        return "declined", selected or {
-            "member": "__browser__",
-            "browser": True,
-        }
-
-    async def _wait_caller_cancel() -> tuple[str, dict]:
-        try:
-            decision = await asyncio.wait_for(
-                route_future, timeout=RING_GROUP_TIMEOUT_S
-            )
-        except asyncio.TimeoutError:
-            return "timeout", {"member": "__caller__", "caller_control": True}
-        action = str((decision or {}).get("action") or "").strip().lower()
-        return (
-            "cancelled" if action == "cancel" else "ignored",
-            {"member": "__caller__", "caller_control": True},
-        )
+    (
+        fork_candidates,
+        candidate_payloads,
+        browser_decision,
+    ) = build_ring_group_fork(
+        sip_port=int(runtime.config["sip_port"]),
+        route_future=route_future,
+        attempts=attempts,
+        browser_legs=browser_legs,
+        preflight_failures=preflight_failures,
+    )
 
     # DialForkController owns every branch task and its loser cleanup
     # barrier.  Keep this compatibility list empty for later rollback
     # helpers, which may still close the selected branch after media setup
     # fails but must never own the fork tasks themselves.
     tasks: list[asyncio.Task] = []
-
-    def _outcome(result: str) -> DialOutcome:
-        disposition = {
-            "in_call": DialDisposition.ANSWERED,
-            "in_call_browser": DialDisposition.ANSWERED,
-            "busy": DialDisposition.BUSY,
-            "dnd": DialDisposition.DND,
-            "declined": DialDisposition.DECLINED,
-            "timeout": DialDisposition.TIMEOUT,
-            "media_incompatible": DialDisposition.MEDIA_INCOMPATIBLE,
-            "auth_required_unsupported": DialDisposition.AUTH_FAILED,
-            "proxy_auth_required_unsupported": DialDisposition.AUTH_FAILED,
-            "cancelled": DialDisposition.CANCELLED,
-            "reroute": DialDisposition.REROUTE,
-        }.get(result, DialDisposition.UNAVAILABLE)
-        return DialOutcome(disposition, reason=result)
-
-    candidate_payloads: dict[str, OutboundLeg | BrowserLeg | dict] = {}
-    fork_candidates: list[DialCandidate] = []
-    for candidate_id, endpoint_id, disposition, tier, order in preflight_failures:
-        async def _dial_preflight(
-            result: DialDisposition = disposition,
-        ) -> DialOutcome:
-            return DialOutcome(result)
-
-        async def _close_preflight(_mode: LegCloseMode) -> None:
-            return None
-
-        fork_candidates.append(
-            DialCandidate(
-                candidate_id,
-                _dial_preflight,
-                _close_preflight,
-                tier=tier,
-                order=order,
-                endpoint_id=endpoint_id,
-            )
-        )
-    for attempt in attempts:
-        candidate_id = attempt.candidate_id or (
-            f"sip:{attempt.client.dialog_ids.call_id}"
-        )
-        candidate_payloads[candidate_id] = attempt
-
-        async def _dial_sip(
-            outbound: OutboundLeg = attempt,
-        ) -> DialOutcome:
-            result, _attempt = await _dial(outbound)
-            if result == "in_call" and outbound.client.dialog is None:
-                return DialOutcome(
-                    DialDisposition.PROTOCOL_ERROR,
-                    500,
-                    "protocol_error",
-                )
-            return _outcome(result)
-
-        async def _close_sip(
-            mode: LegCloseMode,
-            outbound: OutboundLeg = attempt,
-        ) -> None:
-            await _close_outbound_leg(
-                outbound,
-                bye_or_cancel=mode
-                in {LegCloseMode.CANCEL_OR_BYE, LegCloseMode.BYE},
-            )
-
-        fork_candidates.append(
-            DialCandidate(
-                candidate_id,
-                _dial_sip,
-                _close_sip,
-                tier=attempt.tier,
-                order=attempt.order,
-                endpoint_id=attempt.endpoint_id,
-            )
-        )
-
-    control_tier = min(
-        (candidate.tier for candidate in fork_candidates),
-        default=0,
-    )
-    if browser_legs:
-        browser_candidate_id = "browser:route-control"
-
-        async def _dial_browser() -> DialOutcome:
-            result, selected = await _wait_browser()
-            candidate_payloads[browser_candidate_id] = selected
-            if result == "cancelled":
-                return DialOutcome(
-                    DialDisposition.SOURCE_CANCELLED,
-                    487,
-                    result,
-                )
-            return _outcome(result)
-
-        async def _close_browser(_mode: LegCloseMode) -> None:
-            return None
-
-        fork_candidates.append(
-            DialCandidate(
-                browser_candidate_id,
-                _dial_browser,
-                _close_browser,
-                tier=control_tier,
-                order=-2,
-                control=True,
-            )
-        )
-    else:
-        caller_candidate_id = "caller:route-control"
-
-        async def _dial_caller_control() -> DialOutcome:
-            result, selected = await _wait_caller_cancel()
-            candidate_payloads[caller_candidate_id] = selected
-            if result == "cancelled":
-                return DialOutcome(
-                    DialDisposition.SOURCE_CANCELLED,
-                    487,
-                    result,
-                )
-            return _outcome(result)
-
-        async def _close_caller_control(_mode: LegCloseMode) -> None:
-            return None
-
-        fork_candidates.append(
-            DialCandidate(
-                caller_candidate_id,
-                _dial_caller_control,
-                _close_caller_control,
-                tier=control_tier,
-                order=-2,
-                control=True,
-            )
-        )
 
     async def _cleanup_ring_resources(reason: str) -> None:
         """Tear down every ownership layer after an aborted group call."""
