@@ -1175,6 +1175,8 @@ lvgl:
     # ==================================================================
     - id: main_page
       bg_color: 0x05070D
+      on_unload:
+        - script.stop: ai_animation_loop
       # Vertical-up swipe opens the unified settings page by pushing the main
       # screen upward. The VoIP destination area keeps horizontal gestures
       # local, so page-level settings navigation stays vertical only.
@@ -2102,9 +2104,19 @@ lvgl:
                         id: va_hint_label
                         align: TOP_MID
                         y: 112
-                        text: "Touch to talk"
+                        text: "Push to talk or say:"
                         text_font: font_small
                         text_color: 0x8A94A6
+                    - label:
+                        id: va_wake_word_label
+                        align: TOP_MID
+                        y: 140
+                        width: 400
+                        text: ""
+                        text_align: CENTER
+                        text_font: font_small
+                        text_color: 0x8A94A6
+                        long_mode: DOT
                     # Touch area over animation (pushed to bottom)
                     - obj:
                         id: va_touch_area
@@ -3355,6 +3367,7 @@ script:
   # the "RINGING" text from a previous call.
   - id: !extend ui_call_started
     then:
+      - script.stop: ai_animation_loop
       - lambda: |-
           id(peer_name) = peer;
           id(previous_mode) = id(current_mode);
@@ -3384,6 +3397,9 @@ script:
   - id: !extend ui_call_ended
     mode: restart
     then:
+      - globals.set:
+          id: current_mode
+          value: "0"
       - globals.set:
           id: call_ended_active
           value: "true"
@@ -3513,6 +3529,15 @@ script:
                            0xB91C1C, 0x15364A, "Speaker muted", "Speaker");
           set_quick_button(id(quick_dnd_btn), id(quick_dnd_label), id(dnd_switch).state,
                            0xB91C1C, 0x44251D, "DND on", "DND");
+
+          std::string selected_wake_word = "No wake word selected";
+          for (auto *model : id(mww).get_wake_words()) {
+            if (model != nullptr && model->is_enabled() && !model->get_wake_word().empty()) {
+              selected_wake_word = model->get_wake_word();
+              break;
+            }
+          }
+          set_label(id(va_wake_word_label), selected_wake_word.c_str());
 
           // === Update VA container (bottom half) ===
           // Hide all VA groups

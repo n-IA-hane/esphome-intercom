@@ -340,6 +340,35 @@ def test_p4_idle_animation_uses_rendered_page_state() -> None:
         assert f'id(runtime_rendered_page) = "{rendered_page}";' in text
 
 
+def test_p4_idle_animation_has_generic_call_and_page_gates() -> None:
+    text = P4_LANDSCAPE_FULL_AFE.read_text()
+    main_page_start = text.index("    - id: main_page")
+    main_page = text[main_page_start : text.index("      widgets:", main_page_start)]
+    call_started = text[
+        text.index("  - id: !extend ui_call_started") :
+        text.index("  - id: !extend ui_call_dest_ringing")
+    ]
+    call_ended = text[
+        text.index("  - id: !extend ui_call_ended") :
+        text.index("  # Main display rendering")
+    ]
+
+    assert "on_unload:\n        - script.stop: ai_animation_loop" in main_page
+    assert "- script.stop: ai_animation_loop" in call_started
+    assert 'id: current_mode\n          value: "0"' in call_ended
+    assert call_ended.rindex("- script.execute: draw_display") > call_ended.index("delay: 4s")
+
+
+def test_p4_idle_assistant_shows_selected_wake_word() -> None:
+    text = P4_LANDSCAPE_FULL_AFE.read_text()
+
+    assert 'text: "Push to talk or say:"' in text
+    assert "id: va_wake_word_label" in text
+    assert "id(mww).get_wake_words()" in text
+    assert "model->is_enabled()" in text
+    assert "model->get_wake_word()" in text
+
+
 def test_p4_full_jpeg_video_page_has_dedicated_lifecycle() -> None:
     full_jpeg = (
         YAMLS
@@ -352,9 +381,11 @@ def test_p4_full_jpeg_video_page_has_dedicated_lifecycle() -> None:
     assert "on_first_frame:\n    - script.execute: show_call_video_page" in full_jpeg
     assert "on_video_ended:\n    - script.execute: hide_call_video_page" in full_jpeg
     assert "- script.stop: draw_display" in full_jpeg
+    assert "- script.stop: ai_animation_loop" in full_jpeg
     assert 'id(runtime_rendered_page) = "call_video";' in full_jpeg
     assert 'id(runtime_rendered_page) == "call_video"' in full
     assert "id(phone).is_in_call()" in full
+    assert 'id: current_mode\n          value: "0"' in full
 
 
 def test_p4_videophone_contact_navigation_waits_for_owner_callback() -> None:
