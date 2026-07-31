@@ -23,9 +23,9 @@ from .const import (
     DOMAIN,
     HA_SOFTPHONE_DEVICE_ID,
 )
+from .dial_fork import DialDisposition, DialForkController
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
-from .endpoint_registry import EndpointBusyError
 from .endpoint_routing import (
     EndpointRouteResolver,
     peer_audio_formats as _peer_audio_formats,
@@ -33,6 +33,11 @@ from .endpoint_routing import (
     roster_entry_formats as _roster_entry_formats,
     roster_from_peers as _roster_from_peers,
     sip_target_audio_profile as _sip_target_audio_profile,
+)
+from .forward_group_candidates import (
+    ForwardGroupCandidateRuntime,
+    ForwardGroupCandidates,
+    prepare_forward_group_candidates,
 )
 from .fsm import (
     CallState,
@@ -50,22 +55,20 @@ from .media_ports import (
 )
 from .outbound_attempts import (
     BrowserLeg,
-    OutboundLeg,
-    async_cancel_and_join_tasks as _cancel_and_join_tasks,
     async_cleanup_outbound_attempts as _cleanup_outbound_attempts,
     async_close_outbound_leg as _close_outbound_leg,
 )
-from .pbx_routing import (
-    browser_endpoint_can_ring as _browser_endpoint_can_ring,
-    caller_matches_group_member as _caller_matches_member,
-    unique_group_members as _unique_group_members,
-)
+from .pbx_routing import unique_group_members as _unique_group_members
 from .phone_endpoint import (
     DEFAULT_ENDPOINT_ID,
     EndpointAvailability,
     EndpointKind,
 )
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
+from .ring_group import (
+    settle_browser_candidates as _settle_ring_browser_candidates,
+)
+from .ring_group_fork import build_ring_group_fork
 from .router import RouteAction
 from .sdp import build_answer_directional, first_offered_dtmf_format
 from .session_cleanup import async_cleanup_sip_runtime
@@ -89,13 +92,10 @@ from .peer_snapshot import async_build_peer_snapshot as _async_build_peer_snapsh
 from .websocket_api import (
     _ha_peer_name,
     _release_ha_softphone_claim,
-    _set_ha_softphone_call_state,
     _set_sip_bridge_call_state,
 )
 
 _LOGGER = logging.getLogger(__name__)
-RING_GROUP_TIMEOUT_S = 30.0
-MAX_RING_GROUP_ATTEMPTS = 16
 
 
 def _source_dialog_is_answered(early_media: dict | None) -> bool:
@@ -521,57 +521,12 @@ async def async_forward_existing_call(
                 if entry is None:
                     raise RuntimeError("ring group has no roster entry")
                 members = _unique_group_members(entry.metadata.get("members"))
-                attempts: list[OutboundLeg] = []
-                browser_legs: list[BrowserLeg] = []
+                candidates = ForwardGroupCandidates()
+                attempts = candidates.attempts
+                browser_legs = candidates.browser_legs
                 endpoint_registry = hass.data.get(DOMAIN, {}).get(
                     "endpoint_registry"
                 )
-                for member in members:
-                    # A later forward moves a call away from HA and must
-                    # not ring HA again.  Initial routing is different: the
-                    # trunk dialog is only parked on HA while DTMF and
-                    # automations choose its real destination, so browser
-                    # members remain valid ring-group candidates.
-                    browser_leg = _browser_leg_for_member(
-                        member, peers, roster_entries
-                    )
-                    if browser_leg is not None:
-                        if not initial_selection:
-                            continue
-                        endpoint = (
-                            endpoint_registry.get(browser_leg.endpoint_id)
-                            if endpoint_registry is not None
-                            else None
-                        )
-                        if not _browser_endpoint_can_ring(endpoint):
-                            continue
-                        try:
-                            registry.claim_endpoint(
-                                call_id,
-                                browser_leg.endpoint_id,
-                                role="group_candidate",
-                            )
-                        except EndpointBusyError:
-                            continue
-                        browser_legs.append(browser_leg)
-                        continue
-                    if _caller_matches_member(
-                        invite.caller, invite.source_host, member, peers
-                    ):
-                        continue
-                    if len(attempts) >= MAX_RING_GROUP_ATTEMPTS:
-                        break
-                    attempt = _prepare_outbound_leg(
-                        member=member,
-                        peers=peers,
-                        roster_entries=roster_entries,
-                        local_name=invite.caller or _ha_peer_name(hass),
-                        local_rtp_port_index=1,
-                    )
-                    if attempt is not None:
-                        attempts.append(attempt)
-                if not attempts and not browser_legs:
-                    raise RuntimeError("ring group has no reachable members")
 
                 def _settle_browser_candidates(
                     state: str,
@@ -579,33 +534,74 @@ async def async_forward_existing_call(
                     *,
                     keep_endpoint_id: str = "",
                 ) -> None:
-                    for browser_leg in browser_legs:
-                        if browser_leg.endpoint_id == keep_endpoint_id:
-                            continue
-                        registry.release_endpoint_claim(
-                            call_id, browser_leg.endpoint_id
-                        )
-                        _set_ha_softphone_call_state(
-                            hass,
-                            state,
-                            endpoint_id=browser_leg.endpoint_id,
-                            session_device_id=browser_leg.device_id,
-                            caller=invite.caller,
-                            callee=entry.display_name,
-                            peer_name=invite.caller,
-                            direction="incoming",
-                            call_id=call_id,
-                            reason=reason,
-                            terminal_reason=reason,
-                            route_kind=GROUP_TYPE_RING,
-                            last_sip_event="SIP_RESPONSE",
-                        )
-
-                browser_route_future: asyncio.Future | None = None
-                if browser_legs:
-                    browser_route_future = (
-                        asyncio.get_running_loop().create_future()
+                    _settle_ring_browser_candidates(
+                        hass,
+                        registry,
+                        browser_legs,
+                        call_id=call_id,
+                        caller=invite.caller,
+                        callee=entry.display_name,
+                        state=state,
+                        reason=reason,
+                        route_kind=GROUP_TYPE_RING,
+                        keep_endpoint_id=keep_endpoint_id,
                     )
+
+                try:
+                    prepare_forward_group_candidates(
+                        candidates,
+                        ForwardGroupCandidateRuntime(
+                            registry=registry,
+                            endpoint_registry=endpoint_registry,
+                            browser_leg_for_member=_browser_leg_for_member,
+                            prepare_outbound_leg=_prepare_outbound_leg,
+                        ),
+                        invite=invite,
+                        members=members,
+                        peers=peers,
+                        roster_entries=roster_entries,
+                        local_name=invite.caller or _ha_peer_name(hass),
+                        initial_selection=initial_selection,
+                    )
+                except Exception:
+                    _settle_browser_candidates(
+                        CallState.TRANSPORT_UNREACHABLE.value,
+                        TerminalReason.PROTOCOL_ERROR.value,
+                    )
+                    await _cleanup_outbound_attempts([], attempts)
+                    raise
+                if not attempts and not browser_legs:
+                    raise RuntimeError("ring group has no reachable members")
+
+                current_session = registry.sessions.get(
+                    registry.resolve_session_id(call_id)
+                )
+                call_generation = (
+                    current_session.generation
+                    if current_session is not None
+                    else 0
+                )
+                pbx_runtime = hass.data.get(DOMAIN, {}).get("pbx_runtime")
+                authoritative_session = (
+                    pbx_runtime.get_session(
+                        call_id,
+                        generation=call_generation,
+                    )
+                    if pbx_runtime is not None and call_generation
+                    else None
+                )
+                if authoritative_session is None:
+                    _settle_browser_candidates(
+                        CallState.CANCELLED.value,
+                        TerminalReason.CANCELLED.value,
+                    )
+                    await _cleanup_outbound_attempts([], attempts)
+                    raise RuntimeError("forward source call is no longer current")
+
+                browser_route_future = (
+                    asyncio.get_running_loop().create_future()
+                )
+                if browser_legs:
                     registry.upsert(
                         call_id,
                         state=CallState.RINGING.value,
@@ -634,163 +630,74 @@ async def async_forward_existing_call(
                             callee=entry.display_name,
                             last_sip_event="ROUTE_FORWARD",
                         )
-                group_ringing_published = False
 
-                async def _dial_group_member(
-                    attempt: OutboundLeg,
-                ) -> tuple[str, OutboundLeg]:
-                    nonlocal group_ringing_published
-                    result = await attempt.client.invite(
-                        target=attempt.uri.user or attempt.member,
-                        remote_host=attempt.uri.host,
-                        remote_sip_port=attempt.uri.port or int(cfg["sip_port"]),
-                        request_uri=str(attempt.uri),
-                        timeout=8.0,
+                def _publish_group_ringing() -> None:
+                    _set_sip_bridge_call_state(
+                        hass,
+                        CallState.REMOTE_RINGING.value,
+                        caller=invite.caller,
+                        callee=entry.display_name,
+                        peer_name=entry.display_name,
+                        call_id=call_id,
+                        direction="incoming",
+                        route_source="automation",
+                        route_kind=GROUP_TYPE_RING,
+                        last_sip_event="SIP_RESPONSE",
                     )
-                    if result == "ringing":
-                        if not group_ringing_published:
-                            group_ringing_published = True
-                            _set_sip_bridge_call_state(
-                                hass,
-                                CallState.REMOTE_RINGING.value,
-                                caller=invite.caller,
-                                callee=entry.display_name,
-                                peer_name=entry.display_name,
-                                call_id=call_id,
-                                direction="incoming",
-                                route_source="automation",
-                                route_kind=GROUP_TYPE_RING,
-                                last_sip_event="SIP_RESPONSE",
-                            )
-                        result = await attempt.client.wait_for_final(
-                            timeout=RING_GROUP_TIMEOUT_S
-                        )
-                    return result, attempt
 
-                async def _wait_browser_group_member():
-                    if browser_route_future is None:
-                        return "timeout", None, {}
-                    try:
-                        browser_decision = await asyncio.wait_for(
-                            browser_route_future,
-                            timeout=RING_GROUP_TIMEOUT_S,
-                        )
-                    except asyncio.TimeoutError:
-                        return "timeout", None, {}
-                    action = str(
-                        (browser_decision or {}).get("action") or ""
-                    ).strip().lower()
-                    endpoint_id = str(
-                        (browser_decision or {}).get("endpoint_id") or ""
-                    ).strip()
-                    selected = next(
-                        (
-                            leg
-                            for leg in browser_legs
-                            if leg.endpoint_id == endpoint_id
-                        ),
-                        None,
-                    )
-                    if action in {"answer_ha", "default"} and selected is not None:
-                        return "in_call_browser", selected, browser_decision
-                    if action in {"forward", "bridge"}:
-                        return "reroute", None, browser_decision
-                    if action == "cancel":
-                        return "cancelled", None, browser_decision
-                    return "declined", selected, browser_decision
-
-                tasks = [
-                    asyncio.create_task(_dial_group_member(attempt))
-                    for attempt in attempts
-                ]
-                if browser_route_future is not None:
-                    tasks.append(asyncio.create_task(_wait_browser_group_member()))
-                winner: OutboundLeg | BrowserLeg | None = None
-                browser_decision: dict = {}
-                reroute_decision: dict | None = None
-                failure = "timeout"
+                (
+                    fork_candidates,
+                    candidate_payloads,
+                    browser_decision,
+                ) = build_ring_group_fork(
+                    sip_port=int(cfg["sip_port"]),
+                    route_future=browser_route_future,
+                    attempts=attempts,
+                    browser_legs=browser_legs,
+                    preflight_failures=[],
+                    on_ringing=_publish_group_ringing,
+                )
                 try:
-                    deadline = (
-                        asyncio.get_running_loop().time() + RING_GROUP_TIMEOUT_S
+                    fork_result = await DialForkController(
+                        authoritative_session,
+                        fork_candidates,
+                    ).run(
+                        lambda _candidate, _outcome: (
+                            registry.is_generation_current(
+                                call_id,
+                                call_generation,
+                            )
+                        )
                     )
-                    pending_tasks = set(tasks)
-                    while pending_tasks and winner is None:
-                        timeout = max(
-                            0.0, deadline - asyncio.get_running_loop().time()
-                        )
-                        if timeout <= 0:
-                            break
-                        done, pending_tasks = await asyncio.wait(
-                            pending_tasks,
-                            timeout=timeout,
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
-                        if not done:
-                            break
-                        for task in tasks:
-                            if task not in done:
-                                continue
-                            try:
-                                task_result = task.result()
-                            except Exception as err:  # noqa: BLE001
-                                failure = str(err or failure)
-                                continue
-                            if len(task_result) == 3:
-                                result, attempt, decision_data = task_result
-                            else:
-                                result, attempt = task_result
-                                decision_data = {}
-                            if (
-                                result == "in_call"
-                                and isinstance(attempt, OutboundLeg)
-                                and attempt.client.dialog is not None
-                            ):
-                                winner = attempt
-                                break
-                            if (
-                                result == "in_call_browser"
-                                and isinstance(attempt, BrowserLeg)
-                            ):
-                                winner = attempt
-                                browser_decision = dict(decision_data or {})
-                                break
-                            if result == "reroute":
-                                reroute_decision = dict(decision_data or {})
-                                break
-                            failure = result or failure
-                        if reroute_decision is not None:
-                            pending_tasks.clear()
-                            break
                 except asyncio.CancelledError:
                     registry.pending_routes.pop(call_id, None)
                     _settle_browser_candidates(
                         CallState.CANCELLED.value,
                         TerminalReason.CANCELLED.value,
                     )
-                    await _cleanup_outbound_attempts(tasks, attempts)
                     raise
-                finally:
-                    await _cancel_and_join_tasks(tasks)
-
-                losers = [attempt for attempt in attempts if attempt is not winner]
-
-                async def _cancel_losing_sip_legs() -> None:
-                    await asyncio.gather(
-                        *(
-                            _close_outbound_leg(attempt, cancel=True)
-                            for attempt in losers
-                        ),
-                        return_exceptions=True,
+                except Exception:
+                    registry.pending_routes.pop(call_id, None)
+                    _settle_browser_candidates(
+                        CallState.TRANSPORT_UNREACHABLE.value,
+                        TerminalReason.PROTOCOL_ERROR.value,
                     )
+                    await _cleanup_outbound_attempts([], attempts)
+                    raise
 
-                # A browser answer is the fork commit point.  Do not make
-                # its final SIP response wait for remote losing legs to
-                # acknowledge CANCEL; mature PBX implementations cancel
-                # those branches as a consequence of winner selection.
-                if isinstance(winner, BrowserLeg):
-                    create_runtime_task(hass, _cancel_losing_sip_legs())
-                else:
-                    await _cancel_losing_sip_legs()
+                winner = (
+                    candidate_payloads.get(
+                        fork_result.winner.candidate_id
+                    )
+                    if fork_result.winner is not None
+                    else None
+                )
+                reroute_decision = (
+                    dict(browser_decision)
+                    if fork_result.outcome.disposition
+                    is DialDisposition.REROUTE
+                    else None
+                )
                 if reroute_decision is not None:
                     route = registry.pending_routes.pop(call_id, None) or {}
                     _settle_browser_candidates(
@@ -802,6 +709,23 @@ async def async_forward_existing_call(
                         handoff.set_result(dict(reroute_decision))
                     return
                 if winner is None:
+                    failure = {
+                        DialDisposition.BUSY: "busy",
+                        DialDisposition.DND: "dnd",
+                        DialDisposition.DECLINED: "declined",
+                        DialDisposition.TIMEOUT: "timeout",
+                        DialDisposition.MEDIA_INCOMPATIBLE: "media_incompatible",
+                        DialDisposition.AUTH_FAILED: (
+                            "auth_required_unsupported"
+                        ),
+                        DialDisposition.CANCELLED: "cancelled",
+                        DialDisposition.SOURCE_CANCELLED: "cancelled",
+                        DialDisposition.PROTOCOL_ERROR: "protocol_error",
+                        DialDisposition.UNAVAILABLE: "transport_unreachable",
+                    }.get(
+                        fork_result.outcome.disposition,
+                        fork_result.outcome.reason or "transport_unreachable",
+                    )
                     registry.pending_routes.pop(call_id, None)
                     _settle_browser_candidates(
                         CallState.TRANSPORT_UNREACHABLE.value,

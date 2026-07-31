@@ -62,6 +62,12 @@ TRUNK_INBOUND_ROUTER = (
     ROOT / "custom_components" / "voip_stack" / "trunk_inbound_router.py"
 )
 CALL_FORWARDER = ROOT / "custom_components" / "voip_stack" / "call_forwarder.py"
+FORWARD_GROUP_CANDIDATES = (
+    ROOT
+    / "custom_components"
+    / "voip_stack"
+    / "forward_group_candidates.py"
+)
 RING_GROUP_ORCHESTRATOR = (
     ROOT / "custom_components" / "voip_stack" / "ring_group_orchestrator.py"
 )
@@ -139,6 +145,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.trunk_routing = TRUNK_ROUTING.read_text()
         cls.trunk_inbound_router = TRUNK_INBOUND_ROUTER.read_text()
         cls.call_forwarder = CALL_FORWARDER.read_text()
+        cls.forward_group_candidates = FORWARD_GROUP_CANDIDATES.read_text()
         cls.ring_group = RING_GROUP_ORCHESTRATOR.read_text()
         cls.ring_group_candidates = RING_GROUP_CANDIDATES.read_text()
         cls.ring_group_fork = RING_GROUP_FORK.read_text()
@@ -1179,15 +1186,20 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_initial_automation_group_selection_keeps_ha_members(self) -> None:
         forward = self.call_forwarder
+        candidates = self.forward_group_candidates
+        group_fork = self.ring_group_fork
         trunk_route = self.trunk_inbound_router
         self.assertIn("initial_selection: bool = False", forward)
-        self.assertIn("if not initial_selection:", forward)
-        self.assertIn("_browser_endpoint_can_ring(endpoint)", forward)
-        self.assertIn("browser_legs: list[BrowserLeg]", forward)
-        self.assertIn('role="group_candidate"', forward)
+        self.assertIn("prepare_forward_group_candidates(", forward)
+        self.assertIn("if not initial_selection:", candidates)
+        self.assertIn("browser_endpoint_can_ring(endpoint)", candidates)
+        self.assertIn("browser_legs: list[BrowserLeg]", candidates)
+        self.assertIn('role="group_candidate"', candidates)
         self.assertIn("_publish_pending_ha_softphone_ringing(", forward)
-        self.assertIn("async def _wait_browser_group_member", forward)
-        self.assertIn('result == "in_call_browser"', forward)
+        self.assertIn("build_ring_group_fork(", forward)
+        self.assertIn("async def _wait_browser()", group_fork)
+        self.assertIn('"in_call_browser"', group_fork)
+        self.assertIn("DialForkController(", forward)
         self.assertIn('"answer",', forward)
         browser_answer = forward[
             forward.index('"answer",') : forward.index(

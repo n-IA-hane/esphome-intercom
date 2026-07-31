@@ -188,3 +188,50 @@ class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.final_timeout, 30.0)
         self.assertIs(payloads["sip:ws3"], leg)
         self.assertEqual(CLOSE_CALLS, [(leg, True)])
+
+    async def test_parallel_sip_ringing_is_published_once(self) -> None:
+        future = asyncio.get_running_loop().create_future()
+        published: list[str] = []
+
+        class Client:
+            dialog = None
+
+            def __init__(self, call_id: str) -> None:
+                self.dialog_ids = SimpleNamespace(call_id=call_id)
+
+            async def invite(self, **_kwargs):
+                return "ringing"
+
+            async def wait_for_final(self, *, timeout):
+                self.final_timeout = timeout
+                return "busy"
+
+        def leg(call_id: str):
+            return SimpleNamespace(
+                candidate_id=f"sip:{call_id}",
+                client=Client(call_id),
+                uri=SimpleNamespace(
+                    user=call_id,
+                    host="phone.local",
+                    port=5060,
+                ),
+                member=call_id,
+                tier=0,
+                order=0,
+                endpoint_id=call_id,
+            )
+
+        fork, _payloads, _decision = ring_group_fork.build_ring_group_fork(
+            sip_port=5060,
+            route_future=future,
+            attempts=[leg("one"), leg("two")],
+            browser_legs=[],
+            preflight_failures=[],
+            on_ringing=lambda: published.append("ringing"),
+        )
+
+        first, second = await asyncio.gather(fork[0].dial(), fork[1].dial())
+
+        self.assertIs(first.disposition, _Disposition.BUSY)
+        self.assertIs(second.disposition, _Disposition.BUSY)
+        self.assertEqual(published, ["ringing"])

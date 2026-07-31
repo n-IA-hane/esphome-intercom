@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
 from .dial_fork import (
@@ -46,6 +47,7 @@ def build_ring_group_fork(
     attempts: list[OutboundLeg],
     browser_legs: list[BrowserLeg],
     preflight_failures: list[PreflightFailure],
+    on_ringing: Callable[[], None] | None = None,
 ) -> tuple[
     list[DialCandidate],
     dict[str, ForkPayload],
@@ -55,6 +57,7 @@ def build_ring_group_fork(
 
     candidate_payloads: dict[str, ForkPayload] = {}
     browser_decision: dict[str, Any] = {}
+    ringing_published = False
 
     async def _wait_browser() -> tuple[str, BrowserLeg | dict]:
         try:
@@ -149,6 +152,7 @@ def build_ring_group_fork(
         async def _dial_sip(
             outbound: OutboundLeg = attempt,
         ) -> DialOutcome:
+            nonlocal ringing_published
             client = outbound.client
             uri = outbound.uri
             result = await client.invite(
@@ -159,6 +163,9 @@ def build_ring_group_fork(
                 timeout=8.0,
             )
             if result == "ringing":
+                if on_ringing is not None and not ringing_published:
+                    ringing_published = True
+                    on_ringing()
                 result = await client.wait_for_final(
                     timeout=RING_GROUP_TIMEOUT_S
                 )
