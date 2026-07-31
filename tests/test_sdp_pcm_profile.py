@@ -253,6 +253,30 @@ class SdpPcmProfileTest(unittest.TestCase):
         assert negotiated is not None
         self.assertEqual(negotiated.events, frozenset({1, 3, 4}))
 
+    def test_first_offered_dtmf_format_preserves_remote_order(self) -> None:
+        offer = (
+            "v=0\r\no=- 1 1 IN IP4 192.0.2.10\r\n"
+            "s=offer\r\nc=IN IP4 192.0.2.10\r\nt=0 0\r\n"
+            "m=audio 40000 RTP/AVP 96 121 101\r\n"
+            "a=rtpmap:96 L16/8000/1\r\n"
+            "a=rtpmap:121 telephone-event/16000\r\n"
+            "a=rtpmap:101 telephone-event/8000\r\n"
+        )
+
+        selected = sdp.first_offered_dtmf_format(offer)
+
+        self.assertIsNotNone(selected)
+        assert selected is not None
+        self.assertEqual(selected.payload_type, 121)
+        self.assertEqual(selected.sample_rate, 16000)
+        audio_only = (
+            "v=0\r\no=- 1 1 IN IP4 192.0.2.10\r\n"
+            "s=offer\r\nc=IN IP4 192.0.2.10\r\nt=0 0\r\n"
+            "m=audio 40000 RTP/AVP 96\r\n"
+            "a=rtpmap:96 L16/8000/1\r\n"
+        )
+        self.assertIsNone(sdp.first_offered_dtmf_format(audio_only))
+
     def test_answer_cannot_add_rtcp_mux_or_feedback_capabilities(self) -> None:
         offer = (
             "v=0\r\no=- 1 1 IN IP4 192.0.2.10\r\n"

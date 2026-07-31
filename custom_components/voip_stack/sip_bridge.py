@@ -113,15 +113,10 @@ def configure_answered_invite_video_relay(
     )
 
 
-def _invite_dtmf_format(invite: SipInvite) -> sdp.RtpDtmfFormat | None:
-    formats = sdp.offered_dtmf_formats(invite.remote_sdp)
-    return formats[0] if formats else None
-
-
 def invite_rtp_peer(invite: SipInvite) -> RtpPeer:
     """Build the relay peer represented by one inbound offer."""
 
-    dtmf = _invite_dtmf_format(invite)
+    dtmf = sdp.first_offered_dtmf_format(invite.remote_sdp)
     return RtpPeer(
         host=invite.remote_rtp_host,
         port=invite.remote_rtp_port,

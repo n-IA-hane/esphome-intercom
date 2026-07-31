@@ -77,7 +77,7 @@ def _load_module(registry, answer_calls: list[dict]):
         build_answer_directional=build_answer_directional,
         constrained_media_direction=lambda *_args, **_kwargs: "sendrecv",
         constrained_video_direction=lambda *_args, **_kwargs: "inactive",
-        offered_dtmf_formats=lambda _sdp: [],
+        first_offered_dtmf_format=lambda _sdp: None,
     )
     _module(
         "sip_bridge",
@@ -170,4 +170,3 @@ def test_assist_reinvite_returns_audio_answer_and_declines_video() -> None:
     assert owner.committed is False
     asyncio.run(result.commit())
     assert owner.committed is True
-

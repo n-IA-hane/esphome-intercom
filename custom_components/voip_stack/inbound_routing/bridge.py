@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from homeassistant.core import HomeAssistant
 
-from .. import sdp as sip_sdp
 from ..audio_format import HA_TRUNK_AUDIO_FORMATS
 from ..config import debug_mode
 from ..const import (
@@ -44,7 +43,7 @@ from ..media_ports import (
 )
 from ..outbound_attempts import async_close_client_and_release
 from ..phone_endpoint import EndpointKind
-from ..sdp import build_answer_directional
+from ..sdp import build_answer_directional, first_offered_dtmf_format
 from ..sip import parse_sip_uri, sip_endpoints_equal, sip_uri_targets_listener
 from ..sip_bridge import (
     build_invite_client_relay,
@@ -76,11 +75,6 @@ class BridgeRuntime(Protocol):
     send_final_response: Callable[..., Any]
     sip_uri_transport: Callable[..., Any]
     terminate_sip_bridge: Callable[..., Any]
-
-
-def _invite_dtmf_format(invite: SipInvite):
-    formats = sip_sdp.offered_dtmf_formats(invite.remote_sdp)
-    return formats[0] if formats else None
 
 
 def _resolve_bridge_uri(
@@ -620,7 +614,7 @@ async def route_sip_bridge(
             source_relay_port,
             invite.send_format,
             invite.recv_format,
-            dtmf=_invite_dtmf_format(invite),
+            dtmf=first_offered_dtmf_format(invite.remote_sdp),
             remote_sdp=invite.remote_sdp,
             video_port=video_relay.left_port if video_relay is not None else 0,
             video_format=selected_video,

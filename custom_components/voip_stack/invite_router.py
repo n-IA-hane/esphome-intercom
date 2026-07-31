@@ -63,11 +63,6 @@ _LOGGER = logging.getLogger(__name__)
 MAX_PENDING_HA_INVITES = 64
 
 
-def _invite_dtmf_format(invite):
-    formats = sip_sdp.offered_dtmf_formats(invite.remote_sdp)
-    return formats[0] if formats else None
-
-
 @dataclass(slots=True)
 class InviteRuntime:
     """Explicit dependencies used while routing one inbound INVITE."""
@@ -460,5 +455,5 @@ async def route_invite(
         resolved_callee=resolved_callee,
         source_endpoint=source_endpoint,
         target_endpoint=target_endpoint,
-        dtmf_format=_invite_dtmf_format(invite),
+        dtmf_format=sip_sdp.first_offered_dtmf_format(invite.remote_sdp),
     )

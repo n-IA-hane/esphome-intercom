@@ -34,7 +34,7 @@ from .sdp import (
     build_answer_directional,
     constrained_media_direction,
     constrained_video_direction,
-    offered_dtmf_formats,
+    first_offered_dtmf_format,
 )
 from .sip_bridge import invite_rtp_peer, invite_video_rtp_peer
 from .sip_listener import SipInvite, SipInviteResult
@@ -43,11 +43,6 @@ from .websocket_api import _fire_call_event, _ha_softphone_store
 
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _invite_dtmf_format(invite: SipInvite):
-    formats = offered_dtmf_formats(invite.remote_sdp)
-    return formats[0] if formats else None
 
 
 async def async_prepare_media_update(
@@ -125,7 +120,7 @@ async def async_prepare_media_update(
             local_rtp_port,
             updated.send_format,
             updated.recv_format,
-            dtmf=_invite_dtmf_format(updated),
+            dtmf=first_offered_dtmf_format(updated.remote_sdp),
             remote_sdp=updated.remote_sdp,
             video_port=local_video_rtp_port,
             video_format=updated.answer_video_format,
@@ -312,7 +307,7 @@ async def async_prepare_media_update(
                 local_rtp_port,
                 updated.send_format,
                 updated.recv_format,
-                dtmf=_invite_dtmf_format(updated),
+                dtmf=first_offered_dtmf_format(updated.remote_sdp),
                 remote_sdp=updated.remote_sdp,
                 video_port=local_video_rtp_port,
                 video_format=updated.answer_video_format,
@@ -337,7 +332,7 @@ async def async_prepare_media_update(
             media["invite"] = updated
             media["video_direction"] = video_direction
             if audio_session is not None:
-                dtmf_format = _invite_dtmf_format(updated)
+                dtmf_format = first_offered_dtmf_format(updated.remote_sdp)
                 commit_audio_session_update(
                     audio_session,
                     updated,
@@ -463,7 +458,7 @@ async def async_prepare_media_update(
                 int(relay.local_rtp_port),
                 updated.send_format,
                 updated.recv_format,
-                dtmf=_invite_dtmf_format(updated),
+                dtmf=first_offered_dtmf_format(updated.remote_sdp),
                 remote_sdp=updated.remote_sdp,
                 audio_direction=updated.local_audio_direction,
                 video_port=0,
@@ -566,7 +561,7 @@ async def async_prepare_media_update(
         int(relay.left_port),
         updated.send_format,
         updated.recv_format,
-        dtmf=_invite_dtmf_format(updated),
+        dtmf=first_offered_dtmf_format(updated.remote_sdp),
         remote_sdp=updated.remote_sdp,
         audio_direction=audio_direction,
         video_port=local_video_port,

@@ -9,7 +9,6 @@ from typing import Any, Awaitable, Callable
 
 from homeassistant.core import HomeAssistant
 
-from . import sdp as sip_sdp
 from .audio_format import HA_TRUNK_AUDIO_FORMATS
 from .config import debug_mode as _debug_mode, trunk_config as _get_trunk_config
 from .const import (
@@ -68,7 +67,7 @@ from .phone_endpoint import (
 )
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .router import RouteAction
-from .sdp import build_answer_directional
+from .sdp import build_answer_directional, first_offered_dtmf_format
 from .session_cleanup import async_cleanup_sip_runtime
 from .sip import parse_sip_uri
 from .sip_bridge import (
@@ -97,11 +96,6 @@ from .websocket_api import (
 _LOGGER = logging.getLogger(__name__)
 RING_GROUP_TIMEOUT_S = 30.0
 MAX_RING_GROUP_ATTEMPTS = 16
-
-
-def _invite_dtmf_format(invite):
-    formats = sip_sdp.offered_dtmf_formats(invite.remote_sdp)
-    return formats[0] if formats else None
 
 
 def _source_dialog_is_answered(early_media: dict | None) -> bool:
@@ -943,7 +937,7 @@ async def async_forward_existing_call(
                         source_relay_port,
                         invite.send_format,
                         invite.recv_format,
-                        dtmf=_invite_dtmf_format(invite),
+                        dtmf=first_offered_dtmf_format(invite.remote_sdp),
                         remote_sdp=invite.remote_sdp,
                     )
                     _sip_send_final_response(
@@ -1327,7 +1321,7 @@ async def async_forward_existing_call(
                     source_relay_port,
                     invite.send_format,
                     invite.recv_format,
-                    dtmf=_invite_dtmf_format(invite),
+                    dtmf=first_offered_dtmf_format(invite.remote_sdp),
                     remote_sdp=invite.remote_sdp,
                     video_port=(
                         video_relay.left_port if video_relay is not None else 0

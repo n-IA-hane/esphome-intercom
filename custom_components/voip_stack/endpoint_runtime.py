@@ -105,11 +105,6 @@ MAX_TRUNK_INFO_DIGITS = 16
 MAX_PENDING_HA_INVITES = 64
 
 
-def _invite_dtmf_format(invite):
-    formats = sip_sdp.offered_dtmf_formats(invite.remote_sdp)
-    return formats[0] if formats else None
-
-
 def _source_dialog_is_answered(early_media: dict | None) -> bool:
     """Return whether the inbound source already received a final 2xx."""
     return early_media is not None and bool(

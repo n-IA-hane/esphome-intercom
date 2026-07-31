@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
-from . import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
 from .config import debug_mode as _debug_mode
 from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
@@ -52,7 +51,7 @@ from .ring_group_candidates import (
     async_prepare_ring_group_candidates,
 )
 from .ring_group_fork import build_ring_group_fork
-from .sdp import build_answer_directional
+from .sdp import build_answer_directional, first_offered_dtmf_format
 from .session_cleanup import async_cleanup_sip_runtime, async_wait_for_cleanup
 from .sip_bridge import (
     build_invite_client_relay,
@@ -71,11 +70,6 @@ if TYPE_CHECKING:
     from .sip_listener import SipInvite
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _invite_dtmf_format(invite):
-    formats = sip_sdp.offered_dtmf_formats(invite.remote_sdp)
-    return formats[0] if formats else None
 
 
 @dataclass(slots=True)
@@ -674,7 +668,7 @@ async def run_ring_group_call(
                 local_rtp_port,
                 invite.send_format,
                 invite.recv_format,
-                dtmf=_invite_dtmf_format(invite),
+                dtmf=first_offered_dtmf_format(invite.remote_sdp),
                 remote_sdp=invite.remote_sdp,
             )
             committed = registry.transition(
@@ -959,7 +953,7 @@ async def run_ring_group_call(
                 source_relay_port,
                 invite.send_format,
                 invite.recv_format,
-                dtmf=_invite_dtmf_format(invite),
+                dtmf=first_offered_dtmf_format(invite.remote_sdp),
                 remote_sdp=invite.remote_sdp,
                 video_port=(
                     relay.video_relay.left_port

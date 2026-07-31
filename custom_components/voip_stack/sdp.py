@@ -2697,6 +2697,15 @@ def offered_dtmf_formats(sdp: str | bytes) -> list[RtpDtmfFormat]:
     return out
 
 
+def first_offered_dtmf_format(
+    sdp: str | bytes,
+) -> RtpDtmfFormat | None:
+    """Return the first telephone-event format in remote preference order."""
+
+    formats = offered_dtmf_formats(sdp)
+    return formats[0] if formats else None
+
+
 def negotiate_dtmf_answer(
     remote_sdp: str | bytes,
     local_offer_sdp: str | bytes,
