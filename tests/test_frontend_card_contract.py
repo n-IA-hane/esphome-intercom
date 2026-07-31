@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CARD = ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-stack-card.js"
 CARD_EDITOR = CARD.with_name("voip-stack-card-editor.js")
 CARD_MODEL = CARD.with_name("voip-stack-card-model.js")
+CARD_VIEW = CARD.with_name("voip-stack-card-view.js")
 PHONEBOOK_CARD = ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-phonebook-card.js"
 ENDPOINT_DEVICE = ROOT / "custom_components" / "voip_stack" / "endpoint_device.py"
 
@@ -44,7 +45,9 @@ def _method_body(source: str, method_name: str) -> str:
 class FrontendCardContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.source = CARD.read_text()
+        cls.card_source = CARD.read_text()
+        cls.view_source = CARD_VIEW.read_text()
+        cls.source = f"{cls.card_source}\n{cls.view_source}"
         cls.editor_source = CARD_EDITOR.read_text()
         cls.model_source = CARD_MODEL.read_text()
 
@@ -714,7 +717,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn('"sendrecv", "sendonly", "recvonly", "inactive"', media_model)
 
     def test_dynamic_call_controls_expose_accessible_state(self) -> None:
-        source = CARD.read_text()
+        source = self.source
         self.assertIn('statusRow.setAttribute("aria-live", "polite")', source)
         self.assertIn('err.setAttribute("role", "alert")', source)
         self.assertIn('prevBtn.setAttribute("aria-label", "Previous destination")', source)
@@ -737,7 +740,7 @@ class FrontendCardContractTest(unittest.TestCase):
         )
 
     def test_softphone_native_contact_popup_keeps_readable_system_contrast(self) -> None:
-        source = CARD.read_text()
+        source = self.view_source
         self.assertIn(".destination-select option {", source)
         self.assertIn("color: CanvasText;", source)
         self.assertIn("background-color: Canvas;", source)

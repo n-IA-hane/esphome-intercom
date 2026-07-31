@@ -39,6 +39,10 @@ source = source
   .replace(/await import\(`\.\/voip-phonebook-card\.js[^;]+;/, "")
   .replace(/await import\(`\.\/voip-stack-card-editor\.js[^;]+;/, "")
   .replace(
+    /const \{{\s*buildMainCardSkeleton[\s\S]*?\}} = await import\(`\.\/voip-stack-card-view\.js[^;]+;/,
+    "const {{ buildMainCardSkeleton, buildUnconfiguredCardSkeleton }} = globalThis.__cardView;",
+  )
+  .replace(
     /const \{{ voipStackEngine \}} = await import\(`\.\/voip-stack-engine\.js[^;]+;/,
     "const {{ voipStackEngine }} = globalThis.__engine;",
   )
@@ -182,6 +186,10 @@ let microphonePermissionRequests = 0;
 const context = vm.createContext({{
   __engine: {{ voipStackEngine: engine }},
   __cardModel: cardModel,
+  __cardView: {{
+    buildMainCardSkeleton() {{}},
+    buildUnconfiguredCardSkeleton() {{}},
+  }},
   EventTarget,
   Event,
   CustomEvent: class CustomEvent extends Event {{
