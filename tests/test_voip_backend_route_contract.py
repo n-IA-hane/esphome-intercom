@@ -65,6 +65,9 @@ CALL_FORWARDER = ROOT / "custom_components" / "voip_stack" / "call_forwarder.py"
 RING_GROUP_ORCHESTRATOR = (
     ROOT / "custom_components" / "voip_stack" / "ring_group_orchestrator.py"
 )
+RING_GROUP_CANDIDATES = (
+    ROOT / "custom_components" / "voip_stack" / "ring_group_candidates.py"
+)
 INVITE_ROUTER = ROOT / "custom_components" / "voip_stack" / "invite_router.py"
 INBOUND_SOFTPHONE = (
     ROOT
@@ -131,6 +134,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.trunk_inbound_router = TRUNK_INBOUND_ROUTER.read_text()
         cls.call_forwarder = CALL_FORWARDER.read_text()
         cls.ring_group = RING_GROUP_ORCHESTRATOR.read_text()
+        cls.ring_group_candidates = RING_GROUP_CANDIDATES.read_text()
         cls.invite_router = INVITE_ROUTER.read_text()
         cls.inbound_softphone = INBOUND_SOFTPHONE.read_text()
         cls.inbound_bridge = INBOUND_BRIDGE.read_text()
@@ -1137,10 +1141,19 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("discard(invite.call_id)", task_prelude)
 
     def test_ring_group_treats_ha_member_as_parallel_contender(self) -> None:
-        ring_group = self.ring_group
+        ring_group = self.ring_group + self.ring_group_candidates
+        self.assertIn(
+            "await async_prepare_ring_group_candidates(",
+            self.ring_group,
+        )
         self.assertIn("browser_legs: list[BrowserLeg]", ring_group)
-        self.assertIn("_browser_leg_for_member(", ring_group)
-        self.assertIn("member, peers, roster_entries", ring_group)
+        self.assertIn("runtime.browser_leg_for_member(", ring_group)
+        browser_lookup = ring_group.split(
+            "browser_leg = runtime.browser_leg_for_member(",
+            1,
+        )[1].split(")", 1)[0]
+        for argument in ("member", "peers", "roster_entries"):
+            self.assertIn(argument, browser_lookup)
         self.assertIn('role="group_candidate"', ring_group)
         self.assertIn("_set_ha_softphone_call_state(", ring_group)
         self.assertIn("async def _wait_browser()", ring_group)

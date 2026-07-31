@@ -22,10 +22,9 @@ from .dial_fork import (
     DialOutcome,
     LegCloseMode,
 )
-from .dial_plan import RingPolicy, build_sip_contact_targets
+from .dial_plan import RingPolicy
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry
-from .endpoint_registry import EndpointBusyError
 from .fsm import (
     CallState,
     TerminalReason,
@@ -45,15 +44,15 @@ from .outbound_attempts import (
     async_cleanup_outbound_attempts as _cleanup_outbound_attempts,
     async_close_outbound_leg as _close_outbound_leg,
 )
-from .pbx_routing import (
-    caller_matches_group_member as _caller_matches_member,
-    unique_group_members as _unique_group_members,
-)
+from .pbx_routing import unique_group_members as _unique_group_members
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .ring_group import (
-    endpoint_is_esphome as _endpoint_is_esphome,
-    endpoint_preflight_disposition as _endpoint_preflight_disposition,
     settle_browser_candidates as _settle_ring_browser_candidates,
+)
+from .ring_group_candidates import (
+    RingGroupCandidateRuntime,
+    RingGroupCandidates,
+    async_prepare_ring_group_candidates,
 )
 from .sdp import build_answer_directional
 from .session_cleanup import async_cleanup_sip_runtime, async_wait_for_cleanup
@@ -75,7 +74,6 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 RING_GROUP_TIMEOUT_S = 30.0
-MAX_RING_GROUP_ATTEMPTS = 16
 
 
 def _invite_dtmf_format(invite):
@@ -158,9 +156,10 @@ async def run_ring_group_call(
             state=CallState.TRANSPORT_UNREACHABLE.value,
         )
         return
-    attempts: list[OutboundLeg] = []
-    browser_legs: list[BrowserLeg] = []
-    preflight_failures: list[tuple[str, str, DialDisposition, int, int]] = []
+    candidates = RingGroupCandidates()
+    attempts = candidates.attempts
+    browser_legs = candidates.browser_legs
+    preflight_failures = candidates.preflight_failures
     session = registry.sessions.get(registry.resolve_session_id(invite.call_id))
     if session is None or not registry.is_generation_current(
         invite.call_id,
@@ -206,179 +205,26 @@ async def run_ring_group_call(
             route_kind=GROUP_TYPE_RING,
             keep_endpoint_id=keep_endpoint_id,
         )
-    async def _prepare_candidates() -> None:
-        for member_order, member in enumerate(members):
-            if _caller_matches_member(
-                invite.caller,
-                invite.source_host,
-                member,
-                peers,
-                source_endpoint_id=source_endpoint_id,
-            ):
-                continue
-            browser_leg = _browser_leg_for_member(
-                member, peers, roster_entries
-            )
-            if browser_leg is not None:
-                if browser_leg.endpoint_id == source_endpoint_id:
-                    continue
-                endpoint = (
-                    endpoint_registry.get(browser_leg.endpoint_id)
-                    if endpoint_registry is not None
-                    else None
-                )
-                disposition = _endpoint_preflight_disposition(
-                    endpoint,
-                    call_id=invite.call_id,
-                    browser=True,
-                )
-                if disposition is not None:
-                    preflight_failures.append(
-                        (
-                            f"preflight:{member_order}:{disposition.value}:{browser_leg.endpoint_id}",
-                            browser_leg.endpoint_id,
-                            disposition,
-                            ring_policy.member_tiers.get(member.casefold(), 0),
-                            member_order * 1000,
-                        )
-                    )
-                    continue
-                try:
-                    registry.claim_endpoint(
-                        invite.call_id,
-                        browser_leg.endpoint_id,
-                        role="group_candidate",
-                    )
-                except EndpointBusyError:
-                    preflight_failures.append(
-                        (
-                            f"preflight:{member_order}:busy:{browser_leg.endpoint_id}",
-                            browser_leg.endpoint_id,
-                            DialDisposition.BUSY,
-                            ring_policy.member_tiers.get(member.casefold(), 0),
-                            member_order * 1000,
-                        )
-                    )
-                    continue
-                browser_legs.append(browser_leg)
-                continue
-            logical_endpoint = _logical_endpoint_for_member(
-                member, peers, roster_entries
-            )
-            logical_endpoint_id = str(
-                getattr(logical_endpoint, "endpoint_id", "") or ""
-            ).strip()
-            if logical_endpoint_id == source_endpoint_id:
-                continue
-            disposition = _endpoint_preflight_disposition(
-                logical_endpoint,
-                call_id=invite.call_id,
-                browser=False,
-            )
-            if disposition is not None:
-                preflight_failures.append(
-                    (
-                        f"preflight:{member_order}:{disposition.value}:{logical_endpoint_id}",
-                        logical_endpoint_id,
-                        disposition,
-                        ring_policy.member_tiers.get(member.casefold(), 0),
-                        member_order * 1000,
-                    )
-                )
-                continue
-            contact_targets = build_sip_contact_targets(
-                (member,),
-                roster_entries,
-                policy=ring_policy,
-                exclude_endpoint_id=source_endpoint_id,
-            )
-            target_specs = contact_targets or (None,)
-            for contact_order, target_spec in enumerate(target_specs):
-                if len(attempts) >= MAX_RING_GROUP_ATTEMPTS:
-                    _LOGGER.warning(
-                        "SIP ring group %s has more than %d dialable contacts; "
-                        "excess contacts were skipped",
-                        entry.display_name,
-                        MAX_RING_GROUP_ATTEMPTS,
-                    )
-                    return
-                try:
-                    leg = _prepare_outbound_leg(
-                        member=member,
-                        peers=peers,
-                        roster_entries=roster_entries,
-                        local_name=invite.caller or _ha_peer_name(hass),
-                        local_rtp_port_index=1,
-                        uri_override=(
-                            target_spec.uri if target_spec is not None else ""
-                        ),
-                        endpoint_id_override=(
-                            target_spec.endpoint_id
-                            if target_spec is not None
-                            else ""
-                        ),
-                        peer_user_agent_override=(
-                            target_spec.user_agent
-                            if target_spec is not None
-                            else ""
-                        ),
-                        candidate_id=(
-                            target_spec.candidate_id
-                            if target_spec is not None
-                            else f"sip:{member_order}:{contact_order}:{member}"
-                        ),
-                        tier=(
-                            target_spec.tier
-                            if target_spec is not None
-                            else ring_policy.member_tiers.get(
-                                member.casefold(), 0
-                            )
-                        ),
-                        order=(
-                            target_spec.order
-                            if target_spec is not None
-                            else member_order * 1000 + contact_order
-                        ),
-                        invite=invite,
-                    )
-                except RuntimeError as err:
-                    _LOGGER.warning(
-                        "SIP ring group RTP port allocation failed member=%s: %s",
-                        member,
-                        err,
-                    )
-                    return
-                if leg is None:
-                    continue
-                if leg.endpoint_id == source_endpoint_id:
-                    await _close_outbound_leg(leg)
-                    continue
-                try:
-                    if leg.endpoint_id:
-                        registry.claim_endpoint(
-                            invite.call_id,
-                            leg.endpoint_id,
-                            role="group_candidate",
-                            adopt_transport=_endpoint_is_esphome(
-                                logical_endpoint
-                            ),
-                        )
-                except EndpointBusyError:
-                    await _close_outbound_leg(leg)
-                    preflight_failures.append(
-                        (
-                            f"preflight:{leg.candidate_id}:busy",
-                            leg.endpoint_id,
-                            DialDisposition.BUSY,
-                            leg.tier,
-                            leg.order,
-                        )
-                    )
-                    continue
-                attempts.append(leg)
 
     try:
-        await _prepare_candidates()
+        await async_prepare_ring_group_candidates(
+            candidates,
+            RingGroupCandidateRuntime(
+                registry=registry,
+                endpoint_registry=endpoint_registry,
+                browser_leg_for_member=_browser_leg_for_member,
+                logical_endpoint_for_member=_logical_endpoint_for_member,
+                prepare_outbound_leg=_prepare_outbound_leg,
+            ),
+            invite=invite,
+            group_name=entry.display_name,
+            members=members,
+            peers=peers,
+            roster_entries=roster_entries,
+            ring_policy=ring_policy,
+            source_endpoint_id=source_endpoint_id,
+            local_name=invite.caller or _ha_peer_name(hass),
+        )
         if not _call_is_current():
             _settle_browser_candidates(
                 CallState.CANCELLED.value,
