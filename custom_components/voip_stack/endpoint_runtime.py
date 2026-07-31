@@ -24,16 +24,12 @@ from .audio_format import (
     HA_SIP_PCM_RX_FORMATS,
     HA_SIP_PCM_TX_FORMATS,
 )
-from .automation_routing import (
-    canonical_call_origin,
-)
+from .assist_endpoint import AssistEndpoint
 from .call_forwarder import ForwardRuntime, async_forward_existing_call
 from .config_entry_runtime import (
     async_refresh_and_push_phonebook as _refresh_and_push_phonebook,
 )
 from .const import (
-    CONF_ASSIST_ADVANCED_CALL_CONTEXT,
-    CONF_ASSIST_PIPELINE,
     CONF_SIP_VIDEO,
     CONF_REGISTRAR_ENABLED,
     CONF_VIDEO_CAMERA_SEND,
@@ -79,14 +75,10 @@ from .phone_endpoint import (
 )
 from .pbx_routing import (
     caller_matches_group_member as _caller_matches_member,
-    roster_entry_for_target as _roster_entry_for_target,
     unique_group_members as _unique_group_members,
 )
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
-from .router import (
-    RouteAction,
-    RouteReason,
-)
+from .router import RouteReason
 from .ring_group_orchestrator import RingGroupRuntime, run_ring_group_call
 from .session_cleanup import async_cleanup_sip_runtime
 from .sip_bridge import (
@@ -418,142 +410,11 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             and getattr(trunk, "registered", False)
         )
 
-    async def _start_local_assist_bridge(
-        invite: SipInvite,
-        *,
-        reservation: RtpPortReservation,
-        local_rtp_port: int,
-        roster_entries: list[RosterEntry],
-        source: str,
-        called_extension: str,
-        release_reservation_on_failure: bool = True,
-    ):
-        from .assist_runtime import AssistMediaSession, build_call_connected_intent
-
-        assist_cfg = hass.data.setdefault(DOMAIN, {}).get("assist_config", {})
-        caller_entry = _roster_entry_for_target(invite.caller, roster_entries)
-        if caller_entry is None and invite.caller_uri is not None:
-            caller_entry = _roster_entry_for_target(
-                invite.caller_uri.user, roster_entries
-            )
-        if caller_entry is None:
-            caller_token = str(invite.caller or "").strip()
-            caller_entry = next(
-                (
-                    entry
-                    for entry in roster_entries
-                    if caller_token and str(entry.number or "").strip() == caller_token
-                ),
-                None,
-            )
-        caller_id = str(
-            (invite.caller_uri.user if invite.caller_uri is not None else "")
-            or invite.caller
-            or invite.source_host
-            or "Unknown"
-        ).strip()
-        caller_name = (
-            str(caller_entry.name or caller_entry.id).strip()
-            if caller_entry is not None
-            else str(invite.caller or caller_id or "Unknown").strip()
-        )
-        caller_uri = str(invite.caller_uri) if invite.caller_uri is not None else ""
-        destination_name = str(assist_cfg.get("name") or "Assist").strip() or "Assist"
-        assist_leg_id = f"assist:{invite.call_id}"
-        registry = _call_registry(hass)
-        existing_session = registry.sessions.get(
-            registry.resolve_session_id(invite.call_id)
-        )
-        existing_metadata = (
-            existing_session.metadata if existing_session is not None else {}
-        )
-        call_ingress = canonical_call_origin(
-            existing_metadata.get("ingress")
-            or existing_metadata.get("origin")
-            or ("trunk" if invite.received_via_trunk or source == "trunk" else source),
-            existing_session.route_kind if existing_session is not None else "",
-        )
-
-        async def _complete(reason: str) -> None:
-            await _terminate_sip_bridge(
-                hass,
-                invite.call_id,
-                terminal_reason=reason or TerminalReason.PROTOCOL_ERROR.value,
-            )
-
-        media = AssistMediaSession(
-            hass,
-            invite=invite,
-            local_rtp_port=local_rtp_port,
-            reservation=reservation,
-            pipeline_id=str(assist_cfg.get(CONF_ASSIST_PIPELINE) or "preferred"),
-            call_connected_intent=build_call_connected_intent(
-                caller=caller_name,
-                caller_id=caller_id,
-                caller_in_phonebook=caller_entry is not None,
-                source=source,
-                called_extension=called_extension,
-                include_advanced_context=bool(
-                    assist_cfg.get(CONF_ASSIST_ADVANCED_CALL_CONTEXT, False)
-                ),
-            ),
-            on_complete=_complete,
-        )
-        try:
-            await media.start()
-        except BaseException:
-            if release_reservation_on_failure:
-                reservation.release()
-            raise
-
-        registry.bridge_clients[invite.call_id] = assist_leg_id
-        registry.upsert(
-            invite.call_id,
-            state=CallState.IN_CALL.value,
-            owner="assist",
-            caller=caller_name,
-            callee=destination_name,
-            route_kind=RouteAction.ASSIST.value,
-            ingress=call_ingress,
-            origin=call_ingress,
-        )
-        registry.attach_relay(invite.call_id, media)
-        registry.add_leg(
-            invite.call_id,
-            invite.call_id,
-            role="trunk" if call_ingress == "trunk" else "caller",
-            state=CallState.IN_CALL.value,
-        )
-        registry.add_leg(
-            invite.call_id,
-            assist_leg_id,
-            role="assist",
-            state=CallState.IN_CALL.value,
-        )
-        _set_sip_bridge_call_state(
-            hass,
-            CallState.IN_CALL.value,
-            caller=caller_name,
-            callee=destination_name,
-            peer_name=destination_name,
-            call_id=invite.call_id,
-            dest_call_id=assist_leg_id,
-            direction="incoming",
-            route_kind=RouteAction.ASSIST.value,
-            ingress=call_ingress,
-            origin=call_ingress,
-            selected_tx_format=invite.send_format.audio_format.wire_token(),
-            selected_rx_format=invite.recv_format.audio_format.wire_token(),
-            selected_tx_rtp_format=invite.send_format.wire_token(),
-            selected_rx_rtp_format=invite.recv_format.wire_token(),
-            audio_direction=invite.local_audio_direction,
-            audio_connection_held=invite.remote_audio_connection_held,
-            sip_status_code=200,
-            last_sip_event="ASSIST_PIPELINE",
-            caller_uri=caller_uri,
-            source=source,
-        )
-        return media
+    assist_endpoint = AssistEndpoint(
+        hass=hass,
+        terminate_sip_bridge=_terminate_sip_bridge,
+    )
+    _start_local_assist_bridge = assist_endpoint.start
 
     endpoint_dialer = EndpointDialer(
         hass=hass,

@@ -30,6 +30,7 @@ ICONS_JSON = ROOT / "custom_components" / "voip_stack" / "icons.json"
 CONFIG_FLOW = ROOT / "custom_components" / "voip_stack" / "config_flow.py"
 STRINGS_JSON = ROOT / "custom_components" / "voip_stack" / "strings.json"
 AUTOMATION_ROUTING = ROOT / "custom_components" / "voip_stack" / "automation_routing.py"
+ASSIST_ENDPOINT = ROOT / "custom_components" / "voip_stack" / "assist_endpoint.py"
 SERVICE_ENDPOINTS = ROOT / "custom_components" / "voip_stack" / "service_endpoints.py"
 ESPHOME_ACTIONS = ROOT / "custom_components" / "voip_stack" / "esphome_actions.py"
 SOFTPHONE_COMMANDS = (
@@ -134,6 +135,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.inbound_trunk = INBOUND_TRUNK.read_text()
         cls.inbound_automation = INBOUND_AUTOMATION.read_text()
         cls.inbound_targets = INBOUND_TARGETS.read_text()
+        cls.assist_endpoint = ASSIST_ENDPOINT.read_text()
         spec = importlib.util.spec_from_file_location(
             "voip_stack_automation_routing_test", AUTOMATION_ROUTING
         )
@@ -1712,11 +1714,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn('direction="incoming"', bridge)
 
     def test_inbound_assist_bridge_preserves_direction(self) -> None:
-        assist = self.source[
-            self.source.index("async def _start_local_assist_bridge(") :
-            self.source.index("endpoint_dialer = EndpointDialer(")
-        ]
-        self.assertIn('direction="incoming"', assist)
+        self.assertIn('direction="incoming"', self.assist_endpoint)
 
     def test_direct_ha_alias_resolves_through_phonebook_name(self) -> None:
         router = self.source[
@@ -1755,14 +1753,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("defer_final=True", invite)
 
     def test_assist_handoff_preserves_session_transport_provenance(self) -> None:
-        assist = self.source[
-            self.source.index("async def _start_local_assist_bridge(") :
-            self.source.index("endpoint_dialer = EndpointDialer(")
-        ]
-        self.assertIn('existing_metadata.get("ingress")', assist)
-        self.assertIn('existing_metadata.get("origin")', assist)
-        self.assertIn("ingress=call_ingress", assist)
-        self.assertIn("origin=call_ingress", assist)
+        self.assertIn('existing_metadata.get("ingress")', self.assist_endpoint)
+        self.assertIn('existing_metadata.get("origin")', self.assist_endpoint)
+        self.assertIn("ingress=call_ingress", self.assist_endpoint)
+        self.assertIn("origin=call_ingress", self.assist_endpoint)
 
     def test_route_override_publishes_resolved_callee(self) -> None:
         route = self.invite_router[
