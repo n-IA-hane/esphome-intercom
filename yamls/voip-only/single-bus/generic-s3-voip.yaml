@@ -33,9 +33,9 @@ substitutions:
   name: generic-s3
   friendly_name: Generic S3
 
-  ext_components_source: "../../../esphome/components"
-  voip_stack_components_source: "../../../../esphome-voip-stack/esphome/components"
-  audio_stack_components_source: "../../../../esphome-audio-stack/esphome/components"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
 
   # ---------------------------------------------------------------------------
   # Pinout: shared I2S bus
@@ -62,18 +62,18 @@ substitutions:
   status_led_rgb_order: GRB
 
 packages:
-  core: !include ../../../packages/voip_only.yaml
-  voip_entities_full_duplex: !include ../../../packages/voip/entities_full_duplex.yaml
-  call_settings: !include ../../../packages/voip/call_settings.yaml
-  ha_api: !include ../../../packages/voip/ha_api.yaml
-  phonebook_subscribe: !include ../../../packages/voip/phonebook_subscribe.yaml
-  voip_transport: !include ../../../packages/voip/transport.yaml
-  speaker_mute: !include ../../../packages/voip/speaker_mute.yaml
-  s3_base: !include ../../../packages/platform/esp32s3_base.yaml
-  native_diagnostics: !include ../../../packages/diagnostics/native.yaml
-  status_led: !include ../../../packages/led/status_ws2812_single.yaml
-  audio_stack_controls: !include ../../../packages/esp_audio_stack/controls.yaml
-  audio_stack_aec_controls: !include ../../../packages/esp_audio_stack/aec_controls.yaml
+  core: github://n-IA-hane/esphome-intercom/packages/voip_only.yaml@dev
+  voip_entities_full_duplex: github://n-IA-hane/esphome-intercom/packages/voip/entities_full_duplex.yaml@dev
+  call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
+  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api.yaml@dev
+  phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
+  voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
+  speaker_mute: github://n-IA-hane/esphome-intercom/packages/voip/speaker_mute.yaml@dev
+  s3_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32s3_base.yaml@dev
+  native_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native.yaml@dev
+  status_led: github://n-IA-hane/esphome-intercom/packages/led/status_ws2812_single.yaml@dev
+  audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@dev
+  audio_stack_aec_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/aec_controls.yaml@dev
 
 # =============================================================================
 # BOARD AND MEMORY

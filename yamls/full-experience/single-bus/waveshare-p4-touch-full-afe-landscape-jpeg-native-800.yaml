@@ -3,7 +3,7 @@
 # through the supported ESPHome camera entity consumed by Home Assistant.
 
 packages:
-  qualified_jpeg_baseline: !include waveshare-p4-touch-full-afe-landscape.yaml
+  qualified_jpeg_baseline: github://n-IA-hane/esphome-intercom/yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape.yaml@dev
 
 esp_video_camera:
   resolution: 800x800

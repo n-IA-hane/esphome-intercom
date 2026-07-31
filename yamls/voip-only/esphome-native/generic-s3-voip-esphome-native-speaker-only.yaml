@@ -42,9 +42,9 @@ substitutions:
   name: generic-native-int-spk
   friendly_name: Generic S3 Native VoIP Speaker Only
 
-  ext_components_source: "../../../esphome/components"
-  voip_stack_components_source: "../../../../esphome-voip-stack/esphome/components"
-  audio_stack_components_source: "../../../../esphome-audio-stack/esphome/components"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
 
   # ---------------------------------------------------------------------------
   # Pinout: native speaker I2S bus
@@ -65,18 +65,18 @@ substitutions:
 # basic buttons and native diagnostics.
 
 packages:
-  ha_integration: !include ../../../packages/voip/ha_integration.yaml
-  simple_led_status_speaker_only: !include ../../../packages/voip/simple_led_status_speaker_only.yaml
-  callbacks: !include ../../../packages/voip/callbacks.yaml
-  voip_transport: !include ../../../packages/voip/transport.yaml
-  phonebook_subscribe: !include ../../../packages/voip/phonebook_subscribe.yaml
-  ha_api: !include ../../../packages/voip/ha_api.yaml
-  voip_entities_full_duplex: !include ../../../packages/voip/call_buttons.yaml
-  call_settings: !include ../../../packages/voip/call_settings.yaml
-  speaker_mute: !include ../../../packages/voip/speaker_mute.yaml
-  s3_base: !include ../../../packages/platform/esp32s3_base.yaml
-  native_diagnostics: !include ../../../packages/diagnostics/native.yaml
-  status_led: !include ../../../packages/led/status_ws2812_single.yaml
+  ha_integration: github://n-IA-hane/esphome-intercom/packages/voip/ha_integration.yaml@dev
+  simple_led_status_speaker_only: github://n-IA-hane/esphome-intercom/packages/voip/simple_led_status_speaker_only.yaml@dev
+  callbacks: github://n-IA-hane/esphome-intercom/packages/voip/callbacks.yaml@dev
+  voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
+  phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
+  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api.yaml@dev
+  voip_entities_full_duplex: github://n-IA-hane/esphome-intercom/packages/voip/call_buttons.yaml@dev
+  call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
+  speaker_mute: github://n-IA-hane/esphome-intercom/packages/voip/speaker_mute.yaml@dev
+  s3_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32s3_base.yaml@dev
+  native_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native.yaml@dev
+  status_led: github://n-IA-hane/esphome-intercom/packages/led/status_ws2812_single.yaml@dev
 
 # =============================================================================
 # BOARD AND MEMORY

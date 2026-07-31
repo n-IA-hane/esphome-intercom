@@ -21,8 +21,8 @@ substitutions:
 
   # Local sources keep repository builds reproducible. Release examples replace
   # these with the corresponding pinned public component revisions.
-  voip_stack_components_source: "../../../../esphome-voip-stack/esphome/components"
-  audio_stack_components_source: "../../../../esphome-audio-stack/esphome/components"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
 
   i2s_mclk_pin: GPIO2
   i2s_bclk_pin: GPIO48
@@ -38,11 +38,11 @@ external_components:
     components: [esp_audio_stack, esp_afe]
 
 packages:
-  voip_transport: !include ../../../packages/voip/transport.yaml
-  phonebook_subscribe: !include ../../../packages/voip/phonebook_subscribe.yaml
-  ha_api: !include ../../../packages/voip/ha_api.yaml
-  ha_integration: !include ../../../packages/voip/ha_integration.yaml
-  afe_entities: !include ../../../packages/esp_afe/single_mic_entities.yaml
+  voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
+  phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
+  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api.yaml@dev
+  ha_integration: github://n-IA-hane/esphome-intercom/packages/voip/ha_integration.yaml@dev
+  afe_entities: github://n-IA-hane/esphome-intercom/packages/esp_afe/single_mic_entities.yaml@dev
 
 esphome:
   name: ${name}

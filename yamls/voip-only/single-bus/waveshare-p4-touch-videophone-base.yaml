@@ -9,9 +9,9 @@ substitutions:
   # Preserve the existing HA/SIP endpoint identity when switching profiles.
   friendly_name: Waveshare P4 Touch
 
-  ext_components_source: "../../../esphome/components"
-  voip_stack_components_source: "../../../../esphome-voip-stack/esphome/components"
-  audio_stack_components_source: "../../../../esphome-audio-stack/esphome/components"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
 
   voip_transport: udp
   voip_sip_port: "5060"
@@ -34,16 +34,16 @@ substitutions:
   p4_afe_fetch_task_priority: "18"
 
 packages:
-  hardware: !include ../../../packages/board/waveshare_p4_touch_10_1_videophone.yaml
-  ui: !include ../../../packages/lvgl/p4_videophone_ui.yaml
-  voip_entities: !include ../../../packages/voip/entities_full_duplex.yaml
-  call_settings: !include ../../../packages/voip/call_settings.yaml
-  ha_api: !include ../../../packages/voip/ha_api.yaml
-  ha_integration: !include ../../../packages/voip/ha_integration.yaml
-  phonebook: !include ../../../packages/voip/phonebook_subscribe.yaml
-  transport: !include ../../../packages/voip/transport.yaml
-  speaker_mute: !include ../../../packages/voip/speaker_mute.yaml
-  audio_controls: !include ../../../packages/esp_audio_stack/controls.yaml
+  hardware: github://n-IA-hane/esphome-intercom/packages/board/waveshare_p4_touch_10_1_videophone.yaml@dev
+  ui: github://n-IA-hane/esphome-intercom/packages/lvgl/p4_videophone_ui.yaml@dev
+  voip_entities: github://n-IA-hane/esphome-intercom/packages/voip/entities_full_duplex.yaml@dev
+  call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
+  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api.yaml@dev
+  ha_integration: github://n-IA-hane/esphome-intercom/packages/voip/ha_integration.yaml@dev
+  phonebook: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
+  transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
+  speaker_mute: github://n-IA-hane/esphome-intercom/packages/voip/speaker_mute.yaml@dev
+  audio_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@dev
 
 esphome:
   name: ${name}

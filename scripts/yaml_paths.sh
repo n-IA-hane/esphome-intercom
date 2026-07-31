@@ -147,7 +147,8 @@ detect_mode() {
   if [[ $has_local -eq 1 && $has_remote -eq 1 ]]; then echo "mixed"
   elif [[ $has_remote -eq 1 ]]; then echo "remote"
   elif [[ $has_local -eq 1 ]]; then echo "local"
-  else echo "unknown"; fi
+  elif grep -qE '^esphome:[[:space:]]*$' "$f"; then echo "unknown"
+  else echo "fragment"; fi
 }
 
 # Rewrite a single YAML to LOCAL mode (relative paths).
@@ -453,9 +454,12 @@ cmd_check() {
     if [[ "$mode" == "mixed" ]]; then
       log "FAIL: $rel ($mode)"
       rc=1
-    elif [[ "$mode" == "unknown" ]] \
-      && grep -qE '^esphome:[[:space:]]*$' "$f"; then
+    elif [[ "$mode" == "unknown" ]]; then
       log "FAIL: $rel (standalone YAML is not path-managed)"
+      rc=1
+    elif [[ -n "$EXPECT_MODE_ARG" && "$mode" != "fragment" \
+      && "$mode" != "$EXPECT_MODE_ARG" ]]; then
+      log "FAIL: $rel ($mode, expected $EXPECT_MODE_ARG)"
       rc=1
     fi
     if grep -qE '^[[:space:]]*-[[:space:]]*!include[[:space:]]+' "$f"; then
@@ -486,7 +490,7 @@ Commands:
   --remote tag                    Use immutable refs supplied through --tag,
                                   or one explicit ref for every project repo
   remote [options]                Rewrite all YAMLs to REMOTE mode
-  check                           Lint: fail on mixed paths or nested list !include
+  check                           Lint path consistency
 
 Options:
   --url URL       e.g. github://n-IA-hane/esphome-intercom (default)
@@ -514,10 +518,12 @@ Options:
   --runtime REF   esphome-runtime-controller branch/tag (default: main)
   --runtime-controller-root PATH
                   local esphome-runtime-controller checkout (default: ../esphome-runtime-controller)
+  --expect MODE   With check, require local or remote mode for standalone YAMLs
   --file PATH     limit operation to a single YAML (relative to repo root or absolute)
 
 Examples:
   $(basename "$0") status
+  $(basename "$0") check --expect remote
   $(basename "$0") --local
   $(basename "$0") --remote main
   $(basename "$0") --remote dev
@@ -571,6 +577,7 @@ RUNTIME_CONTROLLER_REF_ARG=""
 RUNTIME_CONTROLLER_ROOT_ARG=""
 ONLY_FILE=""
 GLOBAL_TAG_ARG=""
+EXPECT_MODE_ARG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -590,11 +597,21 @@ while [[ $# -gt 0 ]]; do
     --runtime-controller-branch) RUNTIME_CONTROLLER_BRANCH_ARG="$2"; shift 2 ;;
     --runtime|--fsm|--runtime-controller) RUNTIME_CONTROLLER_REF_ARG="$2"; shift 2 ;;
     --runtime-controller-root) RUNTIME_CONTROLLER_ROOT_ARG="$2"; shift 2 ;;
+    --expect)
+      EXPECT_MODE_ARG="$2"
+      [[ "$EXPECT_MODE_ARG" == "local" || "$EXPECT_MODE_ARG" == "remote" ]] \
+        || err "--expect requires local or remote"
+      shift 2
+      ;;
     --file)   ONLY_FILE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) err "unknown option: $1 (run --help)" ;;
   esac
 done
+
+if [[ -n "$EXPECT_MODE_ARG" && "$cmd" != "check" ]]; then
+  err "--expect is only valid with check"
+fi
 
 case "$cmd" in
   status) cmd_status ;;

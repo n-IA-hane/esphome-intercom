@@ -17,7 +17,7 @@ globals:
     initial_value: "false"
 
 packages:
-  full_experience_base: !include waveshare-p4-touch-full-afe-landscape.yaml
+  full_experience_base: github://n-IA-hane/esphome-intercom/yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape.yaml@dev
 
 esphome:
   build_path: .esphome/build/waveshare-p4-touch-full-afe-landscape-sip-jpeg
