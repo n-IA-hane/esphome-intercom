@@ -18,6 +18,7 @@ INIT = ROOT / "custom_components" / "voip_stack" / "__init__.py"
 AUDIO_WS = ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
 CARD_JS = ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-stack-card.js"
 ENDPOINT_ROUTING = ROOT / "custom_components" / "voip_stack" / "endpoint_routing.py"
+ENDPOINT_DIALING = ROOT / "custom_components" / "voip_stack" / "endpoint_dialing.py"
 SIP_BRIDGE = ROOT / "custom_components" / "voip_stack" / "sip_bridge.py"
 SENSOR = ROOT / "custom_components" / "voip_stack" / "sensor.py"
 PEER_SNAPSHOT = ROOT / "custom_components" / "voip_stack" / "peer_snapshot.py"
@@ -118,6 +119,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.outbound_attempts = OUTBOUND_ATTEMPTS.read_text()
         cls.dtmf_events = DTMF_EVENTS.read_text()
         cls.endpoint_routing = ENDPOINT_ROUTING.read_text()
+        cls.endpoint_dialing = ENDPOINT_DIALING.read_text()
         cls.config_entry_runtime = CONFIG_ENTRY_RUNTIME.read_text()
         cls.pbx_routing = PBX_ROUTING.read_text()
         cls.trunk_dtmf = TRUNK_DTMF.read_text()
@@ -1300,8 +1302,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             helper,
         )
         self.assertIn(
-            "_is_local_listener_uri = route_resolver.is_local_listener_uri",
-            self.source,
+            "self.route_resolver.is_local_listener_uri(uri)",
+            self.endpoint_dialing,
         )
 
     def test_early_router_cancel_publishes_one_terminal_event(self) -> None:
@@ -1712,7 +1714,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_inbound_assist_bridge_preserves_direction(self) -> None:
         assist = self.source[
             self.source.index("async def _start_local_assist_bridge(") :
-            self.source.index("def _sip_uri_for_member(")
+            self.source.index("endpoint_dialer = EndpointDialer(")
         ]
         self.assertIn('direction="incoming"', assist)
 
@@ -1755,7 +1757,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_assist_handoff_preserves_session_transport_provenance(self) -> None:
         assist = self.source[
             self.source.index("async def _start_local_assist_bridge(") :
-            self.source.index("def _sip_uri_for_member(")
+            self.source.index("endpoint_dialer = EndpointDialer(")
         ]
         self.assertIn('existing_metadata.get("ingress")', assist)
         self.assertIn('existing_metadata.get("origin")', assist)

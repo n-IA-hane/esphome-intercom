@@ -23,7 +23,6 @@ from .audio_format import (
     HA_SIP_PCM_FORMATS,
     HA_SIP_PCM_RX_FORMATS,
     HA_SIP_PCM_TX_FORMATS,
-    HA_TRUNK_AUDIO_FORMATS,
 )
 from .automation_routing import (
     canonical_call_origin,
@@ -47,17 +46,14 @@ from .endpoint_lifecycle import (
     call_registry as _call_registry,
     create_runtime_task,
 )
+from .endpoint_dialing import EndpointDialer
 from .dtmf_events import (
     attach_dtmf_event_bridge as _attach_dtmf_event_bridge,
     publish_dtmf_event as _publish_dtmf_event,
 )
 from .endpoint_routing import (
     EndpointRouteResolver,
-    peer_audio_formats as _peer_audio_formats,
-    peer_for_target as _peer_for_target,
-    roster_entry_formats as _roster_entry_formats,
     roster_from_peers as _roster_from_peers,
-    sip_target_audio_profile as _sip_target_audio_profile,
 )
 from .fsm import (
     CallState,
@@ -68,13 +64,10 @@ from .fsm import (
 from .media_ports import (
     RtpPortReservation,
     release_media_reservation as _release_media_reservation,
-    release_sip_rtp_port_pair as _release_sip_rtp_port_pair,
-    reserve_sip_video_relay_media,
 )
 from .media_renegotiation import async_prepare_media_update
 from .invite_router import InviteRuntime, route_invite
 from .outbound_attempts import (
-    BrowserLeg,
     OutboundLeg,
     async_close_outbound_leg as _close_outbound_leg,
 )
@@ -97,7 +90,6 @@ from .router import (
 from .ring_group_orchestrator import RingGroupRuntime, run_ring_group_call
 from .session_cleanup import async_cleanup_sip_runtime
 from .sip_bridge import (
-    build_pending_invite_video_relay,
     dialog_rtp_peer,
     dialog_video_rtp_peer,
 )
@@ -255,7 +247,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     )
     _is_ha_target = route_resolver.is_ha_target
     _ha_router_decision = route_resolver.route
-    _is_local_listener_uri = route_resolver.is_local_listener_uri
     _logical_endpoint_for_member = route_resolver.logical_endpoint
 
     def _attach_client_media_update(
@@ -564,215 +555,18 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         )
         return media
 
-    def _sip_uri_for_member(member: str, peers: list[Peer], entries: list[RosterEntry]):
-        peer = _peer_for_target(member, peers)
-        if peer is not None and peer.host:
-            sip_transport = str(
-                (peer.device or {}).get("sip_transport") or "tcp"
-            ).lower()
-            if sip_transport not in {"tcp", "udp"}:
-                sip_transport = "tcp"
-            return (
-                parse_sip_uri(
-                    f"sip:{member}@{peer.host}:{peer.sip_port or cfg['sip_port']};transport={sip_transport}"
-                ),
-                peer,
-                None,
-            )
-        entry = _roster_entry_for_target(member, entries)
-        if entry is None:
-            return None, None, None
-        if entry.sip_uri:
-            return parse_sip_uri(entry.sip_uri), None, entry
-        if not entry.metadata.get("local_ha") and entry.address:
-            bridge_port = int(
-                entry.port
-                or (entry.metadata or {}).get("port")
-                or (entry.metadata or {}).get("sip_port")
-                or cfg["sip_port"]
-            )
-            return (
-                parse_sip_uri(f"sip:{entry.id}@{entry.address}:{bridge_port}"),
-                None,
-                entry,
-            )
-        return None, None, entry
-
-    def _browser_leg_for_member(
-        member: str,
-        peers: list[Peer],
-        entries: list[RosterEntry],
-    ) -> BrowserLeg | None:
-        endpoint = _logical_endpoint_for_member(member, peers, entries)
-        if endpoint is not None:
-            if endpoint.kind is not EndpointKind.BROWSER:
-                return None
-            return BrowserLeg(
-                member=member,
-                endpoint_id=endpoint.endpoint_id,
-                name=endpoint.name,
-                device_id=str(endpoint.device_id or HA_SOFTPHONE_DEVICE_ID),
-            )
-        # Preserve the pre-registry/YAML-only master-phone compatibility path.
-        if _is_ha_target(member):
-            return BrowserLeg(
-                member=member,
-                endpoint_id=DEFAULT_ENDPOINT_ID,
-                name=_ha_peer_name(hass),
-                device_id=HA_SOFTPHONE_DEVICE_ID,
-            )
-        return None
-
-    def _prepare_outbound_leg(
-        *,
-        member: str,
-        peers: list[Peer],
-        roster_entries: list[RosterEntry],
-        local_name: str,
-        local_rtp_port_index: int,
-        uri_override: str = "",
-        endpoint_id_override: str = "",
-        peer_user_agent_override: str = "",
-        candidate_id: str = "",
-        tier: int = 0,
-        order: int = 0,
-        invite: SipInvite | None = None,
-    ) -> OutboundLeg | None:
-        resolved_uri, peer_target, member_entry = _sip_uri_for_member(
-            member, peers, roster_entries
-        )
-        uri = parse_sip_uri(uri_override) if uri_override else resolved_uri
-        if uri is None or _is_local_listener_uri(uri):
-            return None
-        ports = RtpPortReservation.allocate(hass)
-        try:
-            remote_tx_formats = _peer_audio_formats(
-                peer_target, "tx_formats"
-            ) or _roster_entry_formats(member_entry, "tx_formats")
-            remote_rx_formats = _peer_audio_formats(
-                peer_target, "rx_formats"
-            ) or _roster_entry_formats(member_entry, "rx_formats")
-            sip_send_formats, sip_recv_formats = _sip_target_audio_profile(
-                remote_tx_formats=remote_tx_formats,
-                remote_rx_formats=remote_rx_formats,
-                target=member,
-            )
-            bridge_to_softphone = bool(
-                member_entry is not None
-                and member_entry.sip_uri
-                and member_entry.metadata.get("registered")
-            )
-            if bridge_to_softphone:
-                sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
-                sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
-            target_endpoint = _logical_endpoint_for_member(
-                member, peers, roster_entries
-            )
-            video_relay = None
-            video_failure_reason = ""
-            if (
-                invite is not None
-                and invite.video_format is not None
-                and bool(cfg.get(CONF_SIP_VIDEO, False))
-            ):
-                video_reservation = None
-                sockets = ()
-                try:
-                    video_reservation, sockets = reserve_sip_video_relay_media(hass)
-                    source_video_port, destination_video_port = (
-                        video_reservation.ports
-                    )
-                    video_relay = build_pending_invite_video_relay(
-                        invite,
-                        remote_host=str(uri.host),
-                        left_port=source_video_port,
-                        right_port=destination_video_port,
-                        sockets=sockets,
-                        on_release=lambda reserved: _release_sip_rtp_port_pair(
-                            hass, reserved
-                        ),
-                    )
-                    # The relay now owns all reserved sockets and both ports.
-                    video_reservation.detach()
-                except (OSError, RuntimeError) as err:
-                    for sock in sockets:
-                        sock.close()
-                    if video_reservation is not None:
-                        video_reservation.release()
-                    video_relay = None
-                    video_failure_reason = "local_video_resources_unavailable"
-                    _LOGGER.warning(
-                        "SIP fork video reservation unavailable member=%s; "
-                        "continuing audio-only: %s",
-                        member,
-                        err,
-                    )
-            client = SipCallClient(
-                local_ip=local_ip,
-                local_name=local_name,
-                local_sip_port=int(cfg["sip_port"]),
-                local_rtp_port=ports.ports[local_rtp_port_index],
-                supported_send_formats=sip_send_formats,
-                supported_recv_formats=sip_recv_formats,
-                signaling_transport=_sip_uri_transport(uri),
-                include_common_codecs=bridge_to_softphone,
-                peer_user_agent=(
-                    str(peer_user_agent_override or "").strip()
-                    or str(
-                        (
-                            (member_entry.metadata or {}).get("user_agent")
-                            if member_entry is not None
-                            else ""
-                        )
-                        or ""
-                    ).strip()
-                ),
-                local_video_rtp_port=(
-                    video_relay.right_port if video_relay is not None else 0
-                ),
-                video_formats=(
-                    (invite.video_format,)
-                    if video_relay is not None and invite is not None
-                    else ()
-                ),
-                video_direction=(
-                    invite.video_format.direction
-                    if video_relay is not None and invite is not None
-                    else "inactive"
-                ),
-                generic_video_relay=video_relay is not None,
-            )
-            _enable_reused_sip_tcp_connection(
-                hass,
-                client,
-                uri,
-                target=member,
-                default_sip_port=int(cfg["sip_port"]),
-            )
-            return OutboundLeg(
-                member=member,
-                uri=uri,
-                client=client,
-                ports=ports,
-                bridge_to_softphone=bridge_to_softphone,
-                endpoint_id=str(
-                    endpoint_id_override
-                    or getattr(target_endpoint, "endpoint_id", "")
-                    or ""
-                ),
-                candidate_id=candidate_id,
-                tier=int(tier),
-                order=int(order),
-                video_relay=video_relay,
-                video_failure_reason=video_failure_reason,
-            )
-        except Exception:
-            if "video_relay" in locals() and video_relay is not None:
-                # Construction runs inside the endpoint event loop; transfer
-                # rollback to its tracked cleanup task.
-                create_runtime_task(hass, video_relay.stop())
-            ports.release()
-            raise
+    endpoint_dialer = EndpointDialer(
+        hass=hass,
+        local_ip=local_ip,
+        config=cfg,
+        route_resolver=route_resolver,
+        ha_peer_name=_ha_peer_name,
+        sip_uri_transport=_sip_uri_transport,
+        enable_reused_tcp_connection=_enable_reused_sip_tcp_connection,
+    )
+    _sip_uri_for_member = endpoint_dialer.sip_uri_for_member
+    _browser_leg_for_member = endpoint_dialer.browser_leg_for_member
+    _prepare_outbound_leg = endpoint_dialer.prepare_outbound_leg
 
     def _publish_pending_ha_softphone_ringing(
         invite: SipInvite,
