@@ -31,6 +31,9 @@ CONFIG_FLOW = ROOT / "custom_components" / "voip_stack" / "config_flow.py"
 STRINGS_JSON = ROOT / "custom_components" / "voip_stack" / "strings.json"
 AUTOMATION_ROUTING = ROOT / "custom_components" / "voip_stack" / "automation_routing.py"
 ASSIST_ENDPOINT = ROOT / "custom_components" / "voip_stack" / "assist_endpoint.py"
+ENDPOINT_TERMINATION = (
+    ROOT / "custom_components" / "voip_stack" / "endpoint_termination.py"
+)
 SERVICE_ENDPOINTS = ROOT / "custom_components" / "voip_stack" / "service_endpoints.py"
 ESPHOME_ACTIONS = ROOT / "custom_components" / "voip_stack" / "esphome_actions.py"
 SOFTPHONE_COMMANDS = (
@@ -136,6 +139,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.inbound_automation = INBOUND_AUTOMATION.read_text()
         cls.inbound_targets = INBOUND_TARGETS.read_text()
         cls.assist_endpoint = ASSIST_ENDPOINT.read_text()
+        cls.endpoint_termination = ENDPOINT_TERMINATION.read_text()
         spec = importlib.util.spec_from_file_location(
             "voip_stack_automation_routing_test", AUTOMATION_ROUTING
         )
@@ -1309,11 +1313,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_early_router_cancel_publishes_one_terminal_event(self) -> None:
-        terminated = self.source[
-            self.source.index("async def _on_terminated(") : self.source.index(
-                "supported_formats = list(HA_SIP_PCM_FORMATS)"
-            )
-        ]
+        terminated = self.endpoint_termination
         self.assertIn("elif session is not None:", terminated)
         self.assertIn("the logical session still owes observers one terminal event", terminated)
         self.assertIn('"CANCEL"', terminated)
@@ -1578,7 +1578,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
 
     def test_remote_bridge_termination_closes_winning_leg_and_relay(self) -> None:
-        terminated = self.source[self.source.index("async def _on_terminated(") :]
+        terminated = self.endpoint_termination
         bridge_branch = terminated[
             terminated.index("if relay is not None or client is not None:") :
         ]
@@ -1590,10 +1590,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "session = registry.sessions.get(registry.resolve_session_id(call_id))",
             pre_cleanup,
         )
-        self.assertIn(
-            'event_caller = invite.caller if invite is not None else (session.caller if session is not None else "")',
-            pre_cleanup,
-        )
+        self.assertIn("event_caller = (", pre_cleanup)
+        self.assertIn("invite.caller", pre_cleanup)
+        self.assertIn("session.caller", pre_cleanup)
         self.assertIn("session.callee", pre_cleanup)
         self.assertIn("else invite.target", pre_cleanup)
         self.assertIn("await async_cleanup_sip_runtime(", bridge_branch)
@@ -1606,7 +1605,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("target=event_callee", bridge_branch)
 
     def test_remote_softphone_termination_uses_owning_logical_endpoint(self) -> None:
-        terminated = self.source[self.source.index("async def _on_terminated(") :]
+        terminated = self.endpoint_termination
         terminal_branch = terminated[
             terminated.index("session_metadata =") : terminated.index(
                 "if relay is not None or client is not None:"
@@ -1617,7 +1616,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             terminal_branch,
         )
         self.assertIn(
-            "softphone_store = _ha_softphone_store(hass, session_endpoint_id)",
+            "softphone_store = _ha_softphone_store(self.hass, session_endpoint_id)",
             terminal_branch,
         )
         self.assertIn("endpoint_id=session_endpoint_id", terminated)
