@@ -45,9 +45,9 @@ p4_video_renderer:
   display_id: main_display
   display_rotation: 270
   on_first_frame:
-    - script.execute: draw_display
+    - script.execute: show_call_video_page
   on_video_ended:
-    - script.execute: draw_display
+    - script.execute: hide_call_video_page
 
 voip_stack:
   id: phone
@@ -132,6 +132,29 @@ lvgl:
                         text_font: font_ui_medium
 
 script:
+  - id: show_call_video_page
+    mode: restart
+    then:
+      - script.stop: draw_display
+      - script.stop: ai_animation_loop
+      - lambda: |-
+          const char *peer = id(peer_name).empty()
+                                 ? "Video call"
+                                 : id(peer_name).c_str();
+          lv_label_set_text(id(call_video_peer_label), peer);
+          id(runtime_rendered_page) = "call_video";
+          if (lv_disp_get_scr_act(nullptr) != id(call_video_page)->obj)
+            lv_disp_load_scr(id(call_video_page)->obj);
+
+  - id: hide_call_video_page
+    mode: restart
+    then:
+      - script.stop: show_call_video_page
+      - lambda: |-
+          if (id(runtime_rendered_page) == "call_video")
+            id(runtime_rendered_page).clear();
+      - script.execute: draw_display
+
   - id: !extend draw_display
     then:
       - if:

@@ -3490,6 +3490,14 @@ script:
             return;
           }
 
+          // Optional media pages own the display until their profile clears
+          // this state. This prevents periodic dashboard refreshes from
+          // replacing a live video frame after its first-frame callback.
+          if (id(runtime_rendered_page) == "call_video" &&
+              id(phone).is_in_call()) {
+            return;
+          }
+
           // Normal: show main split-screen page
           if (active_scr != id(main_page)->obj) {
             lv_disp_load_scr(id(main_page)->obj);

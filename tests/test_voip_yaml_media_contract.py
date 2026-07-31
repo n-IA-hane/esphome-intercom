@@ -340,6 +340,23 @@ def test_p4_idle_animation_uses_rendered_page_state() -> None:
         assert f'id(runtime_rendered_page) = "{rendered_page}";' in text
 
 
+def test_p4_full_jpeg_video_page_has_dedicated_lifecycle() -> None:
+    full_jpeg = (
+        YAMLS
+        / "full-experience"
+        / "single-bus"
+        / "waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml"
+    ).read_text()
+    full = P4_LANDSCAPE_FULL_AFE.read_text()
+
+    assert "on_first_frame:\n    - script.execute: show_call_video_page" in full_jpeg
+    assert "on_video_ended:\n    - script.execute: hide_call_video_page" in full_jpeg
+    assert "- script.stop: draw_display" in full_jpeg
+    assert 'id(runtime_rendered_page) = "call_video";' in full_jpeg
+    assert 'id(runtime_rendered_page) == "call_video"' in full
+    assert "id(phone).is_in_call()" in full
+
+
 def test_p4_videophone_contact_navigation_waits_for_owner_callback() -> None:
     """The SIP owner publishes the new contact; UI actions must not read stale state."""
     ui = (ROOT / "packages" / "lvgl" / "p4_videophone_ui.yaml").read_text()
