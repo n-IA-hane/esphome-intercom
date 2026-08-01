@@ -251,7 +251,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             publish,
         )
 
-    def test_forwarded_standard_sip_video_requires_exact_passthrough_codec(
+    def test_forwarded_standard_sip_video_prefers_direct_then_transcodes(
         self,
     ) -> None:
         forward = self.call_forwarder
@@ -266,7 +266,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn('target_route_endpoint.supports("video")', video)
         self.assertIn("build_pending_invite_video_relay(", video)
         self.assertIn("configure_answered_invite_video_relay(", video)
-        self.assertIn("video_formats=(invite.video_format,)", video)
+        self.assertIn("video_bridge_offer_formats(", video)
+        self.assertIn("enable_transcoding=video_transcoding_enabled", video)
         self.assertIn("generic_video_relay=video_relay is not None", video)
         bridge_video = SIP_BRIDGE.read_text()
         self.assertEqual(
@@ -277,7 +278,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             bridge_video,
         )
         self.assertIn("sdp.video_offer_answer_directional(", bridge_video)
-        self.assertIn("destination did not accept an exact codec", video)
+        self.assertIn("no direct or transcoded codec", video)
 
     def test_browser_to_browser_call_uses_local_bridge_before_network_discovery(
         self,

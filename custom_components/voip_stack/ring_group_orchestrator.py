@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant
 
 from .call_scope import pending_routes as _pending_routes
 from .config import debug_mode as _debug_mode
-from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
+from .const import CONF_VIDEO_TRANSCODING, DOMAIN, HA_SOFTPHONE_DEVICE_ID
 from .dial_fork import (
     DialDisposition,
     DialForkController,
@@ -759,6 +759,10 @@ async def run_ring_group_call(
                 invite,
                 client.dialog,
                 winner.video_relay,
+                hass=hass,
+                enable_transcoding=bool(
+                    runtime.config.get(CONF_VIDEO_TRANSCODING, False)
+                ),
             )
             if video_answer is None:
                 _LOGGER.info(

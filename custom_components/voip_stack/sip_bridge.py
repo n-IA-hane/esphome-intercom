@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from . import sdp
@@ -24,6 +24,51 @@ class VideoBridgeAnswer:
 
     video_format: sdp.RtpVideoFormat
     direction: str
+
+
+def video_bridge_offer_formats(
+    source: sdp.RtpVideoFormat,
+    *,
+    enable_transcoding: bool,
+) -> tuple[sdp.RtpVideoFormat, ...]:
+    """Offer direct passthrough first, then bounded FFmpeg fallback codecs."""
+
+    if not enable_transcoding:
+        return (source,)
+    formats = [source]
+    used_payloads = {int(source.payload_type)}
+    candidates = (
+        sdp.CONSTRAINED_BASELINE_H264_FORMAT,
+        sdp.DEFAULT_VIDEO_FORMATS[2],
+        sdp.DEFAULT_VIDEO_FORMATS[3],
+    )
+    for candidate in candidates:
+        if candidate.encoding == source.encoding and (
+            candidate.encoding != "H264"
+            or candidate.profile_level_id == source.profile_level_id
+        ):
+            continue
+        payload_type = int(candidate.payload_type)
+        if payload_type in used_payloads:
+            payload_type = next(
+                item for item in range(96, 128) if item not in used_payloads
+            )
+        used_payloads.add(payload_type)
+        formats.append(
+            replace(
+                candidate,
+                payload_type=payload_type,
+                direction=source.direction,
+                transport_profile=source.transport_profile,
+                rtcp_feedback=(
+                    candidate.rtcp_feedback
+                    if source.transport_profile == "RTP/AVPF"
+                    else ()
+                ),
+                max_framerate=source.max_framerate,
+            )
+        )
+    return tuple(formats)
 
 
 def build_pending_invite_video_relay(
@@ -64,8 +109,11 @@ def configure_answered_invite_video_relay(
     invite: SipInvite,
     dialog: SipDialog,
     relay: SipVideoRtpRelay,
+    *,
+    hass: Any | None = None,
+    enable_transcoding: bool = False,
 ) -> VideoBridgeAnswer | None:
-    """Commit an exact passthrough contract after the fork leg answers."""
+    """Commit direct video first, then optional bounded cross-codec fallback."""
 
     remote_video = dialog.video_format
     source_video = (
@@ -78,7 +126,7 @@ def configure_answered_invite_video_relay(
         if invite.video_format is not None and source_video is not None
         else None
     )
-    if not (
+    exact_passthrough = bool(
         remote_video is not None
         and source_video is not None
         and source_directional is not None
@@ -91,12 +139,35 @@ def configure_answered_invite_video_relay(
             dialog.recv_video_format,
             source_directional.send,
         )
+    )
+    if exact_passthrough:
+        assert source_video is not None
+        assert source_directional is not None
+        relay.left.video_format = source_directional.send
+        relay.left.local_video_format = source_directional.recv
+        relay.reconfigure_peer("right", dialog_video_rtp_peer(dialog))
+    elif (
+        enable_transcoding
+        and hass is not None
+        and remote_video is not None
+        and invite.answer_video_format is not None
+        and dialog.remote_video_rtp_port > 0
     ):
+        source_video = invite.answer_video_format
+        relay.left.video_format = invite.send_video_format
+        relay.left.local_video_format = invite.recv_video_format
+        relay.reconfigure_peer("right", dialog_video_rtp_peer(dialog))
+        try:
+            relay.configure_transcoding(hass, invite.call_id)
+        except (RuntimeError, ValueError):
+            return None
+        if not relay.transcoding:
+            return None
+    else:
         return None
 
-    relay.left.video_format = source_directional.send
-    relay.left.local_video_format = source_directional.recv
-    relay.reconfigure_peer("right", dialog_video_rtp_peer(dialog))
+    assert source_video is not None
+    assert remote_video is not None
     return VideoBridgeAnswer(
         video_format=source_video,
         direction=sdp.constrained_video_direction(

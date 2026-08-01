@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from homeassistant.core import HomeAssistant
 
 from .audio_format import HA_TRUNK_AUDIO_FORMATS
-from .const import CONF_SIP_VIDEO, HA_SOFTPHONE_DEVICE_ID
+from .const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING, HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import create_runtime_task
 from .endpoint_routing import (
     EndpointRouteResolver,
@@ -27,7 +27,7 @@ from .outbound_attempts import BrowserLeg, OutboundLeg
 from .pbx_routing import roster_entry_for_target
 from .phone_endpoint import DEFAULT_ENDPOINT_ID, EndpointKind
 from .sip import parse_sip_uri
-from .sip_bridge import build_pending_invite_video_relay
+from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
 from .sip_client import SipCallClient
 
 if TYPE_CHECKING:
@@ -243,8 +243,15 @@ class EndpointDialer:
                     video_relay.right_port if video_relay is not None else 0
                 ),
                 video_formats=(
-                    (invite.video_format,)
-                    if video_relay is not None and invite is not None
+                    video_bridge_offer_formats(
+                        invite.video_format,
+                        enable_transcoding=bool(
+                            self.config.get(CONF_VIDEO_TRANSCODING, False)
+                        ),
+                    )
+                    if video_relay is not None
+                    and invite is not None
+                    and invite.video_format is not None
                     else ()
                 ),
                 video_direction=(

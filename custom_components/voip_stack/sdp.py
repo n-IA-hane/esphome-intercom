@@ -856,6 +856,14 @@ def _h264_receiver_limits(
     return limits
 
 
+def h264_receiver_limits(
+    video_format: RtpVideoFormat,
+) -> dict[str, Fraction] | None:
+    """Expose the negotiated RFC 6184 receive envelope to media adapters."""
+
+    return _h264_receiver_limits(video_format)
+
+
 def audio_format_to_rtp(fmt: AudioFormat, payload_type: int) -> RtpPcmFormat:
     if not 96 <= int(payload_type) <= 127:
         raise SdpError("phase-1 PCM uses dynamic RTP payload types 96-127")
@@ -2444,6 +2452,18 @@ def _serialized_video_fmtp(video_format: RtpVideoFormat) -> str:
         ordered.append(("sprop-parameter-sets", sprop_parameter_sets))
     ordered.extend(extras.items())
     return ";".join(f"{key}={value}" if value else key for key, value in ordered)
+
+
+def serialized_video_fmtp(video_format: RtpVideoFormat) -> str:
+    """Serialize one negotiated video format for an RTP SDP adapter."""
+
+    return _serialized_video_fmtp(video_format)
+
+
+def video_fmtp_parameters(video_format: RtpVideoFormat) -> dict[str, str]:
+    """Return normalized codec parameters without exposing parser internals."""
+
+    return _fmtp_parameters(video_format.fmtp)
 
 
 def _video_media_lines(

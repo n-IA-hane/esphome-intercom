@@ -353,6 +353,64 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertIn("profile-level-id=42800d", snapshot["left_recv_format"])
         self.assertIn("profile-level-id=42801f", snapshot["left_send_format"])
 
+    def test_cross_codec_packets_are_delivered_to_directional_transcoder(self) -> None:
+        jpeg = RtpVideoFormat(payload_type=26, encoding="JPEG")
+        h264 = _format(105, profile="42c00c")
+        self.left.video_format = jpeg
+        self.left.local_video_format = jpeg
+        self.right.video_format = h264
+        self.right.local_video_format = h264
+        self.relay.configure_transcoding(types.SimpleNamespace(data={}), "cross-codec")
+
+        class Transcoder:
+            def __init__(self) -> None:
+                self.received: list[bytes] = []
+
+            def send_rtp(self, data: bytes) -> None:
+                self.received.append(data)
+
+        left_transcoder = Transcoder()
+        right_transcoder = Transcoder()
+        self.relay._transcoders = {  # noqa: SLF001
+            "left": left_transcoder,
+            "right": right_transcoder,
+        }
+        left_packet = rtp.build_packet(
+            rtp.RtpPacket(26, 1, 9000, 0x1111, b"jpeg")
+        )
+        right_packet = rtp.build_packet(
+            rtp.RtpPacket(105, 2, 18000, 0x2222, b"h264")
+        )
+
+        self.relay.handle_rtp("left", left_packet, (self.left.host, self.left.port))
+        self.relay.handle_rtp(
+            "right", right_packet, (self.right.host, self.right.port)
+        )
+
+        self.assertEqual(left_transcoder.received, [left_packet])
+        self.assertEqual(right_transcoder.received, [right_packet])
+        self.assertFalse(self.left_rtp.sent)
+        self.assertFalse(self.right_rtp.sent)
+        self.assertEqual(self.relay.transcoded_input_packets, 2)
+
+    def test_transcoded_output_uses_advertised_relay_socket(self) -> None:
+        jpeg = RtpVideoFormat(payload_type=26, encoding="JPEG")
+        h264 = _format(105, profile="42c00c")
+        self.left.video_format = jpeg
+        self.left.local_video_format = jpeg
+        self.right.video_format = h264
+        self.right.local_video_format = h264
+        self.relay.configure_transcoding(types.SimpleNamespace(data={}), "cross-codec")
+        output = rtp.build_packet(
+            rtp.RtpPacket(105, 1, 9000, 0x5566, b"encoded")
+        )
+
+        self.relay.handle_transcoded_rtp("left", output)
+
+        self.assertEqual(self.right_rtp.sent, [(output, (self.right.host, self.right.port))])
+        self.assertEqual(self.relay.transcoded_output_packets, 1)
+        self.assertEqual(self.relay.right_tx_packets, 1)
+
     def test_directional_contract_mismatch_drops_only_invalid_path(self) -> None:
         self.left.video_format = _format(102, profile="42800d")
         self.left.local_video_format = _format(102, profile="42800d")

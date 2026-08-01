@@ -13,6 +13,7 @@ from .audio_format import HA_TRUNK_AUDIO_FORMATS
 from .config import debug_mode as _debug_mode, trunk_config as _get_trunk_config
 from .const import (
     CONF_SIP_VIDEO,
+    CONF_VIDEO_TRANSCODING,
     CONF_TRUNK_AUTH_USERNAME,
     CONF_TRUNK_OUTBOUND_PROXY,
     CONF_TRUNK_PASSWORD,
@@ -77,6 +78,7 @@ from .sip_bridge import (
     build_invite_client_relay,
     build_pending_invite_video_relay,
     configure_answered_invite_video_relay,
+    video_bridge_offer_formats,
 )
 from .sip_client import SIP_TIMER_B, SipCallClient
 from .sip_runtime import (
@@ -1052,6 +1054,9 @@ async def async_forward_existing_call(
                     or target_route_endpoint.supports("video")
                 )
             )
+            video_transcoding_enabled = bool(
+                forward_video_enabled and cfg.get(CONF_VIDEO_TRANSCODING, False)
+            )
             video_dest_port = 0
             video_failure_reason = ""
             if forward_video_enabled:
@@ -1121,7 +1126,14 @@ async def async_forward_existing_call(
                     else ""
                 ),
                 local_video_rtp_port=video_dest_port,
-                video_formats=(invite.video_format,) if video_relay is not None else (),
+                video_formats=(
+                    video_bridge_offer_formats(
+                        invite.video_format,
+                        enable_transcoding=video_transcoding_enabled,
+                    )
+                    if video_relay is not None and invite.video_format is not None
+                    else ()
+                ),
                 video_direction=(
                     invite.video_format.direction
                     if video_relay is not None
@@ -1199,11 +1211,15 @@ async def async_forward_existing_call(
             selected_video_direction = "inactive"
             if video_relay is not None:
                 video_answer = configure_answered_invite_video_relay(
-                    invite, client.dialog, video_relay
+                    invite,
+                    client.dialog,
+                    video_relay,
+                    hass=hass,
+                    enable_transcoding=video_transcoding_enabled,
                 )
                 if video_answer is None:
                     _LOGGER.info(
-                        "SIP forward video rejected: destination did not accept an exact codec call_id=%s",
+                        "SIP forward video rejected: no direct or transcoded codec call_id=%s",
                         call_id,
                     )
                     await video_relay.stop()

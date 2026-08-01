@@ -11,6 +11,7 @@ from .voip_phase1_support import (
     router,
     rtp,
     sdp,
+    sip,
     sip_bridge,
     sip_client,
     sip_listener,
@@ -21,6 +22,96 @@ from .voip_phase1_support import (
 
 
 class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _cross_codec_video_fixture():
+        audio = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
+        jpeg = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG")
+        h264 = sdp.RtpVideoFormat(
+            payload_type=105,
+            encoding="H264",
+            profile_level_id="42c00c",
+            packetization_mode=1,
+            max_framerate=10,
+        )
+        invite = sip_listener.SipInvite(
+            source_host="192.0.2.10",
+            source_port=5060,
+            request_uri=sip.parse_sip_uri("sip:Zoiper@192.0.2.1"),
+            caller_uri=sip.parse_sip_uri("sip:P4@192.0.2.10"),
+            target="Zoiper",
+            caller="P4",
+            call_id="cross-codec",
+            cseq="1 INVITE",
+            remote_sdp=b"",
+            send_format=audio,
+            recv_format=audio,
+            remote_rtp_host="192.0.2.10",
+            remote_rtp_port=40000,
+            video_format=jpeg,
+            local_video_format=jpeg,
+            video_answer_format=jpeg,
+            remote_video_rtp_host="192.0.2.10",
+            remote_video_rtp_port=41000,
+            remote_video_rtcp_host="192.0.2.10",
+            remote_video_rtcp_port=41001,
+        )
+        dialog = sip_client.SipDialog(
+            target="Zoiper",
+            remote_host="192.0.2.20",
+            remote_sip_port=5060,
+            remote_rtp_host="192.0.2.20",
+            remote_rtp_port=42000,
+            local_rtp_port=42002,
+            call_id="destination",
+            local_uri="sip:HA@192.0.2.1",
+            remote_uri="sip:Zoiper@192.0.2.20",
+            send_format=audio,
+            recv_format=audio,
+            video_format=h264,
+            local_video_format=h264,
+            remote_video_rtp_host="192.0.2.20",
+            remote_video_rtp_port=43000,
+            remote_video_rtcp_host="192.0.2.20",
+            remote_video_rtcp_port=43001,
+        )
+        relay = sip_bridge.build_pending_invite_video_relay(
+            invite,
+            remote_host=dialog.remote_host,
+            left_port=44000,
+            right_port=44002,
+            sockets=(None, None, None, None),
+        )
+        return invite, dialog, relay
+
+    def test_cross_codec_video_offer_keeps_direct_codec_first(self) -> None:
+        invite, _dialog, _relay = self._cross_codec_video_fixture()
+
+        offered = sip_bridge.video_bridge_offer_formats(
+            invite.video_format,
+            enable_transcoding=True,
+        )
+
+        self.assertEqual(offered[0], invite.video_format)
+        self.assertEqual([item.encoding for item in offered], ["JPEG", "H264", "VP8"])
+        self.assertEqual(len({item.payload_type for item in offered}), len(offered))
+
+    def test_cross_codec_video_answer_configures_bidirectional_ffmpeg(self) -> None:
+        invite, dialog, relay = self._cross_codec_video_fixture()
+        hass = types.SimpleNamespace(data={})
+
+        answer = sip_bridge.configure_answered_invite_video_relay(
+            invite,
+            dialog,
+            relay,
+            hass=hass,
+            enable_transcoding=True,
+        )
+
+        self.assertIsNotNone(answer)
+        self.assertTrue(relay.transcoding)
+        self.assertEqual(relay._transcode_directions, {"left", "right"})  # noqa: SLF001
+        self.assertEqual(answer.video_format.encoding, "JPEG")
+
     def test_local_client_relay_does_not_require_a_synthetic_sdp_offer(self) -> None:
         local_to_relay = sdp.RtpPcmFormat(96, "L16", 16000, 1, 16)
         relay_to_local = sdp.RtpPcmFormat(97, "L16", 48000, 1, 10)

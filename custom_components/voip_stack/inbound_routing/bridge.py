@@ -12,6 +12,7 @@ from ..audio_format import HA_TRUNK_AUDIO_FORMATS
 from ..config import debug_mode
 from ..const import (
     CONF_SIP_VIDEO,
+    CONF_VIDEO_TRANSCODING,
     CONF_TRUNK_AUTH_USERNAME,
     CONF_TRUNK_OUTBOUND_PROXY,
     CONF_TRUNK_PASSWORD,
@@ -49,6 +50,7 @@ from ..sip_bridge import (
     build_invite_client_relay,
     build_pending_invite_video_relay,
     configure_answered_invite_video_relay,
+    video_bridge_offer_formats,
 )
 from ..sip_client import SIP_TIMER_B, SipCallClient
 from ..sip_listener import SipInviteResult
@@ -220,6 +222,9 @@ async def route_sip_bridge(
     video_bridge_ports = None
     video_relay = None
     video_failure_reason = ""
+    video_transcoding_enabled = bool(
+        runtime.config.get(CONF_VIDEO_TRANSCODING, False)
+    )
     if bool(cfg.get(CONF_SIP_VIDEO, False)) and invite.video_format is not None:
         sockets = ()
         try:
@@ -281,7 +286,14 @@ async def route_sip_bridge(
             else ""
         ),
         local_video_rtp_port=(video_bridge_ports.ports[1] if video_bridge_ports else 0),
-        video_formats=((invite.video_format,) if video_bridge_ports else ()),
+        video_formats=(
+            video_bridge_offer_formats(
+                invite.video_format,
+                enable_transcoding=video_transcoding_enabled,
+            )
+            if video_bridge_ports and invite.video_format is not None
+            else ()
+        ),
         video_direction=(
             invite.video_format.direction if video_bridge_ports else "inactive"
         ),
@@ -529,11 +541,15 @@ async def route_sip_bridge(
         selected_video_direction = "inactive"
         if video_relay is not None:
             video_answer = configure_answered_invite_video_relay(
-                invite, client.dialog, video_relay
+                invite,
+                client.dialog,
+                video_relay,
+                hass=hass,
+                enable_transcoding=video_transcoding_enabled,
             )
             if video_answer is None:
                 _LOGGER.info(
-                    "SIP bridge video rejected: destination did not accept an exact codec call_id=%s source=%s destination=%s",
+                    "SIP bridge video rejected: no direct or transcoded codec call_id=%s source=%s destination=%s",
                     invite.call_id,
                     invite.video_format.wire_token() if invite.video_format else "none",
                     client.dialog.video_format.wire_token()

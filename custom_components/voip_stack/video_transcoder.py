@@ -16,6 +16,7 @@ import socket
 from typing import TYPE_CHECKING
 
 from .const import DOMAIN
+from . import sdp
 from .sdp import RtpVideoFormat
 from .session_cleanup import async_wait_for_cleanup
 
@@ -32,6 +33,15 @@ _JPEG_NORMALIZE_TIMEOUT = 1.5
 _JPEG_NORMALIZE_MAX_BYTES = 1024 * 1024
 _JPEG_MULTIPART_INPUT_BOUNDARY = "voipstackin"
 _JPEG_MULTIPART_OUTPUT_BOUNDARY = "voipstackout"
+_DEFAULT_TRANSCODE_OUTPUT = RtpVideoFormat(
+    payload_type=103,
+    encoding="VP8",
+    fmtp="max-fr=20;max-fs=3600",
+)
+_FFMPEG_INPUT_ENCODINGS = frozenset(
+    {"H263", "H263P", "H264", "H265", "JPEG", "VP8", "VP9", "AV1"}
+)
+_FFMPEG_OUTPUT_ENCODINGS = frozenset({"H264", "JPEG", "VP8"})
 
 
 class VideoTranscoderError(RuntimeError):
@@ -78,10 +88,15 @@ def _ffmpeg_binary(hass: HomeAssistant) -> str:
 
 def _input_sdp(video_format: RtpVideoFormat, port: int) -> str:
     encoding = str(video_format.encoding or "").upper()
-    if encoding not in {"H263", "H263P", "H264", "H265", "JPEG", "VP8", "VP9", "AV1"}:
+    if encoding not in _FFMPEG_INPUT_ENCODINGS:
         raise VideoTranscoderError(f"unsupported FFmpeg RTP input codec {encoding}")
     rtp_encoding = {"H263P": "H263-1998"}.get(encoding, encoding)
-    fmtp = str(video_format.fmtp or "").replace("\r", " ").replace("\n", " ").strip()
+    fmtp = (
+        sdp.serialized_video_fmtp(video_format)
+        if encoding == "H264"
+        else str(video_format.fmtp or "")
+    )
+    fmtp = fmtp.replace("\r", " ").replace("\n", " ").strip()
     if len(fmtp) > _MAX_FMTP_LENGTH:
         raise VideoTranscoderError("video fmtp exceeds safety limit")
     lines = [
@@ -99,14 +114,186 @@ def _input_sdp(video_format: RtpVideoFormat, port: int) -> str:
     return "\r\n".join(lines) + "\r\n"
 
 
+def video_transcode_supported(
+    input_format: RtpVideoFormat,
+    output_format: RtpVideoFormat,
+) -> bool:
+    """Return whether the bounded FFmpeg bridge can convert one RTP stream."""
+
+    input_encoding = str(input_format.encoding or "").upper()
+    output_encoding = str(output_format.encoding or "").upper()
+    return bool(
+        input_encoding in _FFMPEG_INPUT_ENCODINGS
+        and output_encoding in _FFMPEG_OUTPUT_ENCODINGS
+        and int(input_format.clock_rate) == 90000
+        and int(output_format.clock_rate) == 90000
+        and (
+            output_encoding != "H264"
+            or int(output_format.packetization_mode) == 1
+        )
+    )
+
+
+def _positive_fmtp_integer(video_format: RtpVideoFormat, name: str) -> int:
+    raw = sdp.video_fmtp_parameters(video_format).get(name, "")
+    try:
+        value = int(raw, 10)
+    except (TypeError, ValueError):
+        return 0
+    return value if value > 0 else 0
+
+
+def _transcode_envelope(video_format: RtpVideoFormat) -> tuple[int, int, int]:
+    """Select a conservative frame envelope inside the receiver contract."""
+
+    encoding = str(video_format.encoding or "").upper()
+    max_fps = 15
+    if video_format.max_framerate is not None and video_format.max_framerate > 0:
+        max_fps = min(max_fps, max(1, int(video_format.max_framerate)))
+
+    if encoding == "JPEG":
+        return 800, 800, min(max_fps, 10)
+
+    max_fs = 3600
+    max_mbps = 108000
+    if encoding == "H264":
+        limits = sdp.h264_receiver_limits(video_format)
+        if limits is None:
+            raise VideoTranscoderError("invalid H.264 receiver envelope")
+        max_fs = int(limits["max-fs"])
+        max_mbps = int(limits["max-mbps"])
+    elif encoding == "VP8":
+        max_fs = _positive_fmtp_integer(video_format, "max-fs") or max_fs
+        max_fps = min(
+            max_fps,
+            _positive_fmtp_integer(video_format, "max-fr") or max_fps,
+        )
+
+    candidates = (
+        (1280, 720),
+        (960, 540),
+        (640, 360),
+        (480, 270),
+        (352, 288),
+        (320, 180),
+        (176, 144),
+    )
+    width, height = next(
+        (
+            (candidate_width, candidate_height)
+            for candidate_width, candidate_height in candidates
+            if ((candidate_width + 15) // 16) * ((candidate_height + 15) // 16)
+            <= max_fs
+        ),
+        candidates[-1],
+    )
+    macroblocks = ((width + 15) // 16) * ((height + 15) // 16)
+    max_fps = min(max_fps, max(1, max_mbps // max(1, macroblocks)))
+    return width, height, max_fps
+
+
+def _h264_level_argument(video_format: RtpVideoFormat) -> str:
+    profile = str(video_format.profile_level_id or "").strip().lower()
+    try:
+        profile_idc, profile_iop, level_idc = bytes.fromhex(profile)
+    except ValueError as err:
+        raise VideoTranscoderError("invalid H.264 profile-level-id") from err
+    if level_idc == 11 and profile_idc in {0x42, 0x4D, 0x58} and profile_iop & 0x10:
+        return "1b"
+    return f"{level_idc // 10}.{level_idc % 10}"
+
+
+def _output_command_args(video_format: RtpVideoFormat) -> list[str]:
+    """Build low-latency FFmpeg encoder arguments for one negotiated codec."""
+
+    if not video_transcode_supported(_DEFAULT_TRANSCODE_OUTPUT, video_format):
+        raise VideoTranscoderError(
+            f"unsupported FFmpeg RTP output codec {video_format.encoding}"
+        )
+    width, height, framerate = _transcode_envelope(video_format)
+    scale = (
+        f"fps={framerate},"
+        f"scale=w='min({width},iw)':h='min({height},ih)':"
+        "force_original_aspect_ratio=decrease:force_divisible_by=2"
+    )
+    encoding = str(video_format.encoding).upper()
+    common = ["-vf", scale, "-threads", "1"]
+    if encoding == "VP8":
+        return common + [
+            "-pix_fmt",
+            "yuv420p",
+            "-c:v",
+            "libvpx",
+            "-deadline",
+            "realtime",
+            "-cpu-used",
+            "8",
+            "-b:v",
+            "700k",
+            "-maxrate",
+            "900k",
+            "-bufsize",
+            "1400k",
+            "-g",
+            str(max(1, framerate * 2)),
+            "-keyint_min",
+            str(max(1, framerate)),
+        ]
+    if encoding == "JPEG":
+        return common + [
+            "-pix_fmt",
+            "yuvj420p",
+            "-c:v",
+            "mjpeg",
+            "-huffman",
+            "default",
+            "-force_duplicated_matrix",
+            "1",
+            "-q:v",
+            "5",
+        ]
+    return common + [
+        "-pix_fmt",
+        "yuv420p",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-tune",
+        "zerolatency",
+        "-profile:v",
+        "baseline",
+        "-level:v",
+        _h264_level_argument(video_format),
+        "-b:v",
+        "400k",
+        "-maxrate",
+        "600k",
+        "-bufsize",
+        "800k",
+        "-g",
+        str(max(1, framerate)),
+        "-keyint_min",
+        str(max(1, framerate)),
+        "-x264-params",
+        (
+            f"keyint={max(1, framerate)}:min-keyint={max(1, framerate)}:"
+            "scenecut=0:bframes=0:repeat-headers=1:slice-max-size=1100"
+        ),
+    ]
+
+
 @dataclass(slots=True)
 class FfmpegVideoTranscoder:
-    """One receive-only RTP codec conversion into browser-friendly VP8."""
+    """One receive-only RTP conversion into a negotiated output codec."""
 
     hass: HomeAssistant
     call_id: str
     input_format: RtpVideoFormat
     output_port: int
+    output_format: RtpVideoFormat = _DEFAULT_TRANSCODE_OUTPUT
+    slot_owner: object | None = None
+    manage_slot: bool = True
     input_port: int = 0
     process: asyncio.subprocess.Process | None = None
     _send_socket: socket.socket | None = None
@@ -139,7 +326,9 @@ class FfmpegVideoTranscoder:
                     self._start_task = None
 
     async def _async_start_impl(self) -> None:
-        await _claim_transcoder_slot(self.hass, self)
+        owner = self.slot_owner or self
+        if self.manage_slot:
+            await _claim_transcoder_slot(self.hass, owner)
         process: asyncio.subprocess.Process | None = None
         send_socket: socket.socket | None = None
         stderr_task: asyncio.Task[None] | None = None
@@ -164,19 +353,9 @@ class FfmpegVideoTranscoder:
                 "-an",
                 "-sn",
                 "-dn",
-                "-vf", "fps=15,scale='min(1280,iw)':-2:force_original_aspect_ratio=decrease",
-                "-pix_fmt", "yuv420p",
-                "-c:v", "libvpx",
-                "-deadline", "realtime",
-                "-cpu-used", "8",
-                "-threads", "1",
-                "-b:v", "700k",
-                "-maxrate", "900k",
-                "-bufsize", "1400k",
-                "-g", "30",
-                "-keyint_min", "30",
+                *_output_command_args(self.output_format),
                 "-f", "rtp",
-                "-payload_type", "103",
+                "-payload_type", str(int(self.output_format.payload_type)),
                 f"rtp://127.0.0.1:{int(self.output_port)}?pkt_size=1200",
             ]
             process = await asyncio.create_subprocess_exec(
@@ -205,10 +384,11 @@ class FfmpegVideoTranscoder:
                 send_socket = None
                 stderr_task = None
             _LOGGER.info(
-                "Started optional SIP video transcode call_id=%s input=%s loopback=%s output=VP8/%s",
+                "Started optional SIP video transcode call_id=%s input=%s loopback=%s output=%s/%s",
                 self.call_id,
                 self.input_format.wire_token(),
                 self.input_port,
+                self.output_format.wire_token(),
                 self.output_port,
             )
         except BaseException:
@@ -219,7 +399,7 @@ class FfmpegVideoTranscoder:
                     process=process,
                     send_socket=send_socket,
                     stderr_task=stderr_task,
-                    release_slot=True,
+                    release_slot=self.manage_slot,
                 ),
                 name=f"voip-video-transcoder-start-cleanup-{self.call_id}",
             )
@@ -279,7 +459,7 @@ class FfmpegVideoTranscoder:
             process=process,
             send_socket=send_socket,
             stderr_task=stderr_task,
-            release_slot=True,
+            release_slot=self.manage_slot,
         )
         _LOGGER.info("Stopped optional SIP video transcode call_id=%s", self.call_id)
 
@@ -315,7 +495,7 @@ class FfmpegVideoTranscoder:
             # Never strand the single bounded transcode slot because FFmpeg
             # exited between the returncode check and process cleanup.
             if release_slot:
-                await _release_transcoder_slot(self.hass, self)
+                await _release_transcoder_slot(self.hass, self.slot_owner or self)
             self._released = True
 
 

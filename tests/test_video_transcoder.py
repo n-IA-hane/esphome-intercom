@@ -702,6 +702,7 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
         encoder: str,
         size: str = "320x180",
         encoder_args: tuple[str, ...] = (),
+        output_format=None,
     ) -> None:
         output = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         output.setblocking(False)
@@ -716,6 +717,11 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
             call_id=f"qualification-{video_format.encoding.lower()}",
             input_format=video_format,
             output_port=output_port,
+            output_format=(
+                output_format
+                if output_format is not None
+                else video_transcoder._DEFAULT_TRANSCODE_OUTPUT
+            ),
         )
         sender = None
         input_packets = 0
@@ -752,7 +758,12 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
                 stderr=asyncio.subprocess.PIPE,
             )
             loop = asyncio.get_running_loop()
-            depacketizer = video_rtp.Vp8Depacketizer()
+            selected_output = transcoder.output_format
+            depacketizer = {
+                "H264": video_rtp.H264Depacketizer,
+                "JPEG": video_rtp.JpegDepacketizer,
+                "VP8": video_rtp.Vp8Depacketizer,
+            }[selected_output.encoding]()
             packets = 0
             access_units = []
             deadline = loop.time() + 5.0
@@ -762,7 +773,7 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
                 except TimeoutError:
                     continue
                 packet = rtp.parse_packet(raw)
-                self.assertEqual(packet.payload_type, 103)
+                self.assertEqual(packet.payload_type, selected_output.payload_type)
                 packets += 1
                 access_unit = depacketizer.push(packet)
                 if access_unit is not None:
@@ -835,6 +846,48 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
                     size=size,
                     encoder_args=encoder_args,
                 )
+
+    async def test_h264_and_jpeg_cross_codec_outputs_are_valid_rtp(self) -> None:
+        h264_input = sdp.RtpVideoFormat(
+            payload_type=102,
+            encoding="H264",
+            profile_level_id="42c01f",
+            packetization_mode=1,
+        )
+        jpeg_input = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG")
+        h264_output = sdp.RtpVideoFormat(
+            payload_type=105,
+            encoding="H264",
+            profile_level_id="42c00c",
+            packetization_mode=1,
+            max_framerate=10,
+        )
+        jpeg_output = sdp.RtpVideoFormat(payload_type=26, encoding="JPEG")
+
+        await self._qualify_codec(
+            video_format=h264_input,
+            encoder="libx264",
+            encoder_args=(
+                "-preset",
+                "ultrafast",
+                "-tune",
+                "zerolatency",
+                "-profile:v",
+                "baseline",
+            ),
+            output_format=jpeg_output,
+        )
+        await self._qualify_codec(
+            video_format=jpeg_input,
+            encoder="mjpeg",
+            encoder_args=(
+                "-huffman",
+                "default",
+                "-force_duplicated_matrix",
+                "1",
+            ),
+            output_format=h264_output,
+        )
 
 
 if __name__ == "__main__":
