@@ -23,6 +23,8 @@ from .video_rtcp import RtcpError, parse_compound
 
 _LOGGER = logging.getLogger(__name__)
 _RTP_IP_TOS = 0x88
+_TRANSCODE_STARTUP_MAX_PACKETS = 64
+_TRANSCODE_STARTUP_MAX_BYTES = 256 * 1024
 
 
 def remote_can_send(video_format: RtpVideoFormat | None) -> bool:
@@ -179,6 +181,11 @@ class SipVideoRtpRelay:
         self._transcode_hass: Any | None = None
         self._transcode_call_id = ""
         self._transcode_slot_claimed = False
+        self._transcode_startup_rtp: dict[str, list[bytes]] = {
+            "left": [],
+            "right": [],
+        }
+        self._transcode_startup_bytes = {"left": 0, "right": 0}
         self._on_release = on_release
         self._released = False
         self._lifecycle_lock = asyncio.Lock()
@@ -202,6 +209,9 @@ class SipVideoRtpRelay:
         self.transcoded_output_packets = 0
         self.transcoded_rtcp_packets = 0
         self.transcode_rtcp_dropped = 0
+        self.transcode_startup_buffered = 0
+        self.transcode_startup_dropped = 0
+        self.ignored_after_stop = 0
 
     @staticmethod
     def _socket(port: int) -> socket.socket:
@@ -384,11 +394,49 @@ class SipVideoRtpRelay:
             await asyncio.gather(
                 *(transcoder.async_start() for transcoder in self._transcoders.values())
             )
+            self._flush_transcode_startup_rtp()
         except BaseException:
             await self._stop_transcoding()
             raise
 
+    def _buffer_transcode_startup_rtp(self, side: str, data: bytes) -> bool:
+        pending = self._transcode_startup_rtp[side]
+        pending_bytes = self._transcode_startup_bytes[side]
+        if (
+            len(pending) >= _TRANSCODE_STARTUP_MAX_PACKETS
+            or pending_bytes + len(data) > _TRANSCODE_STARTUP_MAX_BYTES
+        ):
+            self.dropped += 1
+            self.transcode_startup_dropped += 1
+            return False
+        pending.append(data)
+        self._transcode_startup_bytes[side] = pending_bytes + len(data)
+        self.transcode_startup_buffered += 1
+        return True
+
+    def _flush_transcode_startup_rtp(self) -> None:
+        for side in ("left", "right"):
+            pending = self._transcode_startup_rtp[side]
+            self._transcode_startup_rtp[side] = []
+            self._transcode_startup_bytes[side] = 0
+            transcoder = self._transcoders.get(side)
+            if transcoder is None or not transcoder.ready:
+                self.dropped += len(pending)
+                self.transcode_startup_dropped += len(pending)
+                continue
+            for data in pending:
+                try:
+                    transcoder.send_rtp(data)
+                except (OSError, RuntimeError, ValueError):
+                    self.dropped += 1
+                    self.transcode_startup_dropped += 1
+                    continue
+                self.transcoded_input_packets += 1
+
     async def _stop_transcoding(self) -> None:
+        for side in ("left", "right"):
+            self._transcode_startup_rtp[side].clear()
+            self._transcode_startup_bytes[side] = 0
         transcoders = tuple(self._transcoders.values())
         self._transcoders.clear()
         if transcoders:
@@ -491,6 +539,9 @@ class SipVideoRtpRelay:
         self.prepare_peer_reconfiguration(side, peer)()
 
     def handle_rtp(self, side: str, data: bytes, addr) -> None:
+        if self._stop_requested:
+            self.ignored_after_stop += 1
+            return
         source, destination = self._peers(side)
         output = self._transports.get(("right" if side == "left" else "left", False))
         try:
@@ -522,7 +573,11 @@ class SipVideoRtpRelay:
             source.port = int(addr[1])
             if side in self._transcode_directions:
                 transcoder = self._transcoders.get(side)
-                if transcoder is None:
+                if transcoder is None or not getattr(transcoder, "ready", True):
+                    if not self.started:
+                        if self._buffer_transcode_startup_rtp(side, data):
+                            self._account_received(side, len(data))
+                        return
                     raise RuntimeError("directional FFmpeg transcoder is not ready")
                 transcoder.send_rtp(data)
                 self._account_received(side, len(data))
@@ -690,4 +745,7 @@ class SipVideoRtpRelay:
             "transcoded_output_packets": self.transcoded_output_packets,
             "transcoded_rtcp_packets": self.transcoded_rtcp_packets,
             "transcode_rtcp_dropped": self.transcode_rtcp_dropped,
+            "transcode_startup_buffered": self.transcode_startup_buffered,
+            "transcode_startup_dropped": self.transcode_startup_dropped,
+            "ignored_after_stop": self.ignored_after_stop,
         }

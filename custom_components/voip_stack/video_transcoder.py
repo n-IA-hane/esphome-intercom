@@ -305,6 +305,16 @@ class FfmpegVideoTranscoder:
     _cleanup_task: asyncio.Task[None] | None = field(default=None, init=False)
     _close_requested: bool = field(default=False, init=False)
 
+    @property
+    def ready(self) -> bool:
+        """Return whether RTP can be delivered to the live FFmpeg input."""
+
+        return bool(
+            self._send_socket is not None
+            and self.process is not None
+            and self.process.returncode is None
+        )
+
     async def async_start(self) -> None:
         async with self._lifecycle_lock:
             if self.process is not None and self.process.returncode is None:

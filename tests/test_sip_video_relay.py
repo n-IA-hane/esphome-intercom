@@ -393,6 +393,53 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertFalse(self.right_rtp.sent)
         self.assertEqual(self.relay.transcoded_input_packets, 2)
 
+    def test_cross_codec_startup_packets_wait_for_ffmpeg_input(self) -> None:
+        jpeg = RtpVideoFormat(payload_type=26, encoding="JPEG")
+        h264 = _format(105, profile="42c00c")
+        self.left.video_format = jpeg
+        self.left.local_video_format = jpeg
+        self.right.video_format = h264
+        self.right.local_video_format = h264
+        self.relay.configure_transcoding(types.SimpleNamespace(data={}), "cross-codec")
+
+        class Transcoder:
+            def __init__(self) -> None:
+                self.ready = False
+                self.received: list[bytes] = []
+
+            def send_rtp(self, data: bytes) -> None:
+                self.received.append(data)
+
+        transcoder = Transcoder()
+        self.relay._transcoders = {"right": transcoder}  # noqa: SLF001
+        parameter_set = rtp.build_packet(
+            rtp.RtpPacket(105, 1, 9000, 0x2222, b"sps-pps")
+        )
+
+        self.relay.handle_rtp(
+            "right",
+            parameter_set,
+            (self.right.host, self.right.port),
+        )
+
+        self.assertEqual(transcoder.received, [])
+        self.assertEqual(self.relay.transcode_startup_buffered, 1)
+        self.assertEqual(self.relay.dropped, 0)
+        transcoder.ready = True
+        self.relay._flush_transcode_startup_rtp()  # noqa: SLF001
+        self.assertEqual(transcoder.received, [parameter_set])
+        self.assertEqual(self.relay.transcoded_input_packets, 1)
+        self.assertEqual(self.relay.transcode_startup_dropped, 0)
+
+    def test_packets_after_stop_do_not_pollute_media_drop_counter(self) -> None:
+        self.relay._stop_requested = True  # noqa: SLF001
+        packet = rtp.build_packet(rtp.RtpPacket(102, 1, 1, 1, b"late"))
+
+        self.relay.handle_rtp("left", packet, (self.left.host, self.left.port))
+
+        self.assertEqual(self.relay.dropped, 0)
+        self.assertEqual(self.relay.ignored_after_stop, 1)
+
     def test_transcoded_output_uses_advertised_relay_socket(self) -> None:
         jpeg = RtpVideoFormat(payload_type=26, encoding="JPEG")
         h264 = _format(105, profile="42c00c")

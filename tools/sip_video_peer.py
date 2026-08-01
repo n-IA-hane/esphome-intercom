@@ -596,6 +596,8 @@ async def _relay_video(
             counters["video_rx_packets"] += 1
             counters["video_rx_bytes"] += len(raw)
             counters["video_rx_last_sequence"] = packet.sequence
+            if packet.marker and jpeg_recorder is None:
+                counters["video_rx_marker_packets"] += 1
             if jpeg_recorder is not None:
                 jpeg_recorder.push(packet, counters)
             if capture_destination is not None:
