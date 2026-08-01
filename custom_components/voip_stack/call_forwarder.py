@@ -31,6 +31,7 @@ from .endpoint_routing import (
     EndpointRouteResolver,
     peer_audio_formats as _peer_audio_formats,
     peer_for_target as _peer_for_target,
+    peer_video_codec as _peer_video_codec,
     roster_entry_formats as _roster_entry_formats,
     roster_from_peers as _roster_from_peers,
     sip_target_audio_profile as _sip_target_audio_profile,
@@ -1130,6 +1131,10 @@ async def async_forward_existing_call(
                     video_bridge_offer_formats(
                         invite.video_format,
                         enable_transcoding=video_transcoding_enabled,
+                        target_codec=_peer_video_codec(
+                            peer_target,
+                            member_entry or decision.entry,
+                        ),
                     )
                     if video_relay is not None and invite.video_format is not None
                     else ()

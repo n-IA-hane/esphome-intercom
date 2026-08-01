@@ -92,8 +92,27 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(offered[0], invite.video_format)
-        self.assertEqual([item.encoding for item in offered], ["JPEG", "H264", "VP8"])
+        self.assertEqual([item.encoding for item in offered], ["JPEG", "H264"])
         self.assertEqual(len({item.payload_type for item in offered}), len(offered))
+
+    def test_known_jpeg_destination_gets_one_unfragmented_codec_offer(self) -> None:
+        invite, _dialog, _relay = self._cross_codec_video_fixture()
+        source = sdp.RtpVideoFormat(
+            payload_type=102,
+            encoding="H264",
+            profile_level_id="42e01f",
+            direction=invite.video_format.direction,
+            transport_profile=invite.video_format.transport_profile,
+        )
+
+        offered = sip_bridge.video_bridge_offer_formats(
+            source,
+            enable_transcoding=True,
+            target_codec="jpeg",
+        )
+
+        self.assertEqual([item.encoding for item in offered], ["JPEG"])
+        self.assertEqual(offered[0].payload_type, 26)
 
     def test_cross_codec_video_answer_configures_bidirectional_ffmpeg(self) -> None:
         invite, dialog, relay = self._cross_codec_video_fixture()

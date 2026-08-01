@@ -15,6 +15,7 @@ from .endpoint_routing import (
     EndpointRouteResolver,
     peer_audio_formats,
     peer_for_target,
+    peer_video_codec,
     roster_entry_formats,
     sip_target_audio_profile,
 )
@@ -248,6 +249,7 @@ class EndpointDialer:
                         enable_transcoding=bool(
                             self.config.get(CONF_VIDEO_TRANSCODING, False)
                         ),
+                        target_codec=peer_video_codec(peer_target, member_entry),
                     )
                     if video_relay is not None
                     and invite is not None

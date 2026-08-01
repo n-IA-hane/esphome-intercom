@@ -27,6 +27,7 @@ from ..endpoint_registry import EndpointBusyError
 from ..endpoint_routing import (
     peer_audio_formats,
     peer_for_target,
+    peer_video_codec,
     roster_entry_formats,
     sip_target_audio_profile,
 )
@@ -290,6 +291,7 @@ async def route_sip_bridge(
             video_bridge_offer_formats(
                 invite.video_format,
                 enable_transcoding=video_transcoding_enabled,
+                target_codec=peer_video_codec(peer_target, decision.entry),
             )
             if video_bridge_ports and invite.video_format is not None
             else ()

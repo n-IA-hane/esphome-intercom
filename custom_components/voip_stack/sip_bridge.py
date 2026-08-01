@@ -30,16 +30,39 @@ def video_bridge_offer_formats(
     source: sdp.RtpVideoFormat,
     *,
     enable_transcoding: bool,
+    target_codec: str = "",
 ) -> tuple[sdp.RtpVideoFormat, ...]:
     """Offer direct passthrough first, then bounded FFmpeg fallback codecs."""
 
     if not enable_transcoding:
         return (source,)
+    normalized_target = str(target_codec or "").strip().upper()
+    if normalized_target in {"H264", "JPEG"}:
+        if normalized_target == source.encoding:
+            return (source,)
+        candidate = (
+            sdp.CONSTRAINED_BASELINE_H264_FORMAT
+            if normalized_target == "H264"
+            else sdp.DEFAULT_VIDEO_FORMATS[3]
+        )
+        return (
+            replace(
+                candidate,
+                direction=source.direction,
+                transport_profile=source.transport_profile,
+                rtcp_feedback=(
+                    candidate.rtcp_feedback
+                    if source.transport_profile == "RTP/AVPF"
+                    else ()
+                ),
+                max_framerate=source.max_framerate,
+            ),
+        )
+
     formats = [source]
     used_payloads = {int(source.payload_type)}
     candidates = (
         sdp.CONSTRAINED_BASELINE_H264_FORMAT,
-        sdp.DEFAULT_VIDEO_FORMATS[2],
         sdp.DEFAULT_VIDEO_FORMATS[3],
     )
     for candidate in candidates:

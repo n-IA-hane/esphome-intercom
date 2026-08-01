@@ -153,6 +153,17 @@ def peer_audio_formats(peer: Peer | None, key: str) -> list[AudioFormat]:
         return []
 
 
+def peer_video_codec(peer: Peer | None, entry=None) -> str:
+    """Return one explicitly advertised SIP video codec for a destination."""
+
+    value = str(
+        ((peer.device or {}).get("sip_video_codec") if peer is not None else "")
+        or ((getattr(entry, "metadata", None) or {}).get("sip_video_codec"))
+        or ""
+    ).strip().casefold()
+    return value if value in {"h264", "jpeg"} else ""
+
+
 def device_formats(device: dict | None, key: str) -> list[AudioFormat]:
     if not device:
         return []
