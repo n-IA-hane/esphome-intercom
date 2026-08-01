@@ -828,10 +828,14 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         "bool EspH264VideoSource::encode_frame_(", transform_start
     )
     transform = source_cpp[transform_start:transform_end]
-    assert "uint16_t input_block_width = frame.width;" in transform
-    assert "uint16_t input_block_height = frame.height;" in transform
-    assert "static_cast<float>(target_block_width) / input_block_width" in transform
+    assert "((frame.width - input_block_width) / 2U) & ~1U;" in transform
+    assert "((frame.height - input_block_height) / 2U) & ~1U;" in transform
+    assert "config.scale_x = scale;" in transform
+    assert "config.scale_y = scale;" in transform
     assert "config.scale_x = 1.0f;" not in transform
+    assert "kPpaYuv420ScaleStepUnits = 2U" in source_cpp
+    assert "input_block_width * scale_units / kPpaScaleUnits ==" in transform
+    assert "input_block_height * scale_units / kPpaScaleUnits ==" in transform
     profile_gate = source_cpp.index("if (this->profile_level_id_.empty())")
     profile_parse = source_cpp.index("h264_profile_level_id_from_annex_b")
     assert profile_gate < profile_parse

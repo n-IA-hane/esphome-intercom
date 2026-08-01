@@ -39,6 +39,14 @@ static const char *const TAG = "esp_h264_video_source";
 
 namespace {
 
+constexpr uint32_t kPpaScaleUnits = 16U;
+constexpr uint32_t kPpaYuv420ScaleStepUnits = 2U;
+constexpr uint32_t kPpaMaxScaleUnits = 255U * kPpaScaleUnits + 14U;
+
+uint32_t divide_round_up(uint32_t numerator, uint32_t denominator) {
+  return (numerator + denominator - 1U) / denominator;
+}
+
 void *alloc_psram_dma(size_t bytes) {
   return heap_caps_aligned_alloc(
       64, bytes,
@@ -416,41 +424,58 @@ bool EspH264VideoSource::transform_to_encoder_yuv_(
     return false;
   }
 
-  // Preserve the largest centered camera area with the encoder's aspect ratio.
-  // The native 800x800 P4 stream therefore reaches the 400x400 encoder through
-  // one hardware 0.5x PPA pass instead of discarding its outer three quarters.
-  uint16_t input_block_width = frame.width;
-  uint16_t input_block_height = frame.height;
-  const uint64_t input_aspect =
-      static_cast<uint64_t>(frame.width) * target_block_height;
-  const uint64_t target_aspect =
-      static_cast<uint64_t>(frame.height) * target_block_width;
-  if (input_aspect > target_aspect) {
-    input_block_width = static_cast<uint16_t>(
-        static_cast<uint64_t>(frame.height) * target_block_width /
-        target_block_height);
-  } else if (input_aspect < target_aspect) {
-    input_block_height = static_cast<uint16_t>(
-        static_cast<uint64_t>(frame.width) * target_block_height /
-        target_block_width);
+  // IDF quantizes PPA scaling to 1/16 units. For YUV420 output it also
+  // clears the fractional low bit, so only even unit counts reach hardware.
+  uint32_t scale_units = std::max(
+      divide_round_up(
+          static_cast<uint32_t>(target_block_width) * kPpaScaleUnits,
+          frame.width),
+      divide_round_up(
+          static_cast<uint32_t>(target_block_height) * kPpaScaleUnits,
+          frame.height));
+  scale_units = std::max(scale_units, kPpaYuv420ScaleStepUnits);
+  scale_units = (scale_units + 1U) & ~1U;
+  uint32_t input_block_width = 0;
+  uint32_t input_block_height = 0;
+  for (; scale_units <= kPpaMaxScaleUnits;
+       scale_units += kPpaYuv420ScaleStepUnits) {
+    input_block_width =
+        (divide_round_up(
+             static_cast<uint32_t>(target_block_width) * kPpaScaleUnits,
+             scale_units) +
+         1U) &
+        ~1U;
+    input_block_height =
+        (divide_round_up(
+             static_cast<uint32_t>(target_block_height) * kPpaScaleUnits,
+             scale_units) +
+         1U) &
+        ~1U;
+    if (input_block_width <= frame.width &&
+        input_block_height <= frame.height &&
+        input_block_width * scale_units / kPpaScaleUnits ==
+            target_block_width &&
+        input_block_height * scale_units / kPpaScaleUnits ==
+            target_block_height) {
+      break;
+    }
   }
-  input_block_width &= ~1U;
-  input_block_height &= ~1U;
-  if (input_block_width == 0 || input_block_height == 0)
+  if (scale_units > kPpaMaxScaleUnits) {
     return false;
+  }
 
-  const float scale_x =
-      static_cast<float>(target_block_width) / input_block_width;
-  const float scale_y =
-      static_cast<float>(target_block_height) / input_block_height;
+  const float scale =
+      static_cast<float>(scale_units) / kPpaScaleUnits;
   ppa_srm_oper_config_t config{};
   config.in.buffer = frame.data;
   config.in.pic_w = frame.width;
   config.in.pic_h = frame.height;
   config.in.block_w = input_block_width;
   config.in.block_h = input_block_height;
-  config.in.block_offset_x = (frame.width - input_block_width) / 2;
-  config.in.block_offset_y = (frame.height - input_block_height) / 2;
+  config.in.block_offset_x =
+      ((frame.width - input_block_width) / 2U) & ~1U;
+  config.in.block_offset_y =
+      ((frame.height - input_block_height) / 2U) & ~1U;
   config.in.srm_cm = rgb565 ? PPA_SRM_COLOR_MODE_RGB565
                             : PPA_SRM_COLOR_MODE_YUV420;
   config.out.buffer = target;
@@ -462,8 +487,8 @@ bool EspH264VideoSource::transform_to_encoder_yuv_(
   config.out.yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601;
   config.rotation_angle =
       ppa_rotation_for_clockwise(frame.rotation_degrees);
-  config.scale_x = scale_x;
-  config.scale_y = scale_y;
+  config.scale_x = scale;
+  config.scale_y = scale;
   config.rgb_swap = false;
   config.byte_swap = false;
   config.mode = PPA_TRANS_MODE_BLOCKING;
