@@ -620,15 +620,19 @@ def main() -> int:
                 if not page.evaluate(CLICK, "Answer"):
                     raise RuntimeError("Answer button unavailable")
                 matching(page, "in_call")
-                caller.digits("5")
-                observed = wait_dtmf_event(
-                    ringing["backend"]["call_id"], "5", "sip_info"
-                )
+                observed_digits: list[str] = []
+                observed: dict[str, Any] = {}
+                for digit in "0123456789*#":
+                    caller.digits(digit)
+                    observed = wait_dtmf_event(
+                        ringing["backend"]["call_id"], digit, "sip_info"
+                    )
+                    observed_digits.append(str(observed.get("digit") or ""))
                 caller.hangup()
                 matching(page, "idle")
                 return {
                     "call_id": ringing["backend"]["call_id"],
-                    "digit": observed.get("digit"),
+                    "digits": "".join(observed_digits),
                     "transport": observed.get("transport"),
                     "source_leg": observed.get("source_leg"),
                     "ingress": observed.get("ingress"),
