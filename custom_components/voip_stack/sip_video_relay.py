@@ -1,4 +1,4 @@
-"""Exact-codec RTP/RTCP video relay for HA-owned SIP bridges."""
+"""Direct or bounded cross-codec RTP/RTCP relay for HA-owned SIP bridges."""
 
 from __future__ import annotations
 
@@ -141,11 +141,13 @@ class _TranscodedOutputProtocol(asyncio.DatagramProtocol):
 
 
 class SipVideoRtpRelay:
-    """Relay encoded video without decoding or changing timestamps/SSRC.
+    """Relay direct video or transcode only incompatible directions.
 
-    The payload type is the only RTP header field rewritten because it is
-    negotiated independently on each SIP leg. RTP extensions, CSRCs, marker,
-    sequence, timestamp and encoded payload remain byte-for-byte intact.
+    On a compatible direct path, the payload type is the only RTP header field
+    rewritten because it is negotiated independently on each SIP leg. RTP
+    extensions, CSRCs, marker, sequence, timestamp and encoded payload remain
+    byte-for-byte intact. A configured FFmpeg fallback owns separate loopback
+    RTP pairs and never changes the direct direction.
     """
 
     def __init__(

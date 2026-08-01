@@ -16,6 +16,13 @@ Every call has these layers:
 - Call registry: HA tracks source call ID, destination call ID, relay, client,
   pending invite and softphone state.
 - Phonebook resolver: maps the dialed target to a route action.
+- SIP identity: URI users provide stable routes, quoted display names preserve
+  human names, and RFC 4916 can report the selected callee after answer.
+
+Incoming caller text always comes from the standard SIP `From` identity. The
+phonebook helps route the call but does not rename the caller. If an endpoint
+answers a call that was dialed by extension, its canonical name can be returned
+in a connected-identity UPDATE after the initial ACK.
 
 ## ESP to ESP direct
 

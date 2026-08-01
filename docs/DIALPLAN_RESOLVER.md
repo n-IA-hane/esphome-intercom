@@ -44,6 +44,13 @@ Targets are classified before routing:
 Matching is case-insensitive for names and IDs. Numeric matching first checks
 roster `extension`, then falls back to `number` or trunk rules where allowed.
 
+Routing identity and presentation identity are separate. A stable SIP URI user
+selects the endpoint, while the standard quoted display name preserves the
+human name, including spaces. The resolver never replaces an incoming peer's
+valid `From` display name with a roster label. After answer, RFC 4916 connected
+identity can report the canonical destination selected by an extension or
+group route.
+
 ## Route actions
 
 The resolver returns one of these route actions:
@@ -150,7 +157,8 @@ Conference group:
 
 `Garage` is an ESP:
 
-- `Garage` by name from HA: `forward` to `sip:Garage@<esp-ip>`.
+- `Garage` by name from HA: `forward` to the ESP's stable SIP URI user at its
+  current address, with `Garage` retained as the display name.
 - `Garage` by name from ESP: usually `direct`.
 - `Garage` by extension from any caller: HA resolves extension to `Garage`.
 

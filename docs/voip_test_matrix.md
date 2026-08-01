@@ -8,7 +8,8 @@ agree. Counters alone are not proof of audible bidirectional audio.
 
 - No ESP firmware compile or OTA before local implementation and host checks.
 - `voip-pcm/1` profile documented and kept in sync with code.
-- No ESP codecs beyond RTP PCM L16/L24.
+- ESP audio remains RTP PCM L16/L24. Optional P4 video is compile-gated to one
+  encoded codec, JPEG or H.264, and is absent from audio-only firmware.
 - ESP endpoints use no Digest auth, send no `WWW-Authenticate`, and require no
   `Authorization` or `REGISTER`. HA may authenticate its optional trunk and
   local registrar accounts; neither mechanism gates all inbound INVITEs.
@@ -23,6 +24,9 @@ agree. Counters alone are not proof of audible bidirectional audio.
   SIP is implicit; the only transport choice is SIP/TCP or SIP/UDP signaling.
 - The phonebook is an outbound dial plan, not an inbound caller allowlist.
   Unknown/unregistered callers remain valid live-test sources.
+- SIP URI users remain stable routing identifiers while quoted display names
+  preserve spaces. Incoming caller text comes from `From`; connected callee
+  identity follows RFC 4916 when both peers support the in-dialog UPDATE.
 
 ## Local contract tests
 
@@ -127,8 +131,7 @@ state.
 Run after HA deployment and only after local tests pass. Exercise every powered
 device in the qualification environment and record unavailable devices as not
 run, never as passed or failed. Collect HA logs, ESP logs and sampled entity
-snapshots. The 2026-07-18 home qualification had only WS3 powered; Spotpear and
-P4 were therefore outside that physical run.
+snapshots.
 
 - HA softphone card calls WS3 over SIP TCP.
 - HA softphone card calls Spotpear over SIP TCP.
@@ -174,6 +177,22 @@ P4 were therefore outside that physical run.
 - HA/Baresip legs negotiate Opus at 48 kHz where offered and supported; a
   separate L16 48 kHz case verifies high-rate PCM without implying that ESP
   endpoints support compressed codecs.
+- A caller with display name `Dio Cane` remains exactly `Dio Cane` on the
+  receiving card and ESP. Spaces must not become underscores, and roster data
+  must not replace the peer's valid `From` display name.
+- A caller that dials a numeric extension receives the selected endpoint's
+  canonical name through connected identity when RFC 4916 is supported.
+- A Wildix-routed call delivers `0123456789*#` in order through the negotiated
+  DTMF transport, with every digit visible in the HA event and automation log.
+- P4 H.264 and JPEG profiles each complete incoming and outgoing audio/video
+  calls with bidirectional media, clean BYE/CANCEL handling and no audio gaps.
+- H.264-to-JPEG and JPEG-to-H.264 HA bridge fallback passes both media
+  directions. Already compatible directions remain direct and hangup leaves no
+  FFmpeg process, socket, owner or call resource.
+- An audio-only WS3 offer never starts a video session or inherits video from a
+  parallel P4/card call.
+- Direct P4-to-WS3 and WS3-to-P4 calls remain audio-only, bypass HA media and
+  cleanly return both endpoints to idle.
 
 ## Real HA qualification runners
 
@@ -187,6 +206,12 @@ P4 were therefore outside that physical run.
 - `tools/inbound_routing_qualification.py`: trunk default routing, native
   automation override, DTMF valid/invalid/no-digits, Assist forwarding and
   cancellation during the DTMF window.
+
+The real matrix must also include registered SIP client to HA, HA to registered
+client, registered client to registered client, Wildix to HA, Wildix to P4 and
+the reverse directions supported by each endpoint. Video-capable legs verify
+both direct codec relay and the bounded H.264/JPEG fallback. Audio-only legs
+must remain audio-only.
 
 An external-call qualification must include a completed PSTN call, not only
 ringing followed by CANCEL: answer the remote phone, require the audio dialog

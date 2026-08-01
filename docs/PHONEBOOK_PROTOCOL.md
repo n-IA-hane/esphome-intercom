@@ -58,6 +58,20 @@ schema. Fields such as `address`, `sip_uri`, `extension`, `number`, group
 membership, and media capabilities are authored on HA or discovered from
 endpoint entities, then normalized before HA pushes the roster to ESPs.
 
+The contact `name` is the only user-facing identity field required by an ESP
+static contact. Users do not need to provide a second underscore-safe version
+of the same name. SIP keeps routing and presentation separate on the wire:
+
+- the URI user is encoded as a valid, stable SIP route;
+- the quoted display name preserves spaces and is shown to the peer;
+- an incoming caller display is read from the peer's `From` header, not
+  replaced from the roster.
+
+For the ESP itself, ESPHome's node name is the stable URI user and
+`friendly_name` is the SIP display name. For example, node
+`waveshare-p4-touch` with friendly name `Waveshare P4 Touch` sends both values
+in their standard SIP roles without asking the YAML author to duplicate them.
+
 ## HA roster
 
 HA owns the central `sensor.voip_phonebook` roster. It contains ESP peers,
@@ -176,6 +190,12 @@ The `username` becomes the SIP username and central roster ID. If `password` is
 omitted, HA generates one and returns it once in the administrator-only action
 response. Registered clients publish a dynamic Contact into the roster so ESP
 devices can call them by name.
+
+After a routed call is answered, HA and compatible ESP endpoints can publish
+the selected callee through an RFC 4916 connected-identity UPDATE. This lets a
+caller that dialed an extension show the canonical destination name. Peers that
+do not support the in-dialog UPDATE keep the original dialed identity without
+affecting the call.
 
 ## Routing
 

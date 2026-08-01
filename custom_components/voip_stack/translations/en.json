@@ -35,7 +35,7 @@
           "video_camera_send_enabled": "Allow browser camera transmission"
         },
         "data_description": {
-          "video_transcoding_enabled": "Allow the HA softphone to use the available FFmpeg binary for receive-only H.263, H.263-1998 or H.265 video. H.264 and VP8 remain direct. JPEG receive is direct; browser JPEG send may use one bounded FFmpeg normalizer when RFC 2435 requires it. Failure leaves the audio call running.",
+          "video_transcoding_enabled": "Allow VoIP Stack to use Home Assistant's FFmpeg binary when two negotiated video legs have no direct codec match. Direct H.264, VP8 and JPEG remain preferred. The bounded fallback can convert legacy video for the HA softphone and H.264 or JPEG between HA-owned SIP legs. Browser JPEG send may also use one bounded RFC 2435 normalizer. Failure leaves compatible audio active.",
           "video_camera_send_enabled": "Expose a Send Camera choice in the card. Each logical Home Assistant phone keeps its choice; camera permission remains local to each browser. Receiving video never requires camera access."
         }
       },

@@ -35,7 +35,7 @@
           "video_camera_send_enabled": "Consenti la trasmissione della videocamera dal browser"
         },
         "data_description": {
-          "video_transcoding_enabled": "Consente al softphone HA di usare il binario FFmpeg disponibile per ricevere video H.263, H.263-1998 o H.265. H.264, VP8 e JPEG restano diretti. Un errore lascia attiva la chiamata audio.",
+          "video_transcoding_enabled": "Consente a VoIP Stack di usare il binario FFmpeg di Home Assistant quando due flussi video negoziati non hanno un codec diretto in comune. H.264, VP8 e JPEG diretti restano preferiti. Il fallback limitato converte i codec legacy per il softphone HA e H.264 o JPEG tra due leg SIP gestite da HA. Un errore lascia attivo l'audio compatibile.",
           "video_camera_send_enabled": "Espone nella card la scelta Invia videocamera. Ogni telefono logico Home Assistant conserva la propria scelta; il permesso della videocamera resta locale a ciascun browser. La ricezione video non richiede accesso alla videocamera."
         }
       },

@@ -11,9 +11,10 @@ Open the VoIP Stack integration, choose **Reconfigure**, then enable
 **SIP video for the Home Assistant softphone**. A second step
 offers two independent capabilities:
 
-- **Enable video transcoding** lets the HA softphone receive H.263,
-  H.263-1998 or H.265 through the FFmpeg binary already available to Home
-  Assistant.
+- **Enable video transcoding** lets VoIP Stack use the FFmpeg binary already
+  available to Home Assistant when two negotiated video legs have no direct
+  codec match. This covers legacy receive codecs for the HA softphone and
+  H.264/JPEG conversion between HA-owned SIP legs.
 - **Allow browser camera transmission** exposes a **Send Camera** control in
   the card. The logical Home Assistant phone stores that choice in its config
   subentry and exposes it as a native switch; each attached browser still asks
@@ -31,12 +32,12 @@ one bounded FFmpeg worker before RTP packetization.
 
 | Negotiated SIP codec | Receive in card | Send browser camera | Server transcode |
 | --- | --- | --- | --- |
-| H.264 Baseline, Main or High | Direct when supported by the browser | Direct for packetization mode 1 | No |
-| VP8 | Direct | Direct | No |
-| JPEG over RTP | Direct | Direct, with bounded normalization when required | Send normalization only when required |
-| H.263 | Optional | No | Receive-only to VP8 |
-| H.263-1998 / H.263-2000 | Optional | No | Receive-only to VP8 |
-| H.265 / HEVC | Optional | No | Receive-only to VP8 |
+| H.264 Baseline, Main or High | Direct when supported by the browser | Direct for packetization mode 1 | To H.264 or JPEG only when the other SIP leg requires it |
+| VP8 | Direct | Direct | To H.264 or JPEG only when the other SIP leg requires it |
+| JPEG over RTP | Direct | Direct, with bounded normalization when required | To H.264 or JPEG only when the other SIP leg requires it |
+| H.263 | Optional | No | To VP8 for the browser, or H.264/JPEG for a SIP leg |
+| H.263-1998 / H.263-2000 | Optional | No | To VP8 for the browser, or H.264/JPEG for a SIP leg |
+| H.265 / HEVC | Optional | No | To VP8 for the browser, or H.264/JPEG for a SIP leg |
 | Audio-only or unsupported video | Audio continues | No | No |
 
 ## ESP32-P4 video endpoints
@@ -59,6 +60,11 @@ Do not enable both JPEG and H.264 in one P4 firmware. The YAML codec choice
 gates the unused source, decoder, buffers and managed libraries at compile
 time.
 
+H.264 receive uses the P4 direct display path. `display_id` is therefore
+required on `p4_video_renderer` when `codec: h264`; ESPHome rejects the YAML at
+validation time if it is missing. JPEG can present through the LVGL image path
+or an optional direct display.
+
 The profile supports:
 
 - incoming and outgoing calls owned by the Home Assistant softphone;
@@ -74,11 +80,17 @@ The profile supports:
 - one authenticated browser media owner for the active HA call;
 - exact-codec RTP and RTCP relay between two HA-owned standard SIP legs.
 
-The exact-codec bridge changes only the leg-local RTP payload type. Encoded
-payload, timestamp, sequence, marker, SSRC and RTP extensions remain intact.
-H.264 packetization mode, profile and RTP transport profile must match, and
-other codecs must have matching normalized format parameters. Different
-codecs are not transcoded between two SIP endpoints.
+The direct bridge changes only the leg-local RTP payload type. Encoded payload,
+timestamp, sequence, marker, SSRC and RTP extensions remain intact. H.264
+packetization mode, profile and RTP transport profile must match, and other
+codecs must have matching normalized format parameters.
+
+When direct relay is impossible and transcoding is enabled, each active media
+direction is evaluated independently. HA converts only the incompatible
+direction to the format negotiated by that receiver. Direct media on the
+opposite direction stays encoded and unchanged. A known P4 target is offered
+only its compile-time H.264 or JPEG codec, so its SDP never claims support for
+the other path.
 
 ## Direct, trunk and PBX calls
 
@@ -179,12 +191,26 @@ SIP H.263/H.263-1998/H.265 RTP -> local FFmpeg subprocess -> VP8 RTP
                                 -> authenticated HA WebSocket -> browser
 ```
 
+Optional SIP bridge fallback:
+
+```text
+SIP peer A RTP -> local FFmpeg subprocess -> receiver codec RTP -> SIP peer B
+SIP peer B RTP -> local FFmpeg subprocess -> receiver codec RTP -> SIP peer A
+```
+
+The second process exists only when the reverse direction is also incompatible.
+If one direction already has an exact codec contract, that direction remains a
+direct RTP/RTCP relay.
+
 There is no intermediate recording or complete video file. FFmpeg receives
 and emits RTP continuously on loopback. The transcode path is intentionally
-bounded to one active call, one FFmpeg thread, at most 1280 pixels of width,
-15 frames per second, 700 kbit/s target and 900 kbit/s maximum output. A second
-simultaneous transcode remains audio-only instead of starting unbounded codec
-workers.
+bounded to one active call and at most one subprocess per incompatible active
+direction. Every subprocess uses one encoder thread. Browser VP8 output is
+limited to 1280x720, 15 frames per second, 700 kbit/s target and 900 kbit/s
+maximum. SIP H.264 output follows the receiver's level envelope and uses a
+bounded low-latency baseline profile. SIP JPEG output is limited to 800x800 at
+10 frames per second. A second simultaneous transcode call remains audio-only
+instead of starting unbounded codec workers.
 
 VoIP Stack first uses the FFmpeg binary configured by Home Assistant and then
 falls back to `ffmpeg` on the host path. Home Assistant OS and Home Assistant
@@ -222,7 +248,7 @@ This profile does not claim support for:
 - video through Assist, conference rooms or ring-group legs that traverse
   standard SIP/RTP endpoints (a local HA browser caller can retain direct
   browser video when another local browser phone wins the ring group);
-- cross-codec transcoding between two standard SIP endpoints;
+- SIP bridge transcode output other than H.264 or JPEG;
 - VP9, AV1, MxPEG or other proprietary payloads;
 - more than one simultaneous server-side transcode;
 - more than one browser owning the same active HA video stream;
@@ -245,8 +271,11 @@ SIP video is covered by the maintained test matrix and has been exercised on
 real browser-to-browser, HA-to-HA and video-capable trunk calls, including
 bidirectional media, re-INVITE and cleanup. Qualified ESP32-P4 JPEG and H.264
 profiles have also passed real incoming and outgoing bidirectional calls with
-clean teardown. Compatibility with a particular third-party phone or door
-station still depends on its exact codec, SDP and RTP behavior.
+clean teardown. The cross-codec bridge has passed simultaneous H.264-to-JPEG
+and JPEG-to-H.264 media with audio in both directions, zero RTP loss in the
+qualification capture and no retained FFmpeg or call resources after hangup.
+Compatibility with a particular third-party phone or door station still
+depends on its exact codec, SDP and RTP behavior.
 
 The protocol work follows
 [RFC 3264 offer/answer](https://www.rfc-editor.org/rfc/rfc3264),

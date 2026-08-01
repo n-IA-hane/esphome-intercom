@@ -47,6 +47,30 @@ voip_stack:
 | `task_stacks_in_psram` | Place supported VoIP task stacks in PSRAM. Requires PSRAM and is rejected on the original ESP32. |
 | `network_socket_headroom` | Validation-only reservation for additional lwIP sockets in composite firmware. |
 | `audio_debug` | Verbose PCM-level diagnostics; keep off outside targeted tests. |
+| `video` | Optional compile-time SIP video contract. Set exactly one `codec`, `jpeg` or `h264`, plus a `source`, `camera_id`, `sink`, or a valid combination. Omitting this block keeps the firmware audio-only and excludes the video sockets, codec defines and P4 media components. |
+| `video.codec` | RTP/JPEG or H.264. One firmware cannot contain both. JPEG uses payload type 26; H.264 uses a dynamic payload type. |
+| `video.source` / `video.camera_id` / `video.sink` | Encoded TX source, standard JPEG camera adapter and encoded RX sink. H.264 requires an encoded source rather than `camera_id`. |
+| `video.width` / `video.height` / `video.framerate` | Advertised local video envelope. It must match the source and receiver profile wired by the YAML. |
+| `video.rtp_port` | Local video RTP port. The following port is reserved for RTCP and neither may overlap audio RTP. |
+| `video.offer_payload_type` | Defaults to 26 for JPEG and 103 for H.264. H.264 accepts dynamic values from 96 through 127. |
+| `video.max_rtp_payload` | Encoded RTP payload budget, default `1200` bytes. |
+| `video_debug` | Compile-gated video and optional ESP-Hosted counters. It is rejected unless `video` exists. |
+
+### ESP video components
+
+The maintained ESP32-P4 profiles wire four components. They are excluded when
+`voip_stack.video` is absent.
+
+| Component | Purpose and options |
+| --- | --- |
+| `esp_video_camera` | Espressif `esp_video` V4L2 camera source and native ESPHome camera entity. Required `i2c_id`; options include `device`, `resolution`, `jpeg_quality`, `max_framerate`, `rotation`, XCLK controls and optional UVC support. `device: jpeg` exposes hardware JPEG frames, while `device: csi` exposes raw CSI frames for H.264. |
+| `esp_jpeg_video_source` | Borrowed JPEG access-unit adapter with `camera_id`, `width`, `height` and `framerate`. It requires a JPEG-producing camera and performs no decode/re-encode or per-frame allocation. |
+| `esp_h264_video_source` | ESP32-P4 hardware H.264 encoder with `camera_id`, `width`, `height`, `framerate`, `bitrate` and `gop`. Width and height must be multiples of 16 and the camera must use `device: csi`. PPA performs crop, rotation and scaling before the Espressif encoder. |
+| `p4_video_renderer` | Encoded RX sink with `codec`, preferred `width`, `height`, `framerate`, decode bounds, `task_stacks_in_psram`, optional `display_id`, `display_rotation`, `on_first_frame` and `on_video_ended`. H.264 requires `display_id` and presents through the direct P4 display path. |
+
+The source and renderer codec must match `voip_stack.video.codec`. The shipped
+P4 packages are the reference wiring; custom YAMLs should copy one complete
+JPEG or H.264 package instead of mixing parts from both profiles.
 
 ### ESP triggers
 
@@ -111,6 +135,16 @@ small local contract: `name`, optional `ip`, `port`, `rtp_port`, and
 `transport: udp|tcp`. The richer central HA roster additionally supports
 `address`, `sip_uri`, `extension`, `number`, groups, and media metadata. HA
 shapes that central data into the compact roster pushed to each ESP.
+
+`name` remains the only user-facing identity needed by a static contact. On
+the wire SIP keeps two separate standard fields: a stable URI user for routing
+and a human display name in the quoted name-address. An ESP publishes its
+ESPHome node name as the URI user and its `friendly_name` as the display name,
+so `Waveshare P4 Touch` is transmitted with spaces while the stable route stays
+`waveshare-p4-touch`. Incoming caller names are read from SIP `From`, not
+rewritten from the HA roster. After answer, HA also publishes the selected
+callee through an RFC 4916 connected-identity UPDATE when the peer supports the
+normal in-dialog method.
 
 ### ESP conditions
 
@@ -271,7 +305,7 @@ The setup flow has two layers:
 | `assist_advanced_call_context` | Disabled by default. Appends caller ID, phonebook match, source and called extension once to the initial `Incoming SIP call from ...` user message. These values are untrusted metadata; a phonebook match is not authentication. |
 | `debug_mode` | Opt-in detailed diagnostics plus private WAV/JSON call captures under `~/.cache/voip_stack_debug`: up to 15 s per HA-softphone direction and 8 s per relay leg, retained at most 24 files / 64 MiB with directory mode `0700`. Leave disabled for normal operation and remove artifacts according to your privacy policy. |
 | `experimental_sip_video` | Enables the supported SIP video profile for HA browser phones. Direct H.264, VP8 and JPEG require a secure context and compatible browser. Standard ESP profiles remain audio-only; qualified ESP32-P4 videophone profiles can negotiate their compile-time JPEG or H.264 codec. The persisted option key retains its original name so existing configured entries do not need migration. |
-| `video_transcoding_enabled` | Shown only after SIP video is enabled. Uses Home Assistant's available FFmpeg binary for bounded receive-only H.263, H.263-1998 or H.265 to VP8 conversion. H.264 and VP8 remain direct. JPEG receive is direct; browser JPEG send may use one bounded FFmpeg normalizer when RFC 2435 requires it. |
+| `video_transcoding_enabled` | Shown only after SIP video is enabled. Direct compatible media remains preferred. Home Assistant's FFmpeg binary may convert legacy receive codecs to browser VP8 and may convert incompatible HA-owned SIP bridge directions to the H.264 or JPEG contract negotiated by the receiver. Browser JPEG send may also use one bounded RFC 2435 normalizer. Only one transcode call owns the bounded process slot. |
 | `video_camera_send_enabled` | Shown only after SIP video is enabled. Exposes the logical HA phone's persistent **Send Camera** switch for negotiated H.264, VP8 or JPEG transmit media. Browser camera permission remains local; receiving video never needs it. |
 | `sip_registrar_enabled` | Allow standard SIP endpoints to register to HA with accounts created through the account services. This does not gate inbound calls by phonebook membership. |
 | `trunk_enabled` | Enables the second setup step for provider/PBX registration. When false, no trunk client, registration, external route or DTMF collector starts. |

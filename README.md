@@ -175,7 +175,8 @@ Audio component details live in the companion projects:
 Video is available to compatible browser phones in current browsers and the
 Home Assistant Companion app. Standard SIP video door stations, video phones,
 softphones and PBX/trunk legs can negotiate H.264, VP8 or RTP/JPEG. An optional
-bounded FFmpeg path can receive selected legacy codecs.
+bounded FFmpeg path can receive selected legacy codecs and bridge incompatible
+H.264/JPEG SIP legs when direct encoded relay is impossible.
 
 Receiving video does not require camera permission. Sending the browser camera
 is a separate persisted phone setting and still requires browser permission.
@@ -205,6 +206,12 @@ Home Assistant publishes the shared roster through
 A name is the contact identity. An `extension` is an internal alias for that
 same destination; a `number` is normally routed through the trunk. The resolver
 can also handle canonical SIP URIs.
+
+SIP routing identity and presentation identity remain separate. ESPHome node
+names and account usernames provide stable URI users, while friendly names are
+sent as standard SIP display names with spaces preserved. Incoming caller text
+comes from the peer's `From` header, and the answering endpoint can publish its
+resolved name through RFC 4916 connected identity.
 
 Use the card, voice intents or `voip_stack.call` with a phonebook name or
 extension. Do not copy endpoint addresses into automations unless you

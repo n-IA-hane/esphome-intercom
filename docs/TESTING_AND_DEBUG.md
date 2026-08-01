@@ -121,6 +121,8 @@ least:
 - direct H.264, VP8 and JPEG receive;
 - H.264 and VP8 browser camera transmit;
 - optional H.263, H.263-1998 and H.265 receive through FFmpeg;
+- bidirectional H.264-to-JPEG and JPEG-to-H.264 fallback between two HA-owned
+  SIP legs, with direct relay retained for any already compatible direction;
 - outgoing video, including dashboard reloads during ringing and after media
   has connected;
 - remote `sendonly`, proving receive-only video does not request a camera;
