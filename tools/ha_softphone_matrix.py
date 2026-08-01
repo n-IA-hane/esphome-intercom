@@ -671,7 +671,7 @@ def main() -> int:
             def outbound_dtmf_event(
                 *,
                 mode: str,
-                digit: str,
+                digits: str,
                 transport: str,
             ) -> dict[str, Any]:
                 callee = BareSip(
@@ -704,18 +704,22 @@ def main() -> int:
                 callee.command("/accept")
                 callee.wait_for("Call established", 8)
                 matching(page, "in_call")
-                callee.digits(digit)
-                observed = wait_dtmf_event(
-                    calling["backend"]["call_id"],
-                    digit,
-                    transport,
-                    source_leg="callee",
-                )
+                observed_digits: list[str] = []
+                observed: dict[str, Any] = {}
+                for digit in digits:
+                    callee.digits(digit)
+                    observed = wait_dtmf_event(
+                        calling["backend"]["call_id"],
+                        digit,
+                        transport,
+                        source_leg="callee",
+                    )
+                    observed_digits.append(str(observed.get("digit") or ""))
                 callee.hangup()
                 matching(page, "idle")
                 return {
                     "call_id": calling["backend"]["call_id"],
-                    "digit": observed.get("digit"),
+                    "digits": "".join(observed_digits),
                     "transport": observed.get("transport"),
                     "source_leg": observed.get("source_leg"),
                     "direction": observed.get("direction"),
@@ -724,13 +728,19 @@ def main() -> int:
             case(
                 "outbound_sip_info_dtmf_event",
                 lambda: outbound_dtmf_event(
-                    mode="info", digit="8", transport="sip_info"
+                    mode="info", digits="8", transport="sip_info"
                 ),
             )
             case(
                 "outbound_rfc4733_dtmf_event",
                 lambda: outbound_dtmf_event(
-                    mode="rtp", digit="9", transport="rtp_event"
+                    mode="rtp", digits="9", transport="rtp_event"
+                ),
+            )
+            case(
+                "outbound_rfc4733_dtmf_keypad",
+                lambda: outbound_dtmf_event(
+                    mode="rtp", digits="0123456789*#", transport="rtp_event"
                 ),
             )
 
