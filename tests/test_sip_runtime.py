@@ -124,6 +124,69 @@ class SipRuntimeTest(unittest.TestCase):
         self.assertEqual(len(first.bye_calls), 1)
         self.assertEqual(len(owner.bye_calls), 1)
 
+    def test_success_response_resolves_answering_endpoint_identity(self) -> None:
+        owner = _Server(owns="call-identity")
+        session = SimpleNamespace(
+            metadata={"dest_endpoint_id": "kitchen"},
+            callee="427",
+        )
+        call_registry = SimpleNamespace(
+            resolve_session_id=lambda call_id: call_id,
+            sessions={"call-identity": session},
+        )
+        endpoint = SimpleNamespace(name="Cucina", sip_uri_user="428")
+        endpoint_registry = SimpleNamespace(
+            get=lambda endpoint_id: endpoint if endpoint_id == "kitchen" else None
+        )
+        hass = SimpleNamespace(
+            data={
+                DOMAIN: {
+                    "sip_server": owner,
+                    "call_registry": call_registry,
+                    "endpoint_registry": endpoint_registry,
+                }
+            }
+        )
+
+        self.assertTrue(
+            send_final_response(
+                hass,
+                "call-identity",
+                200,
+                "OK",
+                answer_sdp="v=0",
+            )
+        )
+        kwargs = owner.final_calls[-1][3]
+        self.assertEqual(kwargs["connected_identity_name"], "Cucina")
+        self.assertEqual(kwargs["connected_identity_user"], "428")
+
+    def test_failure_response_does_not_publish_connected_identity(self) -> None:
+        owner = _Server(owns="call-failure")
+        hass = SimpleNamespace(
+            data={
+                DOMAIN: {
+                    "sip_server": owner,
+                    "call_registry": SimpleNamespace(
+                        resolve_session_id=lambda call_id: call_id,
+                        sessions={
+                            "call-failure": SimpleNamespace(
+                                metadata={"connected_party": "Cucina"},
+                                callee="427",
+                            )
+                        },
+                    ),
+                }
+            }
+        )
+
+        self.assertTrue(
+            send_final_response(hass, "call-failure", 486, "Busy Here")
+        )
+        kwargs = owner.final_calls[-1][3]
+        self.assertEqual(kwargs["connected_identity_name"], "")
+        self.assertEqual(kwargs["connected_identity_user"], "")
+
     def test_uri_transport_defaults_to_udp(self) -> None:
         self.assertEqual(uri_transport(SimpleNamespace(params=())), "UDP")
         self.assertEqual(

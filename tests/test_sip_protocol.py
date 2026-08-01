@@ -28,6 +28,26 @@ from .voip_phase1_support import (
 
 
 class SipProtocolBugFixTest(unittest.TestCase):
+    def test_dialog_headers_advertise_connected_identity_support(self) -> None:
+        headers = sip.dialog_headers(
+            request_uri="sip:427@192.0.2.20:5060",
+            local_uri="sip:Casa@192.0.2.10:5060",
+            remote_uri="sip:427@192.0.2.20:5060",
+            dialog=sip.SipDialogIds(call_id="identity", local_tag="local"),
+            method="INVITE",
+            contact_uri="sip:Casa@192.0.2.10:5060",
+        )
+        message = sip.parse_message(
+            sip.build_request(
+                "INVITE",
+                "sip:427@192.0.2.20:5060",
+                headers,
+            )
+        )
+
+        self.assertTrue(sip.supports_option(message, "from-change"))
+        self.assertEqual(sip.option_tags(message), frozenset({"from-change"}))
+
     def test_dtmf_collector_emits_one_digit_per_event(self) -> None:
         digits: list[str] = []
         proto = dtmf._DtmfProtocol(101, digits.append, remote_host="127.0.0.1")
@@ -282,6 +302,88 @@ class SipProtocolBugFixTest(unittest.TestCase):
 
 
 class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
+    async def test_connected_identity_update_changes_remote_dialog_uri(self) -> None:
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+        fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        negotiated = sdp.audio_format_to_rtp(fmt, 96)
+        client = sip_client.SipCallClient(
+            local_ip="192.0.2.10",
+            local_name="Casa",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            supported_formats=[fmt],
+        )
+        transport = FakeTransport()
+        client.transport = transport  # type: ignore[assignment]
+        client.dialog_ids.remote_tag = "remote"
+        client.dialog = sip_client.SipDialog(
+            target="427",
+            remote_host="192.0.2.20",
+            remote_sip_port=5060,
+            remote_rtp_host="192.0.2.20",
+            remote_rtp_port=42000,
+            local_rtp_port=41000,
+            call_id=client.dialog_ids.call_id,
+            local_uri="sip:Casa@192.0.2.10:5060",
+            remote_uri="sip:427@192.0.2.20:5060",
+            send_format=negotiated,
+            recv_format=negotiated,
+            remote_target_uri="sip:427@192.0.2.20:5060",
+            peer_supports_from_change=True,
+        )
+        identities: list[tuple[str, str]] = []
+        client.on_connected_identity = lambda name, uri: identities.append(
+            (name, uri)
+        )
+        update = sip.parse_message(
+            sip.build_request(
+                "UPDATE",
+                "sip:Casa@192.0.2.10:5060",
+                [
+                    ("Via", "SIP/2.0/UDP 192.0.2.20:5060;branch=z9hG4bKidentity"),
+                    ("From", '"Cucina" <sip:428@192.0.2.20:5060>;tag=remote'),
+                    (
+                        "To",
+                        f'"Casa" <sip:Casa@192.0.2.10:5060>;tag={client.dialog_ids.local_tag}',
+                    ),
+                    ("Call-ID", client.dialog_ids.call_id),
+                    ("CSeq", "2 UPDATE"),
+                ],
+            )
+        )
+
+        result = await client._handle_dialog_media_request(
+            update,
+            "192.0.2.20",
+            5060,
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(client.connected_party, "Cucina")
+        self.assertEqual(client.dialog.remote_uri, "sip:428@192.0.2.20:5060")
+        self.assertEqual(
+            identities,
+            [("Cucina", "sip:428@192.0.2.20:5060")],
+        )
+        response = sip.parse_message(transport.sent[-1][0])
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(client.bye())
+        bye = sip.parse_message(transport.sent[-1][0])
+        self.assertEqual(
+            sip.name_addr_identity(bye.header("To")),
+            "Cucina",
+        )
+        self.assertEqual(
+            str(sip.parse_sip_uri(bye.header("To"))),
+            "sip:428@192.0.2.20:5060",
+        )
+
     async def test_rtp_relay_concurrent_stop_is_single_owner_and_failure_safe(self) -> None:
         released: list[tuple[int, int]] = []
         fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)

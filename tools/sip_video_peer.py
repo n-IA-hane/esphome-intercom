@@ -278,6 +278,7 @@ def _request_headers(
     local_ip: str,
     local_port: int,
     local_user: str,
+    local_display_name: str = "",
     remote_uri: str,
     call_id: str,
     local_tag: str,
@@ -287,15 +288,20 @@ def _request_headers(
     content_type: str | None = None,
     user_agent: str = "VoIP-Stack-Video-Lab/1",
 ) -> list[tuple[str, str]]:
+    local_identity = sip.format_name_addr(
+        f"sip:{local_user}@{local_ip}:{local_port}",
+        local_display_name,
+    )
     headers = [
         ("Via", f"SIP/2.0/UDP {local_ip}:{local_port};branch={branch};rport"),
         ("Max-Forwards", "70"),
-        ("From", f"<sip:{local_user}@{local_ip}:{local_port}>;tag={local_tag}"),
+        ("From", f"{local_identity};tag={local_tag}"),
         ("To", remote_to or f"<{remote_uri}>"),
         ("Call-ID", call_id),
         ("CSeq", f"{cseq} {method}"),
         ("Contact", f"<sip:{local_user}@{local_ip}:{local_port};transport=udp>"),
-        ("Allow", "INVITE, ACK, BYE, CANCEL, INFO, OPTIONS"),
+        ("Allow", "INVITE, ACK, BYE, CANCEL, INFO, OPTIONS, UPDATE"),
+        ("Supported", "from-change"),
         ("User-Agent", user_agent),
     ]
     if content_type:
@@ -320,6 +326,7 @@ async def _cancel_pending_invite(
     local_ip: str,
     local_port: int,
     local_user: str,
+    local_display_name: str,
     remote_uri: str,
     call_id: str,
     local_tag: str,
@@ -338,6 +345,7 @@ async def _cancel_pending_invite(
             local_ip=local_ip,
             local_port=local_port,
             local_user=local_user,
+            local_display_name=local_display_name,
             remote_uri=remote_uri,
             call_id=call_id,
             local_tag=local_tag,
@@ -373,6 +381,7 @@ async def _cancel_pending_invite(
                     local_ip=local_ip,
                     local_port=local_port,
                     local_user=local_user,
+                    local_display_name=local_display_name,
                     remote_uri=remote_uri,
                     remote_to=message.header("To"),
                     call_id=call_id,
@@ -739,6 +748,7 @@ async def async_main(args: argparse.Namespace) -> int:
             local_ip=local_ip,
             local_port=sip_port,
             local_user=args.user,
+            local_display_name=args.display_name,
             remote_uri=remote_uri,
             call_id=call_id,
             local_tag=local_tag,
@@ -762,6 +772,7 @@ async def async_main(args: argparse.Namespace) -> int:
         "codec": args.codec,
         "audio_codec": args.audio_codec,
         "user_agent": peer_user_agent,
+        "local_display_name": args.display_name,
         "initial_codec": initial_codec,
         "add_video_after": args.add_video_after,
         "audio_hold_after": args.audio_hold_after,
@@ -793,6 +804,9 @@ async def async_main(args: argparse.Namespace) -> int:
         "cancel_invite_status": None,
         "cancel_ack_sent": False,
         "cancel_transaction_complete": False,
+        "connected_identity_update_received": False,
+        "connected_identity_name": "",
+        "connected_identity_uri": "",
     }
     video_process = None
     video_receiver_process = None
@@ -837,6 +851,7 @@ async def async_main(args: argparse.Namespace) -> int:
                                 local_ip=local_ip,
                                 local_port=sip_port,
                                 local_user=args.user,
+                                local_display_name=args.display_name,
                                 remote_uri=remote_uri,
                                 remote_to=message.header("To"),
                                 call_id=call_id,
@@ -910,6 +925,7 @@ async def async_main(args: argparse.Namespace) -> int:
                 local_ip=local_ip,
                 local_port=sip_port,
                 local_user=args.user,
+                local_display_name=args.display_name,
                 remote_uri=remote_uri,
                 remote_to=remote_to,
                 call_id=call_id,
@@ -920,6 +936,35 @@ async def async_main(args: argparse.Namespace) -> int:
             ),
         )
         await loop.sock_sendto(sip_socket, ack, (args.host, args.port))
+
+        async def _handle_connected_identity_update(message, addr) -> bool:
+            if message.method != "UPDATE":
+                return False
+            response = sip.build_response(
+                200,
+                "OK",
+                [
+                    *_response_headers(message),
+                    (
+                        "Contact",
+                        f"<sip:{args.user}@{local_ip}:{sip_port};transport=udp>",
+                    ),
+                    ("Supported", "from-change"),
+                ],
+            )
+            await loop.sock_sendto(sip_socket, response, addr)
+            result["connected_identity_update_received"] = True
+            result["connected_identity_name"] = sip.name_addr_display_name(
+                message.header("From")
+            )
+            try:
+                result["connected_identity_uri"] = str(
+                    sip.parse_sip_uri(message.header("From"))
+                )
+            except (TypeError, ValueError, sip.SipError):
+                result["connected_identity_uri"] = ""
+            return True
+
         audio_destination = (str(answer_audio["connection_ip"]), int(answer_audio["media_port"]))
         audio_process = await _start_audio_sender(
             args.audio_file,
@@ -1020,6 +1065,7 @@ async def async_main(args: argparse.Namespace) -> int:
         resume_at = float("inf")
         hold_done = not hold_enabled
         resume_done = not hold_enabled
+
         async def _add_video() -> None:
             nonlocal next_cseq, remote_bye
             branch = f"z9hG4bK{secrets.token_hex(8)}"
@@ -1031,6 +1077,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     local_ip=local_ip,
                     local_port=sip_port,
                     local_user=args.user,
+                    local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     remote_to=remote_to,
                     call_id=call_id,
@@ -1058,6 +1105,8 @@ async def async_main(args: argparse.Namespace) -> int:
                     raw, addr = await loop.sock_recvfrom(sip_socket, 65535)
                     message = sip.parse_message(raw)
                     if message.header("Call-ID") != call_id:
+                        continue
+                    if await _handle_connected_identity_update(message, addr):
                         continue
                     if message.method == "BYE":
                         await loop.sock_sendto(
@@ -1093,6 +1142,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     local_ip=local_ip,
                     local_port=sip_port,
                     local_user=args.user,
+                    local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     remote_to=final_response.header("To") or remote_to,
                     call_id=call_id,
@@ -1143,6 +1193,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     local_ip=local_ip,
                     local_port=sip_port,
                     local_user=args.user,
+                    local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     remote_to=remote_to,
                     call_id=call_id,
@@ -1171,6 +1222,8 @@ async def async_main(args: argparse.Namespace) -> int:
                     raw, addr = await loop.sock_recvfrom(sip_socket, 65535)
                     message = sip.parse_message(raw)
                     if message.header("Call-ID") != call_id:
+                        continue
+                    if await _handle_connected_identity_update(message, addr):
                         continue
                     if message.method == "BYE":
                         await loop.sock_sendto(
@@ -1205,6 +1258,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     local_ip=local_ip,
                     local_port=sip_port,
                     local_user=args.user,
+                    local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     remote_to=final_response.header("To") or remote_to,
                     call_id=call_id,
@@ -1260,6 +1314,8 @@ async def async_main(args: argparse.Namespace) -> int:
             message = sip.parse_message(raw)
             if message.header("Call-ID") != call_id:
                 continue
+            if await _handle_connected_identity_update(message, addr):
+                continue
             if message.method == "BYE":
                 await loop.sock_sendto(
                     sip_socket,
@@ -1279,6 +1335,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     local_ip=local_ip,
                     local_port=sip_port,
                     local_user=args.user,
+                    local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     remote_to=remote_to,
                     call_id=call_id,
@@ -1296,6 +1353,8 @@ async def async_main(args: argparse.Namespace) -> int:
                         raw, addr = await loop.sock_recvfrom(sip_socket, 65535)
                         message = sip.parse_message(raw)
                         if message.header("Call-ID") != call_id:
+                            continue
+                        if await _handle_connected_identity_update(message, addr):
                             continue
                         if message.method == "BYE":
                             # A simultaneous remote hangup is a separate
@@ -1332,6 +1391,15 @@ async def async_main(args: argparse.Namespace) -> int:
             raise RuntimeError(
                 "established dialog did not retain bidirectional audio RTP"
             )
+        expected_connected_name = str(args.expect_connected_name or "").strip()
+        if expected_connected_name and (
+            result["connected_identity_name"] != expected_connected_name
+        ):
+            raise RuntimeError(
+                "unexpected connected identity: "
+                f"{result['connected_identity_name']!r}, "
+                f"expected {expected_connected_name!r}"
+            )
         result["ok"] = True
     except BaseException as err:
         result["error"] = f"{type(err).__name__}: {err}"
@@ -1348,6 +1416,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     local_ip=local_ip,
                     local_port=sip_port,
                     local_user=args.user,
+                    local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     call_id=call_id,
                     local_tag=local_tag,
@@ -1364,6 +1433,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     local_ip=local_ip,
                     local_port=sip_port,
                     local_user=args.user,
+                    local_display_name=args.display_name,
                     remote_uri=remote_uri,
                     remote_to=remote_to,
                     call_id=call_id,
@@ -1438,6 +1508,16 @@ def main() -> int:
         help="SIP destination; defaults to the stable HA lab extension 2600",
     )
     parser.add_argument("--user", default="video-lab-peer")
+    parser.add_argument(
+        "--display-name",
+        default="",
+        help="standards-based display name carried in the SIP From header",
+    )
+    parser.add_argument(
+        "--expect-connected-name",
+        default="",
+        help="require this RFC 4916 connected identity after answer",
+    )
     parser.add_argument(
         "--user-agent",
         default="",

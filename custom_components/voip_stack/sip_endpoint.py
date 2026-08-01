@@ -264,6 +264,8 @@ class SipEndpointManager:
         *,
         answer_sdp: str = "",
         decline_reason: str = "",
+        connected_identity_name: str = "",
+        connected_identity_user: str = "",
     ) -> bool:
         preferred = self.server_for_pending_call(call_id)
         candidates = [preferred] if preferred is not None else self.servers
@@ -275,6 +277,8 @@ class SipEndpointManager:
                 reason,
                 answer_sdp=answer_sdp,
                 decline_reason=decline_reason,
+                connected_identity_name=connected_identity_name,
+                connected_identity_user=connected_identity_user,
             ):
                 return True
         return False

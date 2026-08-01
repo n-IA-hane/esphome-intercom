@@ -20,6 +20,7 @@ from .sip_transaction import (
     SIP_T2 as _SIP_T2,
     SIP_TIMER_B as _INVITE_2XX_TIMEOUT,
     SIP_TIMER_H as _INVITE_NON2XX_TIMEOUT,
+    SipClientTransaction,
     async_run_server_transaction,
 )
 from .queue_utils import put_drop_oldest
@@ -135,6 +136,8 @@ class _PendingInvite:
     final_retransmissions: int = 0
     local_sdp_session_id: int = field(default_factory=lambda: secrets.randbits(63) or 1)
     local_sdp_session_version: int = 0
+    connected_identity_name: str = ""
+    connected_identity_user: str = ""
 
 
 @dataclass(slots=True)
@@ -172,6 +175,13 @@ class _ActiveDialog:
     response_cache: list[_DialogResponse] = field(default_factory=list)
     local_sdp_session_id: int = 0
     local_sdp_session_version: int = 0
+    connected_identity_name: str = ""
+    connected_identity_user: str = ""
+    connected_identity_sent: bool = False
+    peer_supports_from_change: bool = False
+    connected_identity_task: asyncio.Task[None] | None = None
+    remote_uri: str = ""
+    remote_display_name: str = ""
 
 
 @dataclass(slots=True)
@@ -478,6 +488,9 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self._request_tasks: set[asyncio.Task[None]] = set()
         self._invite_tasks: set[asyncio.Task[None]] = set()
         self._maintenance_tasks: set[asyncio.Task[None]] = set()
+        self._client_transaction_responses: dict[
+            str, asyncio.Queue[tuple[sip.SipMessage, tuple[str, int]]]
+        ] = {}
         self.dropped_datagrams = 0
         self.last_sip_event = ""
         self.last_sip_status_code = 0
@@ -577,6 +590,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             task.cancel()
         for dialog in tuple(self.active_dialogs.values()):
             self._cancel_invite_2xx(dialog)
+            self._cancel_connected_identity(dialog)
         for pending in tuple(self.pending_invites.values()):
             self._cancel_pending_expiry(pending)
         for completed in tuple(self.completed_invites.values()):
@@ -627,6 +641,193 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         dialog.invite_2xx_task = None
         if task is not None and task is not asyncio.current_task():
             task.cancel()
+
+    @staticmethod
+    def _cancel_connected_identity(dialog: _ActiveDialog) -> None:
+        task = dialog.connected_identity_task
+        dialog.connected_identity_task = None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
+    @staticmethod
+    def _accept_remote_connected_identity(
+        dialog: _ActiveDialog,
+        request: sip.SipMessage,
+    ) -> None:
+        """Commit the peer identity carried by one accepted mid-dialog request."""
+
+        try:
+            remote_uri = str(sip.parse_sip_uri(request.header("From")))
+        except (TypeError, ValueError, sip.SipError):
+            return
+        dialog.remote_uri = remote_uri
+        dialog.remote_display_name = sip.name_addr_display_name(
+            request.header("From")
+        )
+
+    def _arm_connected_identity(self, call_id: str, dialog: _ActiveDialog) -> None:
+        """Send the RFC 4916 connected identity after the initial ACK."""
+
+        if (
+            dialog.connected_identity_sent
+            or not dialog.peer_supports_from_change
+            or self.active_dialogs.get(call_id) is not dialog
+        ):
+            return
+        remote_uri = dialog.remote_uri or _uri_text_from_header(
+            dialog.request.header("From")
+        )
+        original_local_uri = _uri_from_header(dialog.request.header("To"))
+        remote_tag = sip.extract_tag(dialog.request.header("From"))
+        identity_user = str(
+            dialog.connected_identity_user
+            or (original_local_uri.user if original_local_uri is not None else "voip")
+        ).strip()
+        if (
+            not remote_uri
+            or original_local_uri is None
+            or not remote_tag
+            or not identity_user
+        ):
+            return
+        identity_uri = str(
+            sip.SipUri(
+                identity_user,
+                original_local_uri.host,
+                original_local_uri.port,
+                params=original_local_uri.params,
+            )
+        )
+        contact_uri = _response_contact_uri(
+            dialog.request,
+            local_ip=self.local_ip,
+            local_sip_port=self.local_sip_port,
+            transport=dialog.transport,
+        )
+        try:
+            routing = sip.dialog_request_routing(
+                dialog.remote_target_uri or remote_uri,
+                dialog.route_set,
+            )
+        except (TypeError, ValueError, sip.SipError) as err:
+            _LOGGER.warning(
+                "SIP connected identity routing rejected call_id=%s: %s",
+                call_id,
+                err,
+            )
+            return
+        branch = sip.make_branch()
+        ids = sip.SipDialogIds(
+            call_id=call_id,
+            local_tag=dialog.to_tag,
+            remote_tag=remote_tag,
+            cseq=dialog.local_cseq,
+            branch=branch,
+        )
+        headers = sip.dialog_headers(
+            request_uri=routing.request_uri,
+            local_uri=identity_uri,
+            remote_uri=remote_uri,
+            dialog=ids,
+            method="UPDATE",
+            contact_uri=contact_uri,
+            transport=dialog.transport,
+            local_display_name=dialog.connected_identity_name,
+            remote_display_name=(
+                dialog.remote_display_name
+                or sip.name_addr_display_name(dialog.request.header("From"))
+            ),
+        )
+        headers.extend(("Route", value) for value in routing.route_headers)
+        raw = sip.build_request("UPDATE", routing.request_uri, headers, b"")
+        target_addr = dialog.addr
+        if dialog.transport == "UDP":
+            try:
+                target = sip.parse_sip_uri(routing.next_hop_uri)
+                target_addr = (target.host, int(target.port or 5060))
+            except (TypeError, ValueError, sip.SipError):
+                pass
+        responses: asyncio.Queue[tuple[sip.SipMessage, tuple[str, int]]] = (
+            asyncio.Queue(maxsize=8)
+        )
+        self._client_transaction_responses[branch] = responses
+        dialog.local_cseq += 1
+
+        async def _run() -> None:
+            transaction = SipClientTransaction[tuple[sip.SipMessage, tuple[str, int]]](
+                transport=dialog.transport,
+                timeout=_INVITE_2XX_TIMEOUT,
+                t1=_SIP_T1,
+                t2=_SIP_T2,
+            )
+
+            async def _read(timeout: float):
+                return await asyncio.wait_for(responses.get(), timeout=timeout)
+
+            async def _retransmit() -> None:
+                if self.active_dialogs.get(call_id) is dialog:
+                    self._send(raw, target_addr)
+
+            try:
+                if not self._send(raw, target_addr):
+                    _LOGGER.warning(
+                        "SIP connected identity UPDATE dropped call_id=%s",
+                        call_id,
+                    )
+                    return
+                dialog.connected_identity_sent = True
+                sip.mark_sip_event(self, "UPDATE")
+                while self.active_dialogs.get(call_id) is dialog:
+                    received = await transaction.receive(_read, _retransmit)
+                    if received is None:
+                        _LOGGER.info(
+                            "SIP connected identity UPDATE timed out call_id=%s",
+                            call_id,
+                        )
+                        return
+                    response, _addr = received
+                    try:
+                        cseq = sip.parse_cseq(response.header("CSeq"))
+                        vias = response.header_values("Via")
+                        response_branch = sip.parse_via(
+                            vias[0] if vias else ""
+                        ).branch
+                    except (TypeError, ValueError, sip.SipError):
+                        continue
+                    if (
+                        cseq.method != "UPDATE"
+                        or cseq.number != ids.cseq
+                        or response_branch != branch
+                        or response.header("Call-ID") != call_id
+                        or sip.extract_tag(response.header("From"))
+                        != ids.local_tag
+                        or sip.extract_tag(response.header("To"))
+                        != ids.remote_tag
+                    ):
+                        continue
+                    status = int(response.status_code or 0)
+                    if status < 200:
+                        continue
+                    _LOGGER.info(
+                        "SIP connected identity UPDATE completed call_id=%s status=%s",
+                        call_id,
+                        status,
+                    )
+                    return
+            except asyncio.CancelledError:
+                return
+            finally:
+                self._client_transaction_responses.pop(branch, None)
+                if dialog.connected_identity_task is asyncio.current_task():
+                    dialog.connected_identity_task = None
+
+        task = asyncio.create_task(
+            _run(),
+            name=f"voip-sip-connected-identity-{call_id}",
+        )
+        dialog.connected_identity_task = task
+        self._maintenance_tasks.add(task)
+        task.add_done_callback(self._maintenance_tasks.discard)
 
     @staticmethod
     def _cancel_invite_non2xx(completed: _PendingInvite) -> None:
@@ -780,6 +981,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 "Contact",
                 f"<{_response_contact_uri(request, local_ip=self.local_ip, local_sip_port=self.local_sip_port, transport=self.signaling_transport)}>",
             ))
+        if request.method == "INVITE" and 101 <= int(status) < 300:
+            headers.append(
+                ("Supported", ", ".join(sorted(sip.SUPPORTED_OPTION_TAGS)))
+            )
         if body:
             headers.append(("Content-Type", "application/sdp"))
         if int(status) == 405:
@@ -805,8 +1010,17 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             _LOGGER.info("SIP RX malformed from %s:%s: %s", addr[0], addr[1], err)
             return
         if not request.is_request:
-            _LOGGER.info("SIP RX response ignored from %s:%s", addr[0], addr[1])
             sip.mark_sip_event(self, "SIP_RESPONSE", int(request.status_code or 0), request.reason)
+            try:
+                via_values = request.header_values("Via")
+                branch = sip.parse_via(via_values[0] if via_values else "").branch
+            except (TypeError, ValueError, sip.SipError):
+                branch = ""
+            queue = self._client_transaction_responses.get(branch)
+            if queue is not None:
+                put_drop_oldest(queue, (request, addr))
+                return
+            _LOGGER.info("SIP RX response ignored from %s:%s", addr[0], addr[1])
             return
 
         _LOGGER.info("SIP RX %s %s from %s:%s", request.method, request.uri, addr[0], addr[1])
@@ -943,6 +1157,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
                 return
             self._cancel_invite_2xx(dialog)
+            self._cancel_connected_identity(dialog)
             self.active_dialogs.pop(call_id, None)
             self._remember_completed(
                 self.completed_byes,
@@ -966,8 +1181,11 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 return
             dialog = self.active_dialogs.get(call_id)
             if dialog is not None and _same_dialog_ack(request, dialog, addr):
+                initial_ack = bool(dialog.pending_ack_cseq)
                 dialog.pending_ack_cseq = 0
                 self._cancel_invite_2xx(dialog)
+                if initial_ack:
+                    self._arm_connected_identity(call_id, dialog)
             return
         call_id = request.header("Call-ID")
         existing_dialog = self.active_dialogs.get(call_id)
@@ -1044,6 +1262,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                         existing_dialog.addr = addr
                         if refreshed_remote_target:
                             existing_dialog.remote_target_uri = refreshed_remote_target
+                        self._accept_remote_connected_identity(
+                            existing_dialog,
+                            request,
+                        )
                         existing_dialog.renegotiations += 1
                     self._remember_dialog_response(
                         existing_dialog,
@@ -1225,6 +1447,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     existing_dialog.addr = addr
                     if refreshed_remote_target:
                         existing_dialog.remote_target_uri = refreshed_remote_target
+                    self._accept_remote_connected_identity(
+                        existing_dialog,
+                        request,
+                    )
                     existing_dialog.answer_sdp = answer_sdp
                     existing_dialog.invite = updated_invite
                     existing_dialog.local_sdp_session_version = next_sdp_version
@@ -1307,6 +1533,16 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                         last_response_sdp=existing_pending.answer_sdp,
                         local_sdp_session_id=existing_pending.local_sdp_session_id,
                         local_sdp_session_version=existing_pending.local_sdp_session_version,
+                        connected_identity_name=(
+                            existing_pending.connected_identity_name or invite.target
+                        ),
+                        connected_identity_user=(
+                            existing_pending.connected_identity_user
+                            or invite.routing_target
+                        ),
+                        peer_supports_from_change=sip.supports_option(
+                            request, "from-change"
+                        ),
                     )
                     self.active_dialogs[invite.call_id] = dialog
                     self._remember_dialog_response(
@@ -1437,6 +1673,15 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 last_response_sdp=answer_sdp,
                 local_sdp_session_id=pending.local_sdp_session_id,
                 local_sdp_session_version=pending.local_sdp_session_version,
+                connected_identity_name=(
+                    pending.connected_identity_name or invite.target
+                ),
+                connected_identity_user=(
+                    pending.connected_identity_user or invite.routing_target
+                ),
+                peer_supports_from_change=sip.supports_option(
+                    request, "from-change"
+                ),
             )
             self.active_dialogs[invite.call_id] = dialog
             self._remember_dialog_response(
@@ -1467,6 +1712,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         *,
         answer_sdp: str = "",
         decline_reason: str = "",
+        connected_identity_name: str = "",
+        connected_identity_user: str = "",
     ) -> bool:
         pending = self.pending_invites.get(call_id)
         if pending is None:
@@ -1482,6 +1729,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         pending.reason = str(reason)
         pending.answer_sdp = answer_sdp
         pending.decline_reason = decline_reason
+        pending.connected_identity_name = _identity_header(connected_identity_name)
+        pending.connected_identity_user = _identity_header(connected_identity_user)
         body = answer_sdp.encode("utf-8") if answer_sdp else b""
         if not self._send_response(
             pending.request,
@@ -1519,6 +1768,17 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 last_response_sdp=answer_sdp,
                 local_sdp_session_id=pending.local_sdp_session_id,
                 local_sdp_session_version=pending.local_sdp_session_version,
+                connected_identity_name=(
+                    pending.connected_identity_name
+                    or (invite.target if invite is not None else "")
+                ),
+                connected_identity_user=(
+                    pending.connected_identity_user
+                    or (invite.routing_target if invite is not None else "")
+                ),
+                peer_supports_from_change=sip.supports_option(
+                    pending.request, "from-change"
+                ),
             )
             self.active_dialogs[call_id] = dialog
             self._remember_dialog_response(
@@ -1548,7 +1808,9 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         dialog = self.active_dialogs.get(call_id) if call_id else None
         if dialog is None:
             return False
-        remote_uri = _uri_text_from_header(dialog.request.header("From"))
+        remote_uri = dialog.remote_uri or _uri_text_from_header(
+            dialog.request.header("From")
+        )
         remote_target_uri = (
             dialog.remote_target_uri
             or _uri_text_from_header(dialog.request.header("Contact"))
@@ -1596,6 +1858,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             return False
         dialog.local_cseq += 1
         self._cancel_invite_2xx(dialog)
+        self._cancel_connected_identity(dialog)
         self.active_dialogs.pop(call_id, None)
         _LOGGER.info("SIP TX BYE call_id=%s to %s:%s", call_id, target_addr[0], target_addr[1])
         sip.mark_sip_event(self, "BYE")
@@ -1871,6 +2134,8 @@ class SipUdpServer:
         *,
         answer_sdp: str = "",
         decline_reason: str = "",
+        connected_identity_name: str = "",
+        connected_identity_user: str = "",
     ) -> bool:
         return self.endpoint is not None and self.endpoint.send_final_response(
             call_id,
@@ -1878,6 +2143,8 @@ class SipUdpServer:
             reason,
             answer_sdp=answer_sdp,
             decline_reason=decline_reason,
+            connected_identity_name=connected_identity_name,
+            connected_identity_user=connected_identity_user,
         )
 
     def send_bye(self, call_id: str = "") -> bool:
@@ -2094,6 +2361,8 @@ class SipTcpServer:
         *,
         answer_sdp: str = "",
         decline_reason: str = "",
+        connected_identity_name: str = "",
+        connected_identity_user: str = "",
     ) -> bool:
         for endpoint in tuple(self.endpoints):
             if endpoint.send_final_response(
@@ -2102,6 +2371,8 @@ class SipTcpServer:
                 reason,
                 answer_sdp=answer_sdp,
                 decline_reason=decline_reason,
+                connected_identity_name=connected_identity_name,
+                connected_identity_user=connected_identity_user,
             ):
                 return True
         return False

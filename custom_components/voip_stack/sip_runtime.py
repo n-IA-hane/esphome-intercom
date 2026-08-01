@@ -13,6 +13,44 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
+def _connected_identity_for_call(
+    hass: HomeAssistant,
+    call_id: str,
+) -> tuple[str, str]:
+    """Resolve one human name and stable SIP user from canonical call ownership."""
+
+    from .sip import parse_sip_uri
+
+    bucket = hass.data.get(DOMAIN, {})
+    registry = bucket.get("call_registry")
+    if registry is None:
+        return "", ""
+    session_id = registry.resolve_session_id(call_id)
+    session = registry.sessions.get(session_id)
+    if session is None:
+        return "", ""
+    metadata = session.metadata
+    endpoint_registry = bucket.get("endpoint_registry")
+    if endpoint_registry is not None:
+        for key in ("dest_endpoint_id", "target_endpoint_id", "endpoint_id"):
+            endpoint_id = str(metadata.get(key) or "").strip()
+            endpoint = endpoint_registry.get(endpoint_id) if endpoint_id else None
+            if endpoint is not None:
+                return str(endpoint.name), str(endpoint.sip_uri_user)
+    name = str(
+        metadata.get("connected_party")
+        or metadata.get("answered_by")
+        or session.callee
+        or ""
+    ).strip()
+    user = ""
+    try:
+        user = parse_sip_uri(str(metadata.get("sip_uri") or "")).user
+    except (TypeError, ValueError):
+        pass
+    return name, str(user or name).strip()
+
+
 def sip_servers(hass: HomeAssistant) -> list[object]:
     """Return every signaling endpoint that may own an inbound dialog."""
     bucket = hass.data.get(DOMAIN, {})
@@ -40,8 +78,16 @@ def send_final_response(
     *,
     answer_sdp: str = "",
     decline_reason: str = "",
+    connected_identity_name: str = "",
+    connected_identity_user: str = "",
 ) -> bool:
     """Send a final response through the endpoint owning ``call_id``."""
+    if 200 <= int(status) < 300 and not (
+        connected_identity_name and connected_identity_user
+    ):
+        resolved_name, resolved_user = _connected_identity_for_call(hass, call_id)
+        connected_identity_name = connected_identity_name or resolved_name
+        connected_identity_user = connected_identity_user or resolved_user
     for server in sip_servers(hass):
         send = getattr(server, "send_final_response", None)
         if callable(send) and send(
@@ -50,6 +96,8 @@ def send_final_response(
             reason,
             answer_sdp=answer_sdp,
             decline_reason=decline_reason,
+            connected_identity_name=connected_identity_name,
+            connected_identity_user=connected_identity_user,
         ):
             return True
     return False

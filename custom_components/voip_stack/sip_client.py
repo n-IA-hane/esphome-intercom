@@ -245,6 +245,7 @@ class SipDialog:
     local_sdp_session_id: int = 0
     local_sdp_session_version: int = 0
     local_sdp_body: str = ""
+    peer_supports_from_change: bool = False
 
     @property
     def selected_format(self) -> sdp.RtpPcmFormat:
@@ -376,6 +377,7 @@ class SipCallClient:
         self.early_dialog: SipDialog | None = None
         self.on_info_dtmf: Callable[[str], None] | None = None
         self.on_media_update: DialogMediaUpdateHandler | None = None
+        self.on_connected_identity: Callable[[str, str], None] | None = None
         self._invite_cseq = self.dialog_ids.cseq
         self._pending_target = ""
         self._pending_target_display = ""
@@ -768,6 +770,10 @@ class SipCallClient:
         ]
         if 200 <= int(status) < 300 and request.method in {"INVITE", "UPDATE"}:
             headers.append(("Contact", f"<{self.dialog.local_uri}>" if self.dialog else f"<{self._pending_local_uri}>"))
+        if request.method == "INVITE" and 101 <= int(status) < 300:
+            headers.append(
+                ("Supported", ", ".join(sorted(sip.SUPPORTED_OPTION_TAGS)))
+            )
         if body:
             headers.append(("Content-Type", "application/sdp"))
         headers.extend(extra_headers)
@@ -1834,6 +1840,34 @@ class SipCallClient:
                 self.dialog,
                 remote_target_uri=refreshed_remote_target,
             )
+        if (
+            method == "UPDATE"
+            and 200 <= status < 300
+            and self.dialog is not None
+            and self.dialog.peer_supports_from_change
+        ):
+            try:
+                connected_uri = str(sip.parse_sip_uri(request.header("From")))
+            except (TypeError, ValueError, sip.SipError):
+                connected_uri = ""
+            if connected_uri and connected_uri != self.dialog.remote_uri:
+                self.dialog = replace(self.dialog, remote_uri=connected_uri)
+            connected_name = sip.name_addr_display_name(request.header("From"))
+            connected_party = connected_name or sip.name_addr_identity(
+                request.header("From")
+            )
+            if connected_party:
+                self._dialog_remote_display_name = connected_name
+                self.connected_party = connected_party
+                callback = self.on_connected_identity
+                if callback is not None:
+                    try:
+                        callback(connected_party, connected_uri)
+                    except Exception as err:  # noqa: BLE001 - observers cannot break the dialog.
+                        _LOGGER.warning(
+                            "SIP connected identity callback failed: %s",
+                            err,
+                        )
         return None
 
     async def wait_for_dialog_termination(self, timeout: float | None = None) -> str:
@@ -2246,6 +2280,7 @@ class SipCallClient:
             local_sdp_session_id=self._sdp_session_id,
             local_sdp_session_version=0,
             local_sdp_body=self._local_sdp_body,
+            peer_supports_from_change=sip.supports_option(msg, "from-change"),
         )
         _LOGGER.info(
             "SIP 200 OK media selected call_id=%s tx=%s rx=%s answer=[%s]",

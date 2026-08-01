@@ -23,6 +23,7 @@ MAX_SIP_BODY_BYTES = 4096
 SUPPORTED_METHODS = frozenset(
     {"INVITE", "ACK", "BYE", "CANCEL", "INFO", "OPTIONS", "REGISTER", "UPDATE"}
 )
+SUPPORTED_OPTION_TAGS = frozenset({"from-change"})
 KNOWN_UNSUPPORTED_METHODS = frozenset(
     {
         "MESSAGE",
@@ -398,6 +399,23 @@ def name_addr_identity(value: str) -> str:
     return display or user
 
 
+def option_tags(message: SipMessage, header_name: str = "Supported") -> frozenset[str]:
+    """Return normalized SIP option tags from every occurrence of one header."""
+
+    return frozenset(
+        token.strip().lower()
+        for value in message.header_values(header_name)
+        for token in value.split(",")
+        if token.strip()
+    )
+
+
+def supports_option(message: SipMessage, option: str) -> bool:
+    """Return whether a SIP message advertises one option tag."""
+
+    return str(option or "").strip().lower() in option_tags(message)
+
+
 def format_name_addr(uri: str | SipUri, display_name: str = "") -> str:
     """Render one standards-compliant SIP name-address."""
 
@@ -703,6 +721,7 @@ def dialog_headers(
         ("CSeq", f"{dialog.cseq} {method.upper()}"),
         ("Contact", format_name_addr(contact_uri, contact_display_name)),
         ("Allow", ", ".join(sorted(SUPPORTED_METHODS))),
+        ("Supported", ", ".join(sorted(SUPPORTED_OPTION_TAGS))),
     ]
     if content_type:
         headers.append(("Content-Type", content_type))

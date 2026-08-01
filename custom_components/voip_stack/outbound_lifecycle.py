@@ -32,6 +32,58 @@ HA_SOFTPHONE_ACTIVE_STATES = {
 }
 
 
+def attach_outbound_connected_identity_state(
+    hass: HomeAssistant,
+    client,
+    *,
+    endpoint_id: str,
+) -> None:
+    """Project RFC 4916 identity updates onto the owning HA softphone."""
+
+    call_id = str(client.dialog_ids.call_id)
+
+    def _update(connected_party: str, connected_uri: str) -> None:
+        registry = call_registry(hass)
+        if registry.sip_clients.get(call_id) is not client:
+            return
+        store = _ha_softphone_store(hass, endpoint_id)
+        if (
+            str(store.get("call_id") or "") != call_id
+            or str(store.get("state") or "") != CallState.IN_CALL.value
+        ):
+            return
+        session_id = registry.resolve_session_id(call_id)
+        session = registry.sessions.get(session_id)
+        if session is not None:
+            registry.upsert(
+                session_id,
+                state=session.state,
+                owner=session.owner,
+                caller=session.caller,
+                callee=session.callee,
+                route_kind=session.route_kind,
+                connected_party=connected_party,
+                connected_uri=connected_uri,
+            )
+        _set_ha_softphone_call_state(
+            hass,
+            CallState.IN_CALL.value,
+            endpoint_id=endpoint_id,
+            session_device_id=str(store.get("session_device_id") or ""),
+            caller=str(store.get("caller") or ""),
+            callee=str(store.get("callee") or ""),
+            peer_name=connected_party,
+            connected_party=connected_party,
+            direction=str(store.get("direction") or "outgoing"),
+            call_id=call_id,
+            target_device_id=str(store.get("target_device_id") or ""),
+            remote_uri=connected_uri,
+            last_sip_event="UPDATE",
+        )
+
+    client.on_connected_identity = _update
+
+
 def _ha_peer_name(hass: HomeAssistant) -> str:
     """Return the configured Home Assistant peer name."""
     return (hass.config.location_name or "").strip() or HA_PEER_FALLBACK_NAME
@@ -53,6 +105,11 @@ async def async_track_outbound_sip_client(
 ) -> None:
     """Keep an outbound SIP client alive and complete early-dialog INVITEs."""
     registry = call_registry(hass)
+    attach_outbound_connected_identity_state(
+        hass,
+        client,
+        endpoint_id=endpoint_id,
+    )
     local_name = local_name or _ha_peer_name(hass)
     if result not in {"ringing", "in_call"}:
         if registry.sip_clients.get(client.dialog_ids.call_id) is client:

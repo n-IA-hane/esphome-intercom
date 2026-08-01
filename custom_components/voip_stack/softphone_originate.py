@@ -57,6 +57,7 @@ from .media_session_updates import (
 )
 from .outbound_lifecycle import (
     HA_SOFTPHONE_ACTIVE_STATES,
+    attach_outbound_connected_identity_state,
     async_prepare_ha_outbound_call as _async_prepare_ha_outbound_call,
     async_track_outbound_sip_client as _track_outbound_sip_client,
 )
@@ -699,6 +700,11 @@ async def async_originate_call(
         call_id=client.dialog_ids.call_id,
         caller=local_name,
         callee=display_target,
+    )
+    attach_outbound_connected_identity_state(
+        hass,
+        client,
+        endpoint_id=endpoint_id,
     )
     try:
         registry.claim_endpoint(

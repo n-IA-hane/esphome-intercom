@@ -119,11 +119,12 @@ def softphone_originate(monkeypatch):
             "allocate_sip_rtp_port": Mock(return_value=40000),
             "reserve_sip_video_media": Mock(),
         },
-        "outbound_lifecycle": {
-            "HA_SOFTPHONE_ACTIVE_STATES": frozenset({"calling", "in_call"}),
-            "async_prepare_ha_outbound_call": AsyncMock(),
-            "async_track_outbound_sip_client": AsyncMock(),
-        },
+            "outbound_lifecycle": {
+                "HA_SOFTPHONE_ACTIVE_STATES": frozenset({"calling", "in_call"}),
+                "attach_outbound_connected_identity_state": Mock(),
+                "async_prepare_ha_outbound_call": AsyncMock(),
+                "async_track_outbound_sip_client": AsyncMock(),
+            },
         "peer_snapshot": {"async_advertise_host": AsyncMock(return_value="127.0.0.1")},
         "phone_endpoint": {
             "DEFAULT_ENDPOINT_ID": "default",

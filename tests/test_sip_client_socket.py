@@ -33,6 +33,90 @@ from .voip_phase1_support import (
 
 
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
+    async def test_listener_sends_rfc4916_identity_after_initial_ack(self) -> None:
+        sent: list[tuple[bytes, tuple[str, int]]] = []
+        fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        endpoint = sip_listener.SipUdpEndpoint(
+            local_ip="192.0.2.20",
+            local_sip_port=5060,
+            local_rtp_port=42000,
+            supported_formats=[fmt],
+            on_invite=lambda _: None,  # type: ignore[arg-type]
+            send_override=lambda data, addr: sent.append((data, addr)),
+        )
+        request = sip.parse_message(
+            sip.build_request(
+                "INVITE",
+                "sip:427@192.0.2.20:5060",
+                [
+                    ("Via", "SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bKinvite"),
+                    ("From", '"Casa" <sip:Casa@192.0.2.10:5060>;tag=remote'),
+                    ("To", "<sip:427@192.0.2.20:5060>"),
+                    ("Contact", "<sip:Casa@192.0.2.10:5060>"),
+                    ("Call-ID", "connected-identity"),
+                    ("CSeq", "7 INVITE"),
+                    ("Supported", "timer, from-change"),
+                ],
+            )
+        )
+        dialog = sip_listener._ActiveDialog(
+            request,
+            ("192.0.2.10", 5060),
+            "local",
+            8,
+            "UDP",
+            remote_target_uri="sip:Casa@192.0.2.10:5060",
+            connected_identity_name="Cucina",
+            connected_identity_user="428",
+            peer_supports_from_change=True,
+            pending_ack_cseq=7,
+        )
+        endpoint.active_dialogs["connected-identity"] = dialog
+        ack = sip.build_request(
+            "ACK",
+            "sip:427@192.0.2.20:5060",
+            [
+                ("Via", "SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bKack"),
+                ("From", '"Casa" <sip:Casa@192.0.2.10:5060>;tag=remote'),
+                ("To", "<sip:427@192.0.2.20:5060>;tag=local"),
+                ("Call-ID", "connected-identity"),
+                ("CSeq", "7 ACK"),
+            ],
+        )
+
+        await endpoint._handle_datagram(ack, ("192.0.2.10", 5060))
+        for _ in range(10):
+            if sent:
+                break
+            await asyncio.sleep(0)
+        self.assertTrue(sent)
+        update = sip.parse_message(sent[-1][0])
+        self.assertEqual(update.method, "UPDATE")
+        self.assertEqual(sip.name_addr_display_name(update.header("From")), "Cucina")
+        self.assertEqual(
+            str(sip.parse_sip_uri(update.header("From"))),
+            "sip:428@192.0.2.20:5060",
+        )
+        self.assertEqual(update.header("CSeq"), "1 UPDATE")
+        self.assertTrue(sip.supports_option(update, "from-change"))
+        response = sip.build_response(
+            200,
+            "OK",
+            [
+                *(('Via', value) for value in update.header_values("Via")),
+                ("From", update.header("From")),
+                ("To", update.header("To")),
+                ("Call-ID", update.header("Call-ID")),
+                ("CSeq", update.header("CSeq")),
+            ],
+        )
+        await endpoint._handle_datagram(response, ("192.0.2.10", 5060))
+        task = dialog.connected_identity_task
+        if task is not None:
+            await asyncio.wait_for(task, timeout=0.1)
+        self.assertIsNone(dialog.connected_identity_task)
+        endpoint.cancel_request_tasks()
+
     async def test_local_audio_websocket_relays_pcm_without_rtp_and_isolates_bad_frames(
         self,
     ) -> None:

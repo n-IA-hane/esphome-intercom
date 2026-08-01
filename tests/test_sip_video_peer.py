@@ -73,6 +73,7 @@ def test_dahua_profile_request_identity_is_explicit() -> None:
         local_ip="127.0.0.1",
         local_port=5062,
         local_user="100",
+        local_display_name="Dio Cane",
         remote_uri="sip:9901@127.0.0.1:5060",
         call_id="dahua-sim",
         local_tag="from-tag",
@@ -82,6 +83,12 @@ def test_dahua_profile_request_identity_is_explicit() -> None:
     )
 
     assert ("User-Agent", "Dahua UAC/3.0") in headers
+    assert (
+        "From",
+        '"Dio Cane" <sip:100@127.0.0.1:5062>;tag=from-tag',
+    ) in headers
+    assert ("Supported", "from-change") in headers
+    assert any(name == "Allow" and "UPDATE" in value for name, value in headers)
 
 
 def test_p4_l16_profile_matches_firmware_packet_cadence() -> None:
@@ -207,6 +214,7 @@ def test_media_peer_completes_cancel_transaction_and_acks_invite_final() -> None
                 local_ip="127.0.0.1",
                 local_port=client.getsockname()[1],
                 local_user="caller",
+                local_display_name="Caller Name",
                 remote_uri=f"sip:2600@127.0.0.1:{server.getsockname()[1]}",
                 call_id=call_id,
                 local_tag="from-tag",
