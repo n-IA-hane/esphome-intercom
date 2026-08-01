@@ -30,8 +30,7 @@ COMPILE_PROFILES = [
     "yamls/full-experience/single-bus/spotpear-ball-v2-full-afe.yaml",
     "yamls/voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml",
     "yamls/voip-only/single-bus/waveshare-p4-touch-videophone-h264.yaml",
-    "yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-jpeg-native-800.yaml",
-    "yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml",
+    "yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml",
 ]
 
 

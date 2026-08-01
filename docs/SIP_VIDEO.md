@@ -47,13 +47,13 @@ P4 video is compile-gated. A firmware includes exactly one SIP video codec:
   decoder;
 - the VoIP-only H.264 profile uses the P4 hardware encoder and the maintained
   receive decoder path;
-- the full-experience SIP profile uses JPEG so video can coexist with AFE,
+- the canonical full-experience profile uses JPEG so video can coexist with AFE,
   Voice Assistant, Micro Wake Word and the landscape UI.
 
-The native-camera full profile is a separate one-way case. It publishes the
-standard ESPHome camera entity to Home Assistant while its SIP call remains
-audio-only. Home Assistant renders that camera through the normal camera
-platform rather than treating it as negotiated SIP video.
+The full profile also publishes the same JPEG source as a standard ESPHome
+camera entity. Home Assistant can render that entity through its normal camera
+platform, while negotiated calls use RTP/JPEG in both directions without a
+second capture pipeline.
 
 Do not enable both JPEG and H.264 in one P4 firmware. The YAML codec choice
 gates the unused source, decoder, buffers and managed libraries at compile

@@ -1,5 +1,5 @@
 # =============================================================================
-# Waveshare ESP32-P4 WiFi6 Touch LCD: VA + VoIP + MWW (LVGL)
+# Waveshare ESP32-P4 WiFi6 Touch LCD: full SIP JPEG videophone (LVGL)
 # =============================================================================
 #
 # Hardware:
@@ -152,6 +152,7 @@ packages:
   ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api_runtime.yaml@dev
   voice_assistant_local_commands: github://n-IA-hane/esphome-intercom/packages/voice_assistant/local_commands.yaml@dev
   voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
+  p4_full_video_jpeg: github://n-IA-hane/esphome-intercom/packages/voip/p4_full_video_jpeg.yaml@dev
   phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
   ota_maintenance: github://n-IA-hane/esphome-intercom/packages/ota/full_audio_lvgl_maintenance.yaml@dev
   afe_entities: github://n-IA-hane/esphome-intercom/packages/esp_afe/dual_mic_entities.yaml@dev
@@ -331,10 +332,9 @@ i2c:
     frequency: 400kHz
     scan: false
 
-# Full-experience profile: expose the camera through ESPHome/Home Assistant only.
-# SIP remains audio-only in this firmware, so the display/assistant resources are
-# never shared with a remote-video decoder. The HA card may render this camera
-# entity alongside the call without changing the SIP/SDP media capabilities.
+# The full profile shares one native JPEG camera between Home Assistant and the
+# compile-gated SIP/JPEG source. Remote video uses the P4 JPEG decoder and PPA
+# direct display path supplied by p4_full_video_jpeg.
 esp_video_camera:
   id: p4_camera
   name: "P4 Camera"
@@ -348,7 +348,7 @@ esp_video_camera:
   # The native API sends one JPEG through a shared ESP-Hosted TCP path. At
   # 800x800, 10 fps keeps that queue continuously busy and measurably delays
   # SIP audio. Five full-resolution frames per second leave bounded idle time
-  # between images without adding a second camera or transcoding path.
+  # while supplying both the HA camera entity and negotiated SIP video.
   max_framerate: 5
   # Camera is mounted portrait relative to the landscape front panel. Rotate
   # once in the native ESPHome camera path consumed by Home Assistant.

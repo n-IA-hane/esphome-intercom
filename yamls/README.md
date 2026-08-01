@@ -124,15 +124,13 @@ Waveshare P4 Touch YAMLs build and boot with the maintained audio/LVGL state
 model, FD high-perf AFE defaults and the current ESPHome/ESP-Hosted baseline.
 The following profiles have distinct, qualified media roles:
 
-- [`waveshare-p4-touch-full-afe-landscape-jpeg-native-800.yaml`](full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-jpeg-native-800.yaml)
-  keeps SIP audio-only and publishes the native ESPHome camera to Home
-  Assistant;
+- [`waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml`](full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml)
+  combines bidirectional RTP/JPEG, the native Home Assistant camera,
+  dual-microphone AFE and the full Voice Assistant runtime;
 - [`waveshare-p4-touch-videophone-jpeg.yaml`](voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml)
   is the lightweight bidirectional RTP/JPEG videophone;
 - [`waveshare-p4-touch-videophone-h264.yaml`](voip-only/single-bus/waveshare-p4-touch-videophone-h264.yaml)
-  is the lightweight bidirectional H.264 videophone;
-- [`waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml`](full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml)
-  combines bidirectional RTP/JPEG, dual-microphone AFE and the full runtime.
+  is the lightweight bidirectional H.264 videophone.
 
 The full SIP/JPEG profile suspends an enabled Wake Word switch only while
 negotiated video media is active, then restores the user's previous state.

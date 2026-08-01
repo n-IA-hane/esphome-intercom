@@ -6,6 +6,28 @@ an earlier development contract instead of carrying two parallel APIs. The
 config-entry migration preserves supported persisted settings, but copied card
 YAML and automations cannot be migrated by Home Assistant automatically.
 
+## 2026.8.1: P4 full profile renamed for SIP video
+
+The P4 full landscape profile now includes bidirectional SIP video over JPEG,
+in addition to AFE, micro wake word, Voice Assistant, media playback and its
+native Home Assistant camera entity. The filename now identifies it as a
+videophone.
+
+Replace:
+
+```text
+yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape.yaml
+```
+
+with:
+
+```text
+yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml
+```
+
+The ESPHome node name and entity identities are unchanged. Only the example
+YAML filename and references to it must be updated.
+
 ## 2026.8.0: upgrade checklist
 
 1. Read the `2026.8.0` sections below and the

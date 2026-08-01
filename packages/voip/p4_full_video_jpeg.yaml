@@ -1,9 +1,9 @@
-# Experimental full-experience P4 profile with bidirectional SIP JPEG video.
+# Bidirectional SIP JPEG video for the full ESP32-P4 landscape profile.
 #
-# The base profile remains unchanged. Removing this file removes the complete
-# experiment. Camera TX reuses the JPEG frame already produced by
-# esp_video_camera. Remote RX uses the P4 JPEG decoder, PPA scaling and direct
-# MIPI DSI presentation, with no software image conversion in the media path.
+# The parent profile owns the native 800x800 JPEG camera and full audio, AFE,
+# Voice Assistant, Micro Wake Word and LVGL runtime. This package adds the SIP
+# source, hardware decoder and direct DSI presentation without a second camera
+# pipeline or software image conversion.
 
 substitutions:
   p4_sip_jpeg_width: "800"
@@ -15,12 +15,6 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
-
-packages:
-  full_experience_base: github://n-IA-hane/esphome-intercom/yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape.yaml@dev
-
-esphome:
-  build_path: .esphome/build/waveshare-p4-touch-full-afe-landscape-sip-jpeg
 
 external_components:
   - source: ${ext_components_source}

@@ -12,7 +12,7 @@ PHYSICAL_AUDIO_STACK_PROFILES = (
     "full-experience/dual-bus/generic-s3-full-aec.yaml",
     "full-experience/single-bus/generic-s3-full-aec.yaml",
     "full-experience/single-bus/spotpear-ball-v2-full-afe.yaml",
-    "full-experience/single-bus/waveshare-p4-touch-full-afe-landscape.yaml",
+    "full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml",
     "full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml",
     "full-experience/single-bus/waveshare-s3-full-afe.yaml",
     "untested/generic-s3-full-afe.yaml",
@@ -28,8 +28,9 @@ P4_LANDSCAPE_FULL_AFE = (
     YAMLS
     / "full-experience"
     / "single-bus"
-    / "waveshare-p4-touch-full-afe-landscape.yaml"
+    / "waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml"
 )
+P4_FULL_JPEG_PACKAGE = ROOT / "packages" / "voip" / "p4_full_video_jpeg.yaml"
 
 
 def _voip_stack_block(text: str) -> str:
@@ -179,20 +180,24 @@ def test_spotpear_layout_and_aec_sync_use_runtime_contracts() -> None:
     )
 
 
-def test_p4_full_profile_is_audio_only_with_native_ha_camera() -> None:
+def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     text = P4_LANDSCAPE_FULL_AFE.read_text()
+    video = P4_FULL_JPEG_PACKAGE.read_text()
     block = _voip_stack_block(text)
+    video_block = _voip_stack_block(video)
 
     assert "components: [speaker, voice_assistant, mipi_dsi, esp_video_camera]" in text
-    assert "p4_sip_video" not in text
-    assert "esp_h264_video_source" not in text
-    assert "esp_jpeg_video_source" not in text
-    assert "p4_video_renderer" not in text
+    assert "p4_full_video_jpeg:" in text
+    assert "esp_h264_video_source" not in text + video
+    assert "esp_jpeg_video_source" in video
+    assert "p4_video_renderer" in video
     assert not re.search(r"(?m)^  video:", block)
+    assert re.search(r"(?m)^  video:", video_block)
     assert not re.search(r"(?m)^  video_debug:", block)
-    assert "call_video_page" not in text
-    assert "call_video_surface" not in text
-    assert "id(p4_video)" not in text
+    assert not re.search(r"(?m)^  video_debug:", video_block)
+    assert "call_video_page" in video
+    assert "call_video_surface" in video
+    assert "id(p4_video)" in video
     assert "video_send_switch" not in text
     assert "ui_video_send_sw" not in text
     assert re.search(
@@ -312,15 +317,11 @@ def test_p4_production_profiles_keep_video_debug_off_and_safe_mode_on() -> None:
         profile_dir / "waveshare-p4-touch-videophone-base.yaml"
     ).read_text()
     full = P4_LANDSCAPE_FULL_AFE.read_text()
-    full_jpeg = (
-        YAMLS
-        / "full-experience"
-        / "single-bus"
-        / "waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml"
-    ).read_text()
+    full_jpeg = P4_FULL_JPEG_PACKAGE.read_text()
 
     assert "video_debug:" not in dedicated
     assert "video_debug:" not in full_jpeg
+    assert "p4_full_video_jpeg:" in full
     assert not re.search(r"(?m)^safe_mode:", dedicated)
     assert not re.search(r"(?m)^safe_mode:", full)
     assert not re.search(r"(?m)^ota:", full)
@@ -370,12 +371,7 @@ def test_p4_idle_assistant_shows_selected_wake_word() -> None:
 
 
 def test_p4_full_jpeg_video_page_has_dedicated_lifecycle() -> None:
-    full_jpeg = (
-        YAMLS
-        / "full-experience"
-        / "single-bus"
-        / "waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml"
-    ).read_text()
+    full_jpeg = P4_FULL_JPEG_PACKAGE.read_text()
     full = P4_LANDSCAPE_FULL_AFE.read_text()
 
     assert "on_first_frame:\n    - script.execute: show_call_video_page" in full_jpeg
@@ -386,6 +382,13 @@ def test_p4_full_jpeg_video_page_has_dedicated_lifecycle() -> None:
     assert 'id(runtime_rendered_page) == "call_video"' in full
     assert "id(phone).is_in_call()" in full
     assert 'id: current_mode\n          value: "0"' in full
+    profile_dir = YAMLS / "full-experience" / "single-bus"
+    assert not (
+        profile_dir / "waveshare-p4-touch-full-afe-landscape-jpeg-native-800.yaml"
+    ).exists()
+    assert not (
+        profile_dir / "waveshare-p4-touch-full-afe-landscape-sip-jpeg.yaml"
+    ).exists()
 
 
 def test_p4_videophone_contact_navigation_waits_for_owner_callback() -> None:
