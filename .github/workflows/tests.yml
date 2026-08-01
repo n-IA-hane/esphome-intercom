@@ -26,6 +26,7 @@ jobs:
           aiohttp==3.14.1
           numpy==2.3.2
           PyYAML==6.0.3
+          requests==2.34.2
           ruff==0.15.21
           voluptuous==0.15.2
       - name: Lint Python
