@@ -38,8 +38,15 @@ def video_bridge_offer_formats(
         return (source,)
     normalized_target = str(target_codec or "").strip().upper()
     if normalized_target in {"H264", "JPEG"}:
+        target_profile = "RTP/AVP"
         if normalized_target == source.encoding:
-            return (source,)
+            return (
+                replace(
+                    source,
+                    transport_profile=target_profile,
+                    rtcp_feedback=(),
+                ),
+            )
         candidate = (
             sdp.CONSTRAINED_BASELINE_H264_FORMAT
             if normalized_target == "H264"
@@ -49,12 +56,8 @@ def video_bridge_offer_formats(
             replace(
                 candidate,
                 direction=source.direction,
-                transport_profile=source.transport_profile,
-                rtcp_feedback=(
-                    candidate.rtcp_feedback
-                    if source.transport_profile == "RTP/AVPF"
-                    else ()
-                ),
+                transport_profile=target_profile,
+                rtcp_feedback=(),
                 max_framerate=source.max_framerate,
             ),
         )
