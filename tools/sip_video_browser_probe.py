@@ -19,12 +19,6 @@ import sys
 import time
 from urllib.parse import urlsplit, urlunsplit
 
-from playwright.sync_api import (
-    Error as PlaywrightError,
-    TimeoutError as PlaywrightTimeoutError,
-    sync_playwright,
-)
-
 try:
     from tools.ha_voip_lab.refresh_playwright_auth import (
         playwright_storage_origin,
@@ -727,6 +721,18 @@ def main() -> int:
         from ha_playwright_auth import context_kwargs
 
         context_options.update(context_kwargs())
+
+    try:
+        from playwright.sync_api import (
+            Error as PlaywrightError,
+            TimeoutError as PlaywrightTimeoutError,
+            sync_playwright,
+        )
+    except ModuleNotFoundError:
+        parser.error(
+            "Playwright is required to run the browser probe; install the "
+            "qualification dependencies first"
+        )
 
     console: list[str] = []
     result: dict = {
