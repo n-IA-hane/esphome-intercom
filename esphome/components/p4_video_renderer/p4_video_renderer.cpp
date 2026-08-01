@@ -161,6 +161,11 @@ void P4VideoRenderer::loop() {
       this->surfaces_[pending] != nullptr) {
 #ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
     if (this->video_container_ != nullptr) {
+      // The first decoded surface is what opens the video page. Presentation
+      // itself is gated on that page already being active, so delaying this
+      // edge until after draw_pixels_at() would create a circular dependency.
+      first_frame = !this->remote_frame_visible_.exchange(
+          true, std::memory_order_acq_rel);
       const bool page_active =
           lv_obj_get_screen(this->video_container_) ==
           lv_disp_get_scr_act(nullptr);
@@ -170,8 +175,6 @@ void P4VideoRenderer::loop() {
       const bool presented =
           page_active && this->present_surface_direct_(pending);
       if (presented) {
-        first_frame = !this->remote_frame_visible_.exchange(
-            true, std::memory_order_acq_rel);
         this->surface_ever_presented_.store(true, std::memory_order_release);
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
         this->rx_presented_frames_.fetch_add(1, std::memory_order_relaxed);
@@ -279,6 +282,11 @@ void P4VideoRenderer::attach_video_container(lv_obj_t *container) {
   this->video_container_ = container;
 #ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
 #ifdef USE_P4_VIDEO_RENDERER_H264
+  // The video page is inactive when this hook runs, so LVGL has not laid out
+  // its objects yet. Prime that page once before the decoder worker reads the
+  // cached geometry; otherwise every first frame is dropped waiting for a page
+  // that can only be opened by that same frame.
+  lv_obj_update_layout(this->video_container_);
   if (!this->refresh_direct_display_layout_()) {
     ESP_LOGW(TAG, "P4 H.264 display layout is not ready at LVGL attach");
   }

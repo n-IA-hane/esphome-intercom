@@ -663,8 +663,20 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert direct_display.index("this->present_surface_direct_(pending)") < (
         direct_display.index("this->pending_surface_.compare_exchange_strong(")
     )
-    assert direct_display.index("if (presented)") < direct_display.index(
-        "this->remote_frame_visible_.exchange("
+    assert direct_display.index("this->remote_frame_visible_.exchange(") < (
+        direct_display.index("const bool page_active")
+    )
+    assert direct_display.index("const bool page_active") < (
+        direct_display.index("this->present_surface_direct_(pending)")
+    )
+    attach_container = renderer_cpp[
+        renderer_cpp.index("void P4VideoRenderer::attach_video_container(") :
+        renderer_cpp.index(
+            "void P4VideoRenderer::display_refresh_ready_callback_("
+        )
+    ]
+    assert attach_container.index("lv_obj_update_layout(") < (
+        attach_container.index("this->refresh_direct_display_layout_()")
     )
     assert "display_id: main_display" in h264_package
     assert "display_rotation: 270" in h264_package
