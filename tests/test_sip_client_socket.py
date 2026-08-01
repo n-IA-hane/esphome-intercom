@@ -1844,7 +1844,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         finally:
             await client.close()
 
-    def test_sip_listener_prefers_intercom_display_identity_headers(self) -> None:
+    def test_sip_listener_prefers_standard_display_identity(self) -> None:
         body = sdp.build_offer(
             "192.168.1.47",
             "192.168.1.47",
@@ -1853,17 +1853,25 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         ).encode()
         raw = sip.build_request(
             "INVITE",
-            "sip:Spotpear_Ball_v2@192.168.1.10",
+            "sip:spotpear_ball_v2@192.168.1.10",
             [
                 ("Via", "SIP/2.0/UDP 192.168.1.47:5060;branch=z9hG4bKdisplay"),
-                ("From", "<sip:Waveshare_S3_Audio@192.168.1.47>;tag=src"),
-                ("To", "<sip:Spotpear_Ball_v2@192.168.1.10>"),
+                (
+                    "From",
+                    '"Waveshare S3 Audio" <sip:waveshare_s3_audio@192.168.1.47>;tag=src',
+                ),
+                (
+                    "To",
+                    '"Spotpear Ball v2" <sip:spotpear_ball_v2@192.168.1.10>',
+                ),
                 ("Call-ID", "call-display"),
                 ("CSeq", "1 INVITE"),
                 ("Contact", "<sip:Waveshare_S3_Audio@192.168.1.47:5060>"),
                 ("Content-Type", "application/sdp"),
-                ("X-Voip-Stack-Caller-Name", "Waveshare S3 Audio"),
-                ("X-Voip-Stack-Dest-Name", "Spotpear Ball v2"),
+                ("X-Voip-Stack-Caller-Name", "Legacy Caller"),
+                ("X-Voip-Stack-Dest-Name", "Legacy Target"),
+                ("X-Voip-Stack-Caller-Route", "legacy_caller"),
+                ("X-Voip-Stack-Dest-Route", "legacy_target"),
             ],
             body,
         )
@@ -1878,6 +1886,8 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         assert invite is not None
         self.assertEqual(invite.caller, "Waveshare S3 Audio")
         self.assertEqual(invite.target, "Spotpear Ball v2")
+        self.assertEqual(invite.routing_caller, "waveshare_s3_audio")
+        self.assertEqual(invite.routing_target, "spotpear_ball_v2")
 
     async def test_listener_replies_405_and_501_for_unsupported_methods(self) -> None:
         sent: list[bytes] = []

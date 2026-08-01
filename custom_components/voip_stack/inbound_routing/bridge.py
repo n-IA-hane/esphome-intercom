@@ -86,11 +86,11 @@ def _resolve_bridge_uri(
     trunk_config: dict[str, Any],
     default_sip_port: int,
 ):
-    peer_target = peer_for_target(decision.target or invite.target, peers)
+    peer_target = peer_for_target(decision.target or invite.routing_target, peers)
     bridge_uri = None
     if bridge_to_trunk:
         bridge_uri = parse_sip_uri(
-            f"sip:{decision.target or invite.target}@"
+            f"sip:{decision.target or invite.routing_target}@"
             f"{trunk_config[CONF_TRUNK_SERVER]}:"
             f"{int(trunk_config[CONF_TRUNK_PORT])};"
             f"transport={str(trunk_config[CONF_TRUNK_TRANSPORT]).lower()}"
@@ -102,7 +102,7 @@ def _resolve_bridge_uri(
         if sip_transport not in {"tcp", "udp"}:
             sip_transport = "tcp"
         bridge_uri = parse_sip_uri(
-            f"sip:{decision.target or invite.target}@{peer_target.host}:"
+            f"sip:{decision.target or invite.routing_target}@{peer_target.host}:"
             f"{peer_target.sip_port or default_sip_port};"
             f"transport={sip_transport}"
         )
@@ -251,10 +251,11 @@ async def route_sip_bridge(
 
     client = SipCallClient(
         local_ip=local_ip,
-        local_name=(
+        local_name=invite.caller or runtime.ha_peer_name(hass),
+        local_uri_user=(
             str(trunk_config.get(CONF_TRUNK_USERNAME) or runtime.ha_peer_name(hass))
             if bridge_to_trunk
-            else invite.caller or runtime.ha_peer_name(hass)
+            else invite.routing_caller or runtime.ha_peer_name(hass)
         ),
         local_sip_port=int(cfg["sip_port"]),
         local_rtp_port=dest_relay_port,
@@ -359,6 +360,7 @@ async def route_sip_bridge(
     try:
         result = await client.invite(
             target=decision_uri.user,
+            target_display_name=resolved_callee,
             remote_host=decision_uri.host,
             remote_sip_port=decision_uri.port or int(cfg["sip_port"]),
             request_uri=str(decision_uri),

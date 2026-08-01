@@ -398,6 +398,19 @@ def name_addr_identity(value: str) -> str:
     return display or user
 
 
+def format_name_addr(uri: str | SipUri, display_name: str = "") -> str:
+    """Render one standards-compliant SIP name-address."""
+
+    uri_text = str(parse_sip_uri(str(uri)))
+    display = str(display_name or "").strip()
+    if not display:
+        return f"<{uri_text}>"
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in display):
+        raise SipError("SIP display name contains control characters")
+    escaped = display.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}" <{uri_text}>'
+
+
 def record_route_set(
     message: SipMessage,
     *,
@@ -662,6 +675,9 @@ def dialog_headers(
     max_forwards: int = 70,
     content_type: str | None = None,
     transport: str = "UDP",
+    local_display_name: str = "",
+    remote_display_name: str = "",
+    contact_display_name: str = "",
 ) -> list[tuple[str, str]]:
     """Build the common headers used by the ESP/HA phase-1 profile."""
     contact = parse_sip_uri(contact_uri)
@@ -674,11 +690,18 @@ def dialog_headers(
     headers = [
         ("Via", f"SIP/2.0/{via_transport} {sent_by};branch={dialog.branch};rport"),
         ("Max-Forwards", str(max_forwards)),
-        ("From", f"<{local_uri}>;tag={dialog.local_tag}"),
-        ("To", f"<{remote_uri}>" + (f";tag={dialog.remote_tag}" if dialog.remote_tag else "")),
+        (
+            "From",
+            f"{format_name_addr(local_uri, local_display_name)};tag={dialog.local_tag}",
+        ),
+        (
+            "To",
+            format_name_addr(remote_uri, remote_display_name)
+            + (f";tag={dialog.remote_tag}" if dialog.remote_tag else ""),
+        ),
         ("Call-ID", dialog.call_id),
         ("CSeq", f"{dialog.cseq} {method.upper()}"),
-        ("Contact", f"<{contact_uri}>"),
+        ("Contact", format_name_addr(contact_uri, contact_display_name)),
         ("Allow", ", ".join(sorted(SUPPORTED_METHODS))),
     ]
     if content_type:

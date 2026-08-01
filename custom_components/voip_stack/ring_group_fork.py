@@ -157,6 +157,7 @@ def build_ring_group_fork(
             uri = outbound.uri
             result = await client.invite(
                 target=uri.user or outbound.member,
+                target_display_name=outbound.member,
                 remote_host=uri.host,
                 remote_sip_port=uri.port or sip_port,
                 request_uri=str(uri),

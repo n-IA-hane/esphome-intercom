@@ -68,7 +68,7 @@ async def async_prepare_ring_group_candidates(
 
     for member_order, member in enumerate(members):
         if caller_matches_group_member(
-            invite.caller,
+            getattr(invite, "routing_caller", invite.caller),
             invite.source_host,
             member,
             peers,

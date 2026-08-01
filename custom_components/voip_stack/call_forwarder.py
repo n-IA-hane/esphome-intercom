@@ -1088,10 +1088,11 @@ async def async_forward_existing_call(
                     )
             client = SipCallClient(
                 local_ip=local_ip,
-                local_name=(
+                local_name=invite.caller or _ha_peer_name(hass),
+                local_uri_user=(
                     str(trunk_cfg.get(CONF_TRUNK_USERNAME) or _ha_peer_name(hass))
                     if bridge_to_trunk
-                    else invite.caller or _ha_peer_name(hass)
+                    else invite.routing_caller or _ha_peer_name(hass)
                 ),
                 local_sip_port=int(cfg["sip_port"]),
                 local_rtp_port=dest_relay_port,
@@ -1138,6 +1139,11 @@ async def async_forward_existing_call(
                 )
             result = await client.invite(
                 target=bridge_uri.user,
+                target_display_name=(
+                    decision.entry.display_name
+                    if decision.entry is not None
+                    else destination
+                ),
                 remote_host=bridge_uri.host,
                 remote_sip_port=bridge_uri.port or int(cfg["sip_port"]),
                 request_uri=str(bridge_uri),

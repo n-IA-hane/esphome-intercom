@@ -530,10 +530,15 @@ async def async_originate_call(
 
     client = SipCallClient(
         local_ip=local_ip,
-        local_name=(
+        local_name=local_name,
+        local_uri_user=(
             str(trunk_cfg.get(CONF_TRUNK_USERNAME) or local_name)
             if use_trunk
-            else local_name
+            else (
+                browser_endpoint.sip_uri_user
+                if browser_endpoint is not None
+                else local_name
+            )
         ),
         local_sip_port=int(cfg["sip_port"]),
         local_rtp_port=local_rtp_port,
@@ -754,6 +759,7 @@ async def async_originate_call(
     try:
         result = await client.invite(
             target=uri.user,
+            target_display_name=display_target,
             remote_host=uri.host,
             remote_sip_port=uri.port or int(cfg["sip_port"]),
             request_uri=str(uri),

@@ -378,7 +378,8 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         # ``HA`` is the stable config-flow alias; the phonebook entry carries
         # the user-selected HA peer name (for example ``Casa``). Resolve the
         # alias before consulting the canonical phonebook dial plan.
-        target = _ha_peer_name(hass) if _is_ha_target(invite.target) else invite.target
+        route_target = invite.routing_target
+        target = _ha_peer_name(hass) if _is_ha_target(route_target) else route_target
         return _ha_router_decision(target, entries)
 
 

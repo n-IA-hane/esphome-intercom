@@ -98,6 +98,28 @@ class PhoneEndpointTest(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             item.endpoint_id = "replacement"
 
+    def test_public_sip_user_never_exposes_the_opaque_endpoint_id(self) -> None:
+        without_extension = endpoint(
+            "browser:opaque-id",
+            "Cucina",
+        )
+        with_extension = endpoint(
+            "browser:opaque-id",
+            "Cucina",
+            extension="427",
+        )
+        account = endpoint(
+            "sip:opaque-id",
+            "Studio",
+            kind="sip_account",
+            extension="428",
+            username="studio-phone",
+        )
+
+        self.assertEqual(without_extension.sip_uri_user, "Cucina")
+        self.assertEqual(with_extension.sip_uri_user, "427")
+        self.assertEqual(account.sip_uri_user, "studio-phone")
+
     def test_rejects_invalid_endpoint_shapes(self) -> None:
         for kwargs in (
             {"endpoint_id": "", "name": "Kitchen", "kind": "browser"},

@@ -67,6 +67,8 @@ class SipInvite:
     signaling_transport: str = "UDP"
     received_via_trunk: bool = False
     peer_profile: str = ""
+    caller_route: str = ""
+    target_route: str = ""
 
     @property
     def selected_format(self) -> sdp.RtpPcmFormat:
@@ -83,6 +85,18 @@ class SipInvite:
     @property
     def answer_video_format(self) -> sdp.RtpVideoFormat | None:
         return self.video_answer_format or self.recv_video_format
+
+    @property
+    def routing_caller(self) -> str:
+        return str(
+            self.caller_route
+            or (self.caller_uri.user if self.caller_uri is not None else "")
+            or self.caller
+        ).strip()
+
+    @property
+    def routing_target(self) -> str:
+        return str(self.target_route or self.target or self.request_uri.user).strip()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1715,12 +1729,29 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     else "none"
                 ),
             )
-            caller = _identity_header(request.header("X-Voip-Stack-Caller-Name"))
-            target = _identity_header(request.header("X-Voip-Stack-Dest-Name"))
+            caller = sip.name_addr_display_name(request.header("From"))
+            target = sip.name_addr_display_name(request.header("To"))
+            if not caller:
+                caller = _identity_header(
+                    request.header("X-Voip-Stack-Caller-Name")
+                )
+            if not target:
+                target = _identity_header(request.header("X-Voip-Stack-Dest-Name"))
             if not caller:
                 caller = from_uri.user if from_uri is not None else ""
             if not target:
                 target = request_uri.user
+            caller_route = (
+                from_uri.user
+                if from_uri is not None and from_uri.user
+                else _identity_header(request.header("X-Voip-Stack-Caller-Route"))
+                or caller
+            )
+            target_route = (
+                request_uri.user
+                or _identity_header(request.header("X-Voip-Stack-Dest-Route"))
+                or target
+            )
             return SipInvite(
                 source_host=addr[0],
                 source_port=int(addr[1]),
@@ -1728,6 +1759,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 caller_uri=from_uri,
                 target=target,
                 caller=caller,
+                caller_route=caller_route,
+                target_route=target_route,
                 call_id=request.header("Call-ID"),
                 cseq=request.header("CSeq"),
                 remote_sdp=request.body,

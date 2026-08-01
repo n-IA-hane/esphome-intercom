@@ -292,6 +292,7 @@ class SipCallClient:
         *,
         local_ip: str,
         local_name: str,
+        local_uri_user: str = "",
         local_sip_port: int,
         local_rtp_port: int,
         supported_formats: list[AudioFormat] | None = None,
@@ -315,6 +316,7 @@ class SipCallClient:
     ) -> None:
         self.local_ip = local_ip
         self.local_name = local_name
+        self.local_uri_user = str(local_uri_user or username or local_name).strip()
         self.local_sip_port = int(local_sip_port)
         self.local_rtp_port = int(local_rtp_port)
         # ``None`` means that the caller did not constrain the profile.  An
@@ -376,6 +378,8 @@ class SipCallClient:
         self.on_media_update: DialogMediaUpdateHandler | None = None
         self._invite_cseq = self.dialog_ids.cseq
         self._pending_target = ""
+        self._pending_target_display = ""
+        self._dialog_remote_display_name = ""
         self._pending_remote_host = ""
         self._pending_remote_sip_port = 5060
         self._pending_request_uri = ""
@@ -1148,15 +1152,25 @@ class SipCallClient:
             contact_uri=self._pending_local_uri,
             content_type="application/sdp",
             transport=self.signaling_transport,
+            local_display_name=self.local_name,
+            remote_display_name=self._pending_target_display,
         )
         caller_name = _sip_header_token(self.local_name)
-        dest_name = _sip_header_token(self._pending_target)
+        dest_name = _sip_header_token(self._pending_target_display)
+        caller_route = _sip_header_token(
+            sip.parse_sip_uri(self._pending_local_uri).user
+        )
+        dest_route = _sip_header_token(
+            sip.parse_sip_uri(self._pending_request_uri).user
+        )
         if caller_name:
             headers.append(("X-Voip-Stack-Caller-Name", caller_name))
-            headers.append(("X-Voip-Stack-Caller-Route", caller_name))
+        if caller_route:
+            headers.append(("X-Voip-Stack-Caller-Route", caller_route))
         if dest_name:
             headers.append(("X-Voip-Stack-Dest-Name", dest_name))
-            headers.append(("X-Voip-Stack-Dest-Route", dest_name))
+        if dest_route:
+            headers.append(("X-Voip-Stack-Dest-Route", dest_route))
         if self._pending_invite_auth_header is not None:
             headers.append(self._pending_invite_auth_header)
         return sip.build_request(
@@ -1278,6 +1292,7 @@ class SipCallClient:
         remote_host: str,
         remote_sip_port: int,
         request_uri: str = "",
+        target_display_name: str = "",
         timeout: float = 8.0,
     ) -> str:
         """Run one owned INVITE transaction that survives caller-task cancellation."""
@@ -1291,6 +1306,7 @@ class SipCallClient:
                 remote_host=remote_host,
                 remote_sip_port=remote_sip_port,
                 request_uri=request_uri,
+                target_display_name=target_display_name,
                 timeout=timeout,
             ),
             name=f"voip-sip-client-invite-{self.dialog_ids.call_id}",
@@ -1309,6 +1325,7 @@ class SipCallClient:
         remote_host: str,
         remote_sip_port: int,
         request_uri: str = "",
+        target_display_name: str = "",
         timeout: float = 8.0,
     ) -> str:
         try:
@@ -1321,9 +1338,17 @@ class SipCallClient:
         transport_param = (("transport", self.signaling_transport.lower()),)
         request_uri = request_uri or str(sip.SipUri(target, remote_host, int(remote_sip_port), params=transport_param))
         sip.parse_sip_uri(request_uri)
-        local_uri = str(sip.SipUri(self.local_name, self.local_ip, self.local_sip_port, params=transport_param))
+        local_uri = str(
+            sip.SipUri(
+                self.local_uri_user,
+                self.local_ip,
+                self.local_sip_port,
+                params=transport_param,
+            )
+        )
         remote_uri = request_uri
         self._pending_target = target
+        self._pending_target_display = str(target_display_name or target).strip()
         self._pending_remote_host = remote_host
         self._pending_remote_sip_port = int(remote_sip_port)
         self._pending_request_uri = request_uri
@@ -1996,7 +2021,14 @@ class SipCallClient:
             request_uri = str(sip.SipUri(target or "voip", remote_host, remote_sip_port))
         transport_param = (("transport", self.signaling_transport.lower()),)
         if not local_uri:
-            local_uri = str(sip.SipUri(self.local_name, self.local_ip, self.local_sip_port, params=transport_param))
+            local_uri = str(
+                sip.SipUri(
+                    self.local_uri_user,
+                    self.local_ip,
+                    self.local_sip_port,
+                    params=transport_param,
+                )
+            )
         if not remote_uri:
             remote_uri = request_uri
         remote_target_uri = request_uri
@@ -2009,24 +2041,14 @@ class SipCallClient:
         else:
             if contact_target:
                 remote_target_uri = contact_target
-        asserted_identity = next(
+        response_display = sip.name_addr_display_name(msg.header("To"))
+        self._dialog_remote_display_name = response_display
+        self.connected_party = next(
             (
                 identity
                 for identity in (
-                    sip.name_addr_identity(msg.header("P-Asserted-Identity")),
-                    sip.name_addr_identity(msg.header("Remote-Party-ID")),
-                )
-                if identity
-            ),
-            "",
-        )
-        self.connected_party = asserted_identity or next(
-            (
-                identity
-                for identity in (
-                    sip.name_addr_display_name(msg.header("Contact")),
-                    sip.name_addr_display_name(msg.header("To")),
-                    sip.name_addr_identity(msg.header("Contact")),
+                    response_display,
+                    self._pending_target_display,
                     sip.name_addr_identity(msg.header("To")),
                 )
                 if identity
@@ -2274,6 +2296,10 @@ class SipCallClient:
             method="ACK",
             contact_uri=local_uri,
             transport=self.signaling_transport,
+            local_display_name=self.local_name,
+            remote_display_name=(
+                self._dialog_remote_display_name
+            ),
         )
         headers.extend(("Route", value) for value in routing.route_headers)
         raw = sip.build_request("ACK", routing.request_uri, headers, b"")
@@ -2312,6 +2338,8 @@ class SipCallClient:
             method="ACK",
             contact_uri=local_uri,
             transport=self.signaling_transport,
+            local_display_name=self.local_name,
+            remote_display_name=sip.name_addr_display_name(msg.header("To")),
         )
         raw = sip.build_request("ACK", request_uri, headers, b"")
         if not self._send_dialog_request(raw, host, int(port)):
@@ -2352,6 +2380,10 @@ class SipCallClient:
             method="BYE",
             contact_uri=local_uri,
             transport=self.signaling_transport,
+            local_display_name=self.local_name,
+            remote_display_name=(
+                self._dialog_remote_display_name
+            ),
         )
         headers.extend(("Route", value) for value in routing.route_headers)
         raw = sip.build_request("BYE", routing.request_uri, headers, b"")
@@ -2421,6 +2453,8 @@ class SipCallClient:
             method="CANCEL",
             contact_uri=self._pending_local_uri,
             transport=self.signaling_transport,
+            local_display_name=self.local_name,
+            remote_display_name=self._pending_target_display,
         )
         raw = sip.build_request("CANCEL", self._pending_request_uri, headers, b"")
         if not self._send_dialog_request(raw, self._pending_remote_host, self._pending_remote_sip_port):

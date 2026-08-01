@@ -109,11 +109,7 @@ async def route_invite(
     _async_build_peer_snapshot = runtime.build_peer_snapshot
     _defer_invite_to_ha_softphone = runtime.defer_invite_to_softphone
     peers = await _async_build_peer_snapshot(hass)
-    caller_identity = str(
-        (invite.caller_uri.user if invite.caller_uri is not None else "")
-        or invite.caller
-        or ""
-    ).strip()
+    caller_identity = invite.routing_caller
     caller_peer = _peer_for_target(caller_identity, peers)
     if caller_peer is not None and str(caller_peer.host) != str(invite.source_host):
         caller_peer = None
@@ -175,7 +171,7 @@ async def route_invite(
             caller_identity or "unknown",
             invite.source_host,
             invite.source_port,
-            invite.target,
+            invite.routing_target,
         )
         return SipInviteResult(
             403,
@@ -201,7 +197,11 @@ async def route_invite(
                 str(trunk_cfg.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "HA").strip()
                 or "HA"
             )
-            invite = replace(invite, target=default_target)
+            invite = replace(
+                invite,
+                target=default_target,
+                target_route=default_target,
+            )
             decision = _inbound_route_decision(invite, peers, roster_entries)
             trunk_direct_preprocessed = True
     bucket = hass.data.setdefault(DOMAIN, {})
@@ -244,9 +244,9 @@ async def route_invite(
         )
     if decision.action is RouteAction.ASSIST:
         called_extension = (
-            str(decision.entry.extension or invite.target)
+            str(decision.entry.extension or invite.routing_target)
             if decision.entry is not None
-            else invite.target
+            else invite.routing_target
         )
         return await route_local_assist(
             runtime=runtime,
@@ -303,7 +303,7 @@ async def route_invite(
     route_action = automation_route.action
     route_destination = automation_route.destination
 
-    fallback_destination = decision.target or invite.target
+    fallback_destination = decision.target or invite.routing_target
     if route_action in {"forward", "bridge"} and route_destination:
         decision = _ha_router_decision(route_destination, roster_entries)
         _LOGGER.info(

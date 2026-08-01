@@ -199,6 +199,13 @@ class PhoneEndpoint:
         return tuple(aliases)
 
     @property
+    def sip_uri_user(self) -> str:
+        """Return the public SIP user without exposing the opaque endpoint id."""
+        if self.kind is EndpointKind.SIP_ACCOUNT:
+            return self.username or self.extension or self.name
+        return self.extension or self.name
+
+    @property
     def has_active_call(self) -> bool:
         """Return whether this endpoint currently owns a logical call."""
         return bool(self.active_call_id)

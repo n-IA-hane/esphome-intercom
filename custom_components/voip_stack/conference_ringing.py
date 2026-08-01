@@ -203,6 +203,7 @@ async def async_ring_conference_members(
         try:
             result = await client.invite(
                 target=uri.user or attempt.member,
+                target_display_name=attempt.member,
                 remote_host=uri.host,
                 remote_sip_port=uri.port or int(runtime.config["sip_port"]),
                 request_uri=str(uri),

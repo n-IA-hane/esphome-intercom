@@ -115,6 +115,8 @@ async def request_route_override(
         route_request=True,
         phase="route_decision",
         source_host=invite.source_host,
+        caller_route=invite.routing_caller,
+        target_route=invite.routing_target,
         target=decision.target,
         default_destination=decision.target,
         fallback_destination=decision.target,

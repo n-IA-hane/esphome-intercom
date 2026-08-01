@@ -48,12 +48,10 @@ class AssistEndpoint:
         """Attach an accepted SIP dialog to the configured Assist pipeline."""
 
         assist_cfg = self.hass.data.setdefault(DOMAIN, {}).get("assist_config", {})
-        caller_entry = roster_entry_for_target(invite.caller, roster_entries)
-        if caller_entry is None and invite.caller_uri is not None:
-            caller_entry = roster_entry_for_target(
-                invite.caller_uri.user,
-                roster_entries,
-            )
+        caller_entry = roster_entry_for_target(
+            invite.routing_caller,
+            roster_entries,
+        )
         if caller_entry is None:
             caller_token = str(invite.caller or "").strip()
             caller_entry = next(
@@ -65,8 +63,7 @@ class AssistEndpoint:
                 None,
             )
         caller_id = str(
-            (invite.caller_uri.user if invite.caller_uri is not None else "")
-            or invite.caller
+            invite.routing_caller
             or invite.source_host
             or "Unknown"
         ).strip()

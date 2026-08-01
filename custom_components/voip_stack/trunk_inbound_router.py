@@ -469,6 +469,7 @@ async def async_route_trunk_invite(
     client = SipCallClient(
         local_ip=runtime.local_ip,
         local_name=invite.caller or runtime.ha_peer_name,
+        local_uri_user=invite.routing_caller or runtime.ha_peer_name,
         local_sip_port=int(cfg["sip_port"]),
         local_rtp_port=dest_relay_port,
         supported_send_formats=sip_send_formats,
@@ -492,6 +493,11 @@ async def async_route_trunk_invite(
     )
     result = await client.invite(
         target=bridge_uri.user,
+        target_display_name=(
+            decision.entry.display_name
+            if decision.entry is not None
+            else destination
+        ),
         remote_host=bridge_uri.host,
         remote_sip_port=bridge_uri.port or int(cfg["sip_port"]),
         request_uri=str(bridge_uri),

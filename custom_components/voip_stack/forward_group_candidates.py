@@ -81,7 +81,7 @@ def prepare_forward_group_candidates(
             continue
 
         if caller_matches_group_member(
-            invite.caller,
+            getattr(invite, "routing_caller", invite.caller),
             invite.source_host,
             member,
             peers,
@@ -95,6 +95,7 @@ def prepare_forward_group_candidates(
             roster_entries=roster_entries,
             local_name=local_name,
             local_rtp_port_index=1,
+            invite=invite,
         )
         if attempt is None:
             continue

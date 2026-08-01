@@ -574,18 +574,67 @@ class SipProfileTest(unittest.TestCase):
 
         client = sip_client.SipCallClient(
             local_ip="192.168.1.10",
-            local_name="Casa",
+            local_name="Waveshare P4 Touch",
+            local_uri_user="waveshare-p4-touch",
             local_sip_port=5060,
             local_rtp_port=41000,
         )
         client.transport = FakeTransport()  # type: ignore[assignment]
-        asyncio.run(client.invite(target="Cucina", remote_host="192.168.1.30", remote_sip_port=5060, timeout=0))
+        asyncio.run(
+            client.invite(
+                target="cucina_phone",
+                target_display_name="Cucina",
+                remote_host="192.168.1.30",
+                remote_sip_port=5060,
+                timeout=0,
+            )
+        )
 
         raw, _ = client.transport.sent[0]  # type: ignore[union-attr]
         parsed = sip.parse_message(raw)
-        self.assertEqual(parsed.header("X-Voip-Stack-Caller-Name"), "Casa")
-        self.assertEqual(parsed.header("X-Voip-Stack-Caller-Route"), "Casa")
+        self.assertEqual(
+            parsed.header("X-Voip-Stack-Caller-Name"),
+            "Waveshare P4 Touch",
+        )
+        self.assertEqual(
+            parsed.header("X-Voip-Stack-Caller-Route"),
+            "waveshare-p4-touch",
+        )
         self.assertEqual(parsed.header("X-Voip-Stack-Dest-Name"), "Cucina")
+        self.assertEqual(
+            parsed.header("X-Voip-Stack-Dest-Route"),
+            "cucina_phone",
+        )
+        self.assertEqual(
+            parsed.header("From").split(";tag=", 1)[0],
+            '"Waveshare P4 Touch" <sip:waveshare-p4-touch@192.168.1.10:5060;transport=udp>',
+        )
+        self.assertEqual(
+            parsed.header("To"),
+            '"Cucina" <sip:cucina_phone@192.168.1.30:5060;transport=udp>',
+        )
+
+    def test_name_address_preserves_display_name_and_escapes_quotes(self) -> None:
+        rendered = sip.format_name_addr(
+            "sip:public@192.0.2.10",
+            'Dio Cane "Casa" \\ ingresso',
+        )
+
+        self.assertEqual(
+            rendered,
+            '"Dio Cane \\"Casa\\" \\\\ ingresso" <sip:public@192.0.2.10>',
+        )
+        self.assertEqual(
+            sip.name_addr_display_name(rendered),
+            'Dio Cane "Casa" \\ ingresso',
+        )
+
+    def test_name_address_rejects_header_injection(self) -> None:
+        with self.assertRaises(sip.SipError):
+            sip.format_name_addr(
+                "sip:public@192.0.2.10",
+                "Dio Cane\r\nVia: bad",
+            )
 
     def test_invite_preserves_registered_contact_request_uri_params(self) -> None:
         sent: list[bytes] = []
@@ -617,7 +666,7 @@ class SipProfileTest(unittest.TestCase):
         raw = sent[0].decode()
         self.assertTrue(raw.startswith(f"INVITE {contact_uri} SIP/2.0\r\n"))
         parsed = sip.parse_message(sent[0])
-        self.assertEqual(parsed.header("To"), f"<{contact_uri}>")
+        self.assertEqual(parsed.header("To"), f'"Zoiper" <{contact_uri}>')
 
     def test_tcp_invite_connection_refused_returns_transport_unreachable(self) -> None:
         async def run() -> str:

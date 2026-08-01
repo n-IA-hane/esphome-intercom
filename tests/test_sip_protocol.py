@@ -2783,7 +2783,10 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                             ),
                             ("Call-ID", invite.header("Call-ID")),
                             ("CSeq", invite.header("CSeq")),
-                            ("Contact", "<sip:1000@192.0.2.10:5060>"),
+                            (
+                                "Contact",
+                                '"Waveshare_P4_Touch" <sip:dialog@192.0.2.10:5060>',
+                            ),
                             ("Content-Type", "application/sdp"),
                         ],
                         answer,
@@ -2859,7 +2862,13 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         invites = [message for message in messages if message.method == "INVITE"]
         self.assertEqual(len(invites), 2)
         self.assertEqual(invites[0].header("From"), invites[1].header("From"))
-        self.assertTrue(invites[0].header("From").startswith("<sip:17770000000@192.168.1.10:5060"))
+        self.assertTrue(
+            invites[0]
+            .header("From")
+            .startswith(
+                '"17770000000" <sip:17770000000@192.168.1.10:5060'
+            )
+        )
         self.assertTrue(invites[0].header("Contact").startswith("<sip:17770000000@192.168.1.10:5060"))
         self.assertEqual(invites[0].header("X-Voip-Stack-Caller-Name"), "17770000000")
         self.assertEqual(invites[1].header("X-Voip-Stack-Caller-Name"), "17770000000")

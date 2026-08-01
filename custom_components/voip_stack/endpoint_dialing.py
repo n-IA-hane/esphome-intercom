@@ -217,6 +217,11 @@ class EndpointDialer:
             client = SipCallClient(
                 local_ip=self.local_ip,
                 local_name=local_name,
+                local_uri_user=(
+                    invite.routing_caller
+                    if invite is not None
+                    else local_name
+                ),
                 local_sip_port=int(self.config["sip_port"]),
                 local_rtp_port=ports.ports[local_rtp_port_index],
                 supported_send_formats=sip_send_formats,

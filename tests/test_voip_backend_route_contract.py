@@ -1765,8 +1765,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.source.index("def _inbound_route_decision(") :
             self.source.index("async def _async_forward_existing_call(")
         ]
+        self.assertIn("route_target = invite.routing_target", router)
         self.assertIn(
-            "target = _ha_peer_name(hass) if _is_ha_target(invite.target)",
+            "target = _ha_peer_name(hass) if _is_ha_target(route_target) else route_target",
             router,
         )
 
