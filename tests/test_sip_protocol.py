@@ -696,8 +696,10 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         answer = (
             "v=0\r\no=- 2 1 IN IP4 127.0.0.2\r\n"
             "s=answer\r\nc=IN IP4 127.0.0.2\r\nt=0 0\r\n"
-            "m=audio 42000 RTP/AVP 120 121\r\n"
+            f"m=audio 42000 RTP/AVP 120 {offered_dtmf.payload_type} 121\r\n"
             "a=rtpmap:120 L16/16000/1\r\n"
+            f"a=rtpmap:{offered_dtmf.payload_type} telephone-event/16000\r\n"
+            f"a=fmtp:{offered_dtmf.payload_type} 0-16\r\n"
             "a=rtpmap:121 telephone-event/8000\r\n"
             "a=fmtp:121 0-16\r\na=ptime:20\r\na=sendrecv\r\n"
         ).encode()
@@ -738,6 +740,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             offered_audio.payload_type,
         )
         self.assertEqual(client.dialog.dtmf_payload_type, offered_dtmf.payload_type)
+        self.assertEqual(client.dialog.send_dtmf_payload_type, 121)
+        self.assertEqual(client.dialog.send_dtmf_clock_rate, 8000)
         self.assertEqual(
             [sip.parse_message(raw).method for raw, _addr in transport.sent],
             ["ACK"],

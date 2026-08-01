@@ -54,6 +54,9 @@ class RtpPeer:
     dtmf_payload_type: int | None = None
     dtmf_clock_rate: int = 8000
     dtmf_events: frozenset[int] = frozenset(range(16))
+    send_dtmf_payload_type: int | None = None
+    send_dtmf_clock_rate: int | None = None
+    send_dtmf_events: frozenset[int] | None = None
     can_send: bool = True
     can_receive: bool = True
     connection_held: bool = False
@@ -88,6 +91,30 @@ class RtpPeer:
         if self.send_rtp_format is not None:
             return self.send_rtp_format
         return audio_format_to_rtp(self.outbound_audio_format, self.outbound_payload_type)
+
+    @property
+    def outbound_dtmf_payload_type(self) -> int | None:
+        return (
+            self.send_dtmf_payload_type
+            if self.send_dtmf_payload_type is not None
+            else self.dtmf_payload_type
+        )
+
+    @property
+    def outbound_dtmf_clock_rate(self) -> int:
+        return (
+            int(self.send_dtmf_clock_rate)
+            if self.send_dtmf_clock_rate is not None
+            else int(self.dtmf_clock_rate)
+        )
+
+    @property
+    def outbound_dtmf_events(self) -> frozenset[int]:
+        return (
+            self.send_dtmf_events
+            if self.send_dtmf_events is not None
+            else self.dtmf_events
+        )
 
     def accepts_source_host(self, source_host: str) -> bool:
         """Allow the SDP media host or the authenticated SIP flow host."""
@@ -552,8 +579,8 @@ class SipRtpRelay:
         event = telephone_event_code(digit)
         if (
             event is None
-            or destination.dtmf_payload_type is None
-            or event not in destination.dtmf_events
+            or destination.outbound_dtmf_payload_type is None
+            or event not in destination.outbound_dtmf_events
             or not destination.can_receive
             or destination.connection_held
         ):
@@ -562,7 +589,7 @@ class SipRtpRelay:
                 source_side,
                 destination_side,
                 digit,
-                destination.dtmf_payload_type is not None,
+                destination.outbound_dtmf_payload_type is not None,
             )
             return False
 
@@ -604,7 +631,7 @@ class SipRtpRelay:
         async with self._dtmf_locks[destination_side]:
             if self._stop_requested:
                 return
-            event_rate = max(1, int(destination.dtmf_clock_rate))
+            event_rate = max(1, destination.outbound_dtmf_clock_rate)
             audio_rate = max(
                 1, int(destination.outbound_rtp_format.rtp_clock_rate)
             )
@@ -644,7 +671,7 @@ class SipRtpRelay:
                     )
                 packet = rtp.build_packet(
                     rtp.RtpPacket(
-                        payload_type=int(destination.dtmf_payload_type),
+                        payload_type=int(destination.outbound_dtmf_payload_type),
                         sequence=sequence,
                         timestamp=event_timestamp,
                         ssrc=ssrc,
@@ -706,7 +733,7 @@ class SipRtpRelay:
                 "RTP DTMF relayed destination=%s digit=%s payload=%s rate=%s",
                 destination_side,
                 digit,
-                destination.dtmf_payload_type,
+                destination.outbound_dtmf_payload_type,
                 event_rate,
             )
 

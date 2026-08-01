@@ -154,6 +154,9 @@ def dialog_rtp_peer(dialog: SipDialog) -> RtpPeer:
         dtmf_payload_type=dialog.dtmf_payload_type,
         dtmf_clock_rate=dialog.dtmf_clock_rate,
         dtmf_events=dialog.dtmf_events,
+        send_dtmf_payload_type=dialog.send_dtmf_payload_type,
+        send_dtmf_clock_rate=dialog.send_dtmf_clock_rate,
+        send_dtmf_events=dialog.send_dtmf_events,
         can_send=dialog.remote_audio_direction in {"sendonly", "sendrecv"},
         can_receive=(
             dialog.remote_audio_direction in {"recvonly", "sendrecv"}

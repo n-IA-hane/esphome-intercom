@@ -182,7 +182,7 @@ class SdpPcmProfileTest(unittest.TestCase):
         self.assertEqual(accepted.send_format.encoding, "PCM")
         self.assertIsNone(rejected)
 
-    def test_answer_cannot_remap_a_selected_dynamic_payload_type(self) -> None:
+    def test_answer_remap_without_any_common_codec_is_rejected(self) -> None:
         offer = (
             "v=0\r\no=- 1 1 IN IP4 192.0.2.10\r\n"
             "s=offer\r\nc=IN IP4 192.0.2.10\r\nt=0 0\r\n"
@@ -196,7 +196,7 @@ class SdpPcmProfileTest(unittest.TestCase):
             "a=rtpmap:96 L16/48000/1\r\na=sendrecv\r\n"
         )
 
-        with self.assertRaisesRegex(sdp.SdpError, "remapped payload type 96"):
+        with self.assertRaisesRegex(sdp.SdpError, "selected no offered codec"):
             sdp.validate_sdp_answer(offer, answer)
 
     def test_answer_may_use_a_different_payload_for_the_same_audio_codec(self) -> None:
@@ -236,6 +236,44 @@ class SdpPcmProfileTest(unittest.TestCase):
         assert selected_dtmf is not None
         self.assertEqual(selected_dtmf.payload_type, offered_dtmf.payload_type)
         self.assertEqual(selected_dtmf.events, frozenset(range(16)))
+
+    def test_zoiper_directional_telephone_event_remap_is_accepted(self) -> None:
+        offer = (
+            "v=0\r\no=- 1 1 IN IP4 192.0.2.10\r\n"
+            "s=offer\r\nc=IN IP4 192.0.2.10\r\nt=0 0\r\n"
+            "m=audio 40000 RTP/AVP 98 9 8 0 96 97 99\r\n"
+            "a=rtpmap:98 OPUS/48000/2\r\n"
+            "a=rtpmap:9 G722/8000\r\n"
+            "a=rtpmap:8 PCMA/8000\r\n"
+            "a=rtpmap:0 PCMU/8000\r\n"
+            "a=rtpmap:96 L16/16000/1\r\n"
+            "a=rtpmap:97 L16/8000/1\r\n"
+            "a=rtpmap:99 telephone-event/8000\r\n"
+            "a=fmtp:99 0-16\r\na=ptime:20\r\na=sendrecv\r\n"
+        )
+        answer = (
+            "v=0\r\no=- 2 1 IN IP4 192.0.2.20\r\n"
+            "s=answer\r\nc=IN IP4 192.0.2.20\r\nt=0 0\r\n"
+            "m=audio 41000 RTP/AVP 98 9 0 8 99 101\r\n"
+            "a=rtpmap:98 OPUS/48000/2\r\n"
+            "a=rtpmap:9 G722/8000\r\n"
+            "a=rtpmap:0 PCMU/8000\r\n"
+            "a=rtpmap:8 PCMA/8000\r\n"
+            "a=rtpmap:99 telephone-event/48000\r\n"
+            "a=fmtp:99 0-16\r\n"
+            "a=rtpmap:101 telephone-event/8000\r\n"
+            "a=fmtp:101 0-16\r\na=ptime:20\r\na=sendrecv\r\n"
+        )
+
+        sdp.validate_sdp_answer(offer, answer)
+        dtmf = sdp.negotiate_dtmf_answer_directional(answer, offer)
+
+        self.assertIsNotNone(dtmf)
+        assert dtmf is not None
+        self.assertEqual(dtmf.send.payload_type, 101)
+        self.assertEqual(dtmf.send.sample_rate, 8000)
+        self.assertEqual(dtmf.recv.payload_type, 99)
+        self.assertEqual(dtmf.recv.sample_rate, 8000)
 
     def test_dtmf_negotiation_restricts_events_to_remote_fmtp(self) -> None:
         audio = audio_format.AudioFormat(8000, "s16le", 1, 20)

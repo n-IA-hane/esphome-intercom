@@ -163,6 +163,14 @@ class RtpDtmfFormat:
 
 
 @dataclass(frozen=True, slots=True)
+class RtpDtmfDirection:
+    """Directional RFC 4733 payload mappings for one negotiated dialog."""
+
+    send: RtpDtmfFormat
+    recv: RtpDtmfFormat
+
+
+@dataclass(frozen=True, slots=True)
 class RtpPcmDirection:
     send: RtpPcmFormat
     recv: RtpPcmFormat
@@ -1672,10 +1680,10 @@ def _equivalent_rtp_payloads(
     """Map each answer payload to equivalent payloads in the offer.
 
     RFC 3264 recommends reusing the same payload type but explicitly permits
-    a different number for the same codec.  The mapping remains directional:
-    the offerer's RTP uses the answer number while the answerer's RTP uses the
-    offer number.  A dynamic payload number itself, however, must never be
-    remapped to a different codec within the media stream.
+    distinct mappings in each direction. The offerer's RTP uses the answer
+    number while the answerer's RTP uses the offer number. Consequently the
+    same dynamic number may identify different formats in the two payload
+    spaces and must be compared by codec contract, not by number alone.
     """
 
     try:
@@ -1691,12 +1699,6 @@ def _equivalent_rtp_payloads(
     mappings: dict[int, set[int]] = {}
     for answer_payload in answered_payloads:
         answer_mapping = _section_rtpmap(answered_section, answer_payload)
-        if answer_payload in offered_payloads:
-            offered_mapping = _section_rtpmap(offered_section, answer_payload)
-            if offered_mapping != answer_mapping:
-                raise SdpError(
-                    f"SDP answer remapped payload type {answer_payload}"
-                )
         if answer_mapping is None:
             continue
         equivalent = {
@@ -2706,15 +2708,16 @@ def first_offered_dtmf_format(
     return formats[0] if formats else None
 
 
-def negotiate_dtmf_answer(
+def negotiate_dtmf_answer_directional(
     remote_sdp: str | bytes,
     local_offer_sdp: str | bytes,
-) -> RtpDtmfFormat | None:
-    """Return the receive-side telephone-event payload from the offer.
+) -> RtpDtmfDirection | None:
+    """Return directional RFC 4733 mappings selected by an SDP answer.
 
-    As with audio/video codecs, an answer may assign another PT to the same
-    telephone-event clock rate. The answerer still transmits using the PT in
-    the offer, which is the value an outbound dialog must decode.
+    As with audio and video, the local offerer transmits with the answer's PT
+    and receives with the original offer's PT. This matters for softphones
+    that reuse one dynamic number for another clock rate in their answer and
+    publish the compatible telephone-event format on a different number.
     """
 
     answered = offered_dtmf_formats(remote_sdp)
@@ -2724,12 +2727,29 @@ def negotiate_dtmf_answer(
             if answer_format.sample_rate == offer_format.sample_rate:
                 events = answer_format.events & offer_format.events
                 if events:
-                    return RtpDtmfFormat(
-                        offer_format.payload_type,
-                        offer_format.sample_rate,
-                        events,
+                    return RtpDtmfDirection(
+                        send=RtpDtmfFormat(
+                            answer_format.payload_type,
+                            answer_format.sample_rate,
+                            events,
+                        ),
+                        recv=RtpDtmfFormat(
+                            offer_format.payload_type,
+                            offer_format.sample_rate,
+                            events,
+                        ),
                     )
     return None
+
+
+def negotiate_dtmf_answer(
+    remote_sdp: str | bytes,
+    local_offer_sdp: str | bytes,
+) -> RtpDtmfFormat | None:
+    """Return the receive-side RFC 4733 mapping for compatibility callers."""
+
+    selected = negotiate_dtmf_answer_directional(remote_sdp, local_offer_sdp)
+    return selected.recv if selected is not None else None
 
 
 def offered_media_descriptions(sdp: str | bytes) -> list[str]:

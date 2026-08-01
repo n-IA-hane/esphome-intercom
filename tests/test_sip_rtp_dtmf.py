@@ -128,6 +128,22 @@ class SipRtpDtmfTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(relay._dtmf_tasks, set())
         await relay.stop()
 
+    async def test_outbound_event_uses_answer_payload_not_receive_payload(self) -> None:
+        relay = self._relay()
+        relay.right.send_dtmf_payload_type = 121
+        relay.right.send_dtmf_clock_rate = 16000
+        relay.right.send_dtmf_events = frozenset({5})
+
+        self.assertTrue(relay.relay_dtmf("left", "5", duration_ms=40))
+        await asyncio.sleep(0.16)
+
+        transport = relay.right_transport
+        assert isinstance(transport, _Transport)
+        packets = [rtp.parse_packet(raw) for raw, _addr in transport.sent]
+        self.assertEqual({packet.payload_type for packet in packets}, {121})
+        self.assertEqual(relay.right.dtmf_payload_type, 110)
+        await relay.stop()
+
     async def test_different_clock_uses_a_separate_rtp_source(self) -> None:
         relay = self._relay(audio_rate=16000)
         incoming = rtp.build_packet(
