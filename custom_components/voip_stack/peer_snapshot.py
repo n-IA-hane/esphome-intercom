@@ -104,6 +104,7 @@ async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
                 sip_port=int(device.get("sip_port") or cfg["sip_port"]),
                 rtp_port=int(device.get("rtp_port") or cfg["rtp_port"]),
                 extension=str(device.get("extension") or ""),
+                sip_uri_user=str(device.get("sip_uri_user") or ""),
                 conference_group=str(device.get("conference_group") or ""),
                 conference_ring=bool(device.get("conference_ring", False)),
                 ring_group=str(device.get("ring_group") or ""),

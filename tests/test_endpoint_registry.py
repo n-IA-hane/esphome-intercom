@@ -115,10 +115,17 @@ class PhoneEndpointTest(unittest.TestCase):
             extension="428",
             username="studio-phone",
         )
+        esp = endpoint(
+            "esphome:opaque-id",
+            "Waveshare P4 Touch",
+            kind="esphome",
+            username="waveshare-p4-touch",
+        )
 
         self.assertEqual(without_extension.sip_uri_user, "Cucina")
         self.assertEqual(with_extension.sip_uri_user, "427")
         self.assertEqual(account.sip_uri_user, "studio-phone")
+        self.assertEqual(esp.sip_uri_user, "waveshare-p4-touch")
 
     def test_rejects_invalid_endpoint_shapes(self) -> None:
         for kwargs in (

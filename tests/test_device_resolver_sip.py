@@ -218,7 +218,7 @@ class SipEndpointParseTest(unittest.TestCase):
 
         class FakeConfigEntries:
             def async_entries(self, _domain):
-                return []
+                return [FakeConfigEntry()]
 
             def async_get_entry(self, _entry_id):
                 return FakeConfigEntry()
@@ -250,6 +250,7 @@ class SipEndpointParseTest(unittest.TestCase):
 
         self.assertEqual(len(devices), 1)
         self.assertEqual(devices[0]["name"], "Waveshare S3 Audio")
+        self.assertEqual(devices[0]["sip_uri_user"], "waveshare-s3")
         self.assertEqual(devices[0]["extension"], "999")
         self.assertEqual(devices[0]["conference_group"], "CG Casa")
         self.assertEqual(devices[0]["ring_group"], "RG Casa")

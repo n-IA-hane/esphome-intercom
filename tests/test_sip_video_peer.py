@@ -91,6 +91,14 @@ def test_dahua_profile_request_identity_is_explicit() -> None:
     assert any(name == "Allow" and "UPDATE" in value for name, value in headers)
 
 
+def test_remote_uri_percent_encodes_endpoint_names_with_spaces() -> None:
+    peer = _load_tool()
+
+    assert peer._remote_uri("Waveshare P4 Touch", "192.0.2.1", 5060) == (
+        "sip:Waveshare%20P4%20Touch@192.0.2.1:5060;transport=udp"
+    )
+
+
 def test_p4_l16_profile_matches_firmware_packet_cadence() -> None:
     peer = _load_tool()
 

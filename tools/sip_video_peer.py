@@ -189,6 +189,19 @@ def _local_ip(remote_host: str, remote_port: int) -> str:
         sock.close()
 
 
+def _remote_uri(target: str, host: str, port: int) -> str:
+    """Build a valid Request-URI while preserving a human endpoint name."""
+
+    return str(
+        sip.SipUri(
+            user=target,
+            host=host,
+            port=port,
+            params=(("transport", "udp"),),
+        )
+    )
+
+
 def _reserve_udp_socket(local_ip: str) -> socket.socket:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setblocking(False)
@@ -738,7 +751,7 @@ async def async_main(args: argparse.Namespace) -> int:
     audio_port = int(audio_socket.getsockname()[1])
     call_id = f"video-lab-{secrets.token_hex(10)}@{local_ip}"
     local_tag = secrets.token_hex(8)
-    remote_uri = f"sip:{args.target}@{args.host}:{args.port};transport=udp"
+    remote_uri = _remote_uri(args.target, args.host, args.port)
     invite_branch = f"z9hG4bK{secrets.token_hex(8)}"
     invite = sip.build_request(
         "INVITE",

@@ -203,6 +203,8 @@ class PhoneEndpoint:
         """Return the public SIP user without exposing the opaque endpoint id."""
         if self.kind is EndpointKind.SIP_ACCOUNT:
             return self.username or self.extension or self.name
+        if self.kind is EndpointKind.ESPHOME:
+            return self.extension or self.username or self.name
         return self.extension or self.name
 
     @property

@@ -19,6 +19,7 @@ class Peer:
     sip_port: int | None = None
     rtp_port: int | None = None
     extension: str = ""
+    sip_uri_user: str = ""
     conference_group: str = ""
     conference_ring: bool = False
     ring_group: str = ""

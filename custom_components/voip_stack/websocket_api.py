@@ -1456,6 +1456,7 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
             name=name,
             kind=EndpointKind.ESPHOME,
             extension=str(device.get("extension") or ""),
+            username=str(device.get("sip_uri_user") or ""),
             device_id=device_id,
             entity_ids=frozenset(
                 str(value)

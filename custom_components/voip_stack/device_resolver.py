@@ -159,6 +159,20 @@ class VoipDeviceResolver:
         raw = entry.data.get("device_name") or entry.title or ""
         return slugify_route_id(raw)
 
+    def sip_uri_user_for_host(self, host: str, device=None) -> str:
+        """Return the stable ESPHome node name used as the SIP URI user."""
+
+        entry = _esphome_entry_for_host(self.hass, host)
+        if entry is None and device is not None:
+            for entry_id in device.config_entries:
+                candidate = self.hass.config_entries.async_get_entry(entry_id)
+                if candidate is not None and candidate.domain == "esphome":
+                    entry = candidate
+                    break
+        if entry is None:
+            return ""
+        return str(entry.data.get("device_name") or "").strip()
+
     def _esphome_entry_via_device(self, host: str):
         device_registry = dr.async_get(self.hass)
         for device in device_registry.devices.values():
@@ -214,6 +228,7 @@ class VoipDeviceResolver:
                 )
                 continue
             route_id = self.route_id_for_host(endpoint["host"])
+            sip_uri_user = self.sip_uri_user_for_host(endpoint["host"], device)
             if not route_id:
                 route_id = self._route_id_from_device(device)
             if route_id:
@@ -231,6 +246,7 @@ class VoipDeviceResolver:
             out.append({
                 "device_id": device_id,
                 "name": endpoint["name"],
+                "sip_uri_user": sip_uri_user,
                 "route_id": route_id,
                 "host": endpoint["host"],
                 "sip_port": endpoint.get("sip_port"),
