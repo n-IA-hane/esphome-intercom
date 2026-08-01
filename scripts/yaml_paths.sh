@@ -450,6 +450,7 @@ cmd_check() {
   while IFS= read -r f; do
     local rel mode
     rel=$(realpath --relative-to="$root" "$f")
+    [[ -n "${ONLY_FILE:-}" && "$rel" != "$ONLY_FILE" && "$f" != "$ONLY_FILE" ]] && continue
     mode=$(detect_mode "$f")
     if [[ "$mode" == "mixed" ]]; then
       log "FAIL: $rel ($mode)"
