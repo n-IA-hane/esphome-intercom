@@ -65,7 +65,7 @@ async def to_code(config):
     # esp_aec wraps the ESP-SR v2 low-level afe_aec API directly so no-codec
     # devices do not need the full GMF pipeline or codec stack. Keep this as a
     # compatible minimum, not an exact pin: ESP-SR 1.x lacks esp_afe_aec.h.
-    add_idf_component(name="espressif/esp-sr", ref="^2.4.4")
+    add_idf_component(name="espressif/esp-sr", ref="2.4.7")
 
 
 @automation.register_action(
