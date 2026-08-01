@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "espressif/esp-dsp": {
+      "version": "1.8.0"
+    },
+    "espressif/esp-sr": {
+      "version": "2.4.7"
+    }
+  }
+}
