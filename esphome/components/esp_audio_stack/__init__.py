@@ -631,11 +631,11 @@ async def to_code(config):
     # Replace it only when a concrete upstream regression is documented.
     has_hardware_codec = CONF_CODEC in config
     has_output_codec = has_hardware_codec and CONF_OUTPUT in config[CONF_CODEC]
-    add_idf_component(name="esphome/esp-audio-libs", ref="*")
-    add_idf_component(name="espressif/esp_audio_effects", ref="*")
+    add_idf_component(name="esphome/esp-audio-libs", ref="2.4.7")
+    add_idf_component(name="espressif/esp_audio_effects", ref="1.0.8")
     if has_hardware_codec:
-        add_idf_component(name="espressif/esp_codec_dev", ref="*")
-        add_idf_component(name="espressif/gmf_io", ref="*")
+        add_idf_component(name="espressif/esp_codec_dev", ref="1.3.1")
+        add_idf_component(name="espressif/gmf_io", ref="1.1.2")
     await cg.register_component(var, config)
 
     # Define USE_ESP_AUDIO_STACK so other components know it's available
