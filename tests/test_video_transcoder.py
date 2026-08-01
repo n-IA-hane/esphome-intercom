@@ -771,6 +771,7 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
         size: str = "320x180",
         encoder_args: tuple[str, ...] = (),
         output_format=None,
+        gop: int = 10,
     ) -> None:
         output = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         output.setblocking(False)
@@ -818,7 +819,7 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
                 "-c:v", encoder,
                 *encoder_args,
                 "-pix_fmt", "yuv420p",
-                "-g", "10",
+                "-g", str(gop),
                 "-f", "rtp",
                 "-payload_type", str(video_format.payload_type),
                 f"rtp://127.0.0.1:{source_port}?pkt_size=1200",
@@ -944,6 +945,7 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
                 "baseline",
             ),
             output_format=jpeg_output,
+            gop=100,
         )
         await self._qualify_codec(
             video_format=jpeg_input,

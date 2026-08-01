@@ -411,7 +411,10 @@ class FfmpegVideoTranscoder:
                 "-loglevel", "warning",
                 "-nostdin",
                 "-protocol_whitelist", "file,pipe,udp,rtp",
-                "-fflags", "+nobuffer+discardcorrupt",
+                # SDP fixes the stream format, while a small probe is still
+                # needed for codec parameters. Keep those initial packets so
+                # the first H.264 GOP survives stream analysis.
+                "-fflags", "+discardcorrupt",
                 "-flags", "low_delay",
                 "-analyzeduration", "0",
                 # SDP already declares codec and payload type. A small probe
