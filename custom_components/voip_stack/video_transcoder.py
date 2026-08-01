@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass, field
 import logging
+import os
 import shutil
 import socket
 from typing import TYPE_CHECKING
@@ -29,6 +30,8 @@ _ACTIVE_TRANSCODER = "video_transcoder_active"
 _TRANSCODER_LOCK = "video_transcoder_lock"
 _MAX_FMTP_LENGTH = 1024
 _PROCESS_STOP_TIMEOUT = 2.0
+_FFMPEG_INPUT_BIND_TIMEOUT = 1.0
+_FFMPEG_INPUT_BIND_POLL_INTERVAL = 0.005
 _JPEG_NORMALIZE_TIMEOUT = 1.5
 _JPEG_NORMALIZE_MAX_BYTES = 1024 * 1024
 _JPEG_MULTIPART_INPUT_BOUNDARY = "voipstackin"
@@ -75,6 +78,64 @@ def _available_udp_port() -> int:
         return int(sock.getsockname()[1])
     finally:
         sock.close()
+
+
+async def _wait_for_udp_listener(
+    process: asyncio.subprocess.Process,
+    port: int,
+) -> None:
+    """Wait until FFmpeg owns its RTP input port or exits."""
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _FFMPEG_INPUT_BIND_TIMEOUT
+    while True:
+        if process.returncode is not None:
+            raise VideoTranscoderError(
+                f"FFmpeg exited before binding RTP input port: {process.returncode}"
+            )
+
+        if _process_owns_udp_port(process.pid, port):
+            return
+
+        if loop.time() >= deadline:
+            raise VideoTranscoderError("FFmpeg did not bind its RTP input port")
+        await asyncio.sleep(_FFMPEG_INPUT_BIND_POLL_INTERVAL)
+
+
+def _process_owns_udp_port(pid: int, port: int) -> bool:
+    """Return whether one Linux child process owns the requested UDP port."""
+
+    socket_inodes: set[str] = set()
+    try:
+        with os.scandir(f"/proc/{int(pid)}/fd") as entries:
+            for entry in entries:
+                try:
+                    target = os.readlink(entry.path)
+                except OSError:
+                    continue
+                if target.startswith("socket:[") and target.endswith("]"):
+                    socket_inodes.add(target[8:-1])
+    except OSError:
+        return False
+
+    for table_name in ("udp", "udp6"):
+        try:
+            with open(
+                f"/proc/{int(pid)}/net/{table_name}",
+                encoding="ascii",
+            ) as table:
+                next(table, None)
+                for row in table:
+                    fields = row.split()
+                    if (
+                        len(fields) > 9
+                        and fields[9] in socket_inodes
+                        and int(fields[1].rsplit(":", 1)[1], 16) == int(port)
+                    ):
+                        return True
+        except (OSError, ValueError):
+            continue
+    return False
 
 
 def _ffmpeg_binary(hass: HomeAssistant) -> str:
@@ -378,12 +439,15 @@ class FfmpegVideoTranscoder:
             process.stdin.write(_input_sdp(self.input_format, self.input_port).encode())
             await process.stdin.drain()
             process.stdin.close()
-            send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            send_socket.setblocking(False)
             stderr_task = asyncio.create_task(
                 self._drain_stderr(process),
                 name=f"voip-video-transcoder-stderr-{self.call_id}",
             )
+            # Do not release buffered RTP until FFmpeg owns the UDP input.
+            # Otherwise in-band H.264 SPS/PPS can be lost before the bind.
+            await _wait_for_udp_listener(process, self.input_port)
+            send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            send_socket.setblocking(False)
             async with self._lifecycle_lock:
                 if self._close_requested or self._released:
                     raise asyncio.CancelledError

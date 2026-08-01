@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 from pathlib import Path
 import shutil
 import socket
@@ -337,6 +338,68 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
             hass.data[video_transcoder.DOMAIN],
         )
 
+    async def test_udp_readiness_waits_for_listener(self) -> None:
+        process = types.SimpleNamespace(returncode=None, pid=123)
+        port = 45678
+        with (
+            mock.patch.object(
+                video_transcoder,
+                "_process_owns_udp_port",
+                side_effect=(False, True),
+            ) as owns_port,
+            mock.patch.object(
+                video_transcoder,
+                "_FFMPEG_INPUT_BIND_POLL_INTERVAL",
+                0,
+            ),
+        ):
+            await video_transcoder._wait_for_udp_listener(process, port)
+        self.assertEqual(owns_port.call_count, 2)
+
+    def test_udp_readiness_observes_only_process_owned_socket(self) -> None:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        listener.bind(("127.0.0.1", 0))
+        port = int(listener.getsockname()[1])
+        try:
+            self.assertTrue(
+                video_transcoder._process_owns_udp_port(os.getpid(), port)
+            )
+            self.assertFalse(
+                video_transcoder._process_owns_udp_port(os.getpid(), port + 1)
+            )
+        finally:
+            listener.close()
+
+    async def test_udp_readiness_fails_if_process_exits(self) -> None:
+        process = types.SimpleNamespace(returncode=1, pid=123)
+        with self.assertRaisesRegex(
+            video_transcoder.VideoTranscoderError,
+            "exited before binding",
+        ):
+            await video_transcoder._wait_for_udp_listener(
+                process,
+                video_transcoder._available_udp_port(),
+            )
+
+    async def test_udp_readiness_times_out_without_listener(self) -> None:
+        process = types.SimpleNamespace(returncode=None, pid=123)
+        with (
+            mock.patch.object(video_transcoder, "_FFMPEG_INPUT_BIND_TIMEOUT", 0.01),
+            mock.patch.object(
+                video_transcoder,
+                "_process_owns_udp_port",
+                return_value=False,
+            ),
+            self.assertRaisesRegex(
+                video_transcoder.VideoTranscoderError,
+                "did not bind",
+            ),
+        ):
+            await video_transcoder._wait_for_udp_listener(
+                process,
+                video_transcoder._available_udp_port(),
+            )
+
     async def test_cleanup_race_still_releases_the_transcoder_slot(self) -> None:
         hass = _Hass()
         transcoder = video_transcoder.FfmpegVideoTranscoder(
@@ -501,6 +564,11 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch.object(video_transcoder, "_ffmpeg_binary", return_value="ffmpeg"),
+            mock.patch.object(
+                video_transcoder,
+                "_wait_for_udp_listener",
+                new=mock.AsyncMock(),
+            ),
             mock.patch.object(
                 video_transcoder.asyncio,
                 "create_subprocess_exec",
