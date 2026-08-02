@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 from pathlib import Path
 import socket
 import subprocess
 import sys
+import types
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +43,23 @@ def test_audio_offer_can_express_hold_and_resume_directions() -> None:
     assert b"a=sendonly\r\n" in held
     assert b"a=sendrecv\r\n" not in held
     assert b"a=sendrecv\r\n" in resumed
+
+
+def test_video_removal_offer_keeps_rejected_media_without_rtcp_port() -> None:
+    peer = _load_tool()
+
+    offer = peer._offer(
+        local_ip="127.0.0.1",
+        audio_port=40000,
+        video_port=0,
+        codec="vp8",
+        direction="inactive",
+        video_profile="RTP/AVP",
+    )
+
+    assert b"m=video 0 RTP/AVP 103\r\n" in offer
+    assert b"a=inactive\r\n" in offer
+    assert b"a=rtcp:1\r\n" not in offer
 
 
 def test_dahua_profile_offer_uses_vendor_pcm_and_keeps_video() -> None:
@@ -173,6 +192,79 @@ def test_media_peer_acks_non_successful_invite_finals() -> None:
     assert '"ACK"' in failure
     assert "branch=invite_branch" in failure
     assert 'result["failure_ack_sent"] = True' in failure
+
+
+def test_media_peer_cleans_up_after_rejected_initial_invite(
+    tmp_path: Path,
+) -> None:
+    peer = _load_tool()
+
+    async def run_rejection() -> tuple[str, dict]:
+        loop = asyncio.get_running_loop()
+        server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        server.setblocking(False)
+        server.bind(("127.0.0.1", 0))
+        output = tmp_path / "rejected.json"
+        args = types.SimpleNamespace(
+            host="127.0.0.1",
+            port=server.getsockname()[1],
+            target="rejected",
+            user="caller",
+            display_name="Rejected caller",
+            expect_connected_name="",
+            user_agent="VoIP-Stack-Test",
+            local_ip="127.0.0.1",
+            audio_codec="pcma",
+            codec="audio",
+            direction="sendrecv",
+            video_profile="RTP/AVP",
+            answer_timeout=1.0,
+            allow_audio_only=False,
+            add_video_after=-1,
+            expect_reinvite_status=0,
+            remove_video_after=-1,
+            readd_video_after=-1,
+            audio_hold_after=-1,
+            audio_hold_seconds=2,
+            duration=1.0,
+            audio_file="",
+            video_file="",
+            video_rx_file="",
+            out=str(output),
+        )
+
+        async def reject() -> str:
+            raw, address = await loop.sock_recvfrom(server, 65535)
+            request = peer.sip.parse_message(raw)
+            await loop.sock_sendto(
+                server,
+                peer.sip.build_response(
+                    403,
+                    "Forbidden",
+                    peer._response_headers(request),
+                ),
+                address,
+            )
+            ack, _address = await loop.sock_recvfrom(server, 65535)
+            return peer.sip.parse_message(ack).method or ""
+
+        try:
+            server_task = asyncio.create_task(reject())
+            try:
+                await peer.async_main(args)
+            except RuntimeError as err:
+                assert "403 Forbidden" in str(err)
+            else:
+                raise AssertionError("rejected INVITE unexpectedly succeeded")
+            return await server_task, json.loads(output.read_text())
+        finally:
+            server.close()
+
+    ack_method, result = asyncio.run(run_rejection())
+
+    assert ack_method == "ACK"
+    assert result["failure_ack_sent"] is True
+    assert result["error"].startswith("RuntimeError: SIP call failed")
 
 
 def test_media_peer_completes_cancel_transaction_and_acks_invite_final() -> None:

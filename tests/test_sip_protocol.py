@@ -1549,6 +1549,57 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         methods = [sip.parse_message(raw).method for raw, _addr in sent]
         self.assertIn("ACK", methods)
 
+    async def test_local_reinvite_removes_video_with_port_zero(self) -> None:
+        client, current, sent, negotiated = self._confirmed_audio_client()
+        jpeg = sdp.DEFAULT_VIDEO_FORMATS[3]
+        current.video_format = jpeg
+        current.local_video_format = jpeg
+        current.local_video_rtp_port = 43000
+        current.local_video_direction = "sendrecv"
+        current.local_sdp_body = sdp.build_offer_directional(
+            "127.0.0.1",
+            "127.0.0.1",
+            41000,
+            [negotiated.audio_format],
+            [negotiated.audio_format],
+            video_port=43000,
+            video_formats=(jpeg,),
+        )
+        client.video_formats = (jpeg,)
+        client.video_format = jpeg
+        client.video_direction = "sendrecv"
+        client.local_video_rtp_port = 43000
+
+        prepared = asyncio.create_task(
+            client.async_prepare_video_reinvite(
+                local_video_rtp_port=0,
+                video_formats=(jpeg,),
+                video_direction="inactive",
+            )
+        )
+        request = await self._wait_for_sent_request(sent, "INVITE")
+        self.assertIn("m=video 0 RTP/AVP 26", request.body.decode())
+        answer = sdp.build_answer_directional(
+            "127.0.0.2",
+            "127.0.0.2",
+            42000,
+            negotiated,
+            negotiated,
+            remote_sdp=request.body,
+        )
+        response = self._response_to_request(request, 200, "OK", answer)
+        client.queue.put_nowait((response, ("127.0.0.2", 5060)))
+
+        candidate = await asyncio.wait_for(prepared, timeout=0.2)
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertIsNone(candidate.video_format)
+        self.assertTrue(client.commit_prepared_reinvite(current, candidate))
+        self.assertEqual(client.video_formats, ())
+        self.assertIsNone(client.video_format)
+        self.assertEqual(client.video_direction, "inactive")
+        self.assertEqual(client.local_video_rtp_port, 0)
+
     async def test_local_reinvite_rejection_preserves_audio_dialog(self) -> None:
         client, current, sent, _negotiated = self._confirmed_audio_client()
         watcher = asyncio.create_task(

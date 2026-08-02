@@ -283,7 +283,9 @@ def _offer(
                 f"a=rtcp-fb:{payload_type} ccm fir",
             )
         )
-    lines.extend((f"a=rtcp:{video_port + 1}", f"a={direction}"))
+    if video_port > 0:
+        lines.append(f"a=rtcp:{video_port + 1}")
+    lines.append(f"a={direction}")
     return ("\r\n".join(lines) + "\r\n").encode()
 
 
@@ -757,8 +759,14 @@ async def _start_video_receiver(
 
 async def async_main(args: argparse.Namespace) -> int:
     add_video_mid_dialog = args.add_video_after >= 0
-    if add_video_mid_dialog and args.codec == "audio":
-        raise ValueError("--add-video-after requires a video codec")
+    remove_video_mid_dialog = args.remove_video_after >= 0
+    readd_video_mid_dialog = args.readd_video_after >= 0
+    if (
+        add_video_mid_dialog
+        or remove_video_mid_dialog
+        or readd_video_mid_dialog
+    ) and args.codec == "audio":
+        raise ValueError("video re-INVITE qualification requires a video codec")
     initial_codec = "audio" if add_video_mid_dialog else args.codec
     audio_profile = AUDIO_PROFILES[args.audio_codec]
     peer_user_agent = (
@@ -815,6 +823,8 @@ async def async_main(args: argparse.Namespace) -> int:
         "local_display_name": args.display_name,
         "initial_codec": initial_codec,
         "add_video_after": args.add_video_after,
+        "remove_video_after": args.remove_video_after,
+        "readd_video_after": args.readd_video_after,
         "audio_hold_after": args.audio_hold_after,
         "audio_hold_seconds": args.audio_hold_seconds,
         "video_profile": args.video_profile,
@@ -847,12 +857,14 @@ async def async_main(args: argparse.Namespace) -> int:
         "connected_identity_update_received": False,
         "connected_identity_name": "",
         "connected_identity_uri": "",
+        "video_transitions": [],
     }
     video_process = None
     video_receiver_process = None
     jpeg_recorder = None
     audio_process = None
     tasks: list[asyncio.Task] = []
+    video_tasks: list[asyncio.Task] = []
     stopped = asyncio.Event()
     answered = False
     remote_bye = False
@@ -861,7 +873,35 @@ async def async_main(args: argparse.Namespace) -> int:
     next_cseq = 2
     started = time.monotonic()
     audio_stderr: list[str] = []
+    video_stderr: list[str] = []
     video_receiver_stderr: list[str] = []
+
+    async def _stop_negotiated_video() -> None:
+        nonlocal video_process, video_receiver_process, jpeg_recorder
+        for task in video_tasks:
+            task.cancel()
+        await asyncio.gather(*video_tasks, return_exceptions=True)
+        video_tasks.clear()
+        sender = video_process
+        receiver = video_receiver_process
+        await _stop_process(sender)
+        if sender is not None:
+            result["video_sender_returncode"] = sender.returncode
+        video_process = None
+        await _stop_process(receiver)
+        if receiver is not None:
+            result["video_receiver_returncode"] = receiver.returncode
+            result["video_rx_file"] = args.video_rx_file
+            if video_receiver_stderr:
+                result["video_receiver_stderr_tail"] = list(
+                    video_receiver_stderr
+                )
+        video_receiver_process = None
+        if jpeg_recorder is not None:
+            jpeg_recorder.close(result)
+            jpeg_recorder = None
+            result["video_rx_file"] = args.video_rx_file
+
     try:
         await loop.sock_sendto(sip_socket, invite, (args.host, args.port))
         response = None
@@ -1028,12 +1068,12 @@ async def async_main(args: argparse.Namespace) -> int:
             asyncio.create_task(_receive_audio(audio_socket, stopped, result)),
             asyncio.create_task(_drain_stderr(audio_process, audio_stderr)),
         ]
-        video_stderr: list[str] = []
-
         async def _start_negotiated_video(parsed: dict | None) -> None:
             nonlocal video_process, video_receiver_process, jpeg_recorder
             if parsed is None or video_socket is None or rtcp_socket is None:
                 return
+            if video_tasks or video_process is not None:
+                raise RuntimeError("video media is already active")
             capture_destination = None
             if args.video_rx_file:
                 if args.codec == "jpeg":
@@ -1056,7 +1096,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     await video_receiver_process.stdin.drain()
                     video_receiver_process.stdin.close()
                     capture_destination = (local_ip, capture_port)
-                    tasks.append(
+                    video_tasks.append(
                         asyncio.create_task(
                             _drain_stderr(
                                 video_receiver_process,
@@ -1064,10 +1104,10 @@ async def async_main(args: argparse.Namespace) -> int:
                             )
                         )
                     )
-            tasks.append(
+            video_tasks.append(
                 asyncio.create_task(_receive_rtcp(rtcp_socket, stopped, result))
             )
-            tasks.append(
+            video_tasks.append(
                 asyncio.create_task(
                     _relay_video(
                         video_socket,
@@ -1090,7 +1130,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     duration=args.duration,
                     video_file=args.video_file,
                 )
-                tasks.append(
+                video_tasks.append(
                     asyncio.create_task(
                         _drain_stderr(video_process, video_stderr)
                     )
@@ -1099,15 +1139,20 @@ async def async_main(args: argparse.Namespace) -> int:
         await _start_negotiated_video(parsed_video)
 
         call_deadline = loop.time() + args.duration
-        reinvite_at = loop.time() + max(0.0, args.add_video_after)
+        cycle_started = loop.time()
+        reinvite_at = cycle_started + max(0.0, args.add_video_after)
+        remove_video_at = cycle_started + max(0.0, args.remove_video_after)
+        readd_video_at = cycle_started + max(0.0, args.readd_video_after)
         reinvite_done = not add_video_mid_dialog
+        remove_video_done = not remove_video_mid_dialog
+        readd_video_done = not readd_video_mid_dialog
         hold_enabled = args.audio_hold_after >= 0
         hold_at = loop.time() + max(0.0, args.audio_hold_after)
         resume_at = float("inf")
         hold_done = not hold_enabled
         resume_done = not hold_enabled
 
-        async def _add_video() -> None:
+        async def _change_video(active: bool, prefix: str) -> None:
             nonlocal next_cseq, remote_bye
             branch = f"z9hG4bK{secrets.token_hex(8)}"
             request = sip.build_request(
@@ -1131,9 +1176,9 @@ async def async_main(args: argparse.Namespace) -> int:
                 _offer(
                     local_ip=local_ip,
                     audio_port=audio_port,
-                    video_port=video_port,
+                    video_port=video_port if active else 0,
                     codec=args.codec,
-                    direction=args.direction,
+                    direction=args.direction if active else "inactive",
                     video_profile=args.video_profile,
                     audio_codec=args.audio_codec,
                 ),
@@ -1167,12 +1212,15 @@ async def async_main(args: argparse.Namespace) -> int:
                         continue
                     status = int(message.status_code)
                     statuses.append(status)
-                    print(f"re-INVITE SIP {status} {message.reason}", flush=True)
+                    print(
+                        f"{prefix} re-INVITE SIP {status} {message.reason}",
+                        flush=True,
+                    )
                     if status >= 200:
                         final_response = message
-            result["reinvite_statuses"] = statuses
-            result["reinvite_status"] = int(final_response.status_code)
-            result["reinvite_answer_sdp"] = final_response.body.decode(
+            result[f"{prefix}_statuses"] = statuses
+            result[f"{prefix}_status"] = int(final_response.status_code)
+            result[f"{prefix}_answer_sdp"] = final_response.body.decode(
                 errors="replace"
             )
             ack = sip.build_request(
@@ -1195,33 +1243,63 @@ async def async_main(args: argparse.Namespace) -> int:
             )
             await loop.sock_sendto(sip_socket, ack, (args.host, args.port))
             next_cseq += 1
-            expected = int(args.expect_reinvite_status or 0)
+            expected = (
+                int(args.expect_reinvite_status or 0) if active else 200
+            )
             if expected and int(final_response.status_code) != expected:
                 raise RuntimeError(
                     "unexpected re-INVITE response: "
                     f"{final_response.status_code}, expected {expected}"
                 )
             if int(final_response.status_code) >= 300:
-                result["reinvite_negotiated_video"] = ""
-                result["reinvite_video_direction"] = "inactive"
-                result["reinvite_remote_video_rtp"] = 0
+                result[f"{prefix}_negotiated_video"] = ""
+                result[f"{prefix}_video_direction"] = "inactive"
+                result[f"{prefix}_remote_video_rtp"] = 0
                 return
             formats = sdp.offered_video_formats(final_response.body)
             parsed = sdp.parse_video_sdp(final_response.body) if formats else None
+            if not active:
+                if formats or parsed is not None:
+                    raise RuntimeError(
+                        "HA accepted video removal with an active video answer"
+                    )
+                result[f"{prefix}_negotiated_video"] = ""
+                result[f"{prefix}_video_direction"] = "inactive"
+                result[f"{prefix}_remote_video_rtp"] = 0
+                await _stop_negotiated_video()
+                result["video_transitions"].append(
+                    {
+                        "name": prefix,
+                        "active": False,
+                        "elapsed_s": round(time.monotonic() - started, 3),
+                        "audio_tx_packets": result["audio_tx_packets"],
+                        "audio_rx_packets": result["audio_rx_packets"],
+                    }
+                )
+                return
             if not formats or parsed is None:
-                result["reinvite_negotiated_video"] = ""
-                result["reinvite_video_direction"] = "inactive"
-                result["reinvite_remote_video_rtp"] = 0
+                result[f"{prefix}_negotiated_video"] = ""
+                result[f"{prefix}_video_direction"] = "inactive"
+                result[f"{prefix}_remote_video_rtp"] = 0
                 if not args.allow_audio_only:
                     raise RuntimeError(
                         "HA accepted the re-INVITE without active video"
                     )
                 return
             selected = formats[0]
-            result["reinvite_negotiated_video"] = selected.wire_token()
-            result["reinvite_video_direction"] = selected.direction
-            result["reinvite_remote_video_rtp"] = int(parsed["media_port"])
+            result[f"{prefix}_negotiated_video"] = selected.wire_token()
+            result[f"{prefix}_video_direction"] = selected.direction
+            result[f"{prefix}_remote_video_rtp"] = int(parsed["media_port"])
             await _start_negotiated_video(parsed)
+            result["video_transitions"].append(
+                {
+                    "name": prefix,
+                    "active": True,
+                    "elapsed_s": round(time.monotonic() - started, 3),
+                    "audio_tx_packets": result["audio_tx_packets"],
+                    "audio_rx_packets": result["audio_rx_packets"],
+                }
+            )
 
         async def _change_audio_direction(direction: str, prefix: str) -> None:
             nonlocal next_cseq, remote_bye
@@ -1321,8 +1399,18 @@ async def async_main(args: argparse.Namespace) -> int:
 
         while loop.time() < call_deadline:
             if not reinvite_done and loop.time() >= reinvite_at:
-                await _add_video()
+                await _change_video(True, "reinvite")
                 reinvite_done = True
+                if remote_bye:
+                    break
+            if not remove_video_done and loop.time() >= remove_video_at:
+                await _change_video(False, "video_remove")
+                remove_video_done = True
+                if remote_bye:
+                    break
+            if not readd_video_done and loop.time() >= readd_video_at:
+                await _change_video(True, "video_readd")
+                readd_video_done = True
                 if remote_bye:
                     break
             if not hold_done and loop.time() >= hold_at:
@@ -1426,6 +1514,10 @@ async def async_main(args: argparse.Namespace) -> int:
                 )
         if not reinvite_done:
             raise RuntimeError("call ended before the video re-INVITE was sent")
+        if not remove_video_done:
+            raise RuntimeError("call ended before video removal was sent")
+        if not readd_video_done:
+            raise RuntimeError("call ended before video was added again")
         if not hold_done or not resume_done:
             raise RuntimeError("call ended before the audio hold/resume cycle completed")
         if result["audio_tx_packets"] <= 0 or result["audio_rx_packets"] <= 0:
@@ -1490,21 +1582,10 @@ async def async_main(args: argparse.Namespace) -> int:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        await _stop_process(video_process)
-        if video_process is not None:
-            result["video_sender_returncode"] = video_process.returncode
+        await _stop_negotiated_video()
         await _stop_process(audio_process)
         if audio_process is not None:
             result["audio_sender_returncode"] = audio_process.returncode
-        await _stop_process(video_receiver_process)
-        if video_receiver_process is not None:
-            result["video_receiver_returncode"] = video_receiver_process.returncode
-            result["video_rx_file"] = args.video_rx_file
-            if video_receiver_stderr:
-                result["video_receiver_stderr_tail"] = video_receiver_stderr
-        if jpeg_recorder is not None:
-            jpeg_recorder.close(result)
-            result["video_rx_file"] = args.video_rx_file
         if audio_stderr:
             result["audio_sender_stderr_tail"] = list(audio_stderr)
         if "video_stderr" in locals() and video_stderr:
@@ -1592,6 +1673,23 @@ def main() -> int:
         help="require this final response to the video-adding re-INVITE",
     )
     parser.add_argument(
+        "--remove-video-after",
+        type=float,
+        default=-1,
+        help=(
+            "remove video with an m=video 0 in-dialog re-INVITE after this "
+            "many seconds"
+        ),
+    )
+    parser.add_argument(
+        "--readd-video-after",
+        type=float,
+        default=-1,
+        help=(
+            "add video again after a prior --remove-video-after transition"
+        ),
+    )
+    parser.add_argument(
         "--audio-hold-after",
         type=float,
         default=-1,
@@ -1616,6 +1714,28 @@ def main() -> int:
     )
     parser.add_argument("--out", default="/tmp/sip_video_peer.json")
     args = parser.parse_args()
+    transition_times = [
+        value
+        for value in (
+            args.add_video_after,
+            args.remove_video_after,
+            args.readd_video_after,
+        )
+        if value >= 0
+    ]
+    if transition_times != sorted(transition_times) or len(
+        transition_times
+    ) != len(set(transition_times)):
+        parser.error("video transition times must be strictly increasing")
+    if any(value >= args.duration for value in transition_times):
+        parser.error("video transitions must occur before --duration")
+    if args.readd_video_after >= 0 and args.remove_video_after < 0:
+        parser.error("--readd-video-after requires --remove-video-after")
+    if args.remove_video_after >= 0 and args.add_video_after >= 0:
+        if args.expect_reinvite_status not in {0, 200}:
+            parser.error("a video cycle requires a successful add re-INVITE")
+    if args.video_rx_file and args.readd_video_after >= 0:
+        parser.error("video capture is not supported across a remove/re-add cycle")
     if args.audio_hold_after >= 0 and (
         args.codec != "audio" or args.add_video_after >= 0
     ):

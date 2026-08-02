@@ -2143,7 +2143,7 @@ class SipCallClient:
                 if video_send is not None
                 else None
             )
-            if offered_video_formats and (
+            if local_video_rtp_port > 0 and offered_video_formats and (
                 remote_video is None or int(remote_video["media_port"]) <= 0
             ):
                 return None
@@ -2226,18 +2226,21 @@ class SipCallClient:
         video_direction: str = "sendrecv",
         timeout: float = 8.0,
     ) -> SipDialog | None:
-        """Add video with one serialized in-dialog offer, without publishing it."""
+        """Change video with one serialized in-dialog offer, without publishing it."""
 
         async with self._local_offer_lock:
             current = self.dialog
             offered_video = tuple(video_formats)
+            local_video_port = int(local_video_rtp_port)
+            removing_video = local_video_port == 0
             if (
                 current is None
                 or self._prepared_reinvite is not None
                 or self._closing
                 or self._closed
                 or not offered_video
-                or int(local_video_rtp_port) <= 0
+                or local_video_port < 0
+                or (removing_video and current.video_format is None)
             ):
                 return None
             try:
@@ -2251,10 +2254,12 @@ class SipCallClient:
                     self.local_rtp_port,
                     [current.send_format.audio_format],
                     [current.recv_format.audio_format],
-                    video_port=int(local_video_rtp_port),
+                    video_port=local_video_port,
                     video_formats=offered_video,
                     audio_direction=current.local_audio_direction,
-                    video_direction=video_direction,
+                    video_direction=(
+                        "inactive" if removing_video else video_direction
+                    ),
                 )
                 offer = sdp.rewrite_sdp_origin(
                     offer, session_id, session_version
@@ -2397,9 +2402,11 @@ class SipCallClient:
                             current,
                             offer,
                             message,
-                            local_video_rtp_port=int(local_video_rtp_port),
+                            local_video_rtp_port=local_video_port,
                             offered_video_formats=offered_video,
-                            video_direction=video_direction,
+                            video_direction=(
+                                "inactive" if removing_video else video_direction
+                            ),
                             session_version=session_version,
                         )
                         remote_tag = sip.extract_tag(message.header("To"))
@@ -2432,8 +2439,12 @@ class SipCallClient:
                         self._prepared_reinvite = (
                             current,
                             candidate,
-                            offered_video,
-                            video_direction,
+                            offered_video if candidate.video_format is not None else (),
+                            (
+                                video_direction
+                                if candidate.video_format is not None
+                                else "inactive"
+                            ),
                         )
                         return candidate
                     self._send_invite_error_ack(

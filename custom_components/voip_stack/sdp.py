@@ -1365,7 +1365,7 @@ def build_offer_directional(
     offered_video = tuple(
         video_formats or (() if video_format is None else (video_format,))
     )
-    if offered_video and int(video_port) > 0:
+    if offered_video:
         lines.extend(
             _video_media_lines_many(
                 int(video_port), offered_video, direction=video_direction
@@ -2486,7 +2486,8 @@ def _video_media_lines(
             lines.append(f"a=rtcp-fb:{payload_type} {feedback}")
     if selected.max_framerate is not None:
         lines.append(f"a=framerate:{selected.max_framerate:g}")
-    lines.append(f"a=rtcp:{int(media_port) + 1}")
+    if int(media_port) > 0:
+        lines.append(f"a=rtcp:{int(media_port) + 1}")
     lines.append(f"a={direction}")
     return lines
 
@@ -2530,7 +2531,8 @@ def _video_media_lines_many(
     ]
     if frame_limits:
         lines.append(f"a=framerate:{min(frame_limits):g}")
-    lines.append(f"a=rtcp:{int(media_port) + 1}")
+    if int(media_port) > 0:
+        lines.append(f"a=rtcp:{int(media_port) + 1}")
     lines.append(f"a={direction}")
     return lines
 
