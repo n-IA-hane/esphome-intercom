@@ -1266,6 +1266,9 @@ class VoipStackEngine extends EventTarget {
       return;
     }
     try {
+      // Preserve the capture preference when a re-INVITE rebuilds the worklet.
+      // Falling back to an implicit default here would make one call change
+      // behavior after an otherwise unrelated media renegotiation.
       await this._setupAudio(
         {
           audio_mode: this._audioMode,

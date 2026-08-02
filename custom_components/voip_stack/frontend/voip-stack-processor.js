@@ -1,10 +1,9 @@
 const PCM_FORMATS = Object.freeze(["s16le", "s24le", "s24le_in_s32", "s32le"]);
 const FRAME_MS = Object.freeze([10, 16, 20, 32]);
 const TX_BUFFER_POOL = 4;
-// 4th-order Butterworth (2 cascaded biquads) Q values -- used to band-limit
-// the mic signal below the target rate's Nyquist before the linear-
-// interpolation decimation below, which otherwise aliases high-frequency
-// content back into the passband as audible noise.
+// Fourth-order Butterworth (two cascaded biquads) Q values. Keep this filter
+// before decimation: sampling first irreversibly folds microphone energy above
+// the destination Nyquist frequency back into the audible passband.
 const ANTI_ALIAS_Q = Object.freeze([0.54119610, 1.30656296]);
 
 class Biquad {
@@ -74,6 +73,9 @@ class RecorderProcessor extends AudioWorkletProcessor {
 
     this._ratio = sampleRate / this._format.sampleRate;
     const antiAliasEnabled = options?.processorOptions?.antiAlias !== false;
+    // The disabled path exists for comparison and legacy troubleshooting. The
+    // safe default is filtered downsampling, while equal-rate and upsampled
+    // paths deliberately allocate no filter stages and pay no filtering cost.
     this._antiAliasStages =
       this._ratio > 1 && antiAliasEnabled
         ? ANTI_ALIAS_Q.map((q) => new Biquad(sampleRate, 0.9 * (this._format.sampleRate / 2), q))
