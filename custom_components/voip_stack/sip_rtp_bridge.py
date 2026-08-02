@@ -225,6 +225,22 @@ class SipRtpRelay:
             },
         }
 
+    @staticmethod
+    def _media_codec_contract(left: RtpPeer, right: RtpPeer) -> tuple[Any, ...]:
+        return tuple(
+            (
+                peer.inbound_rtp_format,
+                peer.outbound_rtp_format,
+                peer.dtmf_payload_type,
+                peer.dtmf_clock_rate,
+                peer.dtmf_events,
+                peer.outbound_dtmf_payload_type,
+                peer.outbound_dtmf_clock_rate,
+                peer.outbound_dtmf_events,
+            )
+            for peer in (left, right)
+        )
+
     def _apply_media_state(
         self,
         left: RtpPeer,
@@ -261,7 +277,12 @@ class SipRtpRelay:
         previous = self.left if side == "left" else self.right
         left = peer if side == "left" else self.left
         right = peer if side == "right" else self.right
-        state = self._build_media_state(left, right)
+        prepared_contract = self._media_codec_contract(left, right)
+        state = (
+            self._build_media_state(left, right)
+            if prepared_contract != self._media_codec_contract(self.left, self.right)
+            else None
+        )
 
         def _commit() -> None:
             current = self.left if side == "left" else self.right
@@ -269,11 +290,6 @@ class SipRtpRelay:
                 raise RuntimeError("stale RTP relay reconfiguration")
             commit_left = peer if side == "left" else self.left
             commit_right = peer if side == "right" else self.right
-            commit_state = (
-                state
-                if commit_left is left and commit_right is right
-                else self._build_media_state(commit_left, commit_right)
-            )
             # Preserve the sender identity at commit time so packets forwarded
             # while the SIP response was in flight cannot rewind the RTP clock.
             peer.sequence = current.sequence
@@ -283,8 +299,19 @@ class SipRtpRelay:
             peer.dtmf_sequence = current.dtmf_sequence
             peer.dtmf_timestamp = current.dtmf_timestamp
             peer.dtmf_ssrc = current.dtmf_ssrc
-            self._apply_media_state(commit_left, commit_right, commit_state)
-            if side in self._capture_buffers:
+            if prepared_contract == self._media_codec_contract(self.left, self.right):
+                self.left = commit_left
+                self.right = commit_right
+            else:
+                commit_state = (
+                    state
+                    if state is not None
+                    and commit_left is left
+                    and commit_right is right
+                    else self._build_media_state(commit_left, commit_right)
+                )
+                self._apply_media_state(commit_left, commit_right, commit_state)
+            if side in self._capture_buffers and peer.audio_format != previous.audio_format:
                 self._capture_buffers[side].clear()
                 self._capture_frames[side] = 0
                 self._capture_formats[side] = peer.audio_format

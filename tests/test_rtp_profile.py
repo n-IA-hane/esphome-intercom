@@ -316,6 +316,51 @@ class RtpProfileTest(unittest.TestCase):
         self.assertFalse(updated.can_send)
         self.assertTrue(updated.can_receive)
 
+    def test_relay_preserves_codec_state_for_unchanged_audio_contract(self) -> None:
+        fmt = audio_format.AudioFormat(16000, "s16le", 1, 16)
+        left = sip_rtp_bridge.RtpPeer("192.0.2.10", 40000, 96, fmt)
+        right = sip_rtp_bridge.RtpPeer("192.0.2.20", 41000, 96, fmt)
+        relay = sip_rtp_bridge.SipRtpRelay(
+            left=left,
+            right=right,
+            left_port=42000,
+            right_port=42002,
+        )
+        codec_state = (
+            relay.left_to_right,
+            relay.right_to_left,
+            relay.left_decoder,
+            relay.right_decoder,
+            relay.left_encoder,
+            relay.right_encoder,
+        )
+        pacing_generation = relay._audio_pacing_generation  # noqa: SLF001
+        updated = sip_rtp_bridge.RtpPeer(
+            "198.51.100.10",
+            43000,
+            96,
+            fmt,
+            can_send=False,
+        )
+
+        relay.reconfigure_peer("left", updated)
+
+        self.assertIs(relay.left, updated)
+        self.assertEqual((updated.host, updated.port), ("198.51.100.10", 43000))
+        self.assertFalse(updated.can_send)
+        self.assertEqual(
+            codec_state,
+            (
+                relay.left_to_right,
+                relay.right_to_left,
+                relay.left_decoder,
+                relay.right_decoder,
+                relay.left_encoder,
+                relay.right_encoder,
+            ),
+        )
+        self.assertEqual(relay._audio_pacing_generation, pacing_generation)  # noqa: SLF001
+
     def test_opposite_relay_reconfigurations_do_not_overwrite_each_other(self) -> None:
         fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
         left = sip_rtp_bridge.RtpPeer("192.0.2.10", 40000, 96, fmt)
