@@ -4,8 +4,8 @@
 # decoder/source symbols and buffers are absent from this firmware.
 
 substitutions:
-  # Encode a centered square crop from the native 800x800 sensor frame. This
-  # keeps the camera aspect and reduces shared PPA/PSRAM traffic versus VGA.
+  # Scale the full native 800x800 sensor field to the 400x400 encoder input.
+  # PPA performs the conversion without changing the square camera aspect.
   p4_video_width: "400"
   p4_video_height: "400"
   # Advertise the independently measured software-decoder envelope for the

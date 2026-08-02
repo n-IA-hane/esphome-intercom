@@ -143,10 +143,9 @@ class SipEndpointRuntime:
     """Own endpoint components and every logical call generation.
 
     Constructing this object is intentionally side-effect free: it does not
-    open UDP/TCP sockets or start a trunk. During migration it can therefore
-    live beside the legacy endpoint runtime without creating two PBXs. The
-    eventual cutover hands the already-created endpoint components to this
-    owner and calls :meth:`activate` exactly once.
+    open UDP/TCP sockets or start a trunk. Endpoint setup hands the complete
+    component set to this sole lifecycle owner, then calls :meth:`activate`
+    exactly once.
     """
 
     _COMPONENT_STOP_ORDER = (
