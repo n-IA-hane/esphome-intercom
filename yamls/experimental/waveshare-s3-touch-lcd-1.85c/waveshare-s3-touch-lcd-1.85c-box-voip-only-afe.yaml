@@ -528,7 +528,7 @@ script:
   - id: draw_call_screen
     then:
       - lambda: |-
-          auto s = id(phone).get_state_str();
+          const std::string s = id(phone).get_state_str();
           std::string status_text = "IDLE";
           uint32_t status_color = 0x00FF00;
           uint32_t btn_color = 0x00AA00;
