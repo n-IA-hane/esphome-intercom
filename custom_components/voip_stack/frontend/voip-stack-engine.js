@@ -106,6 +106,7 @@ class VoipStackEngine extends EventTarget {
     this._endpointId = DEFAULT_SOFTPHONE_ENDPOINT_ID;
     this._callId = "";
     this._audioMode = "full_duplex";
+    this._microphoneAntiAlias = true;
     this._audioDirection = "sendrecv";
     this._txFormat = null;
     this._rxFormat = null;
@@ -1121,6 +1122,7 @@ class VoipStackEngine extends EventTarget {
     const audioMode = this._normaliseAudioMode(deviceInfo?.audio_mode);
     const audioDirection = this._normaliseAudioDirection(negotiated?.audio_direction);
     const formats = this._resolveSessionFormats(negotiated);
+    const microphoneAntiAlias = deviceInfo?.microphone_anti_alias !== false;
     const { capture, playback } = this._desiredAudioPaths(audioMode, audioDirection);
     const setupGeneration = ++this._audioSetupGeneration;
     const expectedCallId = this._callId;
@@ -1165,7 +1167,10 @@ class VoipStackEngine extends EventTarget {
         assertCurrent();
         resources.source = resources.audioContext.createMediaStreamSource(resources.mediaStream);
         resources.captureNode = new AudioWorkletNode(resources.audioContext, "voip-stack-processor", {
-          processorOptions: { format: formats.tx },
+          processorOptions: {
+            format: formats.tx,
+            antiAlias: microphoneAntiAlias,
+          },
         });
         resources.captureNode.port.onmessage = (event) => {
           if (
@@ -1207,6 +1212,7 @@ class VoipStackEngine extends EventTarget {
       assertCurrent();
       const previous = this._takeAudioResources();
       this._audioMode = audioMode;
+      this._microphoneAntiAlias = microphoneAntiAlias;
       this._audioDirection = audioDirection;
       this._txFormat = formats.tx;
       this._rxFormat = formats.rx;
@@ -1261,7 +1267,10 @@ class VoipStackEngine extends EventTarget {
     }
     try {
       await this._setupAudio(
-        { audio_mode: this._audioMode },
+        {
+          audio_mode: this._audioMode,
+          microphone_anti_alias: this._microphoneAntiAlias,
+        },
         { ...negotiated, audio_direction: direction },
       );
     } catch (err) {

@@ -151,6 +151,7 @@ class VoipStackCard extends HTMLElement {
     this._autoAnswerPermissionPending = false;
     this._autoAnswerPermissionGeneration = 0;
     this._ringtoneEnabled = false;
+    this._micAntiAliasEnabled = true;
     this._settingsOpen = false;
     this._ringtoneRequestKey = `voip-stack-card-${Math.random().toString(36).slice(2)}`;
     this._deepLinkAnswerConsumed = false;
@@ -583,6 +584,7 @@ class VoipStackCard extends HTMLElement {
         device_id: sessionDeviceId,
         endpoint_id: snapshot.endpoint_id || this._getSoftphoneEndpointId(),
         audio_mode: snapshot.audio_mode || target?.audio_mode || "full_duplex",
+        microphone_anti_alias: this._microphoneAntiAliasEnabled(),
         softphone: true,
       },
       sessionDeviceId,
@@ -687,12 +689,15 @@ class VoipStackCard extends HTMLElement {
     this._softphoneTargetDeviceId =
       this._loadSoftphoneTargetPreference() ||
       this._softphoneTargetDeviceId;
-    // Audible ringing is a browser preference. Auto-answer and camera intent
-    // come from the logical phone snapshot and survive browser cache changes.
+    // Ringtone and microphone filtering are browser preferences. Auto-answer
+    // and camera intent come from the logical phone snapshot.
     const deviceId = this._phonePreferenceStorageId();
     if (deviceId) {
       try {
         this._ringtoneEnabled = localStorage.getItem(`voip_ringtone_${deviceId}`) === "true";
+        this._micAntiAliasEnabled =
+          localStorage.getItem(`voip_microphone_anti_alias_${deviceId}`) !==
+          "false";
       } catch (_) {}
     }
     if (this._hass && this._isHaSoftphoneMode()) {
@@ -1011,6 +1016,10 @@ class VoipStackCard extends HTMLElement {
 
   _isHaSoftphoneMode() {
     return (this.config?.mode || this.config?.card_mode || "esp_mirror") === "ha_softphone";
+  }
+
+  _microphoneAntiAliasEnabled() {
+    return this._micAntiAliasEnabled;
   }
 
   _canConfigureHaSoftphone() {
@@ -1897,6 +1906,11 @@ class VoipStackCard extends HTMLElement {
       els.ringtoneRow.hidden = !(showSettingsPanel && this._isHaSoftphoneMode());
       els.ringtoneCheckbox.checked = !!this._ringtoneEnabled;
     }
+    if (els.microphoneAntiAliasRow) {
+      els.microphoneAntiAliasRow.hidden =
+        !(showSettingsPanel && this._isHaSoftphoneMode());
+      els.microphoneAntiAliasCheckbox.checked = this._micAntiAliasEnabled;
+    }
     if (els.videoCameraRow) {
       const cameraAvailable = softphoneMode &&
         this._softphoneSupportsVideo() &&
@@ -2025,6 +2039,10 @@ class VoipStackCard extends HTMLElement {
     els.autoAnswerCheckbox.onchange = () => this._toggleAutoAnswer();
     if (els.dndCheckbox) els.dndCheckbox.onchange = () => this._toggleDnd();
     if (els.ringtoneCheckbox) els.ringtoneCheckbox.onchange = () => this._toggleRingtone();
+    if (els.microphoneAntiAliasCheckbox) {
+      els.microphoneAntiAliasCheckbox.onchange = () =>
+        this._toggleMicrophoneAntiAlias();
+    }
     if (els.videoCameraCheckbox) {
       els.videoCameraCheckbox.onchange = (event) => this._toggleVideoCamera(event.target.checked);
     }
@@ -2238,6 +2256,7 @@ class VoipStackCard extends HTMLElement {
       ),
       name: this._getHaName(),
       audio_mode: target.audio_mode || "full_duplex",
+      microphone_anti_alias: this._microphoneAntiAliasEnabled(),
       softphone: true,
     };
     this._activeDeviceInfo = sessionInfo;
@@ -2689,6 +2708,21 @@ class VoipStackCard extends HTMLElement {
     }
     if (this._ringtoneEnabled) voipStackEngine.unlockRingtone();
     this._syncRingtoneRequest(this._getEspState());
+    this._render();
+  }
+
+  _toggleMicrophoneAntiAlias() {
+    this._settingsOpen = true;
+    this._micAntiAliasEnabled = !this._micAntiAliasEnabled;
+    const deviceId = this._phonePreferenceStorageId();
+    if (deviceId) {
+      try {
+        localStorage.setItem(
+          `voip_microphone_anti_alias_${deviceId}`,
+          this._micAntiAliasEnabled.toString(),
+        );
+      } catch (_) {}
+    }
     this._render();
   }
 

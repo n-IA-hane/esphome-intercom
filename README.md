@@ -133,6 +133,11 @@ data:
 
 Omit `device_id` to originate from the default HA phone.
 
+The card's idle `Options` panel includes a `Microphone anti-alias filter`.
+It is enabled by default and stored per browser and logical phone. The setting
+takes effect when the next call opens the microphone and only adds processing
+when the negotiated transmit rate is lower than the browser capture rate.
+
 Each room-to-room media endpoint needs a distinct browser or Companion session.
 Two cards in one browser tab can display two phones, but one tab still owns one
 physical microphone, speaker and camera pipeline.

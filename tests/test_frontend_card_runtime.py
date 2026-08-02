@@ -253,6 +253,7 @@ function elements() {{
     "hangupPeer", "hangupState", "header", "headerName", "keypadBtn",
     "keypadInput", "keypadPanel", "nextBtn", "offlinePanel", "placeholderBtn",
     "prevBtn", "ringtoneCheckbox", "ringtoneRow", "runtimeControls",
+    "microphoneAntiAliasCheckbox", "microphoneAntiAliasRow",
     "settingsBtn", "settingsPanel", "softphoneGroupsPanel", "stats",
     "statusIndicator", "statusReason", "statusText", "videoCameraCheckbox",
     "videoCameraRow", "videoCanvas", "nativeCameraHost", "videoShade",
@@ -288,6 +289,17 @@ function makeCard() {{
 }}
 
 const card = makeCard();
+const antiAliasPreference = makeCard();
+assert.equal(antiAliasPreference._microphoneAntiAliasEnabled(), true);
+antiAliasPreference._toggleMicrophoneAntiAlias();
+assert.equal(antiAliasPreference._microphoneAntiAliasEnabled(), false);
+assert.equal(
+  storage.get("voip_microphone_anti_alias_default"),
+  "false",
+);
+antiAliasPreference._toggleMicrophoneAntiAlias();
+assert.equal(antiAliasPreference._microphoneAntiAliasEnabled(), true);
+assert.equal(storage.get("voip_microphone_anti_alias_default"), "true");
 const base = {{
   call_id: "call-A",
   direction: "outgoing",
@@ -666,6 +678,7 @@ releaseStartLookup({{ device_id: "device-kitchen", softphone: true }});
 await pendingKitchenStart;
 assert.equal(outboundRequests.length, 1);
 assert.equal(outboundRequests[0][1].endpoint_id, "kitchen");
+assert.equal(outboundRequests[0][1].microphone_anti_alias, true);
 engine.releaseSoftphoneSession("start-kitchen", "kitchen");
 
 // An endpoint-only card may be used before its first state snapshot. It must

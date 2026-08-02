@@ -653,6 +653,20 @@ export function buildMainCardSkeleton(cardVersion) {
     ringtoneRow.appendChild(ringtoneLabel);
     settingsPanel.appendChild(ringtoneRow);
 
+    const microphoneAntiAliasRow = document.createElement("div");
+    microphoneAntiAliasRow.className = "auto-answer-row";
+    microphoneAntiAliasRow.hidden = true;
+    const microphoneAntiAliasCheckbox = document.createElement("input");
+    microphoneAntiAliasCheckbox.type = "checkbox";
+    microphoneAntiAliasCheckbox.id = "ha-softphone-microphone-anti-alias-cb";
+    const microphoneAntiAliasLabel = document.createElement("label");
+    microphoneAntiAliasLabel.htmlFor =
+      "ha-softphone-microphone-anti-alias-cb";
+    microphoneAntiAliasLabel.textContent = "Microphone anti-alias filter";
+    microphoneAntiAliasRow.appendChild(microphoneAntiAliasCheckbox);
+    microphoneAntiAliasRow.appendChild(microphoneAntiAliasLabel);
+    settingsPanel.appendChild(microphoneAntiAliasRow);
+
     const videoCameraRow = document.createElement("div");
     videoCameraRow.className = "auto-answer-row";
     videoCameraRow.hidden = true;
@@ -756,7 +770,9 @@ export function buildMainCardSkeleton(cardVersion) {
       answerBtn, declineBtn, hangupBtn, hangupState, hangupPeer, hangupStats, hangupDuration, callBtn, placeholderBtn,
       statusIndicator, statusText, statusReason,
       runtimeControls, keypadBtn, settingsBtn, settingsPanel,
-      autoAnswerRow, autoAnswerCheckbox, dndRow, dndCheckbox, ringtoneRow, ringtoneCheckbox, videoCameraRow, videoCameraCheckbox,
+      autoAnswerRow, autoAnswerCheckbox, dndRow, dndCheckbox, ringtoneRow, ringtoneCheckbox,
+      microphoneAntiAliasRow, microphoneAntiAliasCheckbox,
+      videoCameraRow, videoCameraCheckbox,
       softphoneGroupsPanel, extensionRow, extensionInput, ringGroupInput, ringGroupOptions, conferenceGroupInput, conferenceGroupOptions, conferenceRingRow, conferenceRingCheckbox,
       stats, err,
     };

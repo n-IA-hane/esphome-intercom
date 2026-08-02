@@ -73,8 +73,9 @@ class RecorderProcessor extends AudioWorkletProcessor {
     this._lastSample = 0;
 
     this._ratio = sampleRate / this._format.sampleRate;
+    const antiAliasEnabled = options?.processorOptions?.antiAlias !== false;
     this._antiAliasStages =
-      this._ratio > 1
+      this._ratio > 1 && antiAliasEnabled
         ? ANTI_ALIAS_Q.map((q) => new Biquad(sampleRate, 0.9 * (this._format.sampleRate / 2), q))
         : null;
     this._filterScratch = null;

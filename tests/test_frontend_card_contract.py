@@ -21,6 +21,8 @@ CARD_MODEL = CARD.with_name("voip-stack-card-model.js")
 CARD_VIEW = CARD.with_name("voip-stack-card-view.js")
 PHONEBOOK_CARD = ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-phonebook-card.js"
 ENDPOINT_DEVICE = ROOT / "custom_components" / "voip_stack" / "endpoint_device.py"
+ENGINE = CARD.with_name("voip-stack-engine.js")
+PROCESSOR = CARD.with_name("voip-stack-processor.js")
 
 
 def _method_body(source: str, method_name: str) -> str:
@@ -366,6 +368,21 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("snapshot.sequence === currentSequence", apply_snapshot)
         self.assertIn("Number(current.revision || 0) > snapshot.revision", apply_snapshot)
         self.assertIn("return false", apply_snapshot)
+
+    def test_microphone_anti_alias_option_defaults_on_and_reaches_worklet(self) -> None:
+        engine = ENGINE.read_text()
+        processor = PROCESSOR.read_text()
+
+        self.assertIn(
+            'id = "ha-softphone-microphone-anti-alias-cb"',
+            self.view_source,
+        )
+        self.assertIn("voip_microphone_anti_alias_", self.card_source)
+        self.assertIn("return this._micAntiAliasEnabled", self.card_source)
+        self.assertIn("microphone_anti_alias: this._microphoneAntiAliasEnabled()", self.card_source)
+        self.assertIn("antiAlias: microphoneAntiAlias", engine)
+        self.assertIn("microphone_anti_alias: this._microphoneAntiAlias", engine)
+        self.assertIn("options?.processorOptions?.antiAlias !== false", processor)
 
     def test_phonebook_is_an_internal_main_card_mode(self) -> None:
         source = PHONEBOOK_CARD.read_text()
