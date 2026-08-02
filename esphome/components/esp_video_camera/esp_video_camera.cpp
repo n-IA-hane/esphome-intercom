@@ -650,10 +650,8 @@ void ESPVideoCamera::capture_task_run_() {
     }
     // Fresh descriptors require the current runtime controls.
     this->ctrls_dirty_.store(true);
-    // The ISP/IPA still receives every native sensor frame even when V4L2
-    // frame skipping is active. A deadline therefore preserves the original
-    // AE warmup time without waiting for ten reduced-rate DQBUFs.
-    this->warmup_until_ms_ = millis() + WARMUP_MS;
+    if (this->is_raw_csi_)
+      this->raw_warmup_until_ms_ = millis() + RAW_WARMUP_MS;
     while (this->capture_task_running_.load(std::memory_order_acquire) &&
            this->capture_wanted_.load(std::memory_order_acquire) &&
            !this->capture_faulted_.load(std::memory_order_acquire)) {
@@ -781,6 +779,15 @@ void ESPVideoCamera::loop_jpeg_pipeline_() {
     return;
   }
 
+  // The first CSI buffers after STREAMON can precede stable ISP color and
+  // exposure. Discard them before any raw or JPEG consumer can turn one into
+  // the first frame of a new video session.
+  if (this->startup_frames_remaining_ > 0) {
+    this->startup_frames_remaining_--;
+    requeue_raw();
+    return;
+  }
+
   // During the short AE linger window the sensor stays streaming, but there is
   // no reason to rotate, encode, copy or wake the ESPHome loop without a
   // consumer. Requeue this naturally delivered frame immediately.
@@ -790,11 +797,12 @@ void ESPVideoCamera::loop_jpeg_pipeline_() {
   }
 
   const auto &raw_buffer = this->capture_buffers_[cap_buf.index];
-  const bool warming_up =
-      static_cast<int32_t>(millis() - this->warmup_until_ms_) < 0;
+  const bool raw_warming_up =
+      this->is_raw_csi_ &&
+      static_cast<int32_t>(millis() - this->raw_warmup_until_ms_) < 0;
   RawVideoFrameConsumer *raw_consumer =
       this->raw_frame_consumer_.load(std::memory_order_acquire);
-  if (!warming_up && raw_consumer != nullptr &&
+  if (!raw_warming_up && raw_consumer != nullptr &&
       this->raw_frame_consumer_active_.load(std::memory_order_acquire)) {
     const uint32_t timestamp_90khz = static_cast<uint32_t>(
         (static_cast<uint64_t>(esp_timer_get_time()) * 9ULL) / 100ULL);
@@ -987,17 +995,14 @@ void ESPVideoCamera::loop_jpeg_pipeline_() {
     this->capture_wanted_.store(false, std::memory_order_release);
     return;
   }
-  if (!warming_up) {
-    const auto *jpeg_data =
-        static_cast<const uint8_t *>(this->jpeg_out_buffer_.start);
-    const uint32_t timestamp_90khz = static_cast<uint32_t>(
-        (static_cast<uint64_t>(esp_timer_get_time()) * 9ULL) / 100ULL);
-    this->deliver_jpeg_frame_(
-        jpeg_data, jpeg_buf.bytesused, timestamp_90khz);
-    if (this->stream_requesters_.load(std::memory_order_acquire) != 0 ||
-        this->single_requesters_.load(std::memory_order_acquire) != 0) {
-      this->queue_frame_(jpeg_data, jpeg_buf.bytesused);
-    }
+  const auto *jpeg_data =
+      static_cast<const uint8_t *>(this->jpeg_out_buffer_.start);
+  const uint32_t timestamp_90khz = static_cast<uint32_t>(
+      (static_cast<uint64_t>(esp_timer_get_time()) * 9ULL) / 100ULL);
+  this->deliver_jpeg_frame_(jpeg_data, jpeg_buf.bytesused, timestamp_90khz);
+  if (this->stream_requesters_.load(std::memory_order_acquire) != 0 ||
+      this->single_requesters_.load(std::memory_order_acquire) != 0) {
+    this->queue_frame_(jpeg_data, jpeg_buf.bytesused);
   }
 }
 
@@ -1538,6 +1543,8 @@ bool ESPVideoCamera::start_capture_() {
   if (this->capture_prepared_) {
     if (!this->resume_capture_())
       return false;
+    if (this->is_hw_jpeg_)
+      this->startup_frames_remaining_ = STARTUP_FRAME_COUNT;
     this->last_frame_ms_ = 0;
     return true;
   }
@@ -1563,6 +1570,8 @@ bool ESPVideoCamera::start_capture_() {
   this->capture_prepared_ = true;
   this->capture_faulted_.store(false, std::memory_order_release);
   this->streaming_ = true;
+  if (this->is_hw_jpeg_)
+    this->startup_frames_remaining_ = STARTUP_FRAME_COUNT;
   this->last_frame_ms_ = 0;
   return true;
 }

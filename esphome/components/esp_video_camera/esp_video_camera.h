@@ -360,12 +360,16 @@ class ESPVideoCamera : public camera::Camera {
   bool capture_retry_armed_{false};
   uint32_t last_alloc_warning_ms_{0};
 
-  // Time-based sensor warmup avoids publishing dark startup frames. CSI may
-  // skip frames to enforce max_framerate, so counting DQBUFs would extend the
-  // warmup unnecessarily. Linger keeps capture warm for five seconds after
-  // the last request so a short burst of related events avoids pipeline churn.
-  uint32_t warmup_until_ms_{0};  // only touched by the capture task
-  static constexpr uint32_t WARMUP_MS = 250;
+  // Espressif's V4L2 examples dequeue and requeue the first two CSI buffers
+  // after every STREAMON. Apply that event-driven warmup to the hardware JPEG
+  // path so its first published frame already has stable ISP color.
+  uint8_t startup_frames_remaining_{0};  // capture task only
+  static constexpr uint8_t STARTUP_FRAME_COUNT = 2;
+  // Preserve the qualified time gate for the independent raw H.264 path.
+  uint32_t raw_warmup_until_ms_{0};  // capture task only
+  static constexpr uint32_t RAW_WARMUP_MS = 250;
+  // Linger keeps capture warm for five seconds after the last request so a
+  // short burst of related events avoids pipeline churn.
   static constexpr uint32_t LINGER_MS = 5000;
   static constexpr uint32_t CAPTURE_RETRY_MS = 1000;
   static constexpr uint8_t MAX_CAPTURE_RETRIES = 3;
