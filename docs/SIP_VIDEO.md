@@ -202,6 +202,25 @@ The second process exists only when the reverse direction is also incompatible.
 If one direction already has an exact codec contract, that direction remains a
 direct RTP/RTCP relay.
 
+### Adding video to an established audio call
+
+A standard SIP endpoint may begin with audio and later add video with an
+in-dialog re-INVITE. For a SIP-to-SIP bridge, HA acts as the B2BUA for both
+dialogs:
+
+1. HA validates the source offer without changing the active audio relay.
+2. HA sends a full audio/video re-INVITE to the destination dialog.
+3. The destination answer selects its own video codec and direction.
+4. HA prepares a direct relay when the codecs match, or the bounded FFmpeg
+   fallback when transcoding is enabled and required.
+5. HA answers the source and commits both dialog and relay generations.
+
+If the destination rejects video or preparation fails, HA returns `488 Not
+Acceptable Here` to the new offer and keeps the original audio call. A BYE
+during setup remains authoritative and releases the staged ports, sockets and
+transcoder slot. Immediate redial waits for an already stopping transcoder to
+release that single slot instead of failing the next video offer.
+
 There is no intermediate recording or complete video file. FFmpeg receives
 and emits RTP continuously on loopback. The transcode path is intentionally
 bounded to one active call and at most one subprocess per incompatible active

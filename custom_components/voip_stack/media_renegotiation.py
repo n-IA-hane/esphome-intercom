@@ -10,6 +10,7 @@ re-INVITE fails.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.core import HomeAssistant
@@ -36,13 +37,175 @@ from .sdp import (
     constrained_video_direction,
     first_offered_dtmf_format,
 )
-from .sip_bridge import invite_rtp_peer, invite_video_rtp_peer
+from .sip_bridge import (
+    invite_rtp_peer,
+    invite_video_rtp_peer,
+)
 from .sip_listener import SipInvite, SipInviteResult
 from .sip_video_relay import remote_can_receive, remote_can_send
+from .session_cleanup import async_wait_for_cleanup
 from .websocket_api import _fire_call_event, _ha_softphone_store
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def _prepare_bridge_video_addition(
+    hass: HomeAssistant,
+    local_ip: str,
+    previous: SipInvite,
+    updated: SipInvite,
+    relay,
+) -> SipInviteResult:
+    """Stage video on both B2BUA dialogs before answering the source offer."""
+
+    from .config import transport_config
+    from .const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
+    from .media_ports import (
+        release_sip_rtp_port_pair,
+        reserve_sip_video_relay_media,
+    )
+    from .sip_bridge import (
+        build_pending_invite_video_relay,
+        configure_answered_invite_video_relay,
+        dialog_rtp_peer,
+        video_bridge_offer_formats,
+    )
+
+    registry = _call_registry(hass)
+    source_call_id, dest_call_id = registry.bridge_for(updated.call_id)
+    session = registry.sessions.get(registry.resolve_session_id(updated.call_id))
+    client = registry.sip_clients.get(dest_call_id)
+    cfg = transport_config(hass)
+    if (
+        source_call_id != updated.call_id
+        or session is None
+        or client is None
+        or client.dialog is None
+        or not bool(cfg.get(CONF_SIP_VIDEO, False))
+    ):
+        return SipInviteResult(488, "Not Acceptable Here")
+    call_generation = session.generation
+    destination_dialog = client.dialog
+    enable_transcoding = bool(cfg.get(CONF_VIDEO_TRANSCODING, False))
+    try:
+        reservation, sockets = reserve_sip_video_relay_media(hass)
+        video_relay = build_pending_invite_video_relay(
+            updated,
+            remote_host=destination_dialog.remote_host,
+            left_port=reservation.ports[0],
+            right_port=reservation.ports[1],
+            sockets=sockets,
+            on_release=lambda ports: release_sip_rtp_port_pair(hass, ports),
+        )
+        reservation.detach()
+    except (OSError, RuntimeError, ValueError) as err:
+        _LOGGER.warning(
+            "SIP bridge video re-INVITE could not reserve media call_id=%s: %s",
+            updated.call_id,
+            err,
+        )
+        return SipInviteResult(488, "Not Acceptable Here")
+
+    candidate = None
+    result_transferred = False
+    try:
+        candidate = await client.async_prepare_video_reinvite(
+            local_video_rtp_port=video_relay.right_port,
+            video_formats=video_bridge_offer_formats(
+                updated.video_format,
+                enable_transcoding=enable_transcoding,
+            ),
+            video_direction=updated.video_format.direction,
+        )
+        if candidate is None:
+            return SipInviteResult(488, "Not Acceptable Here")
+        video_answer = configure_answered_invite_video_relay(
+            updated,
+            candidate,
+            video_relay,
+            hass=hass,
+            enable_transcoding=enable_transcoding,
+        )
+        if video_answer is None:
+            return SipInviteResult(488, "Not Acceptable Here")
+        await video_relay.start()
+        next_left = invite_rtp_peer(updated)
+        next_right = dialog_rtp_peer(candidate)
+        previous_left = relay.left
+        previous_right = relay.right
+        commit_left = relay.prepare_peer_reconfiguration("left", next_left)
+        commit_right = relay.prepare_peer_reconfiguration("right", next_right)
+        answer = build_answer_directional(
+            local_ip,
+            local_ip,
+            int(relay.left_port),
+            updated.send_format,
+            updated.recv_format,
+            dtmf=first_offered_dtmf_format(updated.remote_sdp),
+            remote_sdp=updated.remote_sdp,
+            audio_direction=constrained_media_direction(
+                updated.remote_audio_direction,
+                allow_send=(
+                    next_right.can_send
+                    and not updated.remote_audio_connection_held
+                ),
+                allow_receive=next_right.can_receive,
+            ),
+            video_port=video_relay.left_port,
+            video_format=video_answer.video_format,
+            video_direction=video_answer.direction,
+        )
+        committed = False
+
+        async def commit() -> None:
+            nonlocal committed
+            if (
+                not registry.is_generation_current(
+                    updated.call_id, call_generation
+                )
+                or registry.relays.get(updated.call_id) is not relay
+                or registry.sip_clients.get(dest_call_id) is not client
+                or relay.left is not previous_left
+                or relay.right is not previous_right
+                or relay.video_relay is not None
+            ):
+                raise RuntimeError("SIP bridge media owner changed before commit")
+            if not client.commit_prepared_reinvite(
+                destination_dialog, candidate
+            ):
+                raise RuntimeError("SIP destination re-INVITE owner changed")
+            relay.attach_video_relay(video_relay)
+            commit_left()
+            commit_right()
+            committed = True
+
+        async def rollback() -> None:
+            if committed:
+                return
+            client.abort_prepared_reinvite(destination_dialog, candidate)
+            await video_relay.stop()
+
+        result = SipInviteResult(
+            200,
+            "OK",
+            answer_sdp=answer,
+            commit=commit,
+            rollback=rollback,
+        )
+        result_transferred = True
+        return result
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return SipInviteResult(488, "Not Acceptable Here")
+    finally:
+        if not result_transferred:
+            if candidate is not None:
+                client.abort_prepared_reinvite(destination_dialog, candidate)
+            cleanup = asyncio.create_task(
+                video_relay.stop(),
+                name=f"voip-video-reinvite-rollback-{updated.call_id}",
+            )
+            await async_wait_for_cleanup(cleanup)
 
 
 async def async_prepare_media_update(
@@ -511,14 +674,17 @@ async def async_prepare_media_update(
     local_video_port = 0
     if updated.video_format is not None:
         if video_relay is None:
+            if previous.video_format is None:
+                return await _prepare_bridge_video_addition(
+                    hass,
+                    local_ip,
+                    previous,
+                    updated,
+                    relay,
+                )
             _LOGGER.warning(
-                "SIP video media update rejected without video relay call_id=%s "
-                "old_direction=%s new_direction=%s",
+                "SIP video update has no active relay call_id=%s",
                 call_id,
-                previous.video_format.direction
-                if previous.video_format is not None
-                else "none",
-                updated.video_format.direction,
             )
             return SipInviteResult(488, "Not Acceptable Here")
         video_offer = validate_bridged_video_reoffer(

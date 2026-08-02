@@ -170,3 +170,120 @@ def test_assist_reinvite_returns_audio_answer_and_declines_video() -> None:
     assert owner.committed is False
     asyncio.run(result.commit())
     assert owner.committed is True
+
+
+def test_bridge_video_addition_cancellation_releases_staged_media() -> None:
+    answer_calls: list[dict] = []
+    session = types.SimpleNamespace(generation=9)
+    registry = types.SimpleNamespace(
+        preanswered={},
+        softphone_media={},
+        relays={},
+        sessions={"source": session},
+        sip_clients={},
+        bridge_for=lambda _call_id: ("source", "destination"),
+        resolve_session_id=lambda call_id: call_id,
+        is_generation_current=lambda *_args: True,
+    )
+    module, _assist = _load_module(registry, answer_calls)
+
+    const = sys.modules[f"{PACKAGE}.const"]
+    const.CONF_SIP_VIDEO = "sip_video"
+    const.CONF_VIDEO_TRANSCODING = "video_transcoding"
+    _module(
+        "config",
+        transport_config=lambda _hass: {
+            "sip_video": True,
+            "video_transcoding": True,
+        },
+    )
+
+    class Reservation:
+        ports = (43000, 43002)
+        detached = False
+
+        def detach(self) -> None:
+            self.detached = True
+
+    class VideoRelay:
+        left_port = 43000
+        right_port = 43002
+
+        def __init__(self) -> None:
+            self.start_entered = asyncio.Event()
+            self.stopped = False
+
+        async def start(self) -> None:
+            self.start_entered.set()
+            await asyncio.Event().wait()
+
+        async def stop(self) -> None:
+            self.stopped = True
+
+    reservation = Reservation()
+    video_relay = VideoRelay()
+    media_ports = sys.modules[f"{PACKAGE}.media_ports"]
+    media_ports.release_sip_rtp_port_pair = lambda *_args: None
+    media_ports.reserve_sip_video_relay_media = (
+        lambda _hass: (reservation, (None, None, None, None))
+    )
+
+    candidate = types.SimpleNamespace()
+
+    class Client:
+        def __init__(self) -> None:
+            self.dialog = types.SimpleNamespace(remote_host="192.0.2.20")
+            self.aborted = False
+
+        async def async_prepare_video_reinvite(self, **_kwargs):
+            return candidate
+
+        def abort_prepared_reinvite(self, previous, staged) -> None:
+            assert previous is self.dialog
+            assert staged is candidate
+            self.aborted = True
+
+    client = Client()
+    registry.sip_clients["destination"] = client
+    registry.relays["source"] = types.SimpleNamespace()
+    sip_bridge = sys.modules[f"{PACKAGE}.sip_bridge"]
+    sip_bridge.build_pending_invite_video_relay = (
+        lambda *_args, **_kwargs: video_relay
+    )
+    sip_bridge.configure_answered_invite_video_relay = (
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            video_format="jpeg",
+            direction="sendrecv",
+        )
+    )
+    sip_bridge.dialog_rtp_peer = lambda item: item
+    sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: ("jpeg",)
+
+    video = types.SimpleNamespace(direction="sendrecv")
+    previous = types.SimpleNamespace(call_id="source", video_format=None)
+    updated = types.SimpleNamespace(call_id="source", video_format=video)
+
+    async def run() -> None:
+        task = asyncio.create_task(
+            module._prepare_bridge_video_addition(
+                types.SimpleNamespace(),
+                "192.0.2.10",
+                previous,
+                updated,
+                registry.relays["source"],
+            )
+        )
+        await video_relay.start_entered.wait()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        else:
+            raise AssertionError("cancelled media preparation returned normally")
+
+    asyncio.run(run())
+
+    assert reservation.detached is True
+    assert client.aborted is True
+    assert video_relay.stopped is True

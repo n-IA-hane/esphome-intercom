@@ -260,6 +260,12 @@ class SipVideoRtpRelay:
     def transcoding(self) -> bool:
         return bool(self._transcode_directions)
 
+    @property
+    def stopping(self) -> bool:
+        """Return whether a subsequent call may await this relay's release."""
+
+        return self._stop_requested or self._released
+
     def configure_transcoding(self, hass: Any, call_id: str) -> None:
         """Configure only the incompatible active directions for FFmpeg."""
 

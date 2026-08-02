@@ -151,11 +151,12 @@ new offer may change direction, RTP destination, payload type, packet duration
 or another audio format already supported on that leg. An established video
 stream may be held and resumed or move its RTP endpoint only while its codec
 contract remains compatible. A direct HA-browser dialog may also add or remove
-a compatible video stream. A SIP-to-SIP bridge keeps its established topology
-and rejects incompatible additions, removals or codec changes. HA stages the
-replacement resources, sends the SDP answer and commits only the current call
-generation. Rejected or stale updates leave the original session usable, and
-a later BYE still terminates it normally.
+a compatible video stream. A SIP-to-SIP bridge can add video to an audio-only
+call by sending a serialized re-INVITE on the destination dialog. HA answers
+the source only after the destination accepts and a direct or transcoded relay
+is ready. HA stages the replacement resources and commits only the current call
+generation. Rejected or stale updates leave the original audio session usable,
+and a later BYE still terminates it normally.
 
 Confirmed dialogs retain the remote Contact and every Record-Route value. UAC
 route sets reverse the response order, UAS route sets preserve request order,

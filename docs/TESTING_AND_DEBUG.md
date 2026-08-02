@@ -367,8 +367,10 @@ When testing real devices, cover:
 - ESP in-dialog hold/re-INVITE receives `488` while the established call and
   later BYE remain functional;
 - HA-owned UPDATE/re-INVITE hold/resume and supported audio changes commit once;
-  direct browser dialogs cover compatible video add/remove, while bridge
-  topology/codec changes are rejected without disturbing existing media;
+  direct browser dialogs cover compatible video add/remove;
+- an audio-only SIP bridge can add video through a paired destination
+  re-INVITE, including codec conversion, source rejection, BYE during setup and
+  immediate redial after transcoder cleanup;
 - ring group caller cancel before answer;
 - ring group first-answer-wins;
 - conference join/leave;

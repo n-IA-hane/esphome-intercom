@@ -139,12 +139,17 @@ receive. Use network policy when an installation needs that restriction.
    compatible audio change or direction/hold/resume update is answered and
    committed once without rerunning the dial plan or creating a second call.
 5. An established HA video stream may change direction or RTP endpoint while
-   keeping a compatible codec contract. A direct HA-browser dialog may also
-   add/remove compatible video; a SIP-to-SIP bridge rejects topology or codec
-   changes with `488`, leaving the original media usable.
+   keeping a compatible codec contract. A direct HA-browser dialog may add or
+   remove compatible video. When a SIP-to-SIP bridge receives video on an
+   audio-only call, HA first sends a matching re-INVITE on the other dialog,
+   prepares a direct or transcoded video relay, then answers the source offer.
+   A rejection on either leg leaves the original audio session usable.
 6. A successful re-INVITE follows the normal 2xx/ACK transaction. If ACK never
    arrives, HA terminates the uncertain dialog; UPDATE needs no ACK.
 7. Either peer can later send BYE and both sides clean up the active call.
+
+HA never adds video without a peer offer. The paired outbound re-INVITE is the
+B2BUA continuation of the source offer, not an unsolicited media upgrade.
 
 An offerless UPDATE is accepted as a session refresh. An offerless re-INVITE is
 rejected because HA does not implement the delayed offer-in-2xx/answer-in-ACK

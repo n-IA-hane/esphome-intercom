@@ -302,6 +302,109 @@ class SipProtocolBugFixTest(unittest.TestCase):
 
 
 class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _confirmed_audio_client():
+        sent: list[tuple[bytes, tuple[str, int]]] = []
+        pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        negotiated = sdp.audio_format_to_rtp(pcm, 96)
+        client = sip_client.SipCallClient(
+            local_ip="127.0.0.1",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            supported_formats=[pcm],
+        )
+        client.transport = types.SimpleNamespace(
+            sendto=lambda data, addr: sent.append((data, addr))
+        )
+        client.dialog_ids.remote_tag = "remote"
+        initial_sdp = sdp.build_offer_directional(
+            "127.0.0.1", "127.0.0.1", 41000, [pcm], [pcm]
+        )
+        current = sip_client.SipDialog(
+            target="P4",
+            remote_host="127.0.0.2",
+            remote_sip_port=5060,
+            remote_rtp_host="127.0.0.2",
+            remote_rtp_port=42000,
+            local_rtp_port=41000,
+            call_id=client.dialog_ids.call_id,
+            local_uri="sip:HA@127.0.0.1:5060",
+            remote_uri="sip:P4@127.0.0.2:5060",
+            send_format=negotiated,
+            recv_format=negotiated,
+            remote_target_uri="sip:P4@127.0.0.2:5060",
+            local_sdp_session_id=4242,
+            local_sdp_body=initial_sdp,
+        )
+        client.dialog = current
+        return client, current, sent, negotiated
+
+    @staticmethod
+    async def _wait_for_sent_request(
+        sent: list[tuple[bytes, tuple[str, int]]], method: str
+    ) -> sip.SipMessage:
+        for _ in range(100):
+            requests = [
+                sip.parse_message(raw)
+                for raw, _addr in sent
+                if sip.parse_message(raw).method == method
+            ]
+            if requests:
+                return requests[-1]
+            await asyncio.sleep(0)
+        raise AssertionError(f"SIP {method} was not sent")
+
+    @staticmethod
+    def _response_to_request(
+        request: sip.SipMessage,
+        status: int,
+        reason: str,
+        body: str = "",
+    ) -> bytes:
+        headers = [
+            *(("Via", value) for value in request.header_values("Via")),
+            ("From", request.header("From")),
+            ("To", request.header("To")),
+            ("Call-ID", request.header("Call-ID")),
+            ("CSeq", request.header("CSeq")),
+        ]
+        if 200 <= status < 300:
+            headers.append(("Contact", "<sip:P4@127.0.0.2:5060>"))
+        if body:
+            headers.append(("Content-Type", "application/sdp"))
+        return sip.build_response(status, reason, headers, body.encode())
+
+    @staticmethod
+    def _remote_dialog_request(
+        client: sip_client.SipCallClient,
+        method: str,
+        cseq: int,
+        *,
+        body: str = "",
+    ) -> bytes:
+        headers = [
+            (
+                "Via",
+                f"SIP/2.0/UDP 127.0.0.2:5060;branch=z9hG4bK{method.lower()}{cseq}",
+            ),
+            ("From", "<sip:P4@127.0.0.2>;tag=remote"),
+            (
+                "To",
+                f"<sip:HA@127.0.0.1>;tag={client.dialog_ids.local_tag}",
+            ),
+            ("Call-ID", client.dialog_ids.call_id),
+            ("CSeq", f"{cseq} {method}"),
+        ]
+        if body:
+            headers.append(("Content-Type", "application/sdp"))
+        return sip.build_request(
+            method,
+            "sip:HA@127.0.0.1:5060",
+            headers,
+            body.encode(),
+        )
+
     async def test_connected_identity_update_changes_remote_dialog_uri(self) -> None:
         class FakeTransport:
             def __init__(self) -> None:
@@ -1405,6 +1508,173 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         responses = [sip.parse_message(raw) for raw, _addr in transport.sent]
         self.assertEqual([response.status_code for response in responses], [481, 488, 200])
         self.assertIn("Session renegotiation is not supported", responses[1].header("Warning"))
+
+    async def test_local_reinvite_adds_video_without_stealing_dialog_reader(self) -> None:
+        client, current, sent, negotiated = self._confirmed_audio_client()
+        watcher = asyncio.create_task(
+            client.wait_for_dialog_termination(timeout=1.0)
+        )
+        jpeg = sdp.DEFAULT_VIDEO_FORMATS[3]
+        prepared = asyncio.create_task(
+            client.async_prepare_video_reinvite(
+                local_video_rtp_port=43000,
+                video_formats=(jpeg,),
+            )
+        )
+        request = await self._wait_for_sent_request(sent, "INVITE")
+        answer = sdp.build_answer_directional(
+            "127.0.0.2",
+            "127.0.0.2",
+            42000,
+            negotiated,
+            negotiated,
+            remote_sdp=request.body,
+            video_port=44000,
+            video_format=jpeg,
+            video_direction="sendrecv",
+        )
+        response = self._response_to_request(request, 200, "OK", answer)
+        client.queue.put_nowait((response, ("127.0.0.2", 5060)))
+        candidate = await asyncio.wait_for(prepared, timeout=0.2)
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertIs(client.dialog, current)
+        self.assertEqual(candidate.video_format.encoding, "JPEG")
+        self.assertTrue(client.commit_prepared_reinvite(current, candidate))
+        self.assertIs(client.dialog, candidate)
+
+        bye = self._remote_dialog_request(client, "BYE", 2)
+        client.queue.put_nowait((bye, ("127.0.0.2", 5060)))
+        self.assertEqual(await watcher, "remote_hangup")
+        methods = [sip.parse_message(raw).method for raw, _addr in sent]
+        self.assertIn("ACK", methods)
+
+    async def test_local_reinvite_rejection_preserves_audio_dialog(self) -> None:
+        client, current, sent, _negotiated = self._confirmed_audio_client()
+        watcher = asyncio.create_task(
+            client.wait_for_dialog_termination(timeout=1.0)
+        )
+        prepared = asyncio.create_task(
+            client.async_prepare_video_reinvite(
+                local_video_rtp_port=43000,
+                video_formats=(sdp.DEFAULT_VIDEO_FORMATS[3],),
+            )
+        )
+        request = await self._wait_for_sent_request(sent, "INVITE")
+        client.queue.put_nowait(
+            (
+                self._response_to_request(request, 488, "Not Acceptable Here"),
+                ("127.0.0.2", 5060),
+            )
+        )
+
+        self.assertIsNone(await asyncio.wait_for(prepared, timeout=0.2))
+        self.assertIs(client.dialog, current)
+        self.assertFalse(watcher.done())
+        self.assertIn(
+            "ACK",
+            [sip.parse_message(raw).method for raw, _addr in sent],
+        )
+
+        client.queue.put_nowait(
+            (
+                self._remote_dialog_request(client, "BYE", 2),
+                ("127.0.0.2", 5060),
+            )
+        )
+        self.assertEqual(await watcher, "remote_hangup")
+
+    async def test_remote_bye_wins_during_local_reinvite(self) -> None:
+        client, _current, sent, _negotiated = self._confirmed_audio_client()
+        watcher = asyncio.create_task(
+            client.wait_for_dialog_termination(timeout=1.0)
+        )
+        prepared = asyncio.create_task(
+            client.async_prepare_video_reinvite(
+                local_video_rtp_port=43000,
+                video_formats=(sdp.DEFAULT_VIDEO_FORMATS[3],),
+            )
+        )
+        await self._wait_for_sent_request(sent, "INVITE")
+        client.queue.put_nowait(
+            (
+                self._remote_dialog_request(client, "BYE", 2),
+                ("127.0.0.2", 5060),
+            )
+        )
+
+        self.assertIsNone(await asyncio.wait_for(prepared, timeout=0.2))
+        self.assertEqual(await watcher, "remote_hangup")
+        self.assertIsNone(client.dialog)
+        responses = [
+            sip.parse_message(raw)
+            for raw, _addr in sent
+            if sip.parse_message(raw).is_response
+        ]
+        self.assertEqual(responses[-1].status_code, 200)
+
+    async def test_remote_reinvite_gets_491_during_local_offer(self) -> None:
+        client, current, sent, negotiated = self._confirmed_audio_client()
+        watcher = asyncio.create_task(
+            client.wait_for_dialog_termination(timeout=1.0)
+        )
+        jpeg = sdp.DEFAULT_VIDEO_FORMATS[3]
+        prepared = asyncio.create_task(
+            client.async_prepare_video_reinvite(
+                local_video_rtp_port=43000,
+                video_formats=(jpeg,),
+            )
+        )
+        request = await self._wait_for_sent_request(sent, "INVITE")
+        collision = self._remote_dialog_request(
+            client,
+            "INVITE",
+            2,
+            body=sdp.build_offer_directional(
+                "127.0.0.2",
+                "127.0.0.2",
+                42000,
+                [negotiated.audio_format],
+                [negotiated.audio_format],
+            ),
+        )
+        client.queue.put_nowait((collision, ("127.0.0.2", 5060)))
+        answer = sdp.build_answer_directional(
+            "127.0.0.2",
+            "127.0.0.2",
+            42000,
+            negotiated,
+            negotiated,
+            remote_sdp=request.body,
+            video_port=44000,
+            video_format=jpeg,
+            video_direction="sendrecv",
+        )
+        client.queue.put_nowait(
+            (
+                self._response_to_request(request, 200, "OK", answer),
+                ("127.0.0.2", 5060),
+            )
+        )
+
+        candidate = await asyncio.wait_for(prepared, timeout=0.2)
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertTrue(client.commit_prepared_reinvite(current, candidate))
+        responses = [
+            sip.parse_message(raw)
+            for raw, _addr in sent
+            if sip.parse_message(raw).is_response
+        ]
+        self.assertEqual([item.status_code for item in responses], [491])
+
+        client.queue.put_nowait(
+            (
+                self._remote_dialog_request(client, "BYE", 3),
+                ("127.0.0.2", 5060),
+            )
+        )
+        self.assertEqual(await watcher, "remote_hangup")
 
     async def test_confirmed_dialog_commits_remote_update_once_after_200(self) -> None:
         class FakeTransport:

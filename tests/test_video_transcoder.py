@@ -168,6 +168,27 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
             active,
         )
 
+    async def test_rapid_redial_waits_for_stopping_transcoder(self) -> None:
+        hass = _Hass()
+        active = types.SimpleNamespace(stopping=False)
+        contender = types.SimpleNamespace(stopping=False)
+        await video_transcoder._claim_transcoder_slot(hass, active)
+        active.stopping = True
+
+        claim = asyncio.create_task(
+            video_transcoder._claim_transcoder_slot(hass, contender)
+        )
+        await asyncio.sleep(0)
+        self.assertFalse(claim.done())
+        await video_transcoder._release_transcoder_slot(hass, active)
+        await claim
+
+        self.assertIs(
+            hass.data[video_transcoder.DOMAIN][video_transcoder._ACTIVE_TRANSCODER],
+            contender,
+        )
+        await video_transcoder._release_transcoder_slot(hass, contender)
+
     async def test_jpeg_normalizer_shares_and_releases_transcoder_slot(self) -> None:
         hass = _Hass()
         process, _output_read = self._blocking_jpeg_process()

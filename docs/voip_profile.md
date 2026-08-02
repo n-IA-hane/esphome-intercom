@@ -82,8 +82,11 @@ normally with BYE.
 
 HA-owned dialogs accept compatible peer-initiated UPDATE or re-INVITE offers.
 They may update audio direction, supported audio format and RTP endpoint, and
-may hold/resume an already negotiated compatible video stream. HA does not add,
-remove or change the codec of video in-dialog and does not originate the offer.
+may hold or resume an already negotiated compatible video stream. A peer may
+also add video to an audio-only SIP bridge. HA then sends the corresponding
+re-INVITE on the destination dialog and commits the direct or transcoded relay
+only after both offer/answer exchanges succeed. HA does not initiate an
+unsolicited media upgrade.
 
 SIP signaling transports:
 

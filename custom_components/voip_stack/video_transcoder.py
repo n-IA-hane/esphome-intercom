@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 _ACTIVE_TRANSCODER = "video_transcoder_active"
 _TRANSCODER_LOCK = "video_transcoder_lock"
+_TRANSCODER_RELEASE_EVENT = "video_transcoder_release_event"
 _MAX_FMTP_LENGTH = 1024
 _PROCESS_STOP_TIMEOUT = 2.0
 _FFMPEG_INPUT_BIND_TIMEOUT = 1.0
@@ -56,11 +57,26 @@ async def _claim_transcoder_slot(hass: HomeAssistant, owner: object) -> None:
 
     bucket = hass.data.setdefault(DOMAIN, {})
     lock = bucket.setdefault(_TRANSCODER_LOCK, asyncio.Lock())
-    async with lock:
-        active = bucket.get(_ACTIVE_TRANSCODER)
-        if active is not None and active is not owner:
-            raise VideoTranscoderError("another SIP video transcode is active")
-        bucket[_ACTIVE_TRANSCODER] = owner
+    released = bucket.setdefault(_TRANSCODER_RELEASE_EVENT, asyncio.Event())
+    while True:
+        async with lock:
+            active = bucket.get(_ACTIVE_TRANSCODER)
+            if active is None or active is owner:
+                bucket[_ACTIVE_TRANSCODER] = owner
+                released.clear()
+                return
+            if not bool(getattr(active, "stopping", False)):
+                raise VideoTranscoderError("another SIP video transcode is active")
+            released.clear()
+        try:
+            await asyncio.wait_for(
+                released.wait(),
+                timeout=_PROCESS_STOP_TIMEOUT + 0.5,
+            )
+        except TimeoutError as err:
+            raise VideoTranscoderError(
+                "previous SIP video transcode did not release its slot"
+            ) from err
 
 
 async def _release_transcoder_slot(hass: HomeAssistant, owner: object) -> None:
@@ -69,6 +85,7 @@ async def _release_transcoder_slot(hass: HomeAssistant, owner: object) -> None:
     async with lock:
         if bucket.get(_ACTIVE_TRANSCODER) is owner:
             bucket.pop(_ACTIVE_TRANSCODER, None)
+            bucket.setdefault(_TRANSCODER_RELEASE_EVENT, asyncio.Event()).set()
 
 
 def _available_udp_port() -> int:
@@ -94,7 +111,7 @@ async def _wait_for_udp_listener(
                 f"FFmpeg exited before binding RTP input port: {process.returncode}"
             )
 
-        if _process_owns_udp_port(process.pid, port):
+        if await asyncio.to_thread(_process_owns_udp_port, process.pid, port):
             return
 
         if loop.time() >= deadline:
@@ -375,6 +392,12 @@ class FfmpegVideoTranscoder:
             and self.process is not None
             and self.process.returncode is None
         )
+
+    @property
+    def stopping(self) -> bool:
+        """Return whether another call may wait for this slot's cleanup."""
+
+        return self._close_requested or self._released
 
     async def async_start(self) -> None:
         async with self._lifecycle_lock:

@@ -237,9 +237,10 @@ automation, SIP client or card fork.
 - **Constrained in-dialog renegotiation.** ESP endpoints still return `488 Not
   Acceptable Here` for media-changing re-INVITEs. Direct HA browser dialogs
   accept compatible peer-initiated UPDATE/re-INVITE changes, including
-  hold/resume, RTP endpoint changes and video add/remove. SIP-to-SIP bridges
-  keep their established media topology, and HA does not originate a
-  renegotiation. A rejected offer leaves the previous media/dialog active.
+  hold/resume, RTP endpoint changes and video add/remove. An audio-only
+  SIP-to-SIP bridge may add video through a paired destination re-INVITE and a
+  direct or transcoded relay. HA does not initiate an unsolicited media change.
+  A rejected offer leaves the previous media/dialog active.
 - **DTMF route input.** The trunk digit router accepts RTP `telephone-event`
   and compatible legacy SIP INFO DTMF. It does not decode acoustic in-band tones from
   the call audio.

@@ -141,11 +141,14 @@ remain active and a later BYE must still end the call normally.
 
 HA-owned dialogs accept compatible peer-initiated UPDATE or re-INVITE offers.
 If HA returns `488`, inspect whether the peer tried to add/remove video, change
-the established video codec, supplied an unsupported audio shape or sent an
-offerless re-INVITE. A rejected offer must not replace the previous media. For
-an accepted update, inspect `media_renegotiations`, the current directional
-formats and the WebSocket `media_update` notification. A re-INVITE 2xx also
-requires ACK; HA terminates the dialog if that ACK never arrives.
+the established video codec, supplied an unsupported audio shape, sent an
+offerless re-INVITE, or requested video that the other bridge leg rejected.
+For an audio-only SIP bridge, an accepted video addition produces a second
+re-INVITE toward the destination before HA answers the source. A rejected offer
+must not replace the previous audio media. For an accepted update, inspect
+`media_renegotiations`, both dialog CSeq values, the current directional formats
+and the video relay counters. A re-INVITE 2xx also requires ACK; HA terminates
+the dialog if that ACK never arrives.
 
 ## No audio
 
