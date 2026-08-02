@@ -208,6 +208,13 @@ class H264RtpTest(unittest.TestCase):
         self.assertEqual(depacketizer.dropped_access_units, 1)
 
     def test_invalid_or_unbounded_payloads_are_rejected(self) -> None:
+        self.assertEqual(
+            video_rtp.split_annex_b(
+                b"\x00\x00\x00\x00\x01\x67\x01\x00"
+                b"\x00\x01\x68\x02\x00\x00"
+            ),
+            [b"\x67\x01", b"\x68\x02"],
+        )
         with self.assertRaises(video_rtp.H264RtpError):
             video_rtp.split_annex_b(b"not annex b")
         with self.assertRaises(video_rtp.H264RtpError):

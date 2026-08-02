@@ -11,6 +11,7 @@ from . import rtp
 
 
 ANNEX_B_START_CODE = b"\x00\x00\x00\x01"
+_ANNEX_B_SHORT_START_CODE = b"\x00\x00\x01"
 DEFAULT_MAX_RTP_PAYLOAD = 1200
 MAX_ACCESS_UNIT_BYTES = 4 * 1024 * 1024
 MAX_NAL_UNIT_BYTES = 2 * 1024 * 1024
@@ -319,18 +320,17 @@ def split_annex_b(data: bytes) -> list[bytes]:
     if not data:
         return []
     starts: list[tuple[int, int]] = []
-    index = 0
+    search_from = 0
     end = len(data)
-    while index + 3 <= end:
-        if data[index : index + 4] == ANNEX_B_START_CODE:
-            starts.append((index, 4))
-            index += 4
-            continue
-        if data[index : index + 3] == b"\x00\x00\x01":
-            starts.append((index, 3))
-            index += 3
-            continue
-        index += 1
+    while True:
+        short_start = data.find(_ANNEX_B_SHORT_START_CODE, search_from)
+        if short_start < 0:
+            break
+        if short_start > 0 and data[short_start - 1] == 0:
+            starts.append((short_start - 1, 4))
+        else:
+            starts.append((short_start, 3))
+        search_from = short_start + len(_ANNEX_B_SHORT_START_CODE)
     if not starts:
         raise H264RtpError("H.264 access unit is not Annex B")
     out: list[bytes] = []
@@ -369,6 +369,7 @@ class H264Depacketizer:
         self._timestamp: int | None = None
         self._expected_sequence: int | None = None
         self._nals: list[bytes] = []
+        self._nals_bytes = 0
         self._fu: bytearray | None = None
         self._damaged = False
         self._sps: bytes | None = None
@@ -388,6 +389,7 @@ class H264Depacketizer:
         self._timestamp = None
         self._expected_sequence = None
         self._nals.clear()
+        self._nals_bytes = 0
         self._fu = None
         self._damaged = False
 
@@ -416,6 +418,7 @@ class H264Depacketizer:
             self._timestamp = packet.timestamp
             self._expected_sequence = None
             self._nals.clear()
+            self._nals_bytes = 0
             self._fu = None
             self._damaged = False
         if self._expected_sequence is not None and packet.sequence != self._expected_sequence:
@@ -440,9 +443,11 @@ class H264Depacketizer:
             raise H264RtpError("invalid nested H.264 packetization NAL type")
         if len(self._nals) >= MAX_ACCESS_UNIT_NALS:
             raise H264RtpError("too many H.264 NAL units")
-        self._nals.append(nal)
-        if sum(len(item) + 4 for item in self._nals) > MAX_ACCESS_UNIT_BYTES:
+        next_bytes = self._nals_bytes + len(nal) + len(ANNEX_B_START_CODE)
+        if next_bytes > MAX_ACCESS_UNIT_BYTES:
             raise H264RtpError("H.264 access unit exceeds safety limit")
+        self._nals.append(nal)
+        self._nals_bytes = next_bytes
 
     def _consume_payload(self, payload: bytes) -> None:
         nal_type = payload[0] & 0x1F
@@ -511,6 +516,7 @@ class H264Depacketizer:
         self._timestamp = None
         self._expected_sequence = None
         self._nals = []
+        self._nals_bytes = 0
         self._fu = None
         self._damaged = False
         if damaged:
