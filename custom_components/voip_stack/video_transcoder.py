@@ -88,6 +88,20 @@ async def _release_transcoder_slot(hass: HomeAssistant, owner: object) -> None:
             bucket.setdefault(_TRANSCODER_RELEASE_EVENT, asyncio.Event()).set()
 
 
+async def _stop_process(process: asyncio.subprocess.Process | None) -> None:
+    if process is None:
+        return
+    if process.returncode is None:
+        with contextlib.suppress(ProcessLookupError):
+            process.terminate()
+    try:
+        await asyncio.wait_for(process.wait(), timeout=_PROCESS_STOP_TIMEOUT)
+    except TimeoutError:
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+        await process.wait()
+
+
 def _available_udp_port() -> int:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -576,18 +590,7 @@ class FfmpegVideoTranscoder:
         try:
             if send_socket is not None:
                 send_socket.close()
-            if process is not None:
-                if process.returncode is None:
-                    with contextlib.suppress(ProcessLookupError):
-                        process.terminate()
-                try:
-                    await asyncio.wait_for(
-                        process.wait(), timeout=_PROCESS_STOP_TIMEOUT
-                    )
-                except TimeoutError:
-                    with contextlib.suppress(ProcessLookupError):
-                        process.kill()
-                    await process.wait()
+            await _stop_process(process)
         finally:
             if stderr_task is not None:
                 stderr_task.cancel()
@@ -820,18 +823,7 @@ class FfmpegJpegNormalizer:
         release_slot: bool,
     ) -> None:
         try:
-            if process is not None:
-                if process.returncode is None:
-                    with contextlib.suppress(ProcessLookupError):
-                        process.terminate()
-                try:
-                    await asyncio.wait_for(
-                        process.wait(), timeout=_PROCESS_STOP_TIMEOUT
-                    )
-                except TimeoutError:
-                    with contextlib.suppress(ProcessLookupError):
-                        process.kill()
-                    await process.wait()
+            await _stop_process(process)
         finally:
             if stderr_task is not None:
                 stderr_task.cancel()

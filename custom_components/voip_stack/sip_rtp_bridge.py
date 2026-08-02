@@ -176,6 +176,7 @@ class SipRtpRelay:
         self._audio_queues: dict[str, asyncio.Queue[tuple[int, bytes]]] = {}
         self._audio_pacers: dict[str, asyncio.Task[None]] = {}
         self._audio_pacing_generation = 0
+        self._audio_pacing_required: dict[str, bool] = {}
         self._dtmf_tasks: set[asyncio.Task[None]] = set()
         self._dtmf_locks = {"left": asyncio.Lock(), "right": asyncio.Lock()}
         self.video_relay: Any | None = None
@@ -576,6 +577,12 @@ class SipRtpRelay:
 
     def _reconfigure_audio_pacers(self) -> None:
         self._audio_pacing_generation += 1
+        self._audio_pacing_required = {
+            "left": self.right.audio_format.frame_ms
+            != self.left.outbound_audio_format.frame_ms,
+            "right": self.left.audio_format.frame_ms
+            != self.right.outbound_audio_format.frame_ms,
+        }
         dropped = sum(drain_queue(queue) for queue in self._audio_queues.values())
         self.pacing_dropped_packets += dropped
         self.dropped += dropped
@@ -661,7 +668,7 @@ class SipRtpRelay:
 
     def _queue_audio_packet(self, destination_side: str, packet: bytes) -> bool:
         queue = self._audio_queues.get(destination_side)
-        if queue is None:
+        if queue is None or not self._audio_pacing_required[destination_side]:
             return self._send_audio_packet(destination_side, packet)
         if put_drop_oldest(queue, (self._audio_pacing_generation, packet)):
             self.pacing_dropped_packets += 1
