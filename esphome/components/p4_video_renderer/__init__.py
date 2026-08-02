@@ -5,8 +5,10 @@ import esphome.config_validation as cv
 from esphome import automation
 from esphome.components import display, voip_stack
 from esphome.components.esp32 import (
+    VARIANT_ESP32P4,
     add_idf_component,
     add_idf_sdkconfig_option,
+    only_on_variant,
 )
 from esphome.components.lvgl.defines import add_lv_use
 from esphome.const import CONF_DISPLAY_ID, CONF_ID
@@ -116,6 +118,8 @@ CONFIG_SCHEMA = cv.All(
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _validate_dimensions,
+    cv.only_on_esp32,
+    only_on_variant(supported=[VARIANT_ESP32P4]),
 )
 
 

@@ -4,7 +4,11 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
 from esphome.components import esp_video_camera, voip_stack
-from esphome.components.esp32 import add_idf_component
+from esphome.components.esp32 import (
+    VARIANT_ESP32P4,
+    add_idf_component,
+    only_on_variant,
+)
 from esphome.const import CONF_DEVICE, CONF_ID
 from esphome.core import CORE
 
@@ -57,6 +61,8 @@ CONFIG_SCHEMA = cv.All(
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _validate_dimensions,
+    cv.only_on_esp32,
+    only_on_variant(supported=[VARIANT_ESP32P4]),
 )
 
 

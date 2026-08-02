@@ -169,7 +169,11 @@ void MipiDsi::setup() {
       }
     }
   }
-  this->io_lock_ = xSemaphoreCreateBinary();
+  this->io_lock_ = xSemaphoreCreateBinaryStatic(&this->io_lock_storage_);
+  if (this->io_lock_ == nullptr) {
+    this->mark_failed(LOG_STR("Failed to create display transfer semaphore"));
+    return;
+  }
   esp_lcd_dpi_panel_event_callbacks_t cbs = {
       .on_color_trans_done = notify_refresh_ready,
   };
@@ -258,29 +262,45 @@ void MipiDsi::draw_pixels_at(int x_start, int y_start, int w, int h, const uint8
 #endif
 }
 
+bool MipiDsi::submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
+                             const uint8_t *ptr) {
+  if (this->is_failed() || this->handle_ == nullptr ||
+      this->io_lock_ == nullptr) {
+    return false;
+  }
+  const esp_err_t err = esp_lcd_panel_draw_bitmap(
+      this->handle_, x_start, y_start, x_end, y_end, ptr);
+  if (err != ESP_OK) {
+    this->smark_failed(LOG_STR("lcd_panel_draw_bitmap failed"), err);
+    return false;
+  }
+  // A successful submit owns the caller's buffer until the transfer callback.
+  // Waiting without a timeout preserves that ownership contract. The error
+  // path above must return before waiting because no callback is guaranteed
+  // when the driver rejects the submit.
+  xSemaphoreTake(this->io_lock_, portMAX_DELAY);
+  return true;
+}
+
 void MipiDsi::write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,
                                 int x_pad) {
-  esp_err_t err = ESP_OK;
+  if (this->is_failed())
+    return;
   auto bytes_per_pixel = 3 - this->color_depth_;
   auto stride = (x_offset + w + x_pad) * bytes_per_pixel;
   ptr += y_offset * stride + x_offset * bytes_per_pixel;  // skip to the first pixel
   // x_ and y_offset are offsets into the source buffer, unrelated to our own offsets into the display.
   if (x_offset == 0 && x_pad == 0) {
-    err = esp_lcd_panel_draw_bitmap(this->handle_, x_start, y_start, x_start + w, y_start + h, ptr);
-    xSemaphoreTake(this->io_lock_, portMAX_DELAY);
-
+    this->submit_bitmap_(x_start, y_start, x_start + w, y_start + h, ptr);
   } else {
     // draw line by line
     for (int y = 0; y != h; y++) {
-      err = esp_lcd_panel_draw_bitmap(this->handle_, x_start, y + y_start, x_start + w, y + y_start + 1, ptr);
-      if (err != ESP_OK)
+      if (!this->submit_bitmap_(x_start, y + y_start, x_start + w,
+                                y + y_start + 1, ptr))
         break;
       ptr += stride;  // next line
-      xSemaphoreTake(this->io_lock_, portMAX_DELAY);
     }
   }
-  if (err != ESP_OK)
-    ESP_LOGE(TAG, "lcd_lcd_panel_draw_bitmap failed: %s", esp_err_to_name(err));
 }
 
 bool MipiDsi::check_buffer_() {

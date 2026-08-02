@@ -15,6 +15,8 @@
 #include "esp_lcd_panel_io.h"
 
 #include "esp_lcd_mipi_dsi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 namespace esphome::mipi_dsi {
 
@@ -77,6 +79,8 @@ class MipiDsi final : public display::Display {
   void dump_config() override;
 
  protected:
+  bool submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
+                      const uint8_t *ptr);
   void write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,
                          int x_pad);
   bool check_buffer_();
@@ -105,6 +109,7 @@ class MipiDsi final : public display::Display {
   esp_lcd_dsi_bus_handle_t bus_handle_{};
   esp_lcd_panel_io_handle_t io_handle_{};
   SemaphoreHandle_t io_lock_{};
+  StaticSemaphore_t io_lock_storage_{};
   uint8_t *buffer_{nullptr};
   uint16_t x_low_{1};
   uint16_t y_low_{1};

@@ -958,3 +958,55 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         "this->close_encoder_();"
     )
     assert "stop_tx_task_" not in shutdown
+
+
+def test_p4_video_boundaries_fail_closed() -> None:
+    dsi_cpp = (
+        ROOT / "esphome" / "components" / "mipi_dsi" / "mipi_dsi.cpp"
+    ).read_text()
+    dsi_header = (
+        ROOT / "esphome" / "components" / "mipi_dsi" / "mipi_dsi.h"
+    ).read_text()
+    jpeg_source = (
+        ROOT
+        / "esphome"
+        / "components"
+        / "esp_jpeg_video_source"
+        / "esp_jpeg_video_source.cpp"
+    ).read_text()
+    h264_config = (
+        ROOT
+        / "esphome"
+        / "components"
+        / "esp_h264_video_source"
+        / "__init__.py"
+    ).read_text()
+    h264_source = (
+        ROOT
+        / "esphome"
+        / "components"
+        / "esp_h264_video_source"
+        / "esp_h264_video_source.cpp"
+    ).read_text()
+    renderer_config = (
+        ROOT
+        / "esphome"
+        / "components"
+        / "p4_video_renderer"
+        / "__init__.py"
+    ).read_text()
+
+    submit = dsi_cpp[
+        dsi_cpp.index("bool MipiDsi::submit_bitmap_(") :
+        dsi_cpp.index("void MipiDsi::write_to_display_(")
+    ]
+    assert "xSemaphoreCreateBinaryStatic(&this->io_lock_storage_)" in dsi_cpp
+    assert "StaticSemaphore_t io_lock_storage_{};" in dsi_header
+    assert submit.index("if (err != ESP_OK)") < submit.index("xSemaphoreTake(")
+    assert "portMAX_DELAY" in submit
+    assert "capability.width == this->width_" in jpeg_source
+    assert "capability.height == this->height_" in jpeg_source
+    assert "capability.max_fps == 0" in jpeg_source
+    assert "this->active_bitrate_.store(this->bitrate_" in h264_source
+    for source in (h264_config, renderer_config):
+        assert "only_on_variant(supported=[VARIANT_ESP32P4])" in source

@@ -358,6 +358,7 @@ bool EspH264VideoSource::restart_encoder_() {
     this->close_encoder_();
     return false;
   }
+  this->active_bitrate_.store(this->bitrate_, std::memory_order_release);
   return true;
 }
 
@@ -505,6 +506,8 @@ bool EspH264VideoSource::encode_frame_(
   esp_h264_enc_in_frame_t input{};
   input.raw_data.buffer = const_cast<uint8_t *>(yuv);
   input.raw_data.len = this->yuv_bytes_();
+  // esp_h264 1.3.6 passes PTS through unchanged and drives rate control from
+  // config.fps, so preserving the RTP clock avoids a second timestamp domain.
   input.pts = timestamp_90khz;
   esp_h264_enc_out_frame_t output{};
   output.raw_data.buffer = this->tx_encoded_;

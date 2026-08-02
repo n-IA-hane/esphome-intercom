@@ -48,8 +48,8 @@ bool EspJpegVideoSource::prepare_video(
   return !this->is_failed() && this->camera_ != nullptr &&
          !this->active_.load(std::memory_order_acquire) &&
          capability.valid() && capability.is_jpeg() &&
-         capability.width <= this->width_ &&
-         capability.height <= this->height_;
+         capability.width == this->width_ &&
+         capability.height == this->height_;
 }
 
 bool EspJpegVideoSource::start_video(
@@ -61,9 +61,9 @@ bool EspJpegVideoSource::start_video(
   xSemaphoreTake(this->control_mutex_, portMAX_DELAY);
   this->callback_ = callback;
   this->callback_ctx_ = ctx;
-  this->negotiated_fps_ =
-      std::max<uint8_t>(1, std::min(this->framerate_,
-                                    capability.max_fps));
+  this->negotiated_fps_ = capability.max_fps == 0
+                              ? this->framerate_
+                              : std::min(this->framerate_, capability.max_fps);
   this->rate_timestamp_ = 0;
   this->rate_tokens_ = kRateTokenCost;
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
