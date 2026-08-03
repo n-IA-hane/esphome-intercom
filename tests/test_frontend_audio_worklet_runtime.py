@@ -11,6 +11,9 @@ import subprocess
 import pytest
 
 
+pytestmark = pytest.mark.browser
+
+
 PROCESSOR = (
     Path(__file__).resolve().parents[1]
     / "custom_components"

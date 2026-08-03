@@ -1,0 +1,12 @@
+aiohttp==3.14.1
+coverage==7.15.2
+hypothesis==6.165.0
+numpy==2.3.2
+pytest==9.0.3
+pytest-cov==7.1.0
+pytest-timeout==2.4.0
+PyYAML==6.0.3
+requests==2.34.2
+ruff==0.15.21
+voluptuous==0.15.2
+

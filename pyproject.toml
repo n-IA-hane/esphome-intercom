@@ -1,0 +1,30 @@
+[tool.coverage.run]
+branch = true
+source = ["custom_components/voip_stack"]
+dynamic_context = "test_function"
+
+[tool.coverage.report]
+fail_under = 60
+show_missing = true
+skip_empty = true
+
+[tool.mutmut]
+source_paths = ["custom_components/voip_stack/"]
+also_copy = [
+  "pytest.ini",
+  "tests/voip_phase1_support.py",
+  "tests/support/",
+]
+pytest_add_cli_args = ["-q", "-x", "--tb=short"]
+pytest_add_cli_args_test_selection = [
+  "tests/test_call_registry.py",
+  "tests/test_call_registry_stateful.py",
+  "tests/test_service_endpoints_runtime.py",
+  "tests/test_session_cleanup.py",
+  "tests/test_sip_protocol.py",
+  "tests/test_sip_transaction.py",
+  "tests/test_sip_video_relay.py",
+]
+mutate_only_covered_lines = true
+max_stack_depth = 8
+

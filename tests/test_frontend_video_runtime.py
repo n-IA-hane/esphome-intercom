@@ -11,6 +11,9 @@ import subprocess
 import pytest
 
 
+pytestmark = pytest.mark.browser
+
+
 ROOT = Path(__file__).resolve().parents[1]
 VIDEO_ENGINE = (
     ROOT

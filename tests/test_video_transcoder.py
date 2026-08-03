@@ -11,6 +11,11 @@ import types
 import unittest
 from unittest import mock
 
+import pytest
+
+
+pytestmark = pytest.mark.slow
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG_NAME = "custom_components.voip_stack"
