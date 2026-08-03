@@ -31,6 +31,14 @@ P4_LANDSCAPE_FULL_AFE = (
     / "waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml"
 )
 P4_FULL_JPEG_PACKAGE = ROOT / "packages" / "voip" / "p4_full_video_jpeg.yaml"
+HA_PHONE_PACKAGE = ROOT / "packages" / "voip" / "ha_phone.yaml"
+VOIP_ONLY_PACKAGE = ROOT / "packages" / "voip_only.yaml"
+P4_VIDEOPHONE_BASE = (
+    YAMLS
+    / "voip-only"
+    / "single-bus"
+    / "waveshare-p4-touch-videophone-base.yaml"
+)
 
 
 def _voip_stack_block(text: str) -> str:
@@ -60,6 +68,27 @@ def _has_s16le_mono_format(section: str, sample_rate: int, frame_ms: int) -> boo
         and re.search(rf"(?m)^        frame_ms:\s*{frame_ms}\s*$", entry)
         for entry in entries[1:]
     )
+
+
+def test_complete_ha_phone_package_keeps_entities_actions_and_phonebook_together() -> None:
+    text = HA_PHONE_PACKAGE.read_text()
+
+    assert "voip_ha_entities: !include ha_integration.yaml" in text
+    assert "voip_ha_actions: !include ha_api.yaml" in text
+    assert "voip_ha_phonebook: !include phonebook_subscribe.yaml" in text
+
+
+def test_physical_phone_presets_use_complete_ha_phone_package() -> None:
+    voip_only = VOIP_ONLY_PACKAGE.read_text()
+    p4_base = P4_VIDEOPHONE_BASE.read_text()
+
+    assert "ha_phone: !include voip/ha_phone.yaml" in voip_only
+    assert "ha_phone:" in p4_base
+    assert "packages/voip/ha_phone.yaml" in p4_base
+    for text in (voip_only, p4_base):
+        assert "ha_integration:" not in text
+        assert "ha_api:" not in text
+        assert "phonebook_subscribe:" not in text
 
 
 def test_resampling_profiles_accept_direct_esp_16khz_10ms() -> None:

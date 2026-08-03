@@ -84,10 +84,11 @@ an ESP participates in PBX groups, HA reads `text platform: voip_stack
 type: ring_groups`, `text platform: voip_stack type: conference_groups` and
 `switch platform: voip_stack conference_ring` from the same ESPHome device.
 
-The maintained `packages/voip/ha_integration.yaml` package exposes the normal
-entity surface. Custom YAMLs can omit it for standalone ESP-only SIP devices,
-but then HA will not discover that ESP, mirror its call state or read dynamic
-group membership.
+The maintained `packages/voip/ha_phone.yaml` package combines the normal entity
+surface, native HA-callable actions and central roster participation. Custom
+YAMLs can omit it for standalone ESP-only SIP devices, but then HA will not
+fully discover and control that ESP. Full runtime-controller profiles combine
+`ha_integration.yaml` with `ha_api_runtime.yaml` instead.
 
 Roster entries use JSON fields:
 

@@ -1,8 +1,10 @@
 # =============================================================================
-# VoIP Stack Home Assistant integration surface.
+# VoIP Stack Home Assistant entity surface.
 #
-# Include this package when the ESP should participate in the Home Assistant
-# central phonebook/dialplan or be mirrored by the HA softphone card.
+# This low-level package exposes entities only. It does not declare native API
+# actions such as esphome.<slug>_start_call. Custom devices should normally
+# include ha_phone.yaml, which combines this entity surface, API call control
+# and central phonebook participation in one package.
 #
 # `voip_stack:` alone is the SIP/RTP engine and works headless with static
 # contacts. These entities are the HA-facing surface:

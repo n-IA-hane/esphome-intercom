@@ -28,11 +28,9 @@ substitutions:
 
 packages:
   voice_pe_base: github://esphome/home-assistant-voice-pe/home-assistant-voice.yaml@dev
-  ha_integration: github://n-IA-hane/esphome-intercom/packages/voip/ha_integration.yaml@dev
+  ha_phone: github://n-IA-hane/esphome-intercom/packages/voip/ha_phone.yaml@dev
   voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
-  phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
   voip_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
-  voip_ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api.yaml@dev
 
 # =============================================================================
 # BOARD AND MEMORY

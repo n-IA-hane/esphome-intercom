@@ -38,9 +38,7 @@ packages:
   ui: github://n-IA-hane/esphome-intercom/packages/lvgl/p4_videophone_ui.yaml@dev
   voip_entities: github://n-IA-hane/esphome-intercom/packages/voip/entities_full_duplex.yaml@dev
   call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
-  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api.yaml@dev
-  ha_integration: github://n-IA-hane/esphome-intercom/packages/voip/ha_integration.yaml@dev
-  phonebook: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
+  ha_phone: github://n-IA-hane/esphome-intercom/packages/voip/ha_phone.yaml@dev
   transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
   speaker_mute: github://n-IA-hane/esphome-intercom/packages/voip/speaker_mute.yaml@dev
   audio_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@dev

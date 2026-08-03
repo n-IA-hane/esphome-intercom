@@ -64,8 +64,6 @@ packages:
   core: github://n-IA-hane/esphome-intercom/packages/voip_only.yaml@dev
   voip_entities_full_duplex: github://n-IA-hane/esphome-intercom/packages/voip/entities_full_duplex.yaml@dev
   call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
-  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api.yaml@dev
-  phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
   voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
   speaker_mute: github://n-IA-hane/esphome-intercom/packages/voip/speaker_mute.yaml@dev
   s3_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32s3_base.yaml@dev

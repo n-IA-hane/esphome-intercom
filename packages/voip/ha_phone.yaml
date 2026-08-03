@@ -1,0 +1,20 @@
+# =============================================================================
+# Complete Home Assistant surface for a physical ESP VoIP phone.
+#
+# Include this package in custom non-runtime-controller phones. It combines:
+#   - discovery and mirror entities
+#   - native API call-control actions, including start_call
+#   - participation in the Home Assistant managed phonebook
+#
+# Full voice-assistant profiles use ha_integration.yaml plus
+# ha_api_runtime.yaml because their runtime controller owns HA connectivity.
+# Do not include ha_api.yaml separately when this package is present.
+#
+# Required:
+#   - exactly one voip_stack component with id: phone
+# =============================================================================
+
+packages:
+  voip_ha_entities: !include ha_integration.yaml
+  voip_ha_actions: !include ha_api.yaml
+  voip_ha_phonebook: !include phonebook_subscribe.yaml

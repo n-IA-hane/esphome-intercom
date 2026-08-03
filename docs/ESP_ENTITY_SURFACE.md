@@ -3,19 +3,25 @@
 `voip_stack:` is the SIP/RTP engine. It can run headless: an ESP can call
 static contacts or direct SIP peers without exposing any Home Assistant entity.
 
-Home Assistant features need an explicit entity surface. The maintained
-packages expose it for you:
+Home Assistant features need entities and native API actions. Custom physical
+phones should normally include the complete package:
 
 ```yaml
 packages:
-  voip_ha_integration: !include packages/voip/ha_integration.yaml
+  voip_ha_phone: !include packages/voip/ha_phone.yaml
 ```
 
-Maintained YAMLs already include the appropriate entity package. When building
-a custom YAML from the bare `voip_stack` component, add this package or declare
-the equivalent entities manually. Otherwise the ESP may still be a working SIP
-phone, but Home Assistant will not discover it as a phonebook peer and ESP
-mirror cards will not have state to display.
+This combines the `ha_integration.yaml` entity surface,
+`ha_api.yaml` call-control actions and `phonebook_subscribe.yaml`. It exposes
+`esphome.<slug>_start_call`, so selecting the ESP as `device_id` in
+`voip_stack.call` asks that physical phone to originate the call.
+
+Maintained YAMLs already include the appropriate pieces. Full
+runtime-controller profiles use `ha_integration.yaml` with
+`ha_api_runtime.yaml` instead. When building a custom YAML from the bare
+`voip_stack` component, include `ha_phone.yaml` or declare the equivalent
+entities and API actions manually. Otherwise the ESP may still be a working SIP
+phone, but Home Assistant cannot fully discover and control it.
 
 ## Entities
 
@@ -41,9 +47,10 @@ least `state`, `caller`, `destination` and `last_reason`.
 If the ESP does not appear in the HA phonebook, check that it exposes
 `endpoint` and that the endpoint state is not `unknown` or `unavailable`.
 
-## Manual YAML
+## Entity-only package and manual YAML
 
-The package above is recommended. Equivalent manual YAML:
+`ha_integration.yaml` is intentionally the low-level entity-only package. It
+does not expose `start_call`. Equivalent manual entity YAML:
 
 ```yaml
 text_sensor:

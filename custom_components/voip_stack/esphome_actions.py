@@ -15,6 +15,20 @@ from .websocket_api import _get_voip_devices
 _LOGGER = logging.getLogger(__name__)
 
 
+def _registry_endpoint(hass: HomeAssistant, selector: str):
+    """Resolve a selected logical phone without assuming its transport."""
+    registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
+    by_device_id = getattr(registry, "by_device_id", None)
+    endpoint = by_device_id(selector) if callable(by_device_id) else None
+    resolve = getattr(registry, "resolve", None)
+    if endpoint is None and callable(resolve):
+        try:
+            endpoint = resolve(selector)
+        except (KeyError, ValueError):
+            return None
+    return endpoint
+
+
 async def async_press_device_button(
     hass: HomeAssistant,
     device: dict,
@@ -72,7 +86,8 @@ async def async_call_action(
     service = f"{route_id}_{action}"
     if not hass.services.has_service("esphome", service):
         raise ServiceValidationError(
-            f"ESPHome service esphome.{service} is not available"
+            f"ESPHome service esphome.{service} is not available; "
+            "include packages/voip/ha_phone.yaml in the device firmware"
         )
     await hass.services.async_call(
         "esphome",
@@ -124,6 +139,15 @@ async def async_resolve_source_device(
             or str(device.get("host") or "").lower() == wanted
         ):
             return device
+
+    # The registry keeps the ESP identity while its live endpoint is missing.
+    # Do not pass that physical phone to the browser adapter.
+    endpoint = _registry_endpoint(hass, source)
+    if endpoint is not None and getattr(endpoint, "kind", None) is EndpointKind.ESPHOME:
+        name = str(getattr(endpoint, "name", "") or "ESPHome phone")
+        raise ServiceValidationError(
+            f"{name} is an ESPHome phone, but its live VoIP endpoint is unavailable"
+        )
     return None
 
 
@@ -136,14 +160,9 @@ async def async_resolve_command_phone(
     No physical selector means the command targets a browser softphone. A
     logical browser Device must never be mistaken for an ESP target.
     """
-    endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
     selector = str(call.data.get("device_id") or "").strip()
-    resolve_endpoint = getattr(endpoint_registry, "resolve", None)
-    if selector and callable(resolve_endpoint):
-        try:
-            endpoint = resolve_endpoint(selector)
-        except (KeyError, ValueError):
-            endpoint = None
+    if selector:
+        endpoint = _registry_endpoint(hass, selector)
         if (
             endpoint is not None
             and getattr(endpoint, "kind", None) is EndpointKind.BROWSER

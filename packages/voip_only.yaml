@@ -3,11 +3,10 @@
 # Simple phones use voip_stack callbacks directly, without runtime_controller.
 # Full profiles use runtime_controller because VA/media/LVGL need arbitration.
 #
-# Maintained presets include optional feature packages explicitly next to this
-# preset, so users can comment out one line to remove a feature:
+# This preset includes the complete HA phone surface through ha_phone.yaml.
+# Maintained profiles keep optional local controls next to this preset:
 #   - voip/entities_full_duplex.yaml   call/next/prev/decline buttons + mic mute
-#   - voip/call_settings.yaml      auto-answer + DND switches
-#   - voip/ha_api.yaml             HA-callable call-control services
+#   - voip/call_settings.yaml          auto-answer + DND switches
 #
 # Required IDs (defined by device):
 #   mic_main                - Microphone
@@ -22,7 +21,7 @@
 # =============================================================================
 
 packages:
-  ha_integration: !include voip/ha_integration.yaml
+  ha_phone: !include voip/ha_phone.yaml
   simple_led_status_full_duplex: !include voip/simple_led_status_full_duplex.yaml
   callbacks: !include voip/callbacks.yaml
 
