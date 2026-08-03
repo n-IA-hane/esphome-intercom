@@ -46,6 +46,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ $PYTHON != */* ]]; then
+  PYTHON=$(command -v "$PYTHON" || true)
+fi
 [[ -x "$PYTHON" ]] || { printf 'Python not found: %s\n' "$PYTHON" >&2; exit 2; }
 
 cd "$ROOT"
