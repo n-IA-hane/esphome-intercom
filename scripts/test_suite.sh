@@ -112,7 +112,13 @@ case "$MODE" in
     pytest_args+=(-m mutation)
     ;;
   mutation)
-    exec mutmut run
+    git_dir=$(git rev-parse --path-format=absolute --git-dir)
+    common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
+    [[ $git_dir != "$common_dir" ]] || {
+      printf '%s\n' "Mutation tests require a disposable git worktree" >&2
+      exit 2
+    }
+    exec "$PYTHON" -m mutmut run
     ;;
   *)
     printf 'Unknown suite: %s\n' "$MODE" >&2

@@ -23,6 +23,12 @@ Tests stop at the first failure by default. Use `--keep-going` only when an
 independent failure inventory is useful. Use `--seed N` to reproduce generated
 state-machine cases.
 
+Mutation testing is intentionally refused in the primary checkout. Create a
+disposable linked worktree at a committed milestone, install
+`requirements-mutation-test.txt`, then run `./scripts/test_suite.sh mutation`
+there. This keeps generated mutants and deliberate failures away from local
+device YAML edits.
+
 ## Layers
 
 - `unit`: protocol parsing, codecs, value objects and lifecycle primitives.
