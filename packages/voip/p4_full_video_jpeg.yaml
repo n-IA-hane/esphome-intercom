@@ -11,8 +11,8 @@ substitutions:
   p4_sip_jpeg_width: "800"
   p4_sip_jpeg_height: "800"
   # TX and RX share the P4 JPEG codec and DMA path. Match the camera ceiling so
-  # bidirectional video cannot build a second software pacing path.
-  p4_sip_jpeg_fps: "5"
+  # bidirectional video uses one pacing contract.
+  p4_sip_jpeg_fps: "10"
 
 globals:
   - id: restore_mww_after_video_call

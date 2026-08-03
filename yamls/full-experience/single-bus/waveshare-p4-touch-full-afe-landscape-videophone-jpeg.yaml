@@ -344,9 +344,8 @@ esp_video_camera:
   # the PPA only rotates the frame before hardware JPEG encoding.
   resolution: 800x800
   jpeg_quality: 10
-  # The native API and SIP share the same event-driven camera stream. Five
-  # frames per second leaves bounded idle time while serving both consumers.
-  max_framerate: 5
+  # The native API and SIP share the same event-driven camera stream.
+  max_framerate: 10
   # Camera is mounted portrait relative to the landscape front panel. Rotate
   # once in the native ESPHome camera path consumed by Home Assistant.
   rotation: 270
