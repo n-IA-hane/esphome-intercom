@@ -427,6 +427,7 @@ class DialForkController:
             candidate.candidate_id for candidate in self.candidates
         )
         pending_controls = set(control_tasks)
+        branch_result: ForkResult | None = None
 
         async def _stop_branches() -> None:
             if branch_task.done():
@@ -441,18 +442,27 @@ class DialForkController:
             await asyncio.gather(branch_task, return_exceptions=True)
 
         try:
-            while pending_controls and not branch_task.done():
+            while pending_controls:
+                if branch_result is None and branch_task.done():
+                    branch_result = branch_task.result()
+                    if branch_result.winner is not None:
+                        break
                 timeout = max(0.0, deadline - loop.time())
                 if timeout <= 0:
                     break
+                waiters: set[asyncio.Task] = set(pending_controls)
+                if branch_result is None:
+                    waiters.add(branch_task)
                 done, pending = await asyncio.wait(
-                    {*pending_controls, branch_task},
+                    waiters,
                     timeout=timeout,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 pending_controls = {
                     task for task in pending if task is not branch_task
                 }
+                if branch_task in done:
+                    branch_result = branch_task.result()
                 completed_controls = [
                     task for task in control_tasks if task in done
                 ]
@@ -531,7 +541,9 @@ class DialForkController:
                         winner=winner,
                         attempted=attempted,
                     )
-            result = await branch_task
+                if branch_result is not None and branch_result.winner is not None:
+                    break
+            result = branch_result or await branch_task
             await self._close_candidates(controls, LegCloseMode.CLOSE)
             if result.winner is not None and not commit_winner(
                 result.winner,

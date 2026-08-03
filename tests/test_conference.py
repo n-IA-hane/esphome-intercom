@@ -1086,6 +1086,22 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         await manager.leave_call("call-3", reason="remote_hangup")
         self.assertNotIn("Conference", manager.rooms)
 
+        rejoined = manager.start_ha_softphone("Conference")
+        self.assertIsNotNone(rejoined)
+        assert rejoined is not None
+        rejoined_call_id, _queue = rejoined
+        self.assertNotEqual(rejoined_call_id, softphone_call_id)
+        self.assertTrue(rejoined_call_id.startswith("conference:"))
+        registry = endpoint_lifecycle.call_registry(hass)
+        self.assertFalse(registry.is_terminated(rejoined_call_id))
+        self.assertEqual(registry.sessions[rejoined_call_id].state, "in_call")
+
+        await manager.leave_ha_softphone(
+            "Conference",
+            call_id=rejoined_call_id,
+        )
+        self.assertNotIn("Conference", manager.rooms)
+
     async def test_creator_leaving_does_not_close_room_with_remaining_participants(self) -> None:
         hass = _FakeHass()
         manager = conference.ConferenceManager(hass, local_ip="127.0.0.1")

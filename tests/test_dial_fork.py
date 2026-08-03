@@ -324,6 +324,55 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
             closed,
         )
 
+    async def test_failed_media_branches_do_not_cancel_ringing_browser(self) -> None:
+        session = endpoint_session.EndpointCallSession("call-1", 1)
+        browser_answer = asyncio.Event()
+
+        async def busy_branch():
+            return dial_fork.DialOutcome(
+                dial_fork.DialDisposition.BUSY,
+                486,
+            )
+
+        async def answer_browser():
+            await browser_answer.wait()
+            return dial_fork.DialOutcome(
+                dial_fork.DialDisposition.ANSWERED,
+                200,
+            )
+
+        async def close(_mode) -> None:
+            return None
+
+        branch = dial_fork.DialCandidate(
+            "busy-sip-phone",
+            busy_branch,
+            close,
+        )
+        browser = dial_fork.DialCandidate(
+            "ringing-browser",
+            answer_browser,
+            close,
+            control=True,
+        )
+        running = asyncio.create_task(
+            dial_fork.DialForkController(
+                session,
+                (branch, browser),
+            ).run(lambda _candidate, _outcome: True)
+        )
+
+        await asyncio.sleep(0.01)
+        self.assertFalse(running.done())
+        browser_answer.set()
+        result = await running
+
+        self.assertIs(result.winner, browser)
+        self.assertIs(
+            result.outcome.disposition,
+            dial_fork.DialDisposition.ANSWERED,
+        )
+
     async def test_sequential_source_cancel_arbitrates_before_winner_commit(self) -> None:
         session = endpoint_session.EndpointCallSession("call-1", 1)
         gate = asyncio.Event()

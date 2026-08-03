@@ -439,8 +439,18 @@ class LiveContext:
             last = await self.ws.softphone_state()
             active = int(last.get("active_dialogs") or 0)
             pending = list(last.get("pending_call_ids") or [])
+            resources = dict(
+                last.get("runtime_resources")
+                or (last.get("media_debug") or {}).get("runtime_resources")
+                or {}
+            )
             state = norm(self.esp.values.get("voip_state"))
-            if active == 0 and not pending and state == "idle":
+            if (
+                active == 0
+                and not pending
+                and state == "idle"
+                and resources.get("call_scoped_quiescent") is True
+            ):
                 await asyncio.sleep(0.8)
                 return
             await asyncio.sleep(0.3)
@@ -735,47 +745,169 @@ async def scenario_ha_to_esp_dnd(ctx: LiveContext) -> None:
 
 
 async def scenario_ha_to_ring_group_answer(ctx: LiveContext) -> None:
+    await _start_ring_group_call(ctx, auto_answer=False)
+    await ctx.ha.service("voip_stack", "hangup", {})
+    await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
+    ctx.capture("ha_to_ring_group_answer")
+
+
+async def _start_ring_group_call(
+    ctx: LiveContext,
+    *,
+    auto_answer: bool,
+) -> dict[str, Any]:
     await ctx.cleanup()
-    await ctx.esp.switch("auto_answer", False)
+    await ctx.esp.switch("auto_answer", auto_answer)
     await ctx.ha.service("voip_stack", "call", {"destination": ctx.args.ring_group})
-    await wait_esp_voip_state(ctx, {"ringing", "incoming"}, timeout=12)
-    await ctx.esp.button("call")
+    if not auto_answer:
+        await wait_esp_voip_state(ctx, {"ringing", "incoming"}, timeout=12)
+        await ctx.esp.button("call")
     await wait_esp_voip_state(ctx, {"in_call"}, timeout=12)
     soft = await wait_softphone_state(ctx, {"in_call"}, timeout=8)
     if str(soft.get("peer_name") or "") == ctx.args.ring_group:
         raise AssertionError(
             f"HA softphone still displays ring group instead of winning member: {soft}"
         )
+    return soft
+
+
+async def _assert_ha_terminal_cleanup(ctx: LiveContext) -> dict[str, Any]:
+    soft = await wait_softphone_state(
+        ctx,
+        {"idle", "cancelled", "remote_hangup"},
+        timeout=12,
+    )
+    if soft.get("active_dialogs") or soft.get("pending_call_ids"):
+        raise AssertionError(f"HA retained SIP runtime after remote hangup: {soft}")
+    return soft
+
+
+async def scenario_ha_to_ring_group_answer_esp_hangup(ctx: LiveContext) -> None:
+    await _start_ring_group_call(ctx, auto_answer=False)
+    await ctx.esp.button("call")
+    await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
+    await _assert_ha_terminal_cleanup(ctx)
+    ctx.capture("ha_to_ring_group_answer_esp_hangup")
+
+
+async def scenario_ha_to_ring_group_auto_answer_ha_hangup(
+    ctx: LiveContext,
+) -> None:
+    await _start_ring_group_call(ctx, auto_answer=True)
     await ctx.ha.service("voip_stack", "hangup", {})
     await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
-    ctx.capture("ha_to_ring_group_answer")
+    await ctx.esp.switch("auto_answer", False)
+    ctx.capture("ha_to_ring_group_auto_answer_ha_hangup")
+
+
+async def scenario_ha_to_ring_group_auto_answer_esp_hangup(
+    ctx: LiveContext,
+) -> None:
+    await _start_ring_group_call(ctx, auto_answer=True)
+    await ctx.esp.button("call")
+    await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
+    await _assert_ha_terminal_cleanup(ctx)
+    await ctx.esp.switch("auto_answer", False)
+    ctx.capture("ha_to_ring_group_auto_answer_esp_hangup")
+
+
+async def _start_conference_call(
+    ctx: LiveContext,
+    *,
+    auto_answer: bool,
+) -> None:
+    await ctx.cleanup()
+    await ctx.esp.switch("auto_answer", auto_answer)
+    await ctx.esp.switch("voip_ring_on_conference", True)
+    await wait_phonebook_group_member(
+        ctx.ha,
+        ctx.args.conference_group,
+        ctx.esp.spec.name,
+        "ring_members",
+        timeout=15,
+    )
+    await ctx.ha.service(
+        "voip_stack", "call", {"destination": ctx.args.conference_group}
+    )
+    if not auto_answer:
+        await wait_esp_voip_state(ctx, {"ringing", "incoming"}, timeout=12)
+        await ctx.esp.button("call")
+    await wait_esp_voip_state(ctx, {"in_call"}, timeout=12)
+    await wait_softphone_state(ctx, {"in_call"}, timeout=8)
 
 
 async def scenario_ha_to_conference_group_rings_esp(ctx: LiveContext) -> None:
-    await ctx.cleanup()
-    await ctx.esp.switch("auto_answer", False)
-    await ctx.esp.switch("voip_ring_on_conference", True)
+    await _start_conference_call(ctx, auto_answer=False)
     try:
-        await wait_phonebook_group_member(
-            ctx.ha,
-            ctx.args.conference_group,
-            ctx.esp.spec.name,
-            "ring_members",
-            timeout=15,
-        )
-        await ctx.ha.service(
-            "voip_stack", "call", {"destination": ctx.args.conference_group}
-        )
-        await wait_esp_voip_state(ctx, {"ringing", "incoming"}, timeout=12)
-        await ctx.esp.button("call")
-        await wait_esp_voip_state(ctx, {"in_call"}, timeout=12)
         await ctx.ha.service("voip_stack", "hangup", {})
-        await asyncio.sleep(0.5)
-        await ctx.esp.service("decline_call", {"reason": "qualification_cleanup"})
+        await wait_softphone_state(ctx, {"idle"}, timeout=8)
+        await wait_esp_voip_state(ctx, {"in_call"}, timeout=3)
+        await ctx.esp.button("call")
         await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
     finally:
         await ctx.esp.switch("voip_ring_on_conference", False)
     ctx.capture("ha_to_conference_group_rings_esp")
+
+
+async def scenario_ha_to_conference_group_esp_leaves(ctx: LiveContext) -> None:
+    await _start_conference_call(ctx, auto_answer=False)
+    try:
+        await ctx.esp.button("call")
+        await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
+        await wait_softphone_state(ctx, {"in_call"}, timeout=3)
+        await ctx.ha.service("voip_stack", "hangup", {})
+        await wait_softphone_state(ctx, {"idle"}, timeout=8)
+    finally:
+        await ctx.esp.switch("voip_ring_on_conference", False)
+    ctx.capture("ha_to_conference_group_esp_leaves")
+
+
+async def scenario_ha_to_conference_group_auto_answer_ha_leaves(
+    ctx: LiveContext,
+) -> None:
+    await _start_conference_call(ctx, auto_answer=True)
+    try:
+        await ctx.ha.service("voip_stack", "hangup", {})
+        await wait_softphone_state(ctx, {"idle"}, timeout=8)
+        await wait_esp_voip_state(ctx, {"in_call"}, timeout=3)
+        await ctx.esp.button("call")
+        await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
+    finally:
+        await ctx.esp.switch("auto_answer", False)
+        await ctx.esp.switch("voip_ring_on_conference", False)
+    ctx.capture("ha_to_conference_group_auto_answer_ha_leaves")
+
+
+async def scenario_ha_to_conference_group_auto_answer_esp_leaves(
+    ctx: LiveContext,
+) -> None:
+    await _start_conference_call(ctx, auto_answer=True)
+    try:
+        await ctx.esp.button("call")
+        await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
+        await wait_softphone_state(ctx, {"in_call"}, timeout=3)
+        await ctx.ha.service("voip_stack", "hangup", {})
+        await wait_softphone_state(ctx, {"idle"}, timeout=8)
+    finally:
+        await ctx.esp.switch("auto_answer", False)
+        await ctx.esp.switch("voip_ring_on_conference", False)
+    ctx.capture("ha_to_conference_group_auto_answer_esp_leaves")
+
+
+async def scenario_ha_to_conference_group_no_ring(ctx: LiveContext) -> None:
+    await ctx.cleanup()
+    await ctx.esp.switch("auto_answer", True)
+    await ctx.esp.switch("voip_ring_on_conference", False)
+    await ctx.ha.service(
+        "voip_stack", "call", {"destination": ctx.args.conference_group}
+    )
+    await wait_softphone_state(ctx, {"in_call"}, timeout=8)
+    await asyncio.sleep(1.0)
+    await wait_esp_voip_state(ctx, {"idle"}, timeout=2)
+    await ctx.ha.service("voip_stack", "hangup", {})
+    await wait_softphone_state(ctx, {"idle"}, timeout=8)
+    await ctx.esp.switch("auto_answer", False)
+    ctx.capture("ha_to_conference_group_no_ring")
 
 
 async def scenario_esp_to_ha_extension_cancel(ctx: LiveContext) -> None:
@@ -879,12 +1011,65 @@ SCENARIOS: dict[str, Scenario] = {
         ),
         scenario_ha_to_ring_group_answer,
     ),
+    "ha_to_ring_group_answer_esp_hangup": Scenario(
+        "ha_to_ring_group_answer_esp_hangup",
+        "HA calls ring group; ESP answers manually and hangs up",
+        frozenset({"ha", "esp", "ring_group", "phonebook"}),
+        frozenset({"esp_in_call", "ha_terminal_reason", "both_idle"}),
+        scenario_ha_to_ring_group_answer_esp_hangup,
+    ),
+    "ha_to_ring_group_auto_answer_ha_hangup": Scenario(
+        "ha_to_ring_group_auto_answer_ha_hangup",
+        "HA calls ring group; ESP auto-answers and HA hangs up",
+        frozenset({"ha", "esp", "ring_group", "phonebook", "auto_answer"}),
+        frozenset({"automatic_in_call", "remote_bye", "cleanup_idle"}),
+        scenario_ha_to_ring_group_auto_answer_ha_hangup,
+    ),
+    "ha_to_ring_group_auto_answer_esp_hangup": Scenario(
+        "ha_to_ring_group_auto_answer_esp_hangup",
+        "HA calls ring group; ESP auto-answers and hangs up",
+        frozenset({"ha", "esp", "ring_group", "phonebook", "auto_answer"}),
+        frozenset({"automatic_in_call", "ha_terminal_reason", "both_idle"}),
+        scenario_ha_to_ring_group_auto_answer_esp_hangup,
+    ),
     "ha_to_conference_group_rings_esp": Scenario(
         "ha_to_conference_group_rings_esp",
-        "HA joins conference group; ESP ring-on-conference rings and joins",
+        "HA joins conference group; ESP answers manually; HA leaves first",
         frozenset({"ha", "esp", "conference_group", "ring_on_conference"}),
         frozenset({"conference_started", "esp_ringing", "esp_joined", "cleanup_idle"}),
         scenario_ha_to_conference_group_rings_esp,
+    ),
+    "ha_to_conference_group_esp_leaves": Scenario(
+        "ha_to_conference_group_esp_leaves",
+        "HA joins conference group; ESP answers manually and leaves first",
+        frozenset({"ha", "esp", "conference_group", "ring_on_conference"}),
+        frozenset({"conference_started", "esp_joined", "both_idle"}),
+        scenario_ha_to_conference_group_esp_leaves,
+    ),
+    "ha_to_conference_group_auto_answer_ha_leaves": Scenario(
+        "ha_to_conference_group_auto_answer_ha_leaves",
+        "HA joins conference group; ESP auto-answers and HA leaves first",
+        frozenset(
+            {"ha", "esp", "conference_group", "ring_on_conference", "auto_answer"}
+        ),
+        frozenset({"conference_started", "automatic_in_call", "cleanup_idle"}),
+        scenario_ha_to_conference_group_auto_answer_ha_leaves,
+    ),
+    "ha_to_conference_group_auto_answer_esp_leaves": Scenario(
+        "ha_to_conference_group_auto_answer_esp_leaves",
+        "HA joins conference group; ESP auto-answers and leaves first",
+        frozenset(
+            {"ha", "esp", "conference_group", "ring_on_conference", "auto_answer"}
+        ),
+        frozenset({"conference_started", "automatic_in_call", "both_idle"}),
+        scenario_ha_to_conference_group_auto_answer_esp_leaves,
+    ),
+    "ha_to_conference_group_no_ring": Scenario(
+        "ha_to_conference_group_no_ring",
+        "HA joins conference group while ESP conference ringing is disabled",
+        frozenset({"ha", "esp", "conference_group", "ring_on_conference"}),
+        frozenset({"conference_started", "esp_idle", "cleanup_idle"}),
+        scenario_ha_to_conference_group_no_ring,
     ),
     "esp_to_ha_extension_cancel": Scenario(
         "esp_to_ha_extension_cancel",

@@ -56,6 +56,7 @@ from .media_ports import (
 )
 from .outbound_attempts import (
     BrowserLeg,
+    async_apply_outbound_video_answer,
     async_cleanup_outbound_attempts as _cleanup_outbound_attempts,
     async_close_outbound_leg as _close_outbound_leg,
 )
@@ -789,6 +790,21 @@ async def async_forward_existing_call(
                 client = winner.client
                 dest_call_id = client.dialog_ids.call_id
                 dest_relay_port = winner.ports.ports[1]
+                video_answer = None
+                if winner.video_relay is not None and client.dialog is not None:
+                    video_answer = configure_answered_invite_video_relay(
+                        invite,
+                        client.dialog,
+                        winner.video_relay,
+                        hass=hass,
+                        enable_transcoding=bool(
+                            cfg.get(CONF_VIDEO_TRANSCODING, False)
+                        ),
+                    )
+                    await async_apply_outbound_video_answer(
+                        winner,
+                        video_answer,
+                    )
                 registry.register_bridge(
                     source_call_id=call_id,
                     dest_call_id=dest_call_id,
@@ -831,6 +847,8 @@ async def async_forward_existing_call(
                     callee=winner.member,
                     client=client,
                 )
+                if winner.video_relay is not None:
+                    relay.attach_video_relay(winner.video_relay)
                 try:
                     await relay.start()
                 except Exception:
@@ -842,6 +860,9 @@ async def async_forward_existing_call(
                     raise
                 reservation.detach()
                 winner.ports.detach()
+                if winner.video_relay is not None:
+                    # The audio relay now owns and tears down the video relay.
+                    winner.video_relay = None
                 _attach_client_media_update(
                     client,
                     relay,
@@ -866,6 +887,21 @@ async def async_forward_existing_call(
                         invite.recv_format,
                         dtmf=first_offered_dtmf_format(invite.remote_sdp),
                         remote_sdp=invite.remote_sdp,
+                        video_port=(
+                            relay.video_relay.left_port
+                            if relay.video_relay is not None
+                            else 0
+                        ),
+                        video_format=(
+                            video_answer.video_format
+                            if video_answer is not None
+                            else None
+                        ),
+                        video_direction=(
+                            video_answer.direction
+                            if video_answer is not None
+                            else "inactive"
+                        ),
                     )
                     _sip_send_final_response(
                         hass, call_id, 200, "OK", answer_sdp=answer
@@ -888,6 +924,22 @@ async def async_forward_existing_call(
                     sip_status_code=200,
                     last_sip_event="SIP_RESPONSE",
                     sip_uri=str(winner.uri),
+                    video_active=bool(relay.video_relay is not None),
+                    video_requested=invite.video_format is not None,
+                    video_negotiated=bool(relay.video_relay is not None),
+                    video_status=(
+                        "rejected"
+                        if winner.video_failure_reason
+                        else "active"
+                        if relay.video_relay is not None
+                        else "inactive"
+                    ),
+                    video_failure_reason=winner.video_failure_reason,
+                    video_format=(
+                        video_answer.video_format.wire_token()
+                        if video_answer is not None
+                        else ""
+                    ),
                 )
                 await async_watch_sip_bridge_destination(
                     hass,

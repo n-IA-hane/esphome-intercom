@@ -743,6 +743,7 @@ class ConferenceManager:
                 if endpoint_id == DEFAULT_ENDPOINT_ID
                 and legacy not in self.ha_calls
                 and legacy not in registry.sessions
+                and not registry.is_terminated(legacy)
                 else f"conference:{secrets.token_hex(16)}"
             )
         existing = self.ha_calls.get(candidate)

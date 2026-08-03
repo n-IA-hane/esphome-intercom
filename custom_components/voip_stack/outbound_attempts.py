@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any
 
 from .media_ports import RtpPortReservation
 from .session_cleanup import async_cleanup_sip_runtime, async_wait_for_cleanup
@@ -36,6 +37,21 @@ class BrowserLeg:
     endpoint_id: str
     name: str
     device_id: str
+
+
+async def async_apply_outbound_video_answer(
+    attempt: OutboundLeg,
+    answer: Any | None,
+) -> Any | None:
+    """Keep an accepted video relay or release a rejected reservation."""
+
+    relay = attempt.video_relay
+    if relay is None or answer is not None:
+        return answer
+    await relay.stop()
+    attempt.video_relay = None
+    attempt.video_failure_reason = "remote_video_rejected"
+    return None
 
 
 async def async_close_client_and_release(

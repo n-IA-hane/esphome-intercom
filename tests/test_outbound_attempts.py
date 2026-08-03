@@ -137,6 +137,26 @@ class OutboundAttemptsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events, ["signaling", "video", "ports"])
         self.assertIsNone(leg.video_relay)
 
+    async def test_rejected_video_answer_releases_reserved_relay(self) -> None:
+        events: list[str] = []
+        leg = outbound_attempts.OutboundLeg(
+            member="Audio only",
+            uri=object(),
+            client=SimpleNamespace(dialog_ids=SimpleNamespace(call_id="call-3")),
+            ports=_Ports(events),
+            video_relay=_Relay(events),
+        )
+
+        answer = await outbound_attempts.async_apply_outbound_video_answer(
+            leg,
+            None,
+        )
+
+        self.assertIsNone(answer)
+        self.assertEqual(events, ["video"])
+        self.assertIsNone(leg.video_relay)
+        self.assertEqual(leg.video_failure_reason, "remote_video_rejected")
+
     async def test_dial_tasks_are_cancelled_and_joined(self) -> None:
         started = asyncio.Event()
 

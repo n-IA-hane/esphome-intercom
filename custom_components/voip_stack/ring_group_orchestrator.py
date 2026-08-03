@@ -37,6 +37,7 @@ from .media_ports import (
 from .outbound_attempts import (
     BrowserLeg,
     OutboundLeg,
+    async_apply_outbound_video_answer,
     async_cleanup_outbound_attempts as _cleanup_outbound_attempts,
     async_close_outbound_leg as _close_outbound_leg,
 )
@@ -764,6 +765,7 @@ async def run_ring_group_call(
                     runtime.config.get(CONF_VIDEO_TRANSCODING, False)
                 ),
             )
+            await async_apply_outbound_video_answer(winner, video_answer)
             if video_answer is None:
                 _LOGGER.info(
                     "SIP ring group video rejected by winning branch "
@@ -771,9 +773,6 @@ async def run_ring_group_call(
                     invite.call_id,
                     winner.member,
                 )
-                await winner.video_relay.stop()
-                winner.video_relay = None
-                winner.video_failure_reason = "remote_video_rejected"
         bridge_session = registry.register_bridge(
             source_call_id=invite.call_id,
             dest_call_id=client.dialog_ids.call_id,
