@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable
 from homeassistant.core import HomeAssistant
 
 from .audio_format import HA_TRUNK_AUDIO_FORMATS
+from .bridge_manager import async_watch_sip_bridge_destination
 from .config import debug_mode as _debug_mode, trunk_config as _get_trunk_config
 from .const import (
     CONF_SIP_VIDEO,
@@ -44,8 +45,6 @@ from .forward_group_candidates import (
 from .fsm import (
     CallState,
     TerminalReason,
-    sip_public_state as _sip_public_state,
-    sip_terminal_reason as _sip_terminal_reason,
 )
 from .groups import GROUP_TYPE_RING
 from .media_ports import (
@@ -794,6 +793,7 @@ async def async_forward_existing_call(
                     source_call_id=call_id,
                     dest_call_id=dest_call_id,
                     client=client,
+                    lifecycle_task=asyncio.current_task(),
                     state=CallState.CONNECTING.value,
                     caller=invite.caller,
                     callee=entry.display_name,
@@ -889,17 +889,11 @@ async def async_forward_existing_call(
                     last_sip_event="SIP_RESPONSE",
                     sip_uri=str(winner.uri),
                 )
-                current_task = asyncio.current_task()
-                if current_task is not None:
-                    registry.attach_client_watcher(dest_call_id, current_task)
-                terminal = await client.wait_for_dialog_termination()
-                terminal_reason = (
-                    TerminalReason.REMOTE_HANGUP.value
-                    if terminal == "remote_hangup"
-                    else _sip_terminal_reason(terminal, _sip_public_state(terminal))
-                )
-                await _terminate_sip_bridge(
-                    hass, dest_call_id, terminal_reason=terminal_reason
+                await async_watch_sip_bridge_destination(
+                    hass,
+                    client=client,
+                    source_call_id=call_id,
+                    terminate_sip_bridge=_terminate_sip_bridge,
                 )
                 return
 
@@ -1178,6 +1172,7 @@ async def async_forward_existing_call(
                 source_call_id=call_id,
                 dest_call_id=dest_call_id,
                 client=client,
+                lifecycle_task=asyncio.current_task(),
                 state=CallState.REMOTE_RINGING.value
                 if result == "ringing"
                 else CallState.CONNECTING.value,
@@ -1192,9 +1187,6 @@ async def async_forward_existing_call(
                 ),
                 dest_state=result,
             )
-            current_task = asyncio.current_task()
-            if current_task is not None:
-                registry.attach_client_watcher(dest_call_id, current_task)
             if result == "ringing":
                 _set_sip_bridge_call_state(
                     hass,
@@ -1328,16 +1320,11 @@ async def async_forward_existing_call(
                     selected_video.wire_token() if selected_video else ""
                 ),
             )
-            terminal = await client.wait_for_dialog_termination()
-            terminal_reason = (
-                TerminalReason.REMOTE_HANGUP.value
-                if terminal == "remote_hangup"
-                else _sip_terminal_reason(terminal, _sip_public_state(terminal))
-            )
-            await _terminate_sip_bridge(
+            await async_watch_sip_bridge_destination(
                 hass,
-                dest_call_id,
-                terminal_reason=terminal_reason,
+                client=client,
+                source_call_id=call_id,
+                terminate_sip_bridge=_terminate_sip_bridge,
             )
         except asyncio.CancelledError:
             if dest_call_id:

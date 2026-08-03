@@ -1193,6 +1193,7 @@ class CallRegistry:
         source_call_id: str,
         dest_call_id: str,
         client: Any,
+        lifecycle_task: Any | None = None,
         state: str,
         caller: str = "",
         callee: str = "",
@@ -1205,12 +1206,16 @@ class CallRegistry:
         dest_state: str = "",
         expected_generation: int | None = None,
     ) -> CallSession | None:
-        """Attach one destination dialog only while the source call is live.
+        """Attach one destination dialog and its mandatory lifecycle owner.
 
         Async dial/fork tasks may finish after the source transaction has
         already been cancelled.  The generation guard must run before any
         bridge index is mutated, otherwise a late winner can recreate a
         terminal session and leak its client or relay.
+
+        Production registries are bound to a session owner.  Requiring the
+        lifecycle task at this boundary makes it impossible for a route to
+        create a bridge whose destination BYE is never observed.
         """
 
         if expected_generation is not None and not self.is_generation_current(
@@ -1218,6 +1223,8 @@ class CallRegistry:
             expected_generation,
         ):
             return None
+        if lifecycle_task is None and self._session_owner is not None:
+            raise ValueError("SIP bridge requires a lifecycle task")
         self.bridge_clients[source_call_id] = dest_call_id
         session = self.upsert(
             source_call_id,
@@ -1238,6 +1245,8 @@ class CallRegistry:
             role=dest_role,
             state=dest_state or state,
         )
+        if lifecycle_task is not None:
+            self.attach_client_watcher(dest_call_id, lifecycle_task)
         return session
 
     def clear_runtime(self) -> None:

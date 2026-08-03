@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 from pathlib import Path
@@ -1294,7 +1295,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ring_group = self.ring_group
         external_winner = ring_group[
             ring_group.index("client = winner.client") : ring_group.index(
-                "terminal = await client.wait_for_dialog_termination()"
+                "await async_watch_sip_bridge_destination("
             )
         ]
 
@@ -1576,6 +1577,33 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             runner.split("configured_trunk =", 1)[0],
         )
 
+    def test_dtmf_sip_bridge_tracks_destination_dialog_termination(self) -> None:
+        runner = self.trunk_inbound_router
+        self.assertIn("async_watch_sip_bridge_destination(", runner)
+        self.assertIn("lifecycle_task=finish_task", runner)
+        self.assertIn("terminate_sip_bridge=runtime.terminate_sip_bridge", runner)
+
+    def test_every_sip_bridge_registration_has_a_lifecycle_owner(self) -> None:
+        missing: list[str] = []
+        registrations = 0
+        component = ROOT / "custom_components" / "voip_stack"
+        for path in component.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "register_bridge"
+                ):
+                    continue
+                registrations += 1
+                if not any(
+                    keyword.arg == "lifecycle_task" for keyword in node.keywords
+                ):
+                    missing.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+        self.assertGreaterEqual(registrations, 5)
+        self.assertEqual(missing, [])
+
     def test_detached_dtmf_route_failure_releases_call_and_sends_bye(self) -> None:
         guarded = self.source[
             self.source.index("async def _run_trunk_inbound_route_guarded(") :
@@ -1749,11 +1777,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_inbound_bridge_publishes_remote_ringing_with_direction(self) -> None:
         bridge = self.inbound_bridge[
-            self.inbound_bridge.index('if result == "ringing":') :
-            self.inbound_bridge.index(
-                "async def finish_bridge",
-                self.inbound_bridge.index('if result == "ringing":'),
-            )
+            self.inbound_bridge.rindex('if result == "ringing":') :
         ]
         self.assertIn("CallState.REMOTE_RINGING.value", bridge)
         self.assertIn('direction="incoming"', bridge)

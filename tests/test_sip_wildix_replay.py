@@ -97,6 +97,32 @@ class VideoOfferPolicyTest(unittest.TestCase):
         )
         self.assertTrue(decision.accepted)
 
+    def test_bridge_accepts_cross_codec_paths_owned_by_transcoders(self) -> None:
+        vp8 = _video(104, encoding="VP8")
+        jpeg = _video(26, encoding="JPEG")
+
+        rejected = validate_bridged_video_reoffer(
+            vp8,
+            vp8,
+            vp8,
+            peer_send=jpeg,
+            peer_recv=jpeg,
+            peer_direction=jpeg,
+        )
+        accepted = validate_bridged_video_reoffer(
+            vp8,
+            vp8,
+            vp8,
+            peer_send=jpeg,
+            peer_recv=jpeg,
+            peer_direction=jpeg,
+            caller_to_peer_transcoding=True,
+            peer_to_caller_transcoding=True,
+        )
+
+        self.assertFalse(rejected.accepted)
+        self.assertTrue(accepted.accepted)
+
 
 class WildixVideoReinviteReplayTest(unittest.IsolatedAsyncioTestCase):
     async def test_recvonly_sendrecv_reinvite_storm_and_bye(self) -> None:

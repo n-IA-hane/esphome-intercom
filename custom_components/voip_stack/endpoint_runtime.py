@@ -434,6 +434,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                     start_local_assist_bridge=_start_local_assist_bridge,
                     attach_client_media_update=_attach_client_media_update,
                     attach_dtmf_event_bridge=_attach_dtmf_event_bridge,
+                    terminate_sip_bridge=_terminate_sip_bridge,
                 ),
                 invite,
                 bridge_ports=bridge_ports,

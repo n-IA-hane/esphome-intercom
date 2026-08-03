@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable
 
 from homeassistant.core import HomeAssistant
 
+from .bridge_manager import async_watch_sip_bridge_destination
 from .config import debug_mode, trunk_config
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
@@ -78,6 +79,7 @@ class TrunkInboundRuntime:
     start_local_assist_bridge: Callable[..., Awaitable[Any]]
     attach_client_media_update: Callable[..., None]
     attach_dtmf_event_bridge: Callable[..., None]
+    terminate_sip_bridge: Callable[..., Awaitable[Any]]
 
 
 async def async_route_trunk_invite(
@@ -580,10 +582,19 @@ async def async_route_trunk_invite(
         )
         return
 
+    finish_task = hass.async_create_task(
+        async_watch_sip_bridge_destination(
+            hass,
+            client=client,
+            source_call_id=invite.call_id,
+            terminate_sip_bridge=runtime.terminate_sip_bridge,
+        )
+    )
     registry.register_bridge(
         source_call_id=invite.call_id,
         dest_call_id=client.dialog_ids.call_id,
         client=client,
+        lifecycle_task=finish_task,
         state=CallState.IN_CALL.value,
         caller=invite.caller,
         callee=destination,

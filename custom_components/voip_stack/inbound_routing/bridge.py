@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from homeassistant.core import HomeAssistant
 
+from ..bridge_manager import async_watch_sip_bridge_destination
 from ..audio_format import HA_TRUNK_AUDIO_FORMATS
 from ..config import debug_mode
 from ..const import (
@@ -35,8 +35,6 @@ from ..fsm import (
     CallState,
     TerminalReason,
     sip_failure_response,
-    sip_public_state,
-    sip_terminal_reason,
 )
 from ..media_ports import (
     RtpPortReservation,
@@ -459,41 +457,6 @@ async def route_sip_bridge(
             decline_reason=terminal_reason,
         )
 
-    registry.register_bridge(
-        source_call_id=invite.call_id,
-        dest_call_id=client.dialog_ids.call_id,
-        client=client,
-        state=CallState.CONNECTING.value,
-        caller=invite.caller,
-        callee=resolved_callee,
-        route_kind=decision.action.value,
-        ingress="trunk" if trunk_invite else "extension",
-        origin="trunk" if trunk_invite else "extension",
-        source_state=CallState.CONNECTING.value,
-        dest_state=result,
-    )
-    _LOGGER.info(
-        "SIP bridge registered call_id=%s dest_call_id=%s target=%s",
-        invite.call_id,
-        client.dialog_ids.call_id,
-        decision_uri.user,
-    )
-    if result == "ringing":
-        _set_sip_bridge_call_state(
-            hass,
-            CallState.REMOTE_RINGING.value,
-            caller=invite.caller,
-            callee=resolved_callee,
-            peer_name=resolved_callee,
-            call_id=invite.call_id,
-            dest_call_id=client.dialog_ids.call_id,
-            direction="incoming",
-            route_kind=decision.action.value,
-            sip_uri=str(decision_uri),
-            sip_status_code=180,
-            last_sip_event="SIP_RESPONSE",
-        )
-
     async def finish_bridge(initial_result: str) -> None:
         nonlocal video_failure_reason, video_relay
         final = initial_result
@@ -673,43 +636,47 @@ async def route_sip_bridge(
             video_failure_reason=video_failure_reason,
             video_format=selected_video.wire_token() if selected_video else "",
         )
-        try:
-            terminal = await client.wait_for_dialog_termination()
-        except asyncio.CancelledError:
-            raise
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning(
-                "SIP bridge destination watcher failed call_id=%s dest_call_id=%s: %s",
-                invite.call_id,
-                client.dialog_ids.call_id,
-                err,
-            )
-            terminal = "error"
-        terminal_reason = (
-            TerminalReason.REMOTE_HANGUP.value
-            if terminal == "remote_hangup"
-            else sip_terminal_reason(terminal, sip_public_state(terminal))
-        )
-        (
-            bridge_handled,
-            source_call_id,
-            dest_call_id,
-            _client_closed,
-            source_bye,
-        ) = await runtime.terminate_sip_bridge(
+        await async_watch_sip_bridge_destination(
             hass,
-            client.dialog_ids.call_id,
-            terminal_reason=terminal_reason,
+            client=client,
+            source_call_id=invite.call_id,
+            terminate_sip_bridge=runtime.terminate_sip_bridge,
         )
-        if bridge_handled:
-            _LOGGER.info(
-                "SIP bridge destination ended call_id=%s dest_call_id=%s reason=%s source_bye=%s",
-                source_call_id,
-                dest_call_id,
-                terminal_reason,
-                source_bye,
-            )
 
     finish_task = hass.async_create_task(finish_bridge(result))
-    registry.attach_client_watcher(client.dialog_ids.call_id, finish_task)
+    registry.register_bridge(
+        source_call_id=invite.call_id,
+        dest_call_id=client.dialog_ids.call_id,
+        client=client,
+        lifecycle_task=finish_task,
+        state=CallState.CONNECTING.value,
+        caller=invite.caller,
+        callee=resolved_callee,
+        route_kind=decision.action.value,
+        ingress="trunk" if trunk_invite else "extension",
+        origin="trunk" if trunk_invite else "extension",
+        source_state=CallState.CONNECTING.value,
+        dest_state=result,
+    )
+    _LOGGER.info(
+        "SIP bridge registered call_id=%s dest_call_id=%s target=%s",
+        invite.call_id,
+        client.dialog_ids.call_id,
+        decision_uri.user,
+    )
+    if result == "ringing":
+        _set_sip_bridge_call_state(
+            hass,
+            CallState.REMOTE_RINGING.value,
+            caller=invite.caller,
+            callee=resolved_callee,
+            peer_name=resolved_callee,
+            call_id=invite.call_id,
+            dest_call_id=client.dialog_ids.call_id,
+            direction="incoming",
+            route_kind=decision.action.value,
+            sip_uri=str(decision_uri),
+            sip_status_code=180,
+            last_sip_event="SIP_RESPONSE",
+        )
     return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)

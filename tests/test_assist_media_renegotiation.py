@@ -81,6 +81,7 @@ def _load_module(registry, answer_calls: list[dict]):
     )
     _module(
         "sip_bridge",
+        dialog_video_rtp_peer=lambda dialog: dialog,
         invite_rtp_peer=lambda invite: invite,
         invite_video_rtp_peer=lambda invite: invite,
     )
@@ -265,7 +266,7 @@ def test_bridge_video_addition_cancellation_releases_staged_media() -> None:
 
     async def run() -> None:
         task = asyncio.create_task(
-            module._prepare_bridge_video_presence_change(
+            module._prepare_bridge_video_contract_change(
                 types.SimpleNamespace(),
                 "192.0.2.10",
                 previous,
@@ -273,7 +274,7 @@ def test_bridge_video_addition_cancellation_releases_staged_media() -> None:
                 registry.relays["source"],
             )
         )
-        await video_relay.start_entered.wait()
+        await asyncio.wait_for(video_relay.start_entered.wait(), 1.0)
         task.cancel()
         try:
             await task
@@ -396,7 +397,7 @@ def test_bridge_video_removal_updates_both_dialogs_and_stops_media() -> None:
     )
 
     result = asyncio.run(
-        module._prepare_bridge_video_presence_change(
+        module._prepare_bridge_video_contract_change(
             types.SimpleNamespace(),
             "192.0.2.10",
             previous,
@@ -419,3 +420,188 @@ def test_bridge_video_removal_updates_both_dialogs_and_stops_media() -> None:
     assert video_relay.stopped is True
     assert relay.left is updated
     assert relay.right is candidate
+
+
+def test_bridge_video_inactive_updates_both_video_legs_atomically() -> None:
+    answer_calls: list[dict] = []
+    session = types.SimpleNamespace(generation=13)
+    registry = types.SimpleNamespace(
+        preanswered={},
+        softphone_media={},
+        relays={},
+        sessions={"source": session},
+        sip_clients={},
+        bridge_for=lambda _call_id: ("source", "destination"),
+        resolve_session_id=lambda call_id: call_id,
+        is_generation_current=lambda call_id, generation: (
+            call_id == "source" and generation == 13
+        ),
+    )
+    module, _assist = _load_module(registry, answer_calls)
+
+    const = sys.modules[f"{PACKAGE}.const"]
+    const.CONF_SIP_VIDEO = "sip_video"
+    const.CONF_VIDEO_TRANSCODING = "video_transcoding"
+    _module(
+        "config",
+        transport_config=lambda _hass: {
+            "sip_video": True,
+            "video_transcoding": True,
+        },
+    )
+    media_ports = sys.modules[f"{PACKAGE}.media_ports"]
+    media_ports.release_sip_rtp_port_pair = lambda *_args: None
+    media_ports.reserve_sip_video_relay_media = lambda _hass: None
+
+    old_audio_left = types.SimpleNamespace(name="old-audio-left")
+    old_audio_right = types.SimpleNamespace(
+        name="old-audio-right", can_send=True, can_receive=True
+    )
+    new_audio_left = types.SimpleNamespace(name="new-audio-left")
+    new_audio_right = types.SimpleNamespace(
+        name="new-audio-right", can_send=True, can_receive=True
+    )
+    old_video_left = types.SimpleNamespace(name="old-video-left")
+    old_video_right = types.SimpleNamespace(name="old-video-right")
+    new_video_left = types.SimpleNamespace(name="new-video-left")
+    new_video_right = types.SimpleNamespace(
+        name="new-video-right",
+        send_format="jpeg-send",
+        recv_format="jpeg-recv",
+        video_format=types.SimpleNamespace(direction="inactive"),
+        connection_held=False,
+    )
+
+    class VideoRelay:
+        left_port = 43000
+        right_port = 43002
+
+        def __init__(self) -> None:
+            self.left = old_video_left
+            self.right = old_video_right
+
+        def transcodes_from(self, _side: str) -> bool:
+            return True
+
+        def prepare_peer_reconfiguration(self, side, peer):
+            previous_peer = getattr(self, side)
+
+            def commit() -> None:
+                assert getattr(self, side) is previous_peer
+                setattr(self, side, peer)
+
+            return commit
+
+    video_relay = VideoRelay()
+
+    class Relay:
+        left_port = 41000
+
+        def __init__(self) -> None:
+            self.left = old_audio_left
+            self.right = old_audio_right
+            self.video_relay = video_relay
+
+        def prepare_peer_reconfiguration(self, side, peer):
+            previous_peer = getattr(self, side)
+
+            def commit() -> None:
+                assert getattr(self, side) is previous_peer
+                setattr(self, side, peer)
+
+            return commit
+
+    relay = Relay()
+    registry.relays["source"] = relay
+    destination_dialog = types.SimpleNamespace(
+        remote_host="192.0.2.20",
+        recv_video_format="jpeg-recv",
+        video_format="jpeg-send",
+    )
+    candidate = types.SimpleNamespace(
+        video_format=types.SimpleNamespace(direction="inactive"),
+        remote_video_connection_held=False,
+    )
+
+    class Client:
+        def __init__(self) -> None:
+            self.dialog = destination_dialog
+            self.video_formats = ("jpeg",)
+            self.prepared = None
+            self.committed = False
+
+        async def async_prepare_video_reinvite(self, **kwargs):
+            self.prepared = kwargs
+            return candidate
+
+        def commit_prepared_reinvite(self, previous, staged) -> bool:
+            assert previous is destination_dialog
+            assert staged is candidate
+            self.committed = True
+            return True
+
+        def abort_prepared_reinvite(self, *_args) -> None:
+            raise AssertionError("committed direction update was rolled back")
+
+    client = Client()
+    registry.sip_clients["destination"] = client
+    sip_bridge = sys.modules[f"{PACKAGE}.sip_bridge"]
+    sip_bridge.build_pending_invite_video_relay = lambda *_args, **_kwargs: None
+    sip_bridge.configure_answered_invite_video_relay = (
+        lambda *_args, **_kwargs: None
+    )
+    sip_bridge.dialog_rtp_peer = lambda _dialog: new_audio_right
+    sip_bridge.dialog_video_rtp_peer = lambda _dialog: new_video_right
+    sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: ()
+    module.invite_rtp_peer = lambda _invite: new_audio_left
+    module.invite_video_rtp_peer = lambda _invite: new_video_left
+    module.remote_can_send = lambda fmt: fmt.direction in {"sendonly", "sendrecv"}
+    module.remote_can_receive = lambda fmt, **_kwargs: fmt.direction in {
+        "recvonly",
+        "sendrecv",
+    }
+    module.constrained_video_direction = lambda *_args, **_kwargs: "inactive"
+
+    previous_video = types.SimpleNamespace(direction="sendrecv")
+    updated_video = types.SimpleNamespace(direction="inactive")
+    previous = types.SimpleNamespace(
+        call_id="source",
+        video_format=previous_video,
+        remote_video_connection_held=False,
+    )
+    updated = types.SimpleNamespace(
+        call_id="source",
+        video_format=updated_video,
+        recv_video_format=updated_video,
+        answer_video_format=updated_video,
+        remote_video_connection_held=False,
+        send_format="audio-send",
+        recv_format="audio-receive",
+        remote_sdp=b"audio-video-inactive",
+        remote_audio_direction="sendrecv",
+        remote_audio_connection_held=False,
+    )
+
+    result = asyncio.run(
+        module.async_prepare_media_update(
+            types.SimpleNamespace(), "192.0.2.10", previous, updated, "INVITE"
+        )
+    )
+
+    assert result.status == 200
+    assert client.prepared == {
+        "local_video_rtp_port": 43002,
+        "video_formats": ("jpeg",),
+        "video_direction": "inactive",
+    }
+    assert client.committed is False
+    assert video_relay.left is old_video_left
+    assert video_relay.right is old_video_right
+    asyncio.run(result.commit())
+    assert client.committed is True
+    assert relay.left is new_audio_left
+    assert relay.right is new_audio_right
+    assert video_relay.left is new_video_left
+    assert video_relay.right is new_video_right
+    assert answer_calls[-1]["video_port"] == 43000
+    assert answer_calls[-1]["video_direction"] == "inactive"

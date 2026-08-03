@@ -73,6 +73,27 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "not active"):
             runtime.create_session("call-1")
 
+    async def test_live_bridge_requires_lifecycle_owner_before_registration(self) -> None:
+        registry = call_registry.CallRegistry()
+        runtime = SipEndpointRuntime(projection=registry)
+        runtime.activate()
+        registry.bind_session_owner(runtime)
+        registry.upsert("source", state="ringing", owner="router")
+
+        with self.assertRaisesRegex(ValueError, "requires a lifecycle task"):
+            registry.register_bridge(
+                source_call_id="source",
+                dest_call_id="destination",
+                client=object(),
+                state="connecting",
+            )
+
+        self.assertEqual(registry.bridge_clients, {})
+        self.assertEqual(registry.sip_clients, {})
+        self.assertNotIn("destination", registry.leg_index)
+        registry.finish_and_pop("source", reason="cancelled", state="cancelled")
+        await runtime.shutdown()
+
     async def test_runtime_owns_generations_and_observable_projection(self) -> None:
         projection = _Projection()
         runtime = SipEndpointRuntime(projection=projection)
@@ -312,15 +333,15 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         client = Client()
         relay = Relay()
         registry.upsert("source", state="ringing", owner="router")
+        watcher = asyncio.create_task(asyncio.Event().wait())
         registry.register_bridge(
             source_call_id="source",
             dest_call_id="destination",
             client=client,
+            lifecycle_task=watcher,
             state="connecting",
         )
         registry.attach_relay("source", relay)
-        watcher = asyncio.create_task(asyncio.Event().wait())
-        registry.attach_client_watcher("destination", watcher)
         authoritative = runtime.get_session("source")
 
         registry.finish_and_pop("source", reason="cancelled", state="cancelled")

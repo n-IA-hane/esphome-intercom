@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from dataclasses import dataclass
+from functools import partial
 import logging
 import secrets
 from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
+from .bridge_manager import async_watch_sip_bridge_destination
 from .call_scope import pending_routes as _pending_routes
 from .config import debug_mode as _debug_mode
 from .const import CONF_VIDEO_TRANSCODING, DOMAIN, HA_SOFTPHONE_DEVICE_ID
@@ -25,8 +27,6 @@ from .fsm import (
     CallState,
     TerminalReason,
     sip_failure_response as _sip_failure_response,
-    sip_public_state as _sip_public_state,
-    sip_terminal_reason as _sip_terminal_reason,
 )
 from .groups import GROUP_TYPE_RING
 from .media_ports import (
@@ -778,6 +778,7 @@ async def run_ring_group_call(
             source_call_id=invite.call_id,
             dest_call_id=client.dialog_ids.call_id,
             client=client,
+            lifecycle_task=asyncio.current_task(),
             state=CallState.CONNECTING.value,
             caller=invite.caller,
             callee=invite.target,
@@ -995,40 +996,19 @@ async def run_ring_group_call(
                 last_sip_event="SIP_RESPONSE",
                 sip_uri=str(winner.uri),
             )
-        current_task = asyncio.current_task()
-        if current_task is not None:
-            registry.attach_client_watcher(
-                client.dialog_ids.call_id,
-                current_task,
-            )
-        terminal = await client.wait_for_dialog_termination()
-        terminal_reason = (
-            TerminalReason.REMOTE_HANGUP.value
-            if terminal == "remote_hangup"
-            else _sip_terminal_reason(terminal, _sip_public_state(terminal))
-        )
-        (
-            _bridge_handled,
-            _source_call_id,
-            _dest_call_id,
-            _client_closed,
-            source_bye,
-        ) = await _terminate_sip_bridge(
+        await async_watch_sip_bridge_destination(
             hass,
-            client.dialog_ids.call_id,
-            endpoint_id=(origin_endpoint_id if ha_origin else DEFAULT_ENDPOINT_ID),
-            session_device_id=(
-                origin_device_id if ha_origin else HA_SOFTPHONE_DEVICE_ID
+            client=client,
+            source_call_id=invite.call_id,
+            terminate_sip_bridge=partial(
+                _terminate_sip_bridge,
+                endpoint_id=(
+                    origin_endpoint_id if ha_origin else DEFAULT_ENDPOINT_ID
+                ),
+                session_device_id=(
+                    origin_device_id if ha_origin else HA_SOFTPHONE_DEVICE_ID
+                ),
             ),
-            terminal_reason=terminal_reason,
-        )
-        _LOGGER.info(
-            "SIP ring group destination ended call_id=%s dest_call_id=%s "
-            "reason=%s source_bye=%s",
-            invite.call_id,
-            client.dialog_ids.call_id,
-            terminal_reason,
-            source_bye,
         )
     except asyncio.CancelledError:
         _settle_browser_candidates(

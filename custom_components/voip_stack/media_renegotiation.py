@@ -50,14 +50,14 @@ from .websocket_api import _fire_call_event, _ha_softphone_store
 _LOGGER = logging.getLogger(__name__)
 
 
-async def _prepare_bridge_video_presence_change(
+async def _prepare_bridge_video_contract_change(
     hass: HomeAssistant,
     local_ip: str,
     previous: SipInvite,
     updated: SipInvite,
     relay,
 ) -> SipInviteResult:
-    """Stage one video add or remove across both B2BUA dialogs."""
+    """Stage one video add, remove or direction change on both dialogs."""
 
     from .config import transport_config
     from .const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
@@ -69,6 +69,7 @@ async def _prepare_bridge_video_presence_change(
         build_pending_invite_video_relay,
         configure_answered_invite_video_relay,
         dialog_rtp_peer,
+        dialog_video_rtp_peer,
         video_bridge_offer_formats,
     )
 
@@ -77,7 +78,9 @@ async def _prepare_bridge_video_presence_change(
     session = registry.sessions.get(registry.resolve_session_id(updated.call_id))
     client = registry.sip_clients.get(dest_call_id)
     cfg = transport_config(hass)
-    adding_video = updated.video_format is not None
+    adding_video = previous.video_format is None and updated.video_format is not None
+    removing_video = previous.video_format is not None and updated.video_format is None
+    retaining_video = previous.video_format is not None and updated.video_format is not None
     if (
         source_call_id != updated.call_id
         or session is None
@@ -93,6 +96,7 @@ async def _prepare_bridge_video_presence_change(
     destination_dialog = client.dialog
     current_video_relay = getattr(relay, "video_relay", None)
     enable_transcoding = bool(cfg.get(CONF_VIDEO_TRANSCODING, False))
+    staged_video_relay = None
     if adding_video:
         if current_video_relay is not None:
             return SipInviteResult(488, "Not Acceptable Here")
@@ -120,10 +124,9 @@ async def _prepare_bridge_video_presence_change(
         )
         destination_video_port = int(staged_video_relay.right_port)
         destination_video_direction = updated.video_format.direction
-    else:
+    elif removing_video or retaining_video:
         if current_video_relay is None:
             return SipInviteResult(488, "Not Acceptable Here")
-        staged_video_relay = None
         offered_video_formats = tuple(getattr(client, "video_formats", ()))
         if not offered_video_formats:
             offered_video_formats = tuple(
@@ -136,8 +139,20 @@ async def _prepare_bridge_video_presence_change(
             )
         if not offered_video_formats:
             return SipInviteResult(488, "Not Acceptable Here")
-        destination_video_port = 0
-        destination_video_direction = "inactive"
+        destination_video_port = (
+            int(current_video_relay.right_port) if retaining_video else 0
+        )
+        destination_video_direction = (
+            (
+                "inactive"
+                if updated.remote_video_connection_held
+                else updated.video_format.direction
+            )
+            if retaining_video
+            else "inactive"
+        )
+    else:
+        return SipInviteResult(488, "Not Acceptable Here")
 
     candidate = None
     result_transferred = False
@@ -149,7 +164,8 @@ async def _prepare_bridge_video_presence_change(
         )
         if candidate is None:
             return SipInviteResult(488, "Not Acceptable Here")
-        video_answer = None
+        answer_video_format = None
+        answer_video_direction = "inactive"
         if adding_video:
             video_answer = configure_answered_invite_video_relay(
                 updated,
@@ -160,7 +176,43 @@ async def _prepare_bridge_video_presence_change(
             )
             if video_answer is None:
                 return SipInviteResult(488, "Not Acceptable Here")
+            answer_video_format = video_answer.video_format
+            answer_video_direction = video_answer.direction
             await staged_video_relay.start()
+        elif retaining_video:
+            if candidate.video_format is None:
+                return SipInviteResult(488, "Not Acceptable Here")
+            candidate_video_peer = dialog_video_rtp_peer(candidate)
+            video_offer = validate_bridged_video_reoffer(
+                previous.video_format,
+                updated.video_format,
+                updated.recv_video_format,
+                peer_send=candidate_video_peer.send_format,
+                peer_recv=candidate_video_peer.recv_format,
+                peer_direction=candidate_video_peer.video_format,
+                peer_held=candidate_video_peer.connection_held,
+                updated_held=updated.remote_video_connection_held,
+                caller_to_peer_transcoding=current_video_relay.transcodes_from(
+                    "left"
+                ),
+                peer_to_caller_transcoding=current_video_relay.transcodes_from(
+                    "right"
+                ),
+            )
+            if not video_offer.accepted:
+                return SipInviteResult(488, "Not Acceptable Here")
+            answer_video_format = updated.answer_video_format
+            answer_video_direction = constrained_video_direction(
+                updated.video_format.direction,
+                allow_send=(
+                    remote_can_send(candidate.video_format)
+                    and not updated.remote_video_connection_held
+                ),
+                allow_receive=remote_can_receive(
+                    candidate.video_format,
+                    connection_held=candidate.remote_video_connection_held,
+                ),
+            )
         next_left = invite_rtp_peer(updated)
         next_right = dialog_rtp_peer(candidate)
         previous_left = relay.left
@@ -184,20 +236,36 @@ async def _prepare_bridge_video_presence_change(
                 allow_receive=next_right.can_receive,
             ),
             video_port=(
-                int(staged_video_relay.left_port) if adding_video else 0
+                int(staged_video_relay.left_port)
+                if adding_video
+                else int(current_video_relay.left_port)
+                if retaining_video
+                else 0
             ),
-            video_format=(
-                video_answer.video_format
-                if video_answer is not None
-                else updated.answer_video_format
-            ),
-            video_direction=(
-                video_answer.direction
-                if video_answer is not None
-                else "inactive"
-            ),
+            video_format=answer_video_format,
+            video_direction=answer_video_direction,
         )
         committed = False
+        previous_video_left = (
+            current_video_relay.left if retaining_video else None
+        )
+        previous_video_right = (
+            current_video_relay.right if retaining_video else None
+        )
+        commit_video_left = (
+            current_video_relay.prepare_peer_reconfiguration(
+                "left", invite_video_rtp_peer(updated)
+            )
+            if retaining_video
+            else None
+        )
+        commit_video_right = (
+            current_video_relay.prepare_peer_reconfiguration(
+                "right", dialog_video_rtp_peer(candidate)
+            )
+            if retaining_video
+            else None
+        )
 
         async def commit() -> None:
             nonlocal committed
@@ -210,6 +278,13 @@ async def _prepare_bridge_video_presence_change(
                 or relay.left is not previous_left
                 or relay.right is not previous_right
                 or relay.video_relay is not current_video_relay
+                or (
+                    retaining_video
+                    and (
+                        current_video_relay.left is not previous_video_left
+                        or current_video_relay.right is not previous_video_right
+                    )
+                )
             ):
                 raise RuntimeError("SIP bridge media owner changed before commit")
             if not client.commit_prepared_reinvite(
@@ -218,12 +293,16 @@ async def _prepare_bridge_video_presence_change(
                 raise RuntimeError("SIP destination re-INVITE owner changed")
             if adding_video:
                 relay.attach_video_relay(staged_video_relay)
-            else:
+            elif removing_video:
                 relay.video_relay = None
             commit_left()
             commit_right()
+            if commit_video_left is not None:
+                commit_video_left()
+            if commit_video_right is not None:
+                commit_video_right()
             committed = True
-            if current_video_relay is not None:
+            if removing_video and current_video_relay is not None:
                 await current_video_relay.stop()
 
         async def rollback() -> None:
@@ -720,8 +799,20 @@ async def async_prepare_media_update(
     video_relay = getattr(relay, "video_relay", None)
     video_direction = "inactive"
     local_video_port = 0
-    if (previous.video_format is None) != (updated.video_format is None):
-        return await _prepare_bridge_video_presence_change(
+    video_presence_changed = (previous.video_format is None) != (
+        updated.video_format is None
+    )
+    video_direction_changed = bool(
+        previous.video_format is not None
+        and updated.video_format is not None
+        and (
+            previous.video_format.direction != updated.video_format.direction
+            or previous.remote_video_connection_held
+            != updated.remote_video_connection_held
+        )
+    )
+    if video_presence_changed or video_direction_changed:
+        return await _prepare_bridge_video_contract_change(
             hass,
             local_ip,
             previous,

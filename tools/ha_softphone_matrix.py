@@ -164,9 +164,11 @@ class BareSip:
         video_codec: str = "",
     ) -> None:
         TEST_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+        if dtmf_mode and dtmf_mode not in {"auto", "info", "rtpevent"}:
+            raise ValueError(f"unsupported bareSIP DTMF mode: {dtmf_mode}")
         self._temporary_config: tempfile.TemporaryDirectory[str] | None = None
         runtime_config = config
-        if headless_audio or video_codec:
+        if headless_audio or dtmf_mode or video_codec:
             self._temporary_config = tempfile.TemporaryDirectory(
                 prefix="voip-baresip-headless-"
             )
@@ -644,7 +646,7 @@ def main() -> int:
                 caller = BareSip(
                     LOCAL_CONFIG,
                     headless_audio=True,
-                    dtmf_mode="rtp",
+                    dtmf_mode="rtpevent",
                 )
                 active.append(caller)
                 caller.dial(
@@ -738,13 +740,13 @@ def main() -> int:
             case(
                 "outbound_rfc4733_dtmf_event",
                 lambda: outbound_dtmf_event(
-                    mode="rtp", digits="9", transport="rtp_event"
+                    mode="rtpevent", digits="9", transport="rtp_event"
                 ),
             )
             case(
                 "outbound_rfc4733_dtmf_keypad",
                 lambda: outbound_dtmf_event(
-                    mode="rtp", digits="0123456789*#", transport="rtp_event"
+                    mode="rtpevent", digits="0123456789*#", transport="rtp_event"
                 ),
             )
 

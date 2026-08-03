@@ -60,6 +60,8 @@ def validate_bridged_video_reoffer(
     peer_direction: RtpVideoFormat | None,
     peer_held: bool = False,
     updated_held: bool = False,
+    caller_to_peer_transcoding: bool = False,
+    peer_to_caller_transcoding: bool = False,
 ) -> VideoOfferDecision:
     """Validate only RTP paths active on both sides of a bridged call leg."""
 
@@ -80,14 +82,18 @@ def validate_bridged_video_reoffer(
         peer_direction,
         connection_held=peer_held,
     )
-    if caller_sends and peer_receives and not video_formats_passthrough_compatible(
-        updated_recv,
-        peer_send,
+    if (
+        caller_sends
+        and peer_receives
+        and not caller_to_peer_transcoding
+        and not video_formats_passthrough_compatible(updated_recv, peer_send)
     ):
         return VideoOfferDecision(False, "caller_to_peer_contract_incompatible")
-    if caller_receives and peer_sends and not video_formats_passthrough_compatible(
-        peer_recv,
-        updated_send,
+    if (
+        caller_receives
+        and peer_sends
+        and not peer_to_caller_transcoding
+        and not video_formats_passthrough_compatible(peer_recv, updated_send)
     ):
         return VideoOfferDecision(False, "peer_to_caller_contract_incompatible")
     return VideoOfferDecision(True)

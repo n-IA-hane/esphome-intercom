@@ -260,6 +260,13 @@ class SipVideoRtpRelay:
     def transcoding(self) -> bool:
         return bool(self._transcode_directions)
 
+    def transcodes_from(self, side: str) -> bool:
+        """Return whether RTP sourced by this side uses its transcoder."""
+
+        if side not in {"left", "right"}:
+            raise ValueError(f"unknown video relay side: {side}")
+        return side in self._transcode_directions
+
     @property
     def stopping(self) -> bool:
         """Return whether a subsequent call may await this relay's release."""
