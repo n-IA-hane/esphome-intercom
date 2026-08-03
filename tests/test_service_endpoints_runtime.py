@@ -87,7 +87,7 @@ def _load_service_endpoints(
     phone_endpoint.EndpointKind = EndpointKind
     phone_endpoint.PhoneEndpoint = PhoneEndpoint
 
-    module_name = f"{PKG_NAME}._test_service_endpoints_runtime"
+    module_name = f"{PKG_NAME}.service_endpoints"
     spec = importlib.util.spec_from_file_location(
         module_name,
         PKG_DIR / "service_endpoints.py",
