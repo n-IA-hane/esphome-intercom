@@ -101,6 +101,12 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )[0]
         self.assertIn("supports_response=SupportsResponse.OPTIONAL", registration)
         self.assertIn("if not call.return_response", handler)
+        self.assertIn("if physical_source is not None", handler)
+        self.assertLess(
+            handler.index("if physical_source is not None"),
+            handler.index("_service_browser_endpoint(call.hass, call)"),
+        )
+        self.assertIn('"endpoint_type": EndpointKind.ESPHOME.value', handler)
         self.assertIn("_ha_softphone_state(call.hass, endpoint_id)", handler)
 
     def test_hangup_does_not_depend_on_card_side_inference(self) -> None:

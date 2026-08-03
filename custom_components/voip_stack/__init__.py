@@ -290,9 +290,21 @@ async def _handle_sip_call_target_service(
     *,
     force_ha_bridge: bool = False,
 ) -> dict[str, object] | None:
-    await _originate_call(call, force_ha_bridge=force_ha_bridge)
+    physical_source = await _originate_call(
+        call,
+        force_ha_bridge=force_ha_bridge,
+    )
     if not call.return_response:
         return None
+    if physical_source is not None:
+        return {
+            "success": True,
+            "endpoint_id": str(physical_source.get("endpoint_id") or ""),
+            "endpoint_type": EndpointKind.ESPHOME.value,
+            "device_id": str(physical_source.get("device_id") or ""),
+            "name": str(physical_source.get("name") or ""),
+            "destination": str(call.data.get("destination") or ""),
+        }
     endpoint_id, endpoint = _service_browser_endpoint(call.hass, call)
     if endpoint is None and not call.data.get("device_id"):
         return {"success": True}

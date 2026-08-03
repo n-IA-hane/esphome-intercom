@@ -178,7 +178,7 @@ def _logical_endpoint_for_route(hass: HomeAssistant, route):
 
 async def async_originate_call(
     call: ServiceCall, *, force_ha_bridge: bool = False
-) -> None:
+) -> dict[str, object] | None:
     """Originate a standards SIP call from HA to a roster target or URI-shaped target."""
     from .roster import parse_roster_json
     from .sip import parse_sip_uri
@@ -212,7 +212,7 @@ async def async_originate_call(
         _LOGGER.info(
             "ESP SIP phone %s originating call to %s", source.get("name"), target
         )
-        return
+        return source
     endpoint_id, browser_endpoint = _service_browser_endpoint(hass, call)
     await _require_phone_service_control(
         hass,

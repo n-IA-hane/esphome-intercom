@@ -193,8 +193,9 @@ def test_esp_source_delegates_to_native_start_call(softphone_originate) -> None:
     softphone_originate._call_esphome_action = AsyncMock()
     call = _call(hass, destination="667")
 
-    asyncio.run(softphone_originate.async_originate_call(call))
+    result = asyncio.run(softphone_originate.async_originate_call(call))
 
+    assert result is source
     softphone_originate._require_phone_service_control.assert_awaited_once_with(
         hass,
         call,
