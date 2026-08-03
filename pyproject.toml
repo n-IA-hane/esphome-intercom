@@ -1,7 +1,6 @@
 [tool.coverage.run]
 branch = true
 source = ["custom_components/voip_stack"]
-dynamic_context = "test_function"
 
 [tool.coverage.report]
 fail_under = 60

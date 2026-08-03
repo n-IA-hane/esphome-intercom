@@ -88,6 +88,7 @@ case "$MODE" in
       -m "not architecture and not ha and not live and not mutation"
       --cov=custom_components/voip_stack
       --cov-branch
+      --cov-context=test
       --cov-report=term-missing:skip-covered
       --cov-report=xml
     )
