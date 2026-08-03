@@ -10,11 +10,15 @@ skip_empty = true
 
 [tool.mutmut]
 source_paths = ["custom_components/voip_stack/"]
-also_copy = [
-  "pytest.ini",
-  "tests/voip_phase1_support.py",
-  "tests/support/",
+only_mutate = [
+  "custom_components/voip_stack/call_registry.py",
+  "custom_components/voip_stack/service_endpoints.py",
+  "custom_components/voip_stack/session_cleanup.py",
+  "custom_components/voip_stack/sip.py",
+  "custom_components/voip_stack/sip_transaction.py",
+  "custom_components/voip_stack/sip_video_relay.py",
 ]
+also_copy = ["pytest.ini"]
 pytest_add_cli_args = ["-q", "-x", "--tb=short"]
 pytest_add_cli_args_test_selection = [
   "tests/test_call_registry.py",
@@ -27,4 +31,3 @@ pytest_add_cli_args_test_selection = [
 ]
 mutate_only_covered_lines = true
 max_stack_depth = 8
-
