@@ -7,11 +7,11 @@ from dataclasses import dataclass
 from hypothesis import given, settings, strategies as st
 import pytest
 
-from tests.voip_phase1_support import _load_intercom_module
+from tests.support.module_loader import load_voip_stack_module
 
 
 pytestmark = pytest.mark.unit
-call_registry = _load_intercom_module("call_registry")
+call_registry = load_voip_stack_module("call_registry")
 
 
 CALL_IDS = ("call-a", "call-b", "physical:esp")
@@ -175,4 +175,3 @@ def test_terminal_faults_cannot_resurrect_or_duplicate_calls(fault: str) -> None
         )
 
     _assert_indexes_are_consistent(registry)
-
