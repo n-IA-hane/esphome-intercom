@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 jobs:
-  pytest:
+  quality-and-runtime:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -20,15 +20,7 @@ jobs:
         with:
           node-version: "24"
       - name: Install test deps
-        run: >-
-          python -m pip install
-          pytest==9.0.2
-          aiohttp==3.14.1
-          numpy==2.3.2
-          PyYAML==6.0.3
-          requests==2.34.2
-          ruff==0.15.21
-          voluptuous==0.15.2
+        run: python -m pip install -r requirements-test.txt
       - name: Lint Python
         run: python -m ruff check custom_components esphome scripts tests tools
       - name: Parse browser modules
@@ -38,4 +30,29 @@ jobs:
       - name: Check YAML source paths
         run: ./scripts/yaml_paths.sh check --expect remote
       - name: Run test suite
-        run: python -m pytest tests/ -q
+        run: ./scripts/test_suite.sh full
+      - name: Measure runtime coverage
+        run: ./scripts/test_suite.sh coverage
+      - name: Upload coverage report
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: python-coverage
+          path: coverage.xml
+          if-no-files-found: error
+
+  home-assistant-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14.2"
+      - name: Install Home Assistant test deps
+        run: python -m pip install -r requirements-ha-test.txt
+      - name: Check YAML source paths
+        run: ./scripts/yaml_paths.sh check --expect remote
+      - name: Run Home Assistant API tests
+        env:
+          HA_PYTHON: python
+        run: ./scripts/test_suite.sh ha

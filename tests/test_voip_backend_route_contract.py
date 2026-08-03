@@ -9,8 +9,11 @@ import json
 from pathlib import Path
 import unittest
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
+pytestmark = pytest.mark.architecture
 BACKEND = ROOT / "custom_components" / "voip_stack" / "endpoint_runtime.py"
 MEDIA_RENEGOTIATION = (
     ROOT / "custom_components" / "voip_stack" / "media_renegotiation.py"

@@ -3,8 +3,11 @@
 from pathlib import Path
 import re
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
+pytestmark = pytest.mark.architecture
 YAMLS = ROOT / "yamls"
 
 PHYSICAL_AUDIO_STACK_PROFILES = (

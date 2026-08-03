@@ -7,8 +7,11 @@ import re
 import unittest
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
+pytestmark = pytest.mark.architecture
 INIT = ROOT / "custom_components" / "voip_stack" / "__init__.py"
 ENDPOINT_RUNTIME = ROOT / "custom_components" / "voip_stack" / "endpoint_runtime.py"
 INVITE_ROUTER = ROOT / "custom_components" / "voip_stack" / "invite_router.py"
@@ -91,23 +94,6 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("CallState.IDLE.value", state_update)
         self.assertIn("TerminalReason.LOCAL_HANGUP.value", state_update)
         self.assertIn("last_sip_event=", state_update)
-
-    def test_call_service_exposes_optional_native_ha_response(self) -> None:
-        services = SERVICES.read_text()
-        handler = _function_body(self.source, "_handle_sip_call_target_service")
-
-        registration = services.split('DOMAIN,\n        "call",', 1)[1].split(
-            ")\n", 1
-        )[0]
-        self.assertIn("supports_response=SupportsResponse.OPTIONAL", registration)
-        self.assertIn("if not call.return_response", handler)
-        self.assertIn("if physical_source is not None", handler)
-        self.assertLess(
-            handler.index("if physical_source is not None"),
-            handler.index("_service_browser_endpoint(call.hass, call)"),
-        )
-        self.assertIn('"endpoint_type": EndpointKind.ESPHOME.value', handler)
-        self.assertIn("_ha_softphone_state(call.hass, endpoint_id)", handler)
 
     def test_hangup_does_not_depend_on_card_side_inference(self) -> None:
         body = _function_body(

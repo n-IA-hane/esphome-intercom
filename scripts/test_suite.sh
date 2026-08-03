@@ -3,13 +3,14 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PYTHON=${PYTHON:-"$ROOT/.venv/bin/python"}
+HA_PYTHON=${HA_PYTHON:-"$ROOT/../ha-voip-lab/.venv/bin/python"}
 MODE=fast
 KEEP_GOING=0
 SEED=
 
 usage() {
   printf '%s\n' \
-    "Usage: scripts/test_suite.sh [fast|full|ha|browser|fault|mutation] [options]" \
+    "Usage: scripts/test_suite.sh [fast|full|coverage|ha|browser|fault|mutation] [options]" \
     "" \
     "Options:" \
     "  --keep-going  run independent tests after a failure" \
@@ -71,18 +72,43 @@ export YAML_PATH_MODE=$path_mode
 
 case "$MODE" in
   fast)
+    pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
     pytest_args+=(-m "not ha and not browser and not live and not mutation and not slow")
     ;;
   full)
+    pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
     pytest_args+=(-m "not live and not mutation")
     ;;
+  coverage)
+    pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
+    pytest_args+=(
+      -m "not architecture and not ha and not live and not mutation"
+      --cov=custom_components/voip_stack
+      --cov-branch
+      --cov-report=term-missing:skip-covered
+      --cov-report=xml
+    )
+    ;;
   ha)
-    pytest_args+=(-m ha)
+    if [[ $HA_PYTHON != */* ]]; then
+      HA_PYTHON=$(command -v "$HA_PYTHON" || true)
+    fi
+    [[ -x "$HA_PYTHON" ]] || {
+      printf 'HA test Python not found: %s\n' "$HA_PYTHON" >&2
+      exit 2
+    }
+    PYTHON=$HA_PYTHON
+    pytest_args=(tests/test_ha_integration_runtime.py -q --tb=short)
+    if [[ $KEEP_GOING -eq 1 ]]; then
+      pytest_args+=(--maxfail=0)
+    fi
     ;;
   browser)
+    pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
     pytest_args+=(-m browser)
     ;;
   fault)
+    pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
     pytest_args+=(-m mutation)
     ;;
   mutation)

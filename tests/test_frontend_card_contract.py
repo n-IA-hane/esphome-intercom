@@ -13,8 +13,11 @@ import re
 import unittest
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
+pytestmark = pytest.mark.architecture
 CARD = ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-stack-card.js"
 CARD_EDITOR = CARD.with_name("voip-stack-card-editor.js")
 CARD_MODEL = CARD.with_name("voip-stack-card-model.js")

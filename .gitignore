@@ -20,6 +20,12 @@ codex.md
 /test_captures/
 /.pytest_cache/
 /.ruff_cache/
+/.coverage
+/.coverage.*
+/.hypothesis/
+/coverage.xml
+/htmlcov/
+/mutants/
 /voip_stack.zip
 
 # Private development notes and local helper tools
