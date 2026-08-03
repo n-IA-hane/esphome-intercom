@@ -135,7 +135,10 @@ def peer_for_target(target: str, peers: list[Peer]) -> Peer | None:
     for peer in peers:
         if peer.is_ha:
             continue
-        if same_route_name(target, peer.name):
+        if any(
+            same_route_name(target, candidate)
+            for candidate in (peer.name, peer.sip_uri_user, peer.extension)
+        ):
             return peer
     return None
 

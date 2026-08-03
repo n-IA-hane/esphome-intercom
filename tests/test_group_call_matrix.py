@@ -474,6 +474,22 @@ class GroupCallMatrixTest(unittest.TestCase):
 
         self.assertEqual((send, recv), ([], []))
 
+    def test_peer_lookup_accepts_standard_sip_routing_identities(self) -> None:
+        endpoint = peer.Peer(
+            name="Waveshare S3 Audio",
+            host="192.168.1.47",
+            sip_uri_user="waveshare-s3",
+            extension="418",
+        )
+
+        for identity in ("Waveshare S3 Audio", "waveshare-s3", "418"):
+            with self.subTest(identity):
+                self.assertIs(
+                    endpoint_routing.peer_for_target(identity, [endpoint]),
+                    endpoint,
+                )
+        self.assertIsNone(endpoint_routing.peer_for_target("unknown", [endpoint]))
+
     def test_voip_matrix_runner_all_scenarios_validate(self) -> None:
         results, errors = run_matrix()
         self.assertEqual(errors, [])
