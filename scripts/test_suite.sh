@@ -118,7 +118,10 @@ case "$MODE" in
       printf '%s\n' "Mutation tests require a disposable git worktree" >&2
       exit 2
     }
-    exec "$PYTHON" -m mutmut run
+    "$PYTHON" -m mutmut run
+    "$PYTHON" -m mutmut export-cicd-stats
+    exec "$PYTHON" scripts/check_mutation_score.py \
+      mutants/mutmut-cicd-stats.json
     ;;
   *)
     printf 'Unknown suite: %s\n' "$MODE" >&2
