@@ -6,9 +6,13 @@
 # pipeline or software image conversion.
 
 substitutions:
+  # Keep the native square camera envelope. The P4 hardware path performs the
+  # rotation and JPEG work without a software image conversion.
   p4_sip_jpeg_width: "800"
   p4_sip_jpeg_height: "800"
-  p4_sip_jpeg_fps: "10"
+  # TX and RX share the P4 JPEG codec and DMA path. Match the camera ceiling so
+  # bidirectional video cannot build a second software pacing path.
+  p4_sip_jpeg_fps: "5"
 
 globals:
   - id: restore_mww_after_video_call

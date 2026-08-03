@@ -340,15 +340,12 @@ esp_video_camera:
   name: "P4 Camera"
   i2c_id: internal_i2c
   device: jpeg
-  # SC202CS exposes 800x800 as its square native mode. Requesting 400x400 is
-  # rejected by the sensor and still makes PPA read the full 800x800 frame, so
-  # it loses resolution without improving the measured camera cadence.
+  # SC202CS exposes 800x800 as its square native mode. Keep the native field so
+  # the PPA only rotates the frame before hardware JPEG encoding.
   resolution: 800x800
   jpeg_quality: 10
-  # The native API sends one JPEG through a shared ESP-Hosted TCP path. At
-  # 800x800, 10 fps keeps that queue continuously busy and measurably delays
-  # SIP audio. Five full-resolution frames per second leave bounded idle time
-  # while supplying both the HA camera entity and negotiated SIP video.
+  # The native API and SIP share the same event-driven camera stream. Five
+  # frames per second leaves bounded idle time while serving both consumers.
   max_framerate: 5
   # Camera is mounted portrait relative to the landscape front panel. Rotate
   # once in the native ESPHome camera path consumed by Home Assistant.
@@ -444,6 +441,10 @@ esp_afe:
   task_priority: 18
   feed_task_priority: 18
   fetch_task_priority: 18
+  # Keep one completed 64 ms AFE frame ready. This is a fixed-latency reserve,
+  # not a wait or polling path, and absorbs bounded camera/display scheduler
+  # jitter without emitting a whole silent microphone frame.
+  output_prebuffer_frames: 1
   type: fd
   mode: high_perf
   mic_num: 2

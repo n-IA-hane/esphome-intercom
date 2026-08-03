@@ -191,6 +191,12 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     assert "esp_h264_video_source" not in text + video
     assert "esp_jpeg_video_source" in video
     assert "p4_video_renderer" in video
+    assert 'p4_sip_jpeg_width: "800"' in video
+    assert 'p4_sip_jpeg_height: "800"' in video
+    assert 'p4_sip_jpeg_fps: "5"' in video
+    assert "resolution: 800x800" in text
+    assert "output_prebuffer_frames: 1" in text
+    assert "gmf_output_delay_samples" not in text
     assert not re.search(r"(?m)^  video:", block)
     assert re.search(r"(?m)^  video:", video_block)
     assert not re.search(r"(?m)^  video_debug:", block)
@@ -515,6 +521,8 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "this->surface_capacity_bytes_" in renderer_cpp
     assert "config.scale_x = scale;" in renderer_cpp
     assert "config.scale_y = scale;" in renderer_cpp
+    assert "config.data_burst_length = PPA_DATA_BURST_LENGTH_16;" in renderer_cpp
+    assert "kMaxPresentationPixels = 256U * 1024U" in renderer_cpp
     assert "jpeg_output_streaming_" in camera_header
     assert "jpeg_capture_streaming_" in camera_header
     assert (
@@ -825,6 +833,10 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         renderer_cpp.index("if (decode_error == ESP_OK")
     ]
     assert "this->surfaces_[output_index]" in jpeg_decode
+    assert "static_cast<uint32_t>(expected_size)" in jpeg_decode
+    assert "static_cast<uint32_t>(this->surface_capacity_bytes_)" not in (
+        jpeg_decode
+    )
     assert "class P4VideoRenderer" in renderer_header
 
     assert "class EspH264VideoSource" in source_header

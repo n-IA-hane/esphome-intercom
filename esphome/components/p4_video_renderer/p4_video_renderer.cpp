@@ -435,9 +435,11 @@ bool P4VideoRenderer::init_direct_display_ppa_() {
   if (this->direct_display_ppa_ != nullptr)
     return true;
   // This client is used only by loopTask. Camera conversion has its own client
-  // and the IDF driver serializes SRM transactions across callers.
+  // and the IDF driver serializes SRM transactions across callers. A short
+  // burst gives the realtime audio path access to PSRAM between video blocks.
   ppa_client_config_t config{};
   config.oper_type = PPA_OPERATION_SRM;
+  config.data_burst_length = PPA_DATA_BURST_LENGTH_16;
   const esp_err_t error =
       ppa_register_client(&config, &this->direct_display_ppa_);
   if (error != ESP_OK || this->direct_display_ppa_ == nullptr) {
@@ -538,8 +540,11 @@ bool P4VideoRenderer::present_surface_direct_(int index) {
 
   // Both decode buffers alternate as the PPA target. Bound enlargement to the
   // already allocated surface instead of reserving another display-sized
-  // framebuffer. Geometry selection is a short integer-only binary search;
-  // every pixel operation remains in PPA.
+  // framebuffer. Also cap each presentation to a quarter-megapixel: PPA and
+  // the DPI DMA copy share PSRAM with camera, JPEG and AFE, and a stale video
+  // frame is less useful than uninterrupted call audio. Geometry selection is
+  // a short integer-only binary search; every pixel operation remains in PPA.
+  static constexpr size_t kMaxPresentationPixels = 256U * 1024U;
   const auto output_fits = [&](int units) {
     const size_t width =
         static_cast<size_t>(content_width) * units / kPpaScaleUnits;
@@ -547,9 +552,11 @@ bool P4VideoRenderer::present_surface_direct_(int index) {
         static_cast<size_t>(content_height) * units / kPpaScaleUnits;
     if (width == 0 || height == 0)
       return false;
+    const size_t pixels = width * height;
     const size_t pixel_capacity =
         this->surface_capacity_bytes_ / sizeof(uint16_t);
-    return width <= pixel_capacity / height;
+    return width <= pixel_capacity / height &&
+           pixels <= kMaxPresentationPixels;
   };
   if (!output_fits(scale_units)) {
     int low = 1;
@@ -1331,6 +1338,9 @@ void P4VideoRenderer::rx_task_() {
         this->jpeg_decoder_ != nullptr && picture_info_current) {
       const int output_index =
           1 - this->front_surface_.load(std::memory_order_acquire);
+      size_t expected_size =
+          static_cast<size_t>(this->decoded_storage_width_) *
+          this->decoded_storage_height_ * 2U;
       uint32_t decoded_size = 0;
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
       const uint32_t decode_started_us = micros();
@@ -1338,20 +1348,22 @@ void P4VideoRenderer::rx_task_() {
       esp_err_t decode_error = ESP_ERR_INVALID_SIZE;
       if (output_index >= 0 && output_index <= 1 &&
           this->surfaces_[output_index] != nullptr &&
-          this->surface_capacity_bytes_ <= UINT32_MAX) {
+          expected_size <= this->surface_capacity_bytes_ &&
+          expected_size <= UINT32_MAX) {
+        // ESP-IDF synchronizes exactly outbuf_size bytes before and after the
+        // DMA transaction. Pass the padded size of this JPEG, not the maximum
+        // 800x800 surface capacity, so a small remote frame does not evict an
+        // unrelated megabyte of PSRAM cache while AFE is producing audio.
         decode_error = jpeg_decoder_process(
             this->jpeg_decoder_, &this->jpeg_decode_config_, this->rx_au_,
             static_cast<uint32_t>(this->rx_au_size_),
             this->surfaces_[output_index],
-            static_cast<uint32_t>(this->surface_capacity_bytes_),
+            static_cast<uint32_t>(expected_size),
             &decoded_size);
       }
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
       update_max(this->rx_jpeg_decode_max_us_, micros() - decode_started_us);
 #endif
-      size_t expected_size =
-          static_cast<size_t>(this->decoded_storage_width_) *
-          this->decoded_storage_height_ * 2U;
       // The SIP source normally keeps one resolution for the whole session.
       // Reparse only on the first frame or if the hardware reports a changed
       // output size, avoiding a calloc/free pair in every hot-path frame.
