@@ -165,6 +165,43 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 strict=True,
             )
 
+    def test_browser_selector_keeps_default_phone_aliases_and_strictness(self) -> None:
+        browser = PhoneEndpoint(
+            "default",
+            "Dashboard",
+            EndpointKind.BROWSER,
+            "ha-softphone",
+        )
+        self.hass.data["voip_stack"]["endpoint_registry"] = _Registry(browser)
+
+        for device_id in (None, "", "ha-softphone"):
+            endpoint_id, endpoint = self.module.service_browser_endpoint(
+                self.hass,
+                _Call(device_id=device_id),
+            )
+            self.assertEqual(endpoint_id, "default")
+            self.assertIs(endpoint, browser)
+
+        esp = PhoneEndpoint(
+            "default",
+            "Physical default",
+            EndpointKind.ESPHOME,
+        )
+        self.hass.data["voip_stack"]["endpoint_registry"] = _Registry(esp)
+        self.assertEqual(
+            self.module.service_browser_endpoint(self.hass, _Call()),
+            ("default", None),
+        )
+        with self.assertRaisesRegex(
+            ServiceValidationError,
+            "The selected Device is not a Home Assistant browser phone",
+        ):
+            self.module.service_browser_endpoint(
+                self.hass,
+                _Call(),
+                strict=True,
+            )
+
     def test_configured_selector_accepts_only_integration_owned_phones(self) -> None:
         browser = PhoneEndpoint(
             "default",
@@ -202,6 +239,42 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 self.hass,
                 _Call(device_id="esp-device"),
             )
+
+    def test_configured_selector_handles_missing_registry_and_default_alias(self) -> None:
+        self.assertEqual(
+            self.module.service_configured_endpoint(self.hass, _Call()),
+            ("default", None),
+        )
+        self.assertEqual(
+            self.module.service_configured_endpoint(
+                self.hass,
+                _Call(device_id="ha-softphone"),
+            ),
+            ("default", None),
+        )
+        with self.assertRaisesRegex(
+            ServiceValidationError,
+            "Unknown Home Assistant phone device",
+        ):
+            self.module.service_configured_endpoint(
+                self.hass,
+                _Call(device_id="missing"),
+            )
+
+        browser = PhoneEndpoint(
+            "default",
+            "Dashboard",
+            EndpointKind.BROWSER,
+            "ha-softphone",
+        )
+        self.hass.data["voip_stack"]["endpoint_registry"] = _Registry(browser)
+        self.assertEqual(
+            self.module.service_configured_endpoint(
+                self.hass,
+                _Call(device_id="ha-softphone"),
+            ),
+            ("default", browser),
+        )
 
     def test_browser_name_uses_endpoint_then_location_then_fallback(self) -> None:
         endpoint = PhoneEndpoint(
@@ -249,6 +322,55 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             self.hass,
             call,
             ("button.kitchen_call",),
+        )
+
+    async def test_explicit_endpoint_is_not_replaced_by_device_metadata(self) -> None:
+        browser = PhoneEndpoint(
+            "default",
+            "Dashboard",
+            EndpointKind.BROWSER,
+            "ha-softphone",
+        )
+        device = {
+            "device_id": "esp-device",
+            "endpoint_id": "esphome:kitchen",
+            "name": "Kitchen",
+            "entities": {"call": "button.kitchen_call"},
+        }
+
+        await self.module.async_require_phone_service_control(
+            self.hass,
+            _Call(),
+            endpoint=browser,
+            device=device,
+        )
+
+        self.require_endpoint.assert_awaited_once_with(
+            self.hass,
+            unittest.mock.ANY,
+            browser,
+        )
+        self.require_entities.assert_not_awaited()
+
+    async def test_registered_esp_endpoint_is_used_without_reconstruction(self) -> None:
+        esp = PhoneEndpoint(
+            "esphome:kitchen",
+            "Kitchen",
+            EndpointKind.ESPHOME,
+            "esp-device",
+        )
+        self.hass.data["voip_stack"]["endpoint_registry"] = _Registry(esp)
+
+        await self.module.async_require_phone_service_control(
+            self.hass,
+            _Call(),
+            device={"device_id": "esp-device"},
+        )
+
+        self.require_endpoint.assert_awaited_once_with(
+            self.hass,
+            unittest.mock.ANY,
+            esp,
         )
 
 
