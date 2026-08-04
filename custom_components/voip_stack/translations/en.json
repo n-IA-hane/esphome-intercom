@@ -186,8 +186,20 @@
     }
   },
   "exceptions": {
+    "default_phone_unavailable": {
+      "message": "The default Home Assistant phone is unavailable."
+    },
+    "phone_not_browser": {
+      "message": "The selected device is not a Home Assistant browser phone."
+    },
+    "phone_not_integration_owned": {
+      "message": "The selected device is not a phone managed by VoIP Stack."
+    },
     "purge_devices_disabled": {
       "message": "This action is disabled because VoIP Stack does not own ESPHome devices and cannot safely remove them."
+    },
+    "unknown_phone_device": {
+      "message": "The selected Home Assistant phone device is unknown."
     }
   },
   "entity": {

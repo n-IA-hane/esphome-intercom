@@ -15,6 +15,18 @@ from .phone_endpoint import (
     EndpointKind,
     PhoneEndpoint,
 )
+
+
+def _service_error(message: str, key: str) -> ServiceValidationError:
+    """Build one translated service error while preserving its log message."""
+
+    return ServiceValidationError(
+        message,
+        translation_domain=DOMAIN,
+        translation_key=key,
+    )
+
+
 def service_browser_endpoint(
     hass: HomeAssistant,
     call: ServiceCall,
@@ -33,14 +45,18 @@ def service_browser_endpoint(
         )
     if endpoint is None:
         if device_id and device_id != HA_SOFTPHONE_DEVICE_ID:
-            raise ServiceValidationError("Unknown Home Assistant phone device")
+            raise _service_error(
+                "Unknown Home Assistant phone device",
+                "unknown_phone_device",
+            )
         endpoint_id = DEFAULT_ENDPOINT_ID
     else:
         endpoint_id = endpoint.endpoint_id
     if endpoint is not None and endpoint.kind is not EndpointKind.BROWSER:
         if strict or device_id:
-            raise ServiceValidationError(
-                "The selected Device is not a Home Assistant browser phone"
+            raise _service_error(
+                "The selected Device is not a Home Assistant browser phone",
+                "phone_not_browser",
             )
         endpoint = None
     return endpoint_id, endpoint
@@ -53,7 +69,10 @@ def service_configured_endpoint(hass: HomeAssistant, call: ServiceCall):
     device_id = str(call.data.get("device_id") or "").strip()
     if registry is None:
         if device_id and device_id != HA_SOFTPHONE_DEVICE_ID:
-            raise ServiceValidationError("Unknown Home Assistant phone device")
+            raise _service_error(
+                "Unknown Home Assistant phone device",
+                "unknown_phone_device",
+            )
         return DEFAULT_ENDPOINT_ID, None
     endpoint = (
         registry.get(DEFAULT_ENDPOINT_ID)
@@ -61,14 +80,18 @@ def service_configured_endpoint(hass: HomeAssistant, call: ServiceCall):
         else registry.by_device_id(device_id)
     )
     if endpoint is None:
-        raise ServiceValidationError(
-            "Unknown Home Assistant phone device"
-            if device_id
-            else "The default Home Assistant phone is unavailable"
+        raise _service_error(
+            (
+                "Unknown Home Assistant phone device"
+                if device_id
+                else "The default Home Assistant phone is unavailable"
+            ),
+            "unknown_phone_device" if device_id else "default_phone_unavailable",
         )
     if endpoint.kind not in {EndpointKind.BROWSER, EndpointKind.SIP_ACCOUNT}:
-        raise ServiceValidationError(
-            "The selected Device is not an integration-owned phone"
+        raise _service_error(
+            "The selected Device is not an integration-owned phone",
+            "phone_not_integration_owned",
         )
     return endpoint.endpoint_id, endpoint
 

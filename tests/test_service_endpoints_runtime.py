@@ -21,6 +21,19 @@ PKG_DIR = ROOT / "custom_components" / "voip_stack"
 class ServiceValidationError(ValueError):
     """Minimal Home Assistant service validation error."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        translation_domain: str | None = None,
+        translation_key: str | None = None,
+        translation_placeholders: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.translation_domain = translation_domain
+        self.translation_key = translation_key
+        self.translation_placeholders = translation_placeholders
+
 
 class EndpointKind(Enum):
     BROWSER = "browser"
@@ -130,11 +143,13 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(endpoint_id, "default")
         self.assertIsNone(endpoint)
 
-        with self.assertRaisesRegex(ServiceValidationError, "Unknown"):
+        with self.assertRaisesRegex(ServiceValidationError, "Unknown") as raised:
             self.module.service_browser_endpoint(
                 self.hass,
                 _Call(device_id="missing"),
             )
+        self.assertEqual(raised.exception.translation_domain, "voip_stack")
+        self.assertEqual(raised.exception.translation_key, "unknown_phone_device")
 
     def test_browser_selector_rejects_non_browser_devices(self) -> None:
         browser = PhoneEndpoint(
