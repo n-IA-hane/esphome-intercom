@@ -127,7 +127,7 @@ case "$MODE" in
     ;;
   fault)
     pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
-    pytest_args+=(-m mutation)
+    pytest_args+=(-m fault)
     ;;
   mutation)
     git_dir=$(git rev-parse --path-format=absolute --git-dir)

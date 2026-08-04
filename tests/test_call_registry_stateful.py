@@ -129,6 +129,7 @@ def test_generated_lifecycle_sequences_preserve_registry_invariants(
 
 
 @pytest.mark.mutation
+@pytest.mark.fault
 @pytest.mark.parametrize(
     "fault",
     (

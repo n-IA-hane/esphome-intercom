@@ -10,6 +10,8 @@ import types
 import unittest
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG_NAME = "custom_components.voip_stack"
@@ -235,6 +237,7 @@ class EndpointRegistryTest(unittest.TestCase):
             self.registry.upsert(endpoint("KITCHEN", "Kitchen Tablet"))
         self.assertEqual(self.registry.endpoints, (self.kitchen,))
 
+    @pytest.mark.fault
     def test_failed_update_is_atomic_and_keeps_old_indexes(self) -> None:
         office = self.registry.register(
             endpoint("office", "Office", extension="402", device_id="dev-office")
@@ -283,6 +286,7 @@ class EndpointRegistryTest(unittest.TestCase):
             self.registry.resolve("401")
         self.assertEqual(set(ctx.exception.endpoint_ids), {"kitchen", "office"})
 
+    @pytest.mark.fault
     def test_call_claim_is_idempotent_busy_safe_and_guarded_on_release(self) -> None:
         claimed = self.registry.claim_call("kitchen", "call-1")
         duplicate = self.registry.claim_call("kitchen", "call-1")
@@ -342,6 +346,7 @@ class EndpointRegistryTest(unittest.TestCase):
                 fallback_call_id="",
             )
 
+    @pytest.mark.fault
     def test_sip_dialog_can_adopt_only_a_provisional_transport_claim(self) -> None:
         self.registry.sync_transport_call(
             "kitchen",

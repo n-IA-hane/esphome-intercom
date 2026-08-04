@@ -38,6 +38,7 @@ device YAML edits.
   through supported service APIs.
 - `browser`: frontend modules executed by Node or a browser runtime.
 - `architecture`: source layout, YAML, documentation and packaging policy.
+- `fault`: focused cancellation, stale-callback and partial-failure checks.
 - `mutation`: deliberate faults and mutation qualification.
 - `live`: opt-in HA, SIP peer or physical-device qualification.
 

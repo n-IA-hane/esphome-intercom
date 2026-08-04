@@ -9,6 +9,8 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG_NAME = "custom_components.voip_stack"
@@ -554,6 +556,7 @@ class SipVideoRelayLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(item.fileno() == -1 for item in sockets))
         self.assertEqual(released, [(30000, 30002)])
 
+    @pytest.mark.fault
     async def test_stop_racing_start_cannot_resurrect_transports(self) -> None:
         entered = asyncio.Event()
         release_endpoint = asyncio.Event()
@@ -594,6 +597,7 @@ class SipVideoRelayLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(item.closed for item in transports))
         self.assertEqual(released, [(30000, 30002)])
 
+    @pytest.mark.fault
     async def test_cancelled_stop_waiters_cannot_interrupt_owned_cleanup(self) -> None:
         entered = asyncio.Event()
         release_endpoint = asyncio.Event()
@@ -646,6 +650,7 @@ class SipVideoRelayLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(item.closed for item in transports))
         self.assertEqual(released, [(30000, 30002)])
 
+    @pytest.mark.fault
     async def test_concurrent_start_uses_one_endpoint_sequence(self) -> None:
         entered = asyncio.Event()
         release_endpoint = asyncio.Event()
@@ -681,6 +686,7 @@ class SipVideoRelayLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(item.closed for item in transports))
         self.assertEqual(released, [(30000, 30002)])
 
+    @pytest.mark.fault
     async def test_start_is_rejected_once_stop_has_claimed_lifecycle(self) -> None:
         released: list[tuple[int, int]] = []
         relay = self._relay(released)

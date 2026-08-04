@@ -10,6 +10,8 @@ import types
 import unittest
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG_NAME = "custom_components.voip_stack"
@@ -102,6 +104,7 @@ async def _sleep_forever(events: list[str]) -> None:
 
 
 class SipRuntimeCleanupTest(unittest.IsolatedAsyncioTestCase):
+    @pytest.mark.fault
     async def test_cleanup_barrier_survives_repeated_cancellation(self) -> None:
         entered = asyncio.Event()
         release = asyncio.Event()
@@ -178,6 +181,7 @@ class SipRuntimeCleanupTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.client_closed)
         self.assertTrue(result.relay_stopped)
 
+    @pytest.mark.fault
     async def test_cleanup_attempts_every_resource_after_independent_failures(self) -> None:
         events: list[str] = []
         watcher = asyncio.create_task(_sleep_forever(events))
@@ -199,6 +203,7 @@ class SipRuntimeCleanupTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.client_closed)
         self.assertFalse(result.relay_stopped)
 
+    @pytest.mark.fault
     async def test_caller_cancellation_waits_for_detached_resources_to_close(self) -> None:
         events: list[str] = []
         started = asyncio.Event()

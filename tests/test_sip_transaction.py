@@ -10,6 +10,8 @@ import sys
 import types
 import unittest
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG_NAME = "custom_components.voip_stack"
@@ -80,6 +82,7 @@ class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await transaction.receive(read, send))
         self.assertEqual(sends, 0)
 
+    @pytest.mark.fault
     async def test_provisional_response_disables_invite_retransmission(self) -> None:
         sends = 0
 
@@ -121,6 +124,7 @@ class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(result.timed_out)
                 self.assertEqual(bool(sends), expected)
 
+    @pytest.mark.fault
     async def test_server_timer_stops_without_timeout_when_ack_arrives(self) -> None:
         active = True
 
