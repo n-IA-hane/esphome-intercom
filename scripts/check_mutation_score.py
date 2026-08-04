@@ -11,7 +11,7 @@ from pathlib import Path
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("report", type=Path)
-    parser.add_argument("--minimum", type=float, default=60.0)
+    parser.add_argument("--minimum", type=float, default=63.5)
     args = parser.parse_args()
 
     report = json.loads(args.report.read_text())

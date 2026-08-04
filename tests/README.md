@@ -27,7 +27,9 @@ Mutation testing is intentionally refused in the primary checkout. Create a
 disposable linked worktree at a committed milestone, install
 `requirements-mutation-test.txt`, then run `./scripts/test_suite.sh mutation`
 there. This keeps generated mutants and deliberate failures away from local
-device YAML edits.
+device YAML edits. The score gate is 63.5 percent and covers selected lifecycle,
+endpoint, SIP transaction and video relay modules. Raise the floor only after a
+complete run from a clean committed worktree.
 
 ## Layers
 
