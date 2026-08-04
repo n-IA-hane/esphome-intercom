@@ -149,34 +149,6 @@ def test_browser_command_rejects_foreign_call(softphone_commands) -> None:
         )
 
 
-def test_esp_answer_preserves_context_and_exact_control_scope(
-    softphone_commands,
-) -> None:
-    call = _call(device_id="esp")
-    device = {"name": "WS3", "entities": {"call": "button.ws3_call"}}
-    authorize = AsyncMock()
-    press = AsyncMock(return_value=True)
-    softphone_commands.async_resolve_command_phone = AsyncMock(return_value=device)
-    softphone_commands.async_require_phone_service_control = authorize
-    softphone_commands.async_press_device_button = press
-
-    assert asyncio.run(softphone_commands.async_try_esp_answer(call)) is True
-
-    authorize.assert_awaited_once_with(
-        call.hass,
-        call,
-        device=device,
-        action_entity_ids=("button.ws3_call",),
-    )
-    press.assert_awaited_once_with(
-        call.hass,
-        device,
-        "call",
-        "SIP answer",
-        context=call.context,
-    )
-
-
 def test_bind_controller_converts_registry_conflict(softphone_commands) -> None:
     registry = Mock()
     registry.bind_controller.side_effect = ValueError("stale generation")

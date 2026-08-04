@@ -65,6 +65,7 @@ def phone_control(monkeypatch):
         "endpoint_registry": {"EndpointRegistry": object},
         "esphome_actions": {
             "async_call_action": AsyncMock(),
+            "async_press_device_button": AsyncMock(return_value=True),
             "async_resolve_source_device": AsyncMock(return_value=None),
             "has_action": Mock(return_value=False),
         },
@@ -78,6 +79,16 @@ def phone_control(monkeypatch):
         },
         "softphone_originate": {
             "async_originate_browser_call": AsyncMock(),
+        },
+        "softphone_answer": {
+            "async_answer_browser_call": AsyncMock(),
+        },
+        "softphone_commands": {
+            "async_decline_browser_call": AsyncMock(),
+            "async_resolve_browser_call_command": AsyncMock(),
+        },
+        "softphone_termination": {
+            "async_hangup_browser_call": AsyncMock(),
         },
         "websocket_api": {
             "_ha_softphone_state": Mock(return_value={}),
@@ -216,4 +227,49 @@ def test_browser_originate_uses_same_result_type(phone_control) -> None:
         endpoint_id="casa",
         browser_endpoint=endpoint,
         force_ha_bridge=False,
+    )
+
+
+def test_esphome_answer_preserves_context_and_exact_control_scope(
+    phone_control,
+) -> None:
+    endpoint = SimpleNamespace(
+        endpoint_id="esphome:ws3",
+        device_id="device-ws3",
+        kind=_EndpointKind.ESPHOME,
+    )
+    device = {
+        "device_id": "device-ws3",
+        "name": "WS3",
+        "entities": {"call": "button.ws3_call"},
+    }
+    hass = SimpleNamespace()
+    phone_control.async_resolve_source_device = AsyncMock(return_value=device)
+    phone_control.has_action = Mock(return_value=False)
+    phone_control.async_require_phone_service_control = AsyncMock()
+    phone_control.async_press_device_button = AsyncMock(return_value=True)
+    call = _call(hass, device_id="device-ws3")
+    controller = phone_control.PhoneAdapterRegistry(hass, _Endpoints(endpoint))
+
+    result = asyncio.run(
+        controller.control(
+            call,
+            phone_control.PhoneOperation.ANSWER,
+            phone_control.CallControlRequest(context=call.context),
+        )
+    )
+
+    assert result.operation is phone_control.PhoneOperation.ANSWER
+    phone_control.async_require_phone_service_control.assert_awaited_once_with(
+        hass,
+        call,
+        device=device,
+        action_entity_ids=("button.ws3_call",),
+    )
+    phone_control.async_press_device_button.assert_awaited_once_with(
+        hass,
+        device,
+        "call",
+        "SIP answer",
+        context=call.context,
     )

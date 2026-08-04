@@ -336,10 +336,6 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.esphome_actions.index("async def async_call_action(") :
             self.esphome_actions.index("def has_action(")
         ]
-        answer = self.softphone_commands[
-            self.softphone_commands.index("async def async_try_esp_answer(") :
-            self.softphone_commands.index("async def async_try_esp_end_call(")
-        ]
         set_dnd = self.init_source[
             self.init_source.index("async def _handle_set_dnd_service(") :
             self.init_source.index(
@@ -350,8 +346,6 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         for helper in (press, action):
             self.assertIn("context=None", helper)
             self.assertIn("context=context", helper)
-        self.assertIn("action_entity_ids=(call_button,) if call_button else ()", answer)
-        self.assertIn("context=call.context", answer)
         self.assertIn('if str(entity_id).startswith("switch.")', set_dnd)
         self.assertIn("action_entity_ids=dnd_entities", set_dnd)
 

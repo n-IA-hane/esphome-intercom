@@ -14,6 +14,7 @@ from .const import DOMAIN
 from .endpoint_registry import EndpointRegistry
 from .esphome_actions import (
     async_call_action,
+    async_press_device_button,
     async_resolve_source_device,
     has_action,
 )
@@ -23,6 +24,12 @@ from .service_endpoints import (
     service_browser_endpoint,
 )
 from .softphone_originate import async_originate_browser_call
+from .softphone_answer import async_answer_browser_call
+from .softphone_commands import (
+    async_decline_browser_call,
+    async_resolve_browser_call_command,
+)
+from .softphone_termination import async_hangup_browser_call
 from .websocket_api import _ha_softphone_state
 
 
@@ -71,6 +78,15 @@ class OriginateRequest:
     destination: str
     send_video: bool = False
     force_ha_bridge: bool = False
+    context: Context | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CallControlRequest:
+    """Transport-independent request targeting one active call."""
+
+    call_id: str = ""
+    reason: str = ""
     context: Context | None = None
 
 
@@ -141,6 +157,15 @@ class PhoneAdapter(Protocol):
         call: ServiceCall,
     ) -> PhoneActionResult: ...
 
+    async def control(
+        self,
+        phone: PhoneHandle,
+        operation: PhoneOperation,
+        request: CallControlRequest,
+        *,
+        call: ServiceCall,
+    ) -> PhoneActionResult: ...
+
 
 class BrowserPhoneAdapter:
     """Control a logical Home Assistant browser phone."""
@@ -166,6 +191,32 @@ class BrowserPhoneAdapter:
             call_id=str(snapshot.get("call_id") or ""),
             state=str(snapshot.get("state") or "accepted"),
             legacy_fields=snapshot,
+        )
+
+    async def control(
+        self,
+        phone: PhoneHandle,
+        operation: PhoneOperation,
+        request: CallControlRequest,
+        *,
+        call: ServiceCall,
+    ) -> PhoneActionResult:
+        command = await async_resolve_browser_call_command(
+            call.hass,
+            call,
+            endpoint_id=phone.endpoint_id,
+            endpoint=phone.transport_data,
+        )
+        if operation is PhoneOperation.ANSWER:
+            await async_answer_browser_call(call.hass, call, command)
+        elif operation is PhoneOperation.DECLINE:
+            await async_decline_browser_call(call.hass, call, command)
+        else:
+            await async_hangup_browser_call(call.hass, command)
+        return PhoneActionResult(
+            operation=operation,
+            phone=phone,
+            call_id=command.call_id or request.call_id,
         )
 
 
@@ -200,6 +251,63 @@ class EspHomePhoneAdapter:
             destination=request.destination,
         )
 
+    async def control(
+        self,
+        phone: PhoneHandle,
+        operation: PhoneOperation,
+        request: CallControlRequest,
+        *,
+        call: ServiceCall,
+    ) -> PhoneActionResult:
+        device = phone.transport_data
+        entities = device.get("entities") or {}
+        entity_key = "call" if operation is PhoneOperation.ANSWER else "decline"
+        entity_id = str(entities.get(entity_key) or "").strip()
+        await async_require_phone_service_control(
+            call.hass,
+            call,
+            device=device,
+            action_entity_ids=(entity_id,) if entity_id else (),
+        )
+        action = {
+            PhoneOperation.ANSWER: "answer_call",
+            PhoneOperation.DECLINE: "decline_call",
+            PhoneOperation.HANGUP: "hangup_call",
+        }[operation]
+        data = {"reason": request.reason} if operation is PhoneOperation.DECLINE else {}
+        if has_action(call.hass, device, action):
+            await async_call_action(
+                call.hass,
+                device,
+                action,
+                data,
+                context=request.context,
+            )
+        elif operation is PhoneOperation.HANGUP and has_action(
+            call.hass, device, "decline_call"
+        ):
+            # COMPAT: remove decline_call hangup fallback after 2026.10.
+            await async_call_action(
+                call.hass,
+                device,
+                "decline_call",
+                {"reason": request.reason or "local_hangup"},
+                context=request.context,
+            )
+        elif not await async_press_device_button(
+            call.hass,
+            device,
+            entity_key,
+            f"SIP {operation.value}",
+            context=request.context,
+        ):
+            raise _unsupported(phone, operation)
+        return PhoneActionResult(
+            operation=operation,
+            phone=phone,
+            call_id=request.call_id,
+        )
+
 
 class SipAccountAdapter:
     """Represent a valid SIP account that cannot be remotely originated."""
@@ -213,6 +321,17 @@ class SipAccountAdapter:
     ) -> PhoneActionResult:
         del request, call
         raise _unsupported(phone, PhoneOperation.ORIGINATE)
+
+    async def control(
+        self,
+        phone: PhoneHandle,
+        operation: PhoneOperation,
+        request: CallControlRequest,
+        *,
+        call: ServiceCall,
+    ) -> PhoneActionResult:
+        del request, call
+        raise _unsupported(phone, operation)
 
 
 def _unsupported(
@@ -262,6 +381,25 @@ class PhoneAdapterRegistry:
             call=call,
         )
 
+    async def control(
+        self,
+        call: ServiceCall,
+        operation: PhoneOperation,
+        request: CallControlRequest,
+    ) -> PhoneActionResult:
+        """Dispatch answer, decline or hangup through the selected phone."""
+
+        capability = PhoneCapability(operation.value)
+        phone = await self._resolve_source(call)
+        if not phone.supports(capability):
+            raise _unsupported(phone, operation)
+        return await self._adapters[phone.kind].control(
+            phone,
+            operation,
+            request,
+            call=call,
+        )
+
     async def _resolve_source(self, call: ServiceCall) -> PhoneHandle:
         selector = str(call.data.get("device_id") or "").strip()
         endpoint = self._endpoints.resolve(selector) if selector else None
@@ -273,11 +411,22 @@ class PhoneAdapterRegistry:
             live_endpoint = self._endpoints.by_device_id(
                 str(device.get("device_id") or "")
             )
-            capabilities = {
-                PhoneCapability.ORIGINATE
-                for action in ("start_call",)
-                if has_action(self._hass, device, action)
-            }
+            entities = device.get("entities") or {}
+            capabilities = set()
+            if has_action(self._hass, device, "start_call"):
+                capabilities.add(PhoneCapability.ORIGINATE)
+            if has_action(self._hass, device, "answer_call") or entities.get("call"):
+                capabilities.add(PhoneCapability.ANSWER)
+            if has_action(self._hass, device, "decline_call") or entities.get(
+                "decline"
+            ):
+                capabilities.add(PhoneCapability.DECLINE)
+            if (
+                has_action(self._hass, device, "hangup_call")
+                or has_action(self._hass, device, "decline_call")
+                or entities.get("decline")
+            ):
+                capabilities.add(PhoneCapability.HANGUP)
             return PhoneHandle(
                 endpoint_id=str(
                     getattr(live_endpoint, "endpoint_id", "")
@@ -294,7 +443,14 @@ class PhoneAdapterRegistry:
         endpoint_id, browser = service_browser_endpoint(self._hass, call)
         return self._endpoint_handle(
             browser,
-            frozenset({PhoneCapability.ORIGINATE}),
+            frozenset(
+                {
+                    PhoneCapability.ORIGINATE,
+                    PhoneCapability.ANSWER,
+                    PhoneCapability.DECLINE,
+                    PhoneCapability.HANGUP,
+                }
+            ),
             endpoint_id=endpoint_id,
         )
 

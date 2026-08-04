@@ -18,12 +18,6 @@ from .call_scope import (
 )
 from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry
-from .esphome_actions import (
-    async_call_action,
-    async_press_device_button,
-    async_resolve_command_phone,
-    has_action,
-)
 from .service_endpoints import (
     async_require_phone_service_control,
     browser_endpoint_name,
@@ -76,10 +70,14 @@ def bind_service_call_controller(
 async def async_resolve_browser_call_command(
     hass: HomeAssistant,
     call: ServiceCall,
+    *,
+    endpoint_id: str = "",
+    endpoint=None,
 ) -> BrowserCallCommand:
     """Resolve, authorize and scope one browser-phone call command."""
 
-    endpoint_id, endpoint = service_browser_endpoint(hass, call, strict=True)
+    if not endpoint_id:
+        endpoint_id, endpoint = service_browser_endpoint(hass, call, strict=True)
     await async_require_phone_service_control(hass, call, endpoint=endpoint)
     call_id = str(call.data.get("call_id") or "").strip()
     if not call_id:
@@ -101,83 +99,6 @@ async def async_resolve_browser_call_command(
         call_id=call_id,
         registry=registry,
     )
-
-
-async def async_try_esp_answer(call: ServiceCall) -> bool:
-    """Answer through a selected ESP phone, returning False for browser calls."""
-
-    hass = call.hass
-    device = await async_resolve_command_phone(hass, call)
-    if device is None:
-        return False
-    call_button = str((device.get("entities") or {}).get("call") or "").strip()
-    await async_require_phone_service_control(
-        hass,
-        call,
-        device=device,
-        action_entity_ids=(call_button,) if call_button else (),
-    )
-    if not await async_press_device_button(
-        hass,
-        device,
-        "call",
-        "SIP answer",
-        context=call.context,
-    ):
-        raise ServiceValidationError(
-            f"{device.get('name') or 'ESP phone'} has no answer/call button"
-        )
-    return True
-
-
-async def async_try_esp_end_call(
-    call: ServiceCall,
-    *,
-    operation: str,
-) -> bool:
-    """Decline or hang up through a selected ESP phone."""
-
-    hass = call.hass
-    device = await async_resolve_command_phone(hass, call)
-    if device is None:
-        return False
-    decline_button = str(
-        (device.get("entities") or {}).get("decline") or ""
-    ).strip()
-    await async_require_phone_service_control(
-        hass,
-        call,
-        device=device,
-        action_entity_ids=(decline_button,) if decline_button else (),
-    )
-    default_reason = "local_hangup" if operation == "hangup" else ""
-    reason = str(
-        call.data.get("reason")
-        or call.data.get("decline_reason")
-        or default_reason
-    ).strip()
-    if has_action(hass, device, "decline_call"):
-        await async_call_action(
-            hass,
-            device,
-            "decline_call",
-            {"reason": reason},
-            context=call.context,
-        )
-    elif not await async_press_device_button(
-        hass,
-        device,
-        "decline",
-        f"SIP {operation}",
-        context=call.context,
-    ):
-        missing_control = (
-            "decline control" if operation == "decline" else "hangup/decline control"
-        )
-        raise ServiceValidationError(
-            f"{device.get('name') or 'ESP phone'} has no {missing_control}"
-        )
-    return True
 
 
 async def async_decline_browser_call(

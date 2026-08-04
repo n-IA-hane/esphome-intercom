@@ -58,18 +58,13 @@ from .service_endpoints import (
     service_browser_endpoint as _service_browser_endpoint,
     service_configured_endpoint as _service_configured_endpoint,
 )
-from .softphone_commands import (
-    async_decline_browser_call as _decline_browser_call,
-    async_resolve_browser_call_command as _resolve_browser_call_command,
-    async_try_esp_answer as _try_esp_answer,
-    async_try_esp_end_call as _try_esp_end_call,
+from .phone_control import (
+    CallControlRequest,
+    OriginateRequest,
+    PhoneAdapterRegistry,
+    PhoneOperation,
 )
-from .softphone_answer import async_answer_browser_call as _answer_browser_call
-from .phone_control import OriginateRequest, PhoneAdapterRegistry
 from .softphone_forward import async_forward_browser_call as _forward_browser_call
-from .softphone_termination import (
-    async_hangup_browser_call as _hangup_browser_call,
-)
 from .phone_config import (
     async_ensure_phone_subentries,
     async_load_legacy_default_phone_overrides,
@@ -146,27 +141,39 @@ async def _handle_purge_devices_service(call: ServiceCall) -> None:
 
 
 async def _handle_sip_answer_service(call: ServiceCall) -> None:
-    hass: HomeAssistant = call.hass
-    if await _try_esp_answer(call):
-        return
-    command = await _resolve_browser_call_command(hass, call)
-    await _answer_browser_call(hass, call, command)
+    await _control_phone(call, PhoneOperation.ANSWER)
 
 
 async def _handle_sip_decline_service(call: ServiceCall) -> None:
-    hass: HomeAssistant = call.hass
-    if await _try_esp_end_call(call, operation="decline"):
-        return
-    command = await _resolve_browser_call_command(hass, call)
-    await _decline_browser_call(hass, call, command)
+    await _control_phone(call, PhoneOperation.DECLINE)
 
 
 async def _handle_sip_hangup_service(call: ServiceCall) -> None:
-    hass: HomeAssistant = call.hass
-    if await _try_esp_end_call(call, operation="hangup"):
-        return
-    command = await _resolve_browser_call_command(hass, call)
-    await _hangup_browser_call(hass, command)
+    await _control_phone(call, PhoneOperation.HANGUP)
+
+
+async def _control_phone(call: ServiceCall, operation: PhoneOperation) -> None:
+    runtime = _runtime_data(call.hass)
+    if runtime is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="phone_unavailable",
+            translation_placeholders={"phone": "VoIP Stack"},
+        )
+    reason = str(
+        call.data.get("reason")
+        or call.data.get("decline_reason")
+        or ("local_hangup" if operation is PhoneOperation.HANGUP else "")
+    ).strip()
+    await runtime.phones.control(
+        call,
+        operation,
+        CallControlRequest(
+            call_id=str(call.data.get("call_id") or "").strip(),
+            reason=reason,
+            context=call.context,
+        ),
+    )
 
 
 async def _handle_set_dnd_service(call: ServiceCall) -> None:
