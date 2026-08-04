@@ -261,6 +261,31 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("call-1", registry.sessions)
         self.assertIsNone(runtime.get_session("call-1"))
 
+    async def test_waited_removal_allows_same_call_id_to_change_owner(self) -> None:
+        registry = call_registry.CallRegistry()
+        runtime = SipEndpointRuntime(projection=registry)
+        runtime.activate()
+        registry.bind_session_owner(runtime)
+
+        first = registry.upsert("call-1", state="ringing", owner="router")
+        await registry.finish_and_pop_wait(
+            "call-1",
+            reason="local_group_selected",
+        )
+        second = registry.upsert(
+            "call-1",
+            state="connecting",
+            owner="local_bridge",
+        )
+
+        self.assertGreater(second.generation, first.generation)
+        self.assertFalse(registry.is_terminated("call-1"))
+        self.assertTrue(
+            registry.is_terminated("call-1", generation=first.generation)
+        )
+        self.assertTrue(registry.is_generation_current("call-1", second.generation))
+        await registry.finish_and_pop_wait("call-1", reason="test_complete")
+
     async def test_projected_phase_cannot_override_authoritative_phase(self) -> None:
         registry = call_registry.CallRegistry()
         runtime = SipEndpointRuntime(projection=registry)

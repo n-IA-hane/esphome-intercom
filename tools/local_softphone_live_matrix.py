@@ -127,6 +127,11 @@ def _parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=EXPECT_VIDEO,
     )
+    parser.add_argument(
+        "--ring-group",
+        default=os.environ.get("LOCAL_SOFTPHONE_RING_GROUP", ""),
+        help="optional ring group exercised through the local HA bridge",
+    )
     return parser.parse_args()
 
 
@@ -228,20 +233,26 @@ def main() -> int:
             *,
             hangup: Any,
             auto_answer: bool = False,
+            target_name: str = "",
         ) -> None:
             started = time.monotonic()
             try:
                 if auto_answer and not callee.evaluate(SET_AUTO_ANSWER, True):
                     raise RuntimeError(f"failed to enable Auto Answer on {callee_name}")
-                if not caller.evaluate(SET_TARGET, callee_name):
-                    raise RuntimeError(f"{callee_name} is not selectable from {caller_name}")
+                selected_target = target_name or callee_name
+                if not caller.evaluate(SET_TARGET, selected_target):
+                    raise RuntimeError(
+                        f"{selected_target} is not selectable from {caller_name}"
+                    )
                 if not caller.evaluate(CLICK, "Call"):
                     raise RuntimeError(f"Call unavailable on {caller_name}")
                 outgoing = wait_card(
                     caller,
                     lambda item: (
-                        item["backend"]["state"] in {"calling", "in_call"}
-                        and item["card"]["state"] in {"calling", "in_call"}
+                        item["backend"]["state"]
+                        in {"calling", "remote_ringing", "in_call"}
+                        and item["card"]["state"]
+                        in {"calling", "remote_ringing", "in_call"}
                         and item["backend"]["call_id"] == item["card"]["call_id"]
                     ),
                     12,
@@ -318,6 +329,16 @@ def main() -> int:
             hangup=test,
             auto_answer=True,
         )
+        if arguments.ring_group:
+            run_case(
+                "casa_to_ring_group_test_answers",
+                casa,
+                "Casa",
+                test,
+                "Test",
+                hangup=test,
+                target_name=arguments.ring_group,
+            )
 
         started = time.monotonic()
         try:

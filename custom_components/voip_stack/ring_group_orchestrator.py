@@ -601,7 +601,7 @@ async def run_ring_group_call(
                 original_context = registry.ha_context(invite.call_id)
                 if await _abort_stale_ring_group():
                     return
-                registry.finish_and_pop(
+                await registry.finish_and_pop_wait(
                     invite.call_id,
                     reason="local_group_selected",
                     state=CallState.IDLE.value,

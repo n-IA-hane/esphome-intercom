@@ -299,10 +299,17 @@ class CallRegistry:
 
         call_id = str(call_id or "").strip()
         session_id = self.resolve_session_id(call_id)
+        current = self.sessions.get(session_id)
         for candidate in (call_id, session_id):
             if candidate not in self.terminated_call_ids:
                 continue
             terminal_generation = self.terminated_call_ids[candidate]
+            if (
+                generation is None
+                and current is not None
+                and current.generation != terminal_generation
+            ):
+                continue
             if generation is None or terminal_generation == int(generation):
                 return True
         return False
@@ -1167,6 +1174,29 @@ class CallRegistry:
             )
         self.finish(call_id, reason=reason, state=state)
         return self.pop(call_id)
+
+    async def finish_and_pop_wait(
+        self,
+        call_id: str,
+        *,
+        reason: str = "",
+        state: str = "idle",
+    ) -> CallSession | None:
+        """Remove one call and wait for its authoritative cleanup barrier."""
+
+        session_id = self.resolve_session_id(str(call_id or "").strip())
+        session = self.sessions.get(session_id)
+        barrier = None
+        if session is not None and self._session_owner is not None:
+            barrier = self._session_owner.request_termination(
+                session_id,
+                reason or session.terminal_reason or session.outcome or "removed",
+                generation=session.generation,
+            )
+        removed = self.finish_and_pop(call_id, reason=reason, state=state)
+        if barrier is not None:
+            await barrier
+        return removed
 
     def discard_bridge_session(
         self,
