@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-PYTHON=${PYTHON:-"$ROOT/.venv/bin/python"}
-HA_PYTHON=${HA_PYTHON:-"$ROOT/../ha-voip-lab/.venv/bin/python"}
+PYTHON=${PYTHON:-}
+HA_PYTHON=${HA_PYTHON:-}
 MODE=fast
 KEEP_GOING=0
 SEED=
@@ -46,6 +46,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -z $PYTHON ]]; then
+  if [[ -x "$ROOT/.venv/bin/python" ]]; then
+    PYTHON="$ROOT/.venv/bin/python"
+  else
+    PYTHON=python
+  fi
+fi
 if [[ $PYTHON != */* ]]; then
   PYTHON=$(command -v "$PYTHON" || true)
 fi
@@ -94,6 +101,13 @@ case "$MODE" in
     )
     ;;
   ha)
+    if [[ -z $HA_PYTHON ]]; then
+      if [[ -x "$ROOT/../ha-voip-lab/.venv/bin/python" ]]; then
+        HA_PYTHON="$ROOT/../ha-voip-lab/.venv/bin/python"
+      else
+        HA_PYTHON="$PYTHON"
+      fi
+    fi
     if [[ $HA_PYTHON != */* ]]; then
       HA_PYTHON=$(command -v "$HA_PYTHON" || true)
     fi
