@@ -179,6 +179,17 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 _Call(device_id="esp-device"),
                 strict=True,
             )
+        try:
+            self.module.service_browser_endpoint(
+                self.hass,
+                _Call(device_id="esp-device"),
+                strict=True,
+            )
+        except ServiceValidationError as err:
+            self.assertEqual(err.translation_domain, "voip_stack")
+            self.assertEqual(err.translation_key, "phone_not_browser")
+        else:  # pragma: no cover - explicit assertion failure path.
+            self.fail("Expected non-browser phone rejection")
 
     def test_browser_selector_keeps_default_phone_aliases_and_strictness(self) -> None:
         browser = PhoneEndpoint(
@@ -249,11 +260,19 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ),
             ("account:office", account),
         )
-        with self.assertRaisesRegex(ServiceValidationError, "integration-owned"):
+        with self.assertRaisesRegex(
+            ServiceValidationError,
+            "integration-owned",
+        ) as raised:
             self.module.service_configured_endpoint(
                 self.hass,
                 _Call(device_id="esp-device"),
             )
+        self.assertEqual(raised.exception.translation_domain, "voip_stack")
+        self.assertEqual(
+            raised.exception.translation_key,
+            "phone_not_integration_owned",
+        )
 
     def test_configured_selector_handles_missing_registry_and_default_alias(self) -> None:
         self.assertEqual(
@@ -270,11 +289,13 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(
             ServiceValidationError,
             "Unknown Home Assistant phone device",
-        ):
+        ) as raised:
             self.module.service_configured_endpoint(
                 self.hass,
                 _Call(device_id="missing"),
             )
+        self.assertEqual(raised.exception.translation_domain, "voip_stack")
+        self.assertEqual(raised.exception.translation_key, "unknown_phone_device")
 
         browser = PhoneEndpoint(
             "default",

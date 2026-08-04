@@ -93,6 +93,35 @@ class SipVideoRelayTests(unittest.TestCase):
             ("right", True): self.right_rtcp,
         }
 
+    def test_sdp_direction_controls_remote_media_capabilities(self) -> None:
+        expected = {
+            "sendonly": (True, False),
+            "recvonly": (False, True),
+            "sendrecv": (True, True),
+            "inactive": (False, False),
+        }
+
+        for direction, (can_send, can_receive) in expected.items():
+            with self.subTest(direction=direction):
+                video_format = _format(102, direction=direction)
+                self.assertIs(
+                    sip_video_relay.remote_can_send(video_format),
+                    can_send,
+                )
+                self.assertIs(
+                    sip_video_relay.remote_can_receive(video_format),
+                    can_receive,
+                )
+
+        self.assertFalse(sip_video_relay.remote_can_send(None))
+        self.assertFalse(sip_video_relay.remote_can_receive(None))
+        self.assertFalse(
+            sip_video_relay.remote_can_receive(
+                _format(102, direction="sendrecv"),
+                connection_held=True,
+            )
+        )
+
     def test_rewrites_only_leg_local_payload_type(self) -> None:
         packet = rtp.build_packet(
             rtp.RtpPacket(
