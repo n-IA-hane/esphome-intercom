@@ -186,6 +186,9 @@
     }
   },
   "exceptions": {
+    "destination_required": {
+      "message": "A call destination is required."
+    },
     "default_phone_unavailable": {
       "message": "The default Home Assistant phone is unavailable."
     },
@@ -194,6 +197,12 @@
     },
     "phone_not_integration_owned": {
       "message": "The selected device is not a phone managed by VoIP Stack."
+    },
+    "phone_operation_not_supported": {
+      "message": "{phone} does not support the {operation} operation."
+    },
+    "phone_unavailable": {
+      "message": "{phone} is currently unavailable."
     },
     "purge_devices_disabled": {
       "message": "This action is disabled because VoIP Stack does not own ESPHome devices and cannot safely remove them."

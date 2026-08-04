@@ -36,11 +36,7 @@ from .endpoint_routing import (
     roster_entry_formats as _roster_entry_formats,
     sip_target_audio_profile as _sip_target_audio_profile,
 )
-from .esphome_actions import (
-    async_call_action as _call_esphome_action,
-    async_resolve_source_device as _resolve_source_device_from_call,
-    async_resolve_target_device as _resolve_target_device,
-)
+from .esphome_actions import async_resolve_target_device as _resolve_target_device
 from .fsm import (
     CallState,
     TerminalReason,
@@ -71,7 +67,6 @@ from .router import RouteAction, RouteReason, ha_uri_for, resolve_ha_router
 from .service_endpoints import (
     async_require_phone_service_control as _require_phone_service_control,
     browser_endpoint_name as _browser_endpoint_name,
-    service_browser_endpoint as _service_browser_endpoint,
 )
 from .sip_runtime import (
     enable_reused_tcp_connection as _enable_reused_sip_tcp_connection,
@@ -176,44 +171,25 @@ def _logical_endpoint_for_route(hass: HomeAssistant, route):
     return registry.get(endpoint_id) if registry is not None and endpoint_id else None
 
 
-async def async_originate_call(
-    call: ServiceCall, *, force_ha_bridge: bool = False
-) -> dict[str, object] | None:
-    """Originate a standards SIP call from HA to a roster target or URI-shaped target."""
+async def async_originate_browser_call(
+    call: ServiceCall,
+    *,
+    endpoint_id: str,
+    browser_endpoint,
+    force_ha_bridge: bool = False,
+) -> None:
+    """Originate a standards SIP call from one Home Assistant browser phone."""
     from .roster import parse_roster_json
     from .sip import parse_sip_uri
     from .sip_client import SIP_TIMER_B, SipCallClient
 
     hass: HomeAssistant = call.hass
-    source = await _resolve_source_device_from_call(hass, call)
-    dest_device = (
-        None if source is not None else await _resolve_target_device(hass, call)
-    )
+    dest_device = await _resolve_target_device(hass, call)
     target = str(call.data.get("destination") or "").strip()
     if not target and dest_device is not None:
         target = str(dest_device.get("name") or "").strip()
     if not target:
         raise ServiceValidationError("destination is required")
-    if source is not None:
-        call_button = str((source.get("entities") or {}).get("call") or "").strip()
-        await _require_phone_service_control(
-            hass,
-            call,
-            device=source,
-            action_entity_ids=(call_button,) if call_button else (),
-        )
-        await _call_esphome_action(
-            hass,
-            source,
-            "start_call",
-            {"dest": target},
-            context=call.context,
-        )
-        _LOGGER.info(
-            "ESP SIP phone %s originating call to %s", source.get("name"), target
-        )
-        return source
-    endpoint_id, browser_endpoint = _service_browser_endpoint(hass, call)
     await _require_phone_service_control(
         hass,
         call,

@@ -65,7 +65,7 @@ from .softphone_commands import (
     async_try_esp_end_call as _try_esp_end_call,
 )
 from .softphone_answer import async_answer_browser_call as _answer_browser_call
-from .softphone_originate import async_originate_call as _originate_call
+from .phone_control import OriginateRequest, PhoneAdapterRegistry
 from .softphone_forward import async_forward_browser_call as _forward_browser_call
 from .softphone_termination import (
     async_hangup_browser_call as _hangup_browser_call,
@@ -77,12 +77,15 @@ from .phone_config import (
     phone_subentries,
 )
 from .route_decisions import set_pending_route_decision as _set_pending_route_decision
-from .runtime_data import VoipStackConfigEntry, VoipStackRuntime
+from .runtime_data import (
+    VoipStackConfigEntry,
+    VoipStackRuntime,
+    runtime_data as _runtime_data,
+)
 from .store import manual_roster_entries as _manual_roster_entries
 from .websocket_api import (
     async_register_websocket_api,
     _async_load_ha_softphone_store,
-    _ha_softphone_state,
     async_set_ha_softphone_settings,
 )
 
@@ -252,25 +255,41 @@ async def _handle_sip_call_target_service(
     *,
     force_ha_bridge: bool = False,
 ) -> dict[str, object] | None:
-    physical_source = await _originate_call(
+    result = await _originate_phone_action(
         call,
         force_ha_bridge=force_ha_bridge,
     )
     if not call.return_response:
         return None
-    if physical_source is not None:
-        return {
-            "success": True,
-            "endpoint_id": str(physical_source.get("endpoint_id") or ""),
-            "endpoint_type": EndpointKind.ESPHOME.value,
-            "device_id": str(physical_source.get("device_id") or ""),
-            "name": str(physical_source.get("name") or ""),
-            "destination": str(call.data.get("destination") or ""),
-        }
-    endpoint_id, endpoint = _service_browser_endpoint(call.hass, call)
-    if endpoint is None and not call.data.get("device_id"):
-        return {"success": True}
-    return {"success": True, **_ha_softphone_state(call.hass, endpoint_id)}
+    return result.as_service_response(include_legacy_fields=True)
+
+
+async def _originate_phone_action(
+    call: ServiceCall,
+    *,
+    force_ha_bridge: bool = False,
+):
+    """Dispatch one originate action through the entry-owned phone registry."""
+
+    runtime = _runtime_data(call.hass)
+    if runtime is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="phone_unavailable",
+            translation_placeholders={"phone": "VoIP Stack"},
+        )
+    result = await runtime.phones.originate(
+        call,
+        OriginateRequest(
+            destination=str(call.data.get("destination") or "").strip(),
+            send_video=bool(call.data.get("send_video", False)),
+            force_ha_bridge=bool(
+                force_ha_bridge or call.data.get("ha_bridge", False)
+            ),
+            context=call.context,
+        ),
+    )
+    return result
 
 
 async def _handle_sip_route_service(call: ServiceCall) -> None:
@@ -428,6 +447,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
         transport_config=cfg,
         assist_config=assist_cfg,
         trunk_config=trunk_cfg,
+        endpoints=endpoint_registry,
+        phones=PhoneAdapterRegistry(hass, endpoint_registry),
         debug_mode=bool(entry.data.get(CONF_DEBUG_MODE, False)),
         media_capture=bool(entry.data.get(CONF_MEDIA_CAPTURE, False)),
     )

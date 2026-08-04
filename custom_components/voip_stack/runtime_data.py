@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
+from .endpoint_registry import EndpointRegistry
+
+if TYPE_CHECKING:
+    from .phone_control import PhoneAdapterRegistry
 
 
 @dataclass(slots=True)
@@ -18,6 +22,8 @@ class VoipStackRuntime:
     transport_config: dict[str, Any]
     assist_config: dict[str, Any]
     trunk_config: dict[str, Any]
+    endpoints: EndpointRegistry
+    phones: PhoneAdapterRegistry
     debug_mode: bool = False
     media_capture: bool = False
 

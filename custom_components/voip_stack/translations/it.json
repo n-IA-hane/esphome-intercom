@@ -186,6 +186,15 @@
     }
   },
   "exceptions": {
+    "destination_required": {
+      "message": "È richiesta una destinazione per la chiamata."
+    },
+    "phone_operation_not_supported": {
+      "message": "{phone} non supporta l'operazione {operation}."
+    },
+    "phone_unavailable": {
+      "message": "{phone} non è attualmente disponibile."
+    },
     "purge_devices_disabled": {
       "message": "Questa azione è disabilitata perché VoIP Stack non possiede i dispositivi ESPHome e non può rimuoverli in sicurezza."
     }

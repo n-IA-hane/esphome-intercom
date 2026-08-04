@@ -180,38 +180,6 @@ def _call(hass, **data):
     return SimpleNamespace(hass=hass, data=data, context=object())
 
 
-def test_esp_source_delegates_to_native_start_call(softphone_originate) -> None:
-    hass = SimpleNamespace(data={}, config=SimpleNamespace(location_name="Casa"))
-    source = {
-        "name": "WS3",
-        "entities": {"call": "button.ws3_call"},
-    }
-    softphone_originate._resolve_source_device_from_call = AsyncMock(
-        return_value=source
-    )
-    softphone_originate._require_phone_service_control = AsyncMock()
-    softphone_originate._call_esphome_action = AsyncMock()
-    call = _call(hass, destination="667")
-
-    result = asyncio.run(softphone_originate.async_originate_call(call))
-
-    assert result is source
-    softphone_originate._require_phone_service_control.assert_awaited_once_with(
-        hass,
-        call,
-        device=source,
-        action_entity_ids=("button.ws3_call",),
-    )
-    softphone_originate._call_esphome_action.assert_awaited_once_with(
-        hass,
-        source,
-        "start_call",
-        {"dest": "667"},
-        context=call.context,
-    )
-    softphone_originate._ha_advertise_host.assert_not_awaited()
-
-
 def test_browser_to_browser_uses_local_bridge_before_network(
     softphone_originate,
 ) -> None:
@@ -229,9 +197,6 @@ def test_browser_to_browser_uses_local_bridge_before_network(
     )
     destination_endpoint = SimpleNamespace(endpoint_id="test", name="Test")
     route = SimpleNamespace(action=_RouteAction.ANSWER_HA, entry=object())
-    softphone_originate._service_browser_endpoint = Mock(
-        return_value=("casa", source_endpoint)
-    )
     softphone_originate._require_phone_service_control = AsyncMock()
     softphone_originate._get_transport_config = Mock(
         return_value={"video_camera_send": True}
@@ -253,7 +218,13 @@ def test_browser_to_browser_uses_local_bridge_before_network(
         send_video=True,
     )
 
-    asyncio.run(softphone_originate.async_originate_call(call))
+    asyncio.run(
+        softphone_originate.async_originate_browser_call(
+            call,
+            endpoint_id="casa",
+            browser_endpoint=source_endpoint,
+        )
+    )
 
     local_runtime.start_local_softphone_call.assert_called_once_with(
         hass,

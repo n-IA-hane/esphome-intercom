@@ -335,7 +335,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
         self.assertIn("debug_capture = _DebugAudioCapture(", refresh)
 
-        outbound = _function_body(self.softphone_originate, "async_originate_call")
+        outbound = _function_body(
+            self.softphone_originate, "async_originate_browser_call"
+        )
         self.assertIn("commit_audio_session_update(", outbound)
         self.assertNotIn("audio_contract_changed", outbound)
 
@@ -578,7 +580,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
     def test_initial_outbound_state_precedes_final_response_watcher(self) -> None:
         """A queued 200 OK must not be overwritten by the earlier 180 result."""
 
-        outbound = _function_body(self.softphone_originate, "async_originate_call")
+        outbound = _function_body(
+            self.softphone_originate, "async_originate_browser_call"
+        )
         initial_result = outbound.index(
             'if public_result == CallState.REMOTE_RINGING.value or result == "ringing":'
         )
@@ -589,7 +593,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
     def test_outbound_state_carries_resolved_target_device_identity(self) -> None:
         """The card must not recover the physical peer from SIP display text."""
 
-        outbound = _function_body(self.softphone_originate, "async_originate_call")
+        outbound = _function_body(
+            self.softphone_originate, "async_originate_browser_call"
+        )
         self.assertIn('getattr(target_endpoint, "device_id", "")', outbound)
         self.assertIn('entry_metadata.get("device_id")', outbound)
         self.assertGreaterEqual(
@@ -632,7 +638,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("state=CallState.IN_CALL.value", accepted)
 
     def test_outbound_call_claims_source_and_physical_destination_atomically(self) -> None:
-        outbound = _function_body(self.softphone_originate, "async_originate_call")
+        outbound = _function_body(
+            self.softphone_originate, "async_originate_browser_call"
+        )
         claims = outbound.rsplit("registry = _call_registry(hass)", 1)[1].split(
             "_bind_service_call_controller", 1
         )[0]
@@ -663,7 +671,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             immediate_failure.index("await client.close()"),
         )
 
-        outbound = _function_body(self.softphone_originate, "async_originate_call")
+        outbound = _function_body(
+            self.softphone_originate, "async_originate_browser_call"
+        )
         invite_error = outbound.split(
             "except Exception as err:  # noqa: BLE001 - isolate one outbound SIP leg.",
             1,
@@ -888,7 +898,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
 
     def test_outbound_softphone_accepts_live_peer_media_updates(self) -> None:
-        outbound = _function_body(self.softphone_originate, "async_originate_call")
+        outbound = _function_body(
+            self.softphone_originate, "async_originate_browser_call"
+        )
         self.assertIn("async def _prepare_softphone_media_update", outbound)
         self.assertIn(
             "client.on_media_update = _prepare_softphone_media_update",
@@ -940,7 +952,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self,
     ) -> None:
         call_service = _function_body(
-            self.softphone_originate, "async_originate_call"
+            self.softphone_originate, "async_originate_browser_call"
         )
         conference_branch = call_service.split('if group_type == "conference":', 1)[
             1
