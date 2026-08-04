@@ -8,6 +8,7 @@ import importlib.util
 import sys
 import types
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from tests.support.voip_matrix import (
@@ -156,6 +157,30 @@ class _FakeHass:
 
 
 class GroupCallMatrixTest(unittest.TestCase):
+    def test_debug_snapshot_exposes_cleanup_ownership_only_when_enabled(self) -> None:
+        hass = _FakeHass()
+        bucket = hass.data[const.DOMAIN]
+        bucket["audio_ws_owners"] = {"audio-call": object()}
+        bucket["video_ws_owners"] = {"video-call": object()}
+        bucket["video_transcoder_active"] = types.SimpleNamespace(
+            call_id="transcoded-call"
+        )
+
+        normal = websocket_api._ha_softphone_state(hass)
+        self.assertFalse(normal["debug_mode"])
+        self.assertEqual(normal["media_debug"], {})
+
+        with patch.object(websocket_api, "current_debug_mode", return_value=True):
+            debug = websocket_api._ha_softphone_state(hass)
+
+        self.assertTrue(debug["debug_mode"])
+        self.assertEqual(debug["media_debug"]["audio_ws_owner_call_ids"], ["audio-call"])
+        self.assertEqual(debug["media_debug"]["video_ws_owner_call_ids"], ["video-call"])
+        self.assertEqual(
+            debug["media_debug"]["video_transcoder_call_id"],
+            "transcoded-call",
+        )
+
     def test_unregistered_sip_accounts_are_not_exported_to_esp_phonebooks(
         self,
     ) -> None:

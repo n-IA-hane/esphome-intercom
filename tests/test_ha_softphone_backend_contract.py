@@ -153,17 +153,6 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertNotIn("pending_transactions", busy_expr)
         self.assertNotIn("active_dialogs", busy_expr)
 
-    def test_debug_snapshot_exposes_live_cleanup_ownership(self) -> None:
-        ws = (
-            ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
-        ).read_text()
-        state_body = _function_body(ws, "_ha_softphone_state")
-        self.assertIn('"call_registry": registry.snapshot()', state_body)
-        self.assertIn('"audio_ws_owner_call_ids"', state_body)
-        self.assertIn('"video_ws_owner_call_ids"', state_body)
-        self.assertIn('"video_transcoder_call_id"', state_body)
-        self.assertIn("if debug_mode:", state_body)
-
     def test_shutdown_revokes_media_owners_without_rebinding_maps(self) -> None:
         ws = (
             ROOT / "custom_components" / "voip_stack" / "websocket_api.py"

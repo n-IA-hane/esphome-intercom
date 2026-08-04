@@ -222,12 +222,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ]
 
         self.assertIn("if decision.action is RouteAction.ANSWER_HA:", forward)
-        self.assertIn("_logical_endpoint_for_member(", forward)
+        self.assertIn("runtime.route_resolver.logical_endpoint(", forward)
         self.assertIn("cannot forward a call to itself", forward)
         self.assertNotIn("target_browser_endpoint.offline_policy", forward)
         self.assertIn("registry.claim_endpoint(", browser_branch)
         self.assertIn("registry.release_endpoint_claim(", browser_branch)
-        self.assertIn("_defer_invite_to_ha_softphone(", browser_branch)
+        self.assertIn("runtime.defer_invite_to_softphone(", browser_branch)
         self.assertIn('last_sip_event="ROUTE_FORWARD"', browser_branch)
         self.assertTrue(browser_branch.rstrip().endswith("return"))
         self.assertNotIn("RtpPortReservation.allocate", browser_branch)
@@ -1202,7 +1202,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("browser_endpoint_can_ring(endpoint)", candidates)
         self.assertIn("browser_legs: list[BrowserLeg]", candidates)
         self.assertIn('role="group_candidate"', candidates)
-        self.assertIn("_publish_pending_ha_softphone_ringing(", forward)
+        self.assertIn("runtime.publish_pending_ringing(", forward)
         self.assertIn("build_ring_group_fork(", forward)
         self.assertIn("async def _wait_browser()", group_fork)
         self.assertIn('"in_call_browser"', group_fork)

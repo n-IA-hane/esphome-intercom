@@ -134,26 +134,17 @@ async def async_forward_existing_call(
     expected_sequence: int = 0,
     initial_selection: bool = False,
 ) -> None:
-    hass = runtime.hass
-    cfg = runtime.config
-    local_ip = runtime.local_ip
-    _ha_router_decision = runtime.route_resolver.route
-    _logical_endpoint_for_member = runtime.route_resolver.logical_endpoint
-    _attach_client_media_update = runtime.attach_client_media_update
-    _browser_leg_for_member = runtime.browser_leg_for_member
-    _defer_invite_to_ha_softphone = runtime.defer_invite_to_softphone
-    _prepare_outbound_leg = runtime.prepare_outbound_leg
-    _publish_pending_ha_softphone_ringing = runtime.publish_pending_ringing
-    _sip_uri_for_member = runtime.sip_uri_for_member
-    _start_local_assist_bridge = runtime.start_local_assist_bridge
-
     """Route or move one HA-owned pending/ringing call to a target.
 
     ``initial_selection`` is used only by the bounded ``route_requested``
-    decision point.  Unlike a later forward, it must not exclude browser
+    decision point. Unlike a later forward, it must not exclude browser
     phones from a ring group merely because the pre-answered trunk dialog
     is temporarily anchored on the default HA phone.
     """
+
+    hass = runtime.hass
+    cfg = runtime.config
+    local_ip = runtime.local_ip
     from homeassistant.exceptions import ServiceValidationError
 
     call_id = str(call_id or "").strip()
@@ -235,10 +226,10 @@ async def async_forward_existing_call(
             peers,
             _registered_roster_entries(hass),
         )
-        decision = _ha_router_decision(destination, roster_entries)
+        decision = runtime.route_resolver.route(destination, roster_entries)
         endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
         if decision.action is RouteAction.ANSWER_HA:
-            target_browser_endpoint = _logical_endpoint_for_member(
+            target_browser_endpoint = runtime.route_resolver.logical_endpoint(
                 decision.target or destination,
                 peers,
                 roster_entries,
@@ -393,7 +384,7 @@ async def async_forward_existing_call(
                 if resumed is None:
                     return
             if ha_claimed:
-                _publish_pending_ha_softphone_ringing(
+                runtime.publish_pending_ringing(
                     invite,
                     route_kind=original_route_kind,
                     endpoint_id=session_endpoint_id,
@@ -487,7 +478,7 @@ async def async_forward_existing_call(
                             call_id,
                             session_endpoint_id,
                         ) or old_was_claimed
-                    _defer_invite_to_ha_softphone(
+                    runtime.defer_invite_to_softphone(
                         invite,
                         route_kind=decision.action.value,
                         endpoint_id=endpoint.endpoint_id,
@@ -556,8 +547,8 @@ async def async_forward_existing_call(
                         ForwardGroupCandidateRuntime(
                             registry=registry,
                             endpoint_registry=endpoint_registry,
-                            browser_leg_for_member=_browser_leg_for_member,
-                            prepare_outbound_leg=_prepare_outbound_leg,
+                            browser_leg_for_member=runtime.browser_leg_for_member,
+                            prepare_outbound_leg=runtime.prepare_outbound_leg,
                         ),
                         invite=invite,
                         members=members,
@@ -625,7 +616,7 @@ async def async_forward_existing_call(
                         "declined_endpoint_ids": set(),
                     }
                     for browser_leg in browser_legs:
-                        _publish_pending_ha_softphone_ringing(
+                        runtime.publish_pending_ringing(
                             invite,
                             route_kind=GROUP_TYPE_RING,
                             endpoint_id=browser_leg.endpoint_id,
@@ -863,7 +854,7 @@ async def async_forward_existing_call(
                 if winner.video_relay is not None:
                     # The audio relay now owns and tears down the video relay.
                     winner.video_relay = None
-                _attach_client_media_update(
+                runtime.attach_client_media_update(
                     client,
                     relay,
                     source_call_id=call_id,
@@ -964,7 +955,7 @@ async def async_forward_existing_call(
                     )
                     if claimed_assist is None:
                         raise RuntimeError("Assist route ownership changed")
-                await _start_local_assist_bridge(
+                await runtime.start_local_assist_bridge(
                     invite,
                     reservation=reservation,
                     local_rtp_port=source_relay_port,
@@ -1025,7 +1016,7 @@ async def async_forward_existing_call(
                     f"transport={str(trunk_cfg[CONF_TRUNK_TRANSPORT]).lower()}"
                 )
             else:
-                bridge_uri, _peer, member_entry = _sip_uri_for_member(
+                bridge_uri, _peer, member_entry = runtime.sip_uri_for_member(
                     decision.target or destination,
                     peers,
                     roster_entries,
@@ -1299,7 +1290,7 @@ async def async_forward_existing_call(
                 relay.attach_video_relay(video_relay)
             await relay.start()
             reservation.detach()
-            _attach_client_media_update(
+            runtime.attach_client_media_update(
                 client,
                 relay,
                 source_call_id=call_id,
