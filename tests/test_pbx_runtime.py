@@ -261,6 +261,34 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("call-1", registry.sessions)
         self.assertIsNone(runtime.get_session("call-1"))
 
+    async def test_registry_delegates_terminal_claim_to_session_owner(self) -> None:
+        events: list[str] = []
+        registry = call_registry.CallRegistry()
+        runtime = SipEndpointRuntime(projection=registry)
+        runtime.activate()
+        registry.bind_session_owner(runtime)
+        projected = registry.upsert("call-1", state="in_call", owner="bridge")
+        authoritative = runtime.get_session("call-1")
+        self.assertIsNotNone(authoritative)
+        authoritative.add_resource(
+            "relay",
+            object(),
+            lambda reason: events.append(f"relay:{reason}"),
+            stage=endpoint_session.CleanupStage.MEDIA,
+        )
+
+        self.assertTrue(registry.begin_termination("call-1", "remote_hangup"))
+        self.assertFalse(registry.begin_termination("call-1", "duplicate"))
+        self.assertIs(authoritative.phase, SessionPhase.TERMINATING)
+        self.assertEqual(projected.metadata["pbx_phase"], "terminating")
+        self.assertEqual(events, [])
+
+        registry.finish_and_pop("call-1", reason="remote_hangup")
+        await authoritative.terminated.wait()
+
+        self.assertEqual(events, ["relay:remote_hangup"])
+        self.assertIsNone(runtime.get_session("call-1"))
+
     async def test_waited_removal_allows_same_call_id_to_change_owner(self) -> None:
         registry = call_registry.CallRegistry()
         runtime = SipEndpointRuntime(projection=registry)

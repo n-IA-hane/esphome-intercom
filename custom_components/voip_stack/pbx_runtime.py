@@ -509,6 +509,20 @@ class SipEndpointRuntime:
             return None
         return session.start_termination(reason)
 
+    def claim_termination(
+        self,
+        call_id: str,
+        reason: str,
+        *,
+        generation: int | None = None,
+    ) -> bool:
+        """Claim one terminal transition before legacy adapter handoff."""
+
+        session = self.get_session(call_id, generation=generation)
+        if session is None:
+            return False
+        return session.claim_termination(reason)
+
     def get_session(
         self,
         call_id: str,

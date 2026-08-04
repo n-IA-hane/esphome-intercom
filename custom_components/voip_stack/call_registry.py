@@ -1,4 +1,4 @@
-"""Authoritative HA-side SIP call session registry."""
+"""Observable HA call projection and compatibility resource indexes."""
 
 from __future__ import annotations
 
@@ -116,6 +116,14 @@ class CallSessionOwner(Protocol):
         *,
         generation: int | None = None,
     ) -> Any: ...
+
+    def claim_termination(
+        self,
+        call_id: str,
+        reason: str,
+        *,
+        generation: int | None = None,
+    ) -> bool: ...
 
 
 @dataclass(slots=True)
@@ -314,7 +322,11 @@ class CallRegistry:
                 return True
         return False
 
-    def begin_termination(self, call_id: str) -> bool:
+    def begin_termination(
+        self,
+        call_id: str,
+        reason: str = "terminated",
+    ) -> bool:
         """Atomically claim teardown ownership for a call or one of its legs.
 
         SIP transports, client watchers and local UI actions may all observe
@@ -328,12 +340,23 @@ class CallRegistry:
         if self.is_terminated(call_id):
             return False
         session = self.sessions.get(session_id)
+        if session is not None and self._session_owner is not None:
+            if not self._session_owner.claim_termination(
+                session_id,
+                reason,
+                generation=session.generation,
+            ):
+                return False
         self._remember_terminated(
             call_id,
             session_id,
             generation=session.generation if session is not None else 0,
         )
-        if session is not None and session.metadata.get("pbx_phase") != "terminating":
+        if (
+            session is not None
+            and self._session_owner is None
+            and session.metadata.get("pbx_phase") != "terminating"
+        ):
             # The terminal decision is synchronous even when legacy adapters
             # still detach their concrete resources before starting the
             # authoritative cleanup barrier. Events emitted in that interval

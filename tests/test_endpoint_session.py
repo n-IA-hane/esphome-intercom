@@ -42,6 +42,27 @@ endpoint_session = _load_module("endpoint_session")
 
 
 class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_termination_claim_precedes_legacy_handoff_and_cleanup(self) -> None:
+        events: list[str] = []
+        session = endpoint_session.EndpointCallSession("call-1", 1)
+        session.add_resource(
+            "relay",
+            object(),
+            lambda reason: events.append(f"relay:{reason}"),
+            stage=endpoint_session.CleanupStage.MEDIA,
+        )
+
+        self.assertTrue(session.claim_termination("remote_hangup"))
+        self.assertFalse(session.claim_termination("duplicate"))
+        self.assertIs(session.phase, endpoint_session.SessionPhase.TERMINATING)
+        self.assertEqual(session.terminal_reason, "remote_hangup")
+        self.assertEqual(events, [])
+
+        result = await session.start_termination("duplicate")
+
+        self.assertEqual(result.reason, "remote_hangup")
+        self.assertEqual(events, ["relay:remote_hangup"])
+
     async def test_start_termination_is_synchronous_before_cleanup_runs(self) -> None:
         gate = asyncio.Event()
         session = endpoint_session.EndpointCallSession("call-1", 1)

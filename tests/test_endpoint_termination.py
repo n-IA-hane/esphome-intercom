@@ -18,7 +18,7 @@ MODULE = ROOT / "custom_components" / "voip_stack" / "endpoint_termination.py"
 class _Registry:
     def __init__(self) -> None:
         self.begin_result = True
-        self.begin_calls: list[str] = []
+        self.begin_calls: list[tuple[str, str]] = []
         self.pending_invites: dict[str, object] = {}
         self.sessions: dict[str, object] = {}
         self.preanswered: object = {"reservation": "early"}
@@ -26,8 +26,8 @@ class _Registry:
         self.detach_result = ("", "", None, None, None, False)
         self.finished: list[tuple[str, dict[str, object]]] = []
 
-    def begin_termination(self, call_id: str) -> bool:
-        self.begin_calls.append(call_id)
+    def begin_termination(self, call_id: str, reason: str = "terminated") -> bool:
+        self.begin_calls.append((call_id, reason))
         return self.begin_result
 
     @staticmethod
@@ -167,7 +167,7 @@ def test_duplicate_transport_termination_has_no_side_effects(
 
     asyncio.run(handler.handle("call-1"))
 
-    assert registry.begin_calls == ["call-1"]
+    assert registry.begin_calls == [("call-1", "remote_hangup")]
     assert not registry.finished
     assert not hass.released
     assert not hass.events

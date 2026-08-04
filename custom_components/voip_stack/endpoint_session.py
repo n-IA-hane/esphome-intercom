@@ -402,6 +402,23 @@ class EndpointCallSession:
 
         return await async_wait_for_cleanup(self.start_termination(reason))
 
+    def claim_termination(self, reason: str) -> bool:
+        """Make the terminal decision once without starting resource cleanup.
+
+        A signaling callback may still need to detach a legacy adapter before
+        cleanup starts. The session remains the sole owner of the terminal
+        transition while the caller completes that synchronous handoff.
+        """
+
+        if not self.live:
+            return False
+        self.phase = SessionPhase.TERMINATING
+        self.terminal_reason = str(reason or "terminated")
+        self.termination_started.set()
+        if self._on_changed is not None:
+            self._on_changed(self)
+        return True
+
     def start_termination(self, reason: str) -> asyncio.Task[SessionTerminationResult]:
         """Start teardown synchronously and return its unique cleanup barrier.
 
@@ -412,16 +429,13 @@ class EndpointCallSession:
         """
 
         if self._termination_task is None:
+            if self.live:
+                self.claim_termination(reason)
             self._termination_initiator = asyncio.current_task()
             if self._termination_initiator is not None:
                 self.tasks.discard(self._termination_initiator)
-            self.phase = SessionPhase.TERMINATING
-            self.terminal_reason = str(reason or "terminated")
-            self.termination_started.set()
-            if self._on_changed is not None:
-                self._on_changed(self)
             self._termination_task = asyncio.create_task(
-                self._run_termination(reason),
+                self._run_termination(self.terminal_reason),
                 name=f"voip-call-session-terminate-{self.call_id}",
             )
         return self._termination_task

@@ -42,7 +42,7 @@ class EndpointTerminationHandler:
 
         bucket = self.hass.data.setdefault(DOMAIN, {})
         registry = call_registry(self.hass)
-        if not registry.begin_termination(call_id):
+        if not registry.begin_termination(call_id, reason):
             _LOGGER.debug(
                 "Ignoring duplicate SIP termination call_id=%s reason=%s",
                 call_id,
