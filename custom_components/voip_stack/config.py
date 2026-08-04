@@ -132,6 +132,14 @@ def debug_mode(hass: HomeAssistant) -> bool:
     return bool(hass.data.get(DOMAIN, {}).get(CONF_DEBUG_MODE, False))
 
 
+def media_capture_enabled(hass: HomeAssistant) -> bool:
+    """Return whether the user explicitly enabled private media captures."""
+
+    from .const import CONF_MEDIA_CAPTURE
+
+    return bool(hass.data.get(DOMAIN, {}).get(CONF_MEDIA_CAPTURE, False))
+
+
 def trunk_enabled(cfg: dict) -> bool:
     return bool(
         cfg.get(CONF_TRUNK_ENABLED)

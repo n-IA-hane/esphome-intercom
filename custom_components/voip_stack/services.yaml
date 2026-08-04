@@ -1,13 +1,8 @@
 purge_devices:
-  name: Purge Stale Devices
+  name: Purge stale devices (disabled)
   description: >-
-    Remove VoIP devices that are no longer reachable from the device
-    registry. The HA phonebook sensor rebuilds from live voip_endpoint
-    entities, so purged devices disappear from ESP contact lists on the next
-    sensor update. Without a target, every VoIP device whose state is
-    'unavailable' for at least min_unavailable_hours is removed. With a target,
-    the selected device is removed unconditionally. Devices that come back
-    online will re-register themselves automatically.
+    Disabled because VoIP Stack does not own ESPHome devices and must never
+    remove them from Home Assistant's device registry.
   fields:
     device_id:
       name: Device

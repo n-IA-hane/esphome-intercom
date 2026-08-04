@@ -10,7 +10,7 @@ from typing import Any, Awaitable, Callable
 from homeassistant.core import HomeAssistant
 
 from .bridge_manager import async_watch_sip_bridge_destination
-from .config import debug_mode, trunk_config
+from .config import media_capture_enabled, trunk_config
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
     CONF_TRUNK_DTMF_ENABLED,
@@ -547,7 +547,7 @@ async def async_route_trunk_invite(
             client=client,
             source_relay_port=source_relay_port,
             dest_relay_port=dest_relay_port,
-            debug_capture=debug_mode(hass),
+            debug_capture=media_capture_enabled(hass),
             on_release=lambda ports: release_sip_rtp_port_pair(hass, ports),
         )
         runtime.attach_dtmf_event_bridge(

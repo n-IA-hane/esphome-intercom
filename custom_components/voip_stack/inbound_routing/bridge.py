@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 
 from ..bridge_manager import async_watch_sip_bridge_destination
 from ..audio_format import HA_TRUNK_AUDIO_FORMATS
-from ..config import debug_mode
+from ..config import media_capture_enabled
 from ..const import (
     CONF_SIP_VIDEO,
     CONF_VIDEO_TRANSCODING,
@@ -533,7 +533,7 @@ async def route_sip_bridge(
                 client=client,
                 source_relay_port=source_relay_port,
                 dest_relay_port=dest_relay_port,
-                debug_capture=debug_mode(hass),
+                debug_capture=media_capture_enabled(hass),
                 on_release=lambda ports: release_sip_rtp_port_pair(hass, ports),
             )
             attach_dtmf_event_bridge(

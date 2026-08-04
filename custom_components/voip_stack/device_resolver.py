@@ -16,9 +16,78 @@ from homeassistant.helpers import entity_registry as er
 
 from .audio_format import parse_audio_format_list
 from .const import DOMAIN
+from .device_registry_compat import device_config_entry_ids
 
 _LOGGER = logging.getLogger(__name__)
 _CACHE_KEY = "device_resolver"
+
+
+_ENTITY_ROLE_TOKENS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("voip_endpoint", ("voip_endpoint",)),
+    ("voip_state", ("voip_state",)),
+    ("voip_extension", ("voip_extension",)),
+    ("voip_transport", ("voip_transport",)),
+    ("voip_ring_groups", ("voip_ring_groups",)),
+    ("voip_conference_groups", ("voip_conference_groups",)),
+    ("voip_conference_ring", ("voip_ring_on_conference",)),
+    ("auto_answer", ("auto_answer",)),
+    ("dnd", ("do_not_disturb", "_dnd_", "_dnd")),
+    ("incoming_caller", ("incoming_caller", "_caller")),
+    ("destination", ("destination",)),
+    ("last_reason", ("voip_last_reason", "last_reason", "end_reason")),
+    ("previous", ("previous",)),
+    ("next", ("next",)),
+    ("decline", ("decline",)),
+    ("call", ("call",)),
+)
+_ENTITY_ROLE_DOMAINS: dict[str, frozenset[str]] = {
+    "voip_endpoint": frozenset({"sensor", "text_sensor"}),
+    "voip_state": frozenset({"sensor", "text_sensor"}),
+    "voip_extension": frozenset({"text"}),
+    "voip_transport": frozenset({"sensor", "text_sensor"}),
+    "voip_ring_groups": frozenset({"text"}),
+    "voip_conference_groups": frozenset({"text"}),
+    "voip_conference_ring": frozenset({"switch"}),
+    "auto_answer": frozenset({"switch"}),
+    "dnd": frozenset({"switch"}),
+    "incoming_caller": frozenset({"sensor", "text_sensor"}),
+    "destination": frozenset({"sensor", "text_sensor"}),
+    "last_reason": frozenset({"sensor", "text_sensor"}),
+    "previous": frozenset({"button"}),
+    "next": frozenset({"button"}),
+    "decline": frozenset({"button"}),
+    "call": frozenset({"button"}),
+}
+
+
+def _normalized_identity(value: object) -> str:
+    return "".join(
+        character if character.isalnum() else "_"
+        for character in str(value or "").casefold()
+    )
+
+
+def _entity_role(entity: object) -> str:
+    """Resolve a stable ESPHome entity role before using its mutable entity ID."""
+
+    entity_id = str(getattr(entity, "entity_id", "") or "")
+    domain = entity_id.partition(".")[0]
+    if domain == "camera":
+        return "camera"
+    identities = (
+        _normalized_identity(getattr(entity, "unique_id", "")),
+        _normalized_identity(getattr(entity, "translation_key", "")),
+        _normalized_identity(getattr(entity, "original_name", "")),
+        _normalized_identity(entity_id),
+    )
+    for role, tokens in _ENTITY_ROLE_TOKENS:
+        if domain not in _ENTITY_ROLE_DOMAINS[role]:
+            continue
+        if role == "call" and "decline" in identities[3]:
+            continue
+        if any(token in identity for token in tokens for identity in identities if identity):
+            return role
+    return ""
 
 
 def _format_tokens(formats: list) -> list[str]:
@@ -164,7 +233,7 @@ class VoipDeviceResolver:
 
         entry = _esphome_entry_for_host(self.hass, host)
         if entry is None and device is not None:
-            for entry_id in device.config_entries:
+            for entry_id in device_config_entry_ids(device):
                 candidate = self.hass.config_entries.async_get_entry(entry_id)
                 if candidate is not None and candidate.domain == "esphome":
                     entry = candidate
@@ -181,7 +250,7 @@ class VoipDeviceResolver:
                     continue
                 if 'ip' not in conn_type.lower() and conn_type != 'network_ip':
                     continue
-                for entry_id in device.config_entries:
+                for entry_id in device_config_entry_ids(device):
                     entry = self.hass.config_entries.async_get_entry(entry_id)
                     if entry and entry.domain == "esphome":
                         return entry
@@ -207,7 +276,7 @@ class VoipDeviceResolver:
             if str(getattr(entity, "platform", "") or "") == DOMAIN:
                 continue
             entities_by_device.setdefault(entity.device_id, []).append(entity)
-            if "voip_endpoint" in entity.entity_id:
+            if _entity_role(entity) == "voip_endpoint":
                 voip_device_ids.add(entity.device_id)
 
         out: list[dict] = []
@@ -294,8 +363,8 @@ class VoipDeviceResolver:
         return None
 
     def _route_id_from_device(self, device) -> str:
-        """Walk device.config_entries; slugify the linked esphome entry."""
-        for entry_id in device.config_entries:
+        """Find the owning ESPHome entry and return its service slug."""
+        for entry_id in device_config_entry_ids(device):
             entry = self.hass.config_entries.async_get_entry(entry_id)
             if entry and entry.domain == "esphome":
                 raw = entry.data.get("device_name") or entry.title or ""
@@ -314,48 +383,9 @@ class VoipDeviceResolver:
         out: dict[str, str] = {}
         for entity in entities:
             eid = entity.entity_id
-            if eid.startswith("camera.") and "camera" not in out:
-                out["camera"] = eid
-            elif "voip_state" in eid and "voip_state" not in out:
-                out["voip_state"] = eid
-            elif "voip_endpoint" in eid and "voip_endpoint" not in out:
-                out["voip_endpoint"] = eid
-            elif "voip_extension" in eid and "voip_extension" not in out:
-                out["voip_extension"] = eid
-            elif "voip_transport" in eid and "voip_transport" not in out:
-                # source of truth for "udp"/"tcp".
-                out["voip_transport"] = eid
-            elif "voip_ring_groups" in eid and "voip_ring_groups" not in out:
-                out["voip_ring_groups"] = eid
-            elif "voip_conference_groups" in eid and "voip_conference_groups" not in out:
-                out["voip_conference_groups"] = eid
-            elif "voip_ring_on_conference" in eid and "voip_conference_ring" not in out:
-                out["voip_conference_ring"] = eid
-            elif eid.startswith("switch.") and "auto_answer" in eid and "auto_answer" not in out:
-                out["auto_answer"] = eid
-            elif (
-                eid.startswith("switch.")
-                and ("do_not_disturb" in eid or eid.endswith("_dnd") or "_dnd_" in eid)
-                and "dnd" not in out
-            ):
-                out["dnd"] = eid
-            elif ("incoming_caller" in eid or eid.endswith("_caller")) and "incoming_caller" not in out:
-                out["incoming_caller"] = eid
-            elif "destination" in eid and "destination" not in out:
-                out["destination"] = eid
-            elif (
-                ("voip_last_reason" in eid or "last_reason" in eid or "end_reason" in eid)
-                and "last_reason" not in out
-            ):
-                out["last_reason"] = eid
-            elif eid.startswith("button.") and "previous" in eid and "previous" not in out:
-                out["previous"] = eid
-            elif eid.startswith("button.") and "next" in eid and "next" not in out:
-                out["next"] = eid
-            elif eid.startswith("button.") and "decline" in eid and "decline" not in out:
-                out["decline"] = eid
-            elif eid.startswith("button.") and "call" in eid and "decline" not in eid and "call" not in out:
-                out["call"] = eid
+            role = _entity_role(entity)
+            if role and role not in out:
+                out[role] = eid
         return out
 
     def _state_value(self, entity_id: str | None) -> str:

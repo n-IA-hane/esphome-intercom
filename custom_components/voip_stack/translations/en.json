@@ -10,7 +10,8 @@
           "advertise_host": "Advertised HA host/IP",
         "assist_intents": "Enable Assist intents",
         "assist_endpoint_enabled": "Include voice assistant",
-          "debug_mode": "Enable SIP/RTP debug and private audio captures",
+          "debug_mode": "Enable SIP/RTP debug logging",
+          "media_capture": "Record private call audio for diagnostics",
           "experimental_sip_video": "Enable SIP video for the Home Assistant softphone",
           "sip_registrar_enabled": "Enable local SIP accounts",
           "trunk_enabled": "Enable optional SIP trunk"
@@ -21,7 +22,8 @@
           "advertise_host": "Optional override published in ESP phonebooks. Use this when HA is behind routing, NAT, LXC, VPN, or multiple subnets and the automatically announced address is not reachable by ESP devices.",
         "assist_intents": "Register optional Assist handlers for call, hang up, answer and decline (\"Hey Jarvis, call Kitchen\"). Spoken contact names are resolved dynamically against the live VoIP phonebook.",
         "assist_endpoint_enabled": "Add a SIP extension backed directly by a Home Assistant Assist pipeline. No separate VoIP integration or SIP listener is required.",
-          "debug_mode": "Enables detailed SIP/RTP/media diagnostics and logs. It also records private call audio automatically: up to 15 seconds per HA-softphone direction and 8 seconds per relay leg, stored as WAV/JSON in ~/.cache/voip_stack_debug (mode 0700) and pruned to 24 files / 64 MiB. Disable it after testing.",
+          "debug_mode": "Enables detailed SIP/RTP/media diagnostics and logs without recording call audio.",
+          "media_capture": "Explicitly records private call audio: up to 15 seconds per HA-softphone direction and 8 seconds per relay leg, stored as WAV/JSON in ~/.cache/voip_stack_debug (mode 0700) and pruned to 24 files / 64 MiB. Keep disabled unless collecting a diagnostic capture.",
           "experimental_sip_video": "Let the Home Assistant softphone negotiate SIP video with compatible standard phones, softphones and door stations. H.264, VP8 and JPEG use the browser media path. Standard ESP endpoints remain audio-only; qualified ESP32-P4 profiles can negotiate JPEG or H.264. Requires HTTPS and a compatible browser.",
           "sip_registrar_enabled": "Accept REGISTER from local SIP endpoints such as VoIP phones, Zoiper, Linphone or baresip using accounts managed by VoIP Stack services.",
           "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration, external route or DTMF collector starts."
@@ -181,6 +183,11 @@
         "direct": "Route immediately",
         "dtmf": "Collect extension with DTMF"
       }
+    }
+  },
+  "exceptions": {
+    "purge_devices_disabled": {
+      "message": "This action is disabled because VoIP Stack does not own ESPHome devices and cannot safely remove them."
     }
   },
   "entity": {

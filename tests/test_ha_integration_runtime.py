@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from homeassistant import loader
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.setup import async_setup_component
 import pytest
 
@@ -18,7 +19,6 @@ INTEGRATION_DEPENDENCIES = {
     "http",
     "lovelace",
     "network",
-    "zeroconf",
 }
 pytestmark = pytest.mark.ha
 
@@ -108,3 +108,39 @@ async def test_default_browser_call_response_does_not_require_an_open_card(
 
     assert response == {"success": True}
     originate.assert_awaited_once()
+
+
+async def test_purge_devices_is_disabled_before_resolving_or_removing_devices(
+    hass: HomeAssistant,
+) -> None:
+    _prepare_integration_dependencies(hass)
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN,
+            "purge_devices",
+            {},
+            blocking=True,
+        )
+
+
+async def test_debug_logging_does_not_enable_private_media_capture(
+    hass: HomeAssistant,
+) -> None:
+    _prepare_integration_dependencies(hass)
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+
+    from custom_components.voip_stack.config import (
+        debug_mode,
+        media_capture_enabled,
+    )
+
+    hass.data[DOMAIN]["debug_mode"] = True
+    assert debug_mode(hass)
+    assert not media_capture_enabled(hass)
+
+    hass.data[DOMAIN]["media_capture"] = True
+    assert media_capture_enabled(hass)

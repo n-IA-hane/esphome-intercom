@@ -19,7 +19,7 @@ from homeassistant.core import HomeAssistant
 
 from . import rtp
 from .audio_ws import decode_audio_frame, encode_audio_frame
-from .const import CONF_DEBUG_MODE, DOMAIN
+from .const import CONF_DEBUG_MODE, CONF_MEDIA_CAPTURE, DOMAIN
 from .audio_format import HA_SIP_PCM_FORMATS
 from .debug_capture import (
     DEBUG_CAPTURE_DIR,
@@ -710,7 +710,7 @@ async def _run_audio_session(
     tx_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=4)
     debug_capture = (
         _DebugAudioCapture(session.call_id, rx_format=session.recv_format, tx_format=session.send_format)
-        if bool(hass.data.get(DOMAIN, {}).get(CONF_DEBUG_MODE, False))
+        if bool(hass.data.get(DOMAIN, {}).get(CONF_MEDIA_CAPTURE, False))
         else None
     )
     rtp_decoder: RtpPayloadDecoder

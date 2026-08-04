@@ -10,7 +10,8 @@
           "advertise_host": "Host/IP HA annunciato",
         "assist_intents": "Abilita intent Assist",
         "assist_endpoint_enabled": "Includi assistente vocale",
-          "debug_mode": "Abilita debug SIP/RTP e catture audio private",
+          "debug_mode": "Abilita i log di debug SIP/RTP",
+          "media_capture": "Registra audio privato per la diagnostica",
           "experimental_sip_video": "Abilita video SIP per il softphone Home Assistant",
           "sip_registrar_enabled": "Abilita account softphone SIP locali",
           "trunk_enabled": "Abilita trunk SIP opzionale"
@@ -21,7 +22,8 @@
           "advertise_host": "Override opzionale pubblicato nelle rubriche ESP. Usalo quando HA è dietro routing, NAT, LXC, VPN o più subnet e l'indirizzo annunciato automaticamente non è raggiungibile dagli ESP.",
         "assist_intents": "Permette di chiamare e gestire vocalmente le chiamate con l'assistente (per esempio: \"Hey Jarvis, chiama Cucina\"). Abilita comandi Assist opzionali per chiamare, riagganciare, rispondere e rifiutare; i nomi pronunciati vengono risolti dinamicamente dalla rubrica VoIP live.",
         "assist_endpoint_enabled": "Aggiunge un interno SIP collegato direttamente a una pipeline Assist di Home Assistant, senza integrazioni VoIP o listener SIP separati.",
-          "debug_mode": "Abilita diagnostica e log SIP/RTP/media dettagliati. Registra inoltre automaticamente audio privato delle chiamate: fino a 15 secondi per direzione del softphone HA e 8 secondi per tratta relay, salvati come WAV/JSON in ~/.cache/voip_stack_debug (permessi 0700) e limitati a 24 file / 64 MiB. Disabilitalo dopo i test.",
+          "debug_mode": "Abilita diagnostica e log SIP/RTP/media dettagliati senza registrare l'audio delle chiamate.",
+          "media_capture": "Registra esplicitamente audio privato delle chiamate: fino a 15 secondi per direzione del softphone HA e 8 secondi per tratta relay, salvati come WAV/JSON in ~/.cache/voip_stack_debug (permessi 0700) e limitati a 24 file / 64 MiB. Mantienilo disabilitato salvo durante una cattura diagnostica.",
           "experimental_sip_video": "Permette al softphone Home Assistant di negoziare video SIP con telefoni, softphone e videocitofoni standard compatibili. H.264, VP8 e JPEG usano un percorso diretto nel browser. Gli endpoint audio ESP restano solo audio. Richiede HTTPS e un browser compatibile.",
           "sip_registrar_enabled": "Accetta REGISTER da softphone locali come Zoiper, Linphone o baresip usando account gestiti dai servizi VoIP Stack.",
           "trunk_enabled": "Mostra le impostazioni provider/PBX. Se disattivo, non parte nessuna registrazione trunk, rotta esterna o raccolta DTMF."
@@ -181,6 +183,11 @@
         "direct": "Instrada subito",
         "dtmf": "Raccogli interno con DTMF"
       }
+    }
+  },
+  "exceptions": {
+    "purge_devices_disabled": {
+      "message": "Questa azione è disabilitata perché VoIP Stack non possiede i dispositivi ESPHome e non può rimuoverli in sicurezza."
     }
   },
   "entity": {

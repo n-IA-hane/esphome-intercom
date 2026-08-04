@@ -78,6 +78,7 @@ def _load_remove_entry_hook():
         "ConfigEntry": object,
         "DOMAIN": "voip_stack",
         "CONF_DEBUG_MODE": "debug_mode",
+        "CONF_MEDIA_CAPTURE": "media_capture",
     }
     exec(
         compile(
@@ -293,20 +294,23 @@ def test_final_entry_removal_forgets_runtime_but_preserves_global_views() -> Non
     "path",
     [STRINGS, TRANSLATIONS / "en.json", TRANSLATIONS / "it.json"],
 )
-def test_debug_option_discloses_private_audio_capture_and_retention(path: Path) -> None:
+def test_debug_and_media_capture_options_disclose_separate_behaviors(path: Path) -> None:
     document = json.loads(path.read_text())
     user_step = document["config"]["step"]["user"]
-    title = user_step["data"]["debug_mode"].lower()
-    description = user_step["data_description"]["debug_mode"].lower()
+    debug_title = user_step["data"]["debug_mode"].lower()
+    debug_description = user_step["data_description"]["debug_mode"].lower()
+    capture_title = user_step["data"]["media_capture"].lower()
+    capture_description = user_step["data_description"]["media_capture"].lower()
 
-    assert "audio" in title
-    assert "privat" in title
-    assert "15" in description
-    assert "8" in description
-    assert "~/.cache/voip_stack_debug" in description
-    assert "0700" in description
-    assert "24" in description
-    assert "64 mib" in description
+    assert "debug" in debug_title
+    assert "without recording" in debug_description or "senza registrare" in debug_description
+    assert "audio" in capture_title
+    assert "15" in capture_description
+    assert "8" in capture_description
+    assert "~/.cache/voip_stack_debug" in capture_description
+    assert "0700" in capture_description
+    assert "24" in capture_description
+    assert "64 mib" in capture_description
 
 
 @pytest.mark.parametrize("status", [300, 486, 603, 699])

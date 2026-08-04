@@ -11,7 +11,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
 from homeassistant.core import HomeAssistant, CoreState, Event, ServiceCall
-from homeassistant.exceptions import ConfigEntryError
+from homeassistant.exceptions import ConfigEntryError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
 from .config import (
@@ -33,6 +33,7 @@ from .const import (
     CONF_ASSIST_PIPELINE,
     CONF_ASSIST_INTENTS,
     CONF_DEBUG_MODE,
+    CONF_MEDIA_CAPTURE,
     CONF_SIP_VIDEO,
     CONF_PHONEBOOK_CONTACTS,
     CONF_AUTOMATION_ROUTING_ENABLED,
@@ -48,9 +49,6 @@ from .const import (
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
 from .esphome_state_bridge import (
     register_state_event_bridge as _register_esp_state_event_bridge,
-)
-from .esphome_actions import (
-    async_resolve_target_device as _resolve_target_device,
 )
 from .peer_snapshot import (
     async_advertise_host as _ha_advertise_host,
@@ -86,7 +84,6 @@ from .store import manual_roster_entries as _manual_roster_entries
 from .websocket_api import (
     async_register_websocket_api,
     _async_load_ha_softphone_store,
-    _get_voip_devices,
     _ha_softphone_state,
     async_set_ha_softphone_settings,
 )
@@ -137,47 +134,12 @@ SIP_ROUTE_DECISION_TIMEOUT = 1.5
 
 
 async def _handle_purge_devices_service(call: ServiceCall) -> None:
-    """Remove stale VoIP devices."""
-    from datetime import datetime, timedelta, timezone
-    from homeassistant.helpers import device_registry as dr
+    """Reject unsafe removal of devices owned by ESPHome."""
 
-    hass: HomeAssistant = call.hass
-    device_registry = dr.async_get(hass)
-    min_hours = float(call.data.get("min_unavailable_hours", 0) or 0)
-    cutoff = (
-        datetime.now(timezone.utc) - timedelta(hours=min_hours)
-        if min_hours > 0
-        else None
+    raise ServiceValidationError(
+        translation_domain=DOMAIN,
+        translation_key="purge_devices_disabled",
     )
-
-    targeted = await _resolve_target_device(hass, call)
-    purged: list[str] = []
-
-    if targeted:
-        device_registry.async_remove_device(targeted["device_id"])
-        purged.append(targeted["name"])
-    else:
-        devices = await _get_voip_devices(hass)
-        for device in devices:
-            entity_id = (device.get("entities") or {}).get("voip_state")
-            if not entity_id:
-                continue
-            state = hass.states.get(entity_id)
-            if state is None or state.state not in ("unavailable", "unknown"):
-                continue
-            if (
-                cutoff is not None
-                and state.last_changed
-                and state.last_changed > cutoff
-            ):
-                continue
-            device_registry.async_remove_device(device["device_id"])
-            purged.append(device["name"])
-
-    if purged:
-        _LOGGER.info("Purged %d VoIP device(s): %s", len(purged), ", ".join(purged))
-    else:
-        _LOGGER.info("Purge: no stale VoIP devices to remove")
 
 
 async def _handle_sip_answer_service(call: ServiceCall) -> None:
@@ -453,6 +415,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         "rtp_port": VOIP_STACK_RTP_PORT,
     }
     hass.data[DOMAIN][CONF_DEBUG_MODE] = False
+    hass.data[DOMAIN][CONF_MEDIA_CAPTURE] = False
     hass.data[DOMAIN]["assist_config"] = _entry_assist_config(None)
     hass.data[DOMAIN]["trunk_config"] = _entry_trunk_config(None)
     hass.data[DOMAIN]["sip_port"] = VOIP_STACK_SIP_PORT
@@ -475,6 +438,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN]["trunk_config"] = trunk_cfg
     hass.data[DOMAIN]["sip_port"] = cfg["sip_port"]
     hass.data[DOMAIN][CONF_DEBUG_MODE] = bool(entry.data.get(CONF_DEBUG_MODE, False))
+    hass.data[DOMAIN][CONF_MEDIA_CAPTURE] = bool(
+        entry.data.get(CONF_MEDIA_CAPTURE, False)
+    )
     hass.data[DOMAIN]["manual_roster_entries"] = _manual_roster_entries(hass)
     await _async_setup_shared(hass)
     for subentry in phone_subentries(entry):
@@ -615,6 +581,7 @@ _REMOVED_ENTRY_RUNTIME_KEYS = (
     "trunk_config",
     "sip_port",
     CONF_DEBUG_MODE,
+    CONF_MEDIA_CAPTURE,
     "manual_roster_entries",
     "device_resolver",
     "esp_state_event_generations",

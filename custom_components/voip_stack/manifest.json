@@ -4,12 +4,13 @@
   "after_dependencies": ["conversation", "esphome", "stt", "tts"],
   "codeowners": ["@n-IA-hane"],
   "config_flow": true,
-  "dependencies": ["assist_pipeline", "http", "lovelace", "network", "zeroconf"],
+  "dependencies": ["assist_pipeline", "http", "lovelace", "network"],
   "documentation": "https://github.com/n-IA-hane/esphome-intercom",
-  "integration_type": "service",
+  "integration_type": "hub",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/n-IA-hane/esphome-intercom/issues",
   "loggers": ["custom_components.voip_stack"],
-  "requirements": ["numpy>=2.0.0"],
+  "requirements": [],
+  "single_config_entry": true,
   "version": "2026.8.1"
 }

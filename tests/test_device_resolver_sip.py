@@ -8,6 +8,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +62,7 @@ def _load_module(name: str):
 
 
 device_resolver = _load_module("device_resolver")
+device_registry_compat = _load_module("device_registry_compat")
 
 
 class SipEndpointParseTest(unittest.TestCase):
@@ -143,22 +145,58 @@ class SipEndpointParseTest(unittest.TestCase):
         self.assertNotIn("conference_ring", parsed)
 
     def test_list_devices_reads_group_membership_from_sibling_entities(self) -> None:
-        source = (PKG_DIR / "device_resolver.py").read_text(encoding="utf-8")
-        list_devices = source[source.index("async def list_devices") : source.index("async def resolve_target")]
-        self.assertIn('"conference_group": conference_group', list_devices)
-        self.assertIn('"conference_ring": _parse_bool(self._state_value(entities.get("voip_conference_ring")))', list_devices)
-        self.assertIn('"ring_group": ring_group', list_devices)
-        self.assertIn('extension = self._state_value(entities.get("voip_extension")) or endpoint.get("extension") or ""', list_devices)
-        self.assertIn('"extension": extension', list_devices)
-        self.assertIn('entities["start_call_service"] = f"esphome.{route_id}_start_call"', list_devices)
-        collect_entities = source[source.index("def _collect_entities") : source.index("def _state_value")]
-        self.assertIn('"auto_answer"', collect_entities)
-        self.assertIn('"dnd"', collect_entities)
-        self.assertIn('"voip_extension"', collect_entities)
-        self.assertIn('"voip_ring_groups"', collect_entities)
-        self.assertIn('"voip_conference_groups"', collect_entities)
-        self.assertIn('"voip_ring_on_conference"', collect_entities)
-        self.assertIn('eid.startswith("camera.")', collect_entities)
+        entities = [
+            SimpleNamespace(
+                entity_id="sensor.renamed_endpoint",
+                unique_id="abc-text_sensor-voip_endpoint",
+            ),
+            SimpleNamespace(
+                entity_id="text.renamed_extension",
+                unique_id="abc-text-voip_extension",
+            ),
+            SimpleNamespace(
+                entity_id="text.renamed_ring_groups",
+                unique_id="abc-text-voip_ring_groups",
+            ),
+            SimpleNamespace(
+                entity_id="text.renamed_conference_groups",
+                unique_id="abc-text-voip_conference_groups",
+            ),
+            SimpleNamespace(
+                entity_id="switch.renamed_conference_ring",
+                unique_id="abc-switch-voip_ring_on_conference",
+            ),
+            SimpleNamespace(
+                entity_id="camera.renamed_preview",
+                unique_id="abc-camera-front",
+            ),
+        ]
+
+        collected = device_resolver.VoipDeviceResolver._collect_entities(entities)
+
+        self.assertEqual(collected["voip_endpoint"], "sensor.renamed_endpoint")
+        self.assertEqual(collected["voip_extension"], "text.renamed_extension")
+        self.assertEqual(collected["voip_ring_groups"], "text.renamed_ring_groups")
+        self.assertEqual(
+            collected["voip_conference_groups"],
+            "text.renamed_conference_groups",
+        )
+        self.assertEqual(
+            collected["voip_conference_ring"],
+            "switch.renamed_conference_ring",
+        )
+        self.assertEqual(collected["camera"], "camera.renamed_preview")
+
+    def test_device_config_entry_id_prefers_the_2026_8_owner(self) -> None:
+        device = SimpleNamespace(
+            config_entry_id="entry-current",
+            config_entries={"entry-legacy"},
+        )
+
+        self.assertEqual(
+            device_registry_compat.device_config_entry_ids(device),
+            ("entry-current",),
+        )
 
     def test_list_devices_re_reads_live_endpoint_state(self) -> None:
         class FakeEntity:

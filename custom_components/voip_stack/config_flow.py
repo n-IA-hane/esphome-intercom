@@ -58,6 +58,7 @@ from .const import (
     CONF_ASSIST_INTENTS,
     CONF_AUTOMATION_ROUTING_ENABLED,
     CONF_DEBUG_MODE,
+    CONF_MEDIA_CAPTURE,
     CONF_SIP_VIDEO,
     CONF_VIDEO_CAMERA_SEND,
     CONF_VIDEO_TRANSCODING,
@@ -237,6 +238,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_ASSIST_ENDPOINT_ENABLED, False
             ),
             CONF_DEBUG_MODE: existing.get(CONF_DEBUG_MODE, False),
+            CONF_MEDIA_CAPTURE: existing.get(CONF_MEDIA_CAPTURE, False),
             CONF_SIP_VIDEO: existing.get(CONF_SIP_VIDEO, False),
             CONF_REGISTRAR_ENABLED: existing.get(CONF_REGISTRAR_ENABLED, False),
             CONF_TRUNK_ENABLED: existing.get(CONF_TRUNK_ENABLED, False),
@@ -260,6 +262,9 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 ): BooleanSelector(),
                 vol.Required(
                     CONF_DEBUG_MODE, default=defaults[CONF_DEBUG_MODE]
+                ): BooleanSelector(),
+                vol.Required(
+                    CONF_MEDIA_CAPTURE, default=defaults[CONF_MEDIA_CAPTURE]
                 ): BooleanSelector(),
                 vol.Required(
                     CONF_SIP_VIDEO,
@@ -583,6 +588,9 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                             existing.get(CONF_ASSIST_ADVANCED_CALL_CONTEXT, False)
                         ),
                         CONF_DEBUG_MODE: bool(existing.get(CONF_DEBUG_MODE, False)),
+                        CONF_MEDIA_CAPTURE: bool(
+                            existing.get(CONF_MEDIA_CAPTURE, False)
+                        ),
                         CONF_SIP_VIDEO: bool(
                             existing.get(CONF_SIP_VIDEO, False)
                         ),
@@ -629,6 +637,9 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                             existing.get(CONF_ASSIST_ADVANCED_CALL_CONTEXT, False)
                         ),
                         CONF_DEBUG_MODE: bool(existing.get(CONF_DEBUG_MODE, False)),
+                        CONF_MEDIA_CAPTURE: bool(
+                            existing.get(CONF_MEDIA_CAPTURE, False)
+                        ),
                         CONF_SIP_VIDEO: bool(
                             existing.get(CONF_SIP_VIDEO, False)
                         ),

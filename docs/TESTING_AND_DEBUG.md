@@ -193,7 +193,7 @@ Exercise all public services with temporary data:
   occurrence;
 - `route` against an advanced forced route request;
 - `set_deadline` and `cancel_deadline` with current and stale call revisions;
-- `purge_devices` with a high `min_unavailable_hours` as a no-op.
+- `purge_devices`, verifying that HA rejects it without removing any Device.
 
 Always restore:
 
@@ -274,7 +274,7 @@ For HA-side runtime, inspect call events, softphone state events and
 
 ## Audio debug
 
-When RTP relay debug is enabled, HA writes WAV captures under:
+When private media capture is explicitly enabled, HA writes WAV captures under:
 
 ```text
 ~/.cache/voip_stack_debug/
@@ -284,7 +284,8 @@ The filenames include source/destination call IDs and side labels. Use these
 when a call connects but audio direction, volume or format negotiation is
 unclear.
 
-Captures are opt-in through `debug_mode`. HA automatically records up to 15
+`debug_mode` controls detailed logs and metrics only. The separate
+`media_capture` option records up to 15
 seconds in each direction for a Home Assistant softphone WebSocket session and
 up to 8 seconds for each leg of an RTP relay. The directory is created with
 mode `0700`, names are sanitized, and pruning keeps at most the newest 24 files
@@ -295,7 +296,7 @@ calls; further snapshots are dropped instead of growing an unbounded executor
 queue. Inspect `debug_capture_pending_writes` and
 `debug_capture_dropped_writes` in the debug snapshot when evidence is missing.
 WAV/JSON data can still contain private conversation audio and call metadata:
-disable debug mode after the test and remove retained artifacts according to
+disable media capture after the test and remove retained artifacts according to
 the deployment's privacy policy.
 
 ## Serial and device debug

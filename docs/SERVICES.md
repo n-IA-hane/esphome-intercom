@@ -187,10 +187,9 @@ recovery.
 
 ### `voip_stack.purge_devices`
 
-Remove unavailable ESPHome VoIP devices from the HA device registry.
-
-Without `device_id`, only unavailable/unknown devices older than
-`min_unavailable_hours` are purged. A large value is a safe no-op test.
+This legacy action is disabled. VoIP Stack does not own ESPHome Device
+Registry entries and therefore never removes them. Home Assistant returns a
+translated error for every invocation.
 
 ## Local SIP endpoint account services
 

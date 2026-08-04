@@ -14,7 +14,7 @@ from homeassistant.core import HomeAssistant
 
 from .bridge_manager import async_watch_sip_bridge_destination
 from .call_scope import pending_routes as _pending_routes
-from .config import debug_mode as _debug_mode
+from .config import media_capture_enabled as _media_capture_enabled
 from .const import CONF_VIDEO_TRANSCODING, DOMAIN, HA_SOFTPHONE_DEVICE_ID
 from .dial_fork import (
     DialDisposition,
@@ -801,7 +801,7 @@ async def run_ring_group_call(
                     source_relay_port=source_relay_port,
                     dest_relay_port=dest_relay_port,
                     capture_name=f"{invite.call_id}_{client.dialog_ids.call_id}",
-                    debug_capture=_debug_mode(hass),
+                    debug_capture=_media_capture_enabled(hass),
                     on_release=lambda ports: _release_sip_rtp_port_pair(
                         hass, ports
                     ),
@@ -812,7 +812,7 @@ async def run_ring_group_call(
                     client=client,
                     source_relay_port=source_relay_port,
                     dest_relay_port=dest_relay_port,
-                    debug_capture=_debug_mode(hass),
+                    debug_capture=_media_capture_enabled(hass),
                     on_release=lambda ports: _release_sip_rtp_port_pair(
                         hass, ports
                     ),
