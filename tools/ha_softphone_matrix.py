@@ -901,6 +901,40 @@ def main() -> int:
 
             case("registered_sip_live_ringing", local_registered_sip)
 
+            def local_registered_sip_answer() -> dict[str, Any]:
+                caller = BareSip(
+                    LOCAL_CONFIG,
+                    headless_audio=True,
+                    video_codec=os.environ.get("LOCAL_VIDEO_CODEC", "VP8"),
+                )
+                active.append(caller)
+                caller.dial(LOCAL_SIP_TARGET, wait_for="180 Ringing")
+                ringing = matching(page, "ringing")
+                if not page.evaluate(CLICK, "Answer"):
+                    raise RuntimeError("Answer button unavailable")
+                caller.wait_for("Call established", 5)
+                answered = matching(page, "in_call")
+                if os.environ.get("EXPECT_VIDEO", "") == "1":
+                    answered = wait_card(
+                        page,
+                        lambda item: (
+                            item["backend"]["state"] == "in_call"
+                            and item["backend"]["video_direction"] == "sendrecv"
+                            and item["backend"]["video_rtp_tx_packets"] > 0
+                            and item["backend"]["video_rtp_rx_packets"] > 0
+                        ),
+                        8,
+                        "registered SIP bidirectional video RTP",
+                    )
+                caller.hangup()
+                matching(page, "idle")
+                return {
+                    "call_id": ringing["card"]["call_id"],
+                    "answered": answered["card"],
+                }
+
+            case("registered_sip_answer_from_card", local_registered_sip_answer)
+
             service("automation", "turn_on", {"entity_id": AUTOMATION})
 
             def automation_fallback() -> dict[str, Any]:
