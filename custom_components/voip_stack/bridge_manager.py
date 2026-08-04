@@ -11,8 +11,6 @@ from homeassistant.core import HomeAssistant
 
 from .endpoint_lifecycle import call_registry
 from .fsm import TerminalReason, sip_public_state, sip_terminal_reason
-from .media_ports import release_media_reservation
-from .session_cleanup import async_cleanup_sip_runtime
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,21 +72,14 @@ async def async_terminate_sip_bridge(
     if not call_id:
         return False, "", "", False, False
     registry = call_registry(hass)
-    source_call_id, dest_call_id, relay, client, watcher, called_by_dest = registry.detach_bridge(call_id)
+    source_call_id, dest_call_id = registry.bridge_for(call_id)
     if not source_call_id:
         return False, "", "", False, False
 
-    media = registry.take_media(source_call_id)
-    release_media_reservation(media)
-
-    cleanup = await async_cleanup_sip_runtime(
-        relay=relay,
-        client=client if dest_call_id else None,
-        watcher=watcher if dest_call_id else None,
-        terminate_client=not called_by_dest,
-        relay_first=True,
-    )
-
+    client_present = bool(dest_call_id and registry.sip_clients.get(dest_call_id))
     source_bye = send_bye(source_call_id)
-    registry.finish_and_pop(source_call_id, reason=terminal_reason or TerminalReason.LOCAL_HANGUP.value)
-    return True, source_call_id, dest_call_id, cleanup.client_closed, source_bye
+    await registry.finish_and_pop_wait(
+        source_call_id,
+        reason=terminal_reason or TerminalReason.LOCAL_HANGUP.value,
+    )
+    return True, source_call_id, dest_call_id, client_present, source_bye

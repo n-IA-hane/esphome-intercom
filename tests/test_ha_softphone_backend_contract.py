@@ -904,10 +904,6 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         audio_ws = (
             ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
         ).read_text()
-        bridge_manager = (
-            ROOT / "custom_components" / "voip_stack" / "bridge_manager.py"
-        ).read_text()
-
         ring_group = RING_GROUP_ORCHESTRATOR.read_text()
         self.assertIn('"rtp_loopback": True', ring_group)
         self.assertIn('"remote_rtp_port": source_relay_port', ring_group)
@@ -919,8 +915,6 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             "rtp.AudioRtpSenderState.create(ssrc=session.local_ssrc)",
             audio_ws,
         )
-        self.assertIn("registry.take_media(source_call_id)", bridge_manager)
-        self.assertIn("release_media_reservation(media)", bridge_manager)
 
     def test_rtp_sender_identity_survives_browser_media_handoff(self) -> None:
         audio_ws = (
