@@ -1304,37 +1304,45 @@ def build_offer_directional(
     video_formats: tuple[RtpVideoFormat, ...] | list[RtpVideoFormat] | None = None,
     audio_direction: str = "sendrecv",
     video_direction: str = "sendrecv",
+    audio_rtp_formats: tuple[RtpPcmFormat, ...] | None = None,
 ) -> str:
     audio_direction = normalize_direction(audio_direction)
     video_direction = normalize_direction(video_direction)
-    capability_formats = _formats_for_local_direction(
-        send_formats or [],
-        recv_formats or [],
-        audio_direction,
-    )
-    formats = rtp_offer_formats(capability_formats)
-    if not formats:
-        raise SdpError(
-            f"SDP {audio_direction} offer requires at least one compatible "
-            "RTP-mappable PCM format"
+    if audio_rtp_formats is not None:
+        rtp_formats = list(dict.fromkeys(audio_rtp_formats))
+        if not rtp_formats:
+            raise SdpError("SDP offer requires at least one RTP audio format")
+    else:
+        capability_formats = _formats_for_local_direction(
+            send_formats or [],
+            recv_formats or [],
+            audio_direction,
         )
-    rtp_formats = (
-        _common_codec_offer_formats(
-            capability_formats,
-            include_common_codecs=include_common_codecs,
-            include_dahua_pcm=include_dahua_pcm,
+        formats = rtp_offer_formats(capability_formats)
+        if not formats:
+            raise SdpError(
+                f"SDP {audio_direction} offer requires at least one compatible "
+                "RTP-mappable PCM format"
+            )
+        rtp_formats = (
+            _common_codec_offer_formats(
+                capability_formats,
+                include_common_codecs=include_common_codecs,
+                include_dahua_pcm=include_dahua_pcm,
+            )
+            if include_common_codecs or include_dahua_pcm
+            else []
         )
-        if include_common_codecs or include_dahua_pcm
-        else []
-    )
+        next_payload = 96
+        used_payloads = {fmt.payload_type for fmt in rtp_formats}
+        for fmt in formats:
+            while next_payload in used_payloads:
+                next_payload += 1
+            rtp_formats.append(audio_format_to_rtp(fmt, next_payload))
+            used_payloads.add(next_payload)
+            next_payload += 1
     next_payload = 96
     used_payloads = {fmt.payload_type for fmt in rtp_formats}
-    for fmt in formats:
-        while next_payload in used_payloads:
-            next_payload += 1
-        rtp_formats.append(audio_format_to_rtp(fmt, next_payload))
-        used_payloads.add(next_payload)
-        next_payload += 1
     while next_payload in used_payloads:
         next_payload += 1
     dtmf_payload_type = next_payload
@@ -1724,6 +1732,7 @@ def validate_sdp_answer(
     answer: str | bytes,
     *,
     allow_omitted_trailing_media: bool = False,
+    allow_inactive_rejected_media_port: bool = False,
 ) -> None:
     """Validate the RFC 3264 media-section and direction answer contract.
 
@@ -1776,9 +1785,14 @@ def validate_sdp_answer(
                 f"SDP answer media section {index} changed the transport profile"
             )
         if int(offered_section["port"]) == 0 and int(answered_section["port"]) != 0:
-            raise SdpError(
-                f"SDP answer media section {index} accepted a rejected offer"
-            )
+            if not (
+                allow_inactive_rejected_media_port
+                and normalize_direction(str(answered_section["direction"]))
+                == "inactive"
+            ):
+                raise SdpError(
+                    f"SDP answer media section {index} accepted a rejected offer"
+                )
         answered_formats = {str(value) for value in answered_section["formats"]}
         if not answered_formats:
             raise SdpError(f"SDP answer media section {index} has no format")

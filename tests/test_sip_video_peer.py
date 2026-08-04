@@ -221,6 +221,7 @@ def test_media_peer_cleans_up_after_rejected_initial_invite(
             answer_timeout=1.0,
             allow_audio_only=False,
             add_video_after=-1,
+            activate_video_after=-1,
             expect_reinvite_status=0,
             remove_video_after=-1,
             readd_video_after=-1,

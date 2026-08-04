@@ -44,6 +44,10 @@ LOCAL_SIP_TARGET = os.environ.get(
     "LOCAL_SIP_TARGET",
     "sip:Casa@127.0.0.1:15060;transport=tcp",
 )
+LOCAL_REGISTERED_TARGET = os.environ.get(
+    "LOCAL_REGISTERED_TARGET",
+    "video_source",
+)
 
 CARD_STATE = r"""
 async () => {
@@ -713,7 +717,7 @@ def main() -> int:
                     "voip_stack",
                     "call",
                     {
-                        "destination": "Codex",
+                        "destination": LOCAL_REGISTERED_TARGET,
                         "device_id": phone_device_id,
                     },
                 )

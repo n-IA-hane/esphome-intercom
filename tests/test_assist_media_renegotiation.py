@@ -290,6 +290,177 @@ def test_bridge_video_addition_cancellation_releases_staged_media() -> None:
     assert video_relay.stopped is True
 
 
+def test_bridge_activates_video_when_initial_offer_was_recvonly() -> None:
+    """A dormant source m-line must not masquerade as an active bridge leg."""
+
+    answer_calls: list[dict] = []
+    session = types.SimpleNamespace(generation=10)
+    registry = types.SimpleNamespace(
+        preanswered={},
+        softphone_media={},
+        relays={},
+        sessions={"source": session},
+        sip_clients={},
+        bridge_for=lambda _call_id: ("source", "destination"),
+        resolve_session_id=lambda call_id: call_id,
+        is_generation_current=lambda call_id, generation: (
+            call_id == "source" and generation == 10
+        ),
+    )
+    module, _assist = _load_module(registry, answer_calls)
+
+    const = sys.modules[f"{PACKAGE}.const"]
+    const.CONF_SIP_VIDEO = "sip_video"
+    const.CONF_VIDEO_TRANSCODING = "video_transcoding"
+    _module(
+        "config",
+        transport_config=lambda _hass: {
+            "sip_video": True,
+            "video_transcoding": True,
+        },
+    )
+
+    class Reservation:
+        ports = (43000, 43002)
+
+        def detach(self) -> None:
+            return None
+
+    old_audio_left = types.SimpleNamespace(name="old-audio-left")
+    old_audio_right = types.SimpleNamespace(
+        name="old-audio-right", can_send=True, can_receive=True
+    )
+    new_audio_left = types.SimpleNamespace(name="new-audio-left")
+    new_audio_right = types.SimpleNamespace(
+        name="new-audio-right", can_send=True, can_receive=True
+    )
+    new_video_left = types.SimpleNamespace(name="new-video-left")
+
+    class VideoRelay:
+        left_port = 43000
+        right_port = 43002
+
+        def __init__(self) -> None:
+            self.started = False
+            self.stopped = False
+
+        async def start(self) -> None:
+            self.started = True
+
+        async def stop(self) -> None:
+            self.stopped = True
+
+    staged_video_relay = VideoRelay()
+    media_ports = sys.modules[f"{PACKAGE}.media_ports"]
+    media_ports.release_sip_rtp_port_pair = lambda *_args: None
+    media_ports.reserve_sip_video_relay_media = lambda _hass: (
+        Reservation(),
+        (None, None, None, None),
+    )
+
+    class Relay:
+        left_port = 41000
+
+        def __init__(self) -> None:
+            self.left = old_audio_left
+            self.right = old_audio_right
+            self.video_relay = None
+
+        def prepare_peer_reconfiguration(self, side, peer):
+            previous_peer = getattr(self, side)
+
+            def commit() -> None:
+                assert getattr(self, side) is previous_peer
+                setattr(self, side, peer)
+
+            return commit
+
+        def attach_video_relay(self, video_relay) -> None:
+            assert self.video_relay is None
+            self.video_relay = video_relay
+
+    relay = Relay()
+    registry.relays["source"] = relay
+    destination_dialog = types.SimpleNamespace(remote_host="192.0.2.20")
+    candidate = types.SimpleNamespace(video_format="jpeg")
+
+    class Client:
+        def __init__(self) -> None:
+            self.dialog = destination_dialog
+            self.prepared = None
+            self.committed = False
+
+        async def async_prepare_video_reinvite(self, **kwargs):
+            self.prepared = kwargs
+            return candidate
+
+        def commit_prepared_reinvite(self, previous, staged) -> bool:
+            assert previous is destination_dialog
+            assert staged is candidate
+            self.committed = True
+            return True
+
+        def abort_prepared_reinvite(self, *_args) -> None:
+            raise AssertionError("committed video activation was rolled back")
+
+    client = Client()
+    registry.sip_clients["destination"] = client
+    sip_bridge = sys.modules[f"{PACKAGE}.sip_bridge"]
+    sip_bridge.build_pending_invite_video_relay = (
+        lambda *_args, **_kwargs: staged_video_relay
+    )
+    sip_bridge.configure_answered_invite_video_relay = (
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            video_format="vp8",
+            direction="sendrecv",
+        )
+    )
+    sip_bridge.dialog_rtp_peer = lambda _dialog: new_audio_right
+    sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: ("jpeg",)
+    module.invite_rtp_peer = lambda _invite: new_audio_left
+    module.invite_video_rtp_peer = lambda _invite: new_video_left
+
+    previous_video = types.SimpleNamespace(direction="recvonly")
+    updated_video = types.SimpleNamespace(direction="sendrecv")
+    previous = types.SimpleNamespace(
+        call_id="source",
+        video_format=previous_video,
+        remote_video_connection_held=False,
+    )
+    updated = types.SimpleNamespace(
+        call_id="source",
+        video_format=updated_video,
+        recv_video_format=updated_video,
+        answer_video_format=updated_video,
+        remote_video_connection_held=False,
+        send_format="audio-send",
+        recv_format="audio-receive",
+        remote_sdp=b"audio-video-sendrecv",
+        remote_audio_direction="sendrecv",
+        remote_audio_connection_held=False,
+    )
+
+    result = asyncio.run(
+        module.async_prepare_media_update(
+            types.SimpleNamespace(), "192.0.2.10", previous, updated, "INVITE"
+        )
+    )
+
+    assert result.status == 200
+    assert client.prepared == {
+        "local_video_rtp_port": 43002,
+        "video_formats": ("jpeg",),
+        "video_direction": "sendrecv",
+    }
+    assert staged_video_relay.started is True
+    assert relay.video_relay is None
+    asyncio.run(result.commit())
+    assert client.committed is True
+    assert relay.video_relay is staged_video_relay
+    assert answer_calls[-1]["video_port"] == 43000
+    assert answer_calls[-1]["video_direction"] == "sendrecv"
+
+
 def test_bridge_video_removal_updates_both_dialogs_and_stops_media() -> None:
     answer_calls: list[dict] = []
     session = types.SimpleNamespace(generation=11)

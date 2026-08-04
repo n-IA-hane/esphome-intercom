@@ -86,6 +86,22 @@ class SdpPcmProfileTest(unittest.TestCase):
             ["PCM", "L16"],
         )
 
+    def test_reoffer_preserves_negotiated_wire_codec_and_payload(self) -> None:
+        pcma = sdp.RtpPcmFormat(8, "PCMA", 8000, 1, 20)
+
+        offer = sdp.build_offer_directional(
+            "192.0.2.20",
+            "192.0.2.20",
+            40000,
+            [pcma.audio_format],
+            [pcma.audio_format],
+            audio_rtp_formats=(pcma,),
+        )
+
+        self.assertIn("m=audio 40000 RTP/AVP 8 96", offer)
+        self.assertIn("a=rtpmap:8 PCMA/8000/1", offer)
+        self.assertNotIn("L16/8000", offer)
+
     def test_dahua_pcm_rejects_wrong_rate_channels_and_static_payload(self) -> None:
         template = (
             "v=0\r\n"
@@ -459,6 +475,37 @@ class SdpPcmProfileTest(unittest.TestCase):
             audio_only_answer,
             allow_omitted_trailing_media=True,
         )
+
+    def test_uac_interop_may_keep_inactive_port_for_removed_video(self) -> None:
+        audio = audio_format.AudioFormat(8000, "s16le", 1, 20)
+        offer = sdp.build_offer_directional(
+            "192.0.2.10",
+            "192.0.2.10",
+            40000,
+            [audio],
+            [audio],
+            video_port=0,
+            video_formats=(sdp.DEFAULT_H264_FORMAT,),
+            video_direction="inactive",
+        )
+        legacy_inactive_answer = offer.replace(
+            "m=video 0 RTP/AVP",
+            "m=video 41002 RTP/AVP",
+        )
+
+        with self.assertRaisesRegex(sdp.SdpError, "accepted a rejected offer"):
+            sdp.validate_sdp_answer(offer, legacy_inactive_answer)
+        sdp.validate_sdp_answer(
+            offer,
+            legacy_inactive_answer,
+            allow_inactive_rejected_media_port=True,
+        )
+        with self.assertRaisesRegex(sdp.SdpError, "accepted a rejected offer"):
+            sdp.validate_sdp_answer(
+                offer,
+                legacy_inactive_answer.replace("a=inactive", "a=sendrecv"),
+                allow_inactive_rejected_media_port=True,
+            )
 
     def test_answer_direction_matrix_matches_rfc3264(self) -> None:
         audio = audio_format.AudioFormat(16000, "s16le", 1, 20)

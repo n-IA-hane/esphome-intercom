@@ -78,9 +78,10 @@ async def _prepare_bridge_video_contract_change(
     session = registry.sessions.get(registry.resolve_session_id(updated.call_id))
     client = registry.sip_clients.get(dest_call_id)
     cfg = transport_config(hass)
-    adding_video = previous.video_format is None and updated.video_format is not None
-    removing_video = previous.video_format is not None and updated.video_format is None
-    retaining_video = previous.video_format is not None and updated.video_format is not None
+    current_video_relay = getattr(relay, "video_relay", None)
+    adding_video = current_video_relay is None and updated.video_format is not None
+    removing_video = current_video_relay is not None and updated.video_format is None
+    retaining_video = current_video_relay is not None and updated.video_format is not None
     if (
         source_call_id != updated.call_id
         or session is None
@@ -94,7 +95,6 @@ async def _prepare_bridge_video_contract_change(
         return SipInviteResult(488, "Not Acceptable Here")
     call_generation = session.generation
     destination_dialog = client.dialog
-    current_video_relay = getattr(relay, "video_relay", None)
     enable_transcoding = bool(cfg.get(CONF_VIDEO_TRANSCODING, False))
     staged_video_relay = None
     if adding_video:
@@ -811,7 +811,8 @@ async def async_prepare_media_update(
             != updated.remote_video_connection_held
         )
     )
-    if video_presence_changed or video_direction_changed:
+    video_relay_missing = updated.video_format is not None and video_relay is None
+    if video_presence_changed or video_direction_changed or video_relay_missing:
         return await _prepare_bridge_video_contract_change(
             hass,
             local_ip,

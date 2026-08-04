@@ -2116,7 +2116,16 @@ class SipCallClient:
                 != "application/sdp"
             ):
                 return None
-            sdp.validate_sdp_answer(offer, answer.body)
+            sdp.validate_sdp_answer(
+                offer,
+                answer.body,
+                # Some deployed SIP UAs retain their allocated RTP port while
+                # answering an m=video 0 removal with a=inactive. The stream
+                # is still unambiguously disabled, so normalize that legacy
+                # answer at this B2BUA boundary while keeping general SDP
+                # answer validation strict.
+                allow_inactive_rejected_media_port=local_video_rtp_port == 0,
+            )
             audio = sdp.negotiate_answer_directional(
                 answer.body,
                 [current.send_format.audio_format],
@@ -2133,7 +2142,7 @@ class SipCallClient:
                     answer.body,
                     offered_video_formats,
                 )
-                if offered_video_formats
+                if offered_video_formats and local_video_rtp_port > 0
                 else None
             )
             video_send = video_pair.send if video_pair is not None else None
@@ -2259,6 +2268,14 @@ class SipCallClient:
                     audio_direction=current.local_audio_direction,
                     video_direction=(
                         "inactive" if removing_video else video_direction
+                    ),
+                    # An in-dialog offer preserves the negotiated RTP wire
+                    # codec and payload type. Converting PCMA, PCMU, G.722 or
+                    # Opus back through their decoded PCM shape would turn
+                    # them into L16 and can make a standards-compliant peer
+                    # reject an otherwise valid video-only session update.
+                    audio_rtp_formats=tuple(
+                        dict.fromkeys((current.send_format, current.recv_format))
                     ),
                 )
                 offer = sdp.rewrite_sdp_origin(
