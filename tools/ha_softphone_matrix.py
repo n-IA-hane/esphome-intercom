@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from contextlib import suppress
 from pathlib import Path
@@ -36,7 +37,13 @@ INBOUND_AUTOMATION = "automation.voip_inbound_trunk_to_rg_casa"
 WILDIX_CONFIG = Path(
     os.environ.get("WILDIX_CONFIG", "/home/codex/.baresip-wildix-426")
 )
-LOCAL_CONFIG = Path("/home/codex/.baresip-codex")
+LOCAL_CONFIG = Path(
+    os.environ.get("LOCAL_BARESIP_CONFIG", "/home/codex/ha-voip-lab/baresip-source")
+)
+LOCAL_SIP_TARGET = os.environ.get(
+    "LOCAL_SIP_TARGET",
+    "sip:Casa@127.0.0.1:15060;transport=tcp",
+)
 
 CARD_STATE = r"""
 async () => {
@@ -366,6 +373,17 @@ def ha_request(path: str, data: dict[str, Any] | None = None) -> Any:
     return json.loads(payload) if payload else None
 
 
+def optional_entity_state(entity_id: str) -> str | None:
+    """Return an entity state when present in the selected HA instance."""
+
+    try:
+        return str(ha_request(f"/api/states/{entity_id}")["state"])
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return None
+        raise
+
+
 def service(domain: str, name: str, data: dict[str, Any] | None = None) -> Any:
     return ha_request(f"/api/services/{domain}/{name}", data or {})
 
@@ -435,8 +453,9 @@ def main() -> int:
     results: list[dict[str, Any]] = []
     active: list[BareSip] = []
     automation_states = {
-        entity_id: ha_request(f"/api/states/{entity_id}")["state"] == "on"
+        entity_id: state == "on"
         for entity_id in (AUTOMATION, INBOUND_AUTOMATION)
+        if (state := optional_entity_state(entity_id)) is not None
     }
 
     def case(name: str, run: Callable[[], dict[str, Any]]) -> None:
@@ -467,17 +486,21 @@ def main() -> int:
                 active.pop().close()
             time.sleep(0.5)
 
-    disabled_automations = [AUTOMATION]
-    if os.environ.get("KEEP_INBOUND_AUTOMATION", "") != "1":
-        disabled_automations.append(INBOUND_AUTOMATION)
-    service(
-        "automation",
-        "turn_off",
-        {
-            "entity_id": disabled_automations,
-            "stop_actions": True,
-        },
-    )
+    disabled_automations = [
+        entity_id
+        for entity_id in automation_states
+        if entity_id != INBOUND_AUTOMATION
+        or os.environ.get("KEEP_INBOUND_AUTOMATION", "") != "1"
+    ]
+    if disabled_automations:
+        service(
+            "automation",
+            "turn_off",
+            {
+                "entity_id": disabled_automations,
+                "stop_actions": True,
+            },
+        )
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(
@@ -650,7 +673,7 @@ def main() -> int:
                 )
                 active.append(caller)
                 caller.dial(
-                    "sip:Casa@192.168.1.10:5060;transport=tcp",
+                    LOCAL_SIP_TARGET,
                     wait_for="180 Ringing",
                 )
                 ringing = matching(page, "ringing")
@@ -865,7 +888,8 @@ def main() -> int:
                 caller = BareSip(LOCAL_CONFIG)
                 active.append(caller)
                 caller.dial(
-                    "sip:Casa@192.168.1.10:5060;transport=tcp", wait_for="180 Ringing"
+                    LOCAL_SIP_TARGET,
+                    wait_for="180 Ringing",
                 )
                 ringing = matching(page, "ringing")
                 caller.hangup()

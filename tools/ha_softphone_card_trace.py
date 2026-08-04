@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -13,7 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "test_runs"))
 
 
-DEFAULT_URL = "https://f0260ef3d722.sn.mynetname.net/lovelace/default_view"
+DEFAULT_URL = os.environ.get(
+    "HA_CARD_URL",
+    "http://127.0.0.1:18123/lovelace/default_view",
+)
 
 INSTALL_TRACE = r"""
 async () => {

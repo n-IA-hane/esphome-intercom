@@ -78,22 +78,29 @@ def test_softphone_runner_preserves_explicit_ha_origin() -> None:
 
 
 @pytest.mark.parametrize(
-    ("module", "attribute"),
+    ("module", "attribute", "expected"),
     [
-        ("ha_softphone_matrix", "HA_BASE"),
-        ("local_softphone_live_matrix", "HA_BASE"),
-        ("ring_group_live_matrix", "HA_BASE"),
-        ("inbound_routing_qualification", "HA_BASE"),
-        ("live_voip_qualification", "DEFAULT_HA_URL"),
+        ("ha_softphone_matrix", "HA_BASE", "http://127.0.0.1:18123"),
+        ("local_softphone_live_matrix", "HA_BASE", "http://127.0.0.1:18123"),
+        ("ring_group_live_matrix", "HA_BASE", "http://127.0.0.1:18123"),
+        ("inbound_routing_qualification", "HA_BASE", "http://127.0.0.1:18123"),
+        ("live_voip_qualification", "DEFAULT_HA_URL", "http://127.0.0.1:18123"),
+        (
+            "ha_softphone_card_trace",
+            "DEFAULT_URL",
+            "http://127.0.0.1:18123/lovelace/default_view",
+        ),
     ],
 )
 def test_live_tools_default_to_the_isolated_lab(
     module: str,
     attribute: str,
+    expected: str,
 ) -> None:
     env = os.environ.copy()
     env.pop("HA_BASE", None)
     env.pop("HA_URL", None)
+    env.pop("HA_CARD_URL", None)
     completed = subprocess.run(
         [
             sys.executable,
@@ -109,7 +116,7 @@ def test_live_tools_default_to_the_isolated_lab(
         timeout=3,
     )
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == "http://127.0.0.1:18123"
+    assert completed.stdout.strip() == expected
 
 
 @pytest.mark.parametrize(
