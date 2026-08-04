@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "test_runs"))
 
-HA_BASE = os.environ.get("HA_BASE", "http://192.168.1.10:8123")
+HA_BASE = os.environ.get("HA_BASE", "http://127.0.0.1:18123").rstrip("/")
 EXPECT_VIDEO = os.environ.get("EXPECT_VIDEO", "") == "1"
 RUN_LOCK = Path("/tmp/voip-stack-local-softphone-live-matrix.lock")
 CASA_URL = f"{HA_BASE}/lovelace/default_view"

@@ -25,7 +25,7 @@ TEST_CAPTURE_DIR = ROOT / "test_captures"
 sys.path.insert(0, str(ROOT / "test_runs"))
 
 
-HA_BASE = os.environ.get("HA_BASE", "http://192.168.1.10:8123")
+HA_BASE = os.environ.get("HA_BASE", "http://127.0.0.1:18123").rstrip("/")
 HA_URL = f"{HA_BASE}/lovelace/default_view"
 # The stored frontend token is origin-scoped. Keep it on the same local origin
 # used by the matrix so an unauthenticated dashboard cannot masquerade as a

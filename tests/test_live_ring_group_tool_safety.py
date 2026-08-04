@@ -78,6 +78,41 @@ def test_softphone_runner_preserves_explicit_ha_origin() -> None:
 
 
 @pytest.mark.parametrize(
+    ("module", "attribute"),
+    [
+        ("ha_softphone_matrix", "HA_BASE"),
+        ("local_softphone_live_matrix", "HA_BASE"),
+        ("ring_group_live_matrix", "HA_BASE"),
+        ("inbound_routing_qualification", "HA_BASE"),
+        ("live_voip_qualification", "DEFAULT_HA_URL"),
+    ],
+)
+def test_live_tools_default_to_the_isolated_lab(
+    module: str,
+    attribute: str,
+) -> None:
+    env = os.environ.copy()
+    env.pop("HA_BASE", None)
+    env.pop("HA_URL", None)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"import sys; sys.path.insert(0, 'tools'); import {module}; "
+            f"print({module}.{attribute})",
+        ],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=3,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "http://127.0.0.1:18123"
+
+
+@pytest.mark.parametrize(
     ("tool", "expected"),
     [
         (SOFTPHONE_TOOL, "--only"),

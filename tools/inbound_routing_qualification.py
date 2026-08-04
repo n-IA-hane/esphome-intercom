@@ -33,7 +33,7 @@ TEST_CAPTURE_DIR = ROOT / "test_captures"
 sys.path.insert(0, str(ROOT / "test_runs"))
 
 
-HA_BASE = "http://192.168.1.10:8123"
+HA_BASE = os.environ.get("HA_BASE", "http://127.0.0.1:18123").rstrip("/")
 WILDIX_CONFIG = Path(os.environ.get("WILDIX_CONFIG", "/home/codex/.baresip-wildix-426"))
 OLD_AUTOMATION = "automation.voip_ha_non_risponde_inoltra_ad_assist"
 INBOUND_AUTOMATION = "automation.voip_inbound_trunk_to_rg_casa"

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 import importlib.util
 import json
+import os
 from pathlib import Path
 import ssl
 import time
@@ -41,7 +42,7 @@ except (
     websockets = None
 
 
-DEFAULT_HA_URL = "https://f0260ef3d722.sn.mynetname.net"
+DEFAULT_HA_URL = os.environ.get("HA_URL", "http://127.0.0.1:18123").rstrip("/")
 DEFAULT_TOKEN_FILE = Path("/home/codex/.secrets/esphome-intercom/ha_token_codex")
 DEFAULT_AUTH_FILE = Path(
     "/home/codex/.secrets/esphome-intercom/ha_home_auth.json"
