@@ -37,9 +37,10 @@ def _enable_custom_integrations(enable_custom_integrations) -> Iterator[None]:
     import custom_components
 
     component_root = str(Path(__file__).parents[1] / "custom_components")
-    custom_components.__path__.append(component_root)
+    original_path = custom_components.__path__
+    custom_components.__path__ = [*original_path, component_root]
     yield
-    custom_components.__path__.remove(component_root)
+    custom_components.__path__ = original_path
 
 
 async def test_physical_phone_call_response_uses_the_selected_esp_endpoint(

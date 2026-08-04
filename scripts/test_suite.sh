@@ -83,14 +83,17 @@ export YAML_PATH_MODE=$path_mode
 case "$MODE" in
   fast)
     pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
+    pytest_args+=(--ignore=tests/test_phone_control_ha.py)
     pytest_args+=(-m "not ha and not browser and not live and not mutation and not slow")
     ;;
   full)
     pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
+    pytest_args+=(--ignore=tests/test_phone_control_ha.py)
     pytest_args+=(-m "not live and not mutation")
     ;;
   coverage)
     pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
+    pytest_args+=(--ignore=tests/test_phone_control_ha.py)
     pytest_args+=(
       -m "not architecture and not ha and not live and not mutation"
       --cov=custom_components/voip_stack
@@ -116,17 +119,24 @@ case "$MODE" in
       exit 2
     }
     PYTHON=$HA_PYTHON
-    pytest_args=(tests/test_ha_integration_runtime.py -q --tb=short)
+    pytest_args=(
+      tests/test_ha_integration_runtime.py
+      tests/test_phone_control_ha.py
+      -q
+      --tb=short
+    )
     if [[ $KEEP_GOING -eq 1 ]]; then
       pytest_args+=(--maxfail=0)
     fi
     ;;
   browser)
     pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
+    pytest_args+=(--ignore=tests/test_phone_control_ha.py)
     pytest_args+=(-m browser)
     ;;
   fault)
     pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
+    pytest_args+=(--ignore=tests/test_phone_control_ha.py)
     pytest_args+=(-m fault)
     ;;
   mutation)
