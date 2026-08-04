@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -53,6 +54,27 @@ def test_local_softphone_help_is_side_effect_free_and_returns_immediately() -> N
     )
     assert completed.returncode == 0
     assert "--expect-video" in completed.stdout
+
+
+def test_softphone_runner_preserves_explicit_ha_origin() -> None:
+    env = os.environ.copy()
+    env["HA_BASE"] = "http://127.0.0.1:18123"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.path.insert(0, 'tools'); "
+            "import ha_softphone_matrix; print(ha_softphone_matrix.HA_BASE)",
+        ],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=3,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "http://127.0.0.1:18123"
 
 
 @pytest.mark.parametrize(
