@@ -2549,6 +2549,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         audio = audio_format.AudioFormat(16000, "s16le", 1, 20)
         terminated: list[tuple[str, str]] = []
         media_updates: list[tuple[int, str]] = []
+        routed_invites: list[str] = []
 
         def answer(invite):
             return sdp.build_answer_directional(
@@ -2568,6 +2569,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             )
 
         async def on_invite(invite):
+            routed_invites.append(invite.call_id)
             return sip_listener.SipInviteResult(
                 200,
                 "OK",
@@ -2790,6 +2792,15 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         await endpoint._handle_datagram(bye, ("198.51.100.20", 5090))
         self.assertNotIn(call_id, endpoint.active_dialogs)
         self.assertEqual(terminated, [(call_id, "remote_hangup")])
+
+        # A delayed retransmission of the original INVITE must not recreate a
+        # routed call after BYE has already released its endpoint ownership.
+        await endpoint._handle_datagram(first_invite, ("192.0.2.10", 5060))
+        self.assertEqual(routed_invites, [call_id])
+        self.assertEqual(
+            sip.parse_message(replacement_tx.sent[-1]).status_code,
+            481,
+        )
 
     async def test_udp_endpoint_caps_concurrent_handler_tasks(self) -> None:
         async def on_invite(_invite):

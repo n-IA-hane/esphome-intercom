@@ -560,6 +560,26 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             store.pop(next(iter(store)))
         store[key] = value
 
+    def _remember_terminated_invite(self, dialog: _ActiveDialog) -> None:
+        """Reject late retransmissions after the dialog has been torn down."""
+        invite_addr = dialog.addr
+        for cached in dialog.response_cache:
+            if cached.request is dialog.request:
+                invite_addr = cached.addr
+                break
+        self._remember_completed(
+            self.completed_invites,
+            dialog.request.header("Call-ID"),
+            _PendingInvite(
+                dialog.request,
+                invite_addr,
+                dialog.to_tag,
+                dialog.transport,
+                status=481,
+                reason="Call/Transaction Does Not Exist",
+            ),
+        )
+
     @staticmethod
     def _find_dialog_response(
         dialog: _ActiveDialog,
@@ -1158,6 +1178,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 return
             self._cancel_invite_2xx(dialog)
             self._cancel_connected_identity(dialog)
+            self._remember_terminated_invite(dialog)
             self.active_dialogs.pop(call_id, None)
             self._remember_completed(
                 self.completed_byes,
@@ -1859,6 +1880,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         dialog.local_cseq += 1
         self._cancel_invite_2xx(dialog)
         self._cancel_connected_identity(dialog)
+        self._remember_terminated_invite(dialog)
         self.active_dialogs.pop(call_id, None)
         _LOGGER.info("SIP TX BYE call_id=%s to %s:%s", call_id, target_addr[0], target_addr[1])
         sip.mark_sip_event(self, "BYE")
