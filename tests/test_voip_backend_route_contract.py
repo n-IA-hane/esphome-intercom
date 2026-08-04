@@ -1367,13 +1367,6 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.endpoint_dialing,
         )
 
-    def test_early_router_cancel_publishes_one_terminal_event(self) -> None:
-        terminated = self.endpoint_termination
-        self.assertIn("elif session is not None:", terminated)
-        self.assertIn("the logical session still owes observers one terminal event", terminated)
-        self.assertIn('"CANCEL"', terminated)
-        self.assertIn("route_kind=session.route_kind", terminated)
-
     def test_softphone_settings_changes_do_not_emit_call_lifecycle_events(self) -> None:
         websocket = WEBSOCKET_API.read_text()
         group_update = websocket[
@@ -1657,54 +1650,6 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn(
             "destination = route_hint or decision.target or default_target",
             runner,
-        )
-
-    def test_remote_bridge_termination_closes_winning_leg_and_relay(self) -> None:
-        terminated = self.endpoint_termination
-        bridge_branch = terminated[
-            terminated.index("if relay is not None or client is not None:") :
-        ]
-        bridge_branch = bridge_branch[: bridge_branch.index("if (")]
-        pre_cleanup = terminated[
-            : terminated.index("if relay is not None or client is not None:")
-        ]
-        self.assertIn(
-            "session = registry.sessions.get(registry.resolve_session_id(call_id))",
-            pre_cleanup,
-        )
-        self.assertIn("event_caller = (", pre_cleanup)
-        self.assertIn("invite.caller", pre_cleanup)
-        self.assertIn("session.caller", pre_cleanup)
-        self.assertIn("session.callee", pre_cleanup)
-        self.assertIn("else invite.target", pre_cleanup)
-        self.assertIn("await async_cleanup_sip_runtime(", bridge_branch)
-        self.assertIn("relay=relay", bridge_branch)
-        self.assertIn("client=client", bridge_branch)
-        self.assertIn("watcher=watcher", bridge_branch)
-        self.assertIn("terminate_client=True", bridge_branch)
-        self.assertIn("caller=event_caller", bridge_branch)
-        self.assertIn("callee=event_callee", bridge_branch)
-        self.assertIn("target=event_callee", bridge_branch)
-
-    def test_remote_softphone_termination_uses_owning_logical_endpoint(self) -> None:
-        terminated = self.endpoint_termination
-        terminal_branch = terminated[
-            terminated.index("session_metadata =") : terminated.index(
-                "if relay is not None or client is not None:"
-            )
-        ]
-        self.assertIn(
-            'session_metadata.get("endpoint_id") or DEFAULT_ENDPOINT_ID',
-            terminal_branch,
-        )
-        self.assertIn(
-            "softphone_store = _ha_softphone_store(self.hass, session_endpoint_id)",
-            terminal_branch,
-        )
-        self.assertIn("endpoint_id=session_endpoint_id", terminated)
-        self.assertIn("session_device_id=session_device_id", terminated)
-        self.assertNotIn(
-            'softphone_store = bucket.get("ha_softphone", {})', terminated
         )
 
     def test_config_entry_reload_restores_runtime_event_listeners(self) -> None:

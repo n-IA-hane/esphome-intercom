@@ -13,9 +13,7 @@ from .call_scope import pending_routes
 from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState, TerminalReason
-from .media_ports import release_media_reservation
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
-from .session_cleanup import async_cleanup_sip_runtime
 from .websocket_api import (
     _ha_softphone_store,
     _set_ha_softphone_call_state,
@@ -70,17 +68,14 @@ class EndpointTerminationHandler:
                     }
                 )
         invite = registry.pending_invites.pop(call_id, None)
-        preanswered_item = registry.take_media(call_id, provisional=True)
-        release_media_reservation(preanswered_item)
-        active_media = registry.take_media(call_id, default={})
-        release_media_reservation(active_media)
+        active_media = registry.softphone_media.get(call_id, {})
         active_media_invite = active_media.get("invite")
         if invite is None:
             invite = active_media_invite
         session = registry.sessions.get(registry.resolve_session_id(call_id))
-        source_call_id, dest_call_id, relay, client, watcher, _called_by_dest = (
-            registry.detach_bridge(call_id)
-        )
+        source_call_id, dest_call_id = registry.bridge_for(call_id)
+        relay = registry.relays.get(source_call_id) if source_call_id else None
+        client = registry.sip_clients.get(dest_call_id) if dest_call_id else None
         if source_call_id:
             call_id = source_call_id
         event_caller = (
@@ -124,20 +119,13 @@ class EndpointTerminationHandler:
             call_id,
             reason=terminal_reason,
         ):
-            registry.finish_and_pop(
+            await registry.finish_and_pop_wait(
                 call_id,
                 reason=terminal_reason,
                 state=terminal_state,
             )
             return
         if relay is not None or client is not None:
-            await async_cleanup_sip_runtime(
-                relay=relay,
-                client=client,
-                watcher=watcher,
-                terminate_client=True,
-                relay_first=False,
-            )
             _set_sip_bridge_call_state(
                 self.hass,
                 terminal_state,
@@ -199,7 +187,7 @@ class EndpointTerminationHandler:
         # begin_termination makes this callback the sole teardown owner.
         # Finalize exactly once even when transport reports a call without a
         # relay, client, pending INVITE or matching browser store.
-        registry.finish_and_pop(
+        await registry.finish_and_pop_wait(
             call_id,
             reason=terminal_reason,
             state=terminal_state,

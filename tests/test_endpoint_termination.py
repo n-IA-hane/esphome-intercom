@@ -24,6 +24,9 @@ class _Registry:
         self.preanswered: object = {"reservation": "early"}
         self.active_media: object = {"reservation": "active"}
         self.detach_result = ("", "", None, None, None, False)
+        self.softphone_media: dict[str, dict[str, object]] = {}
+        self.relays: dict[str, object] = {}
+        self.sip_clients: dict[str, object] = {}
         self.finished: list[tuple[str, dict[str, object]]] = []
 
     def begin_termination(self, call_id: str, reason: str = "terminated") -> bool:
@@ -52,7 +55,13 @@ class _Registry:
     def detach_bridge(self, _call_id: str):
         return self.detach_result
 
+    def bridge_for(self, _call_id: str) -> tuple[str, str]:
+        return self.detach_result[:2]
+
     def finish_and_pop(self, call_id: str, **values) -> None:
+        self.finished.append((call_id, values))
+
+    async def finish_and_pop_wait(self, call_id: str, **values) -> None:
         self.finished.append((call_id, values))
 
 
@@ -173,7 +182,7 @@ def test_duplicate_transport_termination_has_no_side_effects(
     assert not hass.events
 
 
-def test_bridge_termination_releases_media_before_final_projection(
+def test_bridge_termination_projects_before_session_owned_cleanup(
     endpoint_termination,
 ) -> None:
     registry = _Registry()
@@ -196,6 +205,8 @@ def test_bridge_termination_releases_media_before_final_projection(
         watcher,
         False,
     )
+    registry.relays["call-1"] = relay
+    registry.sip_clients["dest-1"] = client
     hass = _hass(registry)
     relay.hass = hass
     endpoint_termination.hass_holder["hass"] = hass
@@ -212,19 +223,8 @@ def test_bridge_termination_releases_media_before_final_projection(
 
     asyncio.run(run())
 
-    assert hass.released == [
-        {"reservation": "early"},
-        {"reservation": "active"},
-    ]
-    assert hass.cleanups == [
-        {
-            "relay": relay,
-            "client": client,
-            "watcher": watcher,
-            "terminate_client": True,
-            "relay_first": False,
-        }
-    ]
+    assert hass.released == []
+    assert hass.cleanups == []
     assert registry.finished == [
         ("call-1", {"reason": "remote_hangup", "state": "idle"})
     ]
@@ -294,4 +294,48 @@ def test_pending_softphone_termination_uses_owning_endpoint(
     ]
     assert registry.finished == [
         ("call-2", {"reason": "cancelled", "state": "cancelled"})
+    ]
+
+
+def test_early_router_cancel_publishes_one_terminal_event(
+    endpoint_termination,
+) -> None:
+    registry = _Registry()
+    registry.preanswered = None
+    registry.active_media = {}
+    registry.sessions["call-3"] = SimpleNamespace(
+        caller="Door",
+        callee="Ring group",
+        metadata={},
+        route_kind="group",
+    )
+    hass = _hass(registry)
+    endpoint_termination.hass_holder["hass"] = hass
+    handler = endpoint_termination.EndpointTerminationHandler(
+        hass,
+        lambda _hass: "Home Assistant",
+    )
+
+    asyncio.run(handler.handle("call-3", "cancelled"))
+
+    assert hass.events == [
+        (
+            "bridge",
+            "cancelled",
+            {
+                "call_id": "call-3",
+                "caller": "Door",
+                "callee": "Ring group",
+                "peer_name": "Ring group",
+                "target": "Ring group",
+                "reason": "cancelled",
+                "terminal_reason": "cancelled",
+                "origin": "remote",
+                "last_sip_event": "CANCEL",
+                "route_kind": "group",
+            },
+        )
+    ]
+    assert registry.finished == [
+        ("call-3", {"reason": "cancelled", "state": "cancelled"})
     ]

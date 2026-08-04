@@ -105,7 +105,10 @@ independent dial plans.
 Termination is generation-guarded, idempotent and cancellation-safe. The
 session enters `terminating` synchronously, then waits for a shielded cleanup
 barrier so late dial winners, media callbacks or duplicate BYE/CANCEL observers
-cannot resurrect the call.
+cannot resurrect the call. A transport callback may claim that terminal state
+before handing off a legacy adapter, but only `EndpointCallSession` starts and
+owns the cleanup barrier. `CallRegistry` records the bounded tombstone needed
+to absorb delayed SIP observations and never starts a second teardown.
 
 Card commands use standard Home Assistant service actions. Outbound card calls
 request the optional response from `voip_stack.call`; the backend returns the
