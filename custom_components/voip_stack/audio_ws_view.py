@@ -19,7 +19,8 @@ from homeassistant.core import HomeAssistant
 
 from . import rtp
 from .audio_ws import decode_audio_frame, encode_audio_frame
-from .const import CONF_DEBUG_MODE, CONF_MEDIA_CAPTURE, DOMAIN
+from .config import debug_mode, media_capture_enabled
+from .const import DOMAIN
 from .audio_format import HA_SIP_PCM_FORMATS
 from .debug_capture import (
     DEBUG_CAPTURE_DIR,
@@ -710,7 +711,7 @@ async def _run_audio_session(
     tx_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=4)
     debug_capture = (
         _DebugAudioCapture(session.call_id, rx_format=session.recv_format, tx_format=session.send_format)
-        if bool(hass.data.get(DOMAIN, {}).get(CONF_MEDIA_CAPTURE, False))
+        if media_capture_enabled(hass)
         else None
     )
     rtp_decoder: RtpPayloadDecoder
@@ -726,8 +727,8 @@ async def _run_audio_session(
     def publish_counters(*, force: bool = False) -> None:
         nonlocal last_counter_event
         now = loop.time()
-        debug_mode = bool(hass.data.get(DOMAIN, {}).get(CONF_DEBUG_MODE, False))
-        publish_interval = 0.5 if debug_mode else 5.0
+        debug_enabled = debug_mode(hass)
+        publish_interval = 0.5 if debug_enabled else 5.0
         if not force and now - last_counter_event < publish_interval:
             return
         last_counter_event = now
@@ -749,7 +750,7 @@ async def _run_audio_session(
         # terminal snapshot. Preserve that authoritative signaling event.
         if current_call_id:
             update["last_sip_event"] = "rtp_media"
-        if debug_mode:
+        if debug_enabled:
             merge_media_debug(
                 store,
                 call_id=session.call_id,

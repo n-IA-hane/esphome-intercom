@@ -520,7 +520,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         debug_line = next(
             line
             for line in body.splitlines()
-            if "if bool(hass.data.get(DOMAIN, {}).get(CONF_DEBUG_MODE" in line
+            if "if debug_mode(hass):" in line
         )
         publish_line = next(
             line

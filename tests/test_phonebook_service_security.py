@@ -32,6 +32,8 @@ def _load_phonebook_services(monkeypatch, route_conflicts=None):
     const.DOMAIN = "voip_stack"
     const.CONF_ASSIST_ENDPOINT_ENABLED = "assist_endpoint_enabled"
     const.CONF_ASSIST_EXTENSION = "assist_extension"
+    config = types.ModuleType(f"{PACKAGE}.config")
+    config.assist_config = lambda _hass: {}
     validation = types.ModuleType(f"{PACKAGE}.config_validation")
     validation.route_namespace_conflicts = route_conflicts or (
         lambda **_kwargs: False
@@ -47,7 +49,7 @@ def _load_phonebook_services(monkeypatch, route_conflicts=None):
     store = types.ModuleType(f"{PACKAGE}.store")
     store.manual_roster_entries = lambda _hass: []
     store.store_manual_roster_entries = lambda _hass, _entries: None
-    for dependency in (const, validation, runtime, roster, store):
+    for dependency in (config, const, validation, runtime, roster, store):
         monkeypatch.setitem(sys.modules, dependency.__name__, dependency)
 
     name = f"{PACKAGE}.phonebook_services"

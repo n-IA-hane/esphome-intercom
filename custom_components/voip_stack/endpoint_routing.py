@@ -13,7 +13,7 @@ from .audio_format import (
     HA_SIP_PCM_TX_FORMATS,
     parse_audio_format_list,
 )
-from .config import trunk_config, trunk_enabled
+from .config import assist_config, trunk_config, trunk_enabled
 from .const import DOMAIN
 from .peer import Peer
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
@@ -327,7 +327,7 @@ def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries
                 }
             )
         entries.append(replace(registered, metadata=metadata))
-    assist = hass.data.get(DOMAIN, {}).get("assist_config", {})
+    assist = assist_config(hass)
     if assist.get(CONF_ASSIST_ENDPOINT_ENABLED) and assist.get(CONF_ASSIST_EXTENSION):
         extension = assist[CONF_ASSIST_EXTENSION]
         name = str(assist.get("name") or "Assist").strip() or "Assist"

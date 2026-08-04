@@ -8,7 +8,6 @@ the central phonebook and routed through HA as SIP dialogs when needed.
 import asyncio
 import logging
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
 from homeassistant.core import HomeAssistant, CoreState, Event, ServiceCall
 from homeassistant.exceptions import ConfigEntryError, ServiceValidationError
@@ -41,8 +40,6 @@ from .const import (
     CONF_TRUNK_DTMF_TIMEOUT_MS,
     CONF_TRUNK_INBOUND_MODE,
     DOMAIN,
-    VOIP_STACK_RTP_PORT,
-    VOIP_STACK_SIP_PORT,
     TRUNK_INBOUND_MODE_DIRECT,
     TRUNK_INBOUND_MODE_DTMF,
 )
@@ -80,6 +77,7 @@ from .phone_config import (
     phone_subentries,
 )
 from .route_decisions import set_pending_route_decision as _set_pending_route_decision
+from .runtime_data import VoipStackConfigEntry, VoipStackRuntime
 from .store import manual_roster_entries as _manual_roster_entries
 from .websocket_api import (
     async_register_websocket_api,
@@ -98,7 +96,9 @@ PLATFORMS: list[Platform] = [
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
-async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+async def async_migrate_entry(
+    hass: HomeAssistant, config_entry: VoipStackConfigEntry
+) -> bool:
     """Migrate inbound routing options without changing existing behavior."""
     if config_entry.version < 2:
         data = dict(config_entry.data)
@@ -410,20 +410,11 @@ async def _async_setup_shared(hass: HomeAssistant, config: dict | None = None) -
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up VoIP Stack defaults from configuration.yaml."""
-    hass.data.setdefault(DOMAIN, {})["transport_config"] = {
-        "sip_port": VOIP_STACK_SIP_PORT,
-        "rtp_port": VOIP_STACK_RTP_PORT,
-    }
-    hass.data[DOMAIN][CONF_DEBUG_MODE] = False
-    hass.data[DOMAIN][CONF_MEDIA_CAPTURE] = False
-    hass.data[DOMAIN]["assist_config"] = _entry_assist_config(None)
-    hass.data[DOMAIN]["trunk_config"] = _entry_trunk_config(None)
-    hass.data[DOMAIN]["sip_port"] = VOIP_STACK_SIP_PORT
     await _async_setup_shared(hass, config)
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -> bool:
     """Set up VoIP Stack from a config entry (UI setup)."""
     async_ensure_phone_subentries(hass, entry)
     endpoint_registry = async_setup_endpoint_registry(hass, entry)
@@ -433,13 +424,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     cfg = _entry_transport_config(entry)
     assist_cfg = _entry_assist_config(entry)
     trunk_cfg = _entry_trunk_config(entry)
-    hass.data.setdefault(DOMAIN, {})["transport_config"] = cfg
-    hass.data[DOMAIN]["assist_config"] = assist_cfg
-    hass.data[DOMAIN]["trunk_config"] = trunk_cfg
-    hass.data[DOMAIN]["sip_port"] = cfg["sip_port"]
-    hass.data[DOMAIN][CONF_DEBUG_MODE] = bool(entry.data.get(CONF_DEBUG_MODE, False))
-    hass.data[DOMAIN][CONF_MEDIA_CAPTURE] = bool(
-        entry.data.get(CONF_MEDIA_CAPTURE, False)
+    entry.runtime_data = VoipStackRuntime(
+        transport_config=cfg,
+        assist_config=assist_cfg,
+        trunk_config=trunk_cfg,
+        debug_mode=bool(entry.data.get(CONF_DEBUG_MODE, False)),
+        media_capture=bool(entry.data.get(CONF_MEDIA_CAPTURE, False)),
     )
     hass.data[DOMAIN]["manual_roster_entries"] = _manual_roster_entries(hass)
     await _async_setup_shared(hass)
@@ -490,7 +480,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant, entry: VoipStackConfigEntry
+) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unload_ok:
@@ -576,12 +568,6 @@ _REMOVED_ENTRY_RUNTIME_KEYS = (
     "video_transcoder_active",
     "video_transcoder_lock",
     # Entry-derived configuration and resolver caches.
-    "transport_config",
-    "assist_config",
-    "trunk_config",
-    "sip_port",
-    CONF_DEBUG_MODE,
-    CONF_MEDIA_CAPTURE,
     "manual_roster_entries",
     "device_resolver",
     "esp_state_event_generations",
@@ -592,7 +578,9 @@ _REMOVED_ENTRY_RUNTIME_KEYS = (
 )
 
 
-async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def async_remove_entry(
+    hass: HomeAssistant, entry: VoipStackConfigEntry
+) -> None:
     """Forget all runtime state owned by a permanently removed entry.
 
     Services, websocket commands and HTTP views are process-wide Home

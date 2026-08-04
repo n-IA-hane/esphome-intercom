@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
+from .config import trunk_config
 from .const import DOMAIN, INTEGRATION_VERSION
 from .runtime_diagnostics import runtime_resource_snapshot
 
@@ -122,13 +123,13 @@ def _signaling_summary(bucket: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _trunk_summary(bucket: dict[str, Any]) -> dict[str, Any]:
+def _trunk_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, Any]:
     """Return registration health without the provider identity."""
 
     trunk = bucket.get("sip_trunk")
     snapshot = getattr(trunk, "snapshot", None)
     if not callable(snapshot):
-        configured = bool((bucket.get("trunk_config") or {}).get("trunk_enabled"))
+        configured = bool(trunk_config(hass).get("trunk_enabled"))
         return {"enabled": configured, "registered": False}
     data = dict(snapshot())
     return {
@@ -140,11 +141,11 @@ def _trunk_summary(bucket: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _runtime_summary(bucket: dict[str, Any]) -> dict[str, Any]:
+def _runtime_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, Any]:
     return {
         "endpoints": _endpoint_summary(bucket),
         "signaling": _signaling_summary(bucket),
-        "trunk": _trunk_summary(bucket),
+        "trunk": _trunk_summary(hass, bucket),
         "resources": runtime_resource_snapshot(
             bucket,
             bucket.get("call_registry"),
@@ -212,7 +213,7 @@ async def async_get_config_entry_diagnostics(
             "entry_state": _enum_value(getattr(entry, "state", "unknown")),
         },
         "config_entry": async_redact_data(entry.as_dict(), TO_REDACT),
-        "runtime": _runtime_summary(bucket),
+        "runtime": _runtime_summary(hass, bucket),
     }
 
 

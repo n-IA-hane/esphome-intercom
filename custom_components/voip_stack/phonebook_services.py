@@ -8,6 +8,7 @@ from typing import Any
 
 from homeassistant.core import ServiceCall
 
+from .config import assist_config
 from .config_validation import route_namespace_conflicts
 from .const import (
     CONF_ASSIST_ENDPOINT_ENABLED,
@@ -46,7 +47,7 @@ def _runtime_route_mappings(hass: Any) -> list[Mapping[str, Any]]:
             }
             for endpoint in registry.endpoints
         )
-    assist = hass.data.get(DOMAIN, {}).get("assist_config") or {}
+    assist = assist_config(hass)
     assist_extension = str(assist.get(CONF_ASSIST_EXTENSION) or "").strip()
     if assist.get(CONF_ASSIST_ENDPOINT_ENABLED) and assist_extension:
         mappings.append(

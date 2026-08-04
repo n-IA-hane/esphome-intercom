@@ -12,6 +12,8 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
+from .config import debug_mode as current_debug_mode
+from .config import transport_config as current_transport_config
 from .authorization import (
     media_controller_status,
     require_websocket_endpoint_read,
@@ -25,7 +27,6 @@ from .automation_routing import (
 )
 from .call_registry import TERMINAL_STATES, CallRegistry
 from .const import (
-    CONF_DEBUG_MODE,
     CONF_VIDEO_CAMERA_SEND,
     CONF_VIDEO_TRANSCODING,
     DOMAIN,
@@ -896,9 +897,9 @@ def _ha_softphone_state(
     connected_cards = int(
         bucket.get("ha_softphone_presence", {}).get(endpoint_id, 0) or 0
     )
-    debug_mode = bool(bucket.get(CONF_DEBUG_MODE, False))
+    debug_mode = current_debug_mode(hass)
     runtime = _sip_runtime_snapshot(hass, detailed=debug_mode)
-    transport_config = bucket.get("transport_config", {})
+    transport_config = current_transport_config(hass)
     active_softphone = store.get("state") in {
         CallState.CALLING.value,
         CallState.REMOTE_RINGING.value,

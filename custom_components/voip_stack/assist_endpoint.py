@@ -10,10 +10,10 @@ from homeassistant.core import HomeAssistant
 
 from .assist_runtime import AssistMediaSession, build_call_connected_intent
 from .automation_routing import canonical_call_origin
+from .config import assist_config
 from .const import (
     CONF_ASSIST_ADVANCED_CALL_CONTEXT,
     CONF_ASSIST_PIPELINE,
-    DOMAIN,
 )
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState, TerminalReason
@@ -47,7 +47,7 @@ class AssistEndpoint:
     ) -> AssistMediaSession:
         """Attach an accepted SIP dialog to the configured Assist pipeline."""
 
-        assist_cfg = self.hass.data.setdefault(DOMAIN, {}).get("assist_config", {})
+        assist_cfg = assist_config(self.hass)
         caller_entry = roster_entry_for_target(
             invite.routing_caller,
             roster_entries,

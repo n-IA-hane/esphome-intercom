@@ -30,12 +30,12 @@ from .const import (
     CONF_TRUNK_SERVER,
     CONF_TRUNK_TRANSPORT,
     CONF_TRUNK_USERNAME,
-    DOMAIN,
     TRUNK_INBOUND_MODE_DIRECT,
     TRUNK_INBOUND_MODE_DTMF,
     VOIP_STACK_RTP_PORT,
     VOIP_STACK_SIP_PORT,
 )
+from .runtime_data import runtime_data
 
 
 def entry_assist_config(entry: ConfigEntry | None = None) -> dict:
@@ -112,32 +112,36 @@ def entry_trunk_config(entry: ConfigEntry | None = None) -> dict:
 
 
 def transport_config(hass: HomeAssistant) -> dict:
-    return hass.data.get(DOMAIN, {}).get(
-        "transport_config",
-        {
-            "sip_port": VOIP_STACK_SIP_PORT,
-            "rtp_port": VOIP_STACK_RTP_PORT,
-            "advertise_host": "",
-        },
-    )
+    runtime = runtime_data(hass)
+    if runtime is not None:
+        return runtime.transport_config
+    return {
+        "sip_port": VOIP_STACK_SIP_PORT,
+        "rtp_port": VOIP_STACK_RTP_PORT,
+        "advertise_host": "",
+    }
+
+
+def assist_config(hass: HomeAssistant) -> dict:
+    runtime = runtime_data(hass)
+    return runtime.assist_config if runtime is not None else entry_assist_config(None)
 
 
 def trunk_config(hass: HomeAssistant) -> dict:
-    return hass.data.get(DOMAIN, {}).get("trunk_config", entry_trunk_config(None))
+    runtime = runtime_data(hass)
+    return runtime.trunk_config if runtime is not None else entry_trunk_config(None)
 
 
 def debug_mode(hass: HomeAssistant) -> bool:
-    from .const import CONF_DEBUG_MODE
-
-    return bool(hass.data.get(DOMAIN, {}).get(CONF_DEBUG_MODE, False))
+    runtime = runtime_data(hass)
+    return bool(runtime.debug_mode) if runtime is not None else False
 
 
 def media_capture_enabled(hass: HomeAssistant) -> bool:
     """Return whether the user explicitly enabled private media captures."""
 
-    from .const import CONF_MEDIA_CAPTURE
-
-    return bool(hass.data.get(DOMAIN, {}).get(CONF_MEDIA_CAPTURE, False))
+    runtime = runtime_data(hass)
+    return bool(runtime.media_capture) if runtime is not None else False
 
 
 def trunk_enabled(cfg: dict) -> bool:

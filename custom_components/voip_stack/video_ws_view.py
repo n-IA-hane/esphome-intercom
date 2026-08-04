@@ -19,11 +19,8 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from . import rtp, sdp
-from .const import (
-    CONF_DEBUG_MODE,
-    CONF_VIDEO_TRANSCODING,
-    DOMAIN,
-)
+from .config import debug_mode, transport_config
+from .const import CONF_VIDEO_TRANSCODING, DOMAIN
 from .call_registry import CallRegistry
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .media_debug import merge_media_debug
@@ -507,9 +504,9 @@ def _active_video_session(
     store = active.store
     call_id = active.call_id
     registry = active.registry
-    config = hass.data.get(DOMAIN, {}).get("transport_config", {})
+    config = transport_config(hass)
     transcode = bool(config.get(CONF_VIDEO_TRANSCODING, False))
-    debug = bool(hass.data.get(DOMAIN, {}).get(CONF_DEBUG_MODE, False))
+    debug = debug_mode(hass)
 
     item = registry.softphone_media.get(call_id)
     if item is not None:
@@ -656,7 +653,7 @@ async def _run_local_video_session(
             "remote_connection_held": False,
             "camera_send_enabled": can_send,
             "transcoding_enabled": False,
-            "debug": bool(hass.data.get(DOMAIN, {}).get(CONF_DEBUG_MODE, False)),
+            "debug": debug_mode(hass),
             "media_generation": 0,
             "media_transport": "local_websocket",
         }
@@ -1424,7 +1421,7 @@ async def _run_video_session(
         store["video_rtp_dropped_packets"] = protocol.dropped_packets + int(
             transcode_protocol.dropped_packets if transcode_protocol is not None else 0
         )
-        if bool(hass.data.get(DOMAIN, {}).get(CONF_DEBUG_MODE, False)):
+        if debug_mode(hass):
             merge_media_debug(
                 store,
                 call_id=session.call_id,

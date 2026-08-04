@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.setup import async_setup_component
 import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
 DOMAIN = "voip_stack"
@@ -126,21 +127,39 @@ async def test_purge_devices_is_disabled_before_resolving_or_removing_devices(
         )
 
 
-async def test_debug_logging_does_not_enable_private_media_capture(
+async def test_entry_runtime_exposes_configuration_without_global_mirrors(
     hass: HomeAssistant,
 ) -> None:
-    _prepare_integration_dependencies(hass)
-    assert await async_setup_component(hass, DOMAIN, {})
-    await hass.async_block_till_done()
-
     from custom_components.voip_stack.config import (
+        assist_config,
         debug_mode,
         media_capture_enabled,
+        transport_config,
+        trunk_config,
     )
+    from custom_components.voip_stack.runtime_data import VoipStackRuntime
 
-    hass.data[DOMAIN]["debug_mode"] = True
+    runtime = VoipStackRuntime(
+        transport_config={"sip_port": 5099, "rtp_port": 45000},
+        assist_config={"assist_extension": "900"},
+        trunk_config={"trunk_enabled": True},
+        debug_mode=True,
+    )
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    entry.runtime_data = runtime
     assert debug_mode(hass)
     assert not media_capture_enabled(hass)
+    assert transport_config(hass)["sip_port"] == 5099
+    assert assist_config(hass)["assist_extension"] == "900"
+    assert trunk_config(hass)["trunk_enabled"] is True
 
-    hass.data[DOMAIN]["media_capture"] = True
+    runtime.media_capture = True
     assert media_capture_enabled(hass)
+    assert not {
+        "transport_config",
+        "assist_config",
+        "trunk_config",
+        "debug_mode",
+        "media_capture",
+    }.intersection(hass.data.get(DOMAIN, {}))
