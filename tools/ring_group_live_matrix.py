@@ -31,6 +31,7 @@ CALLER_CONFIG = (
 )
 RUN_LOCK = Path("/tmp/voip-stack-ring-group-live-matrix.lock")
 ESP_DND_ENTITY = "switch.cucina_waveshare_s3_audio_do_not_disturb"
+ESP_AUTO_ANSWER_ENTITY = "switch.cucina_waveshare_s3_audio_auto_answer"
 ESP_CALL_STATE_ENTITY = "sensor.cucina_waveshare_s3_audio_voip_state"
 CALL_EVENT_ENTITY = "event.voip_stack_call"
 INBOUND_AUTOMATION = "automation.voip_inbound_trunk_to_rg_casa"
@@ -158,6 +159,15 @@ def _set_esp_dnd(enabled: bool) -> None:
     _wait_entity(ESP_DND_ENTITY, "on" if enabled else "off")
 
 
+def _set_esp_auto_answer(enabled: bool) -> None:
+    service(
+        "switch",
+        "turn_on" if enabled else "turn_off",
+        {"entity_id": ESP_AUTO_ANSWER_ENTITY},
+    )
+    _wait_entity(ESP_AUTO_ANSWER_ENTITY, "on" if enabled else "off")
+
+
 def _state(page: Any, expected: str, label: str, timeout: float = 12) -> dict[str, Any]:
     return wait_card(
         page,
@@ -263,6 +273,9 @@ def main(*, output: Path | None = None) -> int:
     results: list[dict[str, Any]] = []
     api, esp_dnd_state, inbound_automation_state = _wait_lab_ready()
     original_esp_dnd = esp_dnd_state["state"] == "on"
+    original_esp_auto_answer = (
+        ha_request(f"/api/states/{ESP_AUTO_ANSWER_ENTITY}")["state"] == "on"
+    )
     original_inbound_automation = inbound_automation_state["state"] == "on"
     try:
         with sync_playwright() as playwright:
@@ -316,6 +329,7 @@ def main(*, output: Path | None = None) -> int:
                 )
                 try:
                     _set_esp_dnd(False)
+                    _set_esp_auto_answer(True)
                     caller = _dial()
                     # This timer starts at 183, before the configured five-second
                     # inbound DTMF window and the automation route decision.
@@ -678,6 +692,7 @@ def main(*, output: Path | None = None) -> int:
             browser.close()
     finally:
         _set_esp_dnd(original_esp_dnd)
+        _set_esp_auto_answer(original_esp_auto_answer)
         if EXPECT_VIDEO:
             api.delete(
                 f"/api/config/automation/config/{DIRECT_AUTOMATION_ID}",
