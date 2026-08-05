@@ -161,6 +161,12 @@ class CallSessionOwner(Protocol):
 
     def client_watchers_snapshot(self) -> dict[str, Any]: ...
 
+    def bridge_links_snapshot(self) -> dict[str, str]: ...
+
+    def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> bool: ...
+
+    def forget_bridge_link(self, source_call_id: str) -> str: ...
+
     def attach_relay(self, call_id: str, relay: Any) -> bool: ...
 
     def take_relay(self, call_id: str) -> Any | None: ...
@@ -235,7 +241,7 @@ class CallRegistry:
         self._legacy_sip_clients: dict[str, Any] = {}
         self._legacy_client_watchers: dict[str, Any] = {}
         self._legacy_relays: dict[str, Any] = {}
-        self.bridge_clients: dict[str, str] = {}
+        self._legacy_bridge_clients: dict[str, str] = {}
         self.event_contexts: dict[str, CallEventContext] = {}
         self.terminal_summary_ids: OrderedDict[str, None] = OrderedDict()
         self._legacy_endpoint_claims: dict[str, dict[str, str]] = {}
@@ -300,6 +306,30 @@ class CallRegistry:
         if self._session_owner is not None:
             return self._session_owner.client_watchers_snapshot()
         return self._legacy_client_watchers
+
+    @property
+    def bridge_clients(self) -> dict[str, str]:
+        """Compatibility projection of authoritative bridge links."""
+
+        if self._session_owner is not None:
+            return self._session_owner.bridge_links_snapshot()
+        return self._legacy_bridge_clients
+
+    def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> None:
+        """Record a bridge link on the sole current call owner."""
+
+        if self._session_owner is None:
+            self._legacy_bridge_clients[source_call_id] = dest_call_id
+            return
+        if not self._session_owner.set_bridge_link(source_call_id, dest_call_id):
+            raise RuntimeError(f"call session {source_call_id!r} is unavailable")
+
+    def forget_bridge_link(self, source_call_id: str) -> str:
+        """Forget a bridge link without mutating a compatibility snapshot."""
+
+        if self._session_owner is None:
+            return self._legacy_bridge_clients.pop(source_call_id, "")
+        return self._session_owner.forget_bridge_link(source_call_id)
 
     @property
     def endpoint_claims(self) -> dict[str, dict[str, str]]:
@@ -1241,7 +1271,7 @@ class CallRegistry:
                 generation=session.generation,
             )
         self.sessions.pop(session_id, None)
-        self.bridge_clients.pop(session_id, None)
+        self.forget_bridge_link(session_id)
         event_context_ids = {call_id, session_id}
         if session is not None:
             for leg_id in list(session.legs):
@@ -1279,7 +1309,7 @@ class CallRegistry:
         if not source_call_id:
             return "", "", None, None, None, False
         called_by_dest = call_id == dest_call_id
-        self.bridge_clients.pop(source_call_id, None)
+        self.forget_bridge_link(source_call_id)
         relay = self.take_relay(source_call_id)
         client = self.take_sip_client(dest_call_id) if dest_call_id else None
         watcher = self.take_client_watcher(dest_call_id) if dest_call_id else None
@@ -1329,7 +1359,7 @@ class CallRegistry:
         state: str = "idle",
     ) -> Any | None:
         dest = dest_call_id or self.bridge_clients.get(source_call_id, "")
-        self.bridge_clients.pop(source_call_id, None)
+        self.forget_bridge_link(source_call_id)
         client = self.take_sip_client(dest) if dest else None
         self.finish_and_pop(source_call_id, reason=reason, state=state)
         return client
@@ -1377,7 +1407,6 @@ class CallRegistry:
             return None
         if lifecycle_task is None and self._session_owner is not None:
             raise ValueError("SIP bridge requires a lifecycle task")
-        self.bridge_clients[source_call_id] = dest_call_id
         session = self.upsert(
             source_call_id,
             state=state,
@@ -1388,6 +1417,7 @@ class CallRegistry:
             ingress=ingress,
             origin=origin,
         )
+        self.set_bridge_link(source_call_id, dest_call_id)
         self.add_leg(source_call_id, source_call_id, role=source_role, state=source_state or state)
         self.add_leg(source_call_id, dest_call_id, role=dest_role, state=dest_state or state)
         self.attach_sip_client(
@@ -1413,7 +1443,7 @@ class CallRegistry:
         self._legacy_sip_clients.clear()
         self._legacy_client_watchers.clear()
         self._legacy_relays.clear()
-        self.bridge_clients.clear()
+        self._legacy_bridge_clients.clear()
         self.event_contexts.clear()
         self.terminal_summary_ids.clear()
         self.terminated_call_ids.clear()

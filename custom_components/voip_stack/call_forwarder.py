@@ -843,7 +843,7 @@ async def async_forward_existing_call(
                 try:
                     await relay.start()
                 except Exception:
-                    registry.bridge_clients.pop(call_id, None)
+                    registry.forget_bridge_link(call_id)
                     registry.take_sip_client(dest_call_id)
                     registry.take_client_watcher(dest_call_id)
                     registry.remove_leg(call_id, dest_call_id)
@@ -1371,7 +1371,7 @@ async def async_forward_existing_call(
             )
         except asyncio.CancelledError:
             if dest_call_id:
-                registry.bridge_clients.pop(call_id, None)
+                registry.forget_bridge_link(call_id)
                 registry.take_sip_client(dest_call_id)
                 registry.take_client_watcher(dest_call_id)
                 registry.remove_leg(call_id, dest_call_id)
@@ -1395,7 +1395,7 @@ async def async_forward_existing_call(
                 reason,
             )
             if dest_call_id:
-                registry.bridge_clients.pop(call_id, None)
+                registry.forget_bridge_link(call_id)
                 registry.take_sip_client(dest_call_id)
                 registry.take_client_watcher(dest_call_id)
                 registry.remove_leg(call_id, dest_call_id)

@@ -277,6 +277,36 @@ class SipEndpointRuntime:
                     watchers[name.removeprefix("client_watcher:")] = task
         return watchers
 
+    def bridge_links_snapshot(self) -> dict[str, str]:
+        """Return source-to-destination links stored by authoritative sessions."""
+
+        return {
+            call_id: dest_call_id
+            for call_id, session in self.calls.items()
+            if (dest_call_id := str(session.metadata.get("bridge_dest_call_id") or ""))
+        }
+
+    def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> bool:
+        """Attach one destination dialog identity to its source session."""
+
+        session = self.get_session(source_call_id)
+        clean_dest_call_id = str(dest_call_id or "").strip()
+        if session is None or not session.live or not clean_dest_call_id:
+            return False
+        session.update_metadata(bridge_dest_call_id=clean_dest_call_id)
+        return True
+
+    def forget_bridge_link(self, source_call_id: str) -> str:
+        """Remove and return one destination link without ending the session."""
+
+        session = self.get_session(source_call_id)
+        if session is None or not session.live:
+            return ""
+        dest_call_id = str(session.metadata.pop("bridge_dest_call_id", "") or "")
+        if dest_call_id:
+            self._publish(session)
+        return dest_call_id
+
     def attach_relay(self, call_id: str, relay: Any) -> bool:
         """Make one RTP relay a media resource of its call session."""
 

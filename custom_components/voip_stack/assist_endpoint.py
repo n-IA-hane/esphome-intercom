@@ -121,7 +121,6 @@ class AssistEndpoint:
                 reservation.release()
             raise
 
-        registry.bridge_clients[invite.call_id] = assist_leg_id
         registry.upsert(
             invite.call_id,
             state=CallState.IN_CALL.value,
@@ -132,6 +131,7 @@ class AssistEndpoint:
             ingress=call_ingress,
             origin=call_ingress,
         )
+        registry.set_bridge_link(invite.call_id, assist_leg_id)
         registry.attach_relay(invite.call_id, media)
         registry.add_leg(
             invite.call_id,
