@@ -139,6 +139,9 @@ def endpoint_termination(monkeypatch):
             "conference_component": lambda hass: hass.data.get(
                 "voip_stack", {}
             ).get("conference_manager"),
+            "endpoint_directory": lambda _hass: SimpleNamespace(
+                get=lambda _endpoint_id: None,
+            ),
         },
         "session_cleanup": {
             "async_cleanup_sip_runtime": cleanup,

@@ -31,6 +31,7 @@ from .media_session_updates import (
     commit_video_session_update,
 )
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
+from .runtime_data import endpoint_directory
 from .sdp import (
     build_answer_directional,
     constrained_media_direction,
@@ -477,13 +478,7 @@ async def async_prepare_media_update(
             )
             or DEFAULT_ENDPOINT_ID
         ).strip()
-        media_endpoint = (
-            hass.data.get(DOMAIN, {})
-            .get("endpoint_registry")
-            .get(media_endpoint_id)
-            if hass.data.get(DOMAIN, {}).get("endpoint_registry") is not None
-            else None
-        )
+        media_endpoint = endpoint_directory(hass).get(media_endpoint_id)
         media_device_id = str(
             getattr(media_endpoint, "device_id", "") or HA_SOFTPHONE_DEVICE_ID
         )

@@ -67,6 +67,12 @@ def _load_module(registry, answer_calls: list[dict]):
         commit_video_session_update=lambda *_args, **_kwargs: None,
     )
     _module("phone_endpoint", DEFAULT_ENDPOINT_ID="default")
+    _module(
+        "runtime_data",
+        endpoint_directory=lambda _hass: types.SimpleNamespace(
+            get=lambda _endpoint_id: None,
+        ),
+    )
 
     def build_answer_directional(*_args, **kwargs):
         answer_calls.append(dict(kwargs))

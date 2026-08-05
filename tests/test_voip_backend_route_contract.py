@@ -1476,7 +1476,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("RtpPortReservation.allocate", no_dtmf_branch)
         self.assertIn("RtpPortReservation.allocate(hass)", dtmf_branch)
 
-        preprocess = on_invite[: on_invite.index("bucket = hass.data.setdefault")]
+        preprocess = on_invite[: on_invite.index("registry = _call_registry(hass)")]
         self.assertIn("trunk_direct_preprocessed = True", preprocess)
         self.assertLess(
             on_invite.index("trunk_direct_preprocessed = True"),

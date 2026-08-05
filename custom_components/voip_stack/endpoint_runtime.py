@@ -71,7 +71,7 @@ from .phone_endpoint import (
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .router import RouteReason
 from .ring_group_orchestrator import RingGroupRuntime, run_ring_group_call
-from .runtime_data import runtime_data, sip_endpoint_manager, sip_trunk
+from .runtime_data import endpoint_directory, runtime_data, sip_endpoint_manager, sip_trunk
 from .store import sip_accounts as _sip_accounts
 from .trunk_inbound_router import (
     TrunkInboundRuntime,
@@ -165,12 +165,8 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     def _on_registration_change(username: str, registered: bool) -> None:
         from .phone_endpoint import EndpointAvailability
 
-        endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-        endpoint = (
-            endpoint_registry.by_username(username)
-            if endpoint_registry is not None
-            else None
-        )
+        endpoint_registry = endpoint_directory(hass)
+        endpoint = endpoint_registry.by_username(username)
         if (
             endpoint is not None
             and endpoint.availability is not EndpointAvailability.UNAVAILABLE
@@ -260,12 +256,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     ) -> None:
         """Project one pending SIP dialog onto its owning browser phone."""
         registry = _call_registry(hass)
-        endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-        endpoint = (
-            endpoint_registry.get(endpoint_id)
-            if endpoint_registry is not None
-            else None
-        )
+        endpoint = endpoint_directory(hass).get(endpoint_id)
         video_enabled = bool(
             invite.video_format is not None
             and (endpoint is None or endpoint.supports("video"))
@@ -562,12 +553,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         enable_caller_video_send: bool = False,
     ) -> str:
         endpoint_id = str(endpoint_id or DEFAULT_ENDPOINT_ID).strip() or DEFAULT_ENDPOINT_ID
-        endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-        browser_endpoint = (
-            endpoint_registry.get(endpoint_id)
-            if endpoint_registry is not None
-            else None
-        )
+        browser_endpoint = endpoint_directory(hass).get(endpoint_id)
         if (
             browser_endpoint is not None
             and browser_endpoint.kind is not EndpointKind.BROWSER

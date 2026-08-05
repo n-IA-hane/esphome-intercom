@@ -14,7 +14,7 @@ from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState, TerminalReason
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
-from .runtime_data import conference_component
+from .runtime_data import conference_component, endpoint_directory
 from .websocket_api import (
     _ha_softphone_store,
     _set_ha_softphone_call_state,
@@ -96,12 +96,7 @@ class EndpointTerminationHandler:
             str(session_metadata.get("endpoint_id") or DEFAULT_ENDPOINT_ID).strip()
             or DEFAULT_ENDPOINT_ID
         )
-        endpoint_registry = bucket.get("endpoint_registry")
-        session_endpoint = (
-            endpoint_registry.get(session_endpoint_id)
-            if endpoint_registry is not None
-            else None
-        )
+        session_endpoint = endpoint_directory(self.hass).get(session_endpoint_id)
         session_device_id = str(
             session_metadata.get("session_device_id")
             or getattr(session_endpoint, "device_id", "")

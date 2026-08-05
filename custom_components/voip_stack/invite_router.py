@@ -17,14 +17,13 @@ from homeassistant.core import HomeAssistant
 
 from . import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
-from .runtime_data import sip_trunk
+from .runtime_data import endpoint_directory, sip_trunk
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
     CONF_TRUNK_DTMF_ENABLED,
     CONF_TRUNK_DTMF_TIMEOUT_MS,
     CONF_TRUNK_INBOUND_DEFAULT_TARGET,
     CONF_TRUNK_INBOUND_MODE,
-    DOMAIN,
     TRUNK_INBOUND_MODE_DTMF,
 )
 from .endpoint_lifecycle import call_registry as _call_registry
@@ -205,9 +204,8 @@ async def route_invite(
             )
             decision = _inbound_route_decision(invite, peers, roster_entries)
             trunk_direct_preprocessed = True
-    bucket = hass.data.setdefault(DOMAIN, {})
     registry = _call_registry(hass)
-    endpoint_registry = bucket.get("endpoint_registry")
+    endpoint_registry = endpoint_directory(hass)
     source_endpoint_id = str(
         ((caller_roster_entry.metadata or {}).get("endpoint_id"))
         if caller_roster_entry is not None
@@ -215,7 +213,7 @@ async def route_invite(
     ).strip()
     source_endpoint = (
         endpoint_registry.get(source_endpoint_id)
-        if endpoint_registry is not None and source_endpoint_id
+        if source_endpoint_id
         else None
     )
     route_bucket = _pending_routes(hass)
