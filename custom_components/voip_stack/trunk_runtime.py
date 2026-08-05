@@ -18,7 +18,6 @@ from .const import (
     CONF_TRUNK_SERVER,
     CONF_TRUNK_TRANSPORT,
     CONF_TRUNK_USERNAME,
-    DOMAIN,
 )
 from .session_cleanup import async_wait_for_cleanup
 from .runtime_data import sip_endpoint_manager, sip_endpoint_runtime, sip_trunk
@@ -29,7 +28,6 @@ _LOGGER = logging.getLogger(__name__)
 async def async_start_sip_trunk(hass: HomeAssistant, *, local_ip: str) -> bool:
     cfg = trunk_config(hass)
     if not trunk_enabled(cfg):
-        hass.data.setdefault(DOMAIN, {}).pop("sip_trunk", None)
         return True
     if not local_ip:
         _LOGGER.warning("SIP trunk disabled: HA advertise IP is unknown")
@@ -68,19 +66,21 @@ async def async_start_sip_trunk(hass: HomeAssistant, *, local_ip: str) -> bool:
 
 
 async def async_stop_sip_trunk(hass: HomeAssistant) -> None:
-    bucket = hass.data.setdefault(DOMAIN, {})
-    task = bucket.get("sip_trunk_stop_task")
+    pbx_runtime = sip_endpoint_runtime(hass)
+    if pbx_runtime is None:
+        return
+    task = pbx_runtime.trunk_stop_task
     if not isinstance(task, asyncio.Task) or task.done():
         task = asyncio.create_task(
             _async_stop_sip_trunk(hass),
             name="voip-sip-trunk-runtime-stop",
         )
-        bucket["sip_trunk_stop_task"] = task
+        pbx_runtime.trunk_stop_task = task
     try:
         await async_wait_for_cleanup(task)
     finally:
-        if task.done() and bucket.get("sip_trunk_stop_task") is task:
-            bucket.pop("sip_trunk_stop_task", None)
+        if task.done() and pbx_runtime.trunk_stop_task is task:
+            pbx_runtime.trunk_stop_task = None
 
 
 async def _async_stop_sip_trunk(hass: HomeAssistant) -> None:

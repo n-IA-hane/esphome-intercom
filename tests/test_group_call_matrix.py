@@ -162,6 +162,8 @@ class _FakeHass:
             calls=None,
             endpoints=endpoint_registry_module.EndpointRegistry(),
             sip=None,
+            rtp_port_pool={},
+            next_rtp_port=0,
         )
 
 

@@ -164,6 +164,7 @@ class SipEndpointRuntime:
         self._components: dict[str, _OwnedComponent] = {}
         self._endpoint_registry: Any | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
+        self.trunk_stop_task: asyncio.Task[Any] | None = None
         self.forward_tasks: dict[str, asyncio.Task[Any]] = {}
         self.forward_claims: set[str] = set()
         self.deadlines: dict[str, asyncio.Task[Any]] = {}

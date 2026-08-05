@@ -156,6 +156,8 @@ class _FakeHass:
             endpoints=endpoints,
             sip=None,
             shutdown_task=None,
+            rtp_port_pool={},
+            next_rtp_port=0,
             call_artifacts=types.SimpleNamespace(
                 forward_tasks={},
                 forward_claims=set(),
@@ -964,7 +966,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         await manager.leave_call("call-1", reason="remote_hangup")
         self.assertNotIn("Conference", manager.rooms)
-        pool = hass.data[const.DOMAIN]["sip_rtp_port_pool"]
+        pool = hass.runtime.rtp_port_pool
         self.assertFalse(pool["used"])
 
     async def test_multiple_browser_phones_ring_join_and_leave_independently(self) -> None:
@@ -1223,7 +1225,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         await manager.leave_call("second-call", reason="remote_hangup")
         self.assertNotIn("Conference", manager.rooms)
-        pool = hass.data[const.DOMAIN]["sip_rtp_port_pool"]
+        pool = hass.runtime.rtp_port_pool
         self.assertFalse(pool["used"])
 
 

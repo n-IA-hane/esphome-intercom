@@ -62,6 +62,7 @@ def _load_module(name: str):
 
 
 media_ports = _load_module("media_ports")
+media_ports.require_runtime_data = lambda hass: hass.runtime
 
 
 class FakeHass:
@@ -75,6 +76,7 @@ class FakeHass:
                 }
             }
         }
+        self.runtime = types.SimpleNamespace(next_rtp_port=0, rtp_port_pool={})
 
 
 class MediaPortPoolTest(unittest.TestCase):
@@ -82,7 +84,7 @@ class MediaPortPoolTest(unittest.TestCase):
         hass = FakeHass()
         with patch.object(media_ports, "rtp_port_available", return_value=True):
             self.assertEqual(media_ports.allocate_sip_rtp_port(hass), 40000)
-            self.assertEqual(hass.data["voip_stack"]["sip_rtp_next_port"], 40002)
+            self.assertEqual(hass.runtime.next_rtp_port, 40002)
 
     def test_single_allocator_raises_when_no_port_is_available(self) -> None:
         hass = FakeHass()
@@ -114,21 +116,21 @@ class MediaPortPoolTest(unittest.TestCase):
             ports = media_ports.allocate_sip_rtp_port_pair(hass)
             media_ports.release_sip_rtp_port_pair(hass, ports)
             media_ports.release_sip_rtp_port_pair(hass, ports)
-            self.assertEqual(hass.data["voip_stack"]["sip_rtp_port_pool"]["used"], set())
+            self.assertEqual(hass.runtime.rtp_port_pool["used"], set())
 
     def test_reservation_release_and_detach_ownership(self) -> None:
         hass = FakeHass()
         with patch.object(media_ports, "rtp_port_available", return_value=True):
             reservation = media_ports.RtpPortReservation.allocate(hass)
-            self.assertEqual(hass.data["voip_stack"]["sip_rtp_port_pool"]["used"], set(reservation.ports))
+            self.assertEqual(hass.runtime.rtp_port_pool["used"], set(reservation.ports))
             reservation.release()
             reservation.release()
-            self.assertEqual(hass.data["voip_stack"]["sip_rtp_port_pool"]["used"], set())
+            self.assertEqual(hass.runtime.rtp_port_pool["used"], set())
 
             detached = media_ports.RtpPortReservation.allocate(hass)
             ports = detached.detach()
             detached.release()
-            self.assertEqual(hass.data["voip_stack"]["sip_rtp_port_pool"]["used"], set(ports))
+            self.assertEqual(hass.runtime.rtp_port_pool["used"], set(ports))
             media_ports.release_sip_rtp_port_pair(hass, ports)
 
     def test_release_media_reservation_releases_runtime_metadata(self) -> None:
@@ -136,10 +138,10 @@ class MediaPortPoolTest(unittest.TestCase):
         with patch.object(media_ports, "rtp_port_available", return_value=True):
             reservation = media_ports.RtpPortReservation.allocate(hass)
             item = {"rtp_reservation": reservation}
-            self.assertEqual(hass.data["voip_stack"]["sip_rtp_port_pool"]["used"], set(reservation.ports))
+            self.assertEqual(hass.runtime.rtp_port_pool["used"], set(reservation.ports))
             media_ports.release_media_reservation(item)
             media_ports.release_media_reservation(item)
-            self.assertEqual(hass.data["voip_stack"]["sip_rtp_port_pool"]["used"], set())
+            self.assertEqual(hass.runtime.rtp_port_pool["used"], set())
 
     def test_release_media_reservation_releases_separate_video_reservation(self) -> None:
         hass = FakeHass()
@@ -153,7 +155,7 @@ class MediaPortPoolTest(unittest.TestCase):
             media_ports.release_media_reservation(item)
             media_ports.release_media_reservation(item)
             self.assertEqual(
-                hass.data["voip_stack"]["sip_rtp_port_pool"]["used"], set()
+                hass.runtime.rtp_port_pool["used"], set()
             )
 
     def test_release_video_media_preserves_audio_bridge_ownership(self) -> None:
@@ -176,14 +178,14 @@ class MediaPortPoolTest(unittest.TestCase):
             rtp_socket.close.assert_called_once_with()
             rtcp_socket.close.assert_called_once_with()
             self.assertEqual(
-                hass.data["voip_stack"]["sip_rtp_port_pool"]["used"],
+                hass.runtime.rtp_port_pool["used"],
                 set(audio.ports),
             )
             self.assertIn("rtp_reservation", item)
             self.assertNotIn("video_rtp_reservation", item)
             media_ports.release_media_reservation(item)
             self.assertEqual(
-                hass.data["voip_stack"]["sip_rtp_port_pool"]["used"], set()
+                hass.runtime.rtp_port_pool["used"], set()
             )
 
     def test_bound_video_socket_is_nonblocking_and_closed_with_reservation(self) -> None:
@@ -204,7 +206,7 @@ class MediaPortPoolTest(unittest.TestCase):
             self.assertEqual(rtcp_sock.fileno(), -1)
             self.assertNotIn("video_rtp_socket", item)
             self.assertNotIn("video_rtcp_socket", item)
-            self.assertEqual(hass.data["voip_stack"]["sip_rtp_port_pool"]["used"], set())
+            self.assertEqual(hass.runtime.rtp_port_pool["used"], set())
 
     def test_bind_video_sockets_reserves_adjacent_rtp_and_rtcp_ports(self) -> None:
         probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
