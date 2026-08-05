@@ -249,26 +249,13 @@ def test_phone_actions_have_one_device_selector() -> None:
 
 def test_final_entry_removal_forgets_runtime_but_preserves_global_views() -> None:
     hook = _load_remove_entry_hook()
-    unsubscribed: list[str] = []
-
-    class Registry:
-        cleared = False
-
-        def clear_runtime(self) -> None:
-            self.cleared = True
-
-    registry = Registry()
     bucket = {
         "initialized": True,
         "audio_ws_view_registered": True,
         "video_ws_view_registered": True,
         "media_shutdown": object(),
         "debug_capture_tasks": {"finishing-write"},
-        "endpoint_registry": object(),
-        "call_registry": registry,
-        "ha_softphones": {"kitchen": {"state": "in_call"}},
-        "ha_softphone_presence": {"kitchen": 1},
-        "local_softphone_bridge_unsub": lambda: unsubscribed.append("local"),
+        "manual_roster_entries": [{"name": "Kitchen"}],
         "entry-id": {"legacy": True},
     }
     hass = SimpleNamespace(data={"voip_stack": bucket})
@@ -276,12 +263,7 @@ def test_final_entry_removal_forgets_runtime_but_preserves_global_views() -> Non
 
     asyncio.run(hook(hass, entry))
 
-    assert registry.cleared
-    assert unsubscribed == ["local"]
-    assert "endpoint_registry" not in bucket
-    assert "call_registry" not in bucket
-    assert "ha_softphones" not in bucket
-    assert "ha_softphone_presence" not in bucket
+    assert "manual_roster_entries" not in bucket
     assert "entry-id" not in bucket
     assert bucket["initialized"] is True
     assert bucket["audio_ws_view_registered"] is True

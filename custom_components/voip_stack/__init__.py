@@ -592,61 +592,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -
     return unload_ok
 
 
-_REMOVED_ENTRY_RUNTIME_KEYS = (
-    # Configured endpoint graph and its dynamic HA entity adapters.
-    "endpoint_registry",
-    "endpoint_connectivity_entity_manager",
-    "endpoint_call_event_entity_manager",
-    "endpoint_call_state_entity_manager",
-    "endpoint_dnd_entity_manager",
-    "endpoint_conference_ring_entity_manager",
-    "endpoint_extension_entity_manager",
-    "endpoint_ring_group_entity_manager",
-    "endpoint_conference_group_entity_manager",
-    # Per-entry browser-phone state. A later entry must start from its own
-    # subentries instead of inheriting a removed kiosk or its page presence.
-    "ha_softphones",
-    "ha_softphone_presence",
-    "ha_softphone_start_locks",
-    "ha_softphone_endpoint_sensor",
-    "phonebook_sensor",
-    # SIP/B2BUA and local logical-phone runtime.
-    "call_registry",
-    "pbx_runtime",
-    "sip_bridge_state",
-    "sip_registrar",
-    "sip_endpoint",
-    "sip_server",
-    "sip_tcp_server",
-    "sip_trunk",
-    "sip_rtp_port_pool",
-    "sip_rtp_next_port",
-    "trunk_info_queues",
-    "trunk_closed_calls",
-    "active_audio_sessions",
-    "active_video_sessions",
-    "audio_ws_owners",
-    "audio_ws_owner_lock",
-    "video_ws_owners",
-    "video_ws_owner_lock",
-    "media_identity_locks",
-    "media_controller_lock",
-    "local_softphone_bridge",
-    "local_softphone_bridge_unsub",
-    "conference_manager",
-    "async_ring_conference_members",
-    "async_start_ring_group_from_ha",
-    "forward_tasks",
-    "forward_claims",
-    "call_deadlines",
-    "runtime_tasks",
-    "video_transcoder_active",
-    "video_transcoder_lock",
-    # Entry-derived configuration and resolver caches.
-    "manual_roster_entries",
-)
-
-
 async def async_remove_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -> None:
     """Forget all runtime state owned by a permanently removed entry.
 
@@ -659,17 +604,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -
     if not isinstance(bucket, dict):
         return
 
-    registry = bucket.get("call_registry")
-    clear_runtime = getattr(registry, "clear_runtime", None)
-    if callable(clear_runtime):
-        clear_runtime()
-
-    unsubscribe = bucket.pop("local_softphone_bridge_unsub", None)
-    if callable(unsubscribe):
-        unsubscribe()
-
-    for key in _REMOVED_ENTRY_RUNTIME_KEYS:
-        bucket.pop(key, None)
+    bucket.pop("manual_roster_entries", None)
     bucket.pop(entry.entry_id, None)
 
 

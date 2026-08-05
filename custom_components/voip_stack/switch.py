@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-import inspect
-
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
 from .endpoint_device import async_link_endpoint_entity, endpoint_device_info
 from .endpoint_entity_manager import (
     EndpointEntityManager,
@@ -25,39 +21,25 @@ async def async_set_endpoint_dnd(
     endpoint_id: str,
     enabled: bool,
 ) -> None:
-    """Set DND through the runtime hook and canonical phone configuration."""
-    bucket = hass.data.setdefault(DOMAIN, {})
-    handler: Callable[[str, bool], Awaitable[None] | None] | None = bucket.get(
-        "async_set_endpoint_dnd"
-    )
-    if handler is not None:
-        result = handler(endpoint_id, bool(enabled))
-        if inspect.isawaitable(result):
-            await result
-
+    """Persist DND through the canonical phone configuration."""
     registry = endpoint_directory(hass)
     endpoint = registry.get(endpoint_id)
     if endpoint is None:
         raise ValueError(f"Unknown phone endpoint: {endpoint_id}")
 
-    if handler is None:
-        # Config subentries are the canonical preference store for every
-        # integration-owned phone.  Keep the switch durable even when no
-        # transport-specific runtime hook is installed (notably registrar
-        # accounts, which do not have a browser compatibility store).
-        from .phone_config import CONF_PHONE_DND, update_phone_subentry
-        from .store import config_entry
+    from .phone_config import CONF_PHONE_DND, update_phone_subentry
+    from .store import config_entry
 
-        entry = config_entry(hass)
-        if entry is not None:
-            update_phone_subentry(
-                hass,
-                entry,
-                endpoint_id,
-                {CONF_PHONE_DND: bool(enabled)},
-            )
+    entry = config_entry(hass)
+    if entry is not None:
+        update_phone_subentry(
+            hass,
+            entry,
+            endpoint_id,
+            {CONF_PHONE_DND: bool(enabled)},
+        )
 
-    if handler is None and str(getattr(endpoint.kind, "value", endpoint.kind)) == "browser":
+    if str(getattr(endpoint.kind, "value", endpoint.kind)) == "browser":
         from .websocket_api import (
             _async_save_ha_softphone_store,
             _ha_softphone_store,
