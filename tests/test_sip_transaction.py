@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 import pytest
 
@@ -147,21 +148,35 @@ class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_invite_2xx_core_retransmits_even_over_reliable_transport(self) -> None:
         sends = 0
+        now = 0.0
+
+        class _Clock:
+            @staticmethod
+            def time() -> float:
+                return now
+
+        async def advance(delay: float) -> None:
+            nonlocal now
+            now += delay
 
         def send() -> bool:
             nonlocal sends
             sends += 1
             return True
 
-        result = await sip_transaction.async_run_server_transaction(
-            send=send,
-            active=lambda: True,
-            transport="TCP",
-            timeout=0.004,
-            t1=0.001,
-            t2=0.002,
-            retransmit_reliable=True,
-        )
+        with (
+            patch.object(sip_transaction.asyncio, "get_running_loop", return_value=_Clock()),
+            patch.object(sip_transaction.asyncio, "sleep", side_effect=advance),
+        ):
+            result = await sip_transaction.async_run_server_transaction(
+                send=send,
+                active=lambda: True,
+                transport="TCP",
+                timeout=0.004,
+                t1=0.001,
+                t2=0.002,
+                retransmit_reliable=True,
+            )
 
         self.assertTrue(result.timed_out)
         self.assertGreaterEqual(sends, 1)
