@@ -65,6 +65,52 @@ class _EndpointRegistryStub:
 
 
 class CallRegistryEventContextTest(unittest.TestCase):
+    def test_authoritative_snapshots_update_only_the_current_projection(self) -> None:
+        registry = call_registry.CallRegistry()
+        projected = registry.upsert("call-1", state="ringing", owner="router")
+        initial_revision = projected.revision
+
+        snapshot = types.SimpleNamespace(
+            call_id="call-1",
+            generation=projected.generation,
+            phase=types.SimpleNamespace(value="established"),
+            terminal_reason="completed",
+            metadata={"route_kind": "direct", "pbx_phase": "stale"},
+        )
+        registry.publish(snapshot)
+
+        self.assertEqual(projected.metadata["pbx_phase"], "established")
+        self.assertEqual(projected.metadata["route_kind"], "direct")
+        self.assertEqual(projected.terminal_reason, "completed")
+        self.assertEqual(projected.revision, initial_revision + 1)
+
+        registry.publish(snapshot)
+        self.assertEqual(projected.revision, initial_revision + 1)
+
+        registry.publish(
+            types.SimpleNamespace(
+                call_id="call-1",
+                generation=projected.generation + 1,
+                phase=types.SimpleNamespace(value="held"),
+                terminal_reason="wrong-generation",
+                metadata={"route_kind": "wrong-generation"},
+            )
+        )
+        registry.publish(
+            types.SimpleNamespace(
+                call_id="",
+                generation=1,
+                phase=types.SimpleNamespace(value="held"),
+                terminal_reason="blank-call",
+                metadata={},
+            )
+        )
+
+        self.assertEqual(projected.metadata["pbx_phase"], "established")
+        self.assertEqual(projected.metadata["route_kind"], "direct")
+        self.assertEqual(projected.terminal_reason, "completed")
+        self.assertEqual(set(registry.sessions), {"call-1"})
+
     def test_active_count_filters_terminal_and_ha_softphone_sessions(self) -> None:
         registry = call_registry.CallRegistry()
 

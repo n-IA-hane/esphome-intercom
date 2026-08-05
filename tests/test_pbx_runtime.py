@@ -250,6 +250,10 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(authoritative.phase, SessionPhase.RINGING)
         self.assertEqual(projected.metadata["pbx_phase"], "ringing")
         self.assertEqual(authoritative.metadata["owner"], "router")
+        self.assertEqual(authoritative.metadata["caller"], "door")
+        self.assertEqual(authoritative.metadata["callee"], "home")
+        self.assertEqual(authoritative.metadata["route_kind"], "")
+        self.assertNotIn("pbx_phase", authoritative.metadata)
         self.assertEqual(
             authoritative.legs["door-leg"].kind,
             endpoint_session.LegKind.ESPHOME,
