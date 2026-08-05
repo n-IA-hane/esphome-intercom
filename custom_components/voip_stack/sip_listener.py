@@ -1724,6 +1724,15 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         elif sent and int(result.status) >= 300:
             self._remember_completed(self.completed_invites, invite.call_id, pending)
             self._arm_invite_non2xx(invite.call_id, pending)
+            # The server transaction remains cached until ACK or Timer H, but
+            # the logical call has already reached a final response. Retire
+            # its runtime ownership now instead of keeping the phone busy for
+            # the lifetime of the transaction cache.
+            if self.on_terminated is not None:
+                await self.on_terminated(
+                    invite.call_id,
+                    result.decline_reason or "declined",
+                )
 
     def send_final_response(
         self,

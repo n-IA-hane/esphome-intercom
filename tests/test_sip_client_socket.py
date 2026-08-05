@@ -2481,6 +2481,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
     async def test_listener_replays_negative_invite_final_without_rerouting(self) -> None:
         sent: list[bytes] = []
         calls = 0
+        terminated: list[tuple[str, str]] = []
         fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
         offer = sdp.build_offer("192.168.1.48", "192.168.1.48", 40900, [fmt]).encode()
 
@@ -2489,11 +2490,15 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             calls += 1
             return sip_listener.SipInviteResult(486, "Busy Here", decline_reason="busy")
 
+        async def on_terminated(call_id: str, reason: str) -> None:
+            terminated.append((call_id, reason))
+
         endpoint = sip_listener.SipUdpEndpoint(
             local_ip="192.168.1.10",
             local_rtp_port=40000,
             supported_formats=[fmt],
             on_invite=on_invite,
+            on_terminated=on_terminated,
             send_override=lambda data, _addr: sent.append(data),
         )
         invite = sip.build_request(
@@ -2514,6 +2519,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         await endpoint._handle_datagram(invite, ("192.168.1.48", 5090))
 
         self.assertEqual(calls, 1)
+        self.assertEqual(terminated, [("busy-replay-call", "busy")])
         self.assertEqual([sip.parse_message(raw).status_code for raw in sent[-2:]], [486, 486])
         self.assertIn("busy-replay-call", endpoint.completed_invites)
         self.assertNotIn("busy-replay-call", endpoint.pending_invites)
