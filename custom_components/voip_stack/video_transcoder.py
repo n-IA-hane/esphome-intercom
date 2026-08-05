@@ -16,8 +16,8 @@ import shutil
 import socket
 from typing import TYPE_CHECKING
 
-from .const import DOMAIN
 from . import sdp
+from .runtime_data import require_runtime_data
 from .sdp import RtpVideoFormat
 from .session_cleanup import async_wait_for_cleanup
 
@@ -26,9 +26,6 @@ if TYPE_CHECKING:
 
 
 _LOGGER = logging.getLogger(__name__)
-_ACTIVE_TRANSCODER = "video_transcoder_active"
-_TRANSCODER_LOCK = "video_transcoder_lock"
-_TRANSCODER_RELEASE_EVENT = "video_transcoder_release_event"
 _MAX_FMTP_LENGTH = 1024
 _PROCESS_STOP_TIMEOUT = 0.25
 _FFMPEG_INPUT_BIND_TIMEOUT = 1.0
@@ -55,22 +52,20 @@ class VideoTranscoderError(RuntimeError):
 async def _claim_transcoder_slot(hass: HomeAssistant, owner: object) -> None:
     """Bound every FFmpeg video bridge to one integration-owned process slot."""
 
-    bucket = hass.data.setdefault(DOMAIN, {})
-    lock = bucket.setdefault(_TRANSCODER_LOCK, asyncio.Lock())
-    released = bucket.setdefault(_TRANSCODER_RELEASE_EVENT, asyncio.Event())
+    media = require_runtime_data(hass).media
     while True:
-        async with lock:
-            active = bucket.get(_ACTIVE_TRANSCODER)
+        async with media.transcoder_lock:
+            active = media.transcoder
             if active is None or active is owner:
-                bucket[_ACTIVE_TRANSCODER] = owner
-                released.clear()
+                media.transcoder = owner
+                media.transcoder_released.clear()
                 return
             if not bool(getattr(active, "stopping", False)):
                 raise VideoTranscoderError("another SIP video transcode is active")
-            released.clear()
+            media.transcoder_released.clear()
         try:
             await asyncio.wait_for(
-                released.wait(),
+                media.transcoder_released.wait(),
                 timeout=_PROCESS_STOP_TIMEOUT + 0.5,
             )
         except TimeoutError as err:
@@ -80,12 +75,11 @@ async def _claim_transcoder_slot(hass: HomeAssistant, owner: object) -> None:
 
 
 async def _release_transcoder_slot(hass: HomeAssistant, owner: object) -> None:
-    bucket = hass.data.setdefault(DOMAIN, {})
-    lock = bucket.setdefault(_TRANSCODER_LOCK, asyncio.Lock())
-    async with lock:
-        if bucket.get(_ACTIVE_TRANSCODER) is owner:
-            bucket.pop(_ACTIVE_TRANSCODER, None)
-            bucket.setdefault(_TRANSCODER_RELEASE_EVENT, asyncio.Event()).set()
+    media = require_runtime_data(hass).media
+    async with media.transcoder_lock:
+        if media.transcoder is owner:
+            media.transcoder = None
+            media.transcoder_released.set()
 
 
 async def _stop_process(process: asyncio.subprocess.Process | None) -> None:

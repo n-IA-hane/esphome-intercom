@@ -170,6 +170,7 @@ class _FakeHass:
                 owners_for=lambda channel: self.runtime.media.owners[channel],
                 sessions_for=lambda channel: self.runtime.media.sessions[channel],
                 identity_locks={},
+                transcoder=None,
             ),
         )
 
@@ -190,7 +191,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         bucket = hass.data[const.DOMAIN]
         hass.runtime.media.owners["audio"] = {"audio-call": object()}
         hass.runtime.media.owners["video"] = {"video-call": object()}
-        bucket["video_transcoder_active"] = types.SimpleNamespace(
+        hass.runtime.media.transcoder = types.SimpleNamespace(
             call_id="transcoded-call"
         )
 

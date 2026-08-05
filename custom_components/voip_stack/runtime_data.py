@@ -37,6 +37,9 @@ class BrowserMediaRuntime:
     )
     identity_locks: dict[str, Any] = field(default_factory=dict)
     shutdown: asyncio.Event = field(default_factory=asyncio.Event)
+    transcoder: Any | None = None
+    transcoder_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    transcoder_released: asyncio.Event = field(default_factory=asyncio.Event)
 
     def sessions_for(self, channel: str) -> dict[str, Any]:
         """Return live sessions for one supported media channel."""

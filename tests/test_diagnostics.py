@@ -25,6 +25,7 @@ def _media(*, active: bool = False):
         ),
         owners_for=lambda _channel: {},
         identity_locks={},
+        transcoder=None,
     )
 
 

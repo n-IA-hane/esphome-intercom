@@ -52,6 +52,16 @@ video_transcoder = _load("video_transcoder")
 class _Hass:
     def __init__(self) -> None:
         self.data: dict = {}
+        self.runtime = types.SimpleNamespace(
+            media=types.SimpleNamespace(
+                transcoder=None,
+                transcoder_lock=asyncio.Lock(),
+                transcoder_released=asyncio.Event(),
+            )
+        )
+
+
+video_transcoder.require_runtime_data = lambda hass: hass.runtime
 
 
 def _parse_multipart_jpegs(data: bytes) -> list[bytes]:
@@ -157,9 +167,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
     async def test_only_one_transcoder_can_own_the_bounded_slot(self) -> None:
         hass = _Hass()
         active = object()
-        hass.data[video_transcoder.DOMAIN] = {
-            video_transcoder._ACTIVE_TRANSCODER: active,
-        }
+        hass.runtime.media.transcoder = active
         contender = video_transcoder.FfmpegVideoTranscoder(
             hass=hass,
             call_id="second",
@@ -169,7 +177,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(video_transcoder.VideoTranscoderError, "another"):
             await contender.async_start()
         self.assertIs(
-            hass.data[video_transcoder.DOMAIN][video_transcoder._ACTIVE_TRANSCODER],
+            hass.runtime.media.transcoder,
             active,
         )
 
@@ -189,7 +197,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
         await claim
 
         self.assertIs(
-            hass.data[video_transcoder.DOMAIN][video_transcoder._ACTIVE_TRANSCODER],
+            hass.runtime.media.transcoder,
             contender,
         )
         await video_transcoder._release_transcoder_slot(hass, contender)
@@ -218,27 +226,20 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
         ):
             await normalizer.async_start()
             self.assertIs(
-                hass.data[video_transcoder.DOMAIN][
-                    video_transcoder._ACTIVE_TRANSCODER
-                ],
+                hass.runtime.media.transcoder,
                 normalizer,
             )
             with self.assertRaisesRegex(video_transcoder.VideoTranscoderError, "another"):
                 await contender.async_start()
             self.assertIs(
-                hass.data[video_transcoder.DOMAIN][
-                    video_transcoder._ACTIVE_TRANSCODER
-                ],
+                hass.runtime.media.transcoder,
                 normalizer,
             )
             await normalizer.async_close()
 
         process.terminate.assert_called_once()
         process.wait.assert_awaited_once()
-        self.assertNotIn(
-            video_transcoder._ACTIVE_TRANSCODER,
-            hass.data[video_transcoder.DOMAIN],
-        )
+        self.assertIsNone(hass.runtime.media.transcoder)
 
     async def test_invalid_jpeg_is_rejected_before_process_start(self) -> None:
         normalizer = video_transcoder.FfmpegJpegNormalizer(
@@ -271,10 +272,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
                     await normalizer.async_normalize(frame)
 
         spawn.assert_not_awaited()
-        self.assertNotIn(
-            video_transcoder._ACTIVE_TRANSCODER,
-            normalizer.hass.data.get(video_transcoder.DOMAIN, {}),
-        )
+        self.assertIsNone(normalizer.hass.runtime.media.transcoder)
 
     async def test_jpeg_normalizer_timeout_closes_process_and_releases_slot(
         self,
@@ -305,10 +303,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
         process.terminate.assert_called_once()
         process.wait.assert_awaited_once()
         self.assertIsNone(normalizer.process)
-        self.assertNotIn(
-            video_transcoder._ACTIVE_TRANSCODER,
-            hass.data[video_transcoder.DOMAIN],
-        )
+        self.assertIsNone(hass.runtime.media.transcoder)
 
     async def test_cancelled_jpeg_normalization_cleans_up_process_and_slot(
         self,
@@ -339,10 +334,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
         process.terminate.assert_called_once()
         process.wait.assert_awaited_once()
         self.assertIsNone(normalizer.process)
-        self.assertNotIn(
-            video_transcoder._ACTIVE_TRANSCODER,
-            hass.data[video_transcoder.DOMAIN],
-        )
+        self.assertIsNone(hass.runtime.media.transcoder)
 
     async def test_failed_start_releases_the_transcoder_slot(self) -> None:
         hass = _Hass()
@@ -359,10 +351,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaisesRegex(video_transcoder.VideoTranscoderError, "missing"):
                 await transcoder.async_start()
-        self.assertNotIn(
-            video_transcoder._ACTIVE_TRANSCODER,
-            hass.data[video_transcoder.DOMAIN],
-        )
+        self.assertIsNone(hass.runtime.media.transcoder)
 
     async def test_udp_readiness_waits_for_listener(self) -> None:
         process = types.SimpleNamespace(returncode=None, pid=123)
@@ -439,17 +428,12 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
         process.terminate.side_effect = ProcessLookupError
         process.wait = mock.AsyncMock(return_value=0)
         transcoder.process = process
-        hass.data[video_transcoder.DOMAIN] = {
-            video_transcoder._ACTIVE_TRANSCODER: transcoder,
-        }
+        hass.runtime.media.transcoder = transcoder
 
         await transcoder.async_close()
 
         process.wait.assert_awaited_once()
-        self.assertNotIn(
-            video_transcoder._ACTIVE_TRANSCODER,
-            hass.data[video_transcoder.DOMAIN],
-        )
+        self.assertIsNone(hass.runtime.media.transcoder)
 
     async def test_cancelled_start_releases_the_transcoder_slot(self) -> None:
         hass = _Hass()
@@ -479,10 +463,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await task
 
-        self.assertNotIn(
-            video_transcoder._ACTIVE_TRANSCODER,
-            hass.data[video_transcoder.DOMAIN],
-        )
+        self.assertIsNone(hass.runtime.media.transcoder)
 
     async def test_cancelled_close_still_kills_process_and_stderr_task(self) -> None:
         hass = _Hass()
@@ -514,9 +495,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
         stderr_task = asyncio.create_task(asyncio.Event().wait())
         transcoder.process = Process()  # type: ignore[assignment]
         transcoder._stderr_task = stderr_task  # noqa: SLF001
-        hass.data[video_transcoder.DOMAIN] = {
-            video_transcoder._ACTIVE_TRANSCODER: transcoder,
-        }
+        hass.runtime.media.transcoder = transcoder
 
         with mock.patch.object(video_transcoder, "_PROCESS_STOP_TIMEOUT", 0.01):
             task = asyncio.create_task(transcoder.async_close())
@@ -527,10 +506,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(killed)
         self.assertTrue(stderr_task.done())
-        self.assertNotIn(
-            video_transcoder._ACTIVE_TRANSCODER,
-            hass.data[video_transcoder.DOMAIN],
-        )
+        self.assertIsNone(hass.runtime.media.transcoder)
 
     async def test_close_cancels_and_joins_inflight_process_spawn(self) -> None:
         hass = _Hass()
@@ -616,10 +592,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(process.waited, 1)
         self.assertIsNone(transcoder.process)
         self.assertIsNone(transcoder._send_socket)  # noqa: SLF001
-        self.assertNotIn(
-            video_transcoder._ACTIVE_TRANSCODER,
-            hass.data[video_transcoder.DOMAIN],
-        )
+        self.assertIsNone(hass.runtime.media.transcoder)
         with self.assertRaisesRegex(video_transcoder.VideoTranscoderError, "closed"):
             await transcoder.async_start()
 
@@ -660,9 +633,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
         stderr_task = asyncio.create_task(asyncio.Event().wait())
         transcoder.process = process  # type: ignore[assignment]
         transcoder._stderr_task = stderr_task  # noqa: SLF001
-        hass.data[video_transcoder.DOMAIN] = {
-            video_transcoder._ACTIVE_TRANSCODER: transcoder,
-        }
+        hass.runtime.media.transcoder = transcoder
 
         with mock.patch.object(video_transcoder, "_PROCESS_STOP_TIMEOUT", 0.01):
             close = asyncio.create_task(transcoder.async_close())
@@ -679,10 +650,7 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(process.wait_calls, 2)
         self.assertTrue(stderr_task.done())
-        self.assertNotIn(
-            video_transcoder._ACTIVE_TRANSCODER,
-            hass.data[video_transcoder.DOMAIN],
-        )
+        self.assertIsNone(hass.runtime.media.transcoder)
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg is required for JPEG normalization")
@@ -773,18 +741,13 @@ class JpegNormalizerFfmpegTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(len(process_ids), 1)
             self.assertIs(
-                hass.data[video_transcoder.DOMAIN][
-                    video_transcoder._ACTIVE_TRANSCODER
-                ],
+                hass.runtime.media.transcoder,
                 normalizer,
             )
         finally:
             await normalizer.async_close()
 
-        self.assertNotIn(
-            video_transcoder._ACTIVE_TRANSCODER,
-            hass.data[video_transcoder.DOMAIN],
-        )
+        self.assertIsNone(hass.runtime.media.transcoder)
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg is required for the transcode qualification")

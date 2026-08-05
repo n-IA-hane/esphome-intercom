@@ -162,6 +162,7 @@ class _FakeHass:
                 sessions_for=lambda _channel: {},
                 owners_for=lambda _channel: {},
                 identity_locks={},
+                transcoder=None,
             ),
             call_artifacts=types.SimpleNamespace(
                 forward_tasks={},

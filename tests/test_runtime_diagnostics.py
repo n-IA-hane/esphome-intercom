@@ -54,6 +54,7 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
             sessions_for=lambda channel: sessions[channel],
             owners_for=lambda channel: owners[channel],
             identity_locks={"phone|call-1": object()},
+            transcoder=None,
         )
 
         snapshot = diagnostics.runtime_resource_snapshot(

@@ -933,7 +933,9 @@ def _ha_softphone_state(
     registry = call_registry(hass)
     media_debug = dict(store.get("media_debug") or {}) if debug_mode else {}
     if debug_mode:
-        active_transcoder = bucket.get("video_transcoder_active")
+        active_transcoder = (
+            entry_runtime.media.transcoder if entry_runtime is not None else None
+        )
         media_debug.update(
             {
                 "call_registry": registry.snapshot(),

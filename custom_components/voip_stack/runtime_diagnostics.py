@@ -88,7 +88,9 @@ def runtime_resource_snapshot(
                 getattr(call_artifacts, "deadlines", {})
             ),
             "runtime_tasks": _active_task_count(bucket.get("runtime_tasks", set())),
-            "video_transcoders": int(bucket.get("video_transcoder_active") is not None),
+            "video_transcoders": int(
+                browser_media is not None and browser_media.transcoder is not None
+            ),
         }
     )
     call_scoped_keys = (
