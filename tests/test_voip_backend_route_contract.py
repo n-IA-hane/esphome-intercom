@@ -1445,7 +1445,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             )
         ]
         self.assertIn(
-            "resolved_id = _normalise_endpoint_id(endpoint.endpoint_id)",
+            "resolved_id = endpoint.endpoint_id",
             selector,
         )
         self.assertIn("endpoint = preferred_browser_phone(hass)", selector)

@@ -199,12 +199,12 @@ class GroupCallMatrixTest(unittest.TestCase):
             call_id="transcoded-call"
         )
 
-        normal = websocket_api._ha_softphone_state(hass)
+        normal = websocket_api._ha_softphone_state(hass, "default")
         self.assertFalse(normal["debug_mode"])
         self.assertEqual(normal["media_debug"], {})
 
         with patch.object(websocket_api, "current_debug_mode", return_value=True):
-            debug = websocket_api._ha_softphone_state(hass)
+            debug = websocket_api._ha_softphone_state(hass, "default")
 
         self.assertTrue(debug["debug_mode"])
         self.assertEqual(debug["media_debug"]["audio_ws_owner_call_ids"], ["audio-call"])
@@ -250,13 +250,14 @@ class GroupCallMatrixTest(unittest.TestCase):
         websocket_api._set_ha_softphone_call_state(
             hass,
             fsm.CallState.RINGING.value,
+            endpoint_id="default",
             call_id="video-call",
             direction="incoming",
             caller="Door",
             callee="Casa",
             video_offered=True,
         )
-        offered = websocket_api._ha_softphone_state(hass)
+        offered = websocket_api._ha_softphone_state(hass, "default")
         self.assertTrue(offered["video_requested"])
         self.assertFalse(offered["video_negotiated"])
         self.assertEqual(offered["video_status"], "offered")
@@ -264,6 +265,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         websocket_api._set_ha_softphone_call_state(
             hass,
             fsm.CallState.IN_CALL.value,
+            endpoint_id="default",
             call_id="video-call",
             direction="incoming",
             caller="Door",
@@ -273,7 +275,7 @@ class GroupCallMatrixTest(unittest.TestCase):
             video_status="degraded",
             video_failure_reason="local_video_resources_unavailable",
         )
-        degraded = websocket_api._ha_softphone_state(hass)
+        degraded = websocket_api._ha_softphone_state(hass, "default")
         self.assertEqual(degraded["video_status"], "degraded")
         self.assertEqual(
             degraded["video_failure_reason"],
@@ -283,6 +285,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         websocket_api._set_ha_softphone_call_state(
             hass,
             fsm.CallState.IN_CALL.value,
+            endpoint_id="default",
             call_id="video-call",
             direction="incoming",
             caller="Door",
@@ -292,7 +295,7 @@ class GroupCallMatrixTest(unittest.TestCase):
             video_status="active",
             video_failure_reason="",
         )
-        recovered = websocket_api._ha_softphone_state(hass)
+        recovered = websocket_api._ha_softphone_state(hass, "default")
         self.assertEqual(recovered["video_status"], "active")
         self.assertEqual(recovered["video_failure_reason"], "")
 
@@ -496,6 +499,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         websocket_api._publish_ha_softphone_state(
             hass,
             {"call_id": "call-1", "state": "calling"},
+            endpoint_id="default",
         )
 
         self.assertTrue(hass.bus.contexts)
@@ -711,6 +715,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         websocket_api._set_ha_softphone_call_state(
             hass,
             fsm.CallState.IN_CALL.value,
+            endpoint_id="default",
             session_device_id=const.HA_SOFTPHONE_DEVICE_ID,
             caller="Casa",
             callee="RG Casa",
@@ -724,7 +729,7 @@ class GroupCallMatrixTest(unittest.TestCase):
             last_sip_event="SIP_RESPONSE",
             sip_status_code=200,
         )
-        state = websocket_api._ha_softphone_state(hass)
+        state = websocket_api._ha_softphone_state(hass, "default")
         self.assertEqual(state["callee"], "RG Casa")
         self.assertEqual(state["peer_name"], "Spotpear")
         self.assertEqual(state["dialed_target"], "RG Casa")
@@ -732,8 +737,13 @@ class GroupCallMatrixTest(unittest.TestCase):
         self.assertEqual(state["answered_by"], "Spotpear")
         self.assertEqual(state["contact"], "Spotpear")
 
-        websocket_api._set_ha_softphone_call_state(hass, fsm.CallState.IDLE.value, reason="local_hangup")
-        idle = websocket_api._ha_softphone_state(hass)
+        websocket_api._set_ha_softphone_call_state(
+            hass,
+            fsm.CallState.IDLE.value,
+            endpoint_id="default",
+            reason="local_hangup",
+        )
+        idle = websocket_api._ha_softphone_state(hass, "default")
         self.assertEqual(idle["state"], fsm.CallState.IDLE.value)
         self.assertEqual(idle["dialed_target"], "RG Casa")
         self.assertEqual(idle["connected_party"], "")
@@ -744,6 +754,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         websocket_api._set_ha_softphone_call_state(
             hass,
             fsm.CallState.IN_CALL.value,
+            endpoint_id="default",
             session_device_id=const.HA_SOFTPHONE_DEVICE_ID,
             caller="Casa",
             callee="RG Casa",
@@ -757,7 +768,7 @@ class GroupCallMatrixTest(unittest.TestCase):
             last_sip_event="SIP_RESPONSE",
             sip_status_code=200,
         )
-        state = websocket_api._ha_softphone_state(hass)
+        state = websocket_api._ha_softphone_state(hass, "default")
         self.assertEqual(state["callee"], "RG Casa")
         self.assertEqual(state["peer_name"], "Waveshare S3 Audio")
         self.assertEqual(state["dialed_target"], "RG Casa")
@@ -768,6 +779,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         websocket_api._set_ha_softphone_call_state(
             hass,
             fsm.CallState.RINGING.value,
+            endpoint_id="default",
             session_device_id=const.HA_SOFTPHONE_DEVICE_ID,
             caller="Waveshare S3 Audio",
             callee="666",
@@ -778,6 +790,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         websocket_api._set_ha_softphone_call_state(
             hass,
             fsm.CallState.IN_CALL.value,
+            endpoint_id="default",
             session_device_id=const.HA_SOFTPHONE_DEVICE_ID,
             caller="Waveshare S3 Audio",
             callee="666",
@@ -789,6 +802,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         websocket_api._set_ha_softphone_call_state(
             hass,
             fsm.CallState.IDLE.value,
+            endpoint_id="default",
             session_device_id=const.HA_SOFTPHONE_DEVICE_ID,
             caller="Waveshare S3 Audio",
             callee="666",
@@ -797,7 +811,7 @@ class GroupCallMatrixTest(unittest.TestCase):
             call_id="ws3-666",
             reason="local_hangup",
         )
-        idle = websocket_api._ha_softphone_state(hass)
+        idle = websocket_api._ha_softphone_state(hass, "default")
         self.assertEqual(idle["peer_name"], "Waveshare S3 Audio")
         self.assertEqual(idle["dialed_target"], "666")
         self.assertEqual(idle["terminal_reason"], "local_hangup")
@@ -813,6 +827,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         websocket_api._set_ha_softphone_call_state(
             hass,
             fsm.CallState.IN_CALL.value,
+            endpoint_id="default",
             call_id="finished-call",
             direction="incoming",
             caller="Door",
@@ -827,6 +842,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         websocket_api._set_ha_softphone_call_state(
             hass,
             fsm.CallState.IDLE.value,
+            endpoint_id="default",
             call_id="finished-call",
             direction="incoming",
             caller="Door",
@@ -837,13 +853,14 @@ class GroupCallMatrixTest(unittest.TestCase):
         websocket_api._set_ha_softphone_call_state(
             hass,
             fsm.CallState.IN_CALL.value,
+            endpoint_id="default",
             call_id="finished-call",
             direction="incoming",
             caller="Door",
             callee="Casa",
         )
 
-        state = websocket_api._ha_softphone_state(hass)
+        state = websocket_api._ha_softphone_state(hass, "default")
         self.assertEqual(state["state"], fsm.CallState.IDLE.value)
         self.assertEqual(state["call_id"], "finished-call")
         self.assertEqual(state["terminal_reason"], "remote_hangup")

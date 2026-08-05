@@ -37,7 +37,6 @@ from .const import (
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState, TerminalReason, sip_phone_state, sip_public_state as _sip_public_state
 from .phone_endpoint import (
-    DEFAULT_ENDPOINT_ID,
     EndpointAvailability,
     EndpointKind,
     PhoneEndpoint,
@@ -301,20 +300,22 @@ def _fire_call_event(hass: HomeAssistant, payload: dict[str, Any], scope: str) -
     return event
 
 
-def _normalise_endpoint_id(value: object) -> str:
-    """Return a stable browser endpoint id."""
-    return str(value or DEFAULT_ENDPOINT_ID).strip() or DEFAULT_ENDPOINT_ID
+def _endpoint_store_id(value: object) -> str:
+    """Require the real browser endpoint that owns one state store."""
+
+    endpoint_id = str(value or "").strip()
+    if not endpoint_id:
+        raise ValueError("a Home Assistant phone endpoint is required")
+    return endpoint_id
 
 
-def _ha_softphone_store(
-    hass: HomeAssistant, endpoint_id: str = DEFAULT_ENDPOINT_ID
-) -> dict[str, Any]:
+def _ha_softphone_store(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]:
     """Return one endpoint-scoped HA softphone runtime store.
 
     Runtime state has one authoritative endpoint-keyed mapping.
     """
     stores = require_runtime_data(hass).softphones
-    key = _normalise_endpoint_id(endpoint_id)
+    key = _endpoint_store_id(endpoint_id)
     store = stores.setdefault(key, {"dnd": False})
     store.setdefault("endpoint_id", key)
     endpoint = endpoint_directory(hass).get(key)
@@ -326,7 +327,6 @@ def _ha_softphone_store(
 
 def _ha_softphone_stores(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
     """Return every logical browser softphone store."""
-    _ha_softphone_store(hass)
     return require_runtime_data(hass).softphones
 
 
@@ -337,7 +337,8 @@ def _endpoint_registry(hass: HomeAssistant):
 
 def _browser_endpoint(hass: HomeAssistant, endpoint_id: object):
     registry = _endpoint_registry(hass)
-    endpoint = registry.get(_normalise_endpoint_id(endpoint_id)) if registry else None
+    selector = str(endpoint_id or "").strip()
+    endpoint = registry.get(selector) if registry is not None and selector else None
     if endpoint is not None and endpoint.kind is EndpointKind.BROWSER:
         return endpoint
     return None
@@ -350,7 +351,7 @@ def _update_browser_presence(
     delta: int,
 ) -> None:
     """Track connected cards and expose browser reachability to routing."""
-    endpoint_id = _normalise_endpoint_id(endpoint_id)
+    endpoint_id = _endpoint_store_id(endpoint_id)
     counts = require_runtime_data(hass).softphone_presence
     previous = int(counts.get(endpoint_id, 0) or 0)
     current = max(0, previous + int(delta))
@@ -434,10 +435,10 @@ def _release_ha_softphone_claim(
     call_id: str,
     *,
     destination: str = "",
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
 ) -> bool:
     """Release HA's ringing ownership when the same call is routed elsewhere."""
-    endpoint_id = _normalise_endpoint_id(endpoint_id)
+    endpoint_id = _endpoint_store_id(endpoint_id)
     store = _ha_softphone_store(hass, endpoint_id)
     if str(store.get("call_id") or "") != str(call_id or ""):
         return False
@@ -460,9 +461,7 @@ def _release_ha_softphone_claim(
     return True
 
 
-def _ha_softphone_groups(
-    hass: HomeAssistant, endpoint_id: str = DEFAULT_ENDPOINT_ID
-) -> dict[str, Any]:
+def _ha_softphone_groups(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]:
     store = _ha_softphone_store(hass, endpoint_id)
     groups = store.setdefault("groups", {})
     return {
@@ -472,30 +471,24 @@ def _ha_softphone_groups(
     }
 
 
-def _ha_softphone_extension(
-    hass: HomeAssistant, endpoint_id: str = DEFAULT_ENDPOINT_ID
-) -> str:
+def _ha_softphone_extension(hass: HomeAssistant, endpoint_id: str) -> str:
     return _clean_endpoint_field(
         _ha_softphone_store(hass, endpoint_id).get("extension")
     )
 
 
-def _ha_softphone_auto_answer(
-    hass: HomeAssistant, endpoint_id: str = DEFAULT_ENDPOINT_ID
-) -> bool:
+def _ha_softphone_auto_answer(hass: HomeAssistant, endpoint_id: str) -> bool:
     return bool(_ha_softphone_store(hass, endpoint_id).get("auto_answer", False))
 
 
-def _ha_softphone_send_video(
-    hass: HomeAssistant, endpoint_id: str = DEFAULT_ENDPOINT_ID
-) -> bool:
+def _ha_softphone_send_video(hass: HomeAssistant, endpoint_id: str) -> bool:
     return bool(_ha_softphone_store(hass, endpoint_id).get("send_video", False))
 
 
 async def async_set_ha_softphone_settings(
     hass: HomeAssistant,
     *,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
     extension: object = None,
     ring_group: object = None,
     conference_group: object = None,
@@ -503,7 +496,7 @@ async def async_set_ha_softphone_settings(
     auto_answer: object = None,
     send_video: object = None,
 ) -> dict[str, Any]:
-    endpoint_id = _normalise_endpoint_id(endpoint_id)
+    endpoint_id = _endpoint_store_id(endpoint_id)
     store = _ha_softphone_store(hass, endpoint_id)
     if extension is not None:
         store["extension"] = _clean_endpoint_field(extension)
@@ -625,10 +618,11 @@ async def _async_shutdown_all(hass: HomeAssistant) -> None:
 async def _async_load_ha_softphone_store(
     hass: HomeAssistant,
     config_entry: object | None = None,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    *,
+    endpoint_id: str,
     endpoint_data: dict[str, Any] | None = None,
 ) -> None:
-    endpoint_id = _normalise_endpoint_id(endpoint_id)
+    endpoint_id = _endpoint_store_id(endpoint_id)
     runtime = _ha_softphone_store(hass, endpoint_id)
     if config_entry is not None:
         runtime["config_entry_id"] = str(getattr(config_entry, "entry_id", ""))
@@ -668,9 +662,9 @@ async def _async_load_ha_softphone_store(
 
 
 async def _async_save_ha_softphone_store(
-    hass: HomeAssistant, endpoint_id: str = DEFAULT_ENDPOINT_ID
+    hass: HomeAssistant, endpoint_id: str
 ) -> None:
-    endpoint_id = _normalise_endpoint_id(endpoint_id)
+    endpoint_id = _endpoint_store_id(endpoint_id)
     runtime = _ha_softphone_store(hass, endpoint_id)
     groups = _ha_softphone_groups(hass, endpoint_id)
     persisted = {
@@ -693,9 +687,7 @@ async def _async_save_ha_softphone_store(
         )
 
 
-def _ha_softphone_dnd(
-    hass: HomeAssistant, endpoint_id: str = DEFAULT_ENDPOINT_ID
-) -> bool:
+def _ha_softphone_dnd(hass: HomeAssistant, endpoint_id: str) -> bool:
     return bool(_ha_softphone_store(hass, endpoint_id).get("dnd"))
 
 
@@ -896,10 +888,8 @@ def _sip_runtime_snapshot(
     return data
 
 
-def _ha_softphone_state(
-    hass: HomeAssistant, endpoint_id: str = DEFAULT_ENDPOINT_ID
-) -> dict[str, Any]:
-    endpoint_id = _normalise_endpoint_id(endpoint_id)
+def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]:
+    endpoint_id = _endpoint_store_id(endpoint_id)
     store = _ha_softphone_store(hass, endpoint_id)
     endpoint = _browser_endpoint(hass, endpoint_id)
     entry_runtime = runtime_data(hass)
@@ -1110,10 +1100,10 @@ def _publish_ha_softphone_state(
     hass: HomeAssistant,
     state: dict[str, Any] | None = None,
     *,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
 ) -> None:
     """Publish one complete authoritative HA softphone snapshot."""
-    endpoint_id = _normalise_endpoint_id(
+    endpoint_id = _endpoint_store_id(
         (state or {}).get("endpoint_id") or endpoint_id
     )
     payload = (
@@ -1144,10 +1134,10 @@ def _set_ha_softphone_call_state(
     peer_name: str = "",
     direction: str = "",
     call_id: str = "",
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
     **extra: Any,
 ) -> None:
-    endpoint_id = _normalise_endpoint_id(endpoint_id)
+    endpoint_id = _endpoint_store_id(endpoint_id)
     store = _ha_softphone_store(hass, endpoint_id)
     state = _sip_public_state(state)
     local_name = str(extra.pop("local_name", _ha_peer_name(hass)))
@@ -1416,9 +1406,9 @@ def _set_sip_bridge_call_state(
 
 def _ha_softphone_device(
     hass: HomeAssistant,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
 ) -> dict[str, Any]:
-    endpoint_id = _normalise_endpoint_id(endpoint_id)
+    endpoint_id = _endpoint_store_id(endpoint_id)
     state = _ha_softphone_state(hass, endpoint_id)
     return {
         "endpoint_id": endpoint_id,
@@ -1442,13 +1432,13 @@ def _ha_softphone_device(
 def _ha_softphone_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
     registry = _endpoint_registry(hass)
     if registry is None:
-        return [_ha_softphone_device(hass)]
+        return []
     devices = [
         _ha_softphone_device(hass, endpoint.endpoint_id)
         for endpoint in registry.endpoints
         if endpoint.kind is EndpointKind.BROWSER
     ]
-    return devices or [_ha_softphone_device(hass)]
+    return devices
 
 
 async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
@@ -1568,17 +1558,17 @@ def _endpoint_id_from_selector(
         if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
             unresolved.append(device)
             continue
-        selected_ids.add(_normalise_endpoint_id(endpoint.endpoint_id))
+        selected_ids.add(endpoint.endpoint_id)
 
     for entity in _values(entity_id):
         endpoint = _by_current_entity_id(entity)
         if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
             unresolved.append(entity)
             continue
-        selected_ids.add(_normalise_endpoint_id(endpoint.endpoint_id))
+        selected_ids.add(endpoint.endpoint_id)
 
     if explicit:
-        resolved_id = _normalise_endpoint_id(explicit)
+        resolved_id = _endpoint_store_id(explicit)
         if registry is not None:
             endpoint = registry.get(resolved_id)
             if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
@@ -1586,7 +1576,7 @@ def _endpoint_id_from_selector(
             # EndpointRegistry lookup is case-insensitive; every downstream
             # store, event and presence key must nevertheless use the stable
             # canonical identity owned by the registry.
-            resolved_id = _normalise_endpoint_id(endpoint.endpoint_id)
+            resolved_id = endpoint.endpoint_id
         else:
             raise ValueError(f"Unknown Home Assistant phone endpoint: {explicit}")
         if unresolved:
@@ -1664,7 +1654,7 @@ def websocket_subscribe_call_events(
         if requested_endpoint:
             if event_endpoint and event_endpoint != requested_endpoint:
                 return
-            if not event_endpoint and requested_endpoint != DEFAULT_ENDPOINT_ID:
+            if not event_endpoint:
                 return
         connection.send_event(msg_id, {"event_type": CALL_EVENT, "data": event.data})
 
@@ -1708,7 +1698,7 @@ def websocket_subscribe_ha_softphone_state(
 
     @callback
     def forward_state(event: Event) -> None:
-        event_endpoint = _normalise_endpoint_id(event.data.get("endpoint_id"))
+        event_endpoint = str(event.data.get("endpoint_id") or "").strip()
         if event_endpoint != requested_endpoint:
             return
         connection.send_event(msg_id, event.data)
