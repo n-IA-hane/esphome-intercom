@@ -48,6 +48,11 @@ def _load_esphome_actions(get_devices: AsyncMock):
             )
         ),
         f"{PKG_NAME}.phone_endpoint": types.SimpleNamespace(EndpointKind=EndpointKind),
+        f"{PKG_NAME}.runtime_data": types.SimpleNamespace(
+            endpoint_directory=lambda hass: hass.data.get("voip_stack", {}).get(
+                "endpoint_registry"
+            )
+        ),
         f"{PKG_NAME}.websocket_api": types.SimpleNamespace(
             _get_voip_devices=get_devices
         ),

@@ -40,6 +40,10 @@ def _load_phonebook_services(monkeypatch, route_conflicts=None):
     )
     runtime = types.ModuleType(f"{PACKAGE}.phonebook_runtime")
     runtime.push_roster_json_to_esps = lambda *_args, **_kwargs: None
+    runtime_data = types.ModuleType(f"{PACKAGE}.runtime_data")
+    runtime_data.endpoint_directory = lambda hass: hass.data.get(
+        "voip_stack", {}
+    ).get("endpoint_registry", types.SimpleNamespace(endpoints=()))
     roster = types.ModuleType(f"{PACKAGE}.roster")
     roster.RosterEntry = object
     roster.normalize_roster_key = lambda value: "".join(
@@ -49,7 +53,15 @@ def _load_phonebook_services(monkeypatch, route_conflicts=None):
     store = types.ModuleType(f"{PACKAGE}.store")
     store.manual_roster_entries = lambda _hass: []
     store.store_manual_roster_entries = lambda _hass, _entries: None
-    for dependency in (config, const, validation, runtime, roster, store):
+    for dependency in (
+        config,
+        const,
+        validation,
+        runtime,
+        runtime_data,
+        roster,
+        store,
+    ):
         monkeypatch.setitem(sys.modules, dependency.__name__, dependency)
 
     name = f"{PACKAGE}.phonebook_services"

@@ -99,6 +99,10 @@ def _load_service_endpoints(
     phone_endpoint.DEFAULT_ENDPOINT_ID = "default"
     phone_endpoint.EndpointKind = EndpointKind
     phone_endpoint.PhoneEndpoint = PhoneEndpoint
+    runtime_data = types.ModuleType(f"{PKG_NAME}.runtime_data")
+    runtime_data.endpoint_directory = lambda hass: hass.data.get(
+        "voip_stack", {}
+    ).get("endpoint_registry", _Registry())
 
     module_name = f"{PKG_NAME}.service_endpoints"
     spec = importlib.util.spec_from_file_location(
@@ -115,6 +119,7 @@ def _load_service_endpoints(
         authorization.__name__: authorization,
         const.__name__: const,
         phone_endpoint.__name__: phone_endpoint,
+        runtime_data.__name__: runtime_data,
     }
     with patch.dict(sys.modules, dependencies):
         sys.modules[module_name] = module
@@ -274,18 +279,20 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "phone_not_integration_owned",
         )
 
-    def test_configured_selector_handles_missing_registry_and_default_alias(self) -> None:
-        self.assertEqual(
-            self.module.service_configured_endpoint(self.hass, _Call()),
-            ("default", None),
-        )
-        self.assertEqual(
+    def test_configured_selector_rejects_an_unavailable_default(self) -> None:
+        with self.assertRaisesRegex(
+            ServiceValidationError,
+            "default Home Assistant phone is unavailable",
+        ):
+            self.module.service_configured_endpoint(self.hass, _Call())
+        with self.assertRaisesRegex(
+            ServiceValidationError,
+            "Unknown Home Assistant phone device",
+        ):
             self.module.service_configured_endpoint(
                 self.hass,
                 _Call(device_id="ha-softphone"),
-            ),
-            ("default", None),
-        )
+            )
         with self.assertRaisesRegex(
             ServiceValidationError,
             "Unknown Home Assistant phone device",

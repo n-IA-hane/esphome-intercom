@@ -15,6 +15,7 @@ from .const import DOMAIN, INTEGRATION_VERSION
 from .runtime_diagnostics import runtime_resource_snapshot
 from .runtime_data import (
     call_projection,
+    endpoint_directory,
     runtime_data,
     sip_endpoint_manager,
     sip_trunk,
@@ -76,20 +77,20 @@ def _enum_value(value: object) -> str:
     return str(getattr(value, "value", value) or "").strip().lower()
 
 
-def _endpoints(bucket: dict[str, Any]) -> tuple[Any, ...]:
-    registry = bucket.get("endpoint_registry")
+def _endpoints(hass: HomeAssistant) -> tuple[Any, ...]:
+    registry = endpoint_directory(hass)
     values = getattr(registry, "endpoints", ())
     return tuple(values) if values is not None else ()
 
 
-def _endpoint_summary(bucket: dict[str, Any]) -> dict[str, Any]:
+def _endpoint_summary(hass: HomeAssistant) -> dict[str, Any]:
     """Aggregate endpoints without exposing routable identities."""
 
     kinds: Counter[str] = Counter()
     availability: Counter[str] = Counter()
     capabilities: Counter[str] = Counter()
     active = 0
-    for endpoint in _endpoints(bucket):
+    for endpoint in _endpoints(hass):
         kinds[_enum_value(getattr(endpoint, "kind", "unknown")) or "unknown"] += 1
         availability[
             _enum_value(getattr(endpoint, "availability", "unknown")) or "unknown"
@@ -150,7 +151,7 @@ def _trunk_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, Any
 def _runtime_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, Any]:
     runtime = runtime_data(hass)
     return {
-        "endpoints": _endpoint_summary(bucket),
+        "endpoints": _endpoint_summary(hass),
         "signaling": _signaling_summary(hass),
         "trunk": _trunk_summary(hass, bucket),
         "resources": runtime_resource_snapshot(
@@ -162,8 +163,8 @@ def _runtime_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, A
     }
 
 
-def _endpoint_for_device(bucket: dict[str, Any], device: DeviceEntry) -> Any | None:
-    registry = bucket.get("endpoint_registry")
+def _endpoint_for_device(hass: HomeAssistant, device: DeviceEntry) -> Any | None:
+    registry = endpoint_directory(hass)
     by_device_id = getattr(registry, "by_device_id", None)
     if callable(by_device_id) and (endpoint := by_device_id(device.id)) is not None:
         return endpoint
@@ -179,8 +180,8 @@ def _endpoint_for_device(bucket: dict[str, Any], device: DeviceEntry) -> Any | N
     return None
 
 
-def _device_summary(bucket: dict[str, Any], device: DeviceEntry) -> dict[str, Any]:
-    endpoint = _endpoint_for_device(bucket, device)
+def _device_summary(hass: HomeAssistant, device: DeviceEntry) -> dict[str, Any]:
+    endpoint = _endpoint_for_device(hass, device)
     if endpoint is None:
         return {"found": False}
     kind = _enum_value(getattr(endpoint, "kind", "unknown"))
@@ -237,7 +238,7 @@ async def async_get_device_diagnostics(
             "version": INTEGRATION_VERSION,
             "entry_state": _enum_value(getattr(entry, "state", "unknown")),
         },
-        "phone": _device_summary(bucket, device),
+        "phone": _device_summary(hass, device),
         "resources": runtime_resource_snapshot(
             bucket,
             call_projection(hass) or bucket.get("call_registry"),

@@ -115,6 +115,7 @@ endpoint_lifecycle.sip_endpoint_manager = lambda hass: _test_runtime_component(
 )
 endpoint_registry_module = _load_module("endpoint_registry")
 phone_endpoint = _load_module("phone_endpoint")
+runtime_data_module = _load_module("runtime_data")
 trunk_runtime = _load_module("trunk_runtime")
 trunk_runtime.sip_trunk = lambda hass: _test_runtime_component(hass, "sip_trunk")
 sip_listener = _load_module("sip_listener")
@@ -135,12 +136,41 @@ class _FakeBus:
 
 class _FakeHass:
     def __init__(self) -> None:
+        endpoints = endpoint_registry_module.EndpointRegistry()
+        endpoints.register(
+            phone_endpoint.PhoneEndpoint(
+                endpoint_id="default",
+                name="HA",
+                kind=phone_endpoint.EndpointKind.BROWSER,
+                device_id="ha-softphone",
+                availability=phone_endpoint.EndpointAvailability.AVAILABLE,
+            )
+        )
         self.data: dict = {const.DOMAIN: {"transport_config": {"sip_port": 5060, "rtp_port": _free_rtp_base()}}}
         self.config = types.SimpleNamespace(location_name="HA")
         self.bus = _FakeBus()
+        self.runtime = types.SimpleNamespace(
+            tasks=set(),
+            calls=None,
+            endpoints=endpoints,
+            sip=None,
+        )
 
     def async_create_task(self, coro):
         return asyncio.create_task(coro)
+
+
+def _test_runtime(hass):
+    registry = hass.data[const.DOMAIN].get("endpoint_registry")
+    if registry is not None:
+        hass.runtime.endpoints = registry
+    hass.runtime.sip = hass.data[const.DOMAIN].get("pbx_runtime")
+    return hass.runtime
+
+
+runtime_data_module.require_runtime_data = _test_runtime
+runtime_data_module.runtime_data = _test_runtime
+endpoint_lifecycle.require_runtime_data = _test_runtime
 
 
 def _free_rtp_base() -> int:
@@ -879,7 +909,10 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("m=audio", result.answer_sdp)
         self.assertIn("m=video 0 RTP/AVP 102", result.answer_sdp)
 
-        joined = manager.join_ha_softphone("Conference")
+        joined = manager.join_ha_softphone(
+            "Conference",
+            call_id=next(iter(manager.ha_calls)),
+        )
         self.assertIsNotNone(joined)
         assert joined is not None
         softphone_call_id, queue = joined

@@ -12,7 +12,12 @@ from homeassistant.core import HomeAssistant
 from .call_registry import CallRegistry
 from .const import DOMAIN
 from .media_ports import release_media_reservation
-from .runtime_data import conference_component, runtime_data, sip_endpoint_manager
+from .runtime_data import (
+    conference_component,
+    require_runtime_data,
+    runtime_data,
+    sip_endpoint_manager,
+)
 from .session_cleanup import async_cleanup_sip_runtime, async_wait_for_cleanup
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,12 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 def create_runtime_task(hass: HomeAssistant, coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
     """Create a detached integration task that is cancelled on endpoint reload."""
 
-    runtime = runtime_data(hass)
-    tasks: set[asyncio.Task] = (
-        runtime.tasks
-        if runtime is not None
-        else hass.data.setdefault(DOMAIN, {}).setdefault("runtime_tasks", set())
-    )
+    tasks = require_runtime_data(hass).tasks
     task = hass.async_create_task(coro)
     tasks.add(task)
     task.add_done_callback(tasks.discard)
@@ -34,14 +34,9 @@ def create_runtime_task(hass: HomeAssistant, coro: Coroutine[Any, Any, Any]) -> 
 
 
 async def cancel_runtime_tasks(hass: HomeAssistant) -> None:
-    runtime = runtime_data(hass)
-    tasks = set(
-        runtime.tasks
-        if runtime is not None
-        else hass.data.setdefault(DOMAIN, {}).pop("runtime_tasks", set())
-    )
-    if runtime is not None:
-        runtime.tasks.clear()
+    runtime = require_runtime_data(hass)
+    tasks = set(runtime.tasks)
+    runtime.tasks.clear()
     current = asyncio.current_task()
     for task in tasks:
         if task is not current:
@@ -51,19 +46,11 @@ async def cancel_runtime_tasks(hass: HomeAssistant) -> None:
 
 
 def call_registry(hass: HomeAssistant) -> CallRegistry:
-    runtime = runtime_data(hass)
-    if runtime is not None:
-        if runtime.calls is None:
-            runtime.calls = CallRegistry()
-        runtime.calls.bind_endpoint_registry(runtime.endpoints)
-        return runtime.calls
-    bucket = hass.data.setdefault(DOMAIN, {})
-    registry = bucket.get("call_registry")
-    if not isinstance(registry, CallRegistry):
-        registry = CallRegistry()
-        bucket["call_registry"] = registry
-    registry.bind_endpoint_registry(bucket.get("endpoint_registry"))
-    return registry
+    runtime = require_runtime_data(hass)
+    if runtime.calls is None:
+        runtime.calls = CallRegistry()
+    runtime.calls.bind_endpoint_registry(runtime.endpoints)
+    return runtime.calls
 
 
 async def async_stop_sip_endpoint(hass: HomeAssistant) -> None:

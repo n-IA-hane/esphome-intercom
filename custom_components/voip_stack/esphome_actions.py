@@ -7,9 +7,9 @@ import logging
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
-from .const import DOMAIN
 from .device_resolver import get_resolver
 from .phone_endpoint import EndpointKind
+from .runtime_data import endpoint_directory
 from .websocket_api import _get_voip_devices
 
 _LOGGER = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ _LOGGER = logging.getLogger(__name__)
 
 def _registry_endpoint(hass: HomeAssistant, selector: str):
     """Resolve a selected logical phone without assuming its transport."""
-    registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
+    registry = endpoint_directory(hass)
     by_device_id = getattr(registry, "by_device_id", None)
     endpoint = by_device_id(selector) if callable(by_device_id) else None
     resolve = getattr(registry, "resolve", None)

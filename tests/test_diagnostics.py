@@ -69,6 +69,9 @@ def _load_module(monkeypatch):
         "sip_endpoint"
     )
     module.sip_trunk = lambda hass: hass.data.get("voip_stack", {}).get("sip_trunk")
+    module.endpoint_directory = lambda hass: hass.data.get("voip_stack", {}).get(
+        "endpoint_registry", _Registry([])
+    )
     return module
 
 

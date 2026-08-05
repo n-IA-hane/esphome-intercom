@@ -14,11 +14,10 @@ from .audio_format import (
     parse_audio_format_list,
 )
 from .config import assist_config, trunk_config, trunk_enabled
-from .const import DOMAIN
 from .peer import Peer
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .router import resolve_ha_router
-from .runtime_data import sip_trunk
+from .runtime_data import endpoint_directory, sip_trunk
 from .store import manual_roster_entries
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,9 +68,7 @@ def logical_endpoint_for_member(
 ):
     """Resolve a dial-plan member to its transport-independent endpoint."""
 
-    endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-    if endpoint_registry is None:
-        return None
+    endpoint_registry = endpoint_directory(hass)
     entry = next(
         (
             candidate
@@ -266,7 +263,7 @@ def sip_target_audio_profile(
 
 
 def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries) -> list:
-    from .const import CONF_ASSIST_ENDPOINT_ENABLED, CONF_ASSIST_EXTENSION, DOMAIN
+    from .const import CONF_ASSIST_ENDPOINT_ENABLED, CONF_ASSIST_EXTENSION
     from .groups import collect_groups
     from .roster import RosterEntry, merge_roster_overrides
 
@@ -309,12 +306,10 @@ def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries
         )
     manual_entries = manual_roster_entries(hass)
     entries = merge_roster_overrides(entries, manual_entries)
-    endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
+    endpoint_registry = endpoint_directory(hass)
     registered_endpoint_ids: set[str] = set()
     for registered in registered_entries:
-        endpoint = None
-        if endpoint_registry is not None:
-            endpoint = endpoint_registry.by_username(registered.id)
+        endpoint = endpoint_registry.by_username(registered.id)
         metadata = dict(registered.metadata or {})
         if endpoint is not None:
             registered_endpoint_ids.add(endpoint.endpoint_id)

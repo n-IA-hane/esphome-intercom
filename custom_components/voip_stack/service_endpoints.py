@@ -15,6 +15,7 @@ from .phone_endpoint import (
     EndpointKind,
     PhoneEndpoint,
 )
+from .runtime_data import endpoint_directory
 
 
 def _service_error(message: str, key: str) -> ServiceValidationError:
@@ -34,15 +35,13 @@ def service_browser_endpoint(
     strict: bool = False,
 ):
     """Resolve the logical HA/browser phone originating a service action."""
-    registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
+    registry = endpoint_directory(hass)
     device_id = str(call.data.get("device_id") or "").strip()
-    endpoint = None
-    if registry is not None:
-        endpoint = (
-            registry.get(DEFAULT_ENDPOINT_ID)
-            if not device_id or device_id == HA_SOFTPHONE_DEVICE_ID
-            else registry.by_device_id(device_id)
-        )
+    endpoint = (
+        registry.get(DEFAULT_ENDPOINT_ID)
+        if not device_id or device_id == HA_SOFTPHONE_DEVICE_ID
+        else registry.by_device_id(device_id)
+    )
     if endpoint is None:
         if device_id and device_id != HA_SOFTPHONE_DEVICE_ID:
             raise _service_error(
@@ -64,16 +63,9 @@ def service_browser_endpoint(
 
 def service_configured_endpoint(hass: HomeAssistant, call: ServiceCall):
     """Resolve one integration-owned browser or registrar-account phone."""
-    registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
+    registry = endpoint_directory(hass)
 
     device_id = str(call.data.get("device_id") or "").strip()
-    if registry is None:
-        if device_id and device_id != HA_SOFTPHONE_DEVICE_ID:
-            raise _service_error(
-                "Unknown Home Assistant phone device",
-                "unknown_phone_device",
-            )
-        return DEFAULT_ENDPOINT_ID, None
     endpoint = (
         registry.get(DEFAULT_ENDPOINT_ID)
         if not device_id or device_id == HA_SOFTPHONE_DEVICE_ID
@@ -117,12 +109,8 @@ async def async_require_phone_service_control(
 ) -> None:
     """Apply per-phone HA permissions after the integration-wide boundary."""
     if endpoint is None and device is not None:
-        registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-        endpoint = (
-            registry.by_device_id(str(device.get("device_id") or ""))
-            if registry is not None
-            else None
-        )
+        registry = endpoint_directory(hass)
+        endpoint = registry.by_device_id(str(device.get("device_id") or ""))
         if endpoint is None:
             device_id = str(device.get("device_id") or "").strip()
             entities = frozenset(

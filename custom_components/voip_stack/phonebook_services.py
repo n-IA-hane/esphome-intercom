@@ -16,6 +16,7 @@ from .const import (
     DOMAIN,
 )
 from .phonebook_runtime import push_roster_json_to_esps
+from .runtime_data import endpoint_directory
 from .roster import RosterEntry, normalize_roster_key, parse_roster_json
 from .store import manual_roster_entries, store_manual_roster_entries
 
@@ -34,19 +35,18 @@ def _entry_mapping(entry: RosterEntry) -> dict[str, Any]:
 
 def _runtime_route_mappings(hass: Any) -> list[Mapping[str, Any]]:
     mappings: list[Mapping[str, Any]] = []
-    registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-    if registry is not None:
-        mappings.extend(
-            {
-                "id": endpoint.endpoint_id,
-                "name": endpoint.name,
-                "extension": endpoint.extension,
-                "username": endpoint.username,
-                "ring_group": endpoint.ring_group,
-                "conference_group": endpoint.conference_group,
-            }
-            for endpoint in registry.endpoints
-        )
+    registry = endpoint_directory(hass)
+    mappings.extend(
+        {
+            "id": endpoint.endpoint_id,
+            "name": endpoint.name,
+            "extension": endpoint.extension,
+            "username": endpoint.username,
+            "ring_group": endpoint.ring_group,
+            "conference_group": endpoint.conference_group,
+        }
+        for endpoint in registry.endpoints
+    )
     assist = assist_config(hass)
     assist_extension = str(assist.get(CONF_ASSIST_EXTENSION) or "").strip()
     if assist.get(CONF_ASSIST_ENDPOINT_ENABLED) and assist_extension:

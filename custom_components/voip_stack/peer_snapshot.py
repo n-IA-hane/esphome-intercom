@@ -17,6 +17,7 @@ from .phone_endpoint import (
     EndpointAvailability,
     EndpointKind,
 )
+from .runtime_data import endpoint_directory
 from .websocket_api import _get_voip_devices
 
 _LOGGER = logging.getLogger(__name__)
@@ -115,18 +116,14 @@ async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
         )
         device["sip_transport"] = sip_transport
 
-    endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
+    endpoint_registry = endpoint_directory(hass)
     local_ip = await async_advertise_host(hass)
-    browser_endpoints = (
-        [
-            endpoint
-            for endpoint in endpoint_registry.endpoints
-            if endpoint.kind is EndpointKind.BROWSER
-            and endpoint.availability is not EndpointAvailability.UNAVAILABLE
-        ]
-        if endpoint_registry is not None
-        else []
-    )
+    browser_endpoints = [
+        endpoint
+        for endpoint in endpoint_registry.endpoints
+        if endpoint.kind is EndpointKind.BROWSER
+        and endpoint.availability is not EndpointAvailability.UNAVAILABLE
+    ]
     for endpoint in browser_endpoints:
         formats = [fmt.wire_token() for fmt in HA_SIP_PCM_FORMATS[:8]]
         out.append(

@@ -133,6 +133,9 @@ fsm = _load_module("fsm")
 const = _load_module("const")
 conference = _load_module("conference")
 route_decisions = _load_module("route_decisions")
+runtime_data_module = _load_module("runtime_data")
+endpoint_registry_module = _load_module("endpoint_registry")
+endpoint_lifecycle_module = _load_module("endpoint_lifecycle")
 
 
 class _FakeConfig:
@@ -154,6 +157,25 @@ class _FakeHass:
         self.config = _FakeConfig()
         self.bus = _FakeBus()
         self.data: dict = {const.DOMAIN: {}}
+        self.runtime = types.SimpleNamespace(
+            tasks=set(),
+            calls=None,
+            endpoints=endpoint_registry_module.EndpointRegistry(),
+            sip=None,
+        )
+
+
+def _test_runtime(hass):
+    registry = hass.data[const.DOMAIN].get("endpoint_registry")
+    if registry is not None:
+        hass.runtime.endpoints = registry
+    hass.runtime.sip = hass.data[const.DOMAIN].get("pbx_runtime")
+    return hass.runtime
+
+
+runtime_data_module.require_runtime_data = _test_runtime
+runtime_data_module.runtime_data = _test_runtime
+endpoint_lifecycle_module.require_runtime_data = _test_runtime
 
 
 class GroupCallMatrixTest(unittest.TestCase):

@@ -62,11 +62,26 @@ def runtime_data(hass: HomeAssistant) -> VoipStackRuntime | None:
     return None
 
 
+def require_runtime_data(hass: HomeAssistant) -> VoipStackRuntime:
+    """Return the loaded runtime or reject use outside its lifecycle."""
+
+    runtime = runtime_data(hass)
+    if runtime is None:
+        raise RuntimeError("VoIP Stack runtime is unavailable")
+    return runtime
+
+
 def call_projection(hass: HomeAssistant) -> CallRegistry | None:
     """Return the entry-owned observable call index, if initialized."""
 
     runtime = runtime_data(hass)
     return runtime.calls if runtime is not None else None
+
+
+def endpoint_directory(hass: HomeAssistant) -> EndpointRegistry:
+    """Return the entry-owned logical phone directory."""
+
+    return require_runtime_data(hass).endpoints
 
 
 def sip_endpoint_runtime(hass: HomeAssistant) -> SipEndpointRuntime | None:
