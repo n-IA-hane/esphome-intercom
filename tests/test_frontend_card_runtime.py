@@ -297,13 +297,15 @@ assert.equal(antiAliasPreference._microphoneAntiAliasEnabled(), true);
 antiAliasPreference._toggleMicrophoneAntiAlias();
 assert.equal(antiAliasPreference._microphoneAntiAliasEnabled(), false);
 assert.equal(
-  storage.get("voip_microphone_anti_alias_default"),
+  storage.get("voip_microphone_anti_alias_preferred"),
   "false",
 );
 antiAliasPreference._toggleMicrophoneAntiAlias();
 assert.equal(antiAliasPreference._microphoneAntiAliasEnabled(), true);
-assert.equal(storage.get("voip_microphone_anti_alias_default"), "true");
+assert.equal(storage.get("voip_microphone_anti_alias_preferred"), "true");
 const base = {{
+  endpoint_id: "browser:office",
+  device_id: "device-office",
   call_id: "call-A",
   direction: "outgoing",
   caller: "Office HA",
@@ -541,7 +543,8 @@ assert.equal(deviceOnly._softphoneTargetStorageKey(), targetKeyBefore);
 // teardown, so the availability flag is handled only by the idle branch.
 const disabledPhone = makeCard();
 disabledPhone._applySoftphoneSnapshot({{
-  endpoint_id: "default", state: "idle", enabled: false, sequence: 1,
+  endpoint_id: "browser:disabled", device_id: "device-disabled",
+  state: "idle", enabled: false, sequence: 1,
 }});
 disabledPhone._render();
 assert.equal(disabledPhone._els.statusText.textContent, "Phone unavailable");
@@ -786,6 +789,7 @@ assert.equal(card._softphoneSnapshot.state, "in_call");
 // in-call state before the backend publishes a final 200/answer snapshot.
 const incoming = makeCard();
 incoming._applySoftphoneSnapshot({{
+  endpoint_id: "browser:office", device_id: "device-office",
   state: "ringing",
   direction: "incoming",
   call_id: "incoming-A",
@@ -799,9 +803,10 @@ assert.equal(cameraPermissionChecks, 0);
 assert.equal(JSON.stringify(serviceCalls.at(-1)), JSON.stringify([
   "voip_stack",
   "answer",
-  {{ device_id: "__voip_stack_ha_softphone__", call_id: "incoming-A", send_video: false }},
+  {{ device_id: "device-office", call_id: "incoming-A", send_video: false }},
 ]));
 incoming._applySoftphoneSnapshot({{
+  endpoint_id: "browser:office", device_id: "device-office",
   state: "answering",
   direction: "incoming",
   call_id: "incoming-A",
@@ -812,6 +817,7 @@ incoming._applySoftphoneSnapshot({{
 incoming._render();
 assert.equal(incoming._els.statusText.textContent, "Answering Door...");
 incoming._applySoftphoneSnapshot({{
+  endpoint_id: "browser:office", device_id: "device-office",
   state: "in_call",
   direction: "incoming",
   call_id: "incoming-A",
@@ -826,6 +832,7 @@ assert.equal(incoming._els.statusText.textContent, "In Call: Door");
 // stale Answer operation is discarded and cannot answer the new call.
 const race = makeCard();
 race._applySoftphoneSnapshot({{
+  endpoint_id: "browser:office", device_id: "device-office",
   state: "ringing", direction: "incoming", call_id: "race-A", caller: "A", sequence: 1,
 }});
 let releaseLookup;
@@ -833,6 +840,7 @@ race._getDeviceInfo = () => new Promise((resolve) => {{ releaseLookup = resolve;
 const pendingAnswer = race._answer();
 await Promise.resolve();
 race._applySoftphoneSnapshot({{
+  endpoint_id: "browser:office", device_id: "device-office",
   state: "ringing", direction: "incoming", call_id: "race-B", caller: "B", sequence: 1,
 }});
 const serviceCount = serviceCalls.length;
@@ -847,6 +855,7 @@ assert.equal(race._softphoneSnapshot.call_id, "race-B");
 // adopt the same authoritative backend call.
 const replacement = makeCard();
 replacement._applySoftphoneSnapshot({{
+  endpoint_id: "browser:office", device_id: "device-office",
   state: "ringing", direction: "incoming", call_id: "replace-A", caller: "Door", sequence: 1,
 }});
 let releaseAnswer;
@@ -867,7 +876,7 @@ await pendingReplacementAnswer;
 assert.equal(JSON.stringify(replacementCalls), JSON.stringify([[
   "voip_stack",
   "answer",
-  {{ device_id: "__voip_stack_ha_softphone__", call_id: "replace-A", send_video: false }},
+  {{ device_id: "device-office", call_id: "replace-A", send_video: false }},
 ]]));
 
 // Hangup is call-scoped and likewise waits for the backend terminal snapshot.
@@ -879,7 +888,7 @@ await incoming._hangup();
 assert.equal(JSON.stringify(serviceCalls.at(-1)), JSON.stringify([
   "voip_stack",
   "hangup",
-  {{ device_id: "__voip_stack_ha_softphone__", call_id: "incoming-A" }},
+  {{ device_id: "device-office", call_id: "incoming-A" }},
 ]));
 
 // A non-default phone keeps endpoint_id for subscriptions/media correlation,
@@ -914,6 +923,7 @@ assert.match(incoming._els.statusReason.textContent, /Local hangup/);
 // remote participant shown after teardown.
 const outgoingEnded = makeCard();
 outgoingEnded._applySoftphoneSnapshot({{
+  endpoint_id: "browser:office", device_id: "device-office",
   state: "idle", direction: "outgoing", call_id: "outgoing-ended",
   caller: "Casa", callee: "Waveshare S3 Audio",
   peer_name: "Waveshare S3 Audio", dialed_target: "1000",
@@ -927,6 +937,7 @@ assert.equal(
 
 const incomingEnded = makeCard();
 incomingEnded._applySoftphoneSnapshot({{
+  endpoint_id: "browser:office", device_id: "device-office",
   state: "idle", direction: "incoming", call_id: "incoming-ended",
   caller: "Waveshare S3 Audio", callee: "Test", dialed_target: "Test",
   terminal_reason: "local_hangup", sequence: 1,
@@ -960,6 +971,7 @@ assert.deepEqual(engineEvents.at(-1), ["close", "terminal", "remote-ended"]);
 // Media-engine failures are visible in the owning card instead of being
 // console-only diagnostics.
 const engineErrorCard = makeCard();
+engine.endpointId = "";
 engineErrorCard._engineErrorListener({{ detail: "Audio media update failed" }});
 assert.match(engineErrorCard._errorMsg, /audio media update failed/i);
 

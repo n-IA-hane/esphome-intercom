@@ -42,8 +42,6 @@ const {
   buildUnconfiguredCardSkeleton,
 } = await import(`./voip-stack-card-view.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 await import(`./voip-stack-card-editor.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-const HA_SOFTPHONE_DEVICE_ID = "__voip_stack_ha_softphone__";
-const DEFAULT_SOFTPHONE_ENDPOINT_ID = "default";
 const HANGUP_SERVICE_TIMEOUT_MS = 3000;
 
 function settleServiceWithin(promise, timeoutMs, timeoutMessage) {
@@ -438,12 +436,11 @@ class VoipStackCard extends HTMLElement {
 
   _normaliseSoftphoneSnapshot(payload = {}) {
     const endpointId = String(
-      payload.endpoint_id || this._getSoftphoneEndpointId() || DEFAULT_SOFTPHONE_ENDPOINT_ID,
-    ).trim() || DEFAULT_SOFTPHONE_ENDPOINT_ID;
+      payload.endpoint_id || this._getSoftphoneEndpointId() || "",
+    ).trim();
     const configuredDeviceId = String(this.config?.device_id || "").trim();
     const deviceId = String(
-      payload.device_id || payload.endpoint_device_id || configuredDeviceId ||
-      (endpointId === DEFAULT_SOFTPHONE_ENDPOINT_ID ? HA_SOFTPHONE_DEVICE_ID : ""),
+      payload.device_id || payload.endpoint_device_id || configuredDeviceId || "",
     ).trim();
     const state = String(payload.state || payload.sip_state || "idle").toLowerCase();
     const direction = String(payload.direction || "").toLowerCase();
@@ -453,7 +450,7 @@ class VoipStackCard extends HTMLElement {
       ...payload,
       endpoint_id: endpointId,
       device_id: deviceId,
-      session_device_id: payload.session_device_id || deviceId || HA_SOFTPHONE_DEVICE_ID,
+      session_device_id: payload.session_device_id || deviceId,
       state,
       sip_state: String(payload.sip_state || state).toLowerCase(),
       direction,
@@ -524,7 +521,7 @@ class VoipStackCard extends HTMLElement {
       conference_group: String(snapshot.groups?.conference_group || "").trim(),
       conference_ring: !!snapshot.groups?.conference_ring,
     };
-    this._activeSessionDeviceId = snapshot.session_device_id || snapshot.device_id || HA_SOFTPHONE_DEVICE_ID;
+    this._activeSessionDeviceId = snapshot.session_device_id || snapshot.device_id || "";
     const activePhoneState = ["calling", "remote_ringing", "ringing", "answering", "in_call", "connecting", "terminating"].includes(snapshot.state);
     if (activePhoneState) {
       this._lastSoftphoneTerminalKey = "";
@@ -667,7 +664,7 @@ class VoipStackCard extends HTMLElement {
       voipStackEngine.releaseVideoCanvas(this);
       voipStackEngine.releaseSoftphoneController(
         this,
-        oldEndpointId || (oldDeviceId ? `device:${oldDeviceId}` : DEFAULT_SOFTPHONE_ENDPOINT_ID),
+        oldEndpointId || (oldDeviceId ? `device:${oldDeviceId}` : "preferred"),
       );
     }
     if (oldSelector !== newSelector || oldMode !== newMode) {
@@ -677,7 +674,7 @@ class VoipStackCard extends HTMLElement {
       }
       voipStackEngine.releaseSoftphoneController(
         this,
-        oldEndpointId || (oldDeviceId ? `device:${oldDeviceId}` : DEFAULT_SOFTPHONE_ENDPOINT_ID),
+        oldEndpointId || (oldDeviceId ? `device:${oldDeviceId}` : "preferred"),
       );
       this._resetDeviceBindings();
       this._softphoneStateLoaded = false;
@@ -945,7 +942,7 @@ class VoipStackCard extends HTMLElement {
 
   _getConfigDeviceId() {
     if (this._isHaSoftphoneMode()) {
-      return this.config?.device_id || this._softphoneSnapshot?.device_id || HA_SOFTPHONE_DEVICE_ID;
+      return this.config?.device_id || this._softphoneSnapshot?.device_id || "";
     }
     return this._resolvedDeviceId || this._getConfigSelector();
   }
@@ -956,13 +953,7 @@ class VoipStackCard extends HTMLElement {
 
   _getSoftphoneEndpointId() {
     if (!this._isHaSoftphoneMode()) return "";
-    // A card with a Device Registry target but no endpoint_id is resolved by
-    // the backend; until its first scoped snapshot arrives it must not claim
-    // legacy master events.
-    if (this.config?.device_id) {
-      return String(this._softphoneSnapshot?.endpoint_id || "").trim();
-    }
-    return DEFAULT_SOFTPHONE_ENDPOINT_ID;
+    return String(this._softphoneSnapshot?.endpoint_id || "").trim();
   }
 
   _softphoneSelector() {
@@ -971,9 +962,6 @@ class VoipStackCard extends HTMLElement {
     const deviceId = String(this.config?.device_id || "").trim();
     if (endpointId) selector.endpoint_id = endpointId;
     if (deviceId) selector.device_id = deviceId;
-    if (!selector.endpoint_id && !selector.device_id) {
-      selector.endpoint_id = DEFAULT_SOFTPHONE_ENDPOINT_ID;
-    }
     return selector;
   }
 
@@ -981,7 +969,9 @@ class VoipStackCard extends HTMLElement {
     const configuredDevice = String(this.config?.device_id || "").trim();
     return configuredDevice
       ? `device:${configuredDevice}`
-      : DEFAULT_SOFTPHONE_ENDPOINT_ID;
+      : this._getSoftphoneEndpointId()
+        ? `endpoint:${this._getSoftphoneEndpointId()}`
+        : "preferred";
   }
 
   _softphoneSnapshotMatches(payload = {}) {
@@ -991,7 +981,10 @@ class VoipStackCard extends HTMLElement {
     if (selector.endpoint_id) {
       return !!endpointId && endpointId === selector.endpoint_id;
     }
-    return !!selector.device_id && !!deviceId && selector.device_id === deviceId;
+    if (selector.device_id) {
+      return !!deviceId && selector.device_id === deviceId;
+    }
+    return !!endpointId && !!deviceId;
   }
 
   _softphoneRequestScope() {
@@ -1000,7 +993,6 @@ class VoipStackCard extends HTMLElement {
     const deviceId = String(this.config?.device_id || this._softphoneSnapshot?.device_id || "").trim();
     if (endpointId) scope.endpoint_id = endpointId;
     if (deviceId) scope.device_id = deviceId;
-    if (!scope.endpoint_id && !scope.device_id) scope.endpoint_id = DEFAULT_SOFTPHONE_ENDPOINT_ID;
     return scope;
   }
 
@@ -1031,7 +1023,8 @@ class VoipStackCard extends HTMLElement {
     return this._isHaSoftphoneMode()
       ? (
           String(this.config?.device_id || "").trim() ||
-          DEFAULT_SOFTPHONE_ENDPOINT_ID
+          this._getSoftphoneEndpointId() ||
+          "preferred"
         )
       : (this.config?.entity_id || this.config?.device_id);
   }
@@ -1187,10 +1180,8 @@ class VoipStackCard extends HTMLElement {
       const entryEndpointId = String(metadata.endpoint_id || "").trim();
       if (
         metadata.local_ha &&
-        (
-          entryEndpointId === ownEndpointId ||
-          (!entryEndpointId && ownEndpointId === DEFAULT_SOFTPHONE_ENDPOINT_ID)
-        )
+        !!entryEndpointId &&
+        entryEndpointId === ownEndpointId
       ) continue;
       const target = this._targetFromRosterEntry(entry);
       if (!target.device_id || !target.name) continue;
@@ -2245,11 +2236,7 @@ class VoipStackCard extends HTMLElement {
     const sessionInfo = {
       ...(softphoneInfo || {}),
       ...scope,
-      device_id: scope.device_id || (
-        scope.endpoint_id === DEFAULT_SOFTPHONE_ENDPOINT_ID
-          ? HA_SOFTPHONE_DEVICE_ID
-          : ""
-      ),
+      device_id: scope.device_id || "",
       name: this._getHaName(),
       audio_mode: target.audio_mode || "full_duplex",
       microphone_anti_alias: this._microphoneAntiAliasEnabled(),
@@ -2904,16 +2891,7 @@ class VoipStackCard extends HTMLElement {
         type: "voip_stack/ha_softphone_state",
         ...this._softphoneRequestScope(),
       };
-      let result;
-      try {
-        result = await connection.sendMessagePromise(request);
-      } catch (err) {
-        const master = request.endpoint_id === DEFAULT_SOFTPHONE_ENDPOINT_ID && !this.config?.device_id;
-        if (!master || !this._isUnknownCommandError(err) && !String(err?.message || "").toLowerCase().includes("extra keys")) {
-          throw err;
-        }
-        result = await connection.sendMessagePromise({ type: "voip_stack/ha_softphone_state" });
-      }
+      const result = await connection.sendMessagePromise(request);
       if (!this._isHaSoftphoneMode() || this._hass?.connection !== connection) return;
       if (lifecycleGeneration !== this._lifecycleGeneration) return;
       if (this._softphoneStateEpoch !== requestEpoch) return;
@@ -2949,7 +2927,7 @@ class VoipStackCard extends HTMLElement {
         const scope = this._softphoneRequestScope();
         return {
           ...scope,
-          device_id: scope.device_id || HA_SOFTPHONE_DEVICE_ID,
+          device_id: scope.device_id || "",
           name: this._getHaName(),
           audio_mode: "full_duplex",
           softphone: true,

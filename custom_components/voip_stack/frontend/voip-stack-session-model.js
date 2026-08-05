@@ -1,11 +1,8 @@
 /** Pure logical-phone identity rules for the page-level softphone engine. */
 
-export const DEFAULT_SOFTPHONE_ENDPOINT_ID = "default";
-
 export function normaliseSoftphoneSelector(selector = {}) {
   const deviceId = String(selector?.device_id || "").trim();
-  let endpointId = String(selector?.endpoint_id || "").trim();
-  if (!endpointId && !deviceId) endpointId = DEFAULT_SOFTPHONE_ENDPOINT_ID;
+  const endpointId = String(selector?.endpoint_id || "").trim();
   return { endpoint_id: endpointId, device_id: deviceId };
 }
 
@@ -13,7 +10,9 @@ export function softphoneScopeKey(selector = {}) {
   const normalised = normaliseSoftphoneSelector(selector);
   return normalised.endpoint_id
     ? `endpoint:${normalised.endpoint_id}`
-    : `device:${normalised.device_id}`;
+    : normalised.device_id
+      ? `device:${normalised.device_id}`
+      : "preferred";
 }
 
 export function softphoneStateMatches(

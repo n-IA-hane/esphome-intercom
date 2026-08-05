@@ -216,11 +216,11 @@ session.set("voip_stack_media_client_id", "copied-session-token-1234");
 context.__voipStackMediaClientId = undefined;
 const signedA = new Engine();
 signedA.configure(signingHass);
-await signedA._wsUrl("device", "signed-call");
+await signedA._wsUrl("device", "signed-call", "phone");
 context.__voipStackMediaClientId = undefined;
 const signedB = new Engine();
 signedB.configure(signingHass);
-await signedB._wsUrl("device", "signed-call");
+await signedB._wsUrl("device", "signed-call", "phone");
 assert.ok(signedA._mediaClientId.length >= 16);
 assert.equal(signedA._mediaClientId, signedB._mediaClientId);
 assert.equal(signedA._mediaClientId, "copied-session-token-1234");
@@ -230,7 +230,7 @@ assert.equal(
 );
 assert.equal(
   new URL(`https://ha.example${{signedPaths[0]}}`).searchParams.get("endpoint_id"),
-  "default",
+  "phone",
 );
 await signedA._wsUrl("kitchen-device", "kitchen-call", "kitchen");
 assert.equal(
@@ -420,10 +420,12 @@ ownership._setState = () => {{}};
 ownership.addEventListener("error", (event) => ownershipErrors.push(event.detail));
 ownership.claimSoftphoneSession("call-A", "default");
 assert.equal(
-  await ownership._setupAudioOrAbort(
-    "__voip_stack_ha_softphone__",
-    {{ device_id: "__voip_stack_ha_softphone__" }},
-    {{ call_id: "call-A" }},
+      await ownership._setupAudioOrAbort(
+        "phone-device",
+        {{ device_id: "phone-device" }},
+        {{ call_id: "call-A" }},
+        "",
+        "default",
   ),
   false,
 );
@@ -489,10 +491,12 @@ terminalRace.close = async () => {{}};
 terminalRace.addEventListener("error", (event) => terminalErrors.push(event.detail));
 terminalRace.claimSoftphoneSession("terminal-call", "default");
 assert.equal(
-  await terminalRace._setupAudioOrAbort(
-    "__voip_stack_ha_softphone__",
-    {{ endpoint_id: "default" }},
-    {{ call_id: "terminal-call" }},
+      await terminalRace._setupAudioOrAbort(
+        "phone-device",
+        {{ endpoint_id: "default" }},
+        {{ call_id: "terminal-call" }},
+        "",
+        "default",
   ),
   false,
 );
@@ -532,16 +536,19 @@ assert.equal(reconnectAttempts, 3);
 
 // Once the WebSocket is open, an actual local audio setup failure makes this
 // browser leg unusable and intentionally terminates that exact call.
-ownership._connect = async (deviceId, callId) => {{
+ownership._connect = async (deviceId, callId, endpointId) => {{
   ownership._deviceId = deviceId;
+  ownership._endpointId = endpointId;
   ownership._callId = callId;
 }};
 ownership._setupAudio = async () => {{ throw new Error("unsupported PCM"); }};
 assert.equal(
-  await ownership._setupAudioOrAbort(
-    "__voip_stack_ha_softphone__",
-    {{ device_id: "__voip_stack_ha_softphone__" }},
-    {{ call_id: "call-B" }},
+      await ownership._setupAudioOrAbort(
+        "phone-device",
+        {{ device_id: "phone-device" }},
+        {{ call_id: "call-B" }},
+        "",
+        "default",
   ),
   false,
 );
@@ -557,18 +564,18 @@ const ownerA = {{ id: "A" }};
 const ownerB = {{ id: "B" }};
 const canvasA = {{ id: "canvas-A" }};
 const canvasB = {{ id: "canvas-B" }};
-assert.equal(canvas.claimVideoCanvas(ownerA, canvasA), true);
-assert.equal(canvas.claimVideoCanvas(ownerB, canvasB), false);
+assert.equal(canvas.claimVideoCanvas(ownerA, canvasA, "kitchen"), true);
+assert.equal(canvas.claimVideoCanvas(ownerB, canvasB, "kitchen"), false);
 assert.equal(canvas._videoCanvas, canvasA);
 assert.equal(canvas.releaseVideoCanvas(ownerB), false);
 assert.equal(canvas.releaseVideoCanvas(ownerA), true);
-assert.equal(canvas.claimVideoCanvas(ownerB, canvasB), true);
+assert.equal(canvas.claimVideoCanvas(ownerB, canvasB, "kitchen"), true);
 assert.equal(canvas._videoCanvas, canvasB);
-assert.equal(canvas.claimSoftphoneController({{ isConnected: false }}), false);
-assert.equal(canvas.claimVideoCanvas({{ isConnected: false }}, {{}}), false);
+assert.equal(canvas.claimSoftphoneController({{ isConnected: false }}, "kitchen"), false);
+assert.equal(canvas.claimVideoCanvas({{ isConnected: false }}, {{}}, "kitchen"), false);
 canvas._endpointId = "kitchen";
-assert.equal(canvas.claimVideoCanvas(ownerA, canvasA, "kitchen"), true);
-assert.equal(canvas._videoCanvas, canvasA);
+assert.equal(canvas.claimVideoCanvas(ownerA, canvasA, "kitchen"), false);
+assert.equal(canvas._videoCanvas, canvasB);
 
 // A same-call audio-only -> video-active state update must reconcile the
 // optional video channel even though the audio WebSocket is already open.
@@ -595,9 +602,9 @@ preempt._resumeSessionLocked = async (_info, _device, payload) => {{
   entered.push(payload.call_id);
   if (payload.call_id === "A") await attachA;
 }};
-const pendingA = preempt.resumeSession({{}}, "device", {{ state: "in_call", call_id: "A" }});
+const pendingA = preempt.resumeSession({{}}, "device", {{ state: "in_call", call_id: "A", endpoint_id: "kitchen" }});
 await Promise.resolve();
-const pendingB = preempt.resumeSession({{}}, "device", {{ state: "in_call", call_id: "B" }});
+const pendingB = preempt.resumeSession({{}}, "device", {{ state: "in_call", call_id: "B", endpoint_id: "kitchen" }});
 await Promise.resolve();
 assert.deepEqual(entered, ["A", "B"]);
 releaseAttachA();
@@ -664,11 +671,11 @@ class RuntimeWebSocket {{
   send() {{}}
 }}
 context.WebSocket = RuntimeWebSocket;
-const connectA = connectRace._connect("device", "A").then(
+const connectA = connectRace._connect("device", "A", "kitchen").then(
   () => "A:ok",
   (err) => `A:${{err.message}}`,
 );
-const connectB = connectRace._connect("device", "B").then(
+const connectB = connectRace._connect("device", "B", "kitchen").then(
   () => "B:ok",
   (err) => `B:${{err.message}}`,
 );
@@ -691,17 +698,17 @@ const supersededRequests = [];
 superseded._hass = {{
   callWS: async (request) => {{
     supersededRequests.push(request);
-    return {{ response: {{ state: "calling", call_id: "orphan-B" }} }};
+      return {{ response: {{ state: "calling", call_id: "orphan-B", endpoint_id: "kitchen", device_id: "kitchen-device" }} }};
   }},
   callService: async (...args) => supersededServices.push(args),
 }};
 const staleReply = await superseded.startHaSoftphone(
   {{ name: "peer" }},
-  {{}},
+  {{ endpoint_id: "kitchen", device_id: "kitchen-device" }},
   {{ shouldAbort: () => true }},
 );
 assert.equal(staleReply.superseded, true);
-assert.equal(superseded.softphoneCallId, "");
+assert.equal(superseded.ownsSoftphoneSession("orphan-B", "kitchen"), false);
 assert.equal(supersededRequests[0].type, "call_service");
 assert.equal(supersededRequests[0].domain, "voip_stack");
 assert.equal(supersededRequests[0].service, "call");
@@ -802,6 +809,7 @@ let videoCloses = 0;
 lazyVideo._loadVideo = () => new Promise((resolve) => {{ resolveVideo = resolve; }});
 const staleVideoAttach = lazyVideo._ensureVideo({{
   call_id: "video-A",
+  endpoint_id: "kitchen",
   video_active: true,
 }});
 await Promise.resolve();
@@ -830,6 +838,7 @@ audioOnlyReconcile._video = {{
 }};
 await audioOnlyReconcile._ensureVideo({{
   call_id: "audio-after-video",
+  endpoint_id: "kitchen",
   video_active: false,
 }});
 assert.equal(redundantVideoCloses, 0);
@@ -846,10 +855,10 @@ serialized._video = {{
 serialized.configure({{
   callWS: async (request) => {{
     if (request.type === "voip_stack/ha_softphone_state") {{
-      return {{ state: "idle", call_id: "" }};
+        return {{ state: "idle", call_id: "", endpoint_id: "default", device_id: "phone-device" }};
     }}
     outboundStarts++;
-    return {{ state: "idle", call_id: "" }};
+      return {{ state: "idle", call_id: "", endpoint_id: "default", device_id: "phone-device" }};
   }},
 }});
 const closingVideo = serialized.close("terminal");
@@ -949,13 +958,14 @@ import {{ pathToFileURL }} from "url";
 const model = await import(pathToFileURL({json.dumps(str(SESSION_MODEL))}));
 
 assert.deepEqual(model.normaliseSoftphoneSelector({{}}), {{
-  endpoint_id: "default", device_id: "",
+  endpoint_id: "", device_id: "",
 }});
 assert.deepEqual(model.normaliseSoftphoneSelector({{ device_id: " kiosk " }}), {{
   endpoint_id: "", device_id: "kiosk",
 }});
 assert.equal(model.softphoneScopeKey({{ endpoint_id: "kitchen" }}), "endpoint:kitchen");
 assert.equal(model.softphoneScopeKey({{ device_id: "kiosk" }}), "device:kiosk");
+assert.equal(model.softphoneScopeKey({{}}), "preferred");
 
 assert.equal(model.softphoneStateMatches(
   {{ endpoint_id: "kitchen", call_id: "K" }},

@@ -173,7 +173,8 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._ensureSoftphoneScopeSubscription(conn, record)", ensure)
         self.assertIn("this._busSubscribePending", ensure)
         scoped = _method_body(engine, "_ensureSoftphoneScopeSubscription")
-        self.assertIn("this._softphoneBusSubscribePending", scoped)
+        self.assertIn("record.pending = true", scoped)
+        self.assertIn("record.pending = false", scoped)
         self.assertIn("this._scheduleBusSubscriptionRetry(conn)", scoped)
         self.assertIn("request.endpoint_id", scoped)
         self.assertIn("setTimeout", retry)
@@ -677,7 +678,8 @@ class FrontendCardContractTest(unittest.TestCase):
             setup.index("if (!connected)"),
             setup.index('reason: "media_incompatible"'),
         )
-        self.assertIn("deviceId === HA_SOFTPHONE_DEVICE_ID || !!endpointId", setup)
+        self.assertIn("!!deviceId &&", setup)
+        self.assertIn("!!endpointId &&", setup)
         self.assertIn("this._endpointId === endpointId", setup)
         self.assertIn("this._callId === callId", setup)
         self.assertNotIn("raw.slice(1)", engine)
@@ -781,7 +783,6 @@ class FrontendCardContractTest(unittest.TestCase):
 
     def test_softphone_media_ownership_survives_card_recreation_in_same_tab(self) -> None:
         engine = (ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-stack-engine.js").read_text()
-        self.assertIn('const SOFTPHONE_MEDIA_SESSION_KEY = "voip_stack_owned_softphone_call"', engine)
         self.assertIn('const SOFTPHONE_MEDIA_SESSIONS_KEY = "voip_stack_owned_softphone_calls"', engine)
         self.assertIn('const MEDIA_CLIENT_GLOBAL_KEY = "__voipStackMediaClientId"', engine)
         self.assertIn('const MEDIA_CLIENT_SESSION_KEY = "voip_stack_media_client_id"', engine)
@@ -790,9 +791,9 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("sessionStorage.setItem(MEDIA_CLIENT_SESSION_KEY", engine)
         self.assertIn("backend pins every call to this value", engine)
         self.assertIn("client_id=${encodeURIComponent(this._mediaClientId)}", engine)
-        self.assertIn("sessionStorage.getItem(SOFTPHONE_MEDIA_SESSION_KEY)", engine)
-        self.assertIn("sessionStorage.setItem(SOFTPHONE_MEDIA_SESSION_KEY", engine)
-        self.assertIn("sessionStorage.removeItem(SOFTPHONE_MEDIA_SESSION_KEY)", engine)
+        self.assertIn("sessionStorage.getItem(SOFTPHONE_MEDIA_SESSIONS_KEY)", engine)
+        self.assertIn("sessionStorage.setItem(SOFTPHONE_MEDIA_SESSIONS_KEY", engine)
+        self.assertIn("sessionStorage.removeItem(SOFTPHONE_MEDIA_SESSIONS_KEY)", engine)
         self.assertIn("ownsSoftphoneSession(callId, endpointId", engine)
         self.assertIn("releaseSoftphoneSession(callId = \"\", endpointId", engine)
         self.assertIn("_cleanupAfterTerminalSession(snapshot)", self.source)
