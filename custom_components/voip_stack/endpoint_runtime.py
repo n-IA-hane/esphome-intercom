@@ -35,7 +35,6 @@ from .const import (
     CONF_REGISTRAR_ENABLED,
     CONF_VIDEO_CAMERA_SEND,
     CONF_VIDEO_TRANSCODING,
-    DOMAIN,
     HA_SOFTPHONE_DEVICE_ID,
 )
 from .endpoint_lifecycle import (
@@ -689,8 +688,8 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         )
         return call_id
 
-    hass.data.setdefault(DOMAIN, {})["async_ring_conference_members"] = _ring_conference_members_from_ha
-    hass.data.setdefault(DOMAIN, {})["async_start_ring_group_from_ha"] = _start_ring_group_from_ha
+    pbx_runtime.ring_conference_members_from_ha = _ring_conference_members_from_ha
+    pbx_runtime.start_ring_group_from_ha = _start_ring_group_from_ha
 
     async def _on_invite(invite: SipInvite) -> SipInviteResult:
         return await route_invite(

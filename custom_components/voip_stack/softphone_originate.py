@@ -25,7 +25,6 @@ from .const import (
     CONF_TRUNK_TRANSPORT,
     CONF_TRUNK_USERNAME,
     CONF_VIDEO_CAMERA_SEND,
-    DOMAIN,
     HA_PEER_FALLBACK_NAME,
     HA_SOFTPHONE_DEVICE_ID,
 )
@@ -65,6 +64,7 @@ from .phone_endpoint import (
 )
 from .router import RouteAction, RouteReason, ha_uri_for, resolve_ha_router
 from .runtime_data import (
+    call_runtime_artifacts,
     endpoint_directory,
     require_runtime_data,
     sip_registrar,
@@ -297,9 +297,7 @@ async def async_originate_browser_call(
     if route.action is RouteAction.GROUP and route.entry is not None:
         group_type = str((route.entry.metadata or {}).get("group_type") or "")
         if group_type == "ring":
-            start_ring_group = hass.data.setdefault(DOMAIN, {}).get(
-                "async_start_ring_group_from_ha"
-            )
+            start_ring_group = call_runtime_artifacts(hass).start_ring_group_from_ha
             if start_ring_group is None:
                 raise ServiceValidationError(f"{target} is not available yet")
             await _async_prepare_ha_outbound_call(hass, endpoint_id)
@@ -375,9 +373,9 @@ async def async_originate_browser_call(
                 room=room_name,
                 target=target,
             )
-            ring_members = hass.data.setdefault(DOMAIN, {}).get(
-                "async_ring_conference_members"
-            )
+            ring_members = call_runtime_artifacts(
+                hass
+            ).ring_conference_members_from_ha
             if ring_members is not None:
                 create_runtime_task(
                     hass,

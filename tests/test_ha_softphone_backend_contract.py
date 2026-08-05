@@ -566,7 +566,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         endpoint_runtime = ENDPOINT_RUNTIME.read_text()
         start = endpoint_runtime.index("async def _start_ring_group_from_ha(")
         end = endpoint_runtime.index(
-            '\n    hass.data.setdefault(DOMAIN, {})["async_ring_conference_members"]',
+            "\n    pbx_runtime.ring_conference_members_from_ha",
             start,
         )
         ring_start = endpoint_runtime[start:end]

@@ -727,7 +727,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("ring_endpoint_ids=ring_endpoint_ids", self.inbound_local)
         self.assertIn("async def _ring_conference_members_from_ha", self.source)
         self.assertIn(
-            'hass.data.setdefault(DOMAIN, {})["async_ring_conference_members"] = _ring_conference_members_from_ha',
+            "pbx_runtime.ring_conference_members_from_ha = _ring_conference_members_from_ha",
             self.source,
         )
         self.assertIn("caller=_ha_peer_name(hass)", self.source)
@@ -879,7 +879,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("if route.action is RouteAction.GROUP:", call_service)
         self.assertIn("manager.start_ha_softphone(", call_service)
         self.assertIn("endpoint_id=endpoint_id", call_service)
-        self.assertIn('"async_ring_conference_members"', call_service)
+        self.assertIn(".ring_conference_members_from_ha", call_service)
         self.assertIn(
             "ring_members(route.entry, owner_call_id=call_id)", call_service
         )
@@ -892,7 +892,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_ha_softphone_starts_ring_group_without_sip_self_invite(self) -> None:
         runtime = BACKEND.read_text()
         call_service = SOFTPHONE_ORIGINATE.read_text()
-        self.assertIn('"async_start_ring_group_from_ha"', call_service)
+        self.assertIn(".start_ring_group_from_ha", call_service)
         self.assertIn("await start_ring_group(", call_service)
         self.assertIn('context=getattr(call, "context", None)', call_service)
         self.assertIn(
@@ -904,7 +904,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             ],
         )
         self.assertIn(
-            'hass.data.setdefault(DOMAIN, {})["async_start_ring_group_from_ha"] = _start_ring_group_from_ha',
+            "pbx_runtime.start_ring_group_from_ha = _start_ring_group_from_ha",
             runtime,
         )
         self.assertIn('last_sip_event="LOCAL_RING_GROUP"', runtime)

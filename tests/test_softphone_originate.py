@@ -138,7 +138,8 @@ def softphone_originate(monkeypatch):
             "ha_uri_for": Mock(),
             "resolve_ha_router": Mock(),
         },
-        "runtime_data": {
+            "runtime_data": {
+                "call_runtime_artifacts": lambda hass: hass.artifacts,
             "endpoint_directory": lambda hass: hass.data.get("voip_stack", {}).get(
                 "endpoint_registry",
                 SimpleNamespace(get=lambda _endpoint_id: None),

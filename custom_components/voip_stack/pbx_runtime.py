@@ -173,6 +173,8 @@ class SipEndpointRuntime:
         self.trunk_info_queues: dict[str, asyncio.Queue[Any]] = {}
         self.trunk_closed_calls: set[str] = set()
         self.forward_call: Any | None = None
+        self.start_ring_group_from_ha: Any | None = None
+        self.ring_conference_members_from_ha: Any | None = None
 
     @property
     def active(self) -> bool:
