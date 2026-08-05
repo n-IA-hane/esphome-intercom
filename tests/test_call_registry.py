@@ -292,6 +292,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
             source_call_id="source",
             dest_call_id="destination",
             client=object(),
+            lifecycle_task=mock.MagicMock(),
             state="connecting",
             ingress="trunk",
             origin="trunk",

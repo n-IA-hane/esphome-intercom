@@ -92,7 +92,6 @@ async def _async_stop_sip_endpoint(hass: HomeAssistant) -> None:
             await pbx_runtime.shutdown()
         except Exception:
             _LOGGER.debug("Ignoring authoritative PBX runtime stop error", exc_info=True)
-    registry.bind_session_owner(None)
+    registry.clear_runtime()
     if runtime.sip is pbx_runtime:
         runtime.sip = None
-    registry.clear_runtime()

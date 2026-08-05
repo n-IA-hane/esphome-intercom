@@ -769,14 +769,14 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     try:
         started = await endpoint.start()
     except BaseException:
-        registry.bind_session_owner(None)
         await pbx_runtime.shutdown()
+        registry.reset_session_owner()
         if runtime.sip is pbx_runtime:
             runtime.sip = None
         raise
     if not started:
-        registry.bind_session_owner(None)
         await pbx_runtime.shutdown()
+        registry.reset_session_owner()
         if runtime.sip is pbx_runtime:
             runtime.sip = None
         return False

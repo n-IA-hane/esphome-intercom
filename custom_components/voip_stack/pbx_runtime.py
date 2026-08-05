@@ -156,11 +156,17 @@ class SipEndpointRuntime:
         "udp_listener",
     )
 
-    def __init__(self, *, projection: CallProjection | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        projection: CallProjection | None = None,
+        allow_dark_sessions: bool = False,
+    ) -> None:
         self.phase = RuntimePhase.DARK
         self.calls: dict[str, EndpointCallSession] = {}
         self._generation = 0
         self._projection = projection
+        self._allow_dark_sessions = allow_dark_sessions
         self._components: dict[str, _OwnedComponent] = {}
         self._endpoint_registry: Any | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
@@ -538,7 +544,9 @@ class SipEndpointRuntime:
     ) -> EndpointCallSession:
         """Create one unique live generation and publish its initial state."""
 
-        if self.phase is not RuntimePhase.ACTIVE:
+        if self.phase is not RuntimePhase.ACTIVE and not (
+            self.phase is RuntimePhase.DARK and self._allow_dark_sessions
+        ):
             raise RuntimeError("PBX runtime is not active")
         clean_call_id = str(call_id or "").strip()
         if not clean_call_id:
@@ -567,6 +575,12 @@ class SipEndpointRuntime:
         """Return the live authoritative generation, creating it if needed."""
 
         session = self.get_session(call_id)
+        if session is not None and not session.live and self.phase is RuntimePhase.DARK:
+            snapshot = self._snapshot(session)
+            self.calls.pop(session.call_id, None)
+            if self._projection is not None:
+                self._projection.remove(snapshot)
+            session = None
         if session is None:
             return self.create_session(call_id, **metadata)
         if metadata:
