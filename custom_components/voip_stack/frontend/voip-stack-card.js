@@ -1030,7 +1030,6 @@ class VoipStackCard extends HTMLElement {
   _phonePreferenceStorageId() {
     return this._isHaSoftphoneMode()
       ? (
-          String(this.config?.endpoint_id || "").trim() ||
           String(this.config?.device_id || "").trim() ||
           DEFAULT_SOFTPHONE_ENDPOINT_ID
         )
