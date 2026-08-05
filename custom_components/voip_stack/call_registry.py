@@ -66,6 +66,7 @@ class CallSession:
     terminal_reason: str = ""
     legs: dict[str, CallLeg] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    artifacts: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass(slots=True)
@@ -86,7 +87,6 @@ class CallRegistry:
     def __init__(self) -> None:
         self.sessions: dict[str, CallSession] = {}
         self.leg_index: dict[str, str] = {}
-        self._legacy_artifacts: dict[str, dict[str, Any]] = {}
         self._legacy_resources: dict[str, dict[str, Any]] = {}
         self._legacy_sip_clients: dict[str, Any] = {}
         self._legacy_client_watchers: dict[str, Any] = {}
@@ -142,18 +142,24 @@ class CallRegistry:
     def _artifact_view(self, name: str) -> dict[str, Any]:
         if self._session_owner is not None:
             return self._session_owner.artifacts_snapshot(name)
-        return self._legacy_artifacts.setdefault(name, {})
+        return {
+            call_id: session.artifacts[name]
+            for call_id, session in self.sessions.items()
+            if name in session.artifacts
+        }
 
     def _set_artifact(self, call_id: str, name: str, value: Any) -> None:
-        if self._session_owner is None:
-            self._artifact_view(name)[call_id] = value
-        elif not self._session_owner.set_artifact(call_id, name, value):
-            raise RuntimeError(f"call session {call_id!r} is unavailable")
+        if self._session_owner is not None:
+            if not self._session_owner.set_artifact(call_id, name, value):
+                raise RuntimeError(f"call session {call_id!r} is unavailable")
+            return
+        self.sessions[call_id].artifacts[name] = value
 
     def _take_artifact(self, call_id: str, name: str) -> Any | None:
         if self._session_owner is not None:
             return self._session_owner.take_artifact(call_id, name)
-        return self._artifact_view(name).pop(call_id, None)
+        session = self.sessions.get(call_id)
+        return session.artifacts.pop(name, None) if session is not None else None
 
     def _resource_view(self, name: str) -> dict[str, Any]:
         if self._session_owner is not None:
@@ -198,20 +204,14 @@ class CallRegistry:
 
     @property
     def pending_invites(self) -> dict[str, Any]:
-        """Compatibility projection of session-owned inbound INVITEs."""
-
         return self._artifact_view("pending_invite")
 
     @property
     def pending_routes(self) -> dict[str, dict[str, Any]]:
-        """Compatibility projection of session-owned routing state."""
-
         return self._artifact_view("pending_route")
 
     @property
     def video_parameter_sets(self) -> dict[str, tuple[bytes, ...]]:
-        """Compatibility projection of session-owned codec configuration."""
-
         return self._artifact_view("video_parameter_sets")
 
     def cache_video_parameter_sets(
@@ -1331,7 +1331,6 @@ class CallRegistry:
         self._release_all_endpoint_claims()
         self.sessions.clear()
         self.leg_index.clear()
-        self._legacy_artifacts.clear()
         self._legacy_resources.clear()
         self._legacy_sip_clients.clear()
         self._legacy_client_watchers.clear()

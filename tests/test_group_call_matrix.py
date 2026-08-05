@@ -388,7 +388,7 @@ class GroupCallMatrixTest(unittest.TestCase):
                 route_kind="ring",
             )
             future = asyncio.get_running_loop().create_future()
-            registry.pending_routes["group-call"] = {
+            registry.set_pending_route("group-call", {
                 "future": future,
                 "invite": types.SimpleNamespace(
                     caller="Door",
@@ -398,7 +398,7 @@ class GroupCallMatrixTest(unittest.TestCase):
                 ),
                 "ring_group_endpoint_ids": ("kitchen", "hall"),
                 "declined_endpoint_ids": set(),
-            }
+            })
 
             route_decisions.set_pending_route_decision(
                 hass,

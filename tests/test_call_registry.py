@@ -84,8 +84,8 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry.upsert("call-1", state="in_call", owner="bridge")
         registry.add_leg("call-1", "source", role="caller", state="in_call")
         registry.add_leg("call-1", "destination", role="callee", state="in_call")
-        registry.pending_routes["call-1"] = {}
-        registry.pending_invites["call-1"] = object()
+        registry.set_pending_route("call-1", {})
+        registry.set_pending_invite("call-1", object())
         registry.preanswered["call-1"] = {}
         registry.softphone_media["call-1"] = {}
         registry.sip_clients["destination"] = object()
@@ -532,8 +532,8 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry = call_registry.CallRegistry()
         registry.upsert("call-1", state="ringing", owner="ha_softphone")
         registry.event_fields("call-1", "ringing")
-        registry.pending_invites["call-1"] = object()
-        registry.pending_routes["call-1"] = {"future": object()}
+        registry.set_pending_invite("call-1", object())
+        registry.set_pending_route("call-1", {"future": object()})
 
         registry.finish_and_pop("call-1", reason="remote_hangup")
 
