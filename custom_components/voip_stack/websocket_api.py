@@ -32,7 +32,6 @@ from .const import (
     CONF_VIDEO_TRANSCODING,
     DOMAIN,
     HA_PEER_FALLBACK_NAME,
-    HA_SOFTPHONE_DEVICE_ID,
     SIP_CALL_ENDED_EVENT,
 )
 from .endpoint_lifecycle import call_registry
@@ -445,7 +444,7 @@ def _release_ha_softphone_claim(
     _set_ha_softphone_call_state(
         hass,
         CallState.CANCELLED.value,
-        session_device_id=str(store.get("device_id") or HA_SOFTPHONE_DEVICE_ID),
+        session_device_id=str(store.get("device_id") or ""),
         caller=str(store.get("caller") or ""),
         callee=str(store.get("callee") or ""),
         peer_name=str(store.get("peer_name") or ""),
@@ -1005,7 +1004,7 @@ def _ha_softphone_state(
         "device_id": (
             endpoint.device_id
             if endpoint is not None and endpoint.device_id
-            else store.get("device_id", HA_SOFTPHONE_DEVICE_ID)
+            else store.get("device_id", "")
         ),
         "name": endpoint.name if endpoint is not None else _ha_peer_name(hass),
         "endpoint_type": EndpointKind.BROWSER.value,
@@ -1330,7 +1329,7 @@ def _set_ha_softphone_call_state(
 
     payload = {
         "endpoint_id": endpoint_id,
-        "device_id": store.get("device_id", HA_SOFTPHONE_DEVICE_ID),
+        "device_id": store.get("device_id", ""),
         "session_device_id": session_device_id or "",
     }
     payload.update(canonical)
@@ -1424,9 +1423,7 @@ def _ha_softphone_device(
     return {
         "endpoint_id": endpoint_id,
         "endpoint_type": EndpointKind.BROWSER.value,
-        "device_id": state.get("device_id") or (
-            HA_SOFTPHONE_DEVICE_ID if endpoint_id == DEFAULT_ENDPOINT_ID else ""
-        ),
+        "device_id": state.get("device_id") or "",
         "name": state.get("name") or _ha_peer_name(hass),
         "extension": state.get("extension", ""),
         "availability": (
@@ -1814,9 +1811,6 @@ async def websocket_resolve_device(
 ) -> None:
     require_websocket_read(connection)
     device_id = str(msg.get("device_id") or "")
-    if device_id == HA_SOFTPHONE_DEVICE_ID:
-        connection.send_result(msg["id"], {"device": _ha_softphone_device(hass)})
-        return
     registry = _endpoint_registry(hass)
     endpoint = registry.by_device_id(device_id) if registry is not None else None
     if endpoint is not None and endpoint.kind is EndpointKind.BROWSER:
