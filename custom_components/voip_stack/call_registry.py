@@ -133,19 +133,26 @@ class CallRegistry:
                 route_kind=session.route_kind,
             )
             session.generation = int(authoritative.generation)
-            observation = _owner_observation_metadata(session.metadata)
-            observation.update(
-                owner=session.owner,
-                caller=session.caller,
-                callee=session.callee,
-                route_kind=session.route_kind,
-            )
-            owner.observe_call(
-                session.id,
-                state=session.state,
-                generation=session.generation,
-                **observation,
-            )
+            self._observe_session(session)
+
+    def _observe_session(self, session: CallSession) -> None:
+        if self._session_owner is None:
+            return
+        observation = _owner_observation_metadata(session.metadata)
+        observation.update(
+            owner=session.owner,
+            outcome=session.outcome,
+            caller=session.caller,
+            callee=session.callee,
+            route_kind=session.route_kind,
+            terminal_reason=session.terminal_reason,
+        )
+        self._session_owner.observe_call(
+            session.id,
+            state=session.state,
+            generation=session.generation,
+            **observation,
+        )
 
     def _artifact_view(self, name: str) -> dict[str, Any]:
         if self._session_owner is not None:
@@ -747,21 +754,7 @@ class CallRegistry:
             changed = True
         if changed:
             session.revision += 1
-        if self._session_owner is not None:
-            observation = _owner_observation_metadata(session.metadata)
-            observation.update(
-                owner=session.owner,
-                caller=session.caller,
-                callee=session.callee,
-                route_kind=session.route_kind,
-                terminal_reason=session.terminal_reason,
-            )
-            self._session_owner.observe_call(
-                call_id,
-                state=session.state,
-                generation=session.generation,
-                **observation,
-            )
+        self._observe_session(session)
         return session
 
     def transition(
@@ -808,21 +801,7 @@ class CallRegistry:
             {key: value for key, value in metadata.items() if value not in (None, "")}
         )
         session.revision += 1
-        if self._session_owner is not None:
-            observation = _owner_observation_metadata(session.metadata)
-            observation.update(
-                owner=session.owner,
-                outcome=session.outcome,
-                caller=session.caller,
-                callee=session.callee,
-                route_kind=session.route_kind,
-            )
-            self._session_owner.observe_call(
-                session_id,
-                state=session.state,
-                generation=session.generation,
-                **observation,
-            )
+        self._observe_session(session)
         return session
 
     def is_current(
