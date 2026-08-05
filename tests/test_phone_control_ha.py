@@ -215,19 +215,23 @@ async def test_esphome_answer_preserves_context_and_control_scope(
     hass = MagicMock()
     call = _call(hass, device_id=endpoint.device_id)
     authorize = AsyncMock()
-    press = AsyncMock(return_value=True)
+    invoke = AsyncMock()
     monkeypatch.setattr(
         phone_control,
         "async_resolve_source_device",
         AsyncMock(return_value=device),
     )
-    monkeypatch.setattr(phone_control, "has_action", lambda *_args: False)
+    monkeypatch.setattr(
+        phone_control,
+        "has_action",
+        lambda _hass, _device, action: action == "answer_call",
+    )
     monkeypatch.setattr(
         phone_control,
         "async_require_phone_service_control",
         authorize,
     )
-    monkeypatch.setattr(phone_control, "async_press_device_button", press)
+    monkeypatch.setattr(phone_control, "async_call_action", invoke)
 
     result = await PhoneAdapterRegistry(hass, endpoints).control(
         call,
@@ -242,10 +246,41 @@ async def test_esphome_answer_preserves_context_and_control_scope(
         device=device,
         action_entity_ids=("button.ws3_call",),
     )
-    press.assert_awaited_once_with(
+    invoke.assert_awaited_once_with(
         hass,
         device,
-        "call",
-        "SIP answer",
+        "answer_call",
+        {},
         context=call.context,
     )
+
+
+async def test_esphome_control_requires_the_explicit_native_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.voip_stack import phone_control
+
+    endpoint = _endpoint(
+        endpoint_id="esphome:ws3",
+        device_id="device-ws3",
+        name="WS3",
+        kind=EndpointKind.ESPHOME,
+    )
+    endpoints = EndpointRegistry()
+    endpoints.register(endpoint)
+    monkeypatch.setattr(
+        phone_control,
+        "async_resolve_source_device",
+        AsyncMock(return_value={"device_id": endpoint.device_id, "name": endpoint.name}),
+    )
+    monkeypatch.setattr(phone_control, "has_action", lambda *_args: False)
+    call = _call(MagicMock(), device_id=endpoint.device_id)
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await PhoneAdapterRegistry(call.hass, endpoints).control(
+            call,
+            PhoneOperation.HANGUP,
+            CallControlRequest(context=call.context),
+        )
+
+    assert raised.value.translation_key == "phone_operation_not_supported"

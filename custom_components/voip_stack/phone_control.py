@@ -13,7 +13,6 @@ from .const import DOMAIN
 from .endpoint_registry import EndpointRegistry
 from .esphome_actions import (
     async_call_action,
-    async_press_device_button,
     async_resolve_source_device,
     has_action,
 )
@@ -236,33 +235,15 @@ class EspHomePhoneAdapter:
             PhoneOperation.HANGUP: "hangup_call",
         }[operation]
         data = {"reason": request.reason} if operation is PhoneOperation.DECLINE else {}
-        if has_action(call.hass, device, action):
-            await async_call_action(
-                call.hass,
-                device,
-                action,
-                data,
-                context=request.context,
-            )
-        elif operation is PhoneOperation.HANGUP and has_action(
-            call.hass, device, "decline_call"
-        ):
-            # COMPAT: remove decline_call hangup fallback after 2026.10.
-            await async_call_action(
-                call.hass,
-                device,
-                "decline_call",
-                {"reason": request.reason or "local_hangup"},
-                context=request.context,
-            )
-        elif not await async_press_device_button(
+        if not has_action(call.hass, device, action):
+            raise _unsupported(phone, operation)
+        await async_call_action(
             call.hass,
             device,
-            entity_key,
-            f"SIP {operation.value}",
+            action,
+            data,
             context=request.context,
-        ):
-            raise _unsupported(phone, operation)
+        )
         return PhoneActionResult(
             operation=operation,
             phone=phone,
@@ -368,21 +349,14 @@ class PhoneAdapterRegistry:
             live_endpoint = self._endpoints.by_device_id(
                 str(device.get("device_id") or "")
             )
-            entities = device.get("entities") or {}
             capabilities = set()
             if has_action(self._hass, device, "start_call"):
                 capabilities.add(PhoneOperation.ORIGINATE)
-            if has_action(self._hass, device, "answer_call") or entities.get("call"):
+            if has_action(self._hass, device, "answer_call"):
                 capabilities.add(PhoneOperation.ANSWER)
-            if has_action(self._hass, device, "decline_call") or entities.get(
-                "decline"
-            ):
+            if has_action(self._hass, device, "decline_call"):
                 capabilities.add(PhoneOperation.DECLINE)
-            if (
-                has_action(self._hass, device, "hangup_call")
-                or has_action(self._hass, device, "decline_call")
-                or entities.get("decline")
-            ):
+            if has_action(self._hass, device, "hangup_call"):
                 capabilities.add(PhoneOperation.HANGUP)
             return PhoneHandle(
                 endpoint_id=str(

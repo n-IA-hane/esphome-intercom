@@ -28,7 +28,7 @@ yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophon
 The ESPHome node name and entity identities are unchanged. Only the example
 YAML filename and references to it must be updated.
 
-## 2026.8.1: phone actions and cards use Device IDs only
+## 2026.8.1: phone actions and cards use device identifiers only
 
 VoIP Stack no longer accepts the synthetic
 `__voip_stack_ha_softphone__` selector or a card `endpoint_id`. Open each
@@ -47,6 +47,13 @@ the selected phone from `phone.device_id`, `phone.kind` and `phone.name`; read
 call state from `call.call_id`, `call.state` and `call.destination`. The former
 duplicate flat fields such as top-level `device_id`, `endpoint_id`, `call_id`
 and `destination` were removed.
+
+ESPHome phones controlled from Home Assistant must expose the explicit
+`start_call`, `answer_call`, `decline_call` and `hangup_call` native API
+actions provided by the current `packages/voip/ha_phone.yaml`. VoIP Stack no
+longer treats call/decline buttons as remote-control actions and no longer
+uses `decline_call` as a substitute for hangup. Rebuild and flash custom
+firmware that included only the older entity package.
 
 ## 2026.8.0: upgrade checklist
 
