@@ -483,7 +483,6 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             authoritative.endpoint_claims,
             {"caller": "source", "callee": "destination"},
         )
-        self.assertEqual(registry._legacy_endpoint_claims, {})
         self.assertEqual(registry.endpoint_claims, {"call-1": authoritative.endpoint_claims})
 
         registry.finish_and_pop("call-1", reason="remote_hangup", state="idle")

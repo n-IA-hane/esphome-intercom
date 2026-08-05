@@ -81,6 +81,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
 
     def test_snapshot_exposes_every_owned_runtime_resource(self) -> None:
         registry = call_registry.CallRegistry()
+        registry.bind_endpoint_registry(_EndpointRegistryStub())
         registry.upsert("call-1", state="in_call", owner="bridge")
         registry.add_leg("call-1", "source", role="caller", state="in_call")
         registry.add_leg("call-1", "destination", role="callee", state="in_call")
@@ -93,10 +94,8 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry.attach_client_watcher("destination", watcher)
         registry.attach_relay("call-1", object())
         registry.set_bridge_link("call-1", "destination")
-        registry.endpoint_claims["call-1"] = {
-            "office": "source",
-            "kitchen": "destination",
-        }
+        registry.claim_endpoint("call-1", "office", role="source")
+        registry.claim_endpoint("call-1", "kitchen", role="destination")
 
         self.assertEqual(
             registry.snapshot()["resource_counts"],

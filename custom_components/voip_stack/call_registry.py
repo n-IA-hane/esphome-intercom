@@ -68,6 +68,7 @@ class CallSession:
     metadata: dict[str, Any] = field(default_factory=dict)
     artifacts: dict[str, Any] = field(default_factory=dict, repr=False)
     resources: dict[str, Any] = field(default_factory=dict, repr=False)
+    endpoint_claims: dict[str, str] = field(default_factory=dict, repr=False)
 
 
 @dataclass(slots=True)
@@ -90,7 +91,6 @@ class CallRegistry:
         self.leg_index: dict[str, str] = {}
         self.event_contexts: dict[str, CallEventContext] = {}
         self.terminal_summary_ids: OrderedDict[str, None] = OrderedDict()
-        self._legacy_endpoint_claims: dict[str, dict[str, str]] = {}
         self.terminated_call_ids: OrderedDict[str, int] = OrderedDict()
         self._generation = 0
         self._endpoint_registry: Any | None = None
@@ -294,11 +294,13 @@ class CallRegistry:
 
     @property
     def endpoint_claims(self) -> dict[str, dict[str, str]]:
-        """Return claims from the sole owner, or the YAML compatibility store."""
-
         if self._session_owner is not None:
             return self._session_owner.endpoint_claims_snapshot()
-        return self._legacy_endpoint_claims
+        return {
+            call_id: dict(session.endpoint_claims)
+            for call_id, session in self.sessions.items()
+            if session.endpoint_claims
+        }
 
     def publish(self, snapshot: Any) -> None:
         """Receive an observable snapshot without taking lifecycle ownership."""
@@ -483,12 +485,12 @@ class CallRegistry:
             registry.adopt_transport_call(endpoint_id, session_id)
         else:
             registry.claim_call(endpoint_id, session_id)
-        claims = self._legacy_endpoint_claims.setdefault(session_id, {})
+        session = session or self.upsert(session_id, state="new")
+        claims = session.endpoint_claims
         previous = claims.get(endpoint_id)
         claims[endpoint_id] = str(role or "endpoint")
         if previous != claims[endpoint_id]:
-            if session is not None:
-                session.revision += 1
+            session.revision += 1
         return True
 
     def release_endpoint_claims(self, call_id: str) -> None:
@@ -501,10 +503,10 @@ class CallRegistry:
                 generation=session.generation,
             )
             return
-        claims = self._legacy_endpoint_claims.get(session_id, {})
+        claims = session.endpoint_claims if session is not None else {}
         registry = self._endpoint_registry
         if registry is None:
-            self._legacy_endpoint_claims.pop(session_id, None)
+            claims.clear()
             return
         for endpoint_id in tuple(claims):
             # Config removal may have already detached the endpoint from a
@@ -513,7 +515,6 @@ class CallRegistry:
             if not hasattr(registry, "get") or registry.get(endpoint_id) is not None:
                 registry.release_call(endpoint_id, session_id)
             claims.pop(endpoint_id, None)
-        self._legacy_endpoint_claims.pop(session_id, None)
 
     def release_endpoint_claim(self, call_id: str, endpoint_id: str) -> bool:
         """Release one losing/finished endpoint leg without ending the call."""
@@ -529,7 +530,7 @@ class CallRegistry:
             if released:
                 session.revision += 1
             return released
-        claims = self._legacy_endpoint_claims.get(session_id)
+        claims = session.endpoint_claims if session is not None else None
         if not endpoint_id or claims is None or endpoint_id not in claims:
             return False
         registry = self._endpoint_registry
@@ -539,9 +540,6 @@ class CallRegistry:
         ):
             released = bool(registry.release_call(endpoint_id, session_id))
         claims.pop(endpoint_id, None)
-        if not claims:
-            self._legacy_endpoint_claims.pop(session_id, None)
-        session = self.sessions.get(session_id)
         if session is not None:
             session.revision += 1
         return released
