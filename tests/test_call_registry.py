@@ -639,6 +639,17 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertNotIn("call-1", registry.pending_invites)
         self.assertNotIn("call-1", registry.pending_routes)
 
+    def test_pending_route_begins_its_authoritative_call_generation(self) -> None:
+        registry = call_registry.CallRegistry()
+
+        registry.set_pending_route("route-first", {"future": object()})
+
+        session = registry.sessions["route-first"]
+        assert session.state == "connecting"
+        assert session.owner == "router"
+        assert registry.session_owner().get_session("route-first") is not None
+        assert "route-first" in registry.pending_routes
+
     def test_endpoint_claims_are_atomic_and_released_by_leg_teardown(self) -> None:
         registry = call_registry.CallRegistry()
         endpoints = _EndpointRegistryStub()

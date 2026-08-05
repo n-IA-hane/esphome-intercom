@@ -219,7 +219,10 @@ class CallRegistry:
         self._take_artifact(call_id, "video_parameter_sets")
 
     def set_pending_route(self, call_id: str, route: dict[str, Any]) -> None:
-        """Attach route state through the authoritative owner when present."""
+        """Begin routing on the authoritative owner and attach its decision state."""
+
+        if self._session_owner.get_session(call_id) is None:
+            self.upsert(call_id, state="connecting", owner="router")
 
         self._set_artifact(call_id, "pending_route", route)
 
