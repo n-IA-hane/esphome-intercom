@@ -100,11 +100,9 @@ class CallRegistry:
     def __init__(self) -> None:
         self.sessions: dict[str, CallSession] = {}
         self.leg_index: dict[str, str] = {}
-        self._legacy_pending_routes: dict[str, dict[str, Any]] = {}
-        self._legacy_pending_invites: dict[str, Any] = {}
+        self._legacy_artifacts: dict[str, dict[str, Any]] = {}
         self._legacy_preanswered: dict[str, dict[str, Any]] = {}
         self._legacy_softphone_media: dict[str, dict[str, Any]] = {}
-        self._legacy_video_parameter_sets: dict[str, tuple[bytes, ...]] = {}
         self._legacy_sip_clients: dict[str, Any] = {}
         self._legacy_client_watchers: dict[str, Any] = {}
         self._legacy_relays: dict[str, Any] = {}
@@ -150,6 +148,22 @@ class CallRegistry:
                 **observation,
             )
 
+    def _artifact_view(self, name: str) -> dict[str, Any]:
+        if self._session_owner is not None:
+            return self._session_owner.artifacts_snapshot(name)
+        return self._legacy_artifacts.setdefault(name, {})
+
+    def _set_artifact(self, call_id: str, name: str, value: Any) -> None:
+        if self._session_owner is None:
+            self._artifact_view(name)[call_id] = value
+        elif not self._session_owner.set_artifact(call_id, name, value):
+            raise RuntimeError(f"call session {call_id!r} is unavailable")
+
+    def _take_artifact(self, call_id: str, name: str) -> Any | None:
+        if self._session_owner is not None:
+            return self._session_owner.take_artifact(call_id, name)
+        return self._artifact_view(name).pop(call_id, None)
+
     @property
     def relays(self) -> dict[str, Any]:
         """Compatibility projection of relays owned by call sessions."""
@@ -186,62 +200,41 @@ class CallRegistry:
     def pending_invites(self) -> dict[str, Any]:
         """Compatibility projection of session-owned inbound INVITEs."""
 
-        if self._session_owner is not None:
-            return self._session_owner.artifacts_snapshot("pending_invite")
-        return self._legacy_pending_invites
+        return self._artifact_view("pending_invite")
 
     @property
     def pending_routes(self) -> dict[str, dict[str, Any]]:
         """Compatibility projection of session-owned routing state."""
 
-        if self._session_owner is not None:
-            return self._session_owner.artifacts_snapshot("pending_route")
-        return self._legacy_pending_routes
+        return self._artifact_view("pending_route")
 
     @property
     def video_parameter_sets(self) -> dict[str, tuple[bytes, ...]]:
         """Compatibility projection of session-owned codec configuration."""
 
-        if self._session_owner is not None:
-            return self._session_owner.artifacts_snapshot("video_parameter_sets")
-        return self._legacy_video_parameter_sets
+        return self._artifact_view("video_parameter_sets")
 
     def cache_video_parameter_sets(
         self, call_id: str, parameter_sets: tuple[bytes, ...]
     ) -> None:
         """Cache video configuration on the current call generation."""
 
-        if self._session_owner is None:
-            self._legacy_video_parameter_sets[call_id] = tuple(parameter_sets)
-            return
-        if not self._session_owner.set_artifact(
-            call_id, "video_parameter_sets", tuple(parameter_sets)
-        ):
-            raise RuntimeError(f"call session {call_id!r} is no longer current")
+        self._set_artifact(call_id, "video_parameter_sets", tuple(parameter_sets))
 
     def clear_video_parameter_sets(self, call_id: str) -> None:
         """Clear video configuration without mutating a detached projection."""
 
-        if self._session_owner is None:
-            self._legacy_video_parameter_sets.pop(call_id, None)
-            return
-        self._session_owner.take_artifact(call_id, "video_parameter_sets")
+        self._take_artifact(call_id, "video_parameter_sets")
 
     def set_pending_route(self, call_id: str, route: dict[str, Any]) -> None:
         """Attach route state through the authoritative owner when present."""
 
-        if self._session_owner is None:
-            self._legacy_pending_routes[call_id] = route
-            return
-        if not self._session_owner.set_artifact(call_id, "pending_route", route):
-            raise RuntimeError(f"call session {call_id!r} is no longer current")
+        self._set_artifact(call_id, "pending_route", route)
 
     def take_pending_route(self, call_id: str) -> dict[str, Any] | None:
         """Detach route state from its authoritative call generation."""
 
-        if self._session_owner is None:
-            return self._legacy_pending_routes.pop(call_id, None)
-        return self._session_owner.take_artifact(call_id, "pending_route")
+        return self._take_artifact(call_id, "pending_route")
 
     @property
     def preanswered(self) -> dict[str, dict[str, Any]]:
@@ -262,18 +255,12 @@ class CallRegistry:
     def set_pending_invite(self, call_id: str, invite: Any) -> None:
         """Attach an INVITE to the sole current call owner."""
 
-        if self._session_owner is None:
-            self._legacy_pending_invites[call_id] = invite
-            return
-        if not self._session_owner.set_artifact(call_id, "pending_invite", invite):
-            raise RuntimeError(f"call session {call_id!r} is unavailable")
+        self._set_artifact(call_id, "pending_invite", invite)
 
     def take_pending_invite(self, call_id: str) -> Any | None:
         """Take an INVITE without mutating a detached compatibility view."""
 
-        if self._session_owner is None:
-            return self._legacy_pending_invites.pop(call_id, None)
-        return self._session_owner.take_artifact(call_id, "pending_invite")
+        return self._take_artifact(call_id, "pending_invite")
 
     def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> None:
         """Record a bridge link on the sole current call owner."""
@@ -1407,11 +1394,9 @@ class CallRegistry:
         self._release_all_endpoint_claims()
         self.sessions.clear()
         self.leg_index.clear()
-        self._legacy_pending_routes.clear()
-        self._legacy_pending_invites.clear()
+        self._legacy_artifacts.clear()
         self._legacy_preanswered.clear()
         self._legacy_softphone_media.clear()
-        self._legacy_video_parameter_sets.clear()
         self._legacy_sip_clients.clear()
         self._legacy_client_watchers.clear()
         self._legacy_relays.clear()
