@@ -8,7 +8,7 @@ import logging
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
-from .const import DOMAIN, HA_PEER_FALLBACK_NAME, HA_SOFTPHONE_DEVICE_ID
+from .const import HA_PEER_FALLBACK_NAME, HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry
 from .fsm import (
     CallState,
@@ -17,6 +17,7 @@ from .fsm import (
     sip_terminal_reason,
 )
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
+from .runtime_data import call_runtime_artifacts
 from .session_cleanup import async_cleanup_sip_runtime
 from .websocket_api import _ha_softphone_store, _set_ha_softphone_call_state
 
@@ -333,9 +334,10 @@ async def async_prepare_ha_outbound_call(
     endpoint_id: str = DEFAULT_ENDPOINT_ID,
 ) -> None:
     """Close stale HA softphone SIP clients before creating a new dialog."""
-    bucket = hass.data.setdefault(DOMAIN, {})
-    start_locks = bucket.setdefault("ha_softphone_start_locks", {})
-    start_lock: asyncio.Lock = start_locks.setdefault(endpoint_id, asyncio.Lock())
+    artifacts = call_runtime_artifacts(hass)
+    start_lock = artifacts.softphone_start_locks.setdefault(
+        endpoint_id, asyncio.Lock()
+    )
     async with start_lock:
         registry = call_registry(hass)
         store = _ha_softphone_store(hass, endpoint_id)

@@ -133,6 +133,7 @@ class _Hass:
     def __init__(self) -> None:
         self.data: dict = {}
         self.config = types.SimpleNamespace(location_name="Casa")
+        self.artifacts = types.SimpleNamespace(softphone_start_locks={})
 
     @staticmethod
     def async_create_task(coroutine):
@@ -177,6 +178,8 @@ def _load_outbound_lifecycle(
     phone_endpoint.DEFAULT_ENDPOINT_ID = "default"
     session_cleanup = types.ModuleType(f"{PKG_NAME}.session_cleanup")
     session_cleanup.async_cleanup_sip_runtime = cleanup
+    runtime_data = types.ModuleType(f"{PKG_NAME}.runtime_data")
+    runtime_data.call_runtime_artifacts = lambda hass: hass.artifacts
     websocket_api = types.ModuleType(f"{PKG_NAME}.websocket_api")
     websocket_api._ha_softphone_store = (
         lambda _hass, endpoint_id: stores.setdefault(endpoint_id, {})
@@ -202,6 +205,7 @@ def _load_outbound_lifecycle(
         fsm.__name__: fsm,
         phone_endpoint.__name__: phone_endpoint,
         session_cleanup.__name__: session_cleanup,
+        runtime_data.__name__: runtime_data,
         websocket_api.__name__: websocket_api,
     }
     with patch.dict(sys.modules, dependencies):

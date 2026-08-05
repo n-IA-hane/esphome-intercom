@@ -10,7 +10,7 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .call_scope import endpoint_call_ids, pending_routes
 from .config import transport_config
-from .const import CONF_VIDEO_CAMERA_SEND, DOMAIN
+from .const import CONF_VIDEO_CAMERA_SEND
 from .fsm import CallState, TerminalReason
 from .inbound_answer import AnswerTransaction
 from .media_ports import (
@@ -74,7 +74,6 @@ async def async_answer_browser_call(
             raise ServiceValidationError(str(err)) from err
         return
 
-    bucket = hass.data.setdefault(DOMAIN, {})
     # A browser ring-group member resolves its own pending candidate before
     # the generic forwarding guard. The fork controller then commits the only
     # winner and cancels every sibling B-leg.
@@ -93,7 +92,7 @@ async def async_answer_browser_call(
     artifacts = call_runtime_artifacts(hass)
     forward_task = artifacts.forward_tasks.get(call_id)
     forward_claimed = call_id in artifacts.forward_claims
-    group_answer_commit = call_id in bucket.get("ring_group_answer_commits", set())
+    group_answer_commit = call_id in artifacts.answer_commits
     if not group_answer_commit and (
         forward_claimed or (forward_task is not None and not forward_task.done())
     ):

@@ -580,7 +580,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         local_answer = answer_service[
             answer_service.index("camera_send_requested = bool(") :
-            answer_service.index("bucket = hass.data.setdefault(DOMAIN, {})")
+            answer_service.index("# A browser ring-group")
         ]
         self.assertIn("CONF_VIDEO_CAMERA_SEND", local_answer)
         self.assertIn('call.data.get("send_video", False)', local_answer)

@@ -741,9 +741,7 @@ async def async_forward_existing_call(
                         session_device_id=winner.device_id,
                     )
                     registry.set_pending_invite(call_id, invite)
-                    answer_commits = hass.data.setdefault(DOMAIN, {}).setdefault(
-                        "ring_group_answer_commits", set()
-                    )
+                    answer_commits = artifacts.answer_commits
                     answer_commits.add(call_id)
                     try:
                         await hass.services.async_call(

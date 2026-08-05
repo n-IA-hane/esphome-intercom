@@ -559,10 +559,8 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             self.outbound_lifecycle,
             "async_prepare_ha_outbound_call",
         )
-        self.assertIn('setdefault("ha_softphone_start_locks", {})', prepare)
-        self.assertIn(
-            "start_locks.setdefault(endpoint_id, asyncio.Lock())", prepare
-        )
+        self.assertIn("artifacts.softphone_start_locks.setdefault(", prepare)
+        self.assertIn("endpoint_id, asyncio.Lock()", prepare)
         self.assertIn("async with start_lock:", prepare)
 
         endpoint_runtime = ENDPOINT_RUNTIME.read_text()

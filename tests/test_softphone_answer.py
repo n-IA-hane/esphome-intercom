@@ -118,7 +118,9 @@ def _command():
 def test_ring_group_answer_is_submitted_to_fork_controller(softphone_answer) -> None:
     hass = SimpleNamespace(
         data={},
-        artifacts=SimpleNamespace(forward_tasks={}, forward_claims=set()),
+        artifacts=SimpleNamespace(
+            forward_tasks={}, forward_claims=set(), answer_commits=set()
+        ),
     )
     call = SimpleNamespace(
         data={"media_client_id": "browser-1", "send_video": True},
@@ -148,7 +150,7 @@ def test_generic_forward_owner_rejects_direct_answer(softphone_answer) -> None:
     hass = SimpleNamespace(
         data={"voip_stack": {}},
         artifacts=SimpleNamespace(
-            forward_tasks={}, forward_claims={"call-1"}
+            forward_tasks={}, forward_claims={"call-1"}, answer_commits=set()
         ),
     )
     call = SimpleNamespace(data={}, context=object())

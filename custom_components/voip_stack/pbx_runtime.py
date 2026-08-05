@@ -167,6 +167,8 @@ class SipEndpointRuntime:
         self.trunk_stop_task: asyncio.Task[Any] | None = None
         self.forward_tasks: dict[str, asyncio.Task[Any]] = {}
         self.forward_claims: set[str] = set()
+        self.answer_commits: set[str] = set()
+        self.softphone_start_locks: dict[str, asyncio.Lock] = {}
         self.deadlines: dict[str, asyncio.Task[Any]] = {}
         self.trunk_info_queues: dict[str, asyncio.Queue[Any]] = {}
         self.trunk_closed_calls: set[str] = set()
