@@ -72,14 +72,7 @@ def sip_component(hass: HomeAssistant, name: str) -> Any | None:
     """Return one component owned by the active SIP runtime."""
 
     runtime = sip_endpoint_runtime(hass)
-    if runtime is not None:
-        return runtime.component(name)
-    legacy_key = {
-        "conference_manager": "conference_manager",
-        "registrar": "sip_registrar",
-        "trunk": "sip_trunk",
-    }.get(name, f"sip_{name}")
-    return hass.data.get(DOMAIN, {}).get(legacy_key)
+    return runtime.component(name) if runtime is not None else None
 
 
 def sip_registrar(hass: HomeAssistant) -> Any | None:
@@ -104,6 +97,4 @@ def sip_endpoint_manager(hass: HomeAssistant) -> Any | None:
     """Return the shared UDP/TCP endpoint manager owned by the SIP runtime."""
 
     runtime = sip_endpoint_runtime(hass)
-    if runtime is not None:
-        return runtime.component("udp_listener")
-    return hass.data.get(DOMAIN, {}).get("sip_endpoint")
+    return runtime.component("udp_listener") if runtime is not None else None

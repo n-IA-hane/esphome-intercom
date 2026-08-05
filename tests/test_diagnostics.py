@@ -65,6 +65,10 @@ def _load_module(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, module)
     spec.loader.exec_module(module)
+    module.sip_endpoint_manager = lambda hass: hass.data.get("voip_stack", {}).get(
+        "sip_endpoint"
+    )
+    module.sip_trunk = lambda hass: hass.data.get("voip_stack", {}).get("sip_trunk")
     return module
 
 

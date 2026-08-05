@@ -788,6 +788,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         audio_ws_view = _load_audio_ws_runtime_module()
         audio_ws = _load_intercom_module("audio_ws")
         const = _load_intercom_module("const")
+        audio_ws_view.conference_component = lambda hass: hass.data.get(
+            const.DOMAIN, {}
+        ).get("conference_manager")
         from aiohttp import WSMsgType
 
         class Bus:

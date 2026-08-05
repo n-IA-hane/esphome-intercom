@@ -98,9 +98,25 @@ def _load_module(name: str):
 
 conference = _load_module("conference")
 endpoint_lifecycle = _load_module("endpoint_lifecycle")
+
+
+def _test_runtime_component(hass, key):
+    return hass.data.get("voip_stack", {}).get(key)
+
+
+conference.conference_component = lambda hass: _test_runtime_component(
+    hass, "conference_manager"
+)
+endpoint_lifecycle.conference_component = lambda hass: _test_runtime_component(
+    hass, "conference_manager"
+)
+endpoint_lifecycle.sip_endpoint_manager = lambda hass: _test_runtime_component(
+    hass, "sip_endpoint"
+)
 endpoint_registry_module = _load_module("endpoint_registry")
 phone_endpoint = _load_module("phone_endpoint")
 trunk_runtime = _load_module("trunk_runtime")
+trunk_runtime.sip_trunk = lambda hass: _test_runtime_component(hass, "sip_trunk")
 sip_listener = _load_module("sip_listener")
 sip_client = _load_module("sip_client")
 sdp = _load_module("sdp")
