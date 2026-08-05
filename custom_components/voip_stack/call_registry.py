@@ -17,8 +17,20 @@ if TYPE_CHECKING:
     from .pbx_runtime import SipEndpointRuntime
 
 
-LegRole = Literal["caller", "callee", "trunk", "ha_softphone", "esp", "softphone", "router", "assist", "local_phone"]
-CallOwner = Literal["", "ha_softphone", "router", "bridge", "assist", "local_bridge", "terminal"]
+LegRole = Literal[
+    "caller",
+    "callee",
+    "trunk",
+    "ha_softphone",
+    "esp",
+    "softphone",
+    "router",
+    "assist",
+    "local_phone",
+]
+CallOwner = Literal[
+    "", "ha_softphone", "router", "bridge", "assist", "local_bridge", "terminal"
+]
 TERMINAL_STATES = {
     "idle",
     "busy",
@@ -67,9 +79,6 @@ class CallSession:
     terminal_reason: str = ""
     legs: dict[str, CallLeg] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-    artifacts: dict[str, Any] = field(default_factory=dict, repr=False)
-    resources: dict[str, Any] = field(default_factory=dict, repr=False)
-    endpoint_claims: dict[str, str] = field(default_factory=dict, repr=False)
 
 
 @dataclass(slots=True)
@@ -94,7 +103,6 @@ class CallRegistry:
         self.event_contexts: dict[str, CallEventContext] = {}
         self.terminal_summary_ids: OrderedDict[str, None] = OrderedDict()
         self.terminated_call_ids: OrderedDict[str, int] = OrderedDict()
-        self._generation = 0
         self._endpoint_registry: Any | None = None
         from .pbx_runtime import SipEndpointRuntime
 
@@ -265,7 +273,6 @@ class CallRegistry:
             self.sessions[call_id] = session
         elif session.generation != int(snapshot.generation):
             return
-        self._generation = max(self._generation, int(snapshot.generation))
         phase = str(getattr(snapshot.phase, "value", snapshot.phase) or "")
         changed = session.metadata.get("pbx_phase") != phase
         if phase:
@@ -560,9 +567,7 @@ class CallRegistry:
         participant_endpoint_ids.update(self.endpoint_claims.get(call_id, {}))
         participant_endpoint_ids.discard("")
         if participant_endpoint_ids:
-            fields["participant_endpoint_ids"] = sorted(
-                participant_endpoint_ids
-            )
+            fields["participant_endpoint_ids"] = sorted(participant_endpoint_ids)
         return fields
 
     def claim_terminal_summary(self, call_id: str) -> bool:
@@ -579,7 +584,9 @@ class CallRegistry:
 
     def event_context(self, call_id: str) -> CallEventContext | None:
         """Return the current automation event context for a call or leg."""
-        return self.event_contexts.get(self.resolve_session_id(str(call_id or "").strip()))
+        return self.event_contexts.get(
+            self.resolve_session_id(str(call_id or "").strip())
+        )
 
     def record_route(
         self,
@@ -637,7 +644,6 @@ class CallRegistry:
         session = self.sessions.get(call_id)
         if session is None:
             generation = int(authoritative.generation)
-            self._generation = max(self._generation, generation)
             session = CallSession(id=call_id, generation=generation)
             self.sessions[call_id] = session
         changed = False
@@ -657,7 +663,9 @@ class CallRegistry:
             for key, value in ownership_metadata.items()
             if value not in (None, "")
         }
-        if any(session.metadata.get(key) != value for key, value in clean_metadata.items()):
+        if any(
+            session.metadata.get(key) != value for key, value in clean_metadata.items()
+        ):
             session.metadata.update(clean_metadata)
             changed = True
         if changed:
@@ -687,7 +695,9 @@ class CallRegistry:
             return None
         if expected_revision is not None and session.revision != int(expected_revision):
             return None
-        if expected_generation is not None and session.generation != int(expected_generation):
+        if expected_generation is not None and session.generation != int(
+            expected_generation
+        ):
             return None
         if expected_owner is not None and session.owner != expected_owner:
             return None
@@ -757,9 +767,7 @@ class CallRegistry:
             session = self.upsert(call_id, state=state or "active", **metadata)
         else:
             clean_metadata = {
-                key: value
-                for key, value in metadata.items()
-                if value not in (None, "")
+                key: value for key, value in metadata.items() if value not in (None, "")
             }
             if any(
                 session.metadata.get(key) != value
@@ -775,7 +783,11 @@ class CallRegistry:
             changed = True
         next_state = state or leg.state
         next_sip_call_id = sip_call_id or leg.sip_call_id
-        if leg.role != role or leg.state != next_state or leg.sip_call_id != next_sip_call_id:
+        if (
+            leg.role != role
+            or leg.state != next_state
+            or leg.sip_call_id != next_sip_call_id
+        ):
             changed = True
         leg.role = role
         leg.state = next_state
@@ -962,26 +974,22 @@ class CallRegistry:
             user_id or getattr(context, "user_id", "") or ""
         ).strip()
         requested_endpoint_id = str(endpoint_id or "").strip()
-        scoped = bool(
-            requested_endpoint_id and session.metadata.get("local_bridge")
-        )
+        scoped = bool(requested_endpoint_id and session.metadata.get("local_bridge"))
         if scoped:
             controllers = session.metadata.setdefault("controller_user_ids", {})
-            current_user_id = str(
-                controllers.get(requested_endpoint_id) or ""
-            ).strip()
+            current_user_id = str(controllers.get(requested_endpoint_id) or "").strip()
         else:
             current_user_id = str(
                 session.metadata.get("controller_user_id") or ""
             ).strip()
-        if current_user_id and requested_user_id and current_user_id != requested_user_id:
+        if (
+            current_user_id
+            and requested_user_id
+            and current_user_id != requested_user_id
+        ):
             raise ValueError(
                 f"call_id {session_id}"
-                + (
-                    f" endpoint {requested_endpoint_id}"
-                    if scoped
-                    else ""
-                )
+                + (f" endpoint {requested_endpoint_id}" if scoped else "")
                 + " is already controlled by another HA user"
             )
         changed = False
@@ -1001,12 +1009,12 @@ class CallRegistry:
     def ha_context(self, call_id: str) -> Any | None:
         """Return the original HA Context for a call or one of its legs."""
 
-        session = self.sessions.get(
-            self.resolve_session_id(str(call_id or "").strip())
-        )
+        session = self.sessions.get(self.resolve_session_id(str(call_id or "").strip()))
         return session.metadata.get("ha_context") if session is not None else None
 
-    def finish(self, call_id: str, *, reason: str = "", state: str = "idle") -> CallSession | None:
+    def finish(
+        self, call_id: str, *, reason: str = "", state: str = "idle"
+    ) -> CallSession | None:
         session_id = self.resolve_session_id(call_id)
         session = self.sessions.get(session_id)
         if session is None:
@@ -1047,17 +1055,15 @@ class CallRegistry:
         route = self.take_pending_route(session_id)
         if route is not None:
             future = route.get("future")
-            if (
-                future is not None
-                and hasattr(future, "done")
-                and not future.done()
-            ):
+            if future is not None and hasattr(future, "done") and not future.done():
                 future.cancel()
         return session
 
     def bridge_for(self, call_id: str) -> tuple[str, str]:
         source_call_id = call_id if call_id in self.bridge_clients else ""
-        dest_call_id = self.bridge_clients.get(source_call_id, "") if source_call_id else ""
+        dest_call_id = (
+            self.bridge_clients.get(source_call_id, "") if source_call_id else ""
+        )
         if source_call_id:
             return source_call_id, dest_call_id
         for source, dest in self.bridge_clients.items():
@@ -1065,7 +1071,9 @@ class CallRegistry:
                 return source, dest
         return "", ""
 
-    def detach_bridge(self, call_id: str) -> tuple[str, str, Any | None, Any | None, Any | None, bool]:
+    def detach_bridge(
+        self, call_id: str
+    ) -> tuple[str, str, Any | None, Any | None, Any | None, bool]:
         source_call_id, dest_call_id = self.bridge_for(call_id)
         if not source_call_id:
             return "", "", None, None, None, False
@@ -1076,7 +1084,9 @@ class CallRegistry:
         watcher = self.take_client_watcher(dest_call_id) if dest_call_id else None
         return source_call_id, dest_call_id, relay, client, watcher, called_by_dest
 
-    def finish_and_pop(self, call_id: str, *, reason: str = "", state: str = "idle") -> CallSession | None:
+    def finish_and_pop(
+        self, call_id: str, *, reason: str = "", state: str = "idle"
+    ) -> CallSession | None:
         session_id = self.resolve_session_id(str(call_id or "").strip())
         if session_id:
             session = self.sessions.get(session_id)
@@ -1179,8 +1189,15 @@ class CallRegistry:
             origin=origin,
         )
         self.set_bridge_link(source_call_id, dest_call_id)
-        self.add_leg(source_call_id, source_call_id, role=source_role, state=source_state or state)
-        self.add_leg(source_call_id, dest_call_id, role=dest_role, state=dest_state or state)
+        self.add_leg(
+            source_call_id,
+            source_call_id,
+            role=source_role,
+            state=source_state or state,
+        )
+        self.add_leg(
+            source_call_id, dest_call_id, role=dest_role, state=dest_state or state
+        )
         self.attach_sip_client(
             source_call_id,
             dest_call_id,
@@ -1206,7 +1223,9 @@ class CallRegistry:
         for session in self.sessions.values():
             if session.state in TERMINAL_STATES:
                 continue
-            if include_ha_softphone or not any(leg.role == "ha_softphone" for leg in session.legs.values()):
+            if include_ha_softphone or not any(
+                leg.role == "ha_softphone" for leg in session.legs.values()
+            ):
                 count += 1
         return count
 

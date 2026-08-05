@@ -134,11 +134,30 @@ class CallRegistryEventContextTest(unittest.TestCase):
 
         registry.clear_runtime()
         self.assertTrue(
-            all(
-                count == 0
-                for count in registry.snapshot()["resource_counts"].values()
+            all(count == 0 for count in registry.snapshot()["resource_counts"].values())
+        )
+
+        replacement = registry.session_owner()
+        projected = registry.upsert(
+            "call-2",
+            state="ringing",
+            owner="router",
+        )
+        authoritative = replacement.get_session("call-2")
+        self.assertIsNotNone(authoritative)
+        self.assertEqual(projected.generation, authoritative.generation)
+        self.assertTrue(
+            replacement.observe_call(
+                "call-2",
+                state="connecting",
+                generation=authoritative.generation,
+                route_kind="direct",
             )
         )
+        self.assertEqual(
+            registry.sessions["call-2"].metadata["pbx_phase"], "connecting"
+        )
+        self.assertEqual(registry.sessions["call-2"].metadata["route_kind"], "direct")
 
     def test_only_one_terminal_observer_owns_teardown(self) -> None:
         registry = call_registry.CallRegistry()
@@ -154,17 +173,13 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry = call_registry.CallRegistry()
         session = registry.upsert("call-1", state="in_call", owner="bridge")
 
-        self.assertTrue(
-            registry.is_generation_current("call-1", session.generation)
-        )
+        self.assertTrue(registry.is_generation_current("call-1", session.generation))
         self.assertTrue(registry.begin_termination("call-1"))
         self.assertEqual(
             registry.sessions["call-1"].metadata["pbx_phase"],
             "terminating",
         )
-        self.assertFalse(
-            registry.is_generation_current("call-1", session.generation)
-        )
+        self.assertFalse(registry.is_generation_current("call-1", session.generation))
 
     def test_stale_generation_cannot_register_or_resurrect_bridge(self) -> None:
         registry = call_registry.CallRegistry()
@@ -230,7 +245,9 @@ class CallRegistryEventContextTest(unittest.TestCase):
 
         self.assertEqual(ended["duration_seconds"], 45)
 
-    def test_terminal_duration_is_frozen_and_resets_for_reused_physical_id(self) -> None:
+    def test_terminal_duration_is_frozen_and_resets_for_reused_physical_id(
+        self,
+    ) -> None:
         registry = call_registry.CallRegistry()
 
         with mock.patch(
@@ -366,7 +383,9 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertIsNotNone(popped)
         self.assertEqual(registry.event_contexts, {})
 
-    def test_revision_advances_for_owner_and_destination_without_state_change(self) -> None:
+    def test_revision_advances_for_owner_and_destination_without_state_change(
+        self,
+    ) -> None:
         registry = call_registry.CallRegistry()
         session = registry.upsert(
             "call-1", state="connecting", callee="Home Assistant", owner="ha_softphone"
@@ -518,9 +537,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertFalse(registry.is_terminated("call-0"))
         self.assertTrue(registry.is_terminated("call-1"))
         self.assertTrue(
-            registry.is_terminated(
-                f"call-{call_registry.MAX_TERMINATED_CALL_IDS}"
-            )
+            registry.is_terminated(f"call-{call_registry.MAX_TERMINATED_CALL_IDS}")
         )
 
     def test_generation_guards_async_transition_and_terminal_tombstone(self) -> None:
@@ -660,12 +677,8 @@ class CallRegistryEventContextTest(unittest.TestCase):
             local_bridge=True,
         )
 
-        registry.bind_controller(
-            "call-1", user_id="user-a", endpoint_id="kitchen"
-        )
-        registry.bind_controller(
-            "call-1", user_id="user-b", endpoint_id="office"
-        )
+        registry.bind_controller("call-1", user_id="user-a", endpoint_id="kitchen")
+        registry.bind_controller("call-1", user_id="user-b", endpoint_id="office")
 
         session = registry.sessions["call-1"]
         self.assertEqual(
@@ -674,9 +687,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         )
         self.assertNotIn("controller_user_id", session.metadata)
         with self.assertRaisesRegex(ValueError, "endpoint kitchen"):
-            registry.bind_controller(
-                "call-1", user_id="user-c", endpoint_id="kitchen"
-            )
+            registry.bind_controller("call-1", user_id="user-c", endpoint_id="kitchen")
 
     def test_internal_context_survives_later_admin_media_binding(self) -> None:
         registry = call_registry.CallRegistry()
@@ -695,7 +706,14 @@ class AutomationEventTypeTest(unittest.TestCase):
         cases = (
             ({"state": "route_requested", "direction": "incoming"}, "route_requested"),
             ({"state": "connecting", "direction": "incoming"}, "state_changed"),
-            ({"state": "connecting", "direction": "incoming", "event_type": "forwarding"}, "forwarding"),
+            (
+                {
+                    "state": "connecting",
+                    "direction": "incoming",
+                    "event_type": "forwarding",
+                },
+                "forwarding",
+            ),
             ({"state": "connecting", "direction": "outgoing"}, "calling"),
             ({"state": "calling", "direction": "outgoing"}, "outgoing_call"),
             ({"state": "remote_ringing"}, "remote_ringing"),
@@ -745,7 +763,9 @@ class AutomationEventTypeTest(unittest.TestCase):
                 "", {"call-1": {}}, {"call-2": object()}
             )
 
-    def test_initial_destination_call_id_is_inferred_only_for_one_pending_route(self) -> None:
+    def test_initial_destination_call_id_is_inferred_only_for_one_pending_route(
+        self,
+    ) -> None:
         self.assertEqual(
             automation_routing.resolve_pending_route_call_id("", {"call-1": {}}),
             "call-1",

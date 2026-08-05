@@ -102,12 +102,8 @@ _OBSERVED_PHASE_TRANSITIONS: dict[SessionPhase, frozenset[SessionPhase]] = {
     SessionPhase.CONNECTING: frozenset(
         {SessionPhase.RINGING, SessionPhase.ESTABLISHED}
     ),
-    SessionPhase.ESTABLISHED: frozenset(
-        {SessionPhase.HELD, SessionPhase.TRANSFERRING}
-    ),
-    SessionPhase.HELD: frozenset(
-        {SessionPhase.ESTABLISHED, SessionPhase.TRANSFERRING}
-    ),
+    SessionPhase.ESTABLISHED: frozenset({SessionPhase.HELD, SessionPhase.TRANSFERRING}),
+    SessionPhase.HELD: frozenset({SessionPhase.ESTABLISHED, SessionPhase.TRANSFERRING}),
     SessionPhase.TRANSFERRING: frozenset({SessionPhase.ESTABLISHED}),
 }
 
@@ -252,7 +248,9 @@ class SipEndpointRuntime:
         if registry is self._endpoint_registry:
             return
         if any(session.endpoint_claims for session in self.calls.values()):
-            raise RuntimeError("cannot replace endpoint registry while calls are active")
+            raise RuntimeError(
+                "cannot replace endpoint registry while calls are active"
+            )
         self._endpoint_registry = registry
 
     def endpoint_claims_snapshot(self) -> dict[str, dict[str, str]]:
@@ -620,7 +618,9 @@ class SipEndpointRuntime:
         clean_metadata = {
             key: value for key, value in metadata.items() if value not in (None, "")
         }
-        if any(session.metadata.get(key) != value for key, value in clean_metadata.items()):
+        if any(
+            session.metadata.get(key) != value for key, value in clean_metadata.items()
+        ):
             session.metadata.update(clean_metadata)
             changed = True
         if changed:
@@ -836,7 +836,9 @@ class SipEndpointRuntime:
             name for name in self._COMPONENT_STOP_ORDER if name in self._components
         ]
         ordered_names.extend(
-            name for name in reversed(tuple(self._components)) if name not in ordered_names
+            name
+            for name in reversed(tuple(self._components))
+            if name not in ordered_names
         )
         for name in ordered_names:
             try:
