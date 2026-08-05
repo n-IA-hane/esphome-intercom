@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from homeassistant.core import HomeAssistant, callback
 
 from .audio_format import HA_SIP_PCM_FORMATS
-from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
+from .const import HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry
 from .local_softphone_bridge import (
     LocalBridgeEvent,
@@ -19,7 +19,7 @@ from .local_softphone_bridge import (
     LocalCallState,
     LocalSoftphoneBridge,
 )
-from .runtime_data import endpoint_directory
+from .runtime_data import endpoint_directory, runtime_data
 
 if TYPE_CHECKING:
     from .phone_endpoint import PhoneEndpoint
@@ -33,7 +33,8 @@ LOCAL_AUDIO_FORMAT = HA_SIP_PCM_FORMATS[0]
 
 def local_softphone_bridge(hass: HomeAssistant) -> LocalSoftphoneBridge | None:
     """Return the configured in-memory bridge, if logical phones are enabled."""
-    bridge = hass.data.get(DOMAIN, {}).get("local_softphone_bridge")
+    runtime = runtime_data(hass)
+    bridge = runtime.local_bridge if runtime is not None else None
     return bridge if isinstance(bridge, LocalSoftphoneBridge) else None
 
 
@@ -323,14 +324,16 @@ def async_setup_local_softphone_bridge(
     hass: HomeAssistant,
 ) -> LocalSoftphoneBridge | None:
     """Install one local bridge over the configured endpoint registry."""
-    bucket = hass.data.setdefault(DOMAIN, {})
+    runtime = runtime_data(hass)
+    if runtime is None:
+        return None
     existing = local_softphone_bridge(hass)
     if existing is not None:
         return existing
     endpoint_registry = endpoint_directory(hass)
     bridge = LocalSoftphoneBridge(endpoint_registry)
-    bucket["local_softphone_bridge"] = bridge
-    bucket["local_softphone_bridge_unsub"] = bridge.subscribe(
+    runtime.local_bridge = bridge
+    runtime.local_bridge_unsub = bridge.subscribe(
         lambda event: _bridge_event(hass, event)
     )
     return bridge
@@ -339,11 +342,14 @@ def async_setup_local_softphone_bridge(
 @callback
 def async_shutdown_local_softphone_bridge(hass: HomeAssistant) -> None:
     """End every local call and detach its state adapter."""
-    bucket = hass.data.setdefault(DOMAIN, {})
+    runtime = runtime_data(hass)
+    if runtime is None:
+        return
     bridge = local_softphone_bridge(hass)
     if bridge is not None:
         bridge.close()
-    unsubscribe = bucket.pop("local_softphone_bridge_unsub", None)
+    unsubscribe = runtime.local_bridge_unsub
     if unsubscribe is not None:
         unsubscribe()
-    bucket.pop("local_softphone_bridge", None)
+    runtime.local_bridge = None
+    runtime.local_bridge_unsub = None

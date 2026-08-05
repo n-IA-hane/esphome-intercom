@@ -80,6 +80,8 @@ class VoipStackRuntime:
     rtp_port_pool: dict[str, Any] = field(default_factory=dict)
     next_rtp_port: int = 0
     media: BrowserMediaRuntime = field(default_factory=BrowserMediaRuntime)
+    local_bridge: Any | None = None
+    local_bridge_unsub: Any | None = None
 
 
 type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]

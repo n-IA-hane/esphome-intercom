@@ -60,6 +60,10 @@ def _load_runtime_module():
     )
     endpoint_lifecycle.call_registry = lambda _hass: None
     sys.modules[endpoint_lifecycle.__name__] = endpoint_lifecycle
+    runtime_data = types.ModuleType(f"{package_name}.runtime_data")
+    runtime_data.endpoint_directory = lambda hass: hass.runtime.endpoints
+    runtime_data.runtime_data = lambda hass: getattr(hass, "runtime", None)
+    sys.modules[runtime_data.__name__] = runtime_data
 
     homeassistant = sys.modules.setdefault(
         "homeassistant", types.ModuleType("homeassistant")
