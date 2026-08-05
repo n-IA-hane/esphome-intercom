@@ -92,16 +92,54 @@ case "$MODE" in
     pytest_args+=(-m "not live and not mutation")
     ;;
   coverage)
-    pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
-    pytest_args+=(--ignore=tests/test_phone_control_ha.py)
-    pytest_args+=(
-      -m "not architecture and not ha and not live and not mutation"
+    if [[ -z $HA_PYTHON ]]; then
+      HA_PYTHON="$ROOT/../ha-voip-lab/.venv/bin/python"
+    fi
+    if [[ $HA_PYTHON != */* ]]; then
+      HA_PYTHON=$(command -v "$HA_PYTHON" || true)
+    fi
+    [[ -x $HA_PYTHON ]] || {
+      printf 'HA test Python not found: %s\n' "$HA_PYTHON" >&2
+      exit 2
+    }
+
+    coverage_file="$ROOT/.coverage"
+    rm -f "$coverage_file" "$ROOT"/.coverage.*
+
+    coverage_args=(
       --cov=custom_components/voip_stack
       --cov-branch
       --cov-context=test
-      --cov-report=term-missing:skip-covered
-      --cov-report=xml
+      --cov-report=
     )
+    regular_args=(
+      tests
+      -q
+      --tb=short
+      --ignore=tests/test_ha_integration_runtime.py
+      --ignore=tests/test_phone_control_ha.py
+      -m "not architecture and not ha and not live and not mutation"
+      "${coverage_args[@]}"
+    )
+    ha_args=(
+      tests/test_ha_integration_runtime.py
+      tests/test_phone_control_ha.py
+      -q
+      --tb=short
+      "${coverage_args[@]}"
+      --cov-append
+    )
+    if [[ $KEEP_GOING -eq 1 ]]; then
+      regular_args+=(--maxfail=0)
+      ha_args+=(--maxfail=0)
+    fi
+
+    printf 'suite=coverage phase=regular yaml_paths=%s\n' "$path_mode"
+    COVERAGE_FILE=$coverage_file "$PYTHON" -m pytest "${regular_args[@]}"
+    printf 'suite=coverage phase=ha yaml_paths=%s\n' "$path_mode"
+    COVERAGE_FILE=$coverage_file "$HA_PYTHON" -m pytest "${ha_args[@]}"
+    "$PYTHON" -m coverage report --show-missing --skip-covered
+    exec "$PYTHON" -m coverage xml
     ;;
   ha)
     if [[ -z $HA_PYTHON ]]; then
