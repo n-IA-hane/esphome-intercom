@@ -488,7 +488,6 @@ const kitchen = makeCard();
 kitchen.config = {{
   mode: "ha_softphone",
   name: "Kitchen",
-  endpoint_id: "kitchen",
   device_id: "device-kitchen",
 }};
 kitchen._onSoftphoneState({{ endpoint_id: "default", state: "ringing", call_id: "wrong" }});
@@ -507,7 +506,7 @@ let recoveredMediaCalls = 0;
 engine.resumeSession = async () => {{ recoveredMediaCalls++; return true; }};
 const recoveredCard = makeCard();
 recoveredCard.config = {{
-  mode: "ha_softphone", endpoint_id: "kitchen", device_id: "device-kitchen",
+  mode: "ha_softphone", device_id: "device-kitchen",
 }};
 recoveredCard._onSoftphoneState({{
   endpoint_id: "kitchen", device_id: "device-kitchen",
@@ -597,7 +596,7 @@ engine.releaseSoftphoneSession("kitchen-call", "kitchen");
 // answer after observing an initially free engine.
 const kitchenRace = makeCard();
 kitchenRace.config = {{
-  mode: "ha_softphone", endpoint_id: "kitchen", device_id: "device-kitchen",
+  mode: "ha_softphone", device_id: "device-kitchen",
 }};
 kitchenRace._applySoftphoneSnapshot({{
   endpoint_id: "kitchen", device_id: "device-kitchen", state: "ringing",
@@ -605,7 +604,7 @@ kitchenRace._applySoftphoneSnapshot({{
 }});
 const hallRace = makeCard();
 hallRace.config = {{
-  mode: "ha_softphone", endpoint_id: "hall", device_id: "device-hall",
+  mode: "ha_softphone", device_id: "device-hall",
 }};
 hallRace._applySoftphoneSnapshot({{
   endpoint_id: "hall", device_id: "device-hall", state: "ringing",
@@ -652,12 +651,12 @@ assert.equal(engine.releaseMediaIntent(postFailureIntent), true);
 // supplied a call-id to claim.
 const startKitchen = makeCard();
 startKitchen.config = {{
-  mode: "ha_softphone", endpoint_id: "kitchen", device_id: "device-kitchen",
+  mode: "ha_softphone", device_id: "device-kitchen",
 }};
 startKitchen._rosterEntries = [{{ id: "desk", name: "Desk", enabled: true, metadata: {{}} }}];
 const startHall = makeCard();
 startHall.config = {{
-  mode: "ha_softphone", endpoint_id: "hall", device_id: "device-hall",
+  mode: "ha_softphone", device_id: "device-hall",
 }};
 startHall._rosterEntries = [{{ id: "desk", name: "Desk", enabled: true, metadata: {{}} }}];
 let releaseStartLookup;
@@ -677,30 +676,35 @@ await Promise.resolve();
 await startHall._startCall();
 assert.equal(outboundRequests.length, 0);
 assert.match(startHall._errorMsg, /already handling another phone call/i);
-releaseStartLookup({{ device_id: "device-kitchen", softphone: true }});
+releaseStartLookup({{
+  device_id: "device-kitchen", endpoint_id: "kitchen", softphone: true,
+}});
 await pendingKitchenStart;
 assert.equal(outboundRequests.length, 1);
 assert.equal(outboundRequests[0][1].endpoint_id, "kitchen");
 assert.equal(outboundRequests[0][1].microphone_anti_alias, true);
 engine.releaseSoftphoneSession("start-kitchen", "kitchen");
 
-// An endpoint-only card may be used before its first state snapshot. It must
-// not pair that non-default endpoint with the legacy default Device selector.
-const endpointOnly = makeCard();
-endpointOnly.config = {{ mode: "ha_softphone", endpoint_id: "kitchen" }};
-endpointOnly._rosterEntries = [{{
+// A Device-only card resolves its internal endpoint from the backend before
+// starting media, without persisting that endpoint in card configuration.
+const deviceOnlyOutbound = makeCard();
+deviceOnlyOutbound.config = {{ mode: "ha_softphone", device_id: "device-kitchen" }};
+deviceOnlyOutbound._getDeviceInfo = async () => ({{
+  device_id: "device-kitchen", endpoint_id: "kitchen", softphone: true,
+}});
+deviceOnlyOutbound._rosterEntries = [{{
   id: "desk", name: "Desk", enabled: true, metadata: {{}},
 }}];
-let endpointOnlyStart;
+let deviceOnlyStart;
 engine.startHaSoftphone = async (target, session, options) => {{
-  endpointOnlyStart = {{ target, session, options }};
+  deviceOnlyStart = {{ target, session, options }};
   return {{
     state: "calling", call_id: "endpoint-only", endpoint_id: "kitchen", sequence: 1,
   }};
 }};
-await endpointOnly._startCall();
-assert.equal(endpointOnlyStart.session.endpoint_id, "kitchen");
-assert.equal(endpointOnlyStart.session.device_id, "");
+await deviceOnlyOutbound._startCall();
+assert.equal(deviceOnlyStart.session.endpoint_id, "kitchen");
+assert.equal(deviceOnlyStart.session.device_id, "device-kitchen");
 engine.releaseSoftphoneSession("endpoint-only", "kitchen");
 
 // An audio-only roster target must never initialize the browser camera. The

@@ -28,7 +28,7 @@ CARD_MODEL = ENGINE.with_name("voip-stack-card-model.js")
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
-def test_card_config_migrates_legacy_endpoint_to_device_selection() -> None:
+def test_card_config_persists_only_device_selection() -> None:
     script = rf"""
 import assert from "assert/strict";
 import {{ pathToFileURL }} from "url";
@@ -41,7 +41,7 @@ const legacy = normaliseCardConfig({{
   endpoint_id: "default",
 }});
 assert.deepEqual(legacy.config, {{ mode: "ha_softphone" }});
-assert.equal(legacy.legacyEndpointId, "default");
+assert.equal("legacyEndpointId" in legacy, false);
 
 const current = normaliseCardConfig({{
   mode: "ha_softphone",
@@ -52,7 +52,7 @@ assert.deepEqual(current.config, {{
   mode: "ha_softphone",
   device_id: "device-casa",
 }});
-assert.equal(current.legacyEndpointId, "");
+assert.equal("legacyEndpointId" in current, false);
 """
     subprocess.run(
         ["node", "--input-type=module", "-e", script],

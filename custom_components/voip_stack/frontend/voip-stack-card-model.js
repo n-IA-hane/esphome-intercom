@@ -185,9 +185,6 @@ export function formatVideoFailureReason(reason) {
 }
 export function normaliseCardConfig(rawConfig = {}) {
   const config = { ...rawConfig };
-  const legacyEndpointId = !config.device_id
-    ? String(config.endpoint_id || "").trim()
-    : "";
   delete config.endpoint_id;
-  return { config, legacyEndpointId };
+  return { config };
 }

@@ -14,8 +14,6 @@ const {
   normaliseCardConfig,
 } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 
-const DEFAULT_SOFTPHONE_ENDPOINT_ID = "default";
-
 class VoipStackCardEditor extends HTMLElement {
   constructor() {
     super();
@@ -26,7 +24,6 @@ class VoipStackCardEditor extends HTMLElement {
     this._devicesLoading = false;
     this._devicesRetryTimer = null;
     this._els = null;
-    this._legacyEndpointId = "";
   }
 
   connectedCallback() {
@@ -43,7 +40,6 @@ class VoipStackCardEditor extends HTMLElement {
   setConfig(config) {
     const normalised = normaliseCardConfig(config);
     this._config = normalised.config;
-    this._legacyEndpointId = normalised.legacyEndpointId;
     this._render();
   }
 
@@ -74,7 +70,6 @@ class VoipStackCardEditor extends HTMLElement {
       if (result?.devices) {
         this._devices = result.devices;
         this._devicesLoaded = true;
-        this._migrateLegacySelector();
         this._render();
       }
     } catch (err) {
@@ -244,14 +239,8 @@ class VoipStackCardEditor extends HTMLElement {
     const configuredDeviceId = String(
       this._config.device_id || this._config.entity_id || "",
     );
-    const configuredEndpointId = this._legacyEndpointId;
     const selectedDevice = selectableDevices.find((device) =>
-      (configuredDeviceId && device.device_id === configuredDeviceId) ||
-      (
-        !configuredDeviceId &&
-        configuredEndpointId &&
-        device.endpoint_id === configuredEndpointId
-      ));
+      configuredDeviceId && device.device_id === configuredDeviceId);
     for (const device of selectableDevices) {
       const option = document.createElement("option");
       option.value = device.device_id;
@@ -261,21 +250,11 @@ class VoipStackCardEditor extends HTMLElement {
       if (selectedDevice === device) option.selected = true;
       newOptions.push(option);
     }
-    const configuredMissingPhone = softphoneMode &&
-      (
-        configuredDeviceId ||
-        (
-          configuredEndpointId &&
-          configuredEndpointId !== DEFAULT_SOFTPHONE_ENDPOINT_ID
-        )
-      ) &&
-      !selectedDevice;
+    const configuredMissingPhone = softphoneMode && configuredDeviceId && !selectedDevice;
     if (configuredMissingPhone) {
       const missing = document.createElement("option");
-      missing.value = configuredDeviceId ||
-        `missing-endpoint:${configuredEndpointId}`;
-      missing.textContent =
-        `Missing phone: ${configuredEndpointId || configuredDeviceId}`;
+      missing.value = configuredDeviceId;
+      missing.textContent = `Missing phone: ${configuredDeviceId}`;
       missing.selected = true;
       missing.disabled = true;
       newOptions.push(missing);
@@ -339,18 +318,6 @@ class VoipStackCardEditor extends HTMLElement {
       delete newConfig.endpoint_id;
     }
     this._dispatchConfig(newConfig);
-  }
-
-  _migrateLegacySelector() {
-    if (!this._legacyEndpointId || this._config.device_id) return;
-    const selected = this._devices.find(
-      (device) => String(device?.endpoint_id || "").trim() ===
-        this._legacyEndpointId,
-    );
-    if (!selected?.device_id) return;
-    this._config = { ...this._config, device_id: selected.device_id };
-    this._legacyEndpointId = "";
-    this._dispatchConfig(this._config);
   }
 
   _valueChanged(key, value) {
