@@ -73,7 +73,11 @@ def softphone_commands(monkeypatch):
         "local_softphone_runtime": {
             "local_softphone_bridge": Mock(return_value=None)
         },
-        "route_decisions": {"set_pending_route_decision": Mock()},
+            "route_decisions": {"set_pending_route_decision": Mock()},
+            "runtime_data": {
+                "call_runtime_artifacts": Mock(),
+                "conference_component": Mock(return_value=None),
+            },
         "sip_runtime": {
             "send_bye": Mock(return_value=True),
             "send_final_response": Mock(return_value=True),

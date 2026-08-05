@@ -16,7 +16,6 @@ from .call_scope import (
     pending_routes,
     single_pending_route_call_id,
 )
-from .const import HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry
 from .service_endpoints import (
     async_require_phone_service_control,
@@ -94,9 +93,7 @@ async def async_resolve_browser_call_command(
         endpoint_id=endpoint_id,
         endpoint=endpoint,
         endpoint_name=browser_endpoint_name(hass, endpoint_id, endpoint),
-        device_id=str(
-            getattr(endpoint, "device_id", "") or HA_SOFTPHONE_DEVICE_ID
-        ),
+        device_id=str(getattr(endpoint, "device_id", "")),
         call_id=call_id,
         registry=registry,
     )

@@ -10,10 +10,8 @@ import logging
 from homeassistant.core import HomeAssistant
 
 from .call_scope import pending_routes
-from .const import HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState, TerminalReason
-from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .runtime_data import (
     call_runtime_artifacts,
     conference_component,
@@ -96,18 +94,16 @@ class EndpointTerminationHandler:
             else ""
         )
         session_metadata = session.metadata if session is not None else {}
-        session_endpoint_id = (
-            str(session_metadata.get("endpoint_id") or DEFAULT_ENDPOINT_ID).strip()
-            or DEFAULT_ENDPOINT_ID
-        )
+        session_endpoint_id = str(session_metadata.get("endpoint_id") or "").strip()
         session_endpoint = endpoint_directory(self.hass).get(session_endpoint_id)
         session_device_id = str(
             session_metadata.get("session_device_id")
             or getattr(session_endpoint, "device_id", "")
-            or HA_SOFTPHONE_DEVICE_ID
+            or ""
         )
-        softphone_store = _ha_softphone_store(self.hass, session_endpoint_id)
-        softphone_call_id = str(softphone_store.get("call_id") or "")
+        softphone_call_id = str(
+            _ha_softphone_store(self.hass, session_endpoint_id).get("call_id") or ""
+        ) if session_endpoint_id else ""
         terminal_reason = reason or "remote_hangup"
         terminal_state = (
             CallState.CANCELLED.value

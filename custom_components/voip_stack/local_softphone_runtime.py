@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 from homeassistant.core import HomeAssistant, callback
 
 from .audio_format import HA_SIP_PCM_FORMATS
-from .const import HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry
 from .local_softphone_bridge import (
     LocalBridgeEvent,
@@ -89,7 +88,7 @@ def _endpoint(hass: HomeAssistant, endpoint_id: str) -> PhoneEndpoint | None:
 
 
 def _device_id(endpoint: PhoneEndpoint | None) -> str:
-    return str(getattr(endpoint, "device_id", "") or HA_SOFTPHONE_DEVICE_ID)
+    return str(getattr(endpoint, "device_id", "") or "")
 
 
 def _name(endpoint: PhoneEndpoint | None, fallback: str) -> str:
