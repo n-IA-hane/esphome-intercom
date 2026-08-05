@@ -400,6 +400,9 @@ def async_setup_endpoint_registry(
         registry.register(endpoint)
         subentry_ids[endpoint.endpoint_id] = subentry.subentry_id
     bucket = hass.data.setdefault(DOMAIN, {})
+    previous_registry = bucket.get("endpoint_registry")
+    if previous_registry is not None:
+        previous_registry.close()
     bucket["endpoint_registry"] = registry
     registry.subentry_ids = subentry_ids
     pending_removals = registry.pending_removals
@@ -433,12 +436,7 @@ def async_setup_endpoint_registry(
             # event sequence.
             hass.loop.call_soon(_remove_pending_endpoint, endpoint.endpoint_id)
 
-    old_unsub = bucket.pop("pending_endpoint_removal_unsub", None)
-    if old_unsub is not None:
-        old_unsub()
-    bucket["pending_endpoint_removal_unsub"] = registry.subscribe(
-        _finish_deferred_removal
-    )
+    registry.subscribe(_finish_deferred_removal)
     return registry
 
 

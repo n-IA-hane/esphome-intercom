@@ -141,6 +141,10 @@ class EndpointRegistry:
 
         return unsubscribe
 
+    def close(self) -> None:
+        """Release every listener owned by this registry."""
+        self._listeners.clear()
+
     def register(self, endpoint: PhoneEndpoint) -> PhoneEndpoint:
         """Register a new endpoint, rejecting every identity collision."""
         endpoint_key = _key(endpoint.endpoint_id)

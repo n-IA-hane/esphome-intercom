@@ -269,7 +269,6 @@ def test_final_entry_removal_forgets_runtime_but_preserves_global_views() -> Non
         "ha_softphones": {"kitchen": {"state": "in_call"}},
         "ha_softphone_presence": {"kitchen": 1},
         "local_softphone_bridge_unsub": lambda: unsubscribed.append("local"),
-        "pending_endpoint_removal_unsub": lambda: unsubscribed.append("pending"),
         "entry-id": {"legacy": True},
     }
     hass = SimpleNamespace(data={"voip_stack": bucket})
@@ -278,7 +277,7 @@ def test_final_entry_removal_forgets_runtime_but_preserves_global_views() -> Non
     asyncio.run(hook(hass, entry))
 
     assert registry.cleared
-    assert unsubscribed == ["local", "pending"]
+    assert unsubscribed == ["local"]
     assert "endpoint_registry" not in bucket
     assert "call_registry" not in bucket
     assert "ha_softphones" not in bucket

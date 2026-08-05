@@ -557,9 +557,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -
     unsub = hass.data.get(DOMAIN, {}).pop("phonebook_service_event_unsub", None)
     if unsub is not None:
         unsub()
-    unsub = hass.data.get(DOMAIN, {}).pop("pending_endpoint_removal_unsub", None)
-    if unsub is not None:
-        unsub()
+    entry.runtime_data.endpoints.close()
     hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     return unload_ok
 
@@ -640,10 +638,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -
     unsubscribe = bucket.pop("local_softphone_bridge_unsub", None)
     if callable(unsubscribe):
         unsubscribe()
-
-    pending_unsubscribe = bucket.pop("pending_endpoint_removal_unsub", None)
-    if callable(pending_unsubscribe):
-        pending_unsubscribe()
 
     for key in _REMOVED_ENTRY_RUNTIME_KEYS:
         bucket.pop(key, None)
