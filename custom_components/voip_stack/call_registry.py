@@ -5,12 +5,15 @@ from __future__ import annotations
 from collections import OrderedDict
 from dataclasses import dataclass, field
 import time
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal
 
 from .endpoint_session import CleanupStage
 from .automation_routing import CALL_EVENT_SCHEMA_VERSION
 from .media_reservation import release_media_reservation
 from .session_cleanup import async_cleanup_sip_runtime
+
+if TYPE_CHECKING:
+    from .pbx_runtime import SipEndpointRuntime
 
 
 LegRole = Literal["caller", "callee", "trunk", "ha_softphone", "esp", "softphone", "router", "assist", "local_phone"]
@@ -34,164 +37,6 @@ def _owner_observation_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     """Exclude fields computed by the authoritative PBX projection itself."""
 
     return {key: value for key, value in metadata.items() if key != "pbx_phase"}
-
-
-class CallSessionOwner(Protocol):
-    """Minimal synchronous boundary implemented by ``SipEndpointRuntime``."""
-
-    def ensure_session(self, call_id: str, **metadata: Any) -> Any: ...
-
-    def observe_call(
-        self,
-        call_id: str,
-        *,
-        state: str = "",
-        generation: int | None = None,
-        **metadata: Any,
-    ) -> bool: ...
-
-    def observe_leg(
-        self,
-        call_id: str,
-        leg_id: str,
-        *,
-        role: str,
-        state: str = "",
-        sip_call_id: str = "",
-        endpoint_id: str = "",
-        dialog: Any | None = None,
-        closer: Any | None = None,
-        generation: int | None = None,
-    ) -> bool: ...
-
-    def release_leg(
-        self,
-        call_id: str,
-        leg_id: str,
-        *,
-        dialog: Any | None = None,
-        generation: int | None = None,
-    ) -> bool: ...
-
-    def own_resource(
-        self,
-        call_id: str,
-        name: str,
-        value: Any,
-        closer: Any,
-        *,
-        stage: CleanupStage = CleanupStage.RESERVATION,
-        generation: int | None = None,
-    ) -> bool: ...
-
-    def release_resource(
-        self,
-        call_id: str,
-        name: str,
-        *,
-        value: Any | None = None,
-        generation: int | None = None,
-    ) -> bool: ...
-
-    def own_task(
-        self,
-        call_id: str,
-        task: Any,
-        *,
-        name: str = "",
-        generation: int | None = None,
-    ) -> bool: ...
-
-    def release_task(
-        self,
-        call_id: str,
-        task: Any,
-        *,
-        generation: int | None = None,
-    ) -> bool: ...
-
-    def request_termination(
-        self,
-        call_id: str,
-        reason: str,
-        *,
-        generation: int | None = None,
-    ) -> Any: ...
-
-    def claim_termination(
-        self,
-        call_id: str,
-        reason: str,
-        *,
-        generation: int | None = None,
-    ) -> bool: ...
-
-    def bind_endpoint_registry(self, registry: Any | None) -> None: ...
-
-    def endpoint_claims_snapshot(self) -> dict[str, dict[str, str]]: ...
-
-    def claim_endpoint(
-        self,
-        call_id: str,
-        endpoint_id: str,
-        *,
-        role: str = "endpoint",
-        adopt_transport: bool = False,
-        generation: int | None = None,
-    ) -> bool: ...
-
-    def release_endpoint_claim(
-        self,
-        call_id: str,
-        endpoint_id: str,
-        *,
-        generation: int | None = None,
-    ) -> bool: ...
-
-    def release_endpoint_claims(
-        self,
-        call_id: str,
-        *,
-        generation: int | None = None,
-    ) -> None: ...
-
-    def relays_snapshot(self) -> dict[str, Any]: ...
-
-    def sip_clients_snapshot(self) -> dict[str, Any]: ...
-
-    def client_watchers_snapshot(self) -> dict[str, Any]: ...
-
-    def bridge_links_snapshot(self) -> dict[str, str]: ...
-
-    def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> bool: ...
-
-    def forget_bridge_link(self, source_call_id: str) -> str: ...
-
-    def pending_invites_snapshot(self) -> dict[str, Any]: ...
-
-    def pending_routes_snapshot(self) -> dict[str, dict[str, Any]]: ...
-
-    def set_pending_route(self, call_id: str, route: dict[str, Any]) -> bool: ...
-
-    def take_pending_route(self, call_id: str) -> dict[str, Any] | None: ...
-
-    def video_parameter_sets_snapshot(self) -> dict[str, tuple[bytes, ...]]: ...
-
-    def set_video_parameter_sets(
-        self, call_id: str, parameter_sets: tuple[bytes, ...]
-    ) -> bool: ...
-
-    def clear_video_parameter_sets(self, call_id: str) -> None: ...
-
-    def set_pending_invite(self, call_id: str, invite: Any) -> bool: ...
-
-    def take_pending_invite(self, call_id: str) -> Any | None: ...
-
-    def resources_snapshot(self, prefix: str) -> dict[str, Any]: ...
-
-    def attach_relay(self, call_id: str, relay: Any) -> bool: ...
-
-    def take_relay(self, call_id: str) -> Any | None: ...
 
 
 @dataclass(slots=True)
@@ -270,9 +115,9 @@ class CallRegistry:
         self.terminated_call_ids: OrderedDict[str, int] = OrderedDict()
         self._generation = 0
         self._endpoint_registry: Any | None = None
-        self._session_owner: CallSessionOwner | None = None
+        self._session_owner: SipEndpointRuntime | None = None
 
-    def bind_session_owner(self, owner: CallSessionOwner | None) -> None:
+    def bind_session_owner(self, owner: SipEndpointRuntime | None) -> None:
         """Bind the authoritative PBX session owner at listener cutover."""
 
         if owner is self._session_owner:
