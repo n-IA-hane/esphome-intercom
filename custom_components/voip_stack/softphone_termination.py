@@ -10,12 +10,12 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .bridge_manager import async_terminate_sip_bridge
 from .call_scope import endpoint_call_ids, pending_routes, take_pending_route
-from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
+from .const import HA_SOFTPHONE_DEVICE_ID
 from .fsm import CallState, TerminalReason, sip_public_state
 from .media_ports import release_media_reservation
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .route_decisions import set_pending_route_decision
-from .runtime_data import conference_component
+from .runtime_data import call_runtime_artifacts, conference_component
 from .session_cleanup import async_cleanup_sip_runtime
 from .sip_runtime import send_bye, send_final_response, sip_servers
 from .softphone_commands import BrowserCallCommand
@@ -146,9 +146,7 @@ async def async_hangup_browser_call(
             raise ServiceValidationError(str(err)) from err
         return
 
-    forward_task = hass.data.setdefault(DOMAIN, {}).get("forward_tasks", {}).get(
-        call_id
-    )
+    forward_task = call_runtime_artifacts(hass).forward_tasks.get(call_id)
     if forward_task is not None and not forward_task.done():
         forward_task.cancel()
         await asyncio.gather(forward_task, return_exceptions=True)

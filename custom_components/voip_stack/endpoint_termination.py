@@ -10,11 +10,15 @@ import logging
 from homeassistant.core import HomeAssistant
 
 from .call_scope import pending_routes
-from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
+from .const import HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState, TerminalReason
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
-from .runtime_data import conference_component, endpoint_directory
+from .runtime_data import (
+    call_runtime_artifacts,
+    conference_component,
+    endpoint_directory,
+)
 from .websocket_api import (
     _ha_softphone_store,
     _set_ha_softphone_call_state,
@@ -39,7 +43,7 @@ class EndpointTerminationHandler:
     ) -> None:
         """Release call media and publish its final state."""
 
-        bucket = self.hass.data.setdefault(DOMAIN, {})
+        artifacts = call_runtime_artifacts(self.hass)
         registry = call_registry(self.hass)
         if not registry.begin_termination(call_id, reason):
             _LOGGER.debug(
@@ -48,13 +52,13 @@ class EndpointTerminationHandler:
                 reason,
             )
             return
-        forward_task = bucket.setdefault("forward_tasks", {}).get(call_id)
+        forward_task = artifacts.forward_tasks.get(call_id)
         if forward_task is not None and forward_task is not asyncio.current_task():
             forward_task.cancel()
             await asyncio.gather(forward_task, return_exceptions=True)
-        bucket.setdefault("trunk_info_queues", {}).pop(call_id, None)
+        artifacts.trunk_info_queues.pop(call_id, None)
         route = pending_routes(self.hass).pop(call_id, None)
-        closed_calls = bucket.setdefault("trunk_closed_calls", set())
+        closed_calls = artifacts.trunk_closed_calls
         if len(closed_calls) >= 256:
             closed_calls.pop()
         closed_calls.add(call_id)

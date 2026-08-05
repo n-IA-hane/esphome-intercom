@@ -7,10 +7,10 @@ import logging
 from homeassistant.core import HomeAssistant
 
 from .automation_routing import CALL_EVENT_SCHEMA_VERSION, canonical_call_origin
-from .const import DOMAIN
 from .dtmf import parse_sip_info_digit
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState
+from .runtime_data import call_runtime_artifacts
 from .websocket_api import SIP_DTMF_EVENT
 
 
@@ -34,11 +34,7 @@ async def handle_sip_info(
         )
         return
     call_id = request.header("Call-ID")
-    queue = (
-        hass.data.setdefault(DOMAIN, {})
-        .setdefault("trunk_info_queues", {})
-        .get(call_id)
-    )
+    queue = call_runtime_artifacts(hass).trunk_info_queues.get(call_id)
     if queue is None:
         registry = call_registry(hass)
         relay = registry.relays.get(call_id)

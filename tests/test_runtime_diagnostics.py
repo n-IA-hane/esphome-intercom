@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 
 
@@ -53,8 +54,6 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
             "video_ws_owners": {},
             "media_identity_locks": {"phone|call-1": object()},
             "sip_rtp_port_pool": {"used": {40002, 40004}},
-            "forward_tasks": {"call-1": _Task(False), "old": _Task(True)},
-            "call_deadlines": {"call-1": _Task(False)},
             "runtime_tasks": {_Task(False), _Task(True)},
         }
 
@@ -62,6 +61,10 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
             bucket,
             _Registry(),
             detailed=True,
+            call_artifacts=SimpleNamespace(
+                forward_tasks={"call-1": _Task(False), "old": _Task(True)},
+                deadlines={"call-1": _Task(False)},
+            ),
         )
 
         counts = snapshot["resource_counts"]

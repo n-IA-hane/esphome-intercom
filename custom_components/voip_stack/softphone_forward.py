@@ -9,7 +9,7 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .automation_routing import resolve_forward_call_id
 from .call_scope import call_belongs_to_endpoint, pending_routes
-from .const import DOMAIN
+from .runtime_data import call_runtime_artifacts
 from .endpoint_lifecycle import call_registry
 from .route_decisions import set_pending_route_decision
 from .service_endpoints import (
@@ -76,13 +76,11 @@ async def async_forward_browser_call(call: ServiceCall) -> None:
                 f"ring-group route for call_id {selected_call_id} "
                 "did not release ownership"
             ) from err
-        previous = hass.data.get(DOMAIN, {}).get("forward_tasks", {}).get(
-            selected_call_id
-        )
+        previous = call_runtime_artifacts(hass).forward_tasks.get(selected_call_id)
         if previous is not None and not previous.done():
             await asyncio.gather(previous, return_exceptions=True)
 
-    callback = hass.data.get(DOMAIN, {}).get("async_forward_call")
+    callback = call_runtime_artifacts(hass).forward_call
     if callback is None:
         raise ServiceValidationError("SIP endpoint is not running")
     destination = str(data.get("destination") or "").strip()

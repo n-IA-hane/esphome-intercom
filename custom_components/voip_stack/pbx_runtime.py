@@ -164,6 +164,12 @@ class SipEndpointRuntime:
         self._components: dict[str, _OwnedComponent] = {}
         self._endpoint_registry: Any | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
+        self.forward_tasks: dict[str, asyncio.Task[Any]] = {}
+        self.forward_claims: set[str] = set()
+        self.deadlines: dict[str, asyncio.Task[Any]] = {}
+        self.trunk_info_queues: dict[str, asyncio.Queue[Any]] = {}
+        self.trunk_closed_calls: set[str] = set()
+        self.forward_call: Any | None = None
 
     @property
     def active(self) -> bool:

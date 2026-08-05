@@ -154,6 +154,14 @@ class _FakeHass:
             calls=None,
             endpoints=endpoints,
             sip=None,
+            shutdown_task=None,
+            call_artifacts=types.SimpleNamespace(
+                forward_tasks={},
+                forward_claims=set(),
+                deadlines={},
+                trunk_info_queues={},
+                trunk_closed_calls=set(),
+            ),
         )
 
     def async_create_task(self, coro):

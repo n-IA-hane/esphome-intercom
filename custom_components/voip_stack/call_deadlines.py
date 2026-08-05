@@ -13,14 +13,14 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .automation_routing import deadline_is_current
 from .call_registry import TERMINAL_STATES
-from .const import DOMAIN
 from .endpoint_lifecycle import call_registry, create_runtime_task
+from .runtime_data import call_runtime_artifacts
 from .websocket_api import _fire_call_event
 
 
 def cancel_call_deadline(hass: HomeAssistant, call_id: str) -> None:
     """Cancel an armed deadline, if present."""
-    task = hass.data.setdefault(DOMAIN, {}).setdefault("call_deadlines", {}).pop(
+    task = call_runtime_artifacts(hass).deadlines.pop(
         str(call_id or "").strip(), None
     )
     if task is not None and not task.done():
@@ -97,11 +97,9 @@ async def async_set_call_deadline(hass: HomeAssistant, data: dict) -> None:
                 "sip",
             )
         finally:
-            deadlines = hass.data.setdefault(DOMAIN, {}).setdefault(
-                "call_deadlines", {}
-            )
+            deadlines = call_runtime_artifacts(hass).deadlines
             if deadlines.get(call_id) is asyncio.current_task():
                 deadlines.pop(call_id, None)
 
     task = create_runtime_task(hass, _wait())
-    hass.data.setdefault(DOMAIN, {}).setdefault("call_deadlines", {})[call_id] = task
+    call_runtime_artifacts(hass).deadlines[call_id] = task

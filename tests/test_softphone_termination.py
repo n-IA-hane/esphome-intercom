@@ -59,7 +59,10 @@ def termination(monkeypatch):
         },
             "media_ports": {"release_media_reservation": Mock()},
             "phone_endpoint": {"DEFAULT_ENDPOINT_ID": "default"},
-        "runtime_data": {"conference_component": Mock(return_value=None)},
+        "runtime_data": {
+            "call_runtime_artifacts": lambda hass: hass.artifacts,
+            "conference_component": Mock(return_value=None),
+        },
         "route_decisions": {"set_pending_route_decision": Mock()},
         "session_cleanup": {"async_cleanup_sip_runtime": AsyncMock()},
         "sip_runtime": {
@@ -97,7 +100,9 @@ def termination(monkeypatch):
 
 
 def test_pending_ring_group_hangup_cancels_only_its_leg(termination) -> None:
-    hass = SimpleNamespace(data={})
+    hass = SimpleNamespace(
+        data={}, artifacts=SimpleNamespace(forward_tasks={})
+    )
     future = Mock()
     future.done.return_value = False
     routes = {"call-1": {"future": future}}
@@ -125,7 +130,9 @@ def test_pending_ring_group_hangup_cancels_only_its_leg(termination) -> None:
 
 
 def test_bridge_projection_is_scoped_to_matching_softphone(termination) -> None:
-    hass = SimpleNamespace(data={})
+    hass = SimpleNamespace(
+        data={}, artifacts=SimpleNamespace(forward_tasks={})
+    )
     termination._ha_softphone_store = Mock(
         return_value={
             "call_id": "source-call",
@@ -177,7 +184,9 @@ def test_bridge_projection_is_scoped_to_matching_softphone(termination) -> None:
 
 
 def test_bridge_projection_does_not_overwrite_another_active_call(termination) -> None:
-    hass = SimpleNamespace(data={})
+    hass = SimpleNamespace(
+        data={}, artifacts=SimpleNamespace(forward_tasks={})
+    )
     termination._ha_softphone_store = Mock(return_value={})
     termination._sip_bridge_store = Mock(
         return_value={
@@ -202,7 +211,9 @@ def test_bridge_projection_does_not_overwrite_another_active_call(termination) -
 
 
 def test_remote_bridge_bye_publishes_remote_terminal_reason(termination) -> None:
-    hass = SimpleNamespace(data={})
+    hass = SimpleNamespace(
+        data={}, artifacts=SimpleNamespace(forward_tasks={})
+    )
     termination._ha_softphone_store = Mock(return_value={})
     termination._sip_bridge_store = Mock(
         return_value={

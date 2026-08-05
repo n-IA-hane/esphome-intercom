@@ -19,7 +19,11 @@ from .media_ports import (
     reserve_sip_video_media,
 )
 from .peer_snapshot import async_advertise_host
-from .runtime_data import conference_component, sip_endpoint_runtime
+from .runtime_data import (
+    call_runtime_artifacts,
+    conference_component,
+    sip_endpoint_runtime,
+)
 from .route_decisions import set_pending_route_decision
 from .sip_runtime import send_bye, send_final_response
 from .softphone_commands import BrowserCallCommand, bind_service_call_controller
@@ -86,8 +90,9 @@ async def async_answer_browser_call(
             },
         )
         return
-    forward_task = bucket.get("forward_tasks", {}).get(call_id)
-    forward_claimed = call_id in bucket.get("forward_claims", set())
+    artifacts = call_runtime_artifacts(hass)
+    forward_task = artifacts.forward_tasks.get(call_id)
+    forward_claimed = call_id in artifacts.forward_claims
     group_answer_commit = call_id in bucket.get("ring_group_answer_commits", set())
     if not group_answer_commit and (
         forward_claimed or (forward_task is not None and not forward_task.done())

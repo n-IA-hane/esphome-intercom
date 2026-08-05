@@ -15,7 +15,6 @@ from .media_ports import release_media_reservation
 from .runtime_data import (
     conference_component,
     require_runtime_data,
-    runtime_data,
     sip_endpoint_manager,
 )
 from .session_cleanup import async_cleanup_sip_runtime, async_wait_for_cleanup
@@ -54,27 +53,27 @@ def call_registry(hass: HomeAssistant) -> CallRegistry:
 
 
 async def async_stop_sip_endpoint(hass: HomeAssistant) -> None:
-    bucket = hass.data.setdefault(DOMAIN, {})
-    task = bucket.get("sip_endpoint_stop_task")
+    runtime = require_runtime_data(hass)
+    task = runtime.shutdown_task
     if not isinstance(task, asyncio.Task) or task.done():
         task = asyncio.create_task(
             _async_stop_sip_endpoint(hass),
             name="voip-sip-endpoint-runtime-stop",
         )
-        bucket["sip_endpoint_stop_task"] = task
+        runtime.shutdown_task = task
     try:
         await async_wait_for_cleanup(task)
     finally:
-        if task.done() and bucket.get("sip_endpoint_stop_task") is task:
-            bucket.pop("sip_endpoint_stop_task", None)
+        if task.done() and runtime.shutdown_task is task:
+            runtime.shutdown_task = None
 
 
 async def _async_stop_sip_endpoint(hass: HomeAssistant) -> None:
     registry = call_registry(hass)
     bucket = hass.data.get(DOMAIN, {})
     endpoint = sip_endpoint_manager(hass)
-    runtime = runtime_data(hass)
-    pbx_runtime = runtime.sip if runtime is not None else bucket.get("pbx_runtime")
+    runtime = require_runtime_data(hass)
+    pbx_runtime = runtime.sip
 
     if endpoint is not None:
         snapshot = endpoint.snapshot()
@@ -84,10 +83,13 @@ async def _async_stop_sip_endpoint(hass: HomeAssistant) -> None:
             endpoint.send_bye(call_id)
 
     await cancel_runtime_tasks(hass)
-    bucket.pop("async_forward_call", None)
-    bucket.pop("forward_tasks", None)
-    bucket.pop("forward_claims", None)
-    bucket.pop("call_deadlines", None)
+    if pbx_runtime is not None:
+        pbx_runtime.forward_tasks.clear()
+        pbx_runtime.forward_claims.clear()
+        pbx_runtime.deadlines.clear()
+        pbx_runtime.trunk_info_queues.clear()
+        pbx_runtime.trunk_closed_calls.clear()
+        pbx_runtime.forward_call = None
 
     if pbx_runtime is None:
         watchers = {

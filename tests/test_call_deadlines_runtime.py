@@ -44,7 +44,7 @@ class _Registry:
         return self.context if call_id == "call-1" else None
 
 
-def _load_deadlines(registry: _Registry, events: list[tuple[dict, str]]):
+def _load_deadlines(registry: _Registry, events: list[tuple[dict, str]], artifacts):
     if "custom_components" not in sys.modules:
         root = types.ModuleType("custom_components")
         root.__path__ = [str(ROOT / "custom_components")]
@@ -71,8 +71,6 @@ def _load_deadlines(registry: _Registry, events: list[tuple[dict, str]]):
     call_registry.TERMINAL_STATES = frozenset(
         {"idle", "declined", "busy", "cancelled", "timeout", "error"}
     )
-    const = types.ModuleType(f"{PKG_NAME}.const")
-    const.DOMAIN = "voip_stack"
     endpoint_lifecycle = types.ModuleType(f"{PKG_NAME}.endpoint_lifecycle")
     endpoint_lifecycle.call_registry = lambda _hass: registry
     endpoint_lifecycle.create_runtime_task = (
@@ -82,6 +80,8 @@ def _load_deadlines(registry: _Registry, events: list[tuple[dict, str]]):
     websocket_api._fire_call_event = (
         lambda _hass, payload, source: events.append((payload, source))
     )
+    runtime_data = types.ModuleType(f"{PKG_NAME}.runtime_data")
+    runtime_data.call_runtime_artifacts = lambda _hass: artifacts
 
     module_name = f"{PKG_NAME}._test_call_deadlines_runtime"
     spec = importlib.util.spec_from_file_location(
@@ -97,8 +97,8 @@ def _load_deadlines(registry: _Registry, events: list[tuple[dict, str]]):
         "homeassistant.exceptions": exceptions,
         routing.__name__: routing,
         call_registry.__name__: call_registry,
-        const.__name__: const,
         endpoint_lifecycle.__name__: endpoint_lifecycle,
+        runtime_data.__name__: runtime_data,
         websocket_api.__name__: websocket_api,
     }
     with patch.dict(sys.modules, dependencies):
@@ -111,7 +111,8 @@ class CallDeadlineRuntimeTest(unittest.IsolatedAsyncioTestCase):
     async def test_unchanged_call_fires_one_scoped_timeout_event(self) -> None:
         registry = _Registry()
         events: list[tuple[dict, str]] = []
-        deadlines = _load_deadlines(registry, events)
+        artifacts = types.SimpleNamespace(deadlines={})
+        deadlines = _load_deadlines(registry, events, artifacts)
         hass = types.SimpleNamespace(data={})
 
         await deadlines.async_set_call_deadline(
@@ -124,7 +125,7 @@ class CallDeadlineRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 "expected_sequence": 4,
             },
         )
-        task = hass.data["voip_stack"]["call_deadlines"]["call-1"]
+        task = artifacts.deadlines["call-1"]
         await task
 
         self.assertEqual(len(events), 1)
@@ -133,12 +134,13 @@ class CallDeadlineRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["event_type"], "ringing_timeout_requested")
         self.assertEqual(payload["scope"], "automation_deadline")
         self.assertEqual(payload["armed_sequence"], 4)
-        self.assertEqual(hass.data["voip_stack"]["call_deadlines"], {})
+        self.assertEqual(artifacts.deadlines, {})
 
     async def test_state_or_sequence_change_suppresses_stale_timeout(self) -> None:
         registry = _Registry()
         events: list[tuple[dict, str]] = []
-        deadlines = _load_deadlines(registry, events)
+        artifacts = types.SimpleNamespace(deadlines={})
+        deadlines = _load_deadlines(registry, events, artifacts)
         hass = types.SimpleNamespace(data={})
 
         await deadlines.async_set_call_deadline(
@@ -149,29 +151,30 @@ class CallDeadlineRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 "timeout": 0.01,
             },
         )
-        task = hass.data["voip_stack"]["call_deadlines"]["call-1"]
+        task = artifacts.deadlines["call-1"]
         registry.context = _Context("in_call", 5)
         await task
 
         self.assertEqual(events, [])
-        self.assertEqual(hass.data["voip_stack"]["call_deadlines"], {})
+        self.assertEqual(artifacts.deadlines, {})
 
     async def test_replacing_deadline_cancels_previous_owned_task(self) -> None:
         registry = _Registry()
         events: list[tuple[dict, str]] = []
-        deadlines = _load_deadlines(registry, events)
+        artifacts = types.SimpleNamespace(deadlines={})
+        deadlines = _load_deadlines(registry, events, artifacts)
         hass = types.SimpleNamespace(data={})
 
         await deadlines.async_set_call_deadline(
             hass,
             {"call_id": "call-1", "phase": "ringing", "timeout": 10},
         )
-        previous = hass.data["voip_stack"]["call_deadlines"]["call-1"]
+        previous = artifacts.deadlines["call-1"]
         await deadlines.async_set_call_deadline(
             hass,
             {"call_id": "call-1", "phase": "ringing", "timeout": 0},
         )
-        current = hass.data["voip_stack"]["call_deadlines"]["call-1"]
+        current = artifacts.deadlines["call-1"]
         with self.assertRaises(asyncio.CancelledError):
             await previous
         await current
@@ -182,7 +185,8 @@ class CallDeadlineRuntimeTest(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_or_wrong_phase_call_is_rejected(self) -> None:
         registry = _Registry(state="in_call")
         events: list[tuple[dict, str]] = []
-        deadlines = _load_deadlines(registry, events)
+        artifacts = types.SimpleNamespace(deadlines={})
+        deadlines = _load_deadlines(registry, events, artifacts)
         hass = types.SimpleNamespace(data={})
 
         with self.assertRaisesRegex(ServiceValidationError, "unknown or ended"):

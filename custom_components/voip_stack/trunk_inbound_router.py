@@ -17,7 +17,6 @@ from .const import (
     CONF_TRUNK_DTMF_TERMINATOR,
     CONF_TRUNK_DTMF_TIMEOUT_MS,
     CONF_TRUNK_INBOUND_DEFAULT_TARGET,
-    DOMAIN,
     HA_SOFTPHONE_DEVICE_ID,
 )
 from .endpoint_lifecycle import call_registry
@@ -47,6 +46,7 @@ from .peer_snapshot import async_build_peer_snapshot
 from .phone_endpoint import DEFAULT_ENDPOINT_ID, EndpointKind
 from .phonebook_runtime import registered_roster_entries
 from .router import CallContext, RouteAction, RouteReason, route_inbound_trunk
+from .runtime_data import call_runtime_artifacts
 from .sip import parse_sip_uri
 from .sip_bridge import build_invite_client_relay
 from .sip_client import SipCallClient
@@ -93,7 +93,7 @@ async def async_route_trunk_invite(
     hass = runtime.hass
     cfg = runtime.config
     source_relay_port, dest_relay_port = bridge_ports.ports
-    bucket = hass.data.setdefault(DOMAIN, {})
+    artifacts = call_runtime_artifacts(hass)
     registry = call_registry(hass)
     configured_trunk = trunk_config(hass)
     dtmf_timeout_ms = max(
@@ -110,7 +110,7 @@ async def async_route_trunk_invite(
     if configured_trunk.get(CONF_TRUNK_DTMF_ENABLED) and dtmf_timeout_ms > 0:
         timeout = float(dtmf_timeout_ms) / 1000.0
         terminator = str(configured_trunk.get(CONF_TRUNK_DTMF_TERMINATOR) or "")
-        info_queue = bucket.setdefault("trunk_info_queues", {}).setdefault(
+        info_queue = artifacts.trunk_info_queues.setdefault(
             invite.call_id,
             asyncio.Queue(maxsize=MAX_TRUNK_INFO_DIGITS),
         )
@@ -127,9 +127,9 @@ async def async_route_trunk_invite(
     # A source BYE must win before any no-digits automation window is
     # opened. Otherwise a cancelled pre-answer call can emit one stale
     # route_requested occurrence when its DTMF timer expires.
-    if invite.call_id in bucket.get("trunk_closed_calls", set()):
-        bucket["trunk_closed_calls"].discard(invite.call_id)
-        bucket.setdefault("trunk_info_queues", {}).pop(invite.call_id, None)
+    if invite.call_id in artifacts.trunk_closed_calls:
+        artifacts.trunk_closed_calls.discard(invite.call_id)
+        artifacts.trunk_info_queues.pop(invite.call_id, None)
         _LOGGER.info(
             "SIP trunk inbound call_id=%s closed during DTMF collection",
             invite.call_id,
@@ -146,10 +146,10 @@ async def async_route_trunk_invite(
             trunk_config=configured_trunk,
             timeout=SIP_ROUTE_DECISION_TIMEOUT,
         )
-    bucket.setdefault("trunk_info_queues", {}).pop(invite.call_id, None)
+    artifacts.trunk_info_queues.pop(invite.call_id, None)
 
-    if invite.call_id in bucket.get("trunk_closed_calls", set()):
-        bucket["trunk_closed_calls"].discard(invite.call_id)
+    if invite.call_id in artifacts.trunk_closed_calls:
+        artifacts.trunk_closed_calls.discard(invite.call_id)
         _LOGGER.info(
             "SIP trunk inbound call_id=%s closed before routing", invite.call_id
         )

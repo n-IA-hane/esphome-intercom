@@ -77,6 +77,11 @@ def _hass(registry: _Registry):
         cleanups=[],
         events=[],
         softphone_stores={},
+        artifacts=SimpleNamespace(
+            forward_tasks={},
+            trunk_info_queues={},
+            trunk_closed_calls=set(),
+        ),
     )
 
 
@@ -136,6 +141,7 @@ def endpoint_termination(monkeypatch):
             "DEFAULT_ENDPOINT_ID": "default",
         },
         "runtime_data": {
+            "call_runtime_artifacts": lambda hass: hass.artifacts,
             "conference_component": lambda hass: hass.data.get(
                 "voip_stack", {}
             ).get("conference_manager"),

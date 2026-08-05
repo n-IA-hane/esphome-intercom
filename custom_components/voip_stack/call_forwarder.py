@@ -28,7 +28,11 @@ from .const import (
 from .dial_fork import DialDisposition, DialForkController
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
-from .runtime_data import endpoint_directory, sip_endpoint_runtime
+from .runtime_data import (
+    call_runtime_artifacts,
+    endpoint_directory,
+    sip_endpoint_runtime,
+)
 from .endpoint_routing import (
     EndpointRouteResolver,
     peer_audio_formats as _peer_audio_formats,
@@ -181,10 +185,9 @@ async def async_forward_existing_call(
         raise ServiceValidationError(
             f"call_id {call_id} is not a forwardable pending or ringing HA-owned call"
         )
-    forward_tasks = hass.data.setdefault(DOMAIN, {}).setdefault("forward_tasks", {})
-    forward_claims = hass.data.setdefault(DOMAIN, {}).setdefault(
-        "forward_claims", set()
-    )
+    artifacts = call_runtime_artifacts(hass)
+    forward_tasks = artifacts.forward_tasks
+    forward_claims = artifacts.forward_claims
     current_forward = forward_tasks.get(call_id)
     if current_forward is not None and not current_forward.done():
         current_context = registry.event_context(call_id)
@@ -356,9 +359,7 @@ async def async_forward_existing_call(
 
     async def _restore_or_terminate(reason: str) -> None:
         preanswered = registry.preanswered.get(call_id)
-        if on_failure == "resume" and call_id not in hass.data.setdefault(
-            DOMAIN, {}
-        ).get("trunk_closed_calls", set()):
+        if on_failure == "resume" and call_id not in artifacts.trunk_closed_calls:
             if session is not None:
                 current = registry.sessions.get(
                     registry.resolve_session_id(call_id)
@@ -1196,9 +1197,8 @@ async def async_forward_existing_call(
                 request_uri=str(bridge_uri),
                 timeout=SIP_TIMER_B if bridge_to_trunk else 8.0,
             )
-            bucket = hass.data.setdefault(DOMAIN, {})
-            if call_id in bucket.get("trunk_closed_calls", set()):
-                bucket["trunk_closed_calls"].discard(call_id)
+            if call_id in artifacts.trunk_closed_calls:
+                artifacts.trunk_closed_calls.discard(call_id)
                 raise RuntimeError(TerminalReason.CANCELLED.value)
             if result not in {"ringing", "in_call"}:
                 raise RuntimeError(result)

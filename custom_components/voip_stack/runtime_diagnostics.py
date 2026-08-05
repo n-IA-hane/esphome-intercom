@@ -33,6 +33,7 @@ def runtime_resource_snapshot(
     *,
     detailed: bool = False,
     rtp_port_pool: dict[str, Any] | None = None,
+    call_artifacts: Any | None = None,
 ) -> dict[str, Any]:
     """Return stable counts used to prove that a call cleaned up completely.
 
@@ -76,8 +77,12 @@ def runtime_resource_snapshot(
             if isinstance(identity_locks, dict)
             else 0,
             "allocated_rtp_ports": len(used_ports),
-            "forward_tasks": _active_task_count(bucket.get("forward_tasks", {})),
-            "call_deadlines": _active_task_count(bucket.get("call_deadlines", {})),
+            "forward_tasks": _active_task_count(
+                getattr(call_artifacts, "forward_tasks", {})
+            ),
+            "call_deadlines": _active_task_count(
+                getattr(call_artifacts, "deadlines", {})
+            ),
             "runtime_tasks": _active_task_count(bucket.get("runtime_tasks", set())),
             "video_transcoders": int(bucket.get("video_transcoder_active") is not None),
         }

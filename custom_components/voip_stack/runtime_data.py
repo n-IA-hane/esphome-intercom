@@ -34,6 +34,7 @@ class VoipStackRuntime:
     calls: CallRegistry | None = None
     sip: SipEndpointRuntime | None = None
     tasks: set[asyncio.Task[Any]] = field(default_factory=set)
+    shutdown_task: asyncio.Task[Any] | None = None
     entity_managers: dict[str, Any] = field(default_factory=dict)
     entry_runtime_signature: dict[str, Any] | None = None
     entry_phone_signature: tuple[Any, ...] | None = None
@@ -82,6 +83,15 @@ def endpoint_directory(hass: HomeAssistant) -> EndpointRegistry:
     """Return the entry-owned logical phone directory."""
 
     return require_runtime_data(hass).endpoints
+
+
+def call_runtime_artifacts(hass: HomeAssistant) -> SipEndpointRuntime:
+    """Return call coordination from the authoritative SIP runtime."""
+
+    runtime = sip_endpoint_runtime(hass)
+    if runtime is None:
+        raise RuntimeError("VoIP Stack SIP runtime is unavailable")
+    return runtime
 
 
 def sip_endpoint_runtime(hass: HomeAssistant) -> SipEndpointRuntime | None:

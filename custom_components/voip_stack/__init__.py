@@ -603,7 +603,6 @@ _REMOVED_ENTRY_RUNTIME_KEYS = (
     "local_softphone_bridge",
     "local_softphone_bridge_unsub",
     "conference_manager",
-    "async_forward_call",
     "async_ring_conference_members",
     "async_start_ring_group_from_ha",
     "forward_tasks",

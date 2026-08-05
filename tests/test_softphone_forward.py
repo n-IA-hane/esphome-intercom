@@ -56,6 +56,9 @@ def forwarding(monkeypatch):
         },
         "const": {"DOMAIN": "voip_stack"},
         "endpoint_lifecycle": {"call_registry": Mock()},
+        "runtime_data": {
+            "call_runtime_artifacts": lambda hass: hass.artifacts,
+        },
         "route_decisions": {"set_pending_route_decision": Mock()},
         "service_endpoints": {
             "async_require_phone_service_control": AsyncMock(),
@@ -91,7 +94,8 @@ def _runtime(*, ring_group: bool = False):
     )
     callback = AsyncMock()
     hass = SimpleNamespace(
-        data={"voip_stack": {"async_forward_call": callback, "forward_tasks": {}}}
+        data={"voip_stack": {"async_forward_call": callback}},
+        artifacts=SimpleNamespace(forward_tasks={}, forward_call=callback),
     )
     return hass, registry, route, callback
 

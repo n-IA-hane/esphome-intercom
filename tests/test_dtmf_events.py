@@ -33,6 +33,8 @@ def _load_dtmf_events(monkeypatch):
     lifecycle.call_registry = lambda _hass: None
     fsm = types.ModuleType("custom_components.voip_stack.fsm")
     fsm.CallState = SimpleNamespace(IN_CALL=SimpleNamespace(value="in_call"))
+    runtime_data = types.ModuleType("custom_components.voip_stack.runtime_data")
+    runtime_data.call_runtime_artifacts = lambda hass: hass.artifacts
     websocket = types.ModuleType("custom_components.voip_stack.websocket_api")
     websocket.SIP_DTMF_EVENT = "voip_stack.dtmf"
     for name, module in {
@@ -45,6 +47,7 @@ def _load_dtmf_events(monkeypatch):
         "custom_components.voip_stack.dtmf": dtmf,
         "custom_components.voip_stack.endpoint_lifecycle": lifecycle,
         "custom_components.voip_stack.fsm": fsm,
+        "custom_components.voip_stack.runtime_data": runtime_data,
         "custom_components.voip_stack.websocket_api": websocket,
     }.items():
         monkeypatch.setitem(sys.modules, name, module)
@@ -196,7 +199,10 @@ def test_sip_info_prefers_the_live_relay_callback(monkeypatch) -> None:
         resolve_session_id=lambda call_id: call_id,
     )
     monkeypatch.setattr(dtmf_events, "call_registry", lambda _hass: registry)
-    hass = SimpleNamespace(data={"voip_stack": {}})
+    hass = SimpleNamespace(
+        data={"voip_stack": {}},
+        artifacts=SimpleNamespace(trunk_info_queues={}),
+    )
 
     asyncio.run(
         dtmf_events.handle_sip_info(
@@ -216,7 +222,8 @@ def test_sip_info_queues_trunk_digits_without_touching_the_relay(
     dtmf_events = _load_dtmf_events(monkeypatch)
     queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
     hass = SimpleNamespace(
-        data={"voip_stack": {"trunk_info_queues": {"call-2": queue}}}
+        data={"voip_stack": {}},
+        artifacts=SimpleNamespace(trunk_info_queues={"call-2": queue}),
     )
 
     asyncio.run(

@@ -882,15 +882,13 @@ def _sip_runtime_snapshot(
             )
     data["pending_call_ids"] = sorted(set(data["pending_call_ids"]))
     data["active_call_ids"] = sorted(set(data["active_call_ids"]))
+    runtime = runtime_data(hass)
     data["runtime_resources"] = runtime_resource_snapshot(
         bucket,
         registry,
         detailed=detailed,
-        rtp_port_pool=(
-            runtime.rtp_port_pool
-            if (runtime := runtime_data(hass)) is not None
-            else None
-        ),
+        rtp_port_pool=runtime.rtp_port_pool if runtime is not None else None,
+        call_artifacts=runtime.sip if runtime is not None else None,
     )
     return data
 

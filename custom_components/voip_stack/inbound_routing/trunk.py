@@ -16,12 +16,12 @@ from ..const import (
     CONF_TRUNK_DTMF_TIMEOUT_MS,
     CONF_TRUNK_INBOUND_DEFAULT_TARGET,
     CONF_TRUNK_INBOUND_MODE,
-    DOMAIN,
     TRUNK_INBOUND_MODE_DTMF,
 )
 from ..endpoint_lifecycle import create_runtime_task
 from ..fsm import CallState
 from ..media_ports import RtpPortReservation, reserve_sip_video_media
+from ..runtime_data import call_runtime_artifacts
 from ..sdp import build_answer_directional, constrained_video_direction
 from ..sip_listener import SipInviteResult
 from ..websocket_api import _set_sip_bridge_call_state
@@ -70,9 +70,9 @@ def prepare_trunk_preanswer(
     hass = runtime.hass
     cfg = runtime.config
     local_ip = runtime.local_ip
-    bucket = hass.data.setdefault(DOMAIN, {})
-    bucket.setdefault("trunk_closed_calls", set()).discard(invite.call_id)
-    bucket.setdefault("trunk_info_queues", {})[invite.call_id] = asyncio.Queue(
+    artifacts = call_runtime_artifacts(hass)
+    artifacts.trunk_closed_calls.discard(invite.call_id)
+    artifacts.trunk_info_queues[invite.call_id] = asyncio.Queue(
         maxsize=MAX_TRUNK_INFO_DIGITS
     )
     try:

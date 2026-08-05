@@ -16,7 +16,7 @@ from .call_scope import (
     pending_routes,
     single_pending_route_call_id,
 )
-from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
+from .const import HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry
 from .service_endpoints import (
     async_require_phone_service_control,
@@ -26,7 +26,7 @@ from .service_endpoints import (
 from .fsm import TerminalReason
 from .media_ports import release_media_reservation
 from .route_decisions import set_pending_route_decision
-from .runtime_data import conference_component
+from .runtime_data import call_runtime_artifacts, conference_component
 from .sip_runtime import send_bye, send_final_response
 from .websocket_api import (
     _ha_softphone_store,
@@ -170,9 +170,7 @@ async def async_decline_browser_call(
         )
         return
 
-    forward_task = hass.data.setdefault(DOMAIN, {}).get("forward_tasks", {}).get(
-        call_id
-    )
+    forward_task = call_runtime_artifacts(hass).forward_tasks.get(call_id)
     if forward_task is not None and not forward_task.done():
         forward_task.cancel()
         await asyncio.gather(forward_task, return_exceptions=True)

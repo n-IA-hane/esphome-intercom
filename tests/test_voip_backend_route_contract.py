@@ -694,10 +694,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             )
         ]
         self.assertIn(
-            'invite.call_id in bucket.get("trunk_closed_calls", set())', bridge_path
+            "invite.call_id in artifacts.trunk_closed_calls", bridge_path
         )
         self.assertIn(
-            'bucket["trunk_closed_calls"].discard(invite.call_id)', bridge_path
+            "artifacts.trunk_closed_calls.discard(invite.call_id)", bridge_path
         )
         self.assertIn(
             "await async_close_client_and_release(client, bridge_ports, bye=True)",
@@ -1140,15 +1140,15 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("DtmfCollector(", self.trunk_dtmf)
         self.assertIn("asyncio.FIRST_COMPLETED", self.trunk_dtmf)
         after_collect = trunk_route.split(
-            'bucket.setdefault("trunk_info_queues", {}).pop(invite.call_id, None)',
+            "artifacts.trunk_info_queues.pop(invite.call_id, None)",
             1,
         )[1]
-        self.assertIn('invite.call_id in bucket.get("trunk_closed_calls", set())', after_collect)
+        self.assertIn("invite.call_id in artifacts.trunk_closed_calls", after_collect)
         self.assertIn("bridge_ports.release()", after_collect)
         self.assertIn("remote_host=invite.remote_rtp_host", self.trunk_dtmf)
         preanswer = self.inbound_trunk
         self.assertIn(
-            'bucket.setdefault("trunk_closed_calls", set()).discard(invite.call_id)',
+            "artifacts.trunk_closed_calls.discard(invite.call_id)",
             preanswer,
         )
         task_prelude = trunk_route.split(
@@ -1746,7 +1746,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_dtmf_cancellation_precedes_automation_window(self) -> None:
         runner = self.trunk_inbound_router
         cancellation = runner.index(
-            'if invite.call_id in bucket.get("trunk_closed_calls", set()):'
+            "if invite.call_id in artifacts.trunk_closed_calls:"
         )
         automation = runner.index(
             "if not digits and configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED):"

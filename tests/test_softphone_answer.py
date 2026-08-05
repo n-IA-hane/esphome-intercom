@@ -63,6 +63,11 @@ def softphone_answer(monkeypatch):
         },
         "peer_snapshot": {"async_advertise_host": AsyncMock(return_value="127.0.0.1")},
         "route_decisions": {"set_pending_route_decision": Mock()},
+        "runtime_data": {
+            "call_runtime_artifacts": lambda hass: hass.artifacts,
+            "conference_component": Mock(return_value=None),
+            "sip_endpoint_runtime": Mock(return_value=None),
+        },
         "sip_runtime": {
             "send_bye": Mock(return_value=True),
             "send_final_response": Mock(return_value=True),
@@ -111,7 +116,10 @@ def _command():
 
 
 def test_ring_group_answer_is_submitted_to_fork_controller(softphone_answer) -> None:
-    hass = SimpleNamespace(data={})
+    hass = SimpleNamespace(
+        data={},
+        artifacts=SimpleNamespace(forward_tasks={}, forward_claims=set()),
+    )
     call = SimpleNamespace(
         data={"media_client_id": "browser-1", "send_video": True},
         context=object(),
@@ -138,7 +146,10 @@ def test_ring_group_answer_is_submitted_to_fork_controller(softphone_answer) -> 
 
 def test_generic_forward_owner_rejects_direct_answer(softphone_answer) -> None:
     hass = SimpleNamespace(
-        data={"voip_stack": {"forward_claims": {"call-1"}}}
+        data={"voip_stack": {}},
+        artifacts=SimpleNamespace(
+            forward_tasks={}, forward_claims={"call-1"}
+        ),
     )
     call = SimpleNamespace(data={}, context=object())
     softphone_answer.pending_routes = Mock(return_value={})

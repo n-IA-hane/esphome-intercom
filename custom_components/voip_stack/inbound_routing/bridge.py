@@ -20,7 +20,6 @@ from ..const import (
     CONF_TRUNK_SERVER,
     CONF_TRUNK_TRANSPORT,
     CONF_TRUNK_USERNAME,
-    DOMAIN,
 )
 from ..dtmf_events import attach_dtmf_event_bridge
 from ..endpoint_registry import EndpointBusyError
@@ -43,6 +42,7 @@ from ..media_ports import (
 )
 from ..outbound_attempts import async_close_client_and_release
 from ..phone_endpoint import EndpointKind
+from ..runtime_data import call_runtime_artifacts
 from ..sdp import build_answer_directional, first_offered_dtmf_format
 from ..sip import parse_sip_uri, sip_endpoints_equal, sip_uri_targets_listener
 from ..sip_bridge import (
@@ -400,9 +400,9 @@ async def route_sip_bridge(
             decline_reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
         )
 
-    bucket = hass.data.setdefault(DOMAIN, {})
-    if invite.call_id in bucket.get("trunk_closed_calls", set()):
-        bucket["trunk_closed_calls"].discard(invite.call_id)
+    artifacts = call_runtime_artifacts(hass)
+    if invite.call_id in artifacts.trunk_closed_calls:
+        artifacts.trunk_closed_calls.discard(invite.call_id)
         _LOGGER.info(
             "SIP bridge invite completed after caller cancelled call_id=%s; closing outbound leg",
             invite.call_id,
