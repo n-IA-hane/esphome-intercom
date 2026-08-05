@@ -31,13 +31,13 @@ def _mapping_keys(value: object) -> list[str]:
 
 
 def runtime_resource_snapshot(
-    bucket: dict[str, Any],
     registry: Any | None,
     *,
     detailed: bool = False,
     rtp_port_pool: dict[str, Any] | None = None,
     call_artifacts: Any | None = None,
     browser_media: BrowserMediaRuntime | None = None,
+    runtime_tasks: object = (),
 ) -> dict[str, Any]:
     """Return stable counts used to prove that a call cleaned up completely.
 
@@ -59,7 +59,7 @@ def runtime_resource_snapshot(
     audio_owners = browser_media.owners_for("audio") if browser_media else {}
     video_owners = browser_media.owners_for("video") if browser_media else {}
     identity_locks = browser_media.identity_locks if browser_media else {}
-    port_pool = rtp_port_pool or bucket.get("sip_rtp_port_pool")
+    port_pool = rtp_port_pool or {}
     used_ports = (
         set(port_pool.get("used") or ()) if isinstance(port_pool, dict) else set()
     )
@@ -87,7 +87,7 @@ def runtime_resource_snapshot(
             "call_deadlines": _active_task_count(
                 getattr(call_artifacts, "deadlines", {})
             ),
-            "runtime_tasks": _active_task_count(bucket.get("runtime_tasks", set())),
+            "runtime_tasks": _active_task_count(runtime_tasks),
             "video_transcoders": int(
                 browser_media is not None and browser_media.transcoder is not None
             ),

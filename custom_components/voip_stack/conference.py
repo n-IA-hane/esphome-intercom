@@ -18,7 +18,6 @@ from homeassistant.core import HomeAssistant
 
 from .core.audio_format import AudioFormat, PcmFormat
 from .core.audio_pcm import PcmFrameConverter
-from .const import DOMAIN
 from .endpoint_lifecycle import call_registry
 from .endpoint_registry import EndpointBusyError
 from .fsm import CallState, TerminalReason
@@ -1077,7 +1076,6 @@ def conference_manager(
     local_ip: str,
     on_inbound_timeout: Callable[[str, str], Awaitable[None]] | None = None,
 ) -> ConferenceManager:
-    bucket = hass.data.setdefault(DOMAIN, {})
     manager = conference_component(hass)
     if not isinstance(manager, ConferenceManager) or manager.local_ip != local_ip:
         manager = ConferenceManager(
@@ -1086,14 +1084,13 @@ def conference_manager(
             on_inbound_timeout=on_inbound_timeout,
         )
         pbx_runtime = sip_endpoint_runtime(hass)
-        if pbx_runtime is not None:
-            pbx_runtime.adopt_component(
-                "conference_manager",
-                manager,
-                closer=manager.close,
-            )
-        else:
-            bucket["conference_manager"] = manager
+        if pbx_runtime is None:
+            raise RuntimeError("VoIP Stack SIP runtime is unavailable")
+        pbx_runtime.adopt_component(
+            "conference_manager",
+            manager,
+            closer=manager.close,
+        )
     elif on_inbound_timeout is not None:
         manager.on_inbound_timeout = on_inbound_timeout
         for room in manager.rooms.values():

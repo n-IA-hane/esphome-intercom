@@ -78,6 +78,7 @@ from .route_decisions import set_pending_route_decision as _set_pending_route_de
 from .runtime_data import (
     VoipStackConfigEntry,
     VoipStackRuntime,
+    registration_data,
     runtime_data as _runtime_data,
 )
 from .store import manual_roster_entries as _manual_roster_entries
@@ -387,7 +388,7 @@ async def _async_apply_assist_intents(hass: HomeAssistant, enabled: bool) -> Non
         async_register_assist_intents(hass)
         return
 
-    if hass.data.get(DOMAIN, {}).get("assist_intents_registered"):
+    if registration_data(hass).assist_intents:
         from .assist_intents import async_unregister_assist_intents
 
         async_unregister_assist_intents(hass)
@@ -395,8 +396,8 @@ async def _async_apply_assist_intents(hass: HomeAssistant, enabled: bool) -> Non
 
 async def _async_setup_shared(hass: HomeAssistant, config: dict | None = None) -> None:
     """Shared setup logic for both YAML and config entry."""
-    bucket = hass.data.setdefault(DOMAIN, {})
-    if bucket.get("initialized"):
+    registration = registration_data(hass)
+    if registration.initialized:
         # Services, websocket commands and HTTP views stay registered across a
         # config-entry reload. The event listeners are explicitly removed by
         # unload, so restore just those idempotent subscriptions here.
@@ -408,7 +409,7 @@ async def _async_setup_shared(hass: HomeAssistant, config: dict | None = None) -
             async_register_video_ws_view(hass)
         return
 
-    bucket["initialized"] = True
+    registration.initialized = True
 
     async_register_websocket_api(hass)
     from .audio_ws_view import async_register_audio_ws_view

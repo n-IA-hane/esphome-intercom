@@ -155,12 +155,12 @@ def _runtime_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, A
         "signaling": _signaling_summary(hass),
         "trunk": _trunk_summary(hass, bucket),
         "resources": runtime_resource_snapshot(
-            bucket,
             call_projection(hass),
             detailed=False,
             rtp_port_pool=runtime.rtp_port_pool if runtime is not None else None,
             call_artifacts=runtime.sip if runtime is not None else None,
             browser_media=runtime.media if runtime is not None else None,
+            runtime_tasks=getattr(runtime, "tasks", ()),
         ),
     }
 
@@ -233,7 +233,6 @@ async def async_get_device_diagnostics(
 ) -> dict[str, Any]:
     """Return privacy-safe diagnostics for one logical phone device."""
 
-    bucket = hass.data.get(DOMAIN, {})
     runtime = runtime_data(hass)
     return {
         "integration": {
@@ -242,11 +241,11 @@ async def async_get_device_diagnostics(
         },
         "phone": _device_summary(hass, device),
         "resources": runtime_resource_snapshot(
-            bucket,
             call_projection(hass),
             detailed=False,
             rtp_port_pool=runtime.rtp_port_pool if runtime is not None else None,
             call_artifacts=runtime.sip if runtime is not None else None,
             browser_media=runtime.media if runtime is not None else None,
+            runtime_tasks=getattr(runtime, "tasks", ()),
         ),
     }

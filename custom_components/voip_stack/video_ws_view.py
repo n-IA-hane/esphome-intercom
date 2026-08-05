@@ -20,7 +20,7 @@ from homeassistant.core import HomeAssistant
 
 from .core import rtp, sdp
 from .config import debug_mode, transport_config
-from .const import CONF_VIDEO_TRANSCODING, DOMAIN
+from .const import CONF_VIDEO_TRANSCODING
 from .media_debug import merge_media_debug
 from .media_call_lifetime import active_media_call, listen_for_media_call_end
 from .media_ws_session import (
@@ -28,7 +28,7 @@ from .media_ws_session import (
     async_prepare_media_websocket_request,
 )
 from .queue_utils import drain_queue
-from .runtime_data import call_projection, require_runtime_data
+from .runtime_data import call_projection, registration_data, require_runtime_data
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import SipCallClient
 from .core.video_rtcp import (
@@ -479,11 +479,11 @@ class VoipVideoWebSocketView(HomeAssistantView):
 
 
 def async_register_video_ws_view(hass: HomeAssistant) -> None:
-    bucket = hass.data.setdefault(DOMAIN, {})
-    if bucket.get("video_ws_view_registered"):
+    registration = registration_data(hass)
+    if registration.video_view:
         return
     hass.http.register_view(VoipVideoWebSocketView)
-    bucket["video_ws_view_registered"] = True
+    registration.video_view = True
     _LOGGER.info("SIP video websocket ready on %s", VoipVideoWebSocketView.url)
 
 

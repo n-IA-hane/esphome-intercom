@@ -47,7 +47,6 @@ class _Registry:
 class RuntimeDiagnosticsTest(unittest.TestCase):
     def test_snapshot_combines_registry_media_ports_owners_and_tasks(self) -> None:
         diagnostics = _load_module()
-        bucket = {"runtime_tasks": {_Task(False), _Task(True)}}
         sessions = {"audio": {"call-1": object()}, "video": {"call-1": object()}}
         owners = {"audio": {"phone|call-1": object()}, "video": {}}
         media = SimpleNamespace(
@@ -58,7 +57,6 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
         )
 
         snapshot = diagnostics.runtime_resource_snapshot(
-            bucket,
             _Registry(),
             detailed=True,
             browser_media=media,
@@ -67,6 +65,7 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
                 forward_tasks={"call-1": _Task(False), "old": _Task(True)},
                 deadlines={"call-1": _Task(False)},
             ),
+            runtime_tasks={_Task(False), _Task(True)},
         )
 
         counts = snapshot["resource_counts"]
@@ -87,7 +86,7 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
     def test_idle_snapshot_is_call_scoped_quiescent(self) -> None:
         diagnostics = _load_module()
 
-        snapshot = diagnostics.runtime_resource_snapshot({}, None)
+        snapshot = diagnostics.runtime_resource_snapshot(None)
 
         self.assertTrue(snapshot["call_scoped_quiescent"])
         self.assertEqual(snapshot["resource_counts"]["allocated_rtp_ports"], 0)

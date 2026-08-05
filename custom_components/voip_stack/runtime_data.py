@@ -97,6 +97,27 @@ class VoipStackRuntime:
 type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]
 
 
+@dataclass(slots=True)
+class VoipStackRegistration:
+    """Process-wide Home Assistant registrations that survive entry reloads."""
+
+    initialized: bool = False
+    audio_view: bool = False
+    video_view: bool = False
+    assist_intents: bool = False
+
+
+def registration_data(hass: HomeAssistant) -> VoipStackRegistration:
+    """Return the only process-wide VoIP Stack state container."""
+
+    bucket = hass.data.setdefault(DOMAIN, {})
+    registration = bucket.get("registration")
+    if not isinstance(registration, VoipStackRegistration):
+        registration = VoipStackRegistration()
+        bucket["registration"] = registration
+    return registration
+
+
 def runtime_data(hass: HomeAssistant) -> VoipStackRuntime | None:
     """Return the single loaded entry runtime, if setup has reached it."""
 

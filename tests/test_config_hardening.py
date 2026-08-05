@@ -249,10 +249,9 @@ def test_phone_actions_have_one_device_selector() -> None:
 
 def test_final_entry_removal_forgets_runtime_but_preserves_global_views() -> None:
     hook = _load_remove_entry_hook()
+    registration = object()
     bucket = {
-        "initialized": True,
-        "audio_ws_view_registered": True,
-        "video_ws_view_registered": True,
+        "registration": registration,
         "media_shutdown": object(),
         "debug_capture_tasks": {"finishing-write"},
         "manual_roster_entries": [{"name": "Kitchen"}],
@@ -265,9 +264,7 @@ def test_final_entry_removal_forgets_runtime_but_preserves_global_views() -> Non
 
     assert "manual_roster_entries" not in bucket
     assert "entry-id" not in bucket
-    assert bucket["initialized"] is True
-    assert bucket["audio_ws_view_registered"] is True
-    assert bucket["video_ws_view_registered"] is True
+    assert bucket["registration"] is registration
     assert bucket["debug_capture_tasks"] == {"finishing-write"}
 
 

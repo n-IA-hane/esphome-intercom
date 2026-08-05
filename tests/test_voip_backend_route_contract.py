@@ -1627,8 +1627,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             )
         ]
         initialized = setup[
-            setup.index('if bucket.get("initialized"):') : setup.index(
-                'bucket["initialized"] = True'
+            setup.index("if registration.initialized:") : setup.index(
+                "registration.initialized = True"
             )
         ]
         self.assertIn("_register_esp_state_event_bridge(hass)", initialized)

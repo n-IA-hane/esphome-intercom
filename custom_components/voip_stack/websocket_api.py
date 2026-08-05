@@ -746,10 +746,7 @@ def _sip_runtime_snapshot(
     *,
     detailed: bool = False,
 ) -> dict[str, Any]:
-    bucket = hass.data.get(DOMAIN, {})
     registry = call_registry(hass)
-    if registry is None:
-        registry = None
     endpoint = sip_endpoint_manager(hass)
     data: dict[str, Any] = {
         "sip_udp_ready": False,
@@ -773,8 +770,6 @@ def _sip_runtime_snapshot(
         "media_debug": {},
         "runtime_resources": {},
     }
-    if endpoint is None:
-        endpoint = None
     snapshot = getattr(endpoint, "snapshot", None)
     if callable(snapshot):
         snap = snapshot()
@@ -874,12 +869,12 @@ def _sip_runtime_snapshot(
     data["active_call_ids"] = sorted(set(data["active_call_ids"]))
     runtime = runtime_data(hass)
     data["runtime_resources"] = runtime_resource_snapshot(
-        bucket,
         registry,
         detailed=detailed,
         rtp_port_pool=runtime.rtp_port_pool if runtime is not None else None,
         call_artifacts=runtime.sip if runtime is not None else None,
         browser_media=runtime.media if runtime is not None else None,
+        runtime_tasks=runtime.tasks if runtime is not None else (),
     )
     return data
 

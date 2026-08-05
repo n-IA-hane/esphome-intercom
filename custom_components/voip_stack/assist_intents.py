@@ -12,6 +12,7 @@ from homeassistant.helpers import intent
 from homeassistant.helpers.intent import Intent, IntentHandler, IntentResponse
 
 from .const import DOMAIN
+from .runtime_data import registration_data
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -527,7 +528,7 @@ def async_register_assist_intents(hass: HomeAssistant) -> None:
         VoipDeclineIntentHandler(),
     ):
         intent.async_register(hass, handler)
-    hass.data.setdefault(DOMAIN, {})["assist_intents_registered"] = True
+    registration_data(hass).assist_intents = True
     _LOGGER.info("VoIP Stack Assist intents registered")
 
 
@@ -535,5 +536,5 @@ def async_unregister_assist_intents(hass: HomeAssistant) -> None:
     """Unregister optional Assist handlers."""
     for intent_type in INTENT_TYPES:
         intent.async_remove(hass, intent_type)
-    hass.data.setdefault(DOMAIN, {}).pop("assist_intents_registered", None)
+    registration_data(hass).assist_intents = False
     _LOGGER.info("VoIP Stack Assist intents unregistered")

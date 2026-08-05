@@ -20,7 +20,6 @@ from homeassistant.core import HomeAssistant
 from .core import rtp
 from .audio_ws import decode_audio_frame, encode_audio_frame
 from .config import debug_mode, media_capture_enabled
-from .const import DOMAIN
 from .core.audio_format import HA_SIP_PCM_FORMATS
 from .debug_capture import (
     DEBUG_CAPTURE_DIR,
@@ -41,7 +40,7 @@ from .media_call_lifetime import (
     listen_for_media_call_end as _listen_for_call_end,
 )
 from .queue_utils import drain_queue, put_drop_oldest
-from .runtime_data import conference_component, require_runtime_data
+from .runtime_data import conference_component, registration_data, require_runtime_data
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder, SipCallClient
 from .media_ws_session import (
@@ -391,10 +390,11 @@ class VoipAudioWebSocketView(HomeAssistantView):
 
 
 def async_register_audio_ws_view(hass: HomeAssistant) -> None:
-    if hass.data.setdefault(DOMAIN, {}).get("audio_ws_view_registered"):
+    registration = registration_data(hass)
+    if registration.audio_view:
         return
     hass.http.register_view(VoipAudioWebSocketView)
-    hass.data[DOMAIN]["audio_ws_view_registered"] = True
+    registration.audio_view = True
     _LOGGER.info("HA softphone browser audio websocket ready on %s", VoipAudioWebSocketView.url)
 
 
