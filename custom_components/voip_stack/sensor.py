@@ -20,8 +20,6 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .core.audio_format import HA_SIP_PCM_FORMATS
-from .const import HA_SOFTPHONE_ENDPOINT_ENTITY_ID
 from .endpoint_device import (
     async_link_endpoint_entity,
     endpoint_call_state_attributes,
@@ -35,16 +33,13 @@ from .endpoint_entity_manager import (
     event_projects_endpoint_state,
     register_endpoint_entity_manager,
 )
-from .phone_endpoint import DEFAULT_ENDPOINT_ID
-from .peer_snapshot import async_advertise_host, async_build_peer_snapshot
-from .config import transport_config
-from .runtime_data import endpoint_directory, require_runtime_data
+from .peer_snapshot import async_build_peer_snapshot
+from .runtime_data import require_runtime_data
 
 _LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 0
 UNAVAILABLE_STATES = {"", "unknown", "unavailable"}
-HA_ENDPOINT_AUDIO_FORMATS = tuple(fmt.wire_token() for fmt in HA_SIP_PCM_FORMATS[:8])
 PHONE_CALL_STATES = [
     "offline",
     "idle",
@@ -121,18 +116,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    registry = endpoint_directory(hass)
-    default_endpoint = registry.get(DEFAULT_ENDPOINT_ID)
-    _migrate_default_call_state_entity(hass, entry, default_endpoint)
-    ha_endpoint_sensor = HaSoftphoneEndpointSensor(hass, default_endpoint, registry)
     unified_sensor = VoipPhonebookSensor(hass)
-    async_add_entities(
-        [ha_endpoint_sensor],
-        True,
-        config_subentry_id=endpoint_config_subentry_id(
-            hass, DEFAULT_ENDPOINT_ID
-        ),
-    )
     async_add_entities([unified_sensor], True)
     endpoint_manager = EndpointEntityManager(
         hass,
@@ -142,69 +126,10 @@ async def async_setup_entry(
     )
     endpoint_manager.async_setup()
     runtime = require_runtime_data(hass)
-    runtime.ha_endpoint_sensor = ha_endpoint_sensor
     runtime.phonebook_sensor = unified_sensor
     register_endpoint_entity_manager(
         entry, "endpoint_call_state_entity_manager", endpoint_manager
     )
-
-
-class HaSoftphoneEndpointSensor(SensorEntity):
-    """Local HA softphone endpoint, published in the same shape as ESP endpoints."""
-
-    _attr_has_entity_name = False
-    _attr_should_poll = False
-    _attr_icon = "mdi:phone-voip"
-
-    def __init__(self, hass: HomeAssistant, endpoint=None, registry=None) -> None:
-        self.hass = hass
-        self._attr_unique_id = "voip_stack_ha_softphone_voip_endpoint"
-        self._attr_name = "VoIP Stack HA Softphone Endpoint"
-        self.entity_id = HA_SOFTPHONE_ENDPOINT_ENTITY_ID
-        self._attr_native_value = "unknown"
-        self._attr_extra_state_attributes = {"local_ha": True}
-        self.endpoint_registry = registry
-        if endpoint is not None:
-            self._attr_device_info = endpoint_device_info(endpoint)
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        async_link_endpoint_entity(
-            self.endpoint_registry, DEFAULT_ENDPOINT_ID, self.entity_id
-        )
-
-    async def async_update(self) -> None:
-        from .websocket_api import _ha_peer_name, _ha_softphone_extension, _ha_softphone_groups
-
-        host = await async_advertise_host(self.hass)
-        if not host:
-            self._attr_native_value = "unavailable"
-            self._attr_extra_state_attributes = {"local_ha": True, "available": False, "endpoint": ""}
-            if self.hass and self.entity_id:
-                self.async_write_ha_state()
-            return
-
-        cfg = transport_config(self.hass)
-        groups = _ha_softphone_groups(self.hass)
-        extension = _ha_softphone_extension(self.hass)
-        tx = ";".join(HA_ENDPOINT_AUDIO_FORMATS)
-        rx = tx
-        endpoint = (
-            f"{_ha_peer_name(self.hass)}|{host}|{int(cfg['sip_port'])}|{int(cfg['rtp_port'])}|"
-            f"full_duplex|{tx}|{rx}|sip_tcp|{extension}"
-        )
-        self._attr_native_value = "online"
-        self._attr_extra_state_attributes = {
-            "local_ha": True,
-            "available": True,
-            "endpoint": endpoint,
-            "extension": extension,
-            "ring_group": groups["ring_group"],
-            "conference_group": groups["conference_group"],
-            "conference_ring": bool(groups["conference_ring"]),
-        }
-        if self.hass and self.entity_id:
-            self.async_write_ha_state()
 
 
 class PhoneEndpointCallStateSensor(SensorEntity):
@@ -393,7 +318,6 @@ class VoipPhonebookSensor(SensorEntity):
             for e in entity_registry.entities.values()
             if _is_voip_roster_entity(e.entity_id)
         }
-        new_set.add(HA_SOFTPHONE_ENDPOINT_ENTITY_ID)
         if new_set == self._tracked_entities and not initial:
             return
         self._tracked_entities = new_set

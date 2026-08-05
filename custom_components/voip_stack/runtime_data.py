@@ -89,7 +89,6 @@ class VoipStackRuntime:
     softphones: dict[str, dict[str, Any]] = field(default_factory=dict)
     softphone_presence: dict[str, int] = field(default_factory=dict)
     sip_bridge_state: dict[str, Any] = field(default_factory=dict)
-    ha_endpoint_sensor: Any | None = None
     phonebook_sensor: Any | None = None
     esp_state_event_bridge_unsub: Any | None = None
     phonebook_service_event_unsub: Any | None = None

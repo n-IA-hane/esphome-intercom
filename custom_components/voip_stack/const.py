@@ -55,7 +55,6 @@ with open(_MANIFEST, encoding="utf-8") as _f:
 URL_BASE = "/voip-stack"
 HA_PEER_FALLBACK_NAME = "voip-stack"
 HA_SOFTPHONE_DEVICE_ID = "__voip_stack_ha_softphone__"
-HA_SOFTPHONE_ENDPOINT_ENTITY_ID = "sensor.voip_stack_ha_softphone_voip_endpoint"
 HA_SOFTPHONE_CALL_STATE_ENTITY_ID = "sensor.voip_stack_call_state"
 
 VOIP_STACK_SIP_PORT = 5060

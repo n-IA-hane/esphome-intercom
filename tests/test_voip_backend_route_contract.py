@@ -742,7 +742,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.inbound_local,
         )
 
-    def test_ha_softphone_runtime_settings_publish_virtual_endpoint(self) -> None:
+    def test_ha_softphone_runtime_settings_use_canonical_phone_endpoints(self) -> None:
         config_flow = CONFIG_FLOW.read_text()
         strings = STRINGS_JSON.read_text()
         init_py = INIT.read_text()
@@ -778,34 +778,14 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             SERVICES.read_text(),
         )
         self.assertIn("_ha_softphone_extension", websocket)
-        self.assertIn("HA_SOFTPHONE_ENDPOINT_ENTITY_ID", const)
-        self.assertIn("class HaSoftphoneEndpointSensor", sensor)
-        self.assertIn("HA_SIP_PCM_FORMATS", sensor)
-        self.assertIn("HA_ENDPOINT_AUDIO_FORMATS", sensor)
-        self.assertIn("HA_SIP_PCM_FORMATS[:8]", sensor)
-        self.assertIn('tx = ";".join(HA_ENDPOINT_AUDIO_FORMATS)', sensor)
-        self.assertNotIn("HA_ENDPOINT_FORMATS", sensor)
-        self.assertIn('self._attr_native_value = "online"', sensor)
-        self.assertIn('"endpoint": endpoint', sensor)
-        self.assertIn('"extension": extension', sensor)
-        self.assertIn('"ring_group": groups["ring_group"]', sensor)
-        self.assertIn('"conference_group": groups["conference_group"]', sensor)
-        self.assertNotIn(
-            "f\"{extension}|{groups['conference_group']}|{groups['ring_group']}|\"",
-            sensor.replace("\n", ""),
-        )
+        self.assertNotIn("HA_SOFTPHONE_ENDPOINT_ENTITY_ID", sensor)
+        self.assertNotIn("class HaSoftphoneEndpointSensor", sensor)
+        self.assertNotIn("HA_SOFTPHONE_ENDPOINT_ENTITY_ID", peer_snapshot)
         self.assertIn("old_endpoint", sensor)
         self.assertIn("new_endpoint", sensor)
         self.assertIn("voip_ring_groups", sensor)
         self.assertIn("voip_conference_groups", sensor)
         self.assertIn("voip_ring_on_conference", sensor)
-        self.assertIn("new_set.add(HA_SOFTPHONE_ENDPOINT_ENTITY_ID)", sensor)
-        self.assertIn(
-            "hass.states.get(HA_SOFTPHONE_ENDPOINT_ENTITY_ID)", peer_snapshot
-        )
-        self.assertIn("ha_endpoint_state.attributes or {}", peer_snapshot)
-        self.assertIn('get("endpoint")', peer_snapshot)
-        self.assertIn("parse_voip_endpoint", peer_snapshot)
         self.assertNotIn("async_prune_ha_softphone_groups", sensor)
         self.assertNotIn("async_prune_ha_softphone_groups", websocket)
         self.assertNotIn("local_ha_seen = False", websocket)
@@ -829,10 +809,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "endpoint.availability is EndpointAvailability.AVAILABLE",
             peer_snapshot,
         )
-        self.assertIn(
-            "if not browser_endpoints and ha_endpoint is not None:",
-            peer_snapshot,
-        )
+        self.assertNotIn("ha_endpoint_state", peer_snapshot)
 
     def test_ha_softphone_settings_use_phone_subentries_as_the_only_store(self) -> None:
         websocket = WEBSOCKET_API.read_text()
@@ -1451,18 +1428,14 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("endpoint = preferred_browser_phone(hass)", selector)
         self.assertNotIn("return DEFAULT_ENDPOINT_ID", selector)
 
-    def test_phone_subentry_live_sync_updates_endpoint_sensor(self) -> None:
+    def test_phone_subentry_live_sync_has_no_default_endpoint_sensor(self) -> None:
         update_listener = self.config_entry_runtime[
             self.config_entry_runtime.index("async def async_config_entry_updated(") :
             self.config_entry_runtime.index(
                 "def register_phonebook_service_event_sync("
             )
         ]
-        self.assertIn(
-            "endpoint_sensor = runtime.ha_endpoint_sensor",
-            update_listener,
-        )
-        self.assertIn("await endpoint_sensor.async_update()", update_listener)
+        self.assertNotIn("ha_endpoint_sensor", update_listener)
 
     def test_trunk_without_dtmf_preanswer_does_not_allocate_relay_ports(self) -> None:
         on_invite = self.invite_router

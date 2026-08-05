@@ -9,15 +9,12 @@ from homeassistant.core import HomeAssistant
 
 from .core.audio_format import HA_SIP_PCM_FORMATS
 from .config import transport_config
-from .const import HA_SOFTPHONE_ENDPOINT_ENTITY_ID
-from .device_resolver import parse_voip_endpoint
 from .peer import Peer
 from .phone_endpoint import (
-    DEFAULT_ENDPOINT_ID,
     EndpointAvailability,
     EndpointKind,
 )
-from .runtime_data import endpoint_directory, runtime_data
+from .runtime_data import endpoint_directory
 from .websocket_api import _get_voip_devices
 
 _LOGGER = logging.getLogger(__name__)
@@ -153,54 +150,4 @@ async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
             )
         )
 
-    # Compatibility fallback for YAML-only or partially migrated setups where
-    # no logical endpoint registry exists yet.
-    ha_endpoint_state = hass.states.get(HA_SOFTPHONE_ENDPOINT_ENTITY_ID)
-    ha_endpoint_payload = ""
-    ha_endpoint_attrs = {}
-    if ha_endpoint_state is not None:
-        ha_endpoint_attrs = ha_endpoint_state.attributes or {}
-        ha_endpoint_payload = str(
-            ha_endpoint_attrs.get("endpoint") or ha_endpoint_state.state or ""
-        )
-    ha_endpoint = parse_voip_endpoint(ha_endpoint_payload)
-    if not browser_endpoints and ha_endpoint is not None:
-        out.append(
-            Peer(
-                device=None,
-                name=ha_endpoint["name"],
-                host=ha_endpoint["host"],
-                endpoint_id=DEFAULT_ENDPOINT_ID,
-                endpoint_kind=EndpointKind.BROWSER.value,
-                capabilities=("audio", "dtmf"),
-                local_ha=True,
-                sip_port=int(ha_endpoint.get("sip_port") or cfg["sip_port"]),
-                rtp_port=int(ha_endpoint.get("rtp_port") or cfg["rtp_port"]),
-                extension=str(ha_endpoint.get("extension") or ""),
-                conference_group=str(ha_endpoint_attrs.get("conference_group") or ""),
-                conference_ring=bool(
-                    ha_endpoint_attrs.get("conference_ring", False)
-                ),
-                ring_group=str(ha_endpoint_attrs.get("ring_group") or ""),
-                audio_mode=ha_endpoint.get("audio_mode", "full_duplex"),
-                tx_formats=[
-                    fmt.wire_token() for fmt in ha_endpoint.get("tx_formats") or []
-                ],
-                rx_formats=[
-                    fmt.wire_token() for fmt in ha_endpoint.get("rx_formats") or []
-                ],
-            )
-        )
-    elif not browser_endpoints:
-        # The SIP endpoint starts before config-entry platforms. The deferred
-        # phonebook sync discovers the sensor as soon as the platform is ready.
-        runtime = runtime_data(hass)
-        if runtime is None or runtime.ha_endpoint_sensor is None:
-            _LOGGER.debug(
-                "HA softphone endpoint sensor is not ready; phonebook sync is deferred"
-            )
-        else:
-            _LOGGER.warning(
-                "HA softphone endpoint sensor is unavailable; HA will not appear in the SIP phonebook"
-            )
     return out

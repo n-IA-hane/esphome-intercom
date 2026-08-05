@@ -143,10 +143,6 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
             presence.pop(endpoint_id, None)
         for endpoint_id in sorted(previous_browser_ids | current_browser_ids):
             _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
-        endpoint_sensor = runtime.ha_endpoint_sensor
-        if endpoint_sensor is not None:
-            await endpoint_sensor.async_update()
-
         registrar = sip_registrar(hass)
         if registrar is not None:
             registrar.update_accounts(sip_accounts(hass))
