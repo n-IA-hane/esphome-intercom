@@ -56,10 +56,10 @@ async def async_start_sip_trunk(hass: HomeAssistant, *, local_ip: str) -> bool:
     endpoint = sip_endpoint_manager(hass)
     if endpoint is not None:
         trunk.attach_endpoint_manager(endpoint)
-    bucket = hass.data.setdefault(DOMAIN, {})
-    pbx_runtime = sip_endpoint_runtime(hass) or bucket.get("pbx_runtime")
-    if pbx_runtime is not None:
-        pbx_runtime.adopt_component("trunk", trunk, closer=trunk.stop)
+    pbx_runtime = sip_endpoint_runtime(hass)
+    if pbx_runtime is None:
+        return False
+    pbx_runtime.adopt_component("trunk", trunk, closer=trunk.stop)
     try:
         await trunk.start()
     except Exception as err:
@@ -84,7 +84,6 @@ async def async_stop_sip_trunk(hass: HomeAssistant) -> None:
 
 
 async def _async_stop_sip_trunk(hass: HomeAssistant) -> None:
-    bucket = hass.data.get(DOMAIN, {})
     trunk = sip_trunk(hass)
     if trunk is None:
         return
@@ -93,8 +92,6 @@ async def _async_stop_sip_trunk(hass: HomeAssistant) -> None:
     except Exception:
         _LOGGER.debug("Ignoring SIP trunk stop error", exc_info=True)
         return
-    pbx_runtime = sip_endpoint_runtime(hass) or bucket.get("pbx_runtime")
+    pbx_runtime = sip_endpoint_runtime(hass)
     if pbx_runtime is not None:
         pbx_runtime.release_component("trunk", trunk)
-    if bucket.get("sip_trunk") is trunk:
-        bucket.pop("sip_trunk", None)

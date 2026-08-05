@@ -10,7 +10,6 @@ import logging
 from typing import Any
 
 from .session_cleanup import async_wait_for_cleanup
-from .const import DOMAIN
 from .runtime_data import call_projection
 from .websocket_owner import (
     MediaWebSocketOwner,
@@ -266,9 +265,7 @@ async def async_authorize_media_websocket_request(
     from .authorization import async_require_media_controller
     from .call_registry import CallRegistry
 
-    registry = call_projection(context.hass) or context.hass.data.get(DOMAIN, {}).get(
-        "call_registry"
-    )
+    registry = call_projection(context.hass)
     if not isinstance(registry, CallRegistry):
         raise web.HTTPConflict(text="HA softphone call registry is unavailable")
     await async_require_media_controller(

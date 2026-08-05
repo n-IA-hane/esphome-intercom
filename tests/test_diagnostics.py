@@ -65,12 +65,18 @@ def _load_module(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, module)
     spec.loader.exec_module(module)
-    module.sip_endpoint_manager = lambda hass: hass.data.get("voip_stack", {}).get(
-        "sip_endpoint"
+    module.runtime_data = lambda hass: getattr(hass, "runtime", None)
+    module.call_projection = lambda hass: getattr(
+        getattr(hass, "runtime", None), "calls", None
     )
-    module.sip_trunk = lambda hass: hass.data.get("voip_stack", {}).get("sip_trunk")
-    module.endpoint_directory = lambda hass: hass.data.get("voip_stack", {}).get(
-        "endpoint_registry", _Registry([])
+    module.sip_endpoint_manager = lambda hass: getattr(
+        getattr(hass, "runtime", None), "endpoint", None
+    )
+    module.sip_trunk = lambda hass: getattr(
+        getattr(hass, "runtime", None), "trunk", None
+    )
+    module.endpoint_directory = lambda hass: getattr(
+        getattr(hass, "runtime", None), "endpoints", _Registry([])
     )
     return module
 
@@ -196,17 +202,21 @@ def _entry():
 def test_config_entry_diagnostics_are_bounded_and_private(monkeypatch) -> None:
     diagnostics = _load_module(monkeypatch)
     endpoint = _endpoint()
+    runtime = SimpleNamespace(
+        endpoints=_Registry([endpoint]),
+        calls=_CallRegistry(),
+        endpoint=_SipEndpoint(),
+        trunk=_Trunk(),
+        sip=SimpleNamespace(forward_tasks={}, deadlines={}),
+        rtp_port_pool={"used": {40000, 40002}},
+    )
     hass = SimpleNamespace(
         data={
             "voip_stack": {
-                "endpoint_registry": _Registry([endpoint]),
-                "call_registry": _CallRegistry(),
-                "sip_endpoint": _SipEndpoint(),
-                "sip_trunk": _Trunk(),
                 "active_audio_sessions": {"private-call-id": object()},
-                "sip_rtp_port_pool": {"used": {40000, 40002}},
             }
-        }
+        },
+        runtime=runtime,
     )
 
     result = asyncio.run(
@@ -276,12 +286,15 @@ def test_device_diagnostics_expose_behavior_not_identity(monkeypatch) -> None:
     diagnostics = _load_module(monkeypatch)
     endpoint = _endpoint()
     hass = SimpleNamespace(
-        data={
-            "voip_stack": {
-                "endpoint_registry": _Registry([endpoint]),
-                "call_registry": _CallRegistry(),
-            }
-        }
+        data={"voip_stack": {}},
+        runtime=SimpleNamespace(
+            endpoints=_Registry([endpoint]),
+            calls=_CallRegistry(),
+            endpoint=None,
+            trunk=None,
+            sip=None,
+            rtp_port_pool={},
+        ),
     )
     device = SimpleNamespace(id="private-device", identifiers=frozenset())
 
@@ -318,7 +331,15 @@ def test_device_diagnostics_expose_behavior_not_identity(monkeypatch) -> None:
 def test_device_diagnostics_are_safe_when_device_is_not_an_endpoint(monkeypatch) -> None:
     diagnostics = _load_module(monkeypatch)
     hass = SimpleNamespace(
-        data={"voip_stack": {"endpoint_registry": _Registry([])}}
+        data={"voip_stack": {}},
+        runtime=SimpleNamespace(
+            endpoints=_Registry([]),
+            calls=None,
+            endpoint=None,
+            trunk=None,
+            sip=None,
+            rtp_port_pool={},
+        ),
     )
     device = SimpleNamespace(
         id="private-unrelated-device",

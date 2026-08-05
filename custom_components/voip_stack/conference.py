@@ -1102,7 +1102,7 @@ def conference_manager(
             local_ip=local_ip,
             on_inbound_timeout=on_inbound_timeout,
         )
-        pbx_runtime = sip_endpoint_runtime(hass) or bucket.get("pbx_runtime")
+        pbx_runtime = sip_endpoint_runtime(hass)
         if pbx_runtime is not None:
             pbx_runtime.adopt_component(
                 "conference_manager",

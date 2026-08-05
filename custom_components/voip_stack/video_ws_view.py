@@ -591,7 +591,7 @@ def _active_video_session(
 def _detach_video_socket(hass: HomeAssistant, session: _VideoMediaSession) -> None:
     """Transfer pre-bound RTP/RTCP sockets from call to media lifetime."""
 
-    registry = call_projection(hass) or hass.data.get(DOMAIN, {}).get("call_registry")
+    registry = call_projection(hass)
     if not isinstance(registry, CallRegistry):
         return
     item = registry.softphone_media.get(session.call_id)
@@ -1209,7 +1209,7 @@ async def _run_video_session(
     latched_source: tuple[str, int] | None = None
     latched_ssrc: int | None = None
     latched_rtcp_source: tuple[str, int] | None = None
-    registry = call_projection(hass) or hass.data.get(DOMAIN, {}).get("call_registry")
+    registry = call_projection(hass)
     cached_parameter_sets: tuple[bytes, ...] = ()
     if isinstance(registry, CallRegistry):
         cached_parameter_sets = registry.video_parameter_sets.get(session.call_id, ())

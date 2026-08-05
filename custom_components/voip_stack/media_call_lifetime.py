@@ -9,7 +9,6 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from .call_registry import CallRegistry
-from .const import DOMAIN
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .runtime_data import call_projection
 from .websocket_api import CALL_EVENT, _ha_softphone_store
@@ -38,9 +37,7 @@ def active_media_call(
     state = str(store.get("state") or "").strip().lower()
     if not call_id or state not in _MEDIA_CALL_STATES:
         return None
-    registry = call_projection(hass) or hass.data.get(DOMAIN, {}).get(
-        "call_registry"
-    )
+    registry = call_projection(hass)
     if not isinstance(registry, CallRegistry):
         return None
     return ActiveMediaCall(call_id, store, registry)

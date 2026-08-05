@@ -116,6 +116,7 @@ endpoint_lifecycle.sip_endpoint_manager = lambda hass: _test_runtime_component(
 endpoint_registry_module = _load_module("endpoint_registry")
 phone_endpoint = _load_module("phone_endpoint")
 runtime_data_module = _load_module("runtime_data")
+pbx_runtime_module = _load_module("pbx_runtime")
 trunk_runtime = _load_module("trunk_runtime")
 trunk_runtime.sip_trunk = lambda hass: _test_runtime_component(hass, "sip_trunk")
 sip_listener = _load_module("sip_listener")
@@ -169,10 +170,6 @@ class _FakeHass:
 
 
 def _test_runtime(hass):
-    registry = hass.data[const.DOMAIN].get("endpoint_registry")
-    if registry is not None:
-        hass.runtime.endpoints = registry
-    hass.runtime.sip = hass.data[const.DOMAIN].get("pbx_runtime")
     return hass.runtime
 
 
@@ -215,7 +212,7 @@ def _install_browser_endpoints(hass: _FakeHass, *endpoint_ids: str):
                 capabilities={"audio", "video"},
             )
         )
-    hass.data[const.DOMAIN]["endpoint_registry"] = registry
+    hass.runtime.endpoints = registry
     endpoint_lifecycle.call_registry(hass).bind_endpoint_registry(registry)
     return registry
 
@@ -716,7 +713,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 calls.append("client_close")
 
         class Manager:
-            async def close(self, *, reason: str) -> None:
+            async def close(self, *, reason: str = "local_hangup") -> None:
                 calls.append(f"conference_{reason}")
 
         class Reservation:
@@ -745,12 +742,22 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         watcher = asyncio.create_task(asyncio.Event().wait())
         runtime_task = endpoint_lifecycle.create_runtime_task(hass, asyncio.Event().wait())
+        endpoint = Endpoint()
+        manager = Manager()
+        owner = pbx_runtime_module.SipEndpointRuntime(projection=registry)
+        owner.attach_component("conference_manager", manager, closer=manager.close)
+        owner.attach_component("udp_listener", endpoint, closer=endpoint.stop)
+        owner.activate()
+        registry.bind_session_owner(owner)
+        hass.runtime.sip = owner
+        endpoint_lifecycle.sip_endpoint_manager = lambda _hass: endpoint
         registry.upsert("call", state="in_call")
         registry.upsert("inbound", state="in_call")
         registry.upsert("preanswered", state="ringing")
         registry.attach_relay("call", Relay())
         registry.attach_sip_client("call", "call", Client())
         registry.attach_client_watcher("call", watcher)
+        self.assertIs(owner.client_watchers_snapshot().get("call"), watcher)
         registry.attach_media("inbound", {
             "rtp_reservation": Reservation("inbound"),
             "video_rtp_socket": VideoSocket(),
@@ -758,9 +765,6 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         registry.attach_media("preanswered", {
             "rtp_reservation": Reservation("preanswered"),
         }, provisional=True)
-        hass.data[const.DOMAIN]["conference_manager"] = Manager()
-        hass.data[const.DOMAIN]["sip_endpoint"] = Endpoint()
-
         await endpoint_lifecycle.async_stop_sip_endpoint(hass)
 
         self.assertTrue(watcher.cancelled())
@@ -800,7 +804,11 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 self.stopped = True
 
         endpoint = Endpoint()
-        hass.data[const.DOMAIN]["sip_endpoint"] = endpoint
+        owner = pbx_runtime_module.SipEndpointRuntime()
+        owner.attach_component("udp_listener", endpoint, closer=endpoint.stop)
+        owner.activate()
+        hass.runtime.sip = owner
+        endpoint_lifecycle.sip_endpoint_manager = lambda _hass: endpoint
         stopping = asyncio.create_task(
             endpoint_lifecycle.async_stop_sip_endpoint(hass)
         )
@@ -811,14 +819,15 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
 
         self.assertFalse(stopping.done())
-        self.assertIs(hass.data[const.DOMAIN]["sip_endpoint"], endpoint)
+        self.assertIs(hass.runtime.sip, owner)
+        self.assertIs(owner.component("udp_listener"), endpoint)
 
         endpoint.release.set()
         with self.assertRaises(asyncio.CancelledError):
             await stopping
 
         self.assertTrue(endpoint.stopped)
-        self.assertNotIn("sip_endpoint", hass.data[const.DOMAIN])
+        self.assertIsNone(hass.runtime.sip)
 
     async def test_trunk_shutdown_mapping_survives_until_cancel_safe_stop(self) -> None:
         hass = _FakeHass()
@@ -835,7 +844,11 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 self.stopped = True
 
         trunk = Trunk()
-        hass.data[const.DOMAIN]["sip_trunk"] = trunk
+        owner = pbx_runtime_module.SipEndpointRuntime()
+        owner.attach_component("trunk", trunk, closer=trunk.stop)
+        owner.activate()
+        hass.runtime.sip = owner
+        trunk_runtime.sip_trunk = lambda _hass: trunk
         stopping = asyncio.create_task(trunk_runtime.async_stop_sip_trunk(hass))
         await asyncio.wait_for(trunk.entered.wait(), timeout=1)
         stopping.cancel()
@@ -844,14 +857,14 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
 
         self.assertFalse(stopping.done())
-        self.assertIs(hass.data[const.DOMAIN]["sip_trunk"], trunk)
+        self.assertIs(owner.component("trunk"), trunk)
 
         trunk.release.set()
         with self.assertRaises(asyncio.CancelledError):
             await stopping
 
         self.assertTrue(trunk.stopped)
-        self.assertNotIn("sip_trunk", hass.data[const.DOMAIN])
+        self.assertIsNone(owner.component("trunk"))
 
     async def test_outbound_and_ha_legs_cannot_exceed_room_capacity(self) -> None:
         hass = _FakeHass()

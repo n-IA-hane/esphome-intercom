@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
 from .runtime_data import (
     call_projection,
     endpoint_directory,
@@ -27,8 +26,7 @@ def _connected_identity_for_call(
 
     from .sip import parse_sip_uri
 
-    bucket = hass.data.get(DOMAIN, {})
-    registry = call_projection(hass) or bucket.get("call_registry")
+    registry = call_projection(hass)
     if registry is None:
         return "", ""
     session_id = registry.resolve_session_id(call_id)
@@ -62,13 +60,6 @@ def sip_servers(hass: HomeAssistant) -> list[object]:
     endpoint = sip_endpoint_manager(hass)
     if endpoint is not None:
         servers.append(endpoint)
-    else:
-        bucket = hass.data.get(DOMAIN, {})
-        servers.extend(
-            server
-            for server in (bucket.get("sip_server"), bucket.get("sip_tcp_server"))
-            if server is not None
-        )
     trunk_endpoint = getattr(sip_trunk(hass), "inbound_endpoint", None)
     if trunk_endpoint is not None:
         servers.append(trunk_endpoint)

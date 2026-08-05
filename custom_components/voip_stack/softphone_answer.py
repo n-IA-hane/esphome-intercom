@@ -173,7 +173,7 @@ async def async_answer_browser_call(
         )
 
     session = registry.sessions.get(registry.resolve_session_id(call_id))
-    pbx_runtime = sip_endpoint_runtime(hass) or bucket.get("pbx_runtime")
+    pbx_runtime = sip_endpoint_runtime(hass)
     authoritative_session = (
         pbx_runtime.get_session(
             registry.resolve_session_id(call_id),

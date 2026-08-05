@@ -166,10 +166,6 @@ class _FakeHass:
 
 
 def _test_runtime(hass):
-    registry = hass.data[const.DOMAIN].get("endpoint_registry")
-    if registry is not None:
-        hass.runtime.endpoints = registry
-    hass.runtime.sip = hass.data[const.DOMAIN].get("pbx_runtime")
     return hass.runtime
 
 

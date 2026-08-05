@@ -116,11 +116,8 @@ class SipRuntimeTest(unittest.TestCase):
         self.assertEqual(sip_servers(hass), [manager, trunk_endpoint])
 
     def test_final_response_and_bye_stop_at_dialog_owner(self) -> None:
-        first = _Server()
         owner = _Server(owns="call-1")
-        hass = SimpleNamespace(
-            data={DOMAIN: {"sip_server": first, "sip_tcp_server": owner}}
-        )
+        hass = SimpleNamespace(data={DOMAIN: {"sip_endpoint": owner}})
 
         self.assertTrue(
             send_final_response(
@@ -132,9 +129,7 @@ class SipRuntimeTest(unittest.TestCase):
             )
         )
         self.assertTrue(send_bye(hass, "call-1"))
-        self.assertEqual(len(first.final_calls), 1)
         self.assertEqual(len(owner.final_calls), 1)
-        self.assertEqual(len(first.bye_calls), 1)
         self.assertEqual(len(owner.bye_calls), 1)
 
     def test_success_response_resolves_answering_endpoint_identity(self) -> None:
@@ -154,7 +149,7 @@ class SipRuntimeTest(unittest.TestCase):
         hass = SimpleNamespace(
             data={
                 DOMAIN: {
-                    "sip_server": owner,
+                    "sip_endpoint": owner,
                     "call_registry": call_registry,
                     "endpoint_registry": endpoint_registry,
                 }
@@ -179,7 +174,7 @@ class SipRuntimeTest(unittest.TestCase):
         hass = SimpleNamespace(
             data={
                 DOMAIN: {
-                    "sip_server": owner,
+                    "sip_endpoint": owner,
                     "call_registry": SimpleNamespace(
                         resolve_session_id=lambda call_id: call_id,
                         sessions={
