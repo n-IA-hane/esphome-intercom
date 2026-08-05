@@ -154,6 +154,12 @@ class CallSessionOwner(Protocol):
         generation: int | None = None,
     ) -> None: ...
 
+    def relays_snapshot(self) -> dict[str, Any]: ...
+
+    def attach_relay(self, call_id: str, relay: Any) -> bool: ...
+
+    def take_relay(self, call_id: str) -> Any | None: ...
+
 
 @dataclass(slots=True)
 class CallLeg:
@@ -223,7 +229,7 @@ class CallRegistry:
         self.video_parameter_sets: dict[str, tuple[bytes, ...]] = {}
         self.sip_clients: dict[str, Any] = {}
         self.client_watchers: dict[str, Any] = {}
-        self.relays: dict[str, Any] = {}
+        self._legacy_relays: dict[str, Any] = {}
         self.bridge_clients: dict[str, str] = {}
         self.event_contexts: dict[str, CallEventContext] = {}
         self.terminal_summary_ids: OrderedDict[str, None] = OrderedDict()
@@ -265,6 +271,14 @@ class CallRegistry:
                 generation=session.generation,
                 **observation,
             )
+
+    @property
+    def relays(self) -> dict[str, Any]:
+        """Compatibility projection of relays owned by call sessions."""
+
+        if self._session_owner is not None:
+            return self._session_owner.relays_snapshot()
+        return self._legacy_relays
 
     @property
     def endpoint_claims(self) -> dict[str, dict[str, str]]:
@@ -965,16 +979,21 @@ class CallRegistry:
     def attach_relay(self, call_id: str, relay: Any) -> None:
         """Index a media relay while the call session owns its stop barrier."""
 
+        if self._session_owner is not None:
+            if not self._session_owner.attach_relay(call_id, relay):
+                raise RuntimeError(f"call session {call_id!r} is unavailable")
+            return
+
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
-        self.relays[call_id] = relay
+        self._legacy_relays[call_id] = relay
         if session is None or self._session_owner is None:
             return
         resource_name = f"relay:{call_id}"
 
         async def _stop_relay(_reason: str) -> None:
-            if self.relays.get(call_id) is relay:
-                self.relays.pop(call_id, None)
+            if self._legacy_relays.get(call_id) is relay:
+                self._legacy_relays.pop(call_id, None)
             await relay.stop()
 
         self._session_owner.own_resource(
@@ -989,9 +1008,12 @@ class CallRegistry:
     def take_relay(self, call_id: str) -> Any | None:
         """Transfer a relay to an explicit cleanup caller."""
 
+        if self._session_owner is not None:
+            return self._session_owner.take_relay(call_id)
+
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
-        relay = self.relays.pop(call_id, None)
+        relay = self._legacy_relays.pop(call_id, None)
         if relay is not None and session is not None and self._session_owner is not None:
             self._session_owner.release_resource(
                 session_id,
@@ -1361,7 +1383,7 @@ class CallRegistry:
         self.video_parameter_sets.clear()
         self.sip_clients.clear()
         self.client_watchers.clear()
-        self.relays.clear()
+        self._legacy_relays.clear()
         self.bridge_clients.clear()
         self.event_contexts.clear()
         self.terminal_summary_ids.clear()

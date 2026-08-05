@@ -397,6 +397,13 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         registry.attach_relay("source", relay)
         authoritative = runtime.get_session("source")
 
+        self.assertIs(registry.relays["source"], relay)
+        self.assertEqual(registry._legacy_relays, {})
+        self.assertEqual(
+            [resource.name for resource in authoritative.resources],
+            ["relay:source"],
+        )
+
         registry.finish_and_pop("source", reason="cancelled", state="cancelled")
         await authoritative.terminated.wait()
         await asyncio.sleep(0)

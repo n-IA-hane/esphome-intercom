@@ -170,7 +170,6 @@ async def async_hangup_browser_call(
             return
 
     clients = registry.sip_clients
-    relays = registry.relays
     pending = registry.pending_invites
     media_sessions = registry.softphone_media
     preanswered = registry.preanswered
@@ -250,7 +249,7 @@ async def async_hangup_browser_call(
         # Ask it to emit CANCEL when RFC 3261 permits instead of racing it.
         client.request_cancel()
         client = None
-    relay = relays.pop(call_id, None) if call_id else None
+    relay = registry.take_relay(call_id) if call_id else None
     media_session = media_sessions.pop(call_id, None) if call_id else None
     release_media_reservation(media_session)
     conference_room = str((media_session or {}).get("conference_room") or "")

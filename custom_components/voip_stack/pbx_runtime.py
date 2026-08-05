@@ -247,6 +247,49 @@ class SipEndpointRuntime:
             if session.endpoint_claims
         }
 
+    def relays_snapshot(self) -> dict[str, Any]:
+        """Return the live relay index derived from session-owned resources."""
+
+        relays: dict[str, Any] = {}
+        for session in self.calls.values():
+            for resource in session.resources:
+                if resource.name.startswith("relay:"):
+                    relays[resource.name.removeprefix("relay:")] = resource.value
+        return relays
+
+    def attach_relay(self, call_id: str, relay: Any) -> bool:
+        """Make one RTP relay a media resource of its call session."""
+
+        clean_call_id = str(call_id or "").strip()
+
+        async def _stop_relay(_reason: str) -> None:
+            await relay.stop()
+
+        return self.own_resource(
+            clean_call_id,
+            f"relay:{clean_call_id}",
+            relay,
+            _stop_relay,
+            stage=CleanupStage.MEDIA,
+        )
+
+    def take_relay(self, call_id: str) -> Any | None:
+        """Transfer one relay out of the authoritative cleanup barrier."""
+
+        clean_call_id = str(call_id or "").strip()
+        session = self.get_session(clean_call_id)
+        if session is None or not session.live:
+            return None
+        resource_name = f"relay:{clean_call_id}"
+        resource = next(
+            (item for item in session.resources if item.name == resource_name),
+            None,
+        )
+        if resource is None:
+            return None
+        session.release_resource(resource_name, value=resource.value)
+        return resource.value
+
     def claim_endpoint(
         self,
         call_id: str,
