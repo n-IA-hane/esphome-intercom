@@ -313,8 +313,7 @@ def _ha_softphone_store(
 
     Runtime state has one authoritative endpoint-keyed mapping.
     """
-    bucket = hass.data.setdefault(DOMAIN, {})
-    stores = bucket.setdefault("ha_softphones", {})
+    stores = require_runtime_data(hass).softphones
     key = _normalise_endpoint_id(endpoint_id)
     store = stores.setdefault(key, {"dnd": False})
     store.setdefault("endpoint_id", key)
@@ -328,7 +327,7 @@ def _ha_softphone_store(
 def _ha_softphone_stores(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
     """Return every logical browser softphone store."""
     _ha_softphone_store(hass)
-    return hass.data.setdefault(DOMAIN, {})["ha_softphones"]
+    return require_runtime_data(hass).softphones
 
 
 def _endpoint_registry(hass: HomeAssistant):
@@ -352,8 +351,7 @@ def _update_browser_presence(
 ) -> None:
     """Track connected cards and expose browser reachability to routing."""
     endpoint_id = _normalise_endpoint_id(endpoint_id)
-    bucket = hass.data.setdefault(DOMAIN, {})
-    counts = bucket.setdefault("ha_softphone_presence", {})
+    counts = require_runtime_data(hass).softphone_presence
     previous = int(counts.get(endpoint_id, 0) or 0)
     current = max(0, previous + int(delta))
     if current:
@@ -904,12 +902,14 @@ def _ha_softphone_state(
     store = _ha_softphone_store(hass, endpoint_id)
     bucket = hass.data.get(DOMAIN, {})
     endpoint = _browser_endpoint(hass, endpoint_id)
+    entry_runtime = runtime_data(hass)
     connected_cards = int(
-        bucket.get("ha_softphone_presence", {}).get(endpoint_id, 0) or 0
+        (entry_runtime.softphone_presence if entry_runtime is not None else {}).get(
+            endpoint_id, 0
+        )
     )
     debug_mode = current_debug_mode(hass)
     runtime = _sip_runtime_snapshot(hass, detailed=debug_mode)
-    entry_runtime = runtime_data(hass)
     transport_config = current_transport_config(hass)
     active_softphone = store.get("state") in {
         CallState.CALLING.value,

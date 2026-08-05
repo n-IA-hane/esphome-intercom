@@ -68,7 +68,12 @@ endpoint_registry = _load("endpoint_registry")
 
 
 def _bind_runtime(entry, registry) -> None:
-    entry.runtime_data = types.SimpleNamespace(endpoints=registry)
+    previous = getattr(entry, "runtime_data", None)
+    entry.runtime_data = types.SimpleNamespace(
+        endpoints=registry,
+        softphone_presence=getattr(previous, "softphone_presence", {}),
+        softphones=getattr(previous, "softphones", {}),
+    )
 
 
 def test_removed_sip_offline_policy_falls_back_without_breaking_setup(
@@ -244,18 +249,19 @@ def test_deferred_browser_removal_clears_presence_after_terminal_call() -> None:
             phone_config.CONF_PHONE_ENABLED: True,
         },
     )
+    presence = {"kitchen": 1}
+    stores = {"kitchen": {"state": "in_call", "caller": "Door"}}
     entry = types.SimpleNamespace(
-        data={}, options={}, subentries={subentry.subentry_id: subentry}
+        data={},
+        options={},
+        subentries={subentry.subentry_id: subentry},
+        runtime_data=types.SimpleNamespace(
+            softphone_presence=presence,
+            softphones=stores,
+        ),
     )
     hass = types.SimpleNamespace(
-        data={
-            "voip_stack": {
-                "ha_softphone_presence": {"kitchen": 1},
-                "ha_softphones": {
-                    "kitchen": {"state": "in_call", "caller": "Door"}
-                },
-            }
-        },
+        data={"voip_stack": {}},
         loop=Loop(),
     )
     registry = phone_config.async_setup_endpoint_registry(hass, entry)
@@ -270,8 +276,8 @@ def test_deferred_browser_removal_clears_presence_after_terminal_call() -> None:
     callback, args = callbacks.pop()
     callback(*args)
     assert registry.get("kitchen") is None
-    assert "kitchen" not in hass.data["voip_stack"]["ha_softphone_presence"]
-    assert "kitchen" not in hass.data["voip_stack"]["ha_softphones"]
+    assert "kitchen" not in presence
+    assert "kitchen" not in stores
 
 
 def test_idle_browser_removal_immediately_forgets_runtime_store() -> None:
@@ -287,12 +293,17 @@ def test_idle_browser_removal_immediately_forgets_runtime_store() -> None:
             phone_config.CONF_PHONE_ENABLED: True,
         },
     )
+    stores = {"hall": {"state": "idle"}}
     entry = types.SimpleNamespace(
-        data={}, options={}, subentries={subentry.subentry_id: subentry}
+        data={},
+        options={},
+        subentries={subentry.subentry_id: subentry},
+        runtime_data=types.SimpleNamespace(
+            softphone_presence={},
+            softphones=stores,
+        ),
     )
-    hass = types.SimpleNamespace(
-        data={"voip_stack": {"ha_softphones": {"hall": {"state": "idle"}}}}
-    )
+    hass = types.SimpleNamespace(data={"voip_stack": {}})
     registry = phone_config.async_setup_endpoint_registry(hass, entry)
     _bind_runtime(entry, registry)
     entry.subentries.clear()
@@ -300,7 +311,7 @@ def test_idle_browser_removal_immediately_forgets_runtime_store() -> None:
     phone_config.sync_registry_from_entry(hass, entry)
 
     assert registry.get("hall") is None
-    assert "hall" not in hass.data["voip_stack"]["ha_softphones"]
+    assert "hall" not in stores
 
 
 def test_sip_account_services_share_contact_assist_and_group_namespace() -> None:

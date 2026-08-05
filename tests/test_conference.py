@@ -158,6 +158,8 @@ class _FakeHass:
             shutdown_task=None,
             rtp_port_pool={},
             next_rtp_port=0,
+            softphones={},
+            softphone_presence={},
             media=types.SimpleNamespace(
                 sessions_for=lambda _channel: {},
                 owners_for=lambda _channel: {},
@@ -343,7 +345,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(endpoints.require("kitchen").active_call_id)
         self.assertFalse(endpoints.require("hall").active_call_id)
         self.assertEqual(
-            hass.data[const.DOMAIN]["ha_softphones"]["kitchen"]["state"],
+            hass.runtime.softphones["kitchen"]["state"],
             "idle",
         )
 
@@ -962,7 +964,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(room.legs["call-1"].rx_packets, 1)
         heard = await asyncio.wait_for(queue.get(), timeout=1.0)
         self.assertEqual(_first_sample(heard), 1200)
-        store = hass.data[const.DOMAIN]["ha_softphones"]["default"]
+        store = hass.runtime.softphones["default"]
         self.assertEqual(store["state"], "ringing")
         self.assertEqual(store["call_id"], "conference:Conference")
 
@@ -1009,11 +1011,11 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(calls_by_endpoint), {"kitchen", "hall"})
         self.assertNotEqual(calls_by_endpoint["kitchen"], calls_by_endpoint["hall"])
         self.assertEqual(
-            hass.data[const.DOMAIN]["ha_softphones"]["kitchen"]["state"],
+            hass.runtime.softphones["kitchen"]["state"],
             "ringing",
         )
         self.assertEqual(
-            hass.data[const.DOMAIN]["ha_softphones"]["hall"]["state"],
+            hass.runtime.softphones["hall"]["state"],
             "ringing",
         )
 
@@ -1085,7 +1087,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
             calls_by_endpoint["hall"],
         )
         self.assertEqual(
-            hass.data[const.DOMAIN]["ha_softphones"]["hall"]["state"],
+            hass.runtime.softphones["hall"]["state"],
             "ringing",
         )
 

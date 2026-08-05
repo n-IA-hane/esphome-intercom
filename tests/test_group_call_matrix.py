@@ -164,6 +164,8 @@ class _FakeHass:
             sip=None,
             rtp_port_pool={},
             next_rtp_port=0,
+            softphones={},
+            softphone_presence={},
             media=types.SimpleNamespace(
                 sessions={"audio": {}, "video": {}},
                 owners={"audio": {}, "video": {}},
@@ -439,11 +441,11 @@ class GroupCallMatrixTest(unittest.TestCase):
             )
             self.assertFalse(future.done())
             self.assertEqual(
-                hass.data[const.DOMAIN]["ha_softphones"]["kitchen"]["state"],
+                hass.runtime.softphones["kitchen"]["state"],
                 "idle",
             )
             self.assertEqual(
-                hass.data[const.DOMAIN]["ha_softphones"]["kitchen"][
+                hass.runtime.softphones["kitchen"][
                     "terminal_reason"
                 ],
                 "declined",

@@ -440,6 +440,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -> bool:
     """Set up VoIP Stack from a config entry (UI setup)."""
+    previous_runtime = _runtime_data(hass)
     endpoint_registry = async_setup_endpoint_registry(hass, entry)
     for configured_endpoint in tuple(endpoint_registry.endpoints):
         async_ensure_endpoint_device(
@@ -484,6 +485,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
             dict(item)
             for item in entry.data.get(CONF_PHONEBOOK_CONTACTS, [])
             if isinstance(item, dict)
+        ),
+        softphones=(
+            previous_runtime.softphones if previous_runtime is not None else {}
+        ),
+        softphone_presence=(
+            previous_runtime.softphone_presence
+            if previous_runtime is not None
+            else {}
         ),
     )
     from .local_softphone_runtime import async_setup_local_softphone_bridge

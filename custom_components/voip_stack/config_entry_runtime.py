@@ -137,7 +137,7 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
             if endpoint.kind is EndpointKind.BROWSER
         }
         removed_browser_ids = previous_browser_ids - current_browser_ids
-        presence = bucket.setdefault("ha_softphone_presence", {})
+        presence = runtime.softphone_presence
         for endpoint_id in removed_browser_ids:
             presence.pop(endpoint_id, None)
         for endpoint_id in sorted(previous_browser_ids | current_browser_ids):

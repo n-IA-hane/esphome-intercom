@@ -36,6 +36,7 @@ from .phone_endpoint import (
     PhoneEndpoint,
 )
 from .sip_registrar import account_from_mapping, normalize_username
+from .runtime_data import runtime_data
 
 
 PHONE_SUBENTRY_TYPE = "phone"
@@ -369,11 +370,15 @@ def endpoint_from_data(
     )
 
 
-def _clear_browser_runtime(bucket: dict[str, Any], endpoint_id: str) -> None:
+def _clear_browser_runtime(
+    presence: dict[str, int],
+    stores: dict[str, dict[str, Any]],
+    endpoint_id: str,
+) -> None:
     """Forget transient state owned by a deleted browser phone."""
-    bucket.setdefault("ha_softphone_presence", {}).pop(endpoint_id, None)
+    presence.pop(endpoint_id, None)
     if endpoint_id != DEFAULT_ENDPOINT_ID:
-        bucket.setdefault("ha_softphones", {}).pop(endpoint_id, None)
+        stores.pop(endpoint_id, None)
 
 
 def async_setup_endpoint_registry(
@@ -382,7 +387,11 @@ def async_setup_endpoint_registry(
     """Create and publish the authoritative configured endpoint registry."""
     registry = EndpointRegistry()
     subentry_ids: dict[str, str] = {}
-    presence = hass.data.setdefault(DOMAIN, {}).get("ha_softphone_presence", {})
+    previous_runtime = getattr(entry, "runtime_data", None) or runtime_data(hass)
+    presence = (
+        previous_runtime.softphone_presence if previous_runtime is not None else {}
+    )
+    stores = previous_runtime.softphones if previous_runtime is not None else {}
     for subentry in phone_subentries(entry):
         endpoint = endpoint_from_subentry(entry, subentry)
         if (
@@ -399,7 +408,6 @@ def async_setup_endpoint_registry(
             )
         registry.register(endpoint)
         subentry_ids[endpoint.endpoint_id] = subentry.subentry_id
-    bucket = hass.data.setdefault(DOMAIN, {})
     registry.subentry_ids = subentry_ids
     pending_removals = registry.pending_removals
 
@@ -419,7 +427,7 @@ def async_setup_endpoint_registry(
             # transition.  By then the config-entry update that initiated the
             # removal has already run, so clear page-presence bookkeeping here
             # instead of retaining a dead endpoint ID indefinitely.
-            _clear_browser_runtime(bucket, endpoint_id)
+            _clear_browser_runtime(presence, stores, endpoint_id)
 
     def _finish_deferred_removal(event) -> None:
         endpoint = event.endpoint
@@ -446,7 +454,9 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     if registry is None:
         return
     configured: set[str] = set()
-    bucket = hass.data.setdefault(DOMAIN, {})
+    runtime = getattr(entry, "runtime_data", None)
+    if runtime is None:
+        return
     subentries = phone_subentries(entry)
     subentry_ids = {
         str(subentry.data.get(CONF_PHONE_ENDPOINT_ID) or "").strip(): (
@@ -460,7 +470,7 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # associated with its native HA config subentry.
     registry.subentry_ids = subentry_ids
     pending_removals = registry.pending_removals
-    presence = bucket.get("ha_softphone_presence", {})
+    presence = runtime.softphone_presence
     for subentry in subentries:
         candidate = endpoint_from_subentry(entry, subentry)
         configured.add(candidate.endpoint_id)
@@ -524,7 +534,9 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 pending_removals.discard(endpoint.endpoint_id)
                 removed = registry.remove(endpoint.endpoint_id)
                 if removed.kind is EndpointKind.BROWSER:
-                    _clear_browser_runtime(bucket, removed.endpoint_id)
+                    _clear_browser_runtime(
+                        presence, runtime.softphones, removed.endpoint_id
+                    )
 
 
 def sip_account_dicts_from_subentries(entry: ConfigEntry) -> list[dict[str, Any]]:

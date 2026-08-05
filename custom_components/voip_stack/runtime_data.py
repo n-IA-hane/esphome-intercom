@@ -85,6 +85,8 @@ class VoipStackRuntime:
     media: BrowserMediaRuntime = field(default_factory=BrowserMediaRuntime)
     local_bridge: Any | None = None
     local_bridge_unsub: Any | None = None
+    softphones: dict[str, dict[str, Any]] = field(default_factory=dict)
+    softphone_presence: dict[str, int] = field(default_factory=dict)
 
 
 type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]
