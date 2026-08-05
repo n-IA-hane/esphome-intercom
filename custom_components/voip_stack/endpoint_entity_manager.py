@@ -176,8 +176,6 @@ def event_matches_endpoint(
     owner_scoped: bool = False,
 ) -> bool:
     """Return whether a canonical call event involves ``endpoint``."""
-    from .phone_endpoint import DEFAULT_ENDPOINT_ID
-
     # HA softphone session events are emitted once per logical browser leg.
     # When the publisher supplies that owner explicitly, state/event entities
     # must consume only their own projection; source/destination fields merely
@@ -190,12 +188,7 @@ def event_matches_endpoint(
         owner_device_id = str(payload.get("device_id") or "").strip()
         if owner_device_id:
             device_id = str(getattr(endpoint, "device_id", "") or "")
-            if device_id:
-                return owner_device_id == device_id
-            return (
-                endpoint.endpoint_id == DEFAULT_ENDPOINT_ID
-                and owner_device_id == "__voip_stack_ha_softphone__"
-            )
+            return bool(device_id and owner_device_id == device_id)
 
     endpoint_ids = {
         str(payload.get(key) or "").strip()
@@ -233,12 +226,6 @@ def event_matches_endpoint(
     if device_id and device_id in device_ids:
         return True
 
-    if endpoint.endpoint_id == DEFAULT_ENDPOINT_ID:
-        from .const import HA_SOFTPHONE_DEVICE_ID
-
-        if HA_SOFTPHONE_DEVICE_ID in device_ids:
-            return True
-
     # Explicit endpoint/device metadata is authoritative. Do not let a caller
     # display name such as "Kitchen" make the Kitchen phone mirror a call that
     # explicitly belongs to another logical endpoint.
@@ -249,11 +236,6 @@ def event_matches_endpoint(
     dest_call_id = str(payload.get("dest_call_id") or "").strip()
     if endpoint.active_call_id and endpoint.active_call_id in {call_id, dest_call_id}:
         return True
-
-    # Compatibility for the original singleton softphone event envelope.
-    if endpoint.endpoint_id == DEFAULT_ENDPOINT_ID:
-        if str(payload.get("scope") or "") == "session" and not any(endpoint_ids):
-            return True
 
     # Caller, callee and display-name fields are untrusted SIP text. They may
     # help users read a global event, but can never select a per-phone entity:

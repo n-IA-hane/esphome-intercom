@@ -211,6 +211,25 @@ def test_call_event_routes_only_to_involved_endpoint() -> None:
     )
 
 
+def test_default_phone_requires_real_endpoint_or_device_identity() -> None:
+    endpoint = _endpoint(endpoint_id="default", device_id="device-casa")
+
+    assert not entity_manager.event_matches_endpoint(
+        {"scope": "session", "device_id": "__voip_stack_ha_softphone__"},
+        endpoint,
+        owner_scoped=True,
+    )
+    assert not entity_manager.event_matches_endpoint(
+        {"scope": "session"},
+        endpoint,
+    )
+    assert entity_manager.event_matches_endpoint(
+        {"scope": "session", "device_id": "device-casa"},
+        endpoint,
+        owner_scoped=True,
+    )
+
+
 def test_owner_scoped_session_event_does_not_cross_local_phone_legs() -> None:
     registry = endpoint_registry.EndpointRegistry()
     registry.register(_endpoint(device_id="kitchen-device"))
