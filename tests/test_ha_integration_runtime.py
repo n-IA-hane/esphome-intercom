@@ -170,6 +170,33 @@ async def test_default_phone_call_state_keeps_its_historical_entity_id(
     assert registry.async_get(duplicate.entity_id) is None
 
 
+async def test_initial_phone_becomes_preferred_when_multiple_phones_exist() -> None:
+    from custom_components.voip_stack import _preferred_phone_device_id
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+
+    registry = EndpointRegistry()
+    registry.register(
+        PhoneEndpoint(
+            endpoint_id="default",
+            device_id="device-casa",
+            name="Casa",
+            kind=EndpointKind.BROWSER,
+        )
+    )
+    registry.register(
+        PhoneEndpoint(
+            endpoint_id="browser:test",
+            device_id="device-test",
+            name="Test",
+            kind=EndpointKind.BROWSER,
+        )
+    )
+
+    assert _preferred_phone_device_id(registry, "") == "device-casa"
+    assert _preferred_phone_device_id(registry, "device-test") == "device-test"
+
+
 async def test_purge_devices_is_disabled_before_resolving_or_removing_devices(
     hass: HomeAssistant,
 ) -> None:
@@ -401,6 +428,8 @@ async def test_system_health_and_media_capture_repair_are_privacy_safe(
     assert health["online_esphome_phones"] == 1
     assert health["active_calls"] == 2
     assert health["reserved_rtp_ports"] == 1
+    assert health["advertise_host"] == "automatic"
+    assert health["media_workers"] == 0
     assert not {"call_id", "device_id", "caller", "callee"}.intersection(health)
 
     runtime.media_capture = False

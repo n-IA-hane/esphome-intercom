@@ -52,6 +52,7 @@ from .peer_snapshot import (
     async_advertise_host as _ha_advertise_host,
 )
 from .phone_endpoint import (
+    DEFAULT_ENDPOINT_ID,
     EndpointKind,
 )
 from .service_endpoints import (
@@ -141,6 +142,27 @@ async def async_migrate_entry(
 
 _LOGGER = logging.getLogger(__name__)
 SIP_ROUTE_DECISION_TIMEOUT = 1.5
+
+
+def _preferred_phone_device_id(endpoint_registry, configured_device_id: str) -> str:
+    """Resolve the persisted phone or migrate the historical initial phone."""
+
+    selected = endpoint_registry.by_device_id(configured_device_id)
+    if selected is not None and selected.kind is EndpointKind.BROWSER:
+        return selected.device_id
+    initial = endpoint_registry.get(DEFAULT_ENDPOINT_ID)
+    if (
+        initial is not None
+        and initial.kind is EndpointKind.BROWSER
+        and initial.device_id
+    ):
+        return initial.device_id
+    browsers = tuple(
+        endpoint
+        for endpoint in endpoint_registry.endpoints
+        if endpoint.kind is EndpointKind.BROWSER and endpoint.device_id
+    )
+    return browsers[0].device_id if len(browsers) == 1 else ""
 
 
 async def _handle_purge_devices_service(call: ServiceCall) -> None:
@@ -462,19 +484,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
             configured_endpoint,
             endpoint_registry,
         )
-    preferred_phone_device_id = str(
-        entry.data.get(CONF_PREFERRED_PHONE_DEVICE_ID) or ""
-    ).strip()
-    preferred_endpoint = endpoint_registry.by_device_id(preferred_phone_device_id)
-    if preferred_endpoint is None or preferred_endpoint.kind is not EndpointKind.BROWSER:
-        browser_phones = tuple(
-            endpoint
-            for endpoint in endpoint_registry.endpoints
-            if endpoint.kind is EndpointKind.BROWSER and endpoint.device_id
-        )
-        preferred_phone_device_id = (
-            browser_phones[0].device_id if len(browser_phones) == 1 else ""
-        )
+    preferred_phone_device_id = _preferred_phone_device_id(
+        endpoint_registry,
+        str(entry.data.get(CONF_PREFERRED_PHONE_DEVICE_ID) or "").strip(),
+    )
     if preferred_phone_device_id != str(
         entry.data.get(CONF_PREFERRED_PHONE_DEVICE_ID) or ""
     ).strip():

@@ -38,9 +38,16 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
     calls = runtime.sip if runtime is not None else None
     port_pool = runtime.rtp_port_pool if runtime is not None else {}
     used_ports = port_pool.get("used") if isinstance(port_pool, dict) else None
+    media = runtime.media if runtime is not None else None
     return {
         "sip_udp_ready": bool(getattr(endpoint, "udp_server", None)),
         "sip_tcp_ready": bool(getattr(endpoint, "tcp_server", None)),
+        "advertise_host": (
+            "configured"
+            if runtime is not None
+            and str(runtime.transport_config.get("advertise_host") or "").strip()
+            else "automatic"
+        ),
         "configured_phones": len(phones),
         "online_esphome_phones": sum(
             phone.kind is EndpointKind.ESPHOME
@@ -55,7 +62,12 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
         "reserved_rtp_ports": len(used_ports) if isinstance(used_ports, set) else 0,
         "runtime_tasks": len(runtime.tasks) if runtime is not None else 0,
         "active_media_owners": sum(
-            len(runtime.media.owners_for(channel))
+            len(media.owners_for(channel))
             for channel in ("audio", "video")
-        ) if runtime is not None else 0,
+        ) if media is not None else 0,
+        "media_workers": (
+            len(media.debug_capture_tasks) + int(media.transcoder is not None)
+            if media is not None
+            else 0
+        ),
     }

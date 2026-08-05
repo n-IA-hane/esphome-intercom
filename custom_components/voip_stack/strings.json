@@ -189,6 +189,7 @@
     "info": {
       "sip_udp_ready": "SIP UDP listener",
       "sip_tcp_ready": "SIP TCP listener",
+      "advertise_host": "Advertised host selection",
       "configured_phones": "Configured phones",
       "online_esphome_phones": "Online ESPHome phones",
       "registered_sip_accounts": "Registered SIP accounts",
@@ -196,7 +197,8 @@
       "active_calls": "Active calls",
       "reserved_rtp_ports": "Reserved RTP ports",
       "runtime_tasks": "Runtime tasks",
-      "active_media_owners": "Active browser media owners"
+      "active_media_owners": "Active browser media owners",
+      "media_workers": "Active media workers"
     }
   },
   "issues": {
