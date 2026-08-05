@@ -403,7 +403,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             self.config_entry_runtime,
             "register_phonebook_service_event_sync",
         )
-        self.assertIn('"phonebook_service_event_unsub"', body)
+        self.assertIn("runtime.phonebook_service_event_unsub", body)
         self.assertIn('event.data.get("domain") != "esphome"', body)
         self.assertIn('service.endswith("_set_roster_json")', body)
         self.assertIn("async_refresh_and_push_phonebook(hass)", body)

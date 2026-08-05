@@ -7,7 +7,6 @@ import asyncio
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
 
-from .const import DOMAIN
 from .endpoint_lifecycle import create_runtime_task
 from .fsm import CallState, sip_public_state
 from .outbound_lifecycle import HA_SOFTPHONE_ACTIVE_STATES
@@ -141,8 +140,10 @@ async def async_emit_state_event(
 
 def register_state_event_bridge(hass: HomeAssistant) -> None:
     """Forward ESP ``voip_state`` entity changes to the VoIP event bus."""
-    bucket = hass.data.setdefault(DOMAIN, {})
-    if bucket.get("esp_state_event_bridge_unsub") is not None:
+    runtime = runtime_data(hass)
+    if runtime is None:
+        return
+    if runtime.esp_state_event_bridge_unsub is not None:
         return
 
     @callback
@@ -185,7 +186,7 @@ def register_state_event_bridge(hass: HomeAssistant) -> None:
             ),
         )
 
-    bucket["esp_state_event_bridge_unsub"] = hass.bus.async_listen(
+    runtime.esp_state_event_bridge_unsub = hass.bus.async_listen(
         EVENT_STATE_CHANGED,
         _on_state_changed,
     )

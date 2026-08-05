@@ -555,10 +555,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -
     # ordered cleanup barrier.  Do not tear the trunk out from under live call
     # sessions before that owner begins shutdown.
     await _async_stop_sip_endpoint(hass)
-    unsub = hass.data.get(DOMAIN, {}).pop("esp_state_event_bridge_unsub", None)
+    unsub = entry.runtime_data.esp_state_event_bridge_unsub
+    entry.runtime_data.esp_state_event_bridge_unsub = None
     if unsub is not None:
         unsub()
-    unsub = hass.data.get(DOMAIN, {}).pop("phonebook_service_event_unsub", None)
+    unsub = entry.runtime_data.phonebook_service_event_unsub
+    entry.runtime_data.phonebook_service_event_unsub = None
     if unsub is not None:
         unsub()
     entry.runtime_data.endpoints.close()

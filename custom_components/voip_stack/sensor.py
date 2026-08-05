@@ -21,10 +21,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .audio_format import HA_SIP_PCM_FORMATS
-from .const import (
-    DOMAIN,
-    HA_SOFTPHONE_ENDPOINT_ENTITY_ID,
-)
+from .const import HA_SOFTPHONE_ENDPOINT_ENTITY_ID
 from .endpoint_device import (
     async_link_endpoint_entity,
     endpoint_call_state_attributes,
@@ -41,7 +38,7 @@ from .endpoint_entity_manager import (
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .peer_snapshot import async_advertise_host, async_build_peer_snapshot
 from .config import transport_config
-from .runtime_data import endpoint_directory
+from .runtime_data import endpoint_directory, require_runtime_data
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -113,9 +110,9 @@ async def async_setup_entry(
         PhoneEndpointCallStateSensor,
     )
     endpoint_manager.async_setup()
-    bucket = hass.data.setdefault(DOMAIN, {})
-    bucket["ha_softphone_endpoint_sensor"] = ha_endpoint_sensor
-    bucket["phonebook_sensor"] = unified_sensor
+    runtime = require_runtime_data(hass)
+    runtime.ha_endpoint_sensor = ha_endpoint_sensor
+    runtime.phonebook_sensor = unified_sensor
     register_endpoint_entity_manager(
         entry, "endpoint_call_state_entity_manager", endpoint_manager
     )

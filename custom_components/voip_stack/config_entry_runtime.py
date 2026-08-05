@@ -29,13 +29,15 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_refresh_phonebook_sensor(hass: HomeAssistant) -> None:
-    sensor = hass.data.get(DOMAIN, {}).get("phonebook_sensor")
+    runtime = runtime_data(hass)
+    sensor = runtime.phonebook_sensor if runtime is not None else None
     if sensor is not None:
         await sensor.async_update()
 
 
 async def async_current_roster_json(hass: HomeAssistant) -> str:
-    sensor = hass.data.get(DOMAIN, {}).get("phonebook_sensor")
+    runtime = runtime_data(hass)
+    sensor = runtime.phonebook_sensor if runtime is not None else None
     if sensor is not None:
         return str(sensor.extra_state_attributes.get("roster_json", "") or "")
     state = hass.states.get("sensor.voip_phonebook")
@@ -86,7 +88,6 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
     runtime = runtime_data(hass)
     if runtime is None:
         return
-    bucket = hass.data.setdefault(DOMAIN, {})
     runtime_signature = entry_runtime_signature(entry)
     phone_signature = entry_phone_signature(entry)
     contacts_signature = tuple(
@@ -142,7 +143,7 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
             presence.pop(endpoint_id, None)
         for endpoint_id in sorted(previous_browser_ids | current_browser_ids):
             _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
-        endpoint_sensor = bucket.get("ha_softphone_endpoint_sensor")
+        endpoint_sensor = runtime.ha_endpoint_sensor
         if endpoint_sensor is not None:
             await endpoint_sensor.async_update()
 
@@ -151,7 +152,9 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
             registrar.update_accounts(sip_accounts(hass))
 
     if contacts_changed:
-        bucket["manual_roster_entries"] = manual_roster_entries(hass)
+        hass.data.setdefault(DOMAIN, {})["manual_roster_entries"] = (
+            manual_roster_entries(hass)
+        )
     if phones_changed or contacts_changed:
         await async_refresh_and_push_phonebook(hass)
 
@@ -159,8 +162,10 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
 def register_phonebook_service_event_sync(hass: HomeAssistant) -> None:
     """Refresh the phonebook when an ESPHome roster service appears."""
 
-    bucket = hass.data.setdefault(DOMAIN, {})
-    if bucket.get("phonebook_service_event_unsub") is not None:
+    runtime = runtime_data(hass)
+    if runtime is None:
+        return
+    if runtime.phonebook_service_event_unsub is not None:
         return
 
     @callback
@@ -172,7 +177,7 @@ def register_phonebook_service_event_sync(hass: HomeAssistant) -> None:
             return
         create_runtime_task(hass, async_refresh_and_push_phonebook(hass))
 
-    bucket["phonebook_service_event_unsub"] = hass.bus.async_listen(
+    runtime.phonebook_service_event_unsub = hass.bus.async_listen(
         EVENT_SERVICE_REGISTERED,
         _on_service_registered,
     )

@@ -1451,7 +1451,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             selector,
         )
 
-    def test_phone_subentry_live_sync_updates_legacy_endpoint_sensor(self) -> None:
+    def test_phone_subentry_live_sync_updates_endpoint_sensor(self) -> None:
         update_listener = self.config_entry_runtime[
             self.config_entry_runtime.index("async def async_config_entry_updated(") :
             self.config_entry_runtime.index(
@@ -1459,7 +1459,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             )
         ]
         self.assertIn(
-            'endpoint_sensor = bucket.get("ha_softphone_endpoint_sensor")',
+            "endpoint_sensor = runtime.ha_endpoint_sensor",
             update_listener,
         )
         self.assertIn("await endpoint_sensor.async_update()", update_listener)
