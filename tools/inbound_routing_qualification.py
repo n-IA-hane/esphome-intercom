@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 import json
 import os
 from pathlib import Path
@@ -487,6 +487,28 @@ def wait_event_state(
     return wait_for(_match, timeout, f"{CALL_EVENT_ENTITY}={expected}/{callee}")
 
 
+@contextmanager
+def temporary_switch(api: HomeAssistantApi, entity_id: str, enabled: bool):
+    """Apply one test-owned switch state and restore the user's value."""
+
+    original = api.state(entity_id)["state"] == "on"
+    if original != enabled:
+        api.service(
+            "switch",
+            "turn_on" if enabled else "turn_off",
+            {"entity_id": entity_id},
+        )
+    try:
+        yield
+    finally:
+        if original != enabled:
+            api.service(
+                "switch",
+                "turn_on" if original else "turn_off",
+                {"entity_id": entity_id},
+            )
+
+
 def automation_last_triggered(api: HomeAssistantApi, entity_id: str) -> str:
     state = api.state(entity_id)
     return str((state.get("attributes") or {}).get("last_triggered") or "")
@@ -704,9 +726,7 @@ def main() -> int:
         case("direct_default_without_automation_window", direct_default)
 
         def direct_ring_group_waits_for_member_answer() -> dict[str, Any]:
-            auto_answer_was_on = api.state(WS3_AUTO_ANSWER)["state"] == "on"
-            api.service("switch", "turn_off", {"entity_id": WS3_AUTO_ANSWER})
-            try:
+            with temporary_switch(api, WS3_AUTO_ANSWER, False):
                 snapshot.apply(
                     api,
                     mode="direct",
@@ -716,17 +736,14 @@ def main() -> int:
                 sip = caller()
                 with EventTrace(api) as trace:
                     sip.dial()
-                    ringing = wait_call_state(api, "ringing", 10, callee="RG Casa")
+                    ringing = wait_event_state(
+                        api, "ringing", 10, callee="RG Casa"
+                    )
                     # Reproduce issue #74 exactly: an immediate-mode trunk
                     # route must remain provisional until a group member
                     # explicitly answers.
                     time.sleep(2.0)
-                    still_ringing = call_state(api)
-            finally:
-                if auto_answer_was_on:
-                    api.service(
-                        "switch", "turn_on", {"entity_id": WS3_AUTO_ANSWER}
-                    )
+                    still_ringing = event_state(api)
             if still_ringing.get("state") != "ringing":
                 raise RuntimeError(
                     f"ring group did not remain provisional: {still_ringing}"
@@ -768,12 +785,13 @@ def main() -> int:
             set_automation(api, ROUTE_AUTOMATION, True)
             previous = automation_last_triggered(api, ROUTE_AUTOMATION)
             sip = caller()
-            with EventTrace(api) as trace:
-                sip.dial()
-                connected = wait_event_state(
-                    api, "in_call", 15, callee=ROUTE_DESTINATION
-                )
-                time.sleep(0.15)
+            with temporary_switch(api, WS3_AUTO_ANSWER, True):
+                with EventTrace(api) as trace:
+                    sip.dial()
+                    connected = wait_event_state(
+                        api, "in_call", 15, callee=ROUTE_DESTINATION
+                    )
+                    time.sleep(0.15)
             triggered = automation_last_triggered(api, ROUTE_AUTOMATION)
             if not triggered or triggered == previous:
                 raise RuntimeError("native event.received automation did not trigger")
@@ -821,13 +839,14 @@ def main() -> int:
             set_automation(api, ROUTE_AUTOMATION, True)
             previous = automation_last_triggered(api, ROUTE_AUTOMATION)
             sip = caller()
-            with EventTrace(api) as trace:
-                started = sip.dial()
-                connected = wait_event_state(
-                    api, "in_call", 15, callee=ROUTE_DESTINATION
-                )
-                elapsed = time.monotonic() - started
-                time.sleep(0.15)
+            with temporary_switch(api, WS3_AUTO_ANSWER, True):
+                with EventTrace(api) as trace:
+                    started = sip.dial()
+                    connected = wait_event_state(
+                        api, "in_call", 15, callee=ROUTE_DESTINATION
+                    )
+                    elapsed = time.monotonic() - started
+                    time.sleep(0.15)
             triggered = automation_last_triggered(api, ROUTE_AUTOMATION)
             if not triggered or triggered == previous:
                 raise RuntimeError("no-digits native override did not trigger")
@@ -948,7 +967,7 @@ def main() -> int:
                 sip.wait_for_dtmf_media()
                 time.sleep(0.35)
                 sip.hangup()
-                idle = wait_call_state(api, "idle", 8)
+                idle = wait_event_state(api, "idle", 8)
                 time.sleep(3.2)
             triggered = automation_last_triggered(api, ROUTE_AUTOMATION)
             if triggered != previous:
