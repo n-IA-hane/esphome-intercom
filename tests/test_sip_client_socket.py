@@ -790,7 +790,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             bus=bus,
             store={"call_id": "conference:Ops", "state": "in_call"},
         )
-        ended, remove = audio_ws_view._listen_for_call_end(hass, "conference:Ops")
+        ended, remove = audio_ws_view._listen_for_call_end(
+            hass, "conference:Ops", "default"
+        )
         self.assertFalse(ended.is_set())
 
         bus.listener(types.SimpleNamespace(data={"call_id": "other", "state": "idle"}))
@@ -874,7 +876,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             conference_queue=asyncio.Queue(),
         )
 
-        await audio_ws_view._run_conference_audio_session(hass, ws, session)
+        await audio_ws_view._run_conference_audio_session(
+            hass, ws, session, endpoint_id="default"
+        )
 
         self.assertEqual(manager.frames, [("conference:Ops", bytes(expected))])
         self.assertEqual(hass.store["tx_error"], 1)
@@ -969,7 +973,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         hass = Hass()
         ws = WebSocket()
         runtime = asyncio.create_task(
-            audio_ws_view._run_audio_session(hass, ws, session)
+            audio_ws_view._run_audio_session(
+                hass, ws, session, endpoint_id="default"
+            )
         )
         try:
             await wait_until(lambda: bool(ws.json))
@@ -1119,7 +1125,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         hass = Hass()
         ws = WebSocket()
         runtime = asyncio.create_task(
-            audio_ws_view._run_audio_session(hass, ws, session)
+            audio_ws_view._run_audio_session(
+                hass, ws, session, endpoint_id="default"
+            )
         )
         try:
             deadline = loop.time() + 1.0

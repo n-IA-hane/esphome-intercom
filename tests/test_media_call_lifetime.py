@@ -98,7 +98,7 @@ def test_active_media_call_requires_active_state_and_registry(
 ) -> None:
     hass, registry, _bus = _hass()
 
-    active = media_call_lifetime.active_media_call(hass)
+    active = media_call_lifetime.active_media_call(hass, "default")
 
     assert active is not None
     assert active.call_id == "call-1"
@@ -106,18 +106,20 @@ def test_active_media_call_requires_active_state_and_registry(
     assert active.store is hass.stores["default"]
 
     active.store["state"] = "ringing"
-    assert media_call_lifetime.active_media_call(hass) is None
+    assert media_call_lifetime.active_media_call(hass, "default") is None
 
     active.store["state"] = "connecting"
     hass.data["voip_stack"]["call_registry"] = object()
-    assert media_call_lifetime.active_media_call(hass) is None
+    assert media_call_lifetime.active_media_call(hass, "default") is None
 
 
 def test_listener_ignores_other_calls_and_wakes_on_terminal_state(
     media_call_lifetime,
 ) -> None:
     hass, _registry, bus = _hass()
-    ended, remove = media_call_lifetime.listen_for_media_call_end(hass, "call-1")
+    ended, remove = media_call_lifetime.listen_for_media_call_end(
+        hass, "call-1", "default"
+    )
     assert not ended.is_set()
 
     bus.listener(SimpleNamespace(data={"call_id": "other", "state": "idle"}))
@@ -134,6 +136,8 @@ def test_listener_ignores_other_calls_and_wakes_on_terminal_state(
 def test_listener_is_already_set_for_stale_projection(media_call_lifetime) -> None:
     hass, _registry, _bus = _hass(call_id="new-call", state="in_call")
 
-    ended, _remove = media_call_lifetime.listen_for_media_call_end(hass, "old-call")
+    ended, _remove = media_call_lifetime.listen_for_media_call_end(
+        hass, "old-call", "default"
+    )
 
     assert ended.is_set()

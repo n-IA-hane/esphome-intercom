@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
 
-from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .runtime_data import call_projection
 from .websocket_api import CALL_EVENT, _ha_softphone_store
 
@@ -30,7 +29,7 @@ class ActiveMediaCall:
 
 def active_media_call(
     hass: HomeAssistant,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
 ) -> ActiveMediaCall | None:
     """Resolve a media-bearing call without manufacturing missing runtime state."""
 
@@ -48,7 +47,7 @@ def active_media_call(
 def listen_for_media_call_end(
     hass: HomeAssistant,
     call_id: str,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
 ) -> tuple[asyncio.Event, Any]:
     """Wake when one endpoint no longer projects the specified active call."""
 

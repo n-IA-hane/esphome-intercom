@@ -44,7 +44,6 @@ from .queue_utils import drain_queue, put_drop_oldest
 from .runtime_data import conference_component, require_runtime_data
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder, SipCallClient
-from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .media_ws_session import (
     async_claimed_media_websocket,
     async_prepare_media_websocket_request,
@@ -401,7 +400,7 @@ def async_register_audio_ws_view(hass: HomeAssistant) -> None:
 
 def _active_softphone_media_session(
     hass: HomeAssistant,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
 ) -> _SoftphoneMediaSession | None:
     active = active_media_call(hass, endpoint_id)
     if active is None:
@@ -636,7 +635,7 @@ async def _run_audio_session(
     websocket_transport: asyncio.BaseTransport | None = None,
     *,
     handoff_requested: asyncio.Event | None = None,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
 ) -> None:
     if session.conference_queue is not None:
         await _run_conference_audio_session(
@@ -1180,7 +1179,7 @@ async def _run_conference_audio_session(
     session: _SoftphoneMediaSession,
     *,
     handoff_requested: asyncio.Event | None = None,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
 ) -> None:
     conference_queue = session.conference_queue
     if conference_queue is None:

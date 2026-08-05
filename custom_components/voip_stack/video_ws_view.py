@@ -21,7 +21,6 @@ from homeassistant.core import HomeAssistant
 from . import rtp, sdp
 from .config import debug_mode, transport_config
 from .const import CONF_VIDEO_TRANSCODING, DOMAIN
-from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .media_debug import merge_media_debug
 from .media_call_lifetime import active_media_call, listen_for_media_call_end
 from .media_ws_session import (
@@ -490,7 +489,7 @@ def async_register_video_ws_view(hass: HomeAssistant) -> None:
 
 def _active_video_session(
     hass: HomeAssistant,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
 ) -> _VideoMediaSession | None:
     active = active_media_call(hass, endpoint_id)
     if active is None:
@@ -1049,7 +1048,7 @@ async def _run_video_session(
     session: _VideoMediaSession,
     websocket_transport: asyncio.BaseTransport | None = None,
     *,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
 ) -> None:
     remote_host = str(session.remote_rtp_host)
     remote_port = int(session.remote_rtp_port)
