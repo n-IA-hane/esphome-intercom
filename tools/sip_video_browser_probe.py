@@ -115,16 +115,48 @@ DEEP_CARD = r"""
   );
   globalThis.__voipStackProbeFindCard = () => {
     const current = globalThis.__voipStackProbeCard;
-    if (configured(current)) return current;
+    const persistedDeviceId = String(
+      globalThis.__voipStackProbeDeviceId
+        || sessionStorage.getItem("voip-stack-probe-device-id")
+        || ""
+    );
+    const attachedDeviceId = String(
+      current?._softphoneSnapshot?.device_id || current?.config?.device_id || ""
+    );
+    const currentDeviceId = persistedDeviceId || attachedDeviceId;
+    if (currentDeviceId) {
+      globalThis.__voipStackProbeDeviceId = currentDeviceId;
+      sessionStorage.setItem("voip-stack-probe-device-id", currentDeviceId);
+    }
+    if (
+      configured(current)
+      && (!currentDeviceId || attachedDeviceId === currentDeviceId)
+    ) return current;
     const cards = deep("voip-stack-card, intercom-card")
       .filter((card) => (card.config?.mode || card.config?.card_mode || "") === "ha_softphone");
     // Lovelace can briefly detach/recreate the card while the same global
     // media engine keeps a call alive. Do not erase the last controller during
     // that handoff; prefer a visible replacement as soon as it exists.
-    const next = cards.find(visible) || cards.find(configured) || cards[0] || current || null;
+    const samePhone = (card) => {
+      const deviceId = String(
+        card?._softphoneSnapshot?.device_id || card?.config?.device_id || ""
+      );
+      return Boolean(currentDeviceId && deviceId === currentDeviceId);
+    };
+    const next = cards.find((card) => samePhone(card) && visible(card))
+      || cards.find((card) => samePhone(card) && configured(card))
+      || cards.find(visible)
+      || cards.find(configured)
+      || cards[0]
+      || current
+      || null;
     globalThis.__voipStackProbeCard = next;
     const deviceId = String(next?.config?.device_id || "");
-    if (deviceId) globalThis.__voipStackProbeDeviceId = deviceId;
+    const resolvedDeviceId = String(next?._softphoneSnapshot?.device_id || deviceId);
+    if (resolvedDeviceId) {
+      globalThis.__voipStackProbeDeviceId = resolvedDeviceId;
+      sessionStorage.setItem("voip-stack-probe-device-id", resolvedDeviceId);
+    }
     return next;
   };
   return globalThis.__voipStackProbeFindCard();

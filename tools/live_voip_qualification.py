@@ -123,6 +123,7 @@ class EspDevice:
     host: str
     port: int = 6053
     password: str = ""
+    action_prefix: str = ""
     ha_state_entity: str = ""
     runtime_entity: str = ""
 
@@ -132,6 +133,7 @@ DEFAULT_ESPS = {
         "p4",
         "Waveshare P4 Touch",
         "192.168.1.45",
+        action_prefix="waveshare_p4_touch",
         ha_state_entity="sensor.waveshare_p4_touch_voip_state",
         runtime_entity="sensor.waveshare_p4_touch_runtime_snapshot",
     ),
@@ -139,6 +141,7 @@ DEFAULT_ESPS = {
         "ws3",
         "Waveshare S3 Audio",
         "192.168.1.47",
+        action_prefix="cucina_waveshare_s3_audio",
         ha_state_entity="sensor.cucina_waveshare_s3_audio_voip_state",
         runtime_entity="sensor.cucina_waveshare_s3_audio_runtime_snapshot",
     ),
@@ -146,6 +149,7 @@ DEFAULT_ESPS = {
         "spotpear",
         "Spotpear Ball v2",
         "192.168.1.31",
+        action_prefix="casa_spotpear_ball_v2",
         ha_state_entity="sensor.casa_spotpear_ball_v2_voip_state",
         runtime_entity="sensor.casa_spotpear_ball_v2_runtime_snapshot",
     ),
@@ -424,6 +428,19 @@ class LiveContext:
     args: argparse.Namespace
     artifacts: list[dict[str, Any]] = field(default_factory=list)
 
+    def _call_resources_are_quiescent(self, snapshot: dict[str, Any]) -> bool:
+        resources = dict(
+            snapshot.get("runtime_resources")
+            or (snapshot.get("media_debug") or {}).get("runtime_resources")
+            or {}
+        )
+        return (
+            int(snapshot.get("active_dialogs") or 0) == 0
+            and not snapshot.get("pending_call_ids")
+            and norm(self.esp.values.get("voip_state")) == "idle"
+            and resources.get("call_scoped_quiescent") is True
+        )
+
     async def cleanup(self) -> None:
         for _ in range(2):
             await self.ha.service("voip_stack", "hangup", {})
@@ -438,26 +455,13 @@ class LiveContext:
         last: dict[str, Any] | None = None
         while time.monotonic() < deadline:
             last = await self.ws.softphone_state()
-            active = int(last.get("active_dialogs") or 0)
-            pending = list(last.get("pending_call_ids") or [])
-            resources = dict(
-                last.get("runtime_resources")
-                or (last.get("media_debug") or {}).get("runtime_resources")
-                or {}
-            )
-            state = norm(self.esp.values.get("voip_state"))
-            if (
-                active == 0
-                and not pending
-                and state == "idle"
-                and resources.get("call_scoped_quiescent") is True
-            ):
+            if self._call_resources_are_quiescent(last):
                 await asyncio.sleep(0.8)
-                return
-            await asyncio.sleep(0.3)
-        raise AssertionError(
-            f"cleanup did not settle HA/ESP runtime: softphone={last} esp={self.esp.snapshot()}"
-        )
+                confirmed = await self.ws.softphone_state()
+                if self._call_resources_are_quiescent(confirmed):
+                    return
+            await asyncio.sleep(0.1)
+        raise AssertionError(f"call resources did not quiesce: {last}")
 
     def capture(self, label: str) -> None:
         self.artifacts.append(
@@ -681,6 +685,23 @@ async def scenario_ha_to_esp_extension_answer_hangup(ctx: LiveContext) -> None:
     ctx.capture("ha_to_esp_extension_answer_hangup")
 
 
+async def scenario_ha_to_esp_api_answer_hangup(ctx: LiveContext) -> None:
+    """Prove the native ESPHome answer and hangup actions execute on-device."""
+    await ctx.cleanup()
+    await ctx.esp.switch("auto_answer", False)
+    await ctx.ha.service("voip_stack", "call", {"destination": ctx.args.esp_extension})
+    await wait_esp_voip_state(ctx, {"ringing", "incoming"}, timeout=12)
+    prefix = ctx.esp.spec.action_prefix
+    await ctx.ha.service("esphome", f"{prefix}_answer_call", {})
+    await wait_esp_voip_state(ctx, {"in_call"}, timeout=12)
+    await wait_softphone_state(ctx, {"in_call"}, timeout=8)
+    await ctx.ha.service("esphome", f"{prefix}_hangup_call", {})
+    await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
+    await wait_softphone_state(ctx, {"idle"}, timeout=8)
+    await ctx.cleanup()
+    ctx.capture("ha_to_esp_api_answer_hangup")
+
+
 async def scenario_ha_to_esp_auto_answer(ctx: LiveContext) -> None:
     """Exercise both real incoming-call contracts and restore the option."""
     await ctx.cleanup()
@@ -702,6 +723,7 @@ async def scenario_ha_to_esp_auto_answer(ctx: LiveContext) -> None:
     await wait_esp_voip_state(ctx, {"in_call"}, timeout=12)
     await ctx.ha.service("voip_stack", "hangup", {})
     await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
+    await ctx.cleanup()
 
     await ctx.esp.switch("auto_answer", True)
     await ctx.ha.service("voip_stack", "call", {"destination": ctx.args.esp_extension})
@@ -995,6 +1017,13 @@ SCENARIOS: dict[str, Scenario] = {
             {"esp_ringing", "esp_in_call", "ha_in_call", "remote_bye", "esp_idle"}
         ),
         scenario_ha_to_esp_extension_answer_hangup,
+    ),
+    "ha_to_esp_api_answer_hangup": Scenario(
+        "ha_to_esp_api_answer_hangup",
+        "HA calls ESP; native ESPHome actions answer and hang up",
+        frozenset({"ha", "esp", "api_actions", "extension"}),
+        frozenset({"esp_ringing", "both_in_call", "both_idle"}),
+        scenario_ha_to_esp_api_answer_hangup,
     ),
     "ha_to_esp_dnd": Scenario(
         "ha_to_esp_dnd",

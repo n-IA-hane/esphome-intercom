@@ -59,6 +59,40 @@ export function terminalPeerLabel(snapshot = {}) {
   );
 }
 
+const ACTIVE_CALL_STATES = new Set([
+  "calling", "remote_ringing", "ringing", "answering", "connecting", "in_call",
+]);
+const TERMINAL_CALL_STATES = new Set([
+  "idle", "busy", "declined", "cancelled", "media_incompatible",
+  "transport_unreachable", "auth_required_unsupported", "protocol_error", "error",
+]);
+
+export function softphoneSnapshotSupersedes(current, next) {
+  if (!current) return true;
+  const currentCallId = String(current.call_id || "");
+  const nextCallId = String(next.call_id || "");
+  const currentState = String(current.state || "").toLowerCase();
+  const nextState = String(next.state || "").toLowerCase();
+  const terminal = TERMINAL_CALL_STATES.has(nextState);
+  if (
+    currentCallId
+    && ACTIVE_CALL_STATES.has(currentState)
+    && terminal
+    && nextCallId !== currentCallId
+  ) return false;
+  if (!nextCallId || currentCallId !== nextCallId || terminal) return true;
+  const currentSequence = Number(current.sequence || 0);
+  const nextSequence = Number(next.sequence || 0);
+  if (nextSequence > 0 && currentSequence > 0 && nextSequence < currentSequence) {
+    return false;
+  }
+  return !(
+    nextSequence === currentSequence
+    && Number(next.revision || 0) > 0
+    && Number(current.revision || 0) > Number(next.revision || 0)
+  );
+}
+
 export function normaliseTransport(value) {
   const transport = String(value || "").trim().toLowerCase();
   return ["tcp", "udp", "sip_tcp", "sip_udp"].includes(transport)

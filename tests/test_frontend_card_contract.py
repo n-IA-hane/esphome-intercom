@@ -354,18 +354,6 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._isHaSoftphoneMode() && this._lastEndInfo", render)
         self.assertNotIn("this._softphoneSnapshot?.terminal_reason", render)
 
-    def test_ha_softphone_rejects_older_snapshots_for_the_same_call(self) -> None:
-        normalise = _method_body(self.source, "_normaliseSoftphoneSnapshot")
-        apply_snapshot = _method_body(self.source, "_applySoftphoneSnapshot")
-
-        self.assertIn("sequence: Number(payload.sequence || 0)", normalise)
-        self.assertIn("revision: Number(payload.revision || 0)", normalise)
-        self.assertIn("current?.call_id === snapshot.call_id", apply_snapshot)
-        self.assertIn("snapshot.sequence < currentSequence", apply_snapshot)
-        self.assertIn("snapshot.sequence === currentSequence", apply_snapshot)
-        self.assertIn("Number(current.revision || 0) > snapshot.revision", apply_snapshot)
-        self.assertIn("return false", apply_snapshot)
-
     def test_microphone_anti_alias_option_defaults_on_and_reaches_worklet(self) -> None:
         engine = ENGINE.read_text()
         processor = PROCESSOR.read_text()
@@ -483,11 +471,6 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn('void voipStackEngine.close("hangup")', hangup)
         self.assertIn("this._sessionCallId() !== callId", auto_answer)
         self.assertIn("await this._answer({ callId, videoPermission })", auto_answer)
-
-    def test_terminal_snapshot_is_not_rejected_by_revision_guard(self) -> None:
-        apply_snapshot = _method_body(self.source, "_applySoftphoneSnapshot")
-        self.assertIn("const terminalSnapshot = [", apply_snapshot)
-        self.assertGreaterEqual(apply_snapshot.count("!terminalSnapshot &&"), 2)
 
     def test_video_answer_preflights_camera_and_auto_answer_never_prompts(self) -> None:
         answer = _method_body(self.source, "async _answer")

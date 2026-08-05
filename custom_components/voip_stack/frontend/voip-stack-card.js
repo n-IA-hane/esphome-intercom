@@ -34,6 +34,7 @@ const {
   normaliseCardConfig,
   normaliseTransport,
   reasonKey,
+  softphoneSnapshotSupersedes,
   targetFromRosterEntry,
   terminalPeerLabel,
 } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
@@ -486,32 +487,7 @@ class VoipStackCard extends HTMLElement {
   _applySoftphoneSnapshot(payload = {}) {
     const snapshot = this._normaliseSoftphoneSnapshot(payload);
     const current = this._softphoneSnapshot;
-    const terminalSnapshot = [
-      "idle",
-      "busy",
-      "declined",
-      "cancelled",
-      "media_incompatible",
-      "transport_unreachable",
-      "auth_required_unsupported",
-      "protocol_error",
-      "error",
-    ].includes(snapshot.state);
-    if (snapshot.call_id && current?.call_id === snapshot.call_id) {
-      const currentSequence = Number(current.sequence || 0);
-      if (
-        !terminalSnapshot &&
-        snapshot.sequence > 0 &&
-        currentSequence > 0 &&
-        snapshot.sequence < currentSequence
-      ) return false;
-      if (
-        !terminalSnapshot &&
-        snapshot.sequence === currentSequence &&
-        snapshot.revision > 0 &&
-        Number(current.revision || 0) > snapshot.revision
-      ) return false;
-    }
+    if (!softphoneSnapshotSupersedes(current, snapshot)) return false;
     this._softphoneSnapshot = snapshot;
     this._softphoneDnd = !!snapshot.dnd;
     this._autoAnswer = !!snapshot.auto_answer;

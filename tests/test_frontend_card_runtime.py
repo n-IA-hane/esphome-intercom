@@ -55,7 +55,7 @@ source = source
       audioModeLabel, formatCallDuration, formatEndReason,
       formatKnownReason, formatListFromMetadata, formatVideoFailureReason,
       normaliseAudioMode, normaliseTransport, reasonKey,
-      targetFromRosterEntry, terminalPeerLabel,
+      softphoneSnapshotSupersedes, targetFromRosterEntry, terminalPeerLabel,
     }} = globalThis.__cardModel;`,
   )
   .replace("class VoipStackCard extends HTMLElement", "export class VoipStackCard extends HTMLElement");
@@ -784,6 +784,16 @@ assert.equal(card._els.statusText.textContent, "In Call: Home HA");
 assert.equal(card._els.hangupState.textContent, "In call");
 assert.equal(card._applySoftphoneSnapshot({{ ...base, state: "remote_ringing", sequence: 2 }}), false);
 assert.equal(card._softphoneSnapshot.state, "in_call");
+assert.equal(card._applySoftphoneSnapshot({{
+  ...base, state: "idle", call_id: "old-call", sequence: 0, revision: 0,
+}}), false);
+assert.equal(card._applySoftphoneSnapshot({{
+  ...base, state: "idle", call_id: "", sequence: 0, revision: 0,
+}}), false);
+assert.equal(card._softphoneSnapshot.state, "in_call");
+assert.equal(card._applySoftphoneSnapshot({{
+  ...base, state: "idle", call_id: base.call_id, sequence: 0, revision: 0,
+}}), true);
 
 // Pressing Answer sends the exact call service but does not invent an
 // in-call state before the backend publishes a final 200/answer snapshot.
