@@ -6,7 +6,9 @@ import asyncio
 
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 
+from .device_resolver import entity_role
 from .endpoint_lifecycle import create_runtime_task
 from .fsm import CallState, sip_public_state
 from .outbound_lifecycle import HA_SOFTPHONE_ACTIVE_STATES
@@ -149,7 +151,8 @@ def register_state_event_bridge(hass: HomeAssistant) -> None:
     @callback
     def _on_state_changed(event: Event) -> None:
         entity_id = str(event.data.get("entity_id") or "")
-        if "voip_state" not in entity_id:
+        entity = er.async_get(hass).async_get(entity_id)
+        if entity is None or entity_role(entity) != "voip_state":
             return
         old = event.data.get("old_state")
         new = event.data.get("new_state")

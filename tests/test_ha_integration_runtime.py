@@ -250,7 +250,7 @@ async def test_entry_runtime_owns_call_projection_and_detached_tasks(
     registry = call_registry(hass)
     task = create_runtime_task(hass, asyncio.sleep(60))
 
-    assert runtime.calls is registry
+    assert runtime.sip is registry
     assert task in runtime.tasks
     assert not {"call_registry", "runtime_tasks"}.intersection(
         hass.data.get(DOMAIN, {})
@@ -293,6 +293,43 @@ async def test_stale_esphome_state_event_uses_entry_generation(
 
     get_devices.assert_not_awaited()
     assert "esp_state_event_generations" not in hass.data.get(DOMAIN, {})
+
+
+async def test_renamed_esphome_state_entity_keeps_its_stable_role(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.voip_stack import esphome_state_bridge
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.runtime_data import VoipStackRuntime
+
+    runtime = VoipStackRuntime(
+        transport_config={},
+        assist_config={},
+        trunk_config={},
+        endpoints=EndpointRegistry(),
+        phones=MagicMock(),
+    )
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    entry.runtime_data = runtime
+    entity = er.async_get(hass).async_get_or_create(
+        "sensor",
+        "esphome",
+        "p4-text_sensor-voip_state",
+        suggested_object_id="renamed_phone_status",
+    )
+    emit = AsyncMock()
+    monkeypatch.setattr(esphome_state_bridge, "async_emit_state_event", emit)
+    esphome_state_bridge.register_state_event_bridge(hass)
+
+    hass.states.async_set(entity.entity_id, "ringing")
+    await hass.async_block_till_done()
+
+    emit.assert_awaited_once()
+    assert emit.await_args.args[1] == entity.entity_id
 
 
 async def test_device_resolver_is_cached_on_entry_runtime(
@@ -348,8 +385,8 @@ async def test_system_health_and_media_capture_repair_are_privacy_safe(
         phones=MagicMock(),
         media_capture=True,
     )
-    runtime.calls = MagicMock()
-    runtime.calls.active_count.return_value = 2
+    runtime.sip = MagicMock()
+    runtime.sip.active_count.return_value = 2
     runtime.rtp_port_pool = {"used": {40000}}
     entry = MockConfigEntry(domain=DOMAIN, data={})
     entry.add_to_hass(hass)

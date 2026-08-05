@@ -64,7 +64,7 @@ def _normalized_identity(value: object) -> str:
     )
 
 
-def _entity_role(entity: object) -> str:
+def entity_role(entity: object) -> str:
     """Resolve a stable ESPHome entity role before using its mutable entity ID."""
 
     entity_id = str(getattr(entity, "entity_id", "") or "")
@@ -269,7 +269,7 @@ class VoipDeviceResolver:
             if str(getattr(entity, "platform", "") or "") == DOMAIN:
                 continue
             entities_by_device.setdefault(entity.device_id, []).append(entity)
-            if _entity_role(entity) == "voip_endpoint":
+            if entity_role(entity) == "voip_endpoint":
                 voip_device_ids.add(entity.device_id)
 
         out: list[dict] = []
@@ -376,7 +376,7 @@ class VoipDeviceResolver:
         out: dict[str, str] = {}
         for entity in entities:
             eid = entity.entity_id
-            role = _entity_role(entity)
+            role = entity_role(entity)
             if role and role not in out:
                 out[role] = eid
         return out
