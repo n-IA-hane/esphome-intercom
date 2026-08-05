@@ -13,7 +13,6 @@ from .const import DOMAIN
 from .endpoint_registry import EndpointRegistry
 
 if TYPE_CHECKING:
-    from .call_registry import CallRegistry
     from .device_resolver import VoipDeviceResolver
     from .pbx_runtime import SipEndpointRuntime
     from .phone_control import PhoneAdapterRegistry
@@ -71,7 +70,6 @@ class VoipStackRuntime:
     preferred_phone_device_id: str = ""
     debug_mode: bool = False
     media_capture: bool = False
-    calls: CallRegistry | None = None
     sip: SipEndpointRuntime | None = None
     tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     shutdown_task: asyncio.Task[Any] | None = None
@@ -122,11 +120,11 @@ def require_runtime_data(hass: HomeAssistant) -> VoipStackRuntime:
     return runtime
 
 
-def call_projection(hass: HomeAssistant) -> CallRegistry | None:
+def call_projection(hass: HomeAssistant) -> SipEndpointRuntime | None:
     """Return the entry-owned observable call index, if initialized."""
 
     runtime = runtime_data(hass)
-    return runtime.calls if runtime is not None else None
+    return runtime.sip if runtime is not None else None
 
 
 def endpoint_directory(hass: HomeAssistant) -> EndpointRegistry:

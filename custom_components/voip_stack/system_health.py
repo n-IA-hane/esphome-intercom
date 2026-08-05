@@ -35,7 +35,7 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
     registrar = sip_registrar(hass)
     registrar_snapshot = registrar.snapshot() if registrar is not None else {}
     trunk = sip_trunk(hass)
-    calls = runtime.calls if runtime is not None else None
+    calls = runtime.sip if runtime is not None else None
     port_pool = runtime.rtp_port_pool if runtime is not None else {}
     used_ports = port_pool.get("used") if isinstance(port_pool, dict) else None
     return {

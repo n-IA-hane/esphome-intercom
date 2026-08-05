@@ -21,7 +21,6 @@ from homeassistant.core import HomeAssistant
 from . import rtp, sdp
 from .config import debug_mode, transport_config
 from .const import CONF_VIDEO_TRANSCODING, DOMAIN
-from .call_registry import CallRegistry
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .media_debug import merge_media_debug
 from .media_call_lifetime import active_media_call, listen_for_media_call_end
@@ -592,7 +591,7 @@ def _detach_video_socket(hass: HomeAssistant, session: _VideoMediaSession) -> No
     """Transfer pre-bound RTP/RTCP sockets from call to media lifetime."""
 
     registry = call_projection(hass)
-    if not isinstance(registry, CallRegistry):
+    if registry is None:
         return
     item = registry.softphone_media.get(session.call_id)
     if isinstance(item, dict) and (
@@ -881,7 +880,7 @@ def _make_video_depacketizer(
 ):
     if browser_format.encoding == "H264":
         parameter_sets = cached_parameter_sets
-        if isinstance(registry, CallRegistry):
+        if registry is not None:
             parameter_sets = registry.video_parameter_sets.get(
                 session.call_id, parameter_sets
             )
@@ -1211,7 +1210,7 @@ async def _run_video_session(
     latched_rtcp_source: tuple[str, int] | None = None
     registry = call_projection(hass)
     cached_parameter_sets: tuple[bytes, ...] = ()
-    if isinstance(registry, CallRegistry):
+    if registry is not None:
         cached_parameter_sets = registry.video_parameter_sets.get(session.call_id, ())
     depacketizer = _make_video_depacketizer(
         session,
@@ -1573,7 +1572,7 @@ async def _run_video_session(
         )
         if browser_format.encoding == "H264" and isinstance(depacketizer, H264Depacketizer):
             parameter_sets = depacketizer.parameter_sets
-            if len(parameter_sets) == 2 and isinstance(registry, CallRegistry):
+            if len(parameter_sets) == 2 and registry is not None:
                 registry.cache_video_parameter_sets(
                     session.call_id,
                     parameter_sets,

@@ -24,7 +24,7 @@ from ..sip_listener import SipInviteResult
 from ..websocket_api import _set_ha_softphone_call_state
 
 if TYPE_CHECKING:
-    from ..call_registry import CallRegistry
+    from ..pbx_runtime import SipEndpointRuntime
     from ..endpoint_registry import EndpointRegistry
     from ..router import RouteDecision
     from ..sip_listener import SipInvite
@@ -65,7 +65,7 @@ def _resolve_browser_target(
 
 def defer_browser_softphone_invite(
     *,
-    registry: CallRegistry,
+    registry: SipEndpointRuntime,
     endpoint_registry: EndpointRegistry | None,
     invite: SipInvite,
     decision: RouteDecision,
@@ -128,7 +128,7 @@ def answer_inbound_ha_softphone(
     *,
     hass: HomeAssistant,
     local_ip: str,
-    registry: CallRegistry,
+    registry: SipEndpointRuntime,
     endpoint_registry: EndpointRegistry | None,
     invite: SipInvite,
     decision: RouteDecision,

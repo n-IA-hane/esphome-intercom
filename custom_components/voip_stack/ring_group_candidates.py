@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
-from .call_registry import CallRegistry
 from .dial_fork import DialDisposition
 from .dial_plan import RingPolicy, build_sip_contact_targets
 from .endpoint_registry import EndpointBusyError, EndpointRegistry
@@ -22,6 +21,7 @@ from .ring_group import (
 )
 
 if TYPE_CHECKING:
+    from .pbx_runtime import SipEndpointRuntime
     from .peer import Peer
     from .roster import RosterEntry
     from .sip_listener import SipInvite
@@ -35,7 +35,7 @@ PreflightFailure = tuple[str, str, DialDisposition, int, int]
 class RingGroupCandidateRuntime:
     """Dependencies used while resolving physical ring candidates."""
 
-    registry: CallRegistry
+    registry: SipEndpointRuntime
     endpoint_registry: EndpointRegistry | None
     browser_leg_for_member: Callable[..., BrowserLeg | None]
     logical_endpoint_for_member: Callable[..., Any]

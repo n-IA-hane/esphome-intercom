@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
-from .call_registry import CallRegistry
 from .endpoint_registry import EndpointBusyError, EndpointRegistry
 from .outbound_attempts import BrowserLeg, OutboundLeg
 from .pbx_routing import (
@@ -14,6 +13,7 @@ from .pbx_routing import (
 )
 
 if TYPE_CHECKING:
+    from .pbx_runtime import SipEndpointRuntime
     from .peer import Peer
     from .roster import RosterEntry
     from .sip_listener import SipInvite
@@ -26,7 +26,7 @@ MAX_FORWARD_GROUP_ATTEMPTS = 16
 class ForwardGroupCandidateRuntime:
     """Dependencies needed to prepare forwarding candidates."""
 
-    registry: CallRegistry
+    registry: SipEndpointRuntime
     endpoint_registry: EndpointRegistry | None
     browser_leg_for_member: Callable[..., BrowserLeg | None]
     prepare_outbound_leg: Callable[..., OutboundLeg | None]

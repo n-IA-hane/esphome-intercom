@@ -12,15 +12,11 @@ from tests.support.module_loader import load_voip_stack_module
 
 
 pytestmark = pytest.mark.unit
-call_registry = load_voip_stack_module("call_registry")
 pbx_runtime = load_voip_stack_module("pbx_runtime")
 
 
 def _registry():
-    owner = pbx_runtime.SipEndpointRuntime(allow_dark_sessions=True)
-    registry = call_registry.CallRegistry(owner)
-    owner.bind_projection(registry)
-    return registry
+    return pbx_runtime.SipEndpointRuntime(allow_dark_sessions=True)
 
 
 CALL_IDS = ("call-a", "call-b", "physical:esp")

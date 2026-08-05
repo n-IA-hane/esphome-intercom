@@ -20,7 +20,7 @@ from ..sdp import build_answer_directional
 from ..sip_listener import SipInviteResult
 
 if TYPE_CHECKING:
-    from ..call_registry import CallRegistry
+    from ..pbx_runtime import SipEndpointRuntime
     from ..phone_endpoint import PhoneEndpoint
     from ..router import RouteDecision
     from ..sip_listener import SipInvite
@@ -51,7 +51,7 @@ def _busy_result() -> SipInviteResult:
 
 def _claim_source(
     *,
-    registry: CallRegistry,
+    registry: SipEndpointRuntime,
     invite: SipInvite,
     source_endpoint: PhoneEndpoint | None,
     state: str,
@@ -92,7 +92,7 @@ async def route_local_assist(
     decision: RouteDecision,
     roster_entries: list[Any],
     source_endpoint: PhoneEndpoint | None,
-    registry: CallRegistry,
+    registry: SipEndpointRuntime,
     source: str,
     called_extension: str,
 ) -> SipInviteResult:
@@ -166,7 +166,7 @@ async def route_local_group(
     roster_entries: list[Any],
     source_endpoint: PhoneEndpoint | None,
     source_endpoint_id: str,
-    registry: CallRegistry,
+    registry: SipEndpointRuntime,
 ) -> SipInviteResult:
     """Dispatch one inbound call to its ring group or conference owner."""
 

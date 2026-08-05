@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
 
-from .call_registry import CallRegistry
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .runtime_data import call_projection
 from .websocket_api import CALL_EVENT, _ha_softphone_store
+
+if TYPE_CHECKING:
+    from .pbx_runtime import SipEndpointRuntime
 
 
 _MEDIA_CALL_STATES = frozenset({"connecting", "in_call"})
@@ -23,7 +25,7 @@ class ActiveMediaCall:
 
     call_id: str
     store: dict[str, Any]
-    registry: CallRegistry
+    registry: SipEndpointRuntime
 
 
 def active_media_call(
@@ -38,7 +40,7 @@ def active_media_call(
     if not call_id or state not in _MEDIA_CALL_STATES:
         return None
     registry = call_projection(hass)
-    if not isinstance(registry, CallRegistry):
+    if registry is None or not hasattr(registry, "sessions"):
         return None
     return ActiveMediaCall(call_id, store, registry)
 

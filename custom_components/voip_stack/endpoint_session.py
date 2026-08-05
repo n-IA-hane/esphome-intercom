@@ -144,6 +144,19 @@ class SessionTerminationResult:
     errors: tuple[str, ...]
 
 
+@dataclass(slots=True)
+class CallEventContext:
+    """Bounded automation history owned by the call runtime."""
+
+    sequence: int = 0
+    state: str = ""
+    previous_state: str = ""
+    route_history: list[dict[str, Any]] = field(default_factory=list)
+    connected_at: float = 0.0
+    duration_seconds: int | None = None
+
+
+
 class EndpointCallSession:
     """Authoritative owner of one PBX call and all of its resources.
 

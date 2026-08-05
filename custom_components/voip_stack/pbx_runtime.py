@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -10,8 +11,10 @@ import inspect
 import logging
 from typing import Any, Protocol
 
+from .call_registry import CallRuntimeApi
 from .endpoint_session import (
     CallLeg,
+    CallEventContext,
     CleanupStage,
     EndpointCallSession,
     LegKind,
@@ -135,7 +138,7 @@ class _OwnedComponent:
     closer: ComponentCloser | None = None
 
 
-class SipEndpointRuntime:
+class SipEndpointRuntime(CallRuntimeApi):
     """Own endpoint components and every logical call generation.
 
     Constructing this object is intentionally side-effect free: it does not
@@ -160,6 +163,13 @@ class SipEndpointRuntime:
     ) -> None:
         self.phase = RuntimePhase.DARK
         self.calls: dict[str, EndpointCallSession] = {}
+        self.sessions = self.calls
+        self.leg_index: dict[str, str] = {}
+        self.event_contexts: dict[str, CallEventContext] = {}
+        self.terminal_summary_ids: OrderedDict[str, None] = OrderedDict()
+        self.terminated_call_ids: OrderedDict[str, int] = OrderedDict()
+        self.media_controller_lock = asyncio.Lock()
+        self._session_owner = self
         self._generation = 0
         self._projection = projection
         self._allow_dark_sessions = allow_dark_sessions
@@ -242,7 +252,7 @@ class SipEndpointRuntime:
         owned = self._components.get(str(name or "").strip())
         return owned.value if owned is not None else None
 
-    def bind_endpoint_registry(self, registry: Any | None) -> None:
+    def _bind_endpoint_registry(self, registry: Any | None) -> None:
         """Bind the phone directory used by session-owned busy claims."""
 
         if registry is self._endpoint_registry:
@@ -252,6 +262,10 @@ class SipEndpointRuntime:
                 "cannot replace endpoint registry while calls are active"
             )
         self._endpoint_registry = registry
+
+    @property
+    def endpoint_registry(self) -> Any | None:
+        return self._endpoint_registry
 
     def endpoint_claims_snapshot(self) -> dict[str, dict[str, str]]:
         """Return a detached compatibility projection of session claims."""
@@ -340,7 +354,7 @@ class SipEndpointRuntime:
             return None
         return session.artifacts.pop(name, None)
 
-    def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> bool:
+    def _set_bridge_link(self, source_call_id: str, dest_call_id: str) -> bool:
         """Attach one destination dialog identity to its source session."""
 
         session = self.get_session(source_call_id)
@@ -350,7 +364,7 @@ class SipEndpointRuntime:
         session.update_metadata(bridge_dest_call_id=clean_dest_call_id)
         return True
 
-    def forget_bridge_link(self, source_call_id: str) -> str:
+    def _forget_bridge_link(self, source_call_id: str) -> str:
         """Remove and return one destination link without ending the session."""
 
         session = self.get_session(source_call_id)
@@ -361,7 +375,7 @@ class SipEndpointRuntime:
             self._publish(session)
         return dest_call_id
 
-    def attach_relay(self, call_id: str, relay: Any) -> bool:
+    def _attach_relay(self, call_id: str, relay: Any) -> bool:
         """Make one RTP relay a media resource of its call session."""
 
         clean_call_id = str(call_id or "").strip()
@@ -377,7 +391,7 @@ class SipEndpointRuntime:
             stage=CleanupStage.MEDIA,
         )
 
-    def take_relay(self, call_id: str) -> Any | None:
+    def _take_relay(self, call_id: str) -> Any | None:
         """Transfer one relay out of the authoritative cleanup barrier."""
 
         clean_call_id = str(call_id or "").strip()
@@ -394,7 +408,7 @@ class SipEndpointRuntime:
         session.release_resource(resource_name, value=resource.value)
         return resource.value
 
-    def claim_endpoint(
+    def _claim_endpoint(
         self,
         call_id: str,
         endpoint_id: str,
@@ -437,7 +451,7 @@ class SipEndpointRuntime:
             self._publish(session)
         return True
 
-    def release_endpoint_claim(
+    def _release_endpoint_claim(
         self,
         call_id: str,
         endpoint_id: str,
@@ -468,7 +482,7 @@ class SipEndpointRuntime:
         self._publish(session)
         return released
 
-    def release_endpoint_claims(
+    def _release_endpoint_claims(
         self,
         call_id: str,
         *,
@@ -480,7 +494,7 @@ class SipEndpointRuntime:
         if session is None:
             return
         for endpoint_id in tuple(session.endpoint_claims):
-            self.release_endpoint_claim(
+            self._release_endpoint_claim(
                 session.call_id,
                 endpoint_id,
                 generation=session.generation,
@@ -531,6 +545,7 @@ class SipEndpointRuntime:
         if self.calls.get(session.call_id) is not session:
             return
         snapshot = self._snapshot(session)
+        self.remove(snapshot)
         if self._projection is not None:
             try:
                 self._projection.remove(snapshot)

@@ -37,7 +37,6 @@ def _load_module(name: str):
 _load_module("session_cleanup")
 endpoint_session = _load_module("endpoint_session")
 pbx_runtime = _load_module("pbx_runtime")
-call_registry = _load_module("call_registry")
 SessionPhase = endpoint_session.SessionPhase
 CallProjectionSnapshot = pbx_runtime.CallProjectionSnapshot
 RuntimePhase = pbx_runtime.RuntimePhase
@@ -46,9 +45,7 @@ SipEndpointRuntime = pbx_runtime.SipEndpointRuntime
 
 def _registry_runtime():
     runtime = SipEndpointRuntime()
-    registry = call_registry.CallRegistry(runtime)
-    runtime.bind_projection(registry)
-    return registry, runtime
+    return runtime, runtime
 
 
 class _Projection:

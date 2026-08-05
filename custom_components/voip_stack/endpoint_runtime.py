@@ -772,15 +772,11 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         await pbx_runtime.shutdown()
         if runtime.sip is pbx_runtime:
             runtime.sip = None
-        if runtime.calls is registry:
-            runtime.calls = None
         raise
     if not started:
         await pbx_runtime.shutdown()
         if runtime.sip is pbx_runtime:
             runtime.sip = None
-        if runtime.calls is registry:
-            runtime.calls = None
         return False
     pbx_runtime.forward_call = _async_forward_existing_call
     _LOGGER.info(

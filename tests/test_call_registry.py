@@ -42,10 +42,7 @@ pbx_runtime = _load_module("pbx_runtime")
 
 
 def _registry():
-    owner = pbx_runtime.SipEndpointRuntime(allow_dark_sessions=True)
-    registry = call_registry.CallRegistry(owner)
-    owner.bind_projection(registry)
-    return registry
+    return pbx_runtime.SipEndpointRuntime(allow_dark_sessions=True)
 
 
 class _EndpointRegistryStub:

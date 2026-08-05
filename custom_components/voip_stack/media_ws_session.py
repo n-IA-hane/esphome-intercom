@@ -263,10 +263,8 @@ async def async_authorize_media_websocket_request(
     from aiohttp import web
 
     from .authorization import async_require_media_controller
-    from .call_registry import CallRegistry
-
     registry = call_projection(context.hass)
-    if not isinstance(registry, CallRegistry):
+    if registry is None:
         raise web.HTTPConflict(text="HA softphone call registry is unavailable")
     await async_require_media_controller(
         context.hass,

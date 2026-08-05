@@ -56,7 +56,7 @@ from ..sip_listener import SipInviteResult
 from ..websocket_api import _set_sip_bridge_call_state
 
 if TYPE_CHECKING:
-    from ..call_registry import CallRegistry
+    from ..pbx_runtime import SipEndpointRuntime
     from ..phone_endpoint import PhoneEndpoint
     from ..router import RouteDecision
     from ..sip_listener import SipInvite
@@ -141,7 +141,7 @@ async def route_sip_bridge(
     target_endpoint: PhoneEndpoint | None,
     resolved_callee: str,
     trunk_invite: bool,
-    registry: CallRegistry,
+    registry: SipEndpointRuntime,
 ) -> SipInviteResult | None:
     """Route one inbound dialog to a remote SIP endpoint."""
 

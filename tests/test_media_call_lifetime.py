@@ -15,7 +15,7 @@ MODULE = ROOT / "custom_components" / "voip_stack" / "media_call_lifetime.py"
 
 
 class _Registry:
-    pass
+    sessions: dict[str, object] = {}
 
 
 class _Bus:

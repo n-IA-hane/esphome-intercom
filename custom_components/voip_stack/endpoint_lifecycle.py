@@ -9,7 +9,6 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 
-from .call_registry import CallRegistry
 from .pbx_runtime import SipEndpointRuntime
 from .runtime_data import (
     require_runtime_data,
@@ -42,15 +41,12 @@ async def cancel_runtime_tasks(hass: HomeAssistant) -> None:
         await asyncio.gather(*(task for task in tasks if task is not current), return_exceptions=True)
 
 
-def call_registry(hass: HomeAssistant) -> CallRegistry:
+def call_registry(hass: HomeAssistant) -> SipEndpointRuntime:
     runtime = require_runtime_data(hass)
-    if runtime.calls is None:
-        owner = SipEndpointRuntime()
-        runtime.calls = CallRegistry(owner)
-        owner.bind_projection(runtime.calls)
-        runtime.sip = owner
-    runtime.calls.bind_endpoint_registry(runtime.endpoints)
-    return runtime.calls
+    if runtime.sip is None:
+        runtime.sip = SipEndpointRuntime()
+    runtime.sip.bind_endpoint_registry(runtime.endpoints)
+    return runtime.sip
 
 
 async def async_stop_sip_endpoint(hass: HomeAssistant) -> None:
@@ -99,5 +95,3 @@ async def _async_stop_sip_endpoint(hass: HomeAssistant) -> None:
     registry.clear_runtime()
     if runtime.sip is pbx_runtime:
         runtime.sip = None
-    if runtime.calls is registry:
-        runtime.calls = None

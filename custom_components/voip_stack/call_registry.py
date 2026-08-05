@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections import OrderedDict
-from dataclasses import dataclass, field
 import time
 from typing import TYPE_CHECKING, Any, Literal
 
-from .endpoint_session import CallLeg, CleanupStage, EndpointCallSession
+from .endpoint_session import (
+    CallEventContext,
+    CallLeg,
+    CleanupStage,
+    EndpointCallSession,
+)
 from .automation_routing import CALL_EVENT_SCHEMA_VERSION
 from .media_reservation import release_media_reservation
 from .session_cleanup import async_cleanup_sip_runtime
@@ -52,35 +54,8 @@ def _owner_observation_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in metadata.items() if key != "pbx_phase"}
 
 
-@dataclass(slots=True)
-class CallEventContext:
-    """Small bounded automation-facing history for one logical call."""
-
-    sequence: int = 0
-    state: str = ""
-    previous_state: str = ""
-    route_history: list[dict[str, Any]] = field(default_factory=list)
-    connected_at: float = 0.0
-    duration_seconds: int | None = None
-
-
-class CallRegistry:
-    """Observable call index backed by the authoritative PBX runtime."""
-
-    def __init__(self, session_owner: SipEndpointRuntime) -> None:
-        self.media_controller_lock = asyncio.Lock()
-        self.leg_index: dict[str, str] = {}
-        self.event_contexts: dict[str, CallEventContext] = {}
-        self.terminal_summary_ids: OrderedDict[str, None] = OrderedDict()
-        self.terminated_call_ids: OrderedDict[str, int] = OrderedDict()
-        self._endpoint_registry: Any | None = None
-        self._session_owner = session_owner
-
-    @property
-    def sessions(self) -> dict[str, EndpointCallSession]:
-        """Expose the authoritative sessions without maintaining a copy."""
-
-        return self._session_owner.calls
+class CallRuntimeApi:
+    """Call operations implemented directly by the authoritative runtime."""
 
     def session_owner(self) -> SipEndpointRuntime:
         """Return the sole call owner."""
@@ -195,13 +170,13 @@ class CallRegistry:
     def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> None:
         """Record a bridge link on its call session."""
 
-        if not self._session_owner.set_bridge_link(source_call_id, dest_call_id):
+        if not self._session_owner._set_bridge_link(source_call_id, dest_call_id):
             raise RuntimeError(f"call session {source_call_id!r} is unavailable")
 
     def forget_bridge_link(self, source_call_id: str) -> str:
         """Forget a bridge link from its call session."""
 
-        return self._session_owner.forget_bridge_link(source_call_id)
+        return self._session_owner._forget_bridge_link(source_call_id)
 
     @property
     def endpoint_claims(self) -> dict[str, dict[str, str]]:
@@ -290,6 +265,10 @@ class CallRegistry:
                 generation=session.generation,
             ):
                 return False
+            for leg_id, owner_id in tuple(self.leg_index.items()):
+                if owner_id == session_id:
+                    self.leg_index.pop(leg_id, None)
+                    self.event_contexts.pop(leg_id, None)
         self._remember_terminated(
             call_id,
             session_id,
@@ -306,12 +285,11 @@ class CallRegistry:
         ``release_call`` protocol.  This keeps the SIP session model reusable in
         pure tests while making teardown the single owner of endpoint release.
         """
-        if registry is self._endpoint_registry:
+        if registry is self._session_owner.endpoint_registry:
             return
         if self.endpoint_claims:
             self._release_all_endpoint_claims()
-        self._endpoint_registry = registry
-        self._session_owner.bind_endpoint_registry(registry)
+        self._session_owner._bind_endpoint_registry(registry)
 
     def claim_endpoint(
         self,
@@ -329,7 +307,7 @@ class CallRegistry:
         ``adopt_transport`` may replace only the provisional ``physical:``
         claim emitted by an ESP state entity; it can never steal a real call.
         """
-        registry = self._endpoint_registry
+        registry = self._session_owner.endpoint_registry
         endpoint_id = str(endpoint_id or "").strip()
         if registry is None or not endpoint_id:
             return False
@@ -340,7 +318,7 @@ class CallRegistry:
             session_id,
             state="new",
         )
-        claimed = self._session_owner.claim_endpoint(
+        claimed = self._session_owner._claim_endpoint(
             session_id,
             endpoint_id,
             role=role,
@@ -356,7 +334,7 @@ class CallRegistry:
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
         if session is not None:
-            self._session_owner.release_endpoint_claims(
+            self._session_owner._release_endpoint_claims(
                 session_id,
                 generation=session.generation,
             )
@@ -367,7 +345,7 @@ class CallRegistry:
         endpoint_id = str(endpoint_id or "").strip()
         session = self.sessions.get(session_id)
         if session is not None:
-            released = self._session_owner.release_endpoint_claim(
+            released = self._session_owner._release_endpoint_claim(
                 session_id,
                 endpoint_id,
                 generation=session.generation,
@@ -762,11 +740,11 @@ class CallRegistry:
         return client
 
     def attach_relay(self, call_id: str, relay: Any) -> None:
-        if not self._session_owner.attach_relay(call_id, relay):
+        if not self._session_owner._attach_relay(call_id, relay):
             raise RuntimeError(f"call session {call_id!r} is unavailable")
 
     def take_relay(self, call_id: str) -> Any | None:
-        return self._session_owner.take_relay(call_id)
+        return self._session_owner._take_relay(call_id)
 
     def attach_client_watcher(self, call_id: str, task: Any) -> None:
         session_id = self.resolve_session_id(str(call_id or "").strip())

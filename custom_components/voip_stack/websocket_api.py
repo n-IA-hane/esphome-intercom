@@ -25,7 +25,8 @@ from .automation_routing import (
     canonical_call_origin,
     is_logbook_call_summary,
 )
-from .call_registry import TERMINAL_STATES, CallRegistry
+from .call_registry import TERMINAL_STATES
+from .pbx_runtime import SipEndpointRuntime
 from .const import (
     CONF_VIDEO_CAMERA_SEND,
     CONF_VIDEO_TRANSCODING,
@@ -403,7 +404,7 @@ def _endpoint_call_claim(
         )
 
 
-def _registry_call_is_active(registry: CallRegistry, call_id: str) -> bool:
+def _registry_call_is_active(registry: SipEndpointRuntime, call_id: str) -> bool:
     """Return whether a projected call still owns live backend state."""
     call_id = str(call_id or "").strip()
     if not call_id or registry.is_terminated(call_id):
@@ -760,7 +761,7 @@ def _sip_runtime_snapshot(
 ) -> dict[str, Any]:
     bucket = hass.data.get(DOMAIN, {})
     registry = call_registry(hass)
-    if not isinstance(registry, CallRegistry):
+    if registry is None:
         registry = None
     endpoint = sip_endpoint_manager(hass)
     data: dict[str, Any] = {

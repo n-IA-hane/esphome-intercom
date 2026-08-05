@@ -27,7 +27,7 @@ from ..sip_listener import SipInviteResult
 from ..websocket_api import _set_sip_bridge_call_state
 
 if TYPE_CHECKING:
-    from ..call_registry import CallRegistry
+    from ..pbx_runtime import SipEndpointRuntime
     from ..sip_listener import SipInvite
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ def prepare_trunk_preanswer(
     invite: SipInvite,
     trunk_config: dict[str, Any],
     direct_route_preprocessed: bool,
-    registry: CallRegistry,
+    registry: SipEndpointRuntime,
 ) -> SipInviteResult | None:
     """Prepare bounded early media when DTMF selects the destination."""
 
