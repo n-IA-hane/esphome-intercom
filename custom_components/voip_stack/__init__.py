@@ -485,6 +485,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
         debug_mode=bool(entry.data.get(CONF_DEBUG_MODE, False)),
         media_capture=bool(entry.data.get(CONF_MEDIA_CAPTURE, False)),
     )
+    from .repairs import async_sync_runtime_issues
+
+    async_sync_runtime_issues(hass)
     hass.data[DOMAIN]["manual_roster_entries"] = _manual_roster_entries(hass)
     await _async_setup_shared(hass)
     for subentry in phone_subentries(entry):

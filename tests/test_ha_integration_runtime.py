@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from homeassistant import loader
@@ -221,6 +222,62 @@ async def test_entry_runtime_owns_call_projection_and_detached_tasks(
     await cancel_runtime_tasks(hass)
     assert task.cancelled()
     assert runtime.tasks == set()
+
+
+async def test_system_health_and_media_capture_repair_are_privacy_safe(
+    hass: HomeAssistant,
+) -> None:
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.voip_stack.phone_endpoint import (
+        EndpointAvailability,
+        EndpointKind,
+    )
+    from custom_components.voip_stack.repairs import (
+        MEDIA_CAPTURE_ISSUE_ID,
+        async_sync_runtime_issues,
+    )
+    from custom_components.voip_stack.runtime_data import VoipStackRuntime
+    from custom_components.voip_stack.system_health import system_health_info
+
+    runtime = VoipStackRuntime(
+        transport_config={},
+        assist_config={},
+        trunk_config={},
+        endpoints=SimpleNamespace(
+            endpoints=(
+                SimpleNamespace(
+                    kind=EndpointKind.ESPHOME,
+                    availability=EndpointAvailability.AVAILABLE,
+                ),
+            )
+        ),
+        phones=MagicMock(),
+        media_capture=True,
+    )
+    runtime.calls = MagicMock()
+    runtime.calls.active_count.return_value = 2
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    entry.runtime_data = runtime
+    hass.data.setdefault(DOMAIN, {})["sip_rtp_port_pool"] = {40000: object()}
+
+    async_sync_runtime_issues(hass)
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, MEDIA_CAPTURE_ISSUE_ID)
+    health = await system_health_info(hass)
+
+    assert issue is not None
+    assert health["configured_phones"] == 1
+    assert health["online_esphome_phones"] == 1
+    assert health["active_calls"] == 2
+    assert health["reserved_rtp_ports"] == 1
+    assert not {"call_id", "device_id", "caller", "callee"}.intersection(health)
+
+    runtime.media_capture = False
+    async_sync_runtime_issues(hass)
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, MEDIA_CAPTURE_ISSUE_ID) is None
+    )
 
 
 async def test_deleting_the_last_browser_phone_does_not_restore_a_default(

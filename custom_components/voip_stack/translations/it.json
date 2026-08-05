@@ -185,6 +185,26 @@
       }
     }
   },
+  "system_health": {
+    "info": {
+      "sip_udp_ready": "Listener SIP UDP",
+      "sip_tcp_ready": "Listener SIP TCP",
+      "configured_phones": "Telefoni configurati",
+      "online_esphome_phones": "Telefoni ESPHome online",
+      "registered_sip_accounts": "Account SIP registrati",
+      "trunk_registered": "Trunk SIP registrato",
+      "active_calls": "Chiamate attive",
+      "reserved_rtp_ports": "Porte RTP riservate",
+      "runtime_tasks": "Task runtime",
+      "active_media_owners": "Proprietari media browser attivi"
+    }
+  },
+  "issues": {
+    "media_capture_enabled": {
+      "title": "La cattura dei media privati è attiva",
+      "description": "VoIP Stack sta salvando i media privati delle chiamate per la diagnostica. Disattiva la cattura dei media al termine della verifica."
+    }
+  },
   "exceptions": {
     "destination_required": {
       "message": "È richiesta una destinazione per la chiamata."

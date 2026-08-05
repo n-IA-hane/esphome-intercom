@@ -185,6 +185,26 @@
       }
     }
   },
+  "system_health": {
+    "info": {
+      "sip_udp_ready": "SIP UDP listener",
+      "sip_tcp_ready": "SIP TCP listener",
+      "configured_phones": "Configured phones",
+      "online_esphome_phones": "Online ESPHome phones",
+      "registered_sip_accounts": "Registered SIP accounts",
+      "trunk_registered": "SIP trunk registered",
+      "active_calls": "Active calls",
+      "reserved_rtp_ports": "Reserved RTP ports",
+      "runtime_tasks": "Runtime tasks",
+      "active_media_owners": "Active browser media owners"
+    }
+  },
+  "issues": {
+    "media_capture_enabled": {
+      "title": "Private media capture is enabled",
+      "description": "VoIP Stack is saving private call media for diagnostics. Disable media capture when troubleshooting is complete."
+    }
+  },
   "exceptions": {
     "destination_required": {
       "message": "A call destination is required."
