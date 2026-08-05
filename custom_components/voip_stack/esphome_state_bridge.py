@@ -12,6 +12,7 @@ from .endpoint_lifecycle import create_runtime_task
 from .fsm import CallState, sip_public_state
 from .outbound_lifecycle import HA_SOFTPHONE_ACTIVE_STATES
 from .peer_snapshot import device_entity_state
+from .runtime_data import runtime_data
 from .websocket_api import _fire_call_event, _get_voip_devices
 
 _TERMINAL_ESP_STATES = {
@@ -42,16 +43,16 @@ async def async_emit_state_event(
     """Mirror an ESP-published ``voip_state`` change onto the call bus."""
     if delay > 0:
         await asyncio.sleep(delay)
-    bucket = hass.data.setdefault(DOMAIN, {})
-    if generation and int(
-        bucket.setdefault("esp_state_event_generations", {}).get(entity_id, 0)
-    ) != int(generation):
+    runtime = runtime_data(hass)
+    if runtime is None:
         return
-    endpoint_registry = bucket.get("endpoint_registry")
+    if generation and int(runtime.esp_state_event_generations.get(entity_id, 0)) != int(
+        generation
+    ):
+        return
+    endpoint_registry = runtime.endpoints
     guarded_endpoint = (
-        endpoint_registry.get(expected_endpoint_id)
-        if endpoint_registry is not None and expected_endpoint_id
-        else None
+        endpoint_registry.get(expected_endpoint_id) if expected_endpoint_id else None
     )
     raw_state = state.strip().lower()
     terminal_state = raw_state in _TERMINAL_ESP_STATES
@@ -81,11 +82,8 @@ async def async_emit_state_event(
     }
     if device is not None:
         entities = device.get("entities") or {}
-        endpoint = (
-            guarded_endpoint
-            or endpoint_registry.by_device_id(device.get("device_id"))
-            if endpoint_registry is not None
-            else None
+        endpoint = guarded_endpoint or endpoint_registry.by_device_id(
+            device.get("device_id")
         )
         canonical_state = (
             CallState.RINGING.value
@@ -97,8 +95,10 @@ async def async_emit_state_event(
             or raw_state in _TERMINAL_ESP_STATES
         ):
             active = canonical_state in HA_SOFTPHONE_ACTIVE_STATES
-            transport_call_id = expected_call_id or endpoint.active_call_id or (
-                f"physical:{endpoint.endpoint_id}" if active else ""
+            transport_call_id = (
+                expected_call_id
+                or endpoint.active_call_id
+                or (f"physical:{endpoint.endpoint_id}" if active else "")
             )
             if active:
                 endpoint = endpoint_registry.sync_transport_call(
@@ -160,19 +160,16 @@ def register_state_event_bridge(hass: HomeAssistant) -> None:
             return
         if new_value.lower() in ("unknown", "unavailable"):
             return
-        generations = bucket.setdefault("esp_state_event_generations", {})
+        runtime = runtime_data(hass)
+        if runtime is None:
+            return
+        generations = runtime.esp_state_event_generations
         generation = int(generations.get(entity_id, 0) or 0) + 1
         generations[entity_id] = generation
-        endpoint_registry = bucket.get("endpoint_registry")
-        endpoint = (
-            endpoint_registry.by_entity_id(entity_id)
-            if endpoint_registry is not None
-            else None
-        )
+        endpoint_registry = runtime.endpoints
+        endpoint = endpoint_registry.by_entity_id(entity_id)
         terminal_delay = (
-            0.2
-            if new_value.strip().lower() in ("idle", "ended", "declined")
-            else 0.0
+            0.2 if new_value.strip().lower() in ("idle", "ended", "declined") else 0.0
         )
         create_runtime_task(
             hass,
@@ -183,12 +180,8 @@ def register_state_event_bridge(hass: HomeAssistant) -> None:
                 old_value,
                 terminal_delay,
                 generation=generation,
-                expected_endpoint_id=str(
-                    getattr(endpoint, "endpoint_id", "") or ""
-                ),
-                expected_call_id=str(
-                    getattr(endpoint, "active_call_id", "") or ""
-                ),
+                expected_endpoint_id=str(getattr(endpoint, "endpoint_id", "") or ""),
+                expected_call_id=str(getattr(endpoint, "active_call_id", "") or ""),
             ),
         )
 

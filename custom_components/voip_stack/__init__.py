@@ -621,7 +621,6 @@ _REMOVED_ENTRY_RUNTIME_KEYS = (
     # Entry-derived configuration and resolver caches.
     "manual_roster_entries",
     "device_resolver",
-    "esp_state_event_generations",
 )
 
 

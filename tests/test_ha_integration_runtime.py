@@ -215,6 +215,40 @@ async def test_entry_runtime_owns_call_projection_and_detached_tasks(
     assert runtime.tasks == set()
 
 
+async def test_stale_esphome_state_event_uses_entry_generation(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.voip_stack import esphome_state_bridge
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.runtime_data import VoipStackRuntime
+
+    runtime = VoipStackRuntime(
+        transport_config={},
+        assist_config={},
+        trunk_config={},
+        endpoints=EndpointRegistry(),
+        phones=MagicMock(),
+        esp_state_event_generations={"sensor.p4_voip_state": 2},
+    )
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    entry.runtime_data = runtime
+    get_devices = AsyncMock()
+    monkeypatch.setattr(esphome_state_bridge, "_get_voip_devices", get_devices)
+
+    await esphome_state_bridge.async_emit_state_event(
+        hass,
+        "sensor.p4_voip_state",
+        "idle",
+        "in_call",
+        generation=1,
+    )
+
+    get_devices.assert_not_awaited()
+    assert "esp_state_event_generations" not in hass.data.get(DOMAIN, {})
+
+
 async def test_system_health_and_media_capture_repair_are_privacy_safe(
     hass: HomeAssistant,
 ) -> None:

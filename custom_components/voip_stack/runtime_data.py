@@ -38,6 +38,7 @@ class VoipStackRuntime:
     entry_phone_signature: tuple[Any, ...] | None = None
     entry_phone_records: dict[str, dict[str, Any]] = field(default_factory=dict)
     entry_contacts_signature: tuple[dict[str, Any], ...] | None = None
+    esp_state_event_generations: dict[str, int] = field(default_factory=dict)
     rtp_port_pool: dict[str, Any] = field(default_factory=dict)
     next_rtp_port: int = 0
 
