@@ -33,7 +33,6 @@ from .const import (
     DOMAIN,
     HA_PEER_FALLBACK_NAME,
     HA_SOFTPHONE_DEVICE_ID,
-    HA_SOFTPHONE_ENDPOINT_ENTITY_ID,
     SIP_CALL_ENDED_EVENT,
 )
 from .endpoint_lifecycle import call_registry
@@ -58,6 +57,7 @@ from .debug_capture import debug_capture_pending_writes
 from .runtime_diagnostics import runtime_resource_snapshot
 from .runtime_data import (
     endpoint_directory,
+    preferred_browser_phone,
     require_runtime_data,
     runtime_data,
     sip_endpoint_manager,
@@ -1567,9 +1567,6 @@ def _endpoint_id_from_selector(
         return registry.by_device_id(device) if registry is not None and device else None
 
     for device in _values(device_id):
-        if device == HA_SOFTPHONE_DEVICE_ID:
-            selected_ids.add(DEFAULT_ENDPOINT_ID)
-            continue
         endpoint = registry.by_device_id(device) if registry is not None else None
         if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
             unresolved.append(device)
@@ -1577,9 +1574,6 @@ def _endpoint_id_from_selector(
         selected_ids.add(_normalise_endpoint_id(endpoint.endpoint_id))
 
     for entity in _values(entity_id):
-        if entity == HA_SOFTPHONE_ENDPOINT_ENTITY_ID:
-            selected_ids.add(DEFAULT_ENDPOINT_ID)
-            continue
         endpoint = _by_current_entity_id(entity)
         if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
             unresolved.append(entity)
@@ -1596,8 +1590,6 @@ def _endpoint_id_from_selector(
             # store, event and presence key must nevertheless use the stable
             # canonical identity owned by the registry.
             resolved_id = _normalise_endpoint_id(endpoint.endpoint_id)
-        elif resolved_id.casefold() == DEFAULT_ENDPOINT_ID.casefold():
-            resolved_id = DEFAULT_ENDPOINT_ID
         else:
             raise ValueError(f"Unknown Home Assistant phone endpoint: {explicit}")
         if unresolved:
@@ -1618,7 +1610,10 @@ def _endpoint_id_from_selector(
     if len(selected_ids) > 1:
         raise ValueError("Selected Devices or Entities belong to different HA phones")
     if not selected_ids:
-        return DEFAULT_ENDPOINT_ID
+        endpoint = preferred_browser_phone(hass)
+        if endpoint is None:
+            raise ValueError("Select a Home Assistant phone")
+        return endpoint.endpoint_id
     return next(iter(selected_ids))
 
 

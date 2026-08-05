@@ -1446,10 +1446,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "resolved_id = _normalise_endpoint_id(endpoint.endpoint_id)",
             selector,
         )
-        self.assertIn(
-            "resolved_id.casefold() == DEFAULT_ENDPOINT_ID.casefold()",
-            selector,
-        )
+        self.assertIn("endpoint = preferred_browser_phone(hass)", selector)
+        self.assertNotIn("return DEFAULT_ENDPOINT_ID", selector)
 
     def test_phone_subentry_live_sync_updates_endpoint_sensor(self) -> None:
         update_listener = self.config_entry_runtime[
