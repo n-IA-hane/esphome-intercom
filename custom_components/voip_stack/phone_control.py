@@ -329,6 +329,14 @@ class PhoneAdapterRegistry:
         if not selector:
             selector = self._preferred_phone_device_id
         if not selector:
+            candidates = tuple(
+                endpoint
+                for endpoint in self._endpoints.endpoints
+                if endpoint.kind is EndpointKind.BROWSER and endpoint.device_id
+            )
+            if len(candidates) == 1:
+                selector = candidates[0].device_id
+        if not selector:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
                 translation_key="phone_selection_required",

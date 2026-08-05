@@ -403,3 +403,43 @@ async def test_deleting_the_last_browser_phone_does_not_restore_a_default(
 
     assert not entry.subentries
     reload_entry.assert_not_awaited()
+
+
+async def test_new_entry_bootstraps_one_normal_named_browser_phone(
+    hass: HomeAssistant,
+) -> None:
+    from custom_components.voip_stack.phone_config import (
+        CONF_PHONE_ENDPOINT_ID,
+        CONF_PHONE_KIND,
+        CONF_PHONE_NAME,
+        async_bootstrap_browser_phone,
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, data={}, version=5)
+    entry.add_to_hass(hass)
+    hass.config.location_name = "Casa"
+
+    created = async_bootstrap_browser_phone(hass, entry)
+
+    assert created is not None
+    assert created.data[CONF_PHONE_ENDPOINT_ID].startswith("browser:")
+    assert created.data[CONF_PHONE_KIND] == "browser"
+    assert created.data[CONF_PHONE_NAME] == "Casa"
+    assert async_bootstrap_browser_phone(hass, entry) is None
+    assert len(entry.subentries) == 1
+
+
+async def test_v4_migration_marks_existing_phone_bootstrap_as_complete(
+    hass: HomeAssistant,
+) -> None:
+    from custom_components.voip_stack import async_migrate_entry
+    from custom_components.voip_stack.const import CONF_INITIAL_PHONE_CREATED
+
+    entry = MockConfigEntry(domain=DOMAIN, data={}, version=4)
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry)
+
+    assert entry.version == 5
+    assert entry.data[CONF_INITIAL_PHONE_CREATED] is True
+    assert not entry.subentries

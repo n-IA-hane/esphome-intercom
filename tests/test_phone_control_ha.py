@@ -174,7 +174,11 @@ async def test_browser_originate_uses_the_same_result_type(
     )
 
 
-async def test_implicit_source_requires_an_explicit_preferred_phone() -> None:
+async def test_implicit_source_uses_the_only_browser_phone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.voip_stack import phone_control
+
     endpoints = EndpointRegistry()
     endpoint = _endpoint(
         endpoint_id="casa",
@@ -183,6 +187,35 @@ async def test_implicit_source_requires_an_explicit_preferred_phone() -> None:
         kind=EndpointKind.BROWSER,
     )
     endpoints.register(endpoint)
+    call = _call(MagicMock(), destination="P4")
+    originate = AsyncMock()
+    monkeypatch.setattr(phone_control, "async_originate_browser_call", originate)
+    monkeypatch.setattr(
+        phone_control,
+        "_ha_softphone_state",
+        lambda *_args: {"call_id": "call-1", "state": "calling"},
+    )
+
+    result = await PhoneAdapterRegistry(call.hass, endpoints).originate(
+        call,
+        OriginateRequest(destination="P4"),
+    )
+
+    assert result.phone.device_id == "device-casa"
+    originate.assert_awaited_once()
+
+
+async def test_implicit_source_requires_selection_when_two_phones_exist() -> None:
+    endpoints = EndpointRegistry()
+    for endpoint_id in ("casa", "test"):
+        endpoints.register(
+            _endpoint(
+                endpoint_id=endpoint_id,
+                device_id=f"device-{endpoint_id}",
+                name=endpoint_id.title(),
+                kind=EndpointKind.BROWSER,
+            )
+        )
     call = _call(MagicMock(), destination="P4")
 
     with pytest.raises(ServiceValidationError) as raised:

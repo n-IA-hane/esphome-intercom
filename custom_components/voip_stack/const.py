@@ -13,6 +13,7 @@ CONF_ASSIST_ADVANCED_CALL_CONTEXT = "assist_advanced_call_context"
 CONF_DEBUG_MODE = "debug_mode"
 CONF_MEDIA_CAPTURE = "media_capture"
 CONF_PREFERRED_PHONE_DEVICE_ID = "preferred_phone_device_id"
+CONF_INITIAL_PHONE_CREATED = "initial_phone_created"
 # Keep the persisted key stable for configured entries created before the SIP
 # video profile graduated from preview status.
 CONF_SIP_VIDEO = "experimental_sip_video"

@@ -101,11 +101,16 @@ def sip_account_endpoint_id(username: object) -> str:
     return f"sip:{normalize_username(str(username or ''))}"
 
 
-def default_phone_data(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
-    """Build the migrated master softphone definition."""
+def browser_phone_data(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    *,
+    endpoint_id: str,
+) -> dict[str, Any]:
+    """Build the initial Home Assistant browser-phone definition."""
     options = entry.options
     return {
-        CONF_PHONE_ENDPOINT_ID: DEFAULT_ENDPOINT_ID,
+        CONF_PHONE_ENDPOINT_ID: endpoint_id,
         CONF_PHONE_KIND: EndpointKind.BROWSER.value,
         CONF_PHONE_NAME: (hass.config.location_name or "").strip()
         or HA_PEER_FALLBACK_NAME,
@@ -127,6 +132,29 @@ def default_phone_data(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any
         CONF_PHONE_VIDEO_ENABLED: True,
         CONF_PHONE_ENABLED: True,
     }
+
+
+def async_bootstrap_browser_phone(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> ConfigSubentry | None:
+    """Create the first normal browser phone exactly once for a new entry."""
+    if any(
+        item.data.get(CONF_PHONE_KIND) == EndpointKind.BROWSER.value
+        for item in phone_subentries(entry)
+    ):
+        return None
+    data = browser_phone_data(
+        hass,
+        entry,
+        endpoint_id=new_browser_endpoint_id(),
+    )
+    return _add_phone_subentry(
+        hass,
+        entry,
+        data=data,
+        title=str(data[CONF_PHONE_NAME]),
+    )
 
 
 def sip_account_phone_data(
@@ -236,7 +264,11 @@ def async_ensure_phone_subentries(
 ) -> None:
     """Create the master and migrate legacy registrar accounts once."""
     if phone_subentry_by_endpoint_id(entry, DEFAULT_ENDPOINT_ID) is None:
-        data = default_phone_data(hass, entry)
+        data = browser_phone_data(
+            hass,
+            entry,
+            endpoint_id=DEFAULT_ENDPOINT_ID,
+        )
         if default_overrides:
             data.update(
                 {
@@ -377,8 +409,7 @@ def _clear_browser_runtime(
 ) -> None:
     """Forget transient state owned by a deleted browser phone."""
     presence.pop(endpoint_id, None)
-    if endpoint_id != DEFAULT_ENDPOINT_ID:
-        stores.pop(endpoint_id, None)
+    stores.pop(endpoint_id, None)
 
 
 def async_setup_endpoint_registry(

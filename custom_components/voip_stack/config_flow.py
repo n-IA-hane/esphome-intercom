@@ -48,7 +48,7 @@ from .phone_config import (
     new_sip_account_endpoint_id,
     phone_subentries,
 )
-from .phone_endpoint import DEFAULT_ENDPOINT_ID, EndpointKind, OfflinePolicy
+from .phone_endpoint import EndpointKind, OfflinePolicy
 from .sip_registrar import generate_password, normalize_username
 from .const import (
     CONF_ASSIST_ADVANCED_CALL_CONTEXT,
@@ -187,7 +187,7 @@ def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
 class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for VoIP Stack."""
 
-    VERSION = 3
+    VERSION = 5
     _base_input: dict | None = None
 
     @classmethod
@@ -982,13 +982,9 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         """Keep endpoint identity and kind stable while editing settings."""
         self._reconfigure = True
         current = self._get_reconfigure_subentry().data
-        endpoint_id = str(current.get(CONF_PHONE_ENDPOINT_ID) or "")
-        if endpoint_id == DEFAULT_ENDPOINT_ID:
-            self._kind = EndpointKind.BROWSER
-        else:
-            self._kind = EndpointKind(
-                str(current.get(CONF_PHONE_KIND) or EndpointKind.BROWSER.value)
-            )
+        self._kind = EndpointKind(
+            str(current.get(CONF_PHONE_KIND) or EndpointKind.BROWSER.value)
+        )
         if self._kind is EndpointKind.BROWSER:
             return await self.async_step_browser(user_input)
         return await self.async_step_sip_account(user_input)

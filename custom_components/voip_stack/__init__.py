@@ -31,6 +31,7 @@ from .const import (
     CONF_ASSIST_PIPELINE,
     CONF_ASSIST_INTENTS,
     CONF_DEBUG_MODE,
+    CONF_INITIAL_PHONE_CREATED,
     CONF_MEDIA_CAPTURE,
     CONF_PREFERRED_PHONE_DEVICE_ID,
     CONF_SIP_VIDEO,
@@ -67,6 +68,7 @@ from .phone_control import (
 from .softphone_forward import async_forward_browser_call as _forward_browser_call
 from .phone_config import (
     async_ensure_phone_subentries,
+    async_bootstrap_browser_phone,
     async_load_legacy_default_phone_overrides,
     async_setup_endpoint_registry,
     phone_subentries,
@@ -128,6 +130,11 @@ async def async_migrate_entry(
     if config_entry.version < 4:
         hass.config_entries.async_update_entry(config_entry, version=4)
         _LOGGER.info("Prepared VoIP Stack phones for Device-based selection")
+    if config_entry.version < 5:
+        data = dict(config_entry.data)
+        data.setdefault(CONF_INITIAL_PHONE_CREATED, True)
+        hass.config_entries.async_update_entry(config_entry, data=data, version=5)
+        _LOGGER.info("Migrated VoIP Stack preferred-phone bootstrap state")
     return True
 
 
@@ -441,6 +448,11 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -> bool:
     """Set up VoIP Stack from a config entry (UI setup)."""
     previous_runtime = _runtime_data(hass)
+    if CONF_INITIAL_PHONE_CREATED not in entry.data:
+        async_bootstrap_browser_phone(hass, entry)
+        data = dict(entry.data)
+        data[CONF_INITIAL_PHONE_CREATED] = True
+        hass.config_entries.async_update_entry(entry, data=data)
     endpoint_registry = async_setup_endpoint_registry(hass, entry)
     for configured_endpoint in tuple(endpoint_registry.endpoints):
         async_ensure_endpoint_device(
@@ -452,13 +464,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     preferred_phone_device_id = str(
         entry.data.get(CONF_PREFERRED_PHONE_DEVICE_ID) or ""
     ).strip()
-    if not preferred_phone_device_id:
-        legacy_default = endpoint_registry.get("default")
-        if legacy_default is not None and legacy_default.device_id:
-            preferred_phone_device_id = legacy_default.device_id
-            data = dict(entry.data)
+    preferred_endpoint = endpoint_registry.by_device_id(preferred_phone_device_id)
+    if preferred_endpoint is None or preferred_endpoint.kind is not EndpointKind.BROWSER:
+        browser_phones = tuple(
+            endpoint
+            for endpoint in endpoint_registry.endpoints
+            if endpoint.kind is EndpointKind.BROWSER and endpoint.device_id
+        )
+        preferred_phone_device_id = (
+            browser_phones[0].device_id if len(browser_phones) == 1 else ""
+        )
+    if preferred_phone_device_id != str(
+        entry.data.get(CONF_PREFERRED_PHONE_DEVICE_ID) or ""
+    ).strip():
+        data = dict(entry.data)
+        if preferred_phone_device_id:
             data[CONF_PREFERRED_PHONE_DEVICE_ID] = preferred_phone_device_id
-            hass.config_entries.async_update_entry(entry, data=data)
+        else:
+            data.pop(CONF_PREFERRED_PHONE_DEVICE_ID, None)
+        hass.config_entries.async_update_entry(entry, data=data)
     cfg = _entry_transport_config(entry)
     assist_cfg = _entry_assist_config(entry)
     trunk_cfg = _entry_trunk_config(entry)
