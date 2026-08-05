@@ -909,7 +909,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         self.assertIn('last_sip_event="LOCAL_RING_GROUP"', runtime)
         self.assertIn("fmt.nominal_frame_bytes <= 1200", runtime)
-        self.assertIn("endpoint_id: str = DEFAULT_ENDPOINT_ID", runtime)
+        self.assertIn(
+            "browser_endpoint = browser_phone(hass, endpoint_id)", runtime
+        )
         self.assertIn("origin_endpoint_id=endpoint_id", runtime)
 
     def test_ha_softphone_routes_assist_through_local_pbx_listener(self) -> None:

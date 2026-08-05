@@ -35,7 +35,6 @@ from .const import (
     CONF_REGISTRAR_ENABLED,
     CONF_VIDEO_CAMERA_SEND,
     CONF_VIDEO_TRANSCODING,
-    HA_SOFTPHONE_DEVICE_ID,
 )
 from .endpoint_lifecycle import (
     async_stop_sip_endpoint,
@@ -63,14 +62,11 @@ from .media_ports import (
 from .media_renegotiation import async_prepare_media_update
 from .invite_router import InviteRuntime, route_invite
 from .endpoint_registry import EndpointBusyError
-from .phone_endpoint import (
-    DEFAULT_ENDPOINT_ID,
-    EndpointKind,
-)
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .router import RouteReason
 from .ring_group_orchestrator import RingGroupRuntime, run_ring_group_call
 from .runtime_data import (
+    browser_phone,
     endpoint_directory,
     require_runtime_data,
     sip_endpoint_manager,
@@ -304,8 +300,8 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         invite: SipInvite,
         *,
         route_kind: str,
-        endpoint_id: str = DEFAULT_ENDPOINT_ID,
-        endpoint_device_id: str = HA_SOFTPHONE_DEVICE_ID,
+        endpoint_id: str,
+        endpoint_device_id: str,
         callee: str | None = None,
         sip_uri: str | None = None,
         last_sip_event: str = "INVITE",
@@ -548,24 +544,17 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         entry: RosterEntry,
         *,
         context: Any | None = None,
-        endpoint_id: str = DEFAULT_ENDPOINT_ID,
+        endpoint_id: str = "",
         media_client_id: str = "",
         request_video: bool = False,
         enable_caller_video_send: bool = False,
     ) -> str:
-        endpoint_id = str(endpoint_id or DEFAULT_ENDPOINT_ID).strip() or DEFAULT_ENDPOINT_ID
-        browser_endpoint = endpoint_directory(hass).get(endpoint_id)
-        if (
-            browser_endpoint is not None
-            and browser_endpoint.kind is not EndpointKind.BROWSER
-        ):
-            raise ValueError(f"endpoint {endpoint_id!r} is not a browser phone")
-        local_name = str(
-            getattr(browser_endpoint, "name", "") or _ha_peer_name(hass)
-        ).strip()
-        endpoint_device_id = str(
-            getattr(browser_endpoint, "device_id", "") or HA_SOFTPHONE_DEVICE_ID
-        )
+        browser_endpoint = browser_phone(hass, endpoint_id)
+        if browser_endpoint is None:
+            raise ValueError("a Home Assistant phone is required")
+        endpoint_id = browser_endpoint.endpoint_id
+        local_name = browser_endpoint.name
+        endpoint_device_id = browser_endpoint.device_id
         group_name = str(entry.name or entry.id or "")
         # A timestamp is not a dialog identifier: two phones can start in the
         # same millisecond.  Use cryptographic entropy just like the normal SIP

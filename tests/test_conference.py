@@ -160,6 +160,7 @@ class _FakeHass:
             tasks=set(),
             calls=None,
             endpoints=endpoints,
+            preferred_phone_device_id="ha-softphone",
             sip=None,
             shutdown_task=None,
             rtp_port_pool={},
@@ -951,7 +952,11 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
             remote_rtp_port=45678,
         )
         entry = types.SimpleNamespace(name="Conference", id="Conference")
-        result = await manager.join(invite, entry, ring_ha=True)
+        result = await manager.join(
+            invite,
+            entry,
+            ring_endpoint_ids=("default",),
+        )
         self.assertEqual(result.status, 200)
         self.assertIn("m=audio", result.answer_sdp)
         self.assertIn("m=video 0 RTP/AVP 102", result.answer_sdp)
@@ -982,7 +987,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_first_sample(heard), 1200)
         store = hass.runtime.softphones["default"]
         self.assertEqual(store["state"], "ringing")
-        self.assertEqual(store["call_id"], "conference:Conference")
+        self.assertEqual(store["call_id"], softphone_call_id)
 
         await manager.leave_ha_softphone(
             "Conference",
@@ -1151,8 +1156,8 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         assert started is not None
         softphone_call_id, _queue = started
         room = manager.rooms["Conference"]
-        self.assertIn("conference:Conference", room.legs)
-        self.assertEqual(room.legs["conference:Conference"].role, "ha")
+        self.assertIn(softphone_call_id, room.legs)
+        self.assertEqual(room.legs[softphone_call_id].role, "ha")
 
         fmt = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
         invite = sip_listener.SipInvite(
@@ -1178,7 +1183,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "Conference",
             call_id=softphone_call_id,
         )
-        self.assertNotIn("conference:Conference", room.legs)
+        self.assertNotIn(softphone_call_id, room.legs)
         self.assertIn("call-3", room.legs)
 
         await manager.leave_call("call-3", reason="remote_hangup")

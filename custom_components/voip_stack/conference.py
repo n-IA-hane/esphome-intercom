@@ -18,7 +18,7 @@ from homeassistant.core import HomeAssistant
 
 from .audio_format import AudioFormat, PcmFormat
 from .audio_pcm import PcmFrameConverter
-from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
+from .const import DOMAIN
 from .endpoint_lifecycle import call_registry
 from .endpoint_registry import EndpointBusyError
 from .fsm import CallState, TerminalReason
@@ -28,15 +28,16 @@ from .rtp import RtpPacket, build_packet, next_sequence, next_timestamp, parse_p
 from .sdp import build_answer_directional
 from . import sdp
 from .session_cleanup import async_wait_for_cleanup
-from .runtime_data import conference_component, endpoint_directory, sip_endpoint_runtime
+from .runtime_data import (
+    browser_phone,
+    conference_component,
+    endpoint_directory,
+    sip_endpoint_runtime,
+)
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder
 from .sip_listener import SipInvite, SipInviteResult
 from .websocket_api import _fire_call_event, _set_ha_softphone_call_state
-from .phone_endpoint import (
-    DEFAULT_ENDPOINT_ID,
-    EndpointAvailability,
-    EndpointKind,
-)
+from .phone_endpoint import EndpointAvailability, EndpointKind
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -136,7 +137,6 @@ class ConferenceRoom:
         self,
         invite: SipInvite,
         *,
-        ring_ha: bool = False,
         ring_endpoints: tuple[tuple[str, str], ...] = (),
     ) -> SipInviteResult:
         if len(self.legs) >= MAX_CONFERENCE_LEGS:
@@ -185,12 +185,7 @@ class ConferenceRoom:
             if self._task is None or self._task.done():
                 self._task = self.hass.async_create_task(self._mix_loop())
             if was_empty:
-                announced = ring_endpoints or (
-                    ((DEFAULT_ENDPOINT_ID, f"conference:{self.name}"),)
-                    if ring_ha
-                    else ()
-                )
-                for endpoint_id, call_id in announced:
+                for endpoint_id, call_id in ring_endpoints:
                     self._set_softphone_ringing(
                         invite,
                         endpoint_id=endpoint_id,
@@ -621,14 +616,14 @@ class ConferenceRoom:
         target: str = "",
     ) -> None:
         endpoint = endpoint_directory(self.hass).get(endpoint_id)
+        if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
+            raise ValueError(f"endpoint {endpoint_id!r} is not a browser phone")
         self._ha_softphone_announced[call_id] = endpoint_id
         _set_ha_softphone_call_state(
             self.hass,
             CallState.RINGING.value,
             endpoint_id=endpoint_id,
-            session_device_id=str(
-                getattr(endpoint, "device_id", "") or HA_SOFTPHONE_DEVICE_ID
-            ),
+            session_device_id=endpoint.device_id,
             caller=str(caller or getattr(invite, "caller", "") or self.name),
             callee=str(target or getattr(invite, "target", "") or self.name),
             peer_name=str(caller or getattr(invite, "caller", "") or self.name),
@@ -657,14 +652,13 @@ class ConferenceRoom:
             if not endpoint_id:
                 continue
             endpoint = endpoint_registry.get(endpoint_id)
+            if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
+                continue
             _set_ha_softphone_call_state(
                 self.hass,
                 CallState.IDLE.value,
                 endpoint_id=endpoint_id,
-                session_device_id=str(
-                    getattr(endpoint, "device_id", "")
-                    or HA_SOFTPHONE_DEVICE_ID
-                ),
+                session_device_id=endpoint.device_id,
                 caller=self.name,
                 callee=self.name,
                 peer_name=self.name,
@@ -724,38 +718,30 @@ class ConferenceManager:
         call_id: str = "",
         state: str = CallState.RINGING.value,
     ) -> str:
-        endpoint_id = str(endpoint_id or DEFAULT_ENDPOINT_ID).strip()
+        endpoint = browser_phone(self.hass, endpoint_id)
+        if endpoint is None:
+            raise ValueError("a Home Assistant phone is required")
+        endpoint_id = endpoint.endpoint_id
         room_name = str(room_name or "").strip()
         registry = call_registry(self.hass)
         candidate = str(call_id or "").strip()
         if not candidate:
-            legacy = f"conference:{room_name}"
-            candidate = (
-                legacy
-                if endpoint_id == DEFAULT_ENDPOINT_ID
-                and legacy not in self.ha_calls
-                and legacy not in registry.sessions
-                and not registry.is_terminated(legacy)
-                else f"conference:{secrets.token_hex(16)}"
-            )
+            candidate = f"conference:{secrets.token_hex(16)}"
         existing = self.ha_calls.get(candidate)
         if existing is not None:
             if existing != (room_name, endpoint_id):
                 raise ValueError(f"conference call_id {candidate!r} is already bound")
             return candidate
-        endpoint = endpoint_directory(self.hass).get(endpoint_id)
         registry.upsert(
             candidate,
             state=state,
             owner="ha_softphone",
             caller=room_name,
-            callee=str(getattr(endpoint, "name", "") or endpoint_id),
+            callee=endpoint.name,
             route_kind=GROUP_TYPE_CONFERENCE,
             endpoint_id=endpoint_id,
             conference_room=room_name,
-            session_device_id=str(
-                getattr(endpoint, "device_id", "") or HA_SOFTPHONE_DEVICE_ID
-            ),
+            session_device_id=endpoint.device_id,
         )
         try:
             registry.claim_endpoint(candidate, endpoint_id, role="ha_softphone")
@@ -824,7 +810,7 @@ class ConferenceManager:
         try:
             for endpoint_id in endpoint_ids:
                 endpoint = endpoint_registry.get(endpoint_id)
-                if endpoint is not None and (
+                if endpoint is None or (
                     endpoint.kind is not EndpointKind.BROWSER
                     or endpoint.dnd
                     or endpoint.availability
@@ -853,7 +839,6 @@ class ConferenceManager:
         invite: SipInvite,
         entry: Any,
         *,
-        ring_ha: bool = False,
         ring_endpoint_ids: tuple[str, ...] = (),
     ) -> SipInviteResult:
         if self._closing or self._closed:
@@ -868,15 +853,12 @@ class ConferenceManager:
                 on_inbound_timeout=self.on_inbound_timeout,
             )
             self.rooms[room_name] = room
-        requested_endpoint_ids = ring_endpoint_ids or (
-            (DEFAULT_ENDPOINT_ID,) if ring_ha else ()
-        )
         endpoint_registry = endpoint_directory(self.hass)
         ring_endpoints: list[tuple[str, str]] = []
         try:
-            for endpoint_id in requested_endpoint_ids:
+            for endpoint_id in ring_endpoint_ids:
                 endpoint = endpoint_registry.get(endpoint_id)
-                if endpoint is not None and (
+                if endpoint is None or (
                     endpoint.kind is not EndpointKind.BROWSER
                     or endpoint.dnd
                     or endpoint.availability
@@ -890,7 +872,6 @@ class ConferenceManager:
                 ring_endpoints.append((endpoint_id, call_id))
             result = await room.join(
                 invite,
-                ring_ha=False,
                 ring_endpoints=tuple(ring_endpoints),
             )
         except BaseException:
@@ -955,7 +936,7 @@ class ConferenceManager:
         self,
         room_name: str,
         *,
-        endpoint_id: str = DEFAULT_ENDPOINT_ID,
+        endpoint_id: str = "",
         call_id: str = "",
     ) -> tuple[str, asyncio.Queue[bytes]] | None:
         if self._closing or self._closed:
@@ -972,11 +953,12 @@ class ConferenceManager:
             )
         except EndpointBusyError:
             return None
-        reservation = [(endpoint_id, resolved_call_id)]
+        resolved_endpoint_id = self.ha_calls[resolved_call_id][1]
+        reservation = [(resolved_endpoint_id, resolved_call_id)]
         try:
             queue = room.add_ha_softphone_leg(
                 call_id=resolved_call_id,
-                endpoint_id=endpoint_id,
+                endpoint_id=resolved_endpoint_id,
             )
         except BaseException:
             self._release_ha_reservations(reservation, room=room)
@@ -995,7 +977,7 @@ class ConferenceManager:
         self,
         room_name: str,
         *,
-        endpoint_id: str = DEFAULT_ENDPOINT_ID,
+        endpoint_id: str = "",
     ) -> tuple[str, asyncio.Queue[bytes]] | None:
         if self._closing or self._closed:
             return None

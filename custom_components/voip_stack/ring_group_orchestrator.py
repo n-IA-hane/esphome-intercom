@@ -18,7 +18,7 @@ from .call_scope import (
     take_pending_route as _take_pending_route,
 )
 from .config import media_capture_enabled as _media_capture_enabled
-from .const import CONF_VIDEO_TRANSCODING, HA_SOFTPHONE_DEVICE_ID
+from .const import CONF_VIDEO_TRANSCODING
 from .dial_fork import (
     DialDisposition,
     DialForkController,
@@ -47,7 +47,6 @@ from .outbound_attempts import (
     async_close_outbound_leg as _close_outbound_leg,
 )
 from .pbx_routing import unique_group_members as _unique_group_members
-from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .ring_group import (
     publish_browser_candidates_ringing as _publish_browser_candidates_ringing,
     publish_ring_group_origin_state as _publish_ring_group_origin_state,
@@ -123,13 +122,11 @@ async def run_ring_group_call(
         if origin_endpoint_id
         else None
     )
-    origin_device_id = str(
-        getattr(origin_endpoint, "device_id", "") or HA_SOFTPHONE_DEVICE_ID
-    )
+    origin_device_id = str(getattr(origin_endpoint, "device_id", "") or "")
     origin_name = str(
         getattr(origin_endpoint, "name", "") or _ha_peer_name(hass)
     ).strip()
-    ha_origin = bool(origin_endpoint_id)
+    ha_origin = origin_endpoint is not None
     call_ingress = "trunk" if invite.received_via_trunk else "extension"
     members = _unique_group_members(entry.metadata.get("members"))
     try:
@@ -998,12 +995,8 @@ async def run_ring_group_call(
             source_call_id=invite.call_id,
             terminate_sip_bridge=partial(
                 _terminate_sip_bridge,
-                endpoint_id=(
-                    origin_endpoint_id if ha_origin else DEFAULT_ENDPOINT_ID
-                ),
-                session_device_id=(
-                    origin_device_id if ha_origin else HA_SOFTPHONE_DEVICE_ID
-                ),
+                endpoint_id=origin_endpoint_id if ha_origin else "",
+                session_device_id=origin_device_id if ha_origin else "",
             ),
         )
     except asyncio.CancelledError:
