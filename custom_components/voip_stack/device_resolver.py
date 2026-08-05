@@ -17,11 +17,9 @@ from homeassistant.helpers import entity_registry as er
 from .audio_format import parse_audio_format_list
 from .const import DOMAIN
 from .device_registry_compat import device_config_entry_ids
+from .runtime_data import runtime_data
 
 _LOGGER = logging.getLogger(__name__)
-_CACHE_KEY = "device_resolver"
-
-
 _ENTITY_ROLE_TOKENS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("voip_endpoint", ("voip_endpoint",)),
     ("voip_state", ("voip_state",)),
@@ -212,9 +210,6 @@ class VoipDeviceResolver:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
 
-    def install_listeners(self) -> None:
-        """Compatibility hook; device resolution reads live state on demand."""
-
     def route_id_for_host(self, host: str) -> str:
         """ESPHome node_name slug for `host`, used as ESPHome service prefix."""
         entry = _esphome_entry_for_host(self.hass, host)
@@ -398,10 +393,10 @@ class VoipDeviceResolver:
 
 
 def get_resolver(hass: HomeAssistant) -> VoipDeviceResolver:
-    bucket = hass.data.setdefault(DOMAIN, {})
-    resolver = bucket.get(_CACHE_KEY)
+    runtime = runtime_data(hass)
+    resolver = runtime.device_resolver if runtime is not None else None
     if resolver is None:
         resolver = VoipDeviceResolver(hass)
-        resolver.install_listeners()
-        bucket[_CACHE_KEY] = resolver
+        if runtime is not None:
+            runtime.device_resolver = resolver
     return resolver

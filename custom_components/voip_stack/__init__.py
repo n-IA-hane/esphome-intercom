@@ -620,7 +620,6 @@ _REMOVED_ENTRY_RUNTIME_KEYS = (
     "video_transcoder_lock",
     # Entry-derived configuration and resolver caches.
     "manual_roster_entries",
-    "device_resolver",
 )
 
 

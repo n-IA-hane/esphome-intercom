@@ -249,6 +249,28 @@ async def test_stale_esphome_state_event_uses_entry_generation(
     assert "esp_state_event_generations" not in hass.data.get(DOMAIN, {})
 
 
+async def test_device_resolver_is_cached_on_entry_runtime(
+    hass: HomeAssistant,
+) -> None:
+    from custom_components.voip_stack.device_resolver import get_resolver
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.runtime_data import VoipStackRuntime
+
+    runtime = VoipStackRuntime(
+        transport_config={},
+        assist_config={},
+        trunk_config={},
+        endpoints=EndpointRegistry(),
+        phones=MagicMock(),
+    )
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    entry.runtime_data = runtime
+
+    assert get_resolver(hass) is get_resolver(hass) is runtime.device_resolver
+    assert "device_resolver" not in hass.data.get(DOMAIN, {})
+
+
 async def test_system_health_and_media_capture_repair_are_privacy_safe(
     hass: HomeAssistant,
 ) -> None:

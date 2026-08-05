@@ -14,6 +14,7 @@ from .endpoint_registry import EndpointRegistry
 
 if TYPE_CHECKING:
     from .call_registry import CallRegistry
+    from .device_resolver import VoipDeviceResolver
     from .pbx_runtime import SipEndpointRuntime
     from .phone_control import PhoneAdapterRegistry
 
@@ -39,6 +40,7 @@ class VoipStackRuntime:
     entry_phone_records: dict[str, dict[str, Any]] = field(default_factory=dict)
     entry_contacts_signature: tuple[dict[str, Any], ...] | None = None
     esp_state_event_generations: dict[str, int] = field(default_factory=dict)
+    device_resolver: VoipDeviceResolver | None = None
     rtp_port_pool: dict[str, Any] = field(default_factory=dict)
     next_rtp_port: int = 0
 
