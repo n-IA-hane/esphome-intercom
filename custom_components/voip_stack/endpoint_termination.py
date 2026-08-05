@@ -14,6 +14,7 @@ from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState, TerminalReason
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
+from .runtime_data import conference_component
 from .websocket_api import (
     _ha_softphone_store,
     _set_ha_softphone_call_state,
@@ -114,7 +115,7 @@ class EndpointTerminationHandler:
             if terminal_reason == TerminalReason.CANCELLED.value
             else CallState.IDLE.value
         )
-        manager = bucket.get("conference_manager")
+        manager = conference_component(self.hass)
         if manager is not None and await manager.leave_call(
             call_id,
             reason=terminal_reason,

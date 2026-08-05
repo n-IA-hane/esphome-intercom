@@ -28,7 +28,7 @@ from .rtp import RtpPacket, build_packet, next_sequence, next_timestamp, parse_p
 from .sdp import build_answer_directional
 from . import sdp
 from .session_cleanup import async_wait_for_cleanup
-from .runtime_data import sip_endpoint_runtime
+from .runtime_data import conference_component, sip_endpoint_runtime
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder
 from .sip_listener import SipInvite, SipInviteResult
 from .websocket_api import _fire_call_event, _set_ha_softphone_call_state
@@ -391,7 +391,7 @@ class ConferenceRoom:
             await asyncio.gather(task, return_exceptions=True)
         self._set_softphone_idle(reason)
         self._fire("conference_ended", "", count=0, reason=reason)
-        manager = self.hass.data.get(DOMAIN, {}).get("conference_manager")
+        manager = conference_component(self.hass)
         if isinstance(manager, ConferenceManager) and manager.rooms.get(self.name) is self:
             manager.rooms.pop(self.name, None)
 
@@ -657,7 +657,7 @@ class ConferenceRoom:
         )
         endpoint_registry = self.hass.data.get(DOMAIN, {}).get("endpoint_registry")
         registry = call_registry(self.hass)
-        manager = self.hass.data.get(DOMAIN, {}).get("conference_manager")
+        manager = conference_component(self.hass)
         for softphone_call_id, endpoint_id in selected.items():
             if not endpoint_id:
                 continue
@@ -1117,14 +1117,13 @@ def conference_manager(
     on_inbound_timeout: Callable[[str, str], Awaitable[None]] | None = None,
 ) -> ConferenceManager:
     bucket = hass.data.setdefault(DOMAIN, {})
-    manager = bucket.get("conference_manager")
+    manager = conference_component(hass)
     if not isinstance(manager, ConferenceManager) or manager.local_ip != local_ip:
         manager = ConferenceManager(
             hass,
             local_ip=local_ip,
             on_inbound_timeout=on_inbound_timeout,
         )
-        bucket["conference_manager"] = manager
         pbx_runtime = sip_endpoint_runtime(hass) or bucket.get("pbx_runtime")
         if pbx_runtime is not None:
             pbx_runtime.adopt_component(
@@ -1132,6 +1131,8 @@ def conference_manager(
                 manager,
                 closer=manager.close,
             )
+        else:
+            bucket["conference_manager"] = manager
     elif on_inbound_timeout is not None:
         manager.on_inbound_timeout = on_inbound_timeout
         for room in manager.rooms.values():

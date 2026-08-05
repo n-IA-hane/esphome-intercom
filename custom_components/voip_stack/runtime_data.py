@@ -74,7 +74,12 @@ def sip_component(hass: HomeAssistant, name: str) -> Any | None:
     runtime = sip_endpoint_runtime(hass)
     if runtime is not None:
         return runtime.component(name)
-    return hass.data.get(DOMAIN, {}).get(f"sip_{name}")
+    legacy_key = {
+        "conference_manager": "conference_manager",
+        "registrar": "sip_registrar",
+        "trunk": "sip_trunk",
+    }.get(name, f"sip_{name}")
+    return hass.data.get(DOMAIN, {}).get(legacy_key)
 
 
 def sip_registrar(hass: HomeAssistant) -> Any | None:
@@ -87,3 +92,9 @@ def sip_trunk(hass: HomeAssistant) -> Any | None:
     """Return the trunk client owned by the active SIP runtime."""
 
     return sip_component(hass, "trunk")
+
+
+def conference_component(hass: HomeAssistant) -> Any | None:
+    """Return the conference manager owned by the active SIP runtime."""
+
+    return sip_component(hass, "conference_manager")

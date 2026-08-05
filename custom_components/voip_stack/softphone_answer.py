@@ -19,7 +19,7 @@ from .media_ports import (
     reserve_sip_video_media,
 )
 from .peer_snapshot import async_advertise_host
-from .runtime_data import sip_endpoint_runtime
+from .runtime_data import conference_component, sip_endpoint_runtime
 from .route_decisions import set_pending_route_decision
 from .sip_runtime import send_bye, send_final_response
 from .softphone_commands import BrowserCallCommand, bind_service_call_controller
@@ -95,7 +95,7 @@ async def async_answer_browser_call(
         raise ServiceValidationError(f"call_id {call_id} is being forwarded")
 
     if call_id.startswith("conference:"):
-        manager = bucket.get("conference_manager")
+        manager = conference_component(hass)
         resolved = manager.resolve_ha_call(call_id) if manager is not None else None
         if resolved is None or resolved[1] != endpoint_id:
             raise ServiceValidationError(

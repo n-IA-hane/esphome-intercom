@@ -41,6 +41,7 @@ from .media_call_lifetime import (
     listen_for_media_call_end as _listen_for_call_end,
 )
 from .queue_utils import drain_queue, put_drop_oldest
+from .runtime_data import conference_component
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder, SipCallClient
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
@@ -1239,7 +1240,7 @@ async def _run_conference_audio_session(
                         raise ValueError(
                             f"browser PCM frame has {len(pcm)} bytes, expected {expected}"
                         )
-                    manager = hass.data.setdefault(DOMAIN, {}).get("conference_manager")
+                    manager = conference_component(hass)
                     if manager is not None:
                         manager.push_ha_audio(session.call_id, pcm)
                     counters["ws_rx"] += 1

@@ -135,6 +135,11 @@ def endpoint_termination(monkeypatch):
         "phone_endpoint": {
             "DEFAULT_ENDPOINT_ID": "default",
         },
+        "runtime_data": {
+            "conference_component": lambda hass: hass.data.get(
+                "voip_stack", {}
+            ).get("conference_manager"),
+        },
         "session_cleanup": {
             "async_cleanup_sip_runtime": cleanup,
         },

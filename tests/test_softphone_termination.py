@@ -59,6 +59,7 @@ def termination(monkeypatch):
         },
             "media_ports": {"release_media_reservation": Mock()},
             "phone_endpoint": {"DEFAULT_ENDPOINT_ID": "default"},
+        "runtime_data": {"conference_component": Mock(return_value=None)},
         "route_decisions": {"set_pending_route_decision": Mock()},
         "session_cleanup": {"async_cleanup_sip_runtime": AsyncMock()},
         "sip_runtime": {

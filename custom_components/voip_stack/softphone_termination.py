@@ -15,6 +15,7 @@ from .fsm import CallState, TerminalReason, sip_public_state
 from .media_ports import release_media_reservation
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .route_decisions import set_pending_route_decision
+from .runtime_data import conference_component
 from .session_cleanup import async_cleanup_sip_runtime
 from .sip_runtime import send_bye, send_final_response, sip_servers
 from .softphone_commands import BrowserCallCommand
@@ -253,7 +254,7 @@ async def async_hangup_browser_call(
     release_media_reservation(media_session)
     conference_room = str((media_session or {}).get("conference_room") or "")
     if conference_room:
-        manager = hass.data.setdefault(DOMAIN, {}).get("conference_manager")
+        manager = conference_component(hass)
         if manager is not None:
             await manager.leave_ha_softphone(
                 conference_room,

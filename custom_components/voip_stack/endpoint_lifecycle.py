@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from .call_registry import CallRegistry
 from .const import DOMAIN
 from .media_ports import release_media_reservation
-from .runtime_data import runtime_data
+from .runtime_data import conference_component, runtime_data
 from .session_cleanup import async_cleanup_sip_runtime, async_wait_for_cleanup
 
 _LOGGER = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ async def _async_stop_sip_endpoint(hass: HomeAssistant) -> None:
                 return_exceptions=True,
             )
 
-    manager = bucket.get("conference_manager")
+    manager = conference_component(hass)
     runtime_owns_manager = bool(
         pbx_runtime is not None
         and pbx_runtime.component("conference_manager") is manager

@@ -26,6 +26,7 @@ from .service_endpoints import (
 from .fsm import TerminalReason
 from .media_ports import release_media_reservation
 from .route_decisions import set_pending_route_decision
+from .runtime_data import conference_component
 from .sip_runtime import send_bye, send_final_response
 from .websocket_api import (
     _ha_softphone_store,
@@ -135,7 +136,7 @@ async def async_decline_browser_call(
             raise ServiceValidationError(str(err)) from err
         return
     if call_id.startswith("conference:"):
-        manager = hass.data.setdefault(DOMAIN, {}).get("conference_manager")
+        manager = conference_component(hass)
         if manager is not None and await manager.decline_ha_softphone(
             call_id,
             endpoint_id,
