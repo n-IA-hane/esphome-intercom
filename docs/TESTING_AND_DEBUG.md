@@ -6,18 +6,23 @@ changes.
 
 ## Automated local tests
 
-Run the HA integration suite:
+Run the regular suite through the project runner:
 
 ```bash
 cd <checkout>/esphome-intercom
-./.venv/bin/python -m pytest tests -q
+./scripts/test_suite.sh full
 ```
+
+The repository `.venv` intentionally does not install Home Assistant. Run the
+HA integration tests with `./scripts/test_suite.sh ha`; that mode selects
+`../ha-voip-lab/.venv/bin/python`, or the interpreter supplied through
+`HA_PYTHON`. Do not invoke HA test modules with the repository `.venv`.
 
 The complete local gate also runs Ruff and parses every shipped JavaScript
 module:
 
 ```bash
-./.venv/bin/python -m ruff check custom_components scripts tests
+./.venv/bin/ruff check custom_components scripts tests
 find custom_components/voip_stack/frontend -name '*.js' -print0 \
   | xargs -0 -n1 node --check
 ```

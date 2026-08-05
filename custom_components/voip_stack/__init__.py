@@ -295,9 +295,7 @@ async def _originate_phone_action(
         OriginateRequest(
             destination=str(call.data.get("destination") or "").strip(),
             send_video=bool(call.data.get("send_video", False)),
-            force_ha_bridge=bool(
-                force_ha_bridge or call.data.get("ha_bridge", False)
-            ),
+            force_ha_bridge=bool(force_ha_bridge or call.data.get("ha_bridge", False)),
             context=call.context,
         ),
     )
@@ -484,6 +482,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
         preferred_phone_device_id=preferred_phone_device_id,
         debug_mode=bool(entry.data.get(CONF_DEBUG_MODE, False)),
         media_capture=bool(entry.data.get(CONF_MEDIA_CAPTURE, False)),
+        entry_runtime_signature=_entry_runtime_signature(entry),
+        entry_phone_signature=_entry_phone_signature(entry),
+        entry_phone_records={
+            str(subentry.data.get("endpoint_id") or "").strip(): dict(subentry.data)
+            for subentry in phone_subentries(entry)
+        },
+        entry_contacts_signature=tuple(
+            dict(item)
+            for item in entry.data.get(CONF_PHONEBOOK_CONTACTS, [])
+            if isinstance(item, dict)
+        ),
     )
     from .repairs import async_sync_runtime_issues
 
@@ -520,26 +529,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
         )
     await _async_start_sip_trunk(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    bucket = hass.data.setdefault(DOMAIN, {})
-    bucket["entry_runtime_signature"] = _entry_runtime_signature(entry)
-    bucket["entry_phone_signature"] = _entry_phone_signature(entry)
-    bucket["entry_phone_records"] = {
-        str(subentry.data.get("endpoint_id") or "").strip(): dict(subentry.data)
-        for subentry in phone_subentries(entry)
-    }
-    bucket["entry_contacts_signature"] = tuple(
-        dict(item)
-        for item in entry.data.get(CONF_PHONEBOOK_CONTACTS, [])
-        if isinstance(item, dict)
-    )
     entry.async_on_unload(entry.add_update_listener(_async_config_entry_updated))
     create_runtime_task(hass, _deferred_phonebook_sync(hass))
     return True
 
 
-async def async_unload_entry(
-    hass: HomeAssistant, entry: VoipStackConfigEntry
-) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unload_ok:
@@ -627,16 +622,10 @@ _REMOVED_ENTRY_RUNTIME_KEYS = (
     "manual_roster_entries",
     "device_resolver",
     "esp_state_event_generations",
-    "entry_runtime_signature",
-    "entry_phone_signature",
-    "entry_phone_records",
-    "entry_contacts_signature",
 )
 
 
-async def async_remove_entry(
-    hass: HomeAssistant, entry: VoipStackConfigEntry
-) -> None:
+async def async_remove_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -> None:
     """Forget all runtime state owned by a permanently removed entry.
 
     Services, websocket commands and HTTP views are process-wide Home

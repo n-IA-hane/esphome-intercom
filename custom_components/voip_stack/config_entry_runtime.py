@@ -17,7 +17,7 @@ from .phone_config import (
 )
 from .phone_endpoint import EndpointKind
 from .phonebook_runtime import push_roster_json_to_esps
-from .runtime_data import sip_registrar
+from .runtime_data import runtime_data, sip_registrar
 from .store import manual_roster_entries, sip_accounts
 from .websocket_api import (
     _async_load_ha_softphone_store,
@@ -80,11 +80,12 @@ def entry_phone_signature(entry: ConfigEntry) -> tuple:
     )
 
 
-async def async_config_entry_updated(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
+async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Apply native config/subentry changes as soon as HA persists them."""
 
+    runtime = runtime_data(hass)
+    if runtime is None:
+        return
     bucket = hass.data.setdefault(DOMAIN, {})
     runtime_signature = entry_runtime_signature(entry)
     phone_signature = entry_phone_signature(entry)
@@ -93,16 +94,16 @@ async def async_config_entry_updated(
         for item in entry.data.get(CONF_PHONEBOOK_CONTACTS, [])
         if isinstance(item, dict)
     )
-    previous_runtime = bucket.get("entry_runtime_signature")
-    previous_phones = bucket.get("entry_phone_signature")
-    previous_contacts = bucket.get("entry_contacts_signature")
-    bucket["entry_runtime_signature"] = runtime_signature
-    bucket["entry_phone_signature"] = phone_signature
-    bucket["entry_phone_records"] = {
+    previous_runtime = runtime.entry_runtime_signature
+    previous_phones = runtime.entry_phone_signature
+    previous_contacts = runtime.entry_contacts_signature
+    runtime.entry_runtime_signature = runtime_signature
+    runtime.entry_phone_signature = phone_signature
+    runtime.entry_phone_records = {
         str(subentry.data.get("endpoint_id") or "").strip(): dict(subentry.data)
         for subentry in phone_subentries(entry)
     }
-    bucket["entry_contacts_signature"] = contacts_signature
+    runtime.entry_contacts_signature = contacts_signature
 
     if previous_runtime is not None and previous_runtime != runtime_signature:
         await hass.config_entries.async_reload(entry.entry_id)
@@ -115,20 +116,13 @@ async def async_config_entry_updated(
     if phones_changed:
         previous_browser_ids = {
             endpoint.endpoint_id
-            for endpoint in tuple(
-                getattr(bucket.get("endpoint_registry"), "endpoints", ())
-            )
+            for endpoint in tuple(getattr(runtime.endpoints, "endpoints", ()))
             if endpoint.kind is EndpointKind.BROWSER
         }
         sync_registry_from_entry(hass, entry)
         for subentry in phone_subentries(entry):
             endpoint_id = str(subentry.data.get("endpoint_id") or "").strip()
-            endpoint_registry = bucket.get("endpoint_registry")
-            endpoint = (
-                endpoint_registry.get(endpoint_id)
-                if endpoint_registry is not None and endpoint_id
-                else None
-            )
+            endpoint = runtime.endpoints.get(endpoint_id) if endpoint_id else None
             if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
                 continue
             await _async_load_ha_softphone_store(
@@ -137,10 +131,9 @@ async def async_config_entry_updated(
                 endpoint_id=endpoint.endpoint_id,
                 endpoint_data=dict(subentry.data),
             )
-        endpoint_registry = bucket.get("endpoint_registry")
         current_browser_ids = {
             endpoint.endpoint_id
-            for endpoint in tuple(getattr(endpoint_registry, "endpoints", ()))
+            for endpoint in tuple(runtime.endpoints.endpoints)
             if endpoint.kind is EndpointKind.BROWSER
         }
         removed_browser_ids = previous_browser_ids - current_browser_ids

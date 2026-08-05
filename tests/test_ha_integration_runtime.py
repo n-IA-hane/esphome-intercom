@@ -266,9 +266,7 @@ async def test_system_health_and_media_capture_repair_are_privacy_safe(
 
     runtime.media_capture = False
     async_sync_runtime_issues(hass)
-    assert (
-        ir.async_get(hass).async_get_issue(DOMAIN, MEDIA_CAPTURE_ISSUE_ID) is None
-    )
+    assert ir.async_get(hass).async_get_issue(DOMAIN, MEDIA_CAPTURE_ISSUE_ID) is None
 
 
 async def test_deleting_the_last_browser_phone_does_not_restore_a_default(
@@ -283,10 +281,19 @@ async def test_deleting_the_last_browser_phone_does_not_restore_a_default(
 
     entry = MockConfigEntry(domain=DOMAIN, data={}, version=4)
     entry.add_to_hass(hass)
-    bucket = hass.data.setdefault(DOMAIN, {})
-    bucket["entry_runtime_signature"] = entry_runtime_signature(entry)
-    bucket["entry_phone_signature"] = entry_phone_signature(entry)
-    bucket["entry_contacts_signature"] = ()
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.runtime_data import VoipStackRuntime
+
+    entry.runtime_data = VoipStackRuntime(
+        transport_config={},
+        assist_config={},
+        trunk_config={},
+        endpoints=EndpointRegistry(),
+        phones=MagicMock(),
+        entry_runtime_signature=entry_runtime_signature(entry),
+        entry_phone_signature=entry_phone_signature(entry),
+        entry_contacts_signature=(),
+    )
     reload_entry = AsyncMock()
     monkeypatch.setattr(hass.config_entries, "async_reload", reload_entry)
 
