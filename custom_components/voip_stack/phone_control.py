@@ -40,18 +40,6 @@ class PhoneOperation(StrEnum):
     ANSWER = "answer"
     DECLINE = "decline"
     HANGUP = "hangup"
-    DND = "dnd"
-
-
-class PhoneCapability(StrEnum):
-    """Control capabilities advertised by a local phone."""
-
-    ORIGINATE = "originate"
-    ANSWER = "answer"
-    DECLINE = "decline"
-    HANGUP = "hangup"
-    DND = "dnd"
-    VIDEO_SEND = "video_send"
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,13 +50,13 @@ class PhoneHandle:
     device_id: str
     name: str
     kind: EndpointKind
-    capabilities: frozenset[PhoneCapability]
+    capabilities: frozenset[PhoneOperation]
     transport_data: Any = field(default=None, repr=False, compare=False)
 
-    def supports(self, capability: PhoneCapability) -> bool:
+    def supports(self, operation: PhoneOperation) -> bool:
         """Return whether this phone supports one public operation."""
 
-        return capability in self.capabilities
+        return operation in self.capabilities
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,31 +296,6 @@ class EspHomePhoneAdapter:
         )
 
 
-class SipAccountAdapter:
-    """Represent a valid SIP account that cannot be remotely originated."""
-
-    async def originate(
-        self,
-        phone: PhoneHandle,
-        request: OriginateRequest,
-        *,
-        call: ServiceCall,
-    ) -> PhoneActionResult:
-        del request, call
-        raise _unsupported(phone, PhoneOperation.ORIGINATE)
-
-    async def control(
-        self,
-        phone: PhoneHandle,
-        operation: PhoneOperation,
-        request: CallControlRequest,
-        *,
-        call: ServiceCall,
-    ) -> PhoneActionResult:
-        del request, call
-        raise _unsupported(phone, operation)
-
-
 def _unsupported(
     phone: PhoneHandle,
     operation: PhoneOperation,
@@ -365,7 +328,6 @@ class PhoneAdapterRegistry:
         self._adapters: dict[EndpointKind, PhoneAdapter] = {
             EndpointKind.BROWSER: BrowserPhoneAdapter(),
             EndpointKind.ESPHOME: EspHomePhoneAdapter(),
-            EndpointKind.SIP_ACCOUNT: SipAccountAdapter(),
         }
 
     async def originate(
@@ -381,7 +343,7 @@ class PhoneAdapterRegistry:
                 translation_key="destination_required",
             )
         phone = await self._resolve_source(call)
-        if not phone.supports(PhoneCapability.ORIGINATE):
+        if not phone.supports(PhoneOperation.ORIGINATE):
             raise _unsupported(phone, PhoneOperation.ORIGINATE)
         return await self._adapters[phone.kind].originate(
             phone,
@@ -397,9 +359,8 @@ class PhoneAdapterRegistry:
     ) -> PhoneActionResult:
         """Dispatch answer, decline or hangup through the selected phone."""
 
-        capability = PhoneCapability(operation.value)
         phone = await self._resolve_source(call)
-        if not phone.supports(capability):
+        if not phone.supports(operation):
             raise _unsupported(phone, operation)
         return await self._adapters[phone.kind].control(
             phone,
@@ -426,10 +387,10 @@ class PhoneAdapterRegistry:
                     endpoint,
                     frozenset(
                         {
-                            PhoneCapability.ORIGINATE,
-                            PhoneCapability.ANSWER,
-                            PhoneCapability.DECLINE,
-                            PhoneCapability.HANGUP,
+                            PhoneOperation.ORIGINATE,
+                            PhoneOperation.ANSWER,
+                            PhoneOperation.DECLINE,
+                            PhoneOperation.HANGUP,
                         }
                     ),
                 )
@@ -446,19 +407,19 @@ class PhoneAdapterRegistry:
             entities = device.get("entities") or {}
             capabilities = set()
             if has_action(self._hass, device, "start_call"):
-                capabilities.add(PhoneCapability.ORIGINATE)
+                capabilities.add(PhoneOperation.ORIGINATE)
             if has_action(self._hass, device, "answer_call") or entities.get("call"):
-                capabilities.add(PhoneCapability.ANSWER)
+                capabilities.add(PhoneOperation.ANSWER)
             if has_action(self._hass, device, "decline_call") or entities.get(
                 "decline"
             ):
-                capabilities.add(PhoneCapability.DECLINE)
+                capabilities.add(PhoneOperation.DECLINE)
             if (
                 has_action(self._hass, device, "hangup_call")
                 or has_action(self._hass, device, "decline_call")
                 or entities.get("decline")
             ):
-                capabilities.add(PhoneCapability.HANGUP)
+                capabilities.add(PhoneOperation.HANGUP)
             return PhoneHandle(
                 endpoint_id=str(
                     getattr(live_endpoint, "endpoint_id", "")
@@ -477,10 +438,10 @@ class PhoneAdapterRegistry:
             browser,
             frozenset(
                 {
-                    PhoneCapability.ORIGINATE,
-                    PhoneCapability.ANSWER,
-                    PhoneCapability.DECLINE,
-                    PhoneCapability.HANGUP,
+                    PhoneOperation.ORIGINATE,
+                    PhoneOperation.ANSWER,
+                    PhoneOperation.DECLINE,
+                    PhoneOperation.HANGUP,
                 }
             ),
             endpoint_id=endpoint_id,
@@ -489,7 +450,7 @@ class PhoneAdapterRegistry:
     @staticmethod
     def _endpoint_handle(
         endpoint: PhoneEndpoint | None,
-        capabilities: frozenset[PhoneCapability],
+        capabilities: frozenset[PhoneOperation],
         *,
         endpoint_id: str = "",
     ) -> PhoneHandle:
