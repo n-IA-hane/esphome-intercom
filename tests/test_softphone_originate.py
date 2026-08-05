@@ -139,6 +139,10 @@ def softphone_originate(monkeypatch):
             "resolve_ha_router": Mock(),
         },
         "runtime_data": {
+            "endpoint_directory": lambda hass: hass.data.get("voip_stack", {}).get(
+                "endpoint_registry",
+                SimpleNamespace(get=lambda _endpoint_id: None),
+            ),
             "sip_registrar": lambda hass: hass.data.get("voip_stack", {}).get(
                 "sip_registrar"
             ),

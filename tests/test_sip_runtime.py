@@ -45,6 +45,19 @@ def _load_module(name: str):
 
 
 DOMAIN = _load_module("const").DOMAIN
+runtime_data = types.ModuleType(f"{PKG_NAME}.runtime_data")
+runtime_data.call_projection = lambda hass: hass.data.get(DOMAIN, {}).get(
+    "call_registry"
+)
+runtime_data.endpoint_directory = lambda hass: hass.data.get(DOMAIN, {}).get(
+    "endpoint_registry",
+    SimpleNamespace(get=lambda _endpoint_id: None),
+)
+runtime_data.sip_endpoint_manager = lambda hass: hass.data.get(DOMAIN, {}).get(
+    "sip_endpoint"
+)
+runtime_data.sip_trunk = lambda hass: hass.data.get(DOMAIN, {}).get("sip_trunk")
+sys.modules[runtime_data.__name__] = runtime_data
 sip_runtime = _load_module("sip_runtime")
 enable_reused_tcp_connection = sip_runtime.enable_reused_tcp_connection
 send_bye = sip_runtime.send_bye

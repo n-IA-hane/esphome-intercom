@@ -46,6 +46,10 @@ runtime_data = types.ModuleType(f"{PKG_NAME}.runtime_data")
 runtime_data.call_projection = lambda hass: hass.data.get("voip_stack", {}).get(
     "call_registry"
 )
+runtime_data.endpoint_directory = lambda hass: hass.data.get("voip_stack", {}).get(
+    "endpoint_registry",
+    types.SimpleNamespace(get=lambda _endpoint_id: None),
+)
 runtime_data.sip_trunk = lambda hass: hass.data.get("voip_stack", {}).get(
     "sip_trunk"
 )

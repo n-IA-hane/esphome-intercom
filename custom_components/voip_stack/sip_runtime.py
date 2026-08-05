@@ -9,7 +9,12 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-from .runtime_data import call_projection, sip_endpoint_manager, sip_trunk
+from .runtime_data import (
+    call_projection,
+    endpoint_directory,
+    sip_endpoint_manager,
+    sip_trunk,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,13 +36,12 @@ def _connected_identity_for_call(
     if session is None:
         return "", ""
     metadata = session.metadata
-    endpoint_registry = bucket.get("endpoint_registry")
-    if endpoint_registry is not None:
-        for key in ("dest_endpoint_id", "target_endpoint_id", "endpoint_id"):
-            endpoint_id = str(metadata.get(key) or "").strip()
-            endpoint = endpoint_registry.get(endpoint_id) if endpoint_id else None
-            if endpoint is not None:
-                return str(endpoint.name), str(endpoint.sip_uri_user)
+    endpoints = endpoint_directory(hass)
+    for key in ("dest_endpoint_id", "target_endpoint_id", "endpoint_id"):
+        endpoint_id = str(metadata.get(key) or "").strip()
+        endpoint = endpoints.get(endpoint_id) if endpoint_id else None
+        if endpoint is not None:
+            return str(endpoint.name), str(endpoint.sip_uri_user)
     name = str(
         metadata.get("connected_party")
         or metadata.get("answered_by")

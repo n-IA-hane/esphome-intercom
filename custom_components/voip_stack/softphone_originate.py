@@ -64,7 +64,7 @@ from .phone_endpoint import (
     EndpointKind,
 )
 from .router import RouteAction, RouteReason, ha_uri_for, resolve_ha_router
-from .runtime_data import sip_registrar, sip_trunk
+from .runtime_data import endpoint_directory, sip_registrar, sip_trunk
 from .service_endpoints import (
     async_require_phone_service_control as _require_phone_service_control,
     browser_endpoint_name as _browser_endpoint_name,
@@ -139,14 +139,10 @@ async def _async_resolve_browser_destination(
     source_endpoint_id: str,
 ):
     """Resolve a logical browser phone independently from card presence."""
-    endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-    if endpoint_registry is None:
-        return route, target, None
-
     if route.action is not RouteAction.ANSWER_HA or route.entry is None:
         return route, target, None
     endpoint_id = str((route.entry.metadata or {}).get("endpoint_id") or "").strip()
-    endpoint = endpoint_registry.get(endpoint_id) if endpoint_id else None
+    endpoint = endpoint_directory(hass).get(endpoint_id) if endpoint_id else None
     if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
         return route, target, None
     if endpoint.endpoint_id == source_endpoint_id:
@@ -168,8 +164,7 @@ def _logical_endpoint_for_route(hass: HomeAssistant, route):
     endpoint_id = str(
         ((getattr(entry, "metadata", None) or {}).get("endpoint_id")) or ""
     ).strip()
-    registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-    return registry.get(endpoint_id) if registry is not None and endpoint_id else None
+    return endpoint_directory(hass).get(endpoint_id) if endpoint_id else None
 
 
 async def async_originate_browser_call(

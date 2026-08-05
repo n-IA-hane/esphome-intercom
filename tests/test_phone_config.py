@@ -67,6 +67,10 @@ phone_endpoint = _load("phone_endpoint")
 endpoint_registry = _load("endpoint_registry")
 
 
+def _bind_runtime(entry, registry) -> None:
+    entry.runtime_data = types.SimpleNamespace(endpoints=registry)
+
+
 def test_removed_sip_offline_policy_falls_back_without_breaking_setup(
     caplog,
 ) -> None:
@@ -181,8 +185,9 @@ def test_renamed_registered_sip_account_becomes_offline_until_new_register() -> 
         subentries={subentry.subentry_id: subentry},
     )
     hass = types.SimpleNamespace(
-        data={"voip_stack": {"endpoint_registry": registry}}
+        data={"voip_stack": {}}
     )
+    _bind_runtime(entry, registry)
 
     phone_config.sync_registry_from_entry(hass, entry)
 
@@ -203,9 +208,10 @@ def test_active_removed_endpoint_is_unavailable_until_deferred_teardown() -> Non
         )
     )
     hass = types.SimpleNamespace(
-        data={"voip_stack": {"endpoint_registry": registry}}
+        data={"voip_stack": {}}
     )
     entry = types.SimpleNamespace(subentries={})
+    _bind_runtime(entry, registry)
 
     phone_config.sync_registry_from_entry(hass, entry)
 
@@ -253,6 +259,7 @@ def test_deferred_browser_removal_clears_presence_after_terminal_call() -> None:
         loop=Loop(),
     )
     registry = phone_config.async_setup_endpoint_registry(hass, entry)
+    _bind_runtime(entry, registry)
     registry.claim_call("kitchen", "call-1")
     entry.subentries.clear()
 
@@ -287,6 +294,7 @@ def test_idle_browser_removal_immediately_forgets_runtime_store() -> None:
         data={"voip_stack": {"ha_softphones": {"hall": {"state": "idle"}}}}
     )
     registry = phone_config.async_setup_endpoint_registry(hass, entry)
+    _bind_runtime(entry, registry)
     entry.subentries.clear()
 
     phone_config.sync_registry_from_entry(hass, entry)

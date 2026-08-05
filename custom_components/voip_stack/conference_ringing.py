@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from homeassistant.core import HomeAssistant
 
 from .conference import MAX_CONFERENCE_LEGS, conference_manager
-from .const import DOMAIN
 from .endpoint_lifecycle import call_registry
 from .endpoint_registry import EndpointBusyError
 from .fsm import (
@@ -31,6 +30,7 @@ from .pbx_routing import (
     unique_group_members,
 )
 from .phone_endpoint import EndpointAvailability, EndpointKind
+from .runtime_data import endpoint_directory
 
 if TYPE_CHECKING:
     from .peer import Peer
@@ -71,9 +71,7 @@ async def async_ring_conference_members(
         on_inbound_timeout=runtime.on_inbound_timeout,
     )
     registry = call_registry(runtime.hass)
-    endpoint_registry = runtime.hass.data.get(DOMAIN, {}).get(
-        "endpoint_registry"
-    )
+    endpoints = endpoint_directory(runtime.hass)
     owner_session = registry.sessions.get(
         registry.resolve_session_id(str(owner_call_id or "").strip())
     )
@@ -145,11 +143,7 @@ async def async_ring_conference_members(
         if leg.endpoint_id == source_endpoint_id:
             await async_close_outbound_leg(leg)
             continue
-        endpoint = (
-            endpoint_registry.get(leg.endpoint_id)
-            if endpoint_registry is not None and leg.endpoint_id
-            else None
-        )
+        endpoint = endpoints.get(leg.endpoint_id) if leg.endpoint_id else None
         if endpoint is not None and (
             endpoint.dnd
             or endpoint.availability is not EndpointAvailability.AVAILABLE

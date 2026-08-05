@@ -400,10 +400,6 @@ def async_setup_endpoint_registry(
         registry.register(endpoint)
         subentry_ids[endpoint.endpoint_id] = subentry.subentry_id
     bucket = hass.data.setdefault(DOMAIN, {})
-    previous_registry = bucket.get("endpoint_registry")
-    if previous_registry is not None:
-        previous_registry.close()
-    bucket["endpoint_registry"] = registry
     registry.subentry_ids = subentry_ids
     pending_removals = registry.pending_removals
 
@@ -442,8 +438,10 @@ def async_setup_endpoint_registry(
 
 def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Apply config-subentry mutations without changing active runtime fields."""
-    registry: EndpointRegistry | None = hass.data.get(DOMAIN, {}).get(
-        "endpoint_registry"
+    registry: EndpointRegistry | None = getattr(
+        getattr(entry, "runtime_data", None),
+        "endpoints",
+        None,
     )
     if registry is None:
         return
