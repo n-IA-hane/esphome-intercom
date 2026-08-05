@@ -71,64 +71,6 @@ class _EndpointRegistryStub:
 
 
 class CallRegistryEventContextTest(unittest.TestCase):
-    def test_projection_snapshots_cannot_mutate_the_authoritative_session(self) -> None:
-        registry = _registry()
-        projected = registry.upsert("call-1", state="ringing", owner="router")
-        initial_revision = projected.revision
-
-        snapshot = types.SimpleNamespace(
-            call_id="call-1",
-            generation=projected.generation,
-            phase=types.SimpleNamespace(value="established"),
-            terminal_reason="completed",
-            metadata={"pbx_phase": "stale", "route_kind": "direct"},
-        )
-        registry.publish(snapshot)
-
-        self.assertNotIn("pbx_phase", projected.metadata)
-        self.assertEqual(projected.route_kind, "")
-        self.assertEqual(projected.terminal_reason, "")
-        self.assertEqual(projected.revision, initial_revision)
-
-        registry.publish(snapshot)
-        self.assertEqual(projected.revision, initial_revision)
-
-        registry.publish(
-            types.SimpleNamespace(
-                call_id="call-1",
-                generation=projected.generation + 1,
-                phase=types.SimpleNamespace(value="held"),
-                terminal_reason="wrong-generation",
-                metadata={"route_kind": "wrong-generation"},
-            )
-        )
-        registry.publish(
-            types.SimpleNamespace(
-                call_id="",
-                generation=1,
-                phase=types.SimpleNamespace(value="held"),
-                terminal_reason="blank-call",
-                metadata={},
-            )
-        )
-
-        self.assertNotIn("pbx_phase", projected.metadata)
-        self.assertEqual(projected.route_kind, "")
-        self.assertEqual(projected.terminal_reason, "")
-        self.assertEqual(set(registry.sessions), {"call-1"})
-
-        fresh = _registry()
-        fresh.publish(
-            types.SimpleNamespace(
-                call_id="new-call",
-                generation=7,
-                phase="ringing",
-                terminal_reason="",
-                metadata={"source": "trunk"},
-            )
-        )
-        self.assertNotIn("new-call", fresh.sessions)
-
     def test_active_count_filters_terminal_and_ha_softphone_sessions(self) -> None:
         registry = _registry()
 

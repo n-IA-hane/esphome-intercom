@@ -38,7 +38,6 @@ _load_module("session_cleanup")
 endpoint_session = _load_module("endpoint_session")
 pbx_runtime = _load_module("pbx_runtime")
 SessionPhase = endpoint_session.SessionPhase
-CallProjectionSnapshot = pbx_runtime.CallProjectionSnapshot
 RuntimePhase = pbx_runtime.RuntimePhase
 SipEndpointRuntime = pbx_runtime.SipEndpointRuntime
 
@@ -46,26 +45,6 @@ SipEndpointRuntime = pbx_runtime.SipEndpointRuntime
 def _registry_runtime():
     runtime = SipEndpointRuntime()
     return runtime, runtime
-
-
-class _Projection:
-    def __init__(self) -> None:
-        self.published: list[CallProjectionSnapshot] = []
-        self.removed: list[CallProjectionSnapshot] = []
-
-    def publish(self, snapshot: CallProjectionSnapshot) -> None:
-        self.published.append(snapshot)
-
-    def remove(self, snapshot: CallProjectionSnapshot) -> None:
-        self.removed.append(snapshot)
-
-
-class _BrokenProjection:
-    def publish(self, _snapshot: CallProjectionSnapshot) -> None:
-        raise RuntimeError("publish failed")
-
-    def remove(self, _snapshot: CallProjectionSnapshot) -> None:
-        raise RuntimeError("remove failed")
 
 
 class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
@@ -96,31 +75,27 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         registry.finish_and_pop("source", reason="cancelled", state="cancelled")
         await runtime.shutdown()
 
-    async def test_runtime_owns_generations_and_observable_projection(self) -> None:
-        projection = _Projection()
-        runtime = SipEndpointRuntime(projection=projection)
+    async def test_runtime_owns_generations_and_retires_derived_indexes(self) -> None:
+        runtime = SipEndpointRuntime()
         runtime.activate()
 
         first = runtime.create_session("call-1", origin="trunk")
         first.transition(SessionPhase.ROUTING)
         first.update_metadata(destination="100")
+        runtime.observe_leg("call-1", "leg-1", role="sip")
+        runtime.event_contexts["leg-1"] = {"source": "test"}
         token = first.token
 
         self.assertIs(
             runtime.get_session("call-1", generation=token.generation), first
         )
-        self.assertEqual(
-            [item.phase for item in projection.published],
-            [SessionPhase.NEW, SessionPhase.ROUTING, SessionPhase.ROUTING],
-        )
-        self.assertEqual(
-            projection.published[-1].metadata,
-            {"origin": "trunk", "destination": "100"},
-        )
-
         await first.terminate("cancelled")
         self.assertIsNone(runtime.get_session("call-1"))
-        self.assertEqual(projection.removed[-1].generation, token.generation)
+        self.assertNotIn("leg-1", runtime.leg_index)
+        self.assertNotIn("leg-1", runtime.event_contexts)
+        self.assertTrue(
+            runtime.is_terminated("call-1", generation=token.generation)
+        )
 
         second = runtime.create_session("call-1")
         self.assertGreater(second.generation, token.generation)
@@ -192,18 +167,6 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(events, ["trunk", "udp"])
         self.assertIs(runtime.phase, RuntimePhase.STOPPED)
-
-    async def test_projection_failure_cannot_break_call_lifecycle(self) -> None:
-        runtime = SipEndpointRuntime(projection=_BrokenProjection())
-        runtime.activate()
-
-        session = runtime.create_session("call-1")
-        session.transition(SessionPhase.RINGING)
-        result = await session.terminate("remote_hangup")
-
-        self.assertEqual(result.reason, "remote_hangup")
-        self.assertIs(session.phase, SessionPhase.TERMINATED)
-        self.assertIsNone(runtime.get_session("call-1"))
 
     async def test_shutdown_survives_repeated_waiter_cancellation(self) -> None:
         release = asyncio.Event()

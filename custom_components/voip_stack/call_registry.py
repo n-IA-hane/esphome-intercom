@@ -162,18 +162,12 @@ class CallRuntimeApi:
     def endpoint_claims(self) -> dict[str, dict[str, str]]:
         return self.endpoint_claims_snapshot()
 
-    def publish(self, snapshot: Any) -> None:
-        """Accept owner notifications without maintaining a second session."""
+    def _retire_observation(self, session: EndpointCallSession) -> None:
+        """Drop derived indexes after authoritative cleanup completes."""
 
-    def remove(self, snapshot: Any) -> None:
-        """Drop derived indexes after the authoritative cleanup completes."""
-
-        call_id = str(snapshot.call_id or "").strip()
-        session = self.sessions.get(call_id)
-        if session is not None and session.generation != int(snapshot.generation):
-            return
-        self._remember_terminated(call_id, generation=int(snapshot.generation))
-        for leg_id in tuple(snapshot.leg_ids):
+        call_id = session.call_id
+        self._remember_terminated(call_id, generation=session.generation)
+        for leg_id in tuple(session.legs):
             self.leg_index.pop(leg_id, None)
             self.event_contexts.pop(leg_id, None)
         self.leg_index.pop(call_id, None)

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import inspect
 import logging
-from typing import Any, Protocol
+from typing import Any
 
 from .call_registry import CallRuntimeApi
 from .endpoint_session import (
@@ -35,26 +35,6 @@ class RuntimePhase(StrEnum):
     ACTIVE = "active"
     STOPPING = "stopping"
     STOPPED = "stopped"
-
-
-@dataclass(frozen=True, slots=True)
-class CallProjectionSnapshot:
-    """Read-only observable projection of one authoritative call session."""
-
-    call_id: str
-    generation: int
-    phase: SessionPhase
-    terminal_reason: str
-    leg_ids: tuple[str, ...]
-    metadata: dict[str, Any]
-
-
-class CallProjection(Protocol):
-    """Projection boundary; implementations never own call resources."""
-
-    def publish(self, snapshot: CallProjectionSnapshot) -> None: ...
-
-    def remove(self, snapshot: CallProjectionSnapshot) -> None: ...
 
 
 ComponentCloser = Callable[[], Awaitable[None] | None]
@@ -158,7 +138,6 @@ class SipEndpointRuntime(CallRuntimeApi):
     def __init__(
         self,
         *,
-        projection: CallProjection | None = None,
         allow_dark_sessions: bool = False,
     ) -> None:
         self.phase = RuntimePhase.DARK
@@ -170,7 +149,6 @@ class SipEndpointRuntime(CallRuntimeApi):
         self.terminated_call_ids: OrderedDict[str, int] = OrderedDict()
         self.media_controller_lock = asyncio.Lock()
         self._generation = 0
-        self._projection = projection
         self._allow_dark_sessions = allow_dark_sessions
         self._components: dict[str, _OwnedComponent] = {}
         self._endpoint_registry: Any | None = None
@@ -369,8 +347,6 @@ class SipEndpointRuntime(CallRuntimeApi):
         if session is None or session.phase is SessionPhase.TERMINATED:
             return ""
         dest_call_id = str(session.metadata.pop("bridge_dest_call_id", "") or "")
-        if dest_call_id:
-            self._publish(session)
         return dest_call_id
 
     def attach_relay(self, call_id: str, relay: Any) -> None:
@@ -450,7 +426,6 @@ class SipEndpointRuntime(CallRuntimeApi):
             )
         if previous != session.endpoint_claims[clean_endpoint_id]:
             session.revision += 1
-            self._publish(session)
         return True
 
     def release_endpoint_claim(
@@ -482,7 +457,6 @@ class SipEndpointRuntime(CallRuntimeApi):
             released = bool(registry.release_call(clean_endpoint_id, session.call_id))
         if released:
             session.revision += 1
-        self._publish(session)
         return released
 
     def release_endpoint_claims(self, call_id: str) -> None:
@@ -502,36 +476,6 @@ class SipEndpointRuntime(CallRuntimeApi):
             raise RuntimeError(f"cannot activate PBX runtime from {self.phase.value}")
         self.phase = RuntimePhase.ACTIVE
 
-    def bind_projection(self, projection: CallProjection) -> None:
-        """Attach the read model before activation and before any call exists."""
-
-        if self.phase is not RuntimePhase.DARK or self.calls:
-            raise RuntimeError("PBX projection must be bound before activation")
-        if self._projection is not None and self._projection is not projection:
-            raise RuntimeError("PBX projection is already bound")
-        self._projection = projection
-
-    def _snapshot(self, session: EndpointCallSession) -> CallProjectionSnapshot:
-        return CallProjectionSnapshot(
-            call_id=session.call_id,
-            generation=session.generation,
-            phase=session.phase,
-            terminal_reason=session.terminal_reason,
-            leg_ids=tuple(session.legs),
-            metadata=dict(session.metadata),
-        )
-
-    def _publish(self, session: EndpointCallSession) -> None:
-        if self._projection is not None:
-            try:
-                self._projection.publish(self._snapshot(session))
-            except Exception:
-                _LOGGER.exception(
-                    "PBX call projection publish failed call_id=%s generation=%s",
-                    session.call_id,
-                    session.generation,
-                )
-
     def _on_terminated(
         self,
         session: EndpointCallSession,
@@ -539,17 +483,7 @@ class SipEndpointRuntime(CallRuntimeApi):
     ) -> None:
         if self.calls.get(session.call_id) is not session:
             return
-        snapshot = self._snapshot(session)
-        self.remove(snapshot)
-        if self._projection is not None:
-            try:
-                self._projection.remove(snapshot)
-            except Exception:
-                _LOGGER.exception(
-                    "PBX call projection removal failed call_id=%s generation=%s",
-                    session.call_id,
-                    session.generation,
-                )
+        self._retire_observation(session)
         self.calls.pop(session.call_id, None)
 
     def create_session(
@@ -576,12 +510,10 @@ class SipEndpointRuntime(CallRuntimeApi):
             clean_call_id,
             self._generation,
             phase=phase,
-            on_changed=self._publish,
             on_terminated=self._on_terminated,
         )
         session.metadata.update(metadata)
         self.calls[clean_call_id] = session
-        self._publish(session)
         return session
 
     def ensure_session(
@@ -593,10 +525,8 @@ class SipEndpointRuntime(CallRuntimeApi):
 
         session = self.get_session(call_id)
         if session is not None and not session.live and self.phase is RuntimePhase.DARK:
-            snapshot = self._snapshot(session)
+            self._retire_observation(session)
             self.calls.pop(session.call_id, None)
-            if self._projection is not None:
-                self._projection.remove(snapshot)
             session = None
         if session is None:
             return self.create_session(call_id, **metadata)
@@ -644,7 +574,6 @@ class SipEndpointRuntime(CallRuntimeApi):
             changed = True
         if changed:
             session.revision += 1
-            self._publish(session)
         return True
 
     def observe_leg(
@@ -702,7 +631,6 @@ class SipEndpointRuntime(CallRuntimeApi):
         if closer is not None:
             leg.closer = closer
         session.revision += 1
-        self._publish(session)
         return True
 
     def release_leg(
