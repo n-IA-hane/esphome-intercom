@@ -408,6 +408,50 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registry.client_watchers, {})
         self.assertEqual(registry.bridge_clients, {})
 
+    async def test_authoritative_session_owns_endpoint_claims_and_cleanup(self) -> None:
+        class Endpoints:
+            def __init__(self) -> None:
+                self.active: dict[str, str] = {}
+
+            def get(self, endpoint_id: str):
+                return endpoint_id if endpoint_id in {"caller", "callee"} else None
+
+            def claim_call(self, endpoint_id: str, call_id: str) -> None:
+                if endpoint_id in self.active:
+                    raise ValueError("busy")
+                self.active[endpoint_id] = call_id
+
+            def release_call(self, endpoint_id: str, call_id: str) -> bool:
+                if self.active.get(endpoint_id) != call_id:
+                    return False
+                self.active.pop(endpoint_id)
+                return True
+
+        endpoints = Endpoints()
+        registry = call_registry.CallRegistry()
+        runtime = SipEndpointRuntime(projection=registry)
+        runtime.activate()
+        registry.bind_endpoint_registry(endpoints)
+        registry.bind_session_owner(runtime)
+        registry.upsert("call-1", state="connecting", owner="router")
+
+        registry.claim_endpoint("call-1", "caller", role="source")
+        registry.claim_endpoint("call-1", "callee", role="destination")
+
+        authoritative = runtime.get_session("call-1")
+        self.assertEqual(
+            authoritative.endpoint_claims,
+            {"caller": "source", "callee": "destination"},
+        )
+        self.assertEqual(registry._legacy_endpoint_claims, {})
+        self.assertEqual(registry.endpoint_claims, {"call-1": authoritative.endpoint_claims})
+
+        registry.finish_and_pop("call-1", reason="remote_hangup", state="idle")
+        await authoritative.terminated.wait()
+
+        self.assertEqual(endpoints.active, {})
+        self.assertEqual(registry.endpoint_claims, {})
+
     async def test_watcher_that_ends_call_is_not_cancelled_by_own_cleanup(self) -> None:
         registry = call_registry.CallRegistry()
         runtime = SipEndpointRuntime(projection=registry)

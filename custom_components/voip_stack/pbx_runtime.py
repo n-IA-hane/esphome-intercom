@@ -162,6 +162,7 @@ class SipEndpointRuntime:
         self._generation = 0
         self._projection = projection
         self._components: dict[str, _OwnedComponent] = {}
+        self._endpoint_registry: Any | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
 
     @property
@@ -227,6 +228,116 @@ class SipEndpointRuntime:
     def component(self, name: str) -> Any | None:
         owned = self._components.get(str(name or "").strip())
         return owned.value if owned is not None else None
+
+    def bind_endpoint_registry(self, registry: Any | None) -> None:
+        """Bind the phone directory used by session-owned busy claims."""
+
+        if registry is self._endpoint_registry:
+            return
+        if any(session.endpoint_claims for session in self.calls.values()):
+            raise RuntimeError("cannot replace endpoint registry while calls are active")
+        self._endpoint_registry = registry
+
+    def endpoint_claims_snapshot(self) -> dict[str, dict[str, str]]:
+        """Return a detached compatibility projection of session claims."""
+
+        return {
+            call_id: dict(session.endpoint_claims)
+            for call_id, session in self.calls.items()
+            if session.endpoint_claims
+        }
+
+    def claim_endpoint(
+        self,
+        call_id: str,
+        endpoint_id: str,
+        *,
+        role: str = "endpoint",
+        adopt_transport: bool = False,
+        generation: int | None = None,
+    ) -> bool:
+        """Reserve one phone as a resource of the authoritative session."""
+
+        registry = self._endpoint_registry
+        session = self.get_session(call_id, generation=generation)
+        clean_endpoint_id = str(endpoint_id or "").strip()
+        if registry is None or session is None or not clean_endpoint_id:
+            return False
+        if adopt_transport and hasattr(registry, "adopt_transport_call"):
+            registry.adopt_transport_call(clean_endpoint_id, session.call_id)
+        else:
+            registry.claim_call(clean_endpoint_id, session.call_id)
+        previous = session.endpoint_claims.get(clean_endpoint_id)
+        session.endpoint_claims[clean_endpoint_id] = str(role or "endpoint")
+        resource_name = f"endpoint_claim:{clean_endpoint_id}"
+        if not any(resource.name == resource_name for resource in session.resources):
+
+            def _release_claim(_reason: str) -> None:
+                current = session.endpoint_claims.pop(clean_endpoint_id, None)
+                if current is not None and (
+                    not hasattr(registry, "get")
+                    or registry.get(clean_endpoint_id) is not None
+                ):
+                    registry.release_call(clean_endpoint_id, session.call_id)
+
+            session.add_resource(
+                resource_name,
+                registry,
+                _release_claim,
+                stage=CleanupStage.RESERVATION,
+            )
+        if previous != session.endpoint_claims[clean_endpoint_id]:
+            self._publish(session)
+        return True
+
+    def release_endpoint_claim(
+        self,
+        call_id: str,
+        endpoint_id: str,
+        *,
+        generation: int | None = None,
+    ) -> bool:
+        """Release one losing phone without terminating the whole call."""
+
+        session = self.get_session(call_id, generation=generation)
+        clean_endpoint_id = str(endpoint_id or "").strip()
+        if (
+            session is None
+            or not session.live
+            or clean_endpoint_id not in session.endpoint_claims
+        ):
+            return False
+        registry = self._endpoint_registry
+        session.endpoint_claims.pop(clean_endpoint_id, None)
+        session.release_resource(
+            f"endpoint_claim:{clean_endpoint_id}",
+            value=registry,
+        )
+        released = False
+        if registry is not None and (
+            not hasattr(registry, "get") or registry.get(clean_endpoint_id) is not None
+        ):
+            released = bool(registry.release_call(clean_endpoint_id, session.call_id))
+        self._publish(session)
+        return released
+
+    def release_endpoint_claims(
+        self,
+        call_id: str,
+        *,
+        generation: int | None = None,
+    ) -> None:
+        """Release every phone claim owned by one live call."""
+
+        session = self.get_session(call_id, generation=generation)
+        if session is None:
+            return
+        for endpoint_id in tuple(session.endpoint_claims):
+            self.release_endpoint_claim(
+                session.call_id,
+                endpoint_id,
+                generation=session.generation,
+            )
 
     def activate(self) -> None:
         """Make this owner authoritative without starting any I/O itself."""

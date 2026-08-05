@@ -125,6 +125,35 @@ class CallSessionOwner(Protocol):
         generation: int | None = None,
     ) -> bool: ...
 
+    def bind_endpoint_registry(self, registry: Any | None) -> None: ...
+
+    def endpoint_claims_snapshot(self) -> dict[str, dict[str, str]]: ...
+
+    def claim_endpoint(
+        self,
+        call_id: str,
+        endpoint_id: str,
+        *,
+        role: str = "endpoint",
+        adopt_transport: bool = False,
+        generation: int | None = None,
+    ) -> bool: ...
+
+    def release_endpoint_claim(
+        self,
+        call_id: str,
+        endpoint_id: str,
+        *,
+        generation: int | None = None,
+    ) -> bool: ...
+
+    def release_endpoint_claims(
+        self,
+        call_id: str,
+        *,
+        generation: int | None = None,
+    ) -> None: ...
+
 
 @dataclass(slots=True)
 class CallLeg:
@@ -198,7 +227,7 @@ class CallRegistry:
         self.bridge_clients: dict[str, str] = {}
         self.event_contexts: dict[str, CallEventContext] = {}
         self.terminal_summary_ids: OrderedDict[str, None] = OrderedDict()
-        self.endpoint_claims: dict[str, dict[str, str]] = {}
+        self._legacy_endpoint_claims: dict[str, dict[str, str]] = {}
         self.terminated_call_ids: OrderedDict[str, int] = OrderedDict()
         self._generation = 0
         self._endpoint_registry: Any | None = None
@@ -214,6 +243,7 @@ class CallRegistry:
         self._session_owner = owner
         if owner is None:
             return
+        owner.bind_endpoint_registry(self._endpoint_registry)
         for session in tuple(self.sessions.values()):
             authoritative = owner.ensure_session(
                 session.id,
@@ -235,6 +265,14 @@ class CallRegistry:
                 generation=session.generation,
                 **observation,
             )
+
+    @property
+    def endpoint_claims(self) -> dict[str, dict[str, str]]:
+        """Return claims from the sole owner, or the YAML compatibility store."""
+
+        if self._session_owner is not None:
+            return self._session_owner.endpoint_claims_snapshot()
+        return self._legacy_endpoint_claims
 
     def publish(self, snapshot: Any) -> None:
         """Receive an observable snapshot without taking lifecycle ownership."""
@@ -377,6 +415,8 @@ class CallRegistry:
         if self.endpoint_claims:
             self._release_all_endpoint_claims()
         self._endpoint_registry = registry
+        if self._session_owner is not None:
+            self._session_owner.bind_endpoint_registry(registry)
 
     def claim_endpoint(
         self,
@@ -401,27 +441,25 @@ class CallRegistry:
         session_id = self.resolve_session_id(str(call_id or "").strip())
         if not session_id:
             raise ValueError("call_id must not be empty")
+        session = self.sessions.get(session_id)
+        if session is not None and self._session_owner is not None:
+            claimed = self._session_owner.claim_endpoint(
+                session_id,
+                endpoint_id,
+                role=role,
+                adopt_transport=adopt_transport,
+                generation=session.generation,
+            )
+            if claimed:
+                session.revision += 1
+            return claimed
         if adopt_transport and hasattr(registry, "adopt_transport_call"):
             registry.adopt_transport_call(endpoint_id, session_id)
         else:
             registry.claim_call(endpoint_id, session_id)
-        claims = self.endpoint_claims.setdefault(session_id, {})
+        claims = self._legacy_endpoint_claims.setdefault(session_id, {})
         previous = claims.get(endpoint_id)
         claims[endpoint_id] = str(role or "endpoint")
-        session = self.sessions.get(session_id)
-        if session is not None and self._session_owner is not None:
-
-            def _release_claim(_reason: str) -> None:
-                self.release_endpoint_claim(session_id, endpoint_id)
-
-            self._session_owner.own_resource(
-                session_id,
-                f"endpoint_claim:{endpoint_id}",
-                self,
-                _release_claim,
-                stage=CleanupStage.RESERVATION,
-                generation=session.generation,
-            )
         if previous != claims[endpoint_id]:
             if session is not None:
                 session.revision += 1
@@ -430,10 +468,17 @@ class CallRegistry:
     def release_endpoint_claims(self, call_id: str) -> None:
         """Release every logical endpoint owned by a call or one of its legs."""
         session_id = self.resolve_session_id(str(call_id or "").strip())
-        claims = self.endpoint_claims.get(session_id, {})
+        session = self.sessions.get(session_id)
+        if session is not None and self._session_owner is not None:
+            self._session_owner.release_endpoint_claims(
+                session_id,
+                generation=session.generation,
+            )
+            return
+        claims = self._legacy_endpoint_claims.get(session_id, {})
         registry = self._endpoint_registry
         if registry is None:
-            self.endpoint_claims.pop(session_id, None)
+            self._legacy_endpoint_claims.pop(session_id, None)
             return
         for endpoint_id in tuple(claims):
             # Config removal may have already detached the endpoint from a
@@ -442,13 +487,23 @@ class CallRegistry:
             if not hasattr(registry, "get") or registry.get(endpoint_id) is not None:
                 registry.release_call(endpoint_id, session_id)
             claims.pop(endpoint_id, None)
-        self.endpoint_claims.pop(session_id, None)
+        self._legacy_endpoint_claims.pop(session_id, None)
 
     def release_endpoint_claim(self, call_id: str, endpoint_id: str) -> bool:
         """Release one losing/finished endpoint leg without ending the call."""
         session_id = self.resolve_session_id(str(call_id or "").strip())
         endpoint_id = str(endpoint_id or "").strip()
-        claims = self.endpoint_claims.get(session_id)
+        session = self.sessions.get(session_id)
+        if session is not None and self._session_owner is not None:
+            released = self._session_owner.release_endpoint_claim(
+                session_id,
+                endpoint_id,
+                generation=session.generation,
+            )
+            if released:
+                session.revision += 1
+            return released
+        claims = self._legacy_endpoint_claims.get(session_id)
         if not endpoint_id or claims is None or endpoint_id not in claims:
             return False
         registry = self._endpoint_registry
@@ -459,17 +514,10 @@ class CallRegistry:
             released = bool(registry.release_call(endpoint_id, session_id))
         claims.pop(endpoint_id, None)
         if not claims:
-            self.endpoint_claims.pop(session_id, None)
+            self._legacy_endpoint_claims.pop(session_id, None)
         session = self.sessions.get(session_id)
         if session is not None:
             session.revision += 1
-            if self._session_owner is not None:
-                self._session_owner.release_resource(
-                    session_id,
-                    f"endpoint_claim:{endpoint_id}",
-                    value=self,
-                    generation=session.generation,
-                )
         return released
 
     def _release_all_endpoint_claims(self) -> None:

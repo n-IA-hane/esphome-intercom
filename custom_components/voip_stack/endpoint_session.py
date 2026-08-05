@@ -171,6 +171,7 @@ class EndpointCallSession:
         self.legs: dict[str, CallLeg] = {}
         self.resources: list[ManagedResource] = []
         self.tasks: set[asyncio.Task[Any]] = set()
+        self.endpoint_claims: dict[str, str] = {}
         self.metadata: dict[str, Any] = {}
         self.termination_started = asyncio.Event()
         self.terminated = asyncio.Event()
