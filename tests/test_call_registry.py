@@ -65,6 +65,24 @@ class _EndpointRegistryStub:
 
 
 class CallRegistryEventContextTest(unittest.TestCase):
+    def test_active_count_filters_terminal_and_ha_softphone_sessions(self) -> None:
+        registry = call_registry.CallRegistry()
+
+        registry.upsert("terminal-first", state="idle", owner="bridge")
+        registry.upsert("active-physical", state="in_call", owner="bridge")
+        registry.upsert("active-physical-2", state="calling", owner="router")
+        registry.upsert("active-browser", state="ringing", owner="ha_softphone")
+        registry.add_leg(
+            "active-browser",
+            "browser-leg",
+            role="ha_softphone",
+            state="ringing",
+        )
+        registry.upsert("terminal-last", state="busy", owner="bridge")
+
+        self.assertEqual(registry.active_count(), 3)
+        self.assertEqual(registry.active_count(include_ha_softphone=False), 2)
+
     def test_event_v2_origin_is_transport_stable(self) -> None:
         self.assertEqual(
             automation_routing.canonical_call_origin("trunk", "ring_group"),
