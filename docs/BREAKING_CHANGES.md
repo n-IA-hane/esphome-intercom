@@ -59,6 +59,11 @@ Custom frontends must use the current scoped
 `voip_stack/subscribe_ha_softphone` WebSocket request. The card no longer
 retries the older unscoped subscription when the server rejects that request.
 
+Video WebSocket negotiation now exposes codec parameters only inside the
+directional `send` and `receive` objects. Custom clients must stop reading the
+former flat `codec`, `encoding`, `clock_rate`, `payload_type` and `fmtp`
+aliases from the negotiation root.
+
 ## 2026.8.0: upgrade checklist
 
 1. Read the `2026.8.0` sections below and the

@@ -575,7 +575,7 @@ const cameraRace = new Video();
 cameraRace._generation = 7;
 cameraRace._active = true;
 cameraRace._cameraAllowed = true;
-cameraRace._negotiated = {{ codec: "vp8" }};
+cameraRace._negotiated = {{ send: {{ codec: "vp8", encoding: "VP8" }} }};
 let cameraSetups = 0;
 let releaseCameraSetup;
 const cameraSetupGate = new Promise((resolve) => {{ releaseCameraSetup = resolve; }});
@@ -664,9 +664,11 @@ assert.equal(eofTrackStopped, 1);
 const h264Low = new Video();
 h264Low._encoding = "H264";
 h264Low._negotiated = {{
-  codec: "avc1.42800D",
-  profile_level_id: "42800d",
-  fmtp: "profile-level-id=42800d;packetization-mode=1",
+  send: {{
+    codec: "avc1.42800D",
+    profile_level_id: "42800d",
+    fmtp: "profile-level-id=42800d;packetization-mode=1",
+  }},
 }};
 const h264LowContract = h264Low._cameraCaptureContract();
 assert.equal(h264LowContract.maxFs, 396);
@@ -679,8 +681,7 @@ assert.equal(h264LowContract.maxFr, 20);
 const h264OneB = new Video();
 h264OneB._encoding = "H264";
 h264OneB._negotiated = {{
-  codec: "avc1.42B00B",
-  profile_level_id: "42b00b",
+  send: {{ codec: "avc1.42B00B", profile_level_id: "42b00b" }},
 }};
 const h264OneBContract = h264OneB._cameraCaptureContract();
 assert.equal(h264OneBContract.maxFs, 99);
@@ -693,8 +694,7 @@ assert.equal(h264OneBContract.maxFr, 15);
 const h264Default = new Video();
 h264Default._encoding = "H264";
 h264Default._negotiated = {{
-  codec: "avc1.42801F",
-  profile_level_id: "42801f",
+  send: {{ codec: "avc1.42801F", profile_level_id: "42801f" }},
 }};
 const h264DefaultContract = h264Default._cameraCaptureContract();
 assert.deepEqual(
@@ -708,7 +708,9 @@ assert.deepEqual(
 
 const vp8Limited = new Video();
 vp8Limited._encoding = "VP8";
-vp8Limited._negotiated = {{ fmtp: "max-fr=12;max-fs=1200" }};
+vp8Limited._negotiated = {{
+  send: {{ codec: "vp8", encoding: "VP8", fmtp: "max-fr=12;max-fs=1200" }},
+}};
 const vp8Contract = vp8Limited._cameraCaptureContract();
 assert.deepEqual(
   [vp8Contract.maxWidth, vp8Contract.maxHeight, vp8Contract.maxFr],
@@ -815,9 +817,9 @@ const decoderOwner = new Video();
 decoderOwner._generation = 11;
 decoderOwner._encoding = "H264";
 await decoderOwner._setupCodecs({{
-  codec: "avc1.42E01F",
   can_receive: true,
   can_send: false,
+  receive: {{ codec: "avc1.42E01F", encoding: "H264" }},
 }}, 11);
 const decoderA = decoderOwner._decoder;
 decoderOwner._generation = 12;
@@ -891,14 +893,6 @@ const Video = module.namespace.VoipStackVideo;
 const asymmetric = {{
   can_send: true,
   can_receive: true,
-  // Flat fields deliberately describe RX for compatibility with old cards.
-  codec: "avc1.64001F",
-  encoding: "H264",
-  clock_rate: 90000,
-  payload_type: 121,
-  fmtp: "profile-level-id=64001f;packetization-mode=1",
-  profile_level_id: "64001f",
-  packetization_mode: 1,
   send: {{
     codec: "avc1.42800D",
     encoding: "H264",
@@ -921,12 +915,11 @@ const asymmetric = {{
   }},
 }};
 
-// The nested directional objects win over legacy flat RX aliases, including
-// PT and clock. The browser itself does not packetize RTP, but exposing the
-// negotiated PTs in state makes diagnostics verify the backend contract.
+// Directional payload type and clock contracts remain independently visible
+// in diagnostics even though the browser does not packetize RTP itself.
 const media = new Video();
 media._negotiated = asymmetric;
-media._updateLegacyMediaAliases(asymmetric);
+media._updateMediaSummary(asymmetric);
 assert.deepEqual(
   [media._mediaContract("send").codec, media._mediaContract("send").clockRate,
     media._mediaContract("send").payloadType],
@@ -985,7 +978,7 @@ const codecs = new Video();
 codecs._generation = 7;
 codecs._cameraEnabled = true;
 codecs._negotiated = asymmetric;
-codecs._updateLegacyMediaAliases(asymmetric);
+codecs._updateMediaSummary(asymmetric);
 const senderCodecs = [];
 codecs._ensureSender = async (codec) => {{
   senderCodecs.push(codec);
@@ -1046,26 +1039,6 @@ assert.deepEqual(applied.map((item) => [
   ["avc1.42800D", "avc1.64001F", 103, 121],
 ]);
 
-// Legacy flat payloads remain a symmetric contract for both paths.
-const legacy = new Video();
-legacy._negotiated = {{
-  codec: "vp8",
-  encoding: "VP8",
-  clock_rate: 90000,
-  payload_type: 104,
-  fmtp: "max-fr=12;max-fs=1200",
-  can_send: true,
-  can_receive: true,
-}};
-assert.deepEqual(legacy._mediaContract("send"), legacy._mediaContract("receive"));
-assert.deepEqual(
-  [legacy._mediaContract("send").codec, legacy._mediaContract("send").payloadType],
-  ["vp8", 104],
-);
-assert.deepEqual(
-  [legacy._cameraCaptureContract().maxWidth, legacy._cameraCaptureContract().maxFr],
-  [640, 12],
-);
 """
     completed = subprocess.run(
         [

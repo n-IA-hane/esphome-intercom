@@ -11,7 +11,6 @@ const {
   cameraEncoderContract,
   directionalVideoContract,
   emptyVideoStats,
-  legacyVideoAliases,
 } = await import(
   `./voip-stack-video-model.js?v=${encodeURIComponent(VIDEO_MODULE_VERSION)}`
 );
@@ -679,7 +678,7 @@ export class VoipStackVideo extends EventTarget {
       ]);
       if (!this._isCurrent(generation, ws, callId)) return false;
       this._negotiated = negotiated;
-      this._updateLegacyMediaAliases(negotiated);
+      this._updateMediaSummary(negotiated);
       await this._setupCodecs(negotiated, generation);
       if (!this._isCurrent(generation, ws, callId)) return false;
       this._active = true;
@@ -697,22 +696,15 @@ export class VoipStackVideo extends EventTarget {
   }
 
   _mediaContract(direction, negotiated = this._negotiated) {
-    return directionalVideoContract(
-      negotiated,
-      direction,
-      this._encoding,
-      this._clockRate,
-    );
+    return directionalVideoContract(negotiated, direction);
   }
 
-  _updateLegacyMediaAliases(negotiated) {
-    const aliases = legacyVideoAliases(
-      negotiated,
-      this._encoding,
-      this._clockRate,
-    );
-    this._encoding = aliases.encoding;
-    this._clockRate = aliases.clockRate;
+  _updateMediaSummary(negotiated) {
+    const primaryDirection = negotiated?.can_receive === false && negotiated?.can_send
+      ? "send"
+      : "receive";
+    this._encoding = this._mediaContract(primaryDirection, negotiated).encoding;
+    this._clockRate = this._mediaContract("receive", negotiated).clockRate;
   }
 
   _handleEncoderControl(payload) {
@@ -766,7 +758,7 @@ export class VoipStackVideo extends EventTarget {
     await senderCleanup;
     if (this._ws !== ws || this._callId !== callId || generation !== this._generation) return;
     this._negotiated = negotiated;
-    this._updateLegacyMediaAliases(negotiated);
+    this._updateMediaSummary(negotiated);
     this._rtpTimestampBase = null;
     this._rtpTimestampLast = null;
     this._rtpTimestampTicks = 0;

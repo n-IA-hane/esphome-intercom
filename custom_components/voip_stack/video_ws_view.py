@@ -860,9 +860,6 @@ def _video_negotiation_payload(
     payload: dict[str, object] = {
         "state": "in_call",
         "call_id": session.call_id,
-        # Flat keys remain an RX/decoder compatibility alias for older cards.
-        # New cards must use the directional objects.
-        **_video_format_payload(current_browser_receive),
         "send": _video_format_payload(current_browser_send),
         "receive": _video_format_payload(current_browser_receive),
         "source_format": session.recv_video_format.wire_token(),

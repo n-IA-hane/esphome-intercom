@@ -20,21 +20,12 @@ export function emptyVideoStats() {
   };
 }
 
-export function directionalVideoContract(
-  negotiated,
-  direction,
-  legacyEncoding = "H264",
-  legacyClockRate = 90000,
-) {
-  // Directional payloads coexist with the original flat receive aliases so
-  // current cards remain interoperable with older custom-component builds.
+export function directionalVideoContract(negotiated, direction) {
   const nested = negotiated?.[direction];
   const media = nested && typeof nested === "object" && !Array.isArray(nested)
     ? nested
     : {};
-  const value = (key, fallback = undefined) => (
-    media[key] ?? negotiated?.[key] ?? fallback
-  );
+  const value = (key, fallback = undefined) => media[key] ?? fallback;
   const rawCodec = String(value("codec", "") || "");
   const codecToken = rawCodec.toLowerCase();
   const inferredEncoding = codecToken.startsWith("avc1")
@@ -43,7 +34,7 @@ export function directionalVideoContract(
       ? "VP8"
       : codecToken.includes("jpeg")
         ? "JPEG"
-        : String(legacyEncoding || "H264").toUpperCase();
+        : "H264";
   const encoding = String(
     value("encoding", inferredEncoding) || inferredEncoding,
   ).toUpperCase();
@@ -52,7 +43,7 @@ export function directionalVideoContract(
     : encoding === "JPEG"
       ? "jpeg"
       : "avc1.42E01F";
-  const rawClockRate = Number(value("clock_rate", legacyClockRate || 90000));
+  const rawClockRate = Number(value("clock_rate", 90000));
   const clockRate = Number.isFinite(rawClockRate) && rawClockRate > 0
     ? rawClockRate
     : 90000;
@@ -77,28 +68,6 @@ export function directionalVideoContract(
       ? rawMaxFramerate
       : null,
     format: String(value("format", "") || ""),
-  };
-}
-
-export function legacyVideoAliases(
-  negotiated,
-  legacyEncoding = "H264",
-  legacyClockRate = 90000,
-) {
-  const contract = (direction) => directionalVideoContract(
-    negotiated,
-    direction,
-    legacyEncoding,
-    legacyClockRate,
-  );
-  // The display alias historically described the canvas. For a send-only
-  // dialog it must instead describe the camera path.
-  const primaryDirection = negotiated?.can_receive === false && negotiated?.can_send
-    ? "send"
-    : "receive";
-  return {
-    encoding: contract(primaryDirection).encoding,
-    clockRate: contract("receive").clockRate,
   };
 }
 
