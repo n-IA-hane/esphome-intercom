@@ -12,9 +12,11 @@ packages:
 ```
 
 This combines the `ha_integration.yaml` entity surface,
-`ha_api.yaml` call-control actions and `phonebook_subscribe.yaml`. It exposes
-`esphome.<slug>_start_call`, so selecting the ESP as `device_id` in
-`voip_stack.call` asks that physical phone to originate the call.
+`ha_api.yaml` connectivity wrapper and `phonebook_subscribe.yaml`.
+`ha_api.yaml` imports the single shared `ha_actions.yaml` definition for
+`start_call`, `answer_call`, `decline_call` and `hangup_call`. Selecting the ESP
+as `device_id` in a public VoIP Stack action invokes the matching native action
+on that physical phone.
 
 Maintained YAMLs already include the appropriate pieces. Full
 runtime-controller profiles use `ha_integration.yaml` with
@@ -50,7 +52,8 @@ If the ESP does not appear in the HA phonebook, check that it exposes
 ## Entity-only package and manual YAML
 
 `ha_integration.yaml` is intentionally the low-level entity-only package. It
-does not expose `start_call`. Equivalent manual entity YAML:
+does not expose call control. `ha_actions.yaml` is the shared low-level action
+surface used by both connectivity wrappers. Equivalent manual entity YAML:
 
 ```yaml
 text_sensor:
