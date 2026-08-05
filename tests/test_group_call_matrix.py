@@ -173,6 +173,8 @@ class _FakeHass:
                 sessions_for=lambda channel: self.runtime.media.sessions[channel],
                 identity_locks={},
                 transcoder=None,
+                debug_capture_tasks=set(),
+                debug_capture_dropped_writes=0,
             ),
         )
 
@@ -190,7 +192,6 @@ websocket_api.runtime_data = _test_runtime
 class GroupCallMatrixTest(unittest.TestCase):
     def test_debug_snapshot_exposes_cleanup_ownership_only_when_enabled(self) -> None:
         hass = _FakeHass()
-        bucket = hass.data[const.DOMAIN]
         hass.runtime.media.owners["audio"] = {"audio-call": object()}
         hass.runtime.media.owners["video"] = {"video-call": object()}
         hass.runtime.media.transcoder = types.SimpleNamespace(

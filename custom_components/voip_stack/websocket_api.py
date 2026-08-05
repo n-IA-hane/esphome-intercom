@@ -531,21 +531,21 @@ async def async_set_ha_softphone_settings(
 
 
 def _sip_bridge_store(hass: HomeAssistant) -> dict[str, Any]:
-    return hass.data.setdefault(DOMAIN, {}).setdefault("sip_bridge_state", {})
+    return require_runtime_data(hass).sip_bridge_state
 
 
 async def _async_shutdown_all(hass: HomeAssistant) -> None:
     """Clear HA softphone volatile state before SIP transports are stopped."""
-    bucket = hass.data.setdefault(DOMAIN, {})
     registry = call_registry(hass)
     for route in list(registry.pending_routes.values()):
         future = route.get("future") if isinstance(route, dict) else None
         if future is not None and not future.done():
             future.cancel()
-    bucket.pop("sip_bridge_state", None)
+    runtime = runtime_data(hass)
+    if runtime is not None:
+        runtime.sip_bridge_state.clear()
     # HTTP views remain registered across a config-entry reload. Gate claims
     # before taking owner snapshots so a concurrent GET cannot outlive unload.
-    runtime = runtime_data(hass)
     media = runtime.media if runtime is not None else None
     if media is not None:
         media.shutdown.set()
@@ -567,7 +567,7 @@ async def _async_shutdown_all(hass: HomeAssistant) -> None:
         )
     capture_tasks = {
         task
-        for task in bucket.setdefault("debug_capture_tasks", set())
+        for task in (media.debug_capture_tasks if media is not None else set())
         if not task.done()
     }
     if capture_tasks:
@@ -900,7 +900,6 @@ def _ha_softphone_state(
 ) -> dict[str, Any]:
     endpoint_id = _normalise_endpoint_id(endpoint_id)
     store = _ha_softphone_store(hass, endpoint_id)
-    bucket = hass.data.get(DOMAIN, {})
     endpoint = _browser_endpoint(hass, endpoint_id)
     entry_runtime = runtime_data(hass)
     connected_cards = int(
@@ -954,8 +953,10 @@ def _ha_softphone_state(
                     getattr(active_transcoder, "call_id", "") or ""
                 ),
                 "debug_capture_pending_writes": debug_capture_pending_writes(),
-                "debug_capture_dropped_writes": int(
-                    bucket.get("debug_capture_dropped_writes", 0)
+                "debug_capture_dropped_writes": (
+                    entry_runtime.media.debug_capture_dropped_writes
+                    if entry_runtime is not None
+                    else 0
                 ),
             }
         )

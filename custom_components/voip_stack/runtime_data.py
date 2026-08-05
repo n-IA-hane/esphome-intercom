@@ -40,6 +40,8 @@ class BrowserMediaRuntime:
     transcoder: Any | None = None
     transcoder_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     transcoder_released: asyncio.Event = field(default_factory=asyncio.Event)
+    debug_capture_tasks: set[asyncio.Future[Any]] = field(default_factory=set)
+    debug_capture_dropped_writes: int = 0
 
     def sessions_for(self, channel: str) -> dict[str, Any]:
         """Return live sessions for one supported media channel."""
@@ -87,6 +89,7 @@ class VoipStackRuntime:
     local_bridge_unsub: Any | None = None
     softphones: dict[str, dict[str, Any]] = field(default_factory=dict)
     softphone_presence: dict[str, int] = field(default_factory=dict)
+    sip_bridge_state: dict[str, Any] = field(default_factory=dict)
 
 
 type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]

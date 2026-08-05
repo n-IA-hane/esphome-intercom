@@ -184,7 +184,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             idle_branch,
         )
         self.assertNotIn("_fire_call_event", idle_branch)
-        self.assertIn('setdefault("debug_capture_tasks", set())', body)
+        self.assertIn("media.debug_capture_tasks", body)
 
     def test_topology_details_are_exposed_only_in_debug_mode(self) -> None:
         ws = (

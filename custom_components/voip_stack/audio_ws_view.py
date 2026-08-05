@@ -256,15 +256,11 @@ def _schedule_debug_capture_write(
 ) -> None:
     """Persist diagnostics without delaying WebSocket ownership handoff."""
 
-    bucket = hass.data.setdefault(DOMAIN, {})
-    tasks: set[asyncio.Future[Any]] = bucket.setdefault(
-        "debug_capture_tasks", set()
-    )
+    media = require_runtime_data(hass).media
+    tasks = media.debug_capture_tasks
     tasks.difference_update(task for task in tasks if task.done())
     if len(tasks) >= DEBUG_CAPTURE_MAX_PENDING_WRITES:
-        bucket["debug_capture_dropped_writes"] = int(
-            bucket.get("debug_capture_dropped_writes", 0)
-        ) + 1
+        media.debug_capture_dropped_writes += 1
         _LOGGER.warning(
             "HA softphone debug capture queue full; dropping capture call_id=%s pending=%d",
             capture.call_id,
@@ -272,9 +268,7 @@ def _schedule_debug_capture_write(
         )
         return
     if not try_reserve_debug_capture_write():
-        bucket["debug_capture_dropped_writes"] = int(
-            bucket.get("debug_capture_dropped_writes", 0)
-        ) + 1
+        media.debug_capture_dropped_writes += 1
         _LOGGER.warning(
             "VoIP debug capture writer pool full; dropping audio capture call_id=%s",
             capture.call_id,

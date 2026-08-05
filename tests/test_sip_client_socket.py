@@ -573,6 +573,10 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         class Hass:
             def __init__(self) -> None:
                 self.data = {const.DOMAIN: {}}
+                self.media = types.SimpleNamespace(
+                    debug_capture_tasks=set(),
+                    debug_capture_dropped_writes=0,
+                )
 
             def async_add_executor_job(self, target, *args):
                 async def run():
@@ -585,12 +589,15 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 return asyncio.create_task(run())
 
         hass = Hass()
+        audio_ws_view.require_runtime_data = lambda _hass: types.SimpleNamespace(
+            media=hass.media
+        )
         audio_ws_view._schedule_debug_capture_write(
             hass,
             Capture(),
             {"rtp_rx": 7},
         )
-        tasks = hass.data[const.DOMAIN]["debug_capture_tasks"]
+        tasks = hass.media.debug_capture_tasks
         self.assertEqual(len(tasks), 1)
         await asyncio.wait_for(written.wait(), timeout=1)
         await asyncio.sleep(0)
@@ -614,12 +621,19 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.data = {const.DOMAIN: {}}
                 self.scheduled = 0
+                self.media = types.SimpleNamespace(
+                    debug_capture_tasks=set(),
+                    debug_capture_dropped_writes=0,
+                )
 
             def async_add_executor_job(self, _target, *_args):
                 self.scheduled += 1
                 return asyncio.get_running_loop().create_future()
 
         hass = Hass()
+        audio_ws_view.require_runtime_data = lambda _hass: types.SimpleNamespace(
+            media=hass.media
+        )
         for index in range(capture_limits.DEBUG_CAPTURE_MAX_PENDING_WRITES + 3):
             audio_ws_view._schedule_debug_capture_write(
                 hass,
@@ -627,7 +641,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 {},
             )
 
-        tasks = hass.data[const.DOMAIN]["debug_capture_tasks"]
+        tasks = hass.media.debug_capture_tasks
         self.assertEqual(
             len(tasks),
             capture_limits.DEBUG_CAPTURE_MAX_PENDING_WRITES,
@@ -687,6 +701,10 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.data = {const.DOMAIN: {}}
                 self.scheduled = 0
+                self.media = types.SimpleNamespace(
+                    debug_capture_tasks=set(),
+                    debug_capture_dropped_writes=0,
+                )
 
             def async_add_executor_job(self, _target, *_args):
                 self.scheduled += 1
@@ -699,10 +717,13 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(capture_limits.try_reserve_debug_capture_write())
                 reserved += 1
             hass = Hass()
+            audio_ws_view.require_runtime_data = lambda _hass: types.SimpleNamespace(
+                media=hass.media
+            )
             audio_ws_view._schedule_debug_capture_write(hass, Capture(), {})
             self.assertEqual(hass.scheduled, 0)
             self.assertEqual(
-                hass.data[const.DOMAIN]["debug_capture_dropped_writes"],
+                hass.media.debug_capture_dropped_writes,
                 1,
             )
         finally:
