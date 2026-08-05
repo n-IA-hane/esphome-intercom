@@ -6,9 +6,9 @@ import logging
 
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
 from .device_resolver import get_resolver
 from .peer import Peer
+from .runtime_data import sip_registrar
 from .websocket_api import _get_voip_devices
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ def format_entry_unified(peer: Peer) -> str:
 def registered_roster_entries(hass: HomeAssistant):
     """Return local SIP account roster entries with active Contact bindings."""
 
-    registrar = hass.data.get(DOMAIN, {}).get("sip_registrar")
+    registrar = sip_registrar(hass)
     entries = getattr(registrar, "registered_roster_entries", None)
     return list(entries()) if callable(entries) else []
 

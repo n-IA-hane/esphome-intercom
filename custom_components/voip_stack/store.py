@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError
 
 from .const import CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS, DOMAIN
+from .runtime_data import sip_registrar
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,6 +99,6 @@ def update_sip_accounts(hass: HomeAssistant, accounts: list[dict]) -> None:
     from .phone_config import replace_sip_account_subentries
 
     replace_sip_account_subentries(hass, entry, accounts)
-    registrar = hass.data.get(DOMAIN, {}).get("sip_registrar")
+    registrar = sip_registrar(hass)
     if registrar is not None:
         registrar.update_accounts(sip_accounts(hass))

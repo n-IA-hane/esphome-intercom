@@ -66,3 +66,18 @@ def sip_endpoint_runtime(hass: HomeAssistant) -> SipEndpointRuntime | None:
 
     runtime = runtime_data(hass)
     return runtime.sip if runtime is not None else None
+
+
+def sip_component(hass: HomeAssistant, name: str) -> Any | None:
+    """Return one component owned by the active SIP runtime."""
+
+    runtime = sip_endpoint_runtime(hass)
+    if runtime is not None:
+        return runtime.component(name)
+    return hass.data.get(DOMAIN, {}).get(f"sip_{name}")
+
+
+def sip_registrar(hass: HomeAssistant) -> Any | None:
+    """Return the local registrar without exposing its storage location."""
+
+    return sip_component(hass, "registrar")

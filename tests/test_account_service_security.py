@@ -67,11 +67,15 @@ def _load_account_services(monkeypatch, notifications: list[str], events: list[d
     store.update_sip_accounts = lambda hass, accounts: setattr(
         hass, "accounts", [dict(item) for item in accounts]
     )
+    runtime_data = types.ModuleType(f"{PACKAGE}.runtime_data")
+    runtime_data.sip_registrar = lambda hass: hass.data.get("voip_stack", {}).get(
+        "sip_registrar"
+    )
     websocket = types.ModuleType(f"{PACKAGE}.websocket_api")
     websocket._fire_call_event = lambda _hass, payload, _scope: events.append(
         dict(payload)
     )
-    for dependency in (const, registrar, store, websocket):
+    for dependency in (const, registrar, runtime_data, store, websocket):
         monkeypatch.setitem(sys.modules, dependency.__name__, dependency)
 
     name = f"{PACKAGE}.account_services"

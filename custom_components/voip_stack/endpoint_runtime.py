@@ -193,7 +193,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         on_registration_change=_on_registration_change,
     )
     bucket = hass.data.setdefault(DOMAIN, {})
-    bucket["sip_registrar"] = registrar
     registry = _call_registry(hass)
     # The explicit runtime owns call generations and ordered cleanup.  The
     # registry remains the observable/resource compatibility index consumed by

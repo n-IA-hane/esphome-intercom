@@ -17,6 +17,7 @@ from .phone_config import (
 )
 from .phone_endpoint import EndpointKind
 from .phonebook_runtime import push_roster_json_to_esps
+from .runtime_data import sip_registrar
 from .store import manual_roster_entries, sip_accounts
 from .websocket_api import (
     _async_load_ha_softphone_store,
@@ -152,7 +153,7 @@ async def async_config_entry_updated(
         if endpoint_sensor is not None:
             await endpoint_sensor.async_update()
 
-        registrar = bucket.get("sip_registrar")
+        registrar = sip_registrar(hass)
         if registrar is not None:
             registrar.update_accounts(sip_accounts(hass))
 

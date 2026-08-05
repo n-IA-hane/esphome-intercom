@@ -138,6 +138,11 @@ def softphone_originate(monkeypatch):
             "ha_uri_for": Mock(),
             "resolve_ha_router": Mock(),
         },
+        "runtime_data": {
+            "sip_registrar": lambda hass: hass.data.get("voip_stack", {}).get(
+                "sip_registrar"
+            )
+        },
         "service_endpoints": {
             "async_require_phone_service_control": AsyncMock(),
             "browser_endpoint_name": Mock(return_value="Casa"),

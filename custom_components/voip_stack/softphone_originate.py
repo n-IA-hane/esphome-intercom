@@ -64,6 +64,7 @@ from .phone_endpoint import (
     EndpointKind,
 )
 from .router import RouteAction, RouteReason, ha_uri_for, resolve_ha_router
+from .runtime_data import sip_registrar
 from .service_endpoints import (
     async_require_phone_service_control as _require_phone_service_control,
     browser_endpoint_name as _browser_endpoint_name,
@@ -91,7 +92,7 @@ async def _mark_sip_account_unreachable(hass: HomeAssistant, username: str) -> N
     wanted = (username or "").strip().lower()
     if not wanted:
         return
-    registrar = hass.data.get(DOMAIN, {}).get("sip_registrar")
+    registrar = sip_registrar(hass)
     if registrar is None:
         return
     removed = False

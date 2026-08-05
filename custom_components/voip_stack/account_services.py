@@ -9,7 +9,7 @@ from typing import Any
 from homeassistant.core import ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
-from .const import DOMAIN
+from .runtime_data import sip_registrar
 from .sip_registrar import (
     SipAccount,
     dump_account,
@@ -87,7 +87,7 @@ def build_account_service_handlers(
             if str(item.get("username") or "").lower() != username.lower()
         ]
         update_sip_accounts(hass, accounts)
-        registrar = hass.data.get(DOMAIN, {}).get("sip_registrar")
+        registrar = sip_registrar(hass)
         if registrar is not None:
             registrar.remove_registration(username)
         await refresh_and_push_phonebook(hass)
@@ -107,7 +107,7 @@ def build_account_service_handlers(
         if not found:
             raise ServiceValidationError(f"SIP account {username} does not exist")
         update_sip_accounts(hass, accounts)
-        registrar = hass.data.get(DOMAIN, {}).get("sip_registrar")
+        registrar = sip_registrar(hass)
         if registrar is not None:
             registrar.remove_registration(username)
         await refresh_and_push_phonebook(hass)
@@ -128,7 +128,7 @@ def build_account_service_handlers(
             raise ServiceValidationError(f"SIP account {username} does not exist")
         update_sip_accounts(hass, accounts)
         if not enabled:
-            registrar = hass.data.get(DOMAIN, {}).get("sip_registrar")
+            registrar = sip_registrar(hass)
             if registrar is not None:
                 registrar.remove_registration(username)
         await refresh_and_push_phonebook(hass)
