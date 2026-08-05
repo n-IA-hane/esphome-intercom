@@ -17,6 +17,7 @@ from homeassistant.core import HomeAssistant
 
 from . import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
+from .runtime_data import sip_trunk
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
     CONF_TRUNK_DTMF_ENABLED,
@@ -384,7 +385,7 @@ async def route_invite(
 
     force_ha_softphone = route_action == "answer_ha"
     trunk_cfg = _get_trunk_config(hass)
-    trunk = hass.data.get(DOMAIN, {}).get("sip_trunk")
+    trunk = sip_trunk(hass)
     trunk_ready = _trunk_enabled(trunk_cfg) and bool(
         getattr(trunk, "registered", False)
     )

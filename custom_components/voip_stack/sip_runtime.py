@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-from .runtime_data import call_projection
+from .runtime_data import call_projection, sip_trunk
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def sip_servers(hass: HomeAssistant) -> list[object]:
             for server in (bucket.get("sip_server"), bucket.get("sip_tcp_server"))
             if server is not None
         )
-    trunk_endpoint = getattr(bucket.get("sip_trunk"), "inbound_endpoint", None)
+    trunk_endpoint = getattr(sip_trunk(hass), "inbound_endpoint", None)
     if trunk_endpoint is not None:
         servers.append(trunk_endpoint)
     return servers

@@ -81,3 +81,9 @@ def sip_registrar(hass: HomeAssistant) -> Any | None:
     """Return the local registrar without exposing its storage location."""
 
     return sip_component(hass, "registrar")
+
+
+def sip_trunk(hass: HomeAssistant) -> Any | None:
+    """Return the trunk client owned by the active SIP runtime."""
+
+    return sip_component(hass, "trunk")

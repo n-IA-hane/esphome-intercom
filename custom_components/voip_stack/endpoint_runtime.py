@@ -71,7 +71,7 @@ from .phone_endpoint import (
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .router import RouteReason
 from .ring_group_orchestrator import RingGroupRuntime, run_ring_group_call
-from .runtime_data import runtime_data
+from .runtime_data import runtime_data, sip_trunk
 from .store import sip_accounts as _sip_accounts
 from .trunk_inbound_router import (
     TrunkInboundRuntime,
@@ -222,7 +222,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
 
     def _is_trunk_invite(invite: SipInvite) -> bool:
         trunk_cfg = _get_trunk_config(hass)
-        trunk = hass.data.get(DOMAIN, {}).get("sip_trunk")
+        trunk = sip_trunk(hass)
         return bool(
             _trunk_enabled(trunk_cfg)
             and invite.received_via_trunk

@@ -64,7 +64,7 @@ from .phone_endpoint import (
     EndpointKind,
 )
 from .router import RouteAction, RouteReason, ha_uri_for, resolve_ha_router
-from .runtime_data import sip_registrar
+from .runtime_data import sip_registrar, sip_trunk
 from .service_endpoints import (
     async_require_phone_service_control as _require_phone_service_control,
     browser_endpoint_name as _browser_endpoint_name,
@@ -207,7 +207,7 @@ async def async_originate_browser_call(
     )
     _ha_softphone_store(hass, endpoint_id)["device_id"] = source_device_id
     cfg = _get_transport_config(hass)
-    trunk = hass.data.get(DOMAIN, {}).get("sip_trunk")
+    trunk = sip_trunk(hass)
     trunk_cfg = _get_trunk_config(hass)
     trunk_ready = _trunk_enabled(trunk_cfg) and bool(
         getattr(trunk, "registered", False)

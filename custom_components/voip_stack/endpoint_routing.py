@@ -18,6 +18,7 @@ from .const import DOMAIN
 from .peer import Peer
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .router import resolve_ha_router
+from .runtime_data import sip_trunk
 from .store import manual_roster_entries
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ def is_ha_target(hass: HomeAssistant, value: str) -> bool:
 def ha_router_decision(hass: HomeAssistant, target: str, entries: list):
     """Resolve one target against the canonical HA dial plan."""
 
-    trunk = hass.data.get(DOMAIN, {}).get("sip_trunk")
+    trunk = sip_trunk(hass)
     configured_trunk = trunk_config(hass)
     trunk_ready = trunk_enabled(configured_trunk) and bool(
         getattr(trunk, "registered", False)

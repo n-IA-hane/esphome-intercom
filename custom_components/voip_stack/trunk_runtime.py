@@ -21,7 +21,7 @@ from .const import (
     DOMAIN,
 )
 from .session_cleanup import async_wait_for_cleanup
-from .runtime_data import sip_endpoint_runtime
+from .runtime_data import sip_endpoint_runtime, sip_trunk
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,7 +57,6 @@ async def async_start_sip_trunk(hass: HomeAssistant, *, local_ip: str) -> bool:
     if endpoint is not None:
         trunk.attach_endpoint_manager(endpoint)
     bucket = hass.data.setdefault(DOMAIN, {})
-    bucket["sip_trunk"] = trunk
     pbx_runtime = sip_endpoint_runtime(hass) or bucket.get("pbx_runtime")
     if pbx_runtime is not None:
         pbx_runtime.adopt_component("trunk", trunk, closer=trunk.stop)
@@ -86,7 +85,7 @@ async def async_stop_sip_trunk(hass: HomeAssistant) -> None:
 
 async def _async_stop_sip_trunk(hass: HomeAssistant) -> None:
     bucket = hass.data.get(DOMAIN, {})
-    trunk = bucket.get("sip_trunk")
+    trunk = sip_trunk(hass)
     if trunk is None:
         return
     try:

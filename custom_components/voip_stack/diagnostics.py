@@ -13,7 +13,7 @@ from homeassistant.helpers.device_registry import DeviceEntry
 from .config import trunk_config
 from .const import DOMAIN, INTEGRATION_VERSION
 from .runtime_diagnostics import runtime_resource_snapshot
-from .runtime_data import call_projection, runtime_data
+from .runtime_data import call_projection, runtime_data, sip_trunk
 
 
 # SIP identities, routing aliases and network topology are private even when
@@ -127,7 +127,7 @@ def _signaling_summary(bucket: dict[str, Any]) -> dict[str, Any]:
 def _trunk_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, Any]:
     """Return registration health without the provider identity."""
 
-    trunk = bucket.get("sip_trunk")
+    trunk = sip_trunk(hass)
     snapshot = getattr(trunk, "snapshot", None)
     if not callable(snapshot):
         configured = bool(trunk_config(hass).get("trunk_enabled"))

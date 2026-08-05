@@ -55,7 +55,7 @@ from .phone_config import (
 )
 from .debug_capture import debug_capture_pending_writes
 from .runtime_diagnostics import runtime_resource_snapshot
-from .runtime_data import runtime_data, sip_registrar
+from .runtime_data import runtime_data, sip_registrar, sip_trunk
 from .websocket_owner import (
     async_revoke_media_owners,
     media_websocket_owner_status,
@@ -841,7 +841,7 @@ def _sip_runtime_snapshot(
             data["last_sip_event"] = str(client_data.get("last_sip_event") or data["last_sip_event"])
             data["last_sip_status_code"] = int(client_data.get("last_sip_status_code") or data["last_sip_status_code"] or 0)
             data["last_sip_reason"] = str(client_data.get("last_sip_reason") or data["last_sip_reason"])
-    trunk = bucket.get("sip_trunk")
+    trunk = sip_trunk(hass)
     trunk_snapshot = getattr(trunk, "snapshot", None)
     if callable(trunk_snapshot):
         trunk_data = dict(trunk_snapshot())

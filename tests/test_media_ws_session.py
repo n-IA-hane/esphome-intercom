@@ -46,6 +46,9 @@ runtime_data = types.ModuleType(f"{PKG_NAME}.runtime_data")
 runtime_data.call_projection = lambda hass: hass.data.get("voip_stack", {}).get(
     "call_registry"
 )
+runtime_data.sip_trunk = lambda hass: hass.data.get("voip_stack", {}).get(
+    "sip_trunk"
+)
 sys.modules[runtime_data.__name__] = runtime_data
 media_ws_session = _load_module("media_ws_session")
 

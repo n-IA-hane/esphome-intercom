@@ -141,7 +141,10 @@ def softphone_originate(monkeypatch):
         "runtime_data": {
             "sip_registrar": lambda hass: hass.data.get("voip_stack", {}).get(
                 "sip_registrar"
-            )
+            ),
+            "sip_trunk": lambda hass: hass.data.get("voip_stack", {}).get(
+                "sip_trunk"
+            ),
         },
         "service_endpoints": {
             "async_require_phone_service_control": AsyncMock(),
