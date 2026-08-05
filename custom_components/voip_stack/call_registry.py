@@ -52,13 +52,7 @@ class CallLeg:
 
 @dataclass(slots=True)
 class CallSession:
-    """Observable compatibility view of one authoritative PBX session.
-
-    ``generation`` distinguishes a new call lifetime from late callbacks that
-    still carry the same external Call-ID.  ``revision`` orders projections
-    within that lifetime.  Neither field is a SIP CSeq: SIP transaction and
-    dialog ordering remain owned by the signaling layer.
-    """
+    """Observable view of one PBX session lifetime."""
 
     id: str
     generation: int = 0
@@ -87,15 +81,7 @@ class CallEventContext:
 
 
 class CallRegistry:
-    """Compatibility index shared by softphone, router and trunk adapters.
-
-    Once ``bind_session_owner`` installs the PBX runtime, that owner is the
-    lifecycle authority.  This registry mirrors its snapshots and indexes the
-    concrete clients, relays and reservations still needed by older adapters;
-    callers must not build a second state machine from these dictionaries.
-    Generation guards and ``begin_termination`` prevent late transport, media
-    or UI callbacks from resurrecting an already terminated call.
-    """
+    """Observable call index backed by the authoritative PBX runtime."""
 
     def __init__(self) -> None:
         self.sessions: dict[str, CallSession] = {}
@@ -105,7 +91,6 @@ class CallRegistry:
         self._legacy_sip_clients: dict[str, Any] = {}
         self._legacy_client_watchers: dict[str, Any] = {}
         self._legacy_relays: dict[str, Any] = {}
-        self._legacy_bridge_clients: dict[str, str] = {}
         self.event_contexts: dict[str, CallEventContext] = {}
         self.terminal_summary_ids: OrderedDict[str, None] = OrderedDict()
         self._legacy_endpoint_claims: dict[str, dict[str, str]] = {}
@@ -201,11 +186,15 @@ class CallRegistry:
 
     @property
     def bridge_clients(self) -> dict[str, str]:
-        """Compatibility projection of authoritative bridge links."""
+        """Return a detached projection of bridge links."""
 
         if self._session_owner is not None:
             return self._session_owner.bridge_links_snapshot()
-        return self._legacy_bridge_clients
+        return {
+            call_id: dest_call_id
+            for call_id, session in self.sessions.items()
+            if (dest_call_id := str(session.metadata.get("bridge_dest_call_id") or ""))
+        }
 
     @property
     def pending_invites(self) -> dict[str, Any]:
@@ -270,19 +259,29 @@ class CallRegistry:
         return self._take_artifact(call_id, "pending_invite")
 
     def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> None:
-        """Record a bridge link on the sole current call owner."""
+        """Record a bridge link on its call session."""
 
         if self._session_owner is None:
-            self._legacy_bridge_clients[source_call_id] = dest_call_id
+            session = self.sessions.get(source_call_id)
+            if session is None:
+                raise RuntimeError(f"call session {source_call_id!r} is unavailable")
+            session.metadata["bridge_dest_call_id"] = dest_call_id
+            session.revision += 1
             return
         if not self._session_owner.set_bridge_link(source_call_id, dest_call_id):
             raise RuntimeError(f"call session {source_call_id!r} is unavailable")
 
     def forget_bridge_link(self, source_call_id: str) -> str:
-        """Forget a bridge link without mutating a compatibility snapshot."""
+        """Forget a bridge link from its call session."""
 
         if self._session_owner is None:
-            return self._legacy_bridge_clients.pop(source_call_id, "")
+            session = self.sessions.get(source_call_id)
+            if session is None:
+                return ""
+            dest_call_id = str(session.metadata.pop("bridge_dest_call_id", "") or "")
+            if dest_call_id:
+                session.revision += 1
+            return dest_call_id
         return self._session_owner.forget_bridge_link(source_call_id)
 
     @property
@@ -1337,7 +1336,6 @@ class CallRegistry:
         self._legacy_sip_clients.clear()
         self._legacy_client_watchers.clear()
         self._legacy_relays.clear()
-        self._legacy_bridge_clients.clear()
         self.event_contexts.clear()
         self.terminal_summary_ids.clear()
         self.terminated_call_ids.clear()

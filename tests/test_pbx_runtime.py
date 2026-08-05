@@ -409,7 +409,6 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(registry.sip_clients["destination"], client)
         self.assertEqual(registry._legacy_sip_clients, {})
         self.assertEqual(registry.bridge_clients, {"source": "destination"})
-        self.assertEqual(registry._legacy_bridge_clients, {})
         self.assertIs(registry.pending_invites["source"], invite)
         self.assertEqual(registry._legacy_artifacts, {})
         self.assertIs(authoritative.artifacts["pending_invite"], invite)

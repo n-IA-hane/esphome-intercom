@@ -91,7 +91,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry.sip_clients["destination"] = object()
         registry.client_watchers["destination"] = object()
         registry.relays["call-1"] = object()
-        registry.bridge_clients["call-1"] = "destination"
+        registry.set_bridge_link("call-1", "destination")
         registry.endpoint_claims["call-1"] = {
             "office": "source",
             "kitchen": "destination",
