@@ -33,7 +33,8 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
     registrar_snapshot = registrar.snapshot() if registrar is not None else {}
     trunk = bucket.get("sip_trunk")
     calls = runtime.calls if runtime is not None else None
-    port_pool = bucket.get("sip_rtp_port_pool")
+    port_pool = runtime.rtp_port_pool if runtime is not None else {}
+    used_ports = port_pool.get("used") if isinstance(port_pool, dict) else None
     return {
         "sip_udp_ready": bool(getattr(endpoint, "udp_server", None)),
         "sip_tcp_ready": bool(getattr(endpoint, "tcp_server", None)),
@@ -48,7 +49,7 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
         ),
         "trunk_registered": bool(getattr(trunk, "registered", False)),
         "active_calls": calls.active_count() if calls is not None else 0,
-        "reserved_rtp_ports": len(port_pool) if isinstance(port_pool, dict) else 0,
+        "reserved_rtp_ports": len(used_ports) if isinstance(used_ports, set) else 0,
         "runtime_tasks": len(runtime.tasks) if runtime is not None else 0,
         "active_media_owners": sum(
             len(value)

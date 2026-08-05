@@ -33,6 +33,8 @@ class VoipStackRuntime:
     calls: CallRegistry | None = None
     sip: SipEndpointRuntime | None = None
     tasks: set[asyncio.Task[Any]] = field(default_factory=set)
+    rtp_port_pool: dict[str, Any] = field(default_factory=dict)
+    next_rtp_port: int = 0
 
 
 type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]

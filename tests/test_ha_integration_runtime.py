@@ -257,10 +257,10 @@ async def test_system_health_and_media_capture_repair_are_privacy_safe(
     )
     runtime.calls = MagicMock()
     runtime.calls.active_count.return_value = 2
+    runtime.rtp_port_pool = {"used": {40000}}
     entry = MockConfigEntry(domain=DOMAIN, data={})
     entry.add_to_hass(hass)
     entry.runtime_data = runtime
-    hass.data.setdefault(DOMAIN, {})["sip_rtp_port_pool"] = {40000: object()}
 
     async_sync_runtime_issues(hass)
     issue = ir.async_get(hass).async_get_issue(DOMAIN, MEDIA_CAPTURE_ISSUE_ID)

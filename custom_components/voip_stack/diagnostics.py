@@ -13,7 +13,7 @@ from homeassistant.helpers.device_registry import DeviceEntry
 from .config import trunk_config
 from .const import DOMAIN, INTEGRATION_VERSION
 from .runtime_diagnostics import runtime_resource_snapshot
-from .runtime_data import call_projection
+from .runtime_data import call_projection, runtime_data
 
 
 # SIP identities, routing aliases and network topology are private even when
@@ -143,6 +143,7 @@ def _trunk_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, Any
 
 
 def _runtime_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, Any]:
+    runtime = runtime_data(hass)
     return {
         "endpoints": _endpoint_summary(bucket),
         "signaling": _signaling_summary(bucket),
@@ -151,6 +152,7 @@ def _runtime_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, A
             bucket,
             call_projection(hass) or bucket.get("call_registry"),
             detailed=False,
+            rtp_port_pool=runtime.rtp_port_pool if runtime is not None else None,
         ),
     }
 
@@ -224,6 +226,7 @@ async def async_get_device_diagnostics(
     """Return privacy-safe diagnostics for one logical phone device."""
 
     bucket = hass.data.get(DOMAIN, {})
+    runtime = runtime_data(hass)
     return {
         "integration": {
             "version": INTEGRATION_VERSION,
@@ -234,5 +237,6 @@ async def async_get_device_diagnostics(
             bucket,
             call_projection(hass) or bucket.get("call_registry"),
             detailed=False,
+            rtp_port_pool=runtime.rtp_port_pool if runtime is not None else None,
         ),
     }

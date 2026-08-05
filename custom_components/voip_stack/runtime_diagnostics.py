@@ -32,6 +32,7 @@ def runtime_resource_snapshot(
     registry: Any | None,
     *,
     detailed: bool = False,
+    rtp_port_pool: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return stable counts used to prove that a call cleaned up completely.
 
@@ -53,7 +54,7 @@ def runtime_resource_snapshot(
     audio_owners = bucket.get("audio_ws_owners")
     video_owners = bucket.get("video_ws_owners")
     identity_locks = bucket.get("media_identity_locks")
-    port_pool = bucket.get("sip_rtp_port_pool")
+    port_pool = rtp_port_pool or bucket.get("sip_rtp_port_pool")
     used_ports = (
         set(port_pool.get("used") or ()) if isinstance(port_pool, dict) else set()
     )

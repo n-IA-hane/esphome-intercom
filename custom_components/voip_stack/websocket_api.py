@@ -55,6 +55,7 @@ from .phone_config import (
 )
 from .debug_capture import debug_capture_pending_writes
 from .runtime_diagnostics import runtime_resource_snapshot
+from .runtime_data import runtime_data
 from .websocket_owner import (
     async_revoke_media_owners,
     media_websocket_owner_status,
@@ -880,6 +881,11 @@ def _sip_runtime_snapshot(
         bucket,
         registry,
         detailed=detailed,
+        rtp_port_pool=(
+            runtime.rtp_port_pool
+            if (runtime := runtime_data(hass)) is not None
+            else None
+        ),
     )
     return data
 

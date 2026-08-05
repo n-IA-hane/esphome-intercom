@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 
 from .config import transport_config
 from .const import DOMAIN
+from .runtime_data import runtime_data
 from .media_reservation import (
     release_media_reservation as release_media_reservation,
     release_video_media_reservation as release_video_media_reservation,
@@ -135,17 +136,28 @@ def reserve_sip_video_relay_media(
 def allocate_sip_rtp_port(hass: HomeAssistant, *, step: int = 2) -> int:
     cfg = transport_config(hass)
     bucket = hass.data.setdefault(DOMAIN, {})
+    runtime = runtime_data(hass)
     base_port = int(cfg["rtp_port"])
     if rtp_port_available(base_port):
-        bucket["sip_rtp_next_port"] = base_port + int(step)
+        if runtime is not None:
+            runtime.next_rtp_port = base_port + int(step)
+        else:
+            bucket["sip_rtp_next_port"] = base_port + int(step)
         return base_port
-    candidate = int(bucket.get("sip_rtp_next_port", base_port + int(step)))
+    candidate = int(
+        runtime.next_rtp_port
+        if runtime is not None and runtime.next_rtp_port
+        else bucket.get("sip_rtp_next_port", base_port + int(step))
+    )
     for _ in range(64):
         if candidate == base_port:
             candidate += int(step)
             continue
         if rtp_port_available(candidate):
-            bucket["sip_rtp_next_port"] = candidate + int(step)
+            if runtime is not None:
+                runtime.next_rtp_port = candidate + int(step)
+            else:
+                bucket["sip_rtp_next_port"] = candidate + int(step)
             return candidate
         candidate += int(step)
     raise RuntimeError("SIP RTP port allocation exhausted")
@@ -154,6 +166,7 @@ def allocate_sip_rtp_port(hass: HomeAssistant, *, step: int = 2) -> int:
 def _relay_pool(hass: HomeAssistant, step: int) -> tuple[dict, int, int, int]:
     cfg = transport_config(hass)
     bucket = hass.data.setdefault(DOMAIN, {})
+    runtime = runtime_data(hass)
     base = int(cfg["rtp_port"]) + 2
     if base % 2:
         base += 1
@@ -161,7 +174,11 @@ def _relay_pool(hass: HomeAssistant, step: int) -> tuple[dict, int, int, int]:
     width -= width % 2
     if width < 4:
         raise RuntimeError("SIP RTP relay port pool is too small")
-    pool = bucket.setdefault("sip_rtp_port_pool", {})
+    pool = (
+        runtime.rtp_port_pool
+        if runtime is not None
+        else bucket.setdefault("sip_rtp_port_pool", {})
+    )
     pool.setdefault("next", base)
     pool.setdefault("used", set())
     return pool, base, base + width, int(step)
@@ -196,8 +213,12 @@ def allocate_sip_rtp_port_pair(hass: HomeAssistant, *, step: int = 2) -> tuple[i
 
 
 def release_sip_rtp_port_pair(hass: HomeAssistant, ports: tuple[int, int] | list[int]) -> None:
-    bucket = hass.data.setdefault(DOMAIN, {})
-    pool = bucket.get("sip_rtp_port_pool")
+    runtime = runtime_data(hass)
+    pool = (
+        runtime.rtp_port_pool
+        if runtime is not None
+        else hass.data.setdefault(DOMAIN, {}).get("sip_rtp_port_pool")
+    )
     if not isinstance(pool, dict):
         return
     used = pool.get("used")
