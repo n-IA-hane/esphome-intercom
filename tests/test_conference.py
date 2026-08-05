@@ -710,7 +710,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         registry.upsert("call", state="in_call")
         registry.upsert("inbound", state="in_call")
         registry.upsert("preanswered", state="ringing")
-        registry.relays["call"] = Relay()
+        registry.attach_relay("call", Relay())
         registry.sip_clients["call"] = Client()
         registry.client_watchers["call"] = watcher
         registry.attach_media("inbound", {

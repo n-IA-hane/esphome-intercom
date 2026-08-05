@@ -90,7 +90,6 @@ class CallRegistry:
         self.leg_index: dict[str, str] = {}
         self._legacy_sip_clients: dict[str, Any] = {}
         self._legacy_client_watchers: dict[str, Any] = {}
-        self._legacy_relays: dict[str, Any] = {}
         self.event_contexts: dict[str, CallEventContext] = {}
         self.terminal_summary_ids: OrderedDict[str, None] = OrderedDict()
         self._legacy_endpoint_claims: dict[str, dict[str, str]] = {}
@@ -174,11 +173,14 @@ class CallRegistry:
 
     @property
     def relays(self) -> dict[str, Any]:
-        """Compatibility projection of relays owned by call sessions."""
-
         if self._session_owner is not None:
             return self._session_owner.relays_snapshot()
-        return self._legacy_relays
+        return {
+            key.removeprefix("relay:"): value
+            for session in self.sessions.values()
+            for key, value in session.resources.items()
+            if key.startswith("relay:")
+        }
 
     @property
     def sip_clients(self) -> dict[str, Any]:
@@ -957,20 +959,18 @@ class CallRegistry:
         return client
 
     def attach_relay(self, call_id: str, relay: Any) -> None:
-        """Index a media relay while the call session owns its stop barrier."""
-
         if self._session_owner is not None:
             if not self._session_owner.attach_relay(call_id, relay):
                 raise RuntimeError(f"call session {call_id!r} is unavailable")
             return
-        self._legacy_relays[call_id] = relay
+        session_id = self.resolve_session_id(call_id)
+        self.sessions[session_id].resources[f"relay:{call_id}"] = relay
 
     def take_relay(self, call_id: str) -> Any | None:
-        """Transfer a relay to an explicit cleanup caller."""
-
         if self._session_owner is not None:
             return self._session_owner.take_relay(call_id)
-        return self._legacy_relays.pop(call_id, None)
+        session = self.sessions.get(self.resolve_session_id(call_id))
+        return session.resources.pop(f"relay:{call_id}", None) if session else None
 
     def attach_client_watcher(self, call_id: str, task: Any) -> None:
         """Index a watcher while the owning session controls cancellation."""
@@ -1333,7 +1333,6 @@ class CallRegistry:
         self.leg_index.clear()
         self._legacy_sip_clients.clear()
         self._legacy_client_watchers.clear()
-        self._legacy_relays.clear()
         self.event_contexts.clear()
         self.terminal_summary_ids.clear()
         self.terminated_call_ids.clear()

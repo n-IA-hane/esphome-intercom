@@ -90,7 +90,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry.attach_media("call-1", {})
         registry.sip_clients["destination"] = object()
         registry.client_watchers["destination"] = object()
-        registry.relays["call-1"] = object()
+        registry.attach_relay("call-1", object())
         registry.set_bridge_link("call-1", "destination")
         registry.endpoint_claims["call-1"] = {
             "office": "source",
