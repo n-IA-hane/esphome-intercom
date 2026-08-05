@@ -654,18 +654,5 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(owners, {})
 
-    async def test_shutdown_closes_and_removes_legacy_owner(self) -> None:
-        owners: dict[str, object] = {}
-        lock = asyncio.Lock()
-        legacy = _FakeWebSocket()
-        owners["legacy"] = legacy
-
-        pending = await async_revoke_media_owners(owners, lock, timeout=1.0)
-
-        self.assertEqual(pending, set())
-        self.assertEqual(legacy.force_close_calls, 1)
-        self.assertEqual(owners, {})
-
-
 if __name__ == "__main__":
     unittest.main()

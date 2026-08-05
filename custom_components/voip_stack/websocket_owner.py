@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-import inspect
 import logging
 from typing import Any
 
@@ -339,7 +338,7 @@ async def async_release_media_owner(
 
 
 async def async_revoke_media_owners(
-    owners: dict[str, object],
+    owners: dict[str, MediaWebSocketOwner],
     owner_lock: asyncio.Lock,
     *,
     timeout: float,
@@ -348,47 +347,8 @@ async def async_revoke_media_owners(
 
     async with owner_lock:
         snapshot = dict(owners)
-    structured = {
-        call_id: owner
-        for call_id, owner in snapshot.items()
-        if isinstance(owner, MediaWebSocketOwner)
-    }
-    legacy = {
-        call_id: owner
-        for call_id, owner in snapshot.items()
-        if not isinstance(owner, MediaWebSocketOwner)
-    }
-    for owner in structured.values():
+    for owner in snapshot.values():
         owner.revoke()
-
-    async def _revoke_legacy(call_id: str, owner: object) -> str | None:
-        """Best-effort cleanup for mappings created by an older reload."""
-
-        failed = False
-        targets = (owner, getattr(owner, "websocket", None), getattr(owner, "transport", None))
-        seen: set[int] = set()
-        for target in targets:
-            if target is None or id(target) in seen:
-                continue
-            seen.add(id(target))
-            close = getattr(target, "force_close", None) or getattr(target, "close", None)
-            if not callable(close):
-                continue
-            try:
-                result = close()
-                if inspect.isawaitable(result):
-                    await result
-            except Exception:  # noqa: BLE001 - unload must continue.
-                failed = True
-                _LOGGER.debug(
-                    "Failed to close legacy media WebSocket owner call_id=%s",
-                    call_id,
-                    exc_info=True,
-                )
-        async with owner_lock:
-            if owners.get(call_id) is owner:
-                owners.pop(call_id, None)
-        return call_id if failed else None
 
     async def _wait(call_id: str, owner: MediaWebSocketOwner) -> str | None:
         try:
@@ -398,7 +358,6 @@ async def async_revoke_media_owners(
         return None
 
     results = await asyncio.gather(
-        *(_wait(call_id, owner) for call_id, owner in structured.items()),
-        *(_revoke_legacy(call_id, owner) for call_id, owner in legacy.items()),
+        *(_wait(call_id, owner) for call_id, owner in snapshot.items()),
     )
     return {call_id for call_id in results if call_id is not None}

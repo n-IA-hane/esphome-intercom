@@ -157,12 +157,6 @@ class _VideoMediaSession:
         )
 
     @property
-    def browser_format(self) -> sdp.RtpVideoFormat:
-        """Compatibility alias for the browser's receive/decoder format."""
-
-        return self.browser_receive_format
-
-    @property
     def can_send(self) -> bool:
         return bool(
             self.camera_send_enabled
