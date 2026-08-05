@@ -255,7 +255,9 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         runtime.activate()
         registry.upsert("call-1", state="in_call", owner="bridge")
 
-        result = await runtime.terminate_session("call-1", "remote_hangup")
+        session = runtime.get_session("call-1")
+        self.assertIsNotNone(session)
+        result = await session.terminate("remote_hangup")
 
         self.assertIsNotNone(result)
         self.assertNotIn("call-1", registry.sessions)

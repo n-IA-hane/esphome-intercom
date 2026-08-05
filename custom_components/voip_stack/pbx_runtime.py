@@ -256,12 +256,7 @@ class SipEndpointRuntime(CallRuntimeApi):
     def relays_snapshot(self) -> dict[str, Any]:
         """Return the live relay index derived from session-owned resources."""
 
-        relays: dict[str, Any] = {}
-        for session in self.calls.values():
-            for resource in session.resources:
-                if resource.name.startswith("relay:"):
-                    relays[resource.name.removeprefix("relay:")] = resource.value
-        return relays
+        return self.resources_snapshot("relay")
 
     def resources_snapshot(self, prefix: str) -> dict[str, Any]:
         """Return one named class of resources from authoritative sessions."""
@@ -737,18 +732,6 @@ class SipEndpointRuntime(CallRuntimeApi):
         ):
             return None
         return session
-
-    async def terminate_session(
-        self,
-        call_id: str,
-        reason: str,
-        *,
-        generation: int | None = None,
-    ) -> SessionTerminationResult | None:
-        session = self.get_session(call_id, generation=generation)
-        if session is None:
-            return None
-        return await session.terminate(reason)
 
     async def _close_component(self, component: _OwnedComponent) -> None:
         if component.closer is None:
