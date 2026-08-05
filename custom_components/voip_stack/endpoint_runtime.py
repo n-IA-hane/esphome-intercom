@@ -319,7 +319,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         last_sip_event: str = "INVITE",
     ) -> None:
         registry = _call_registry(hass)
-        registry.pending_invites[invite.call_id] = invite
         session = registry.upsert(
             invite.call_id,
             state=CallState.RINGING.value,
@@ -333,6 +332,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             ingress="trunk" if invite.received_via_trunk else "extension",
             origin="trunk" if invite.received_via_trunk else "extension",
         )
+        registry.set_pending_invite(invite.call_id, invite)
         registry.claim_endpoint(
             invite.call_id,
             endpoint_id,
@@ -446,7 +446,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 "SIP trunk inbound routing failed call_id=%s", invite.call_id
             )
             registry = _call_registry(hass)
-            registry.pending_invites.pop(invite.call_id, None)
+            registry.take_pending_invite(invite.call_id)
             preanswered = registry.take_media(invite.call_id, provisional=True)
             _release_media_reservation(preanswered)
             bridge_ports.release()

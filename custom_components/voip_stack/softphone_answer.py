@@ -363,7 +363,7 @@ async def async_answer_browser_call(
         )
         if claimed is None:
             return False
-        pending.pop(call_id, None)
+        registry.take_pending_invite(call_id)
         return True
 
     answer_result = await transaction.commit(answer_sdp, claim=_claim_answer)

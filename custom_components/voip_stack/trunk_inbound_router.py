@@ -178,7 +178,7 @@ async def async_route_trunk_invite(
         )
         return
     if automation_action in {"decline", "busy", "cancel"}:
-        registry.pending_invites.pop(invite.call_id, None)
+        registry.take_pending_invite(invite.call_id)
         preanswered = registry.take_media(invite.call_id, provisional=True)
         release_media_reservation(preanswered)
         status = 486 if automation_action == "busy" else 603
@@ -244,7 +244,7 @@ async def async_route_trunk_invite(
         # browser phone. Preserve explicit DTMF extensions for the second pass.
         destination = route_hint or decision.target or default_target
     elif decision.action is RouteAction.REJECT:
-        registry.pending_invites.pop(invite.call_id, None)
+        registry.take_pending_invite(invite.call_id)
         preanswered = registry.take_media(invite.call_id, provisional=True)
         release_media_reservation(preanswered)
         terminal_reason = RouteReason.ROUTE_NOT_FOUND.value
@@ -292,7 +292,7 @@ async def async_route_trunk_invite(
     )
 
     if decision.action is RouteAction.ASSIST:
-        registry.pending_invites.pop(invite.call_id, None)
+        registry.take_pending_invite(invite.call_id)
         preanswered = registry.take_media(invite.call_id, provisional=True)
         release_video_media_reservation(preanswered)
         try:
@@ -390,7 +390,7 @@ async def async_route_trunk_invite(
             on_failure="resume",
         )
         return
-    registry.pending_invites.pop(invite.call_id, None)
+    registry.take_pending_invite(invite.call_id)
     preanswered = registry.take_media(invite.call_id, provisional=True)
     release_video_media_reservation(preanswered)
     peer_target = peer_for_target(decision.target or destination, peers)

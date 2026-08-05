@@ -277,7 +277,7 @@ async def async_hangup_browser_call(
         relay_first=False,
     )
     for pending_call_id in pending_ids:
-        invite = pending.pop(pending_call_id, None)
+        invite = registry.take_pending_invite(pending_call_id)
         if invite is None:
             continue
         preanswered_item = preanswered.pop(pending_call_id, None)

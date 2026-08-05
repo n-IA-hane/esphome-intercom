@@ -195,7 +195,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         self.assertNotIn('return SipInviteResult(200, "OK"', answer_ha_branch)
         self.assertIn("def _defer_invite_to_ha_softphone(", self.source)
-        self.assertIn("registry.pending_invites[invite.call_id] = invite", self.source)
+        self.assertIn("registry.set_pending_invite(invite.call_id, invite)", self.source)
         self.assertIn("_set_ha_softphone_call_state(", self.source)
         self.assertIn("CallState.RINGING.value", self.source)
 
@@ -1608,7 +1608,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             )
         ]
         self.assertIn("except asyncio.CancelledError:", guarded)
-        self.assertIn("registry.pending_invites.pop", guarded)
+        self.assertIn("registry.take_pending_invite(invite.call_id)", guarded)
         self.assertIn(
             "registry.take_media(invite.call_id, provisional=True)", guarded
         )

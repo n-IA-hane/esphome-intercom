@@ -286,6 +286,37 @@ class SipEndpointRuntime:
             if (dest_call_id := str(session.metadata.get("bridge_dest_call_id") or ""))
         }
 
+    def pending_invites_snapshot(self) -> dict[str, Any]:
+        """Return pending INVITEs directly from authoritative sessions."""
+
+        return {
+            call_id: session.pending_invite
+            for call_id, session in self.calls.items()
+            if session.pending_invite is not None
+        }
+
+    def set_pending_invite(self, call_id: str, invite: Any) -> bool:
+        """Attach the current inbound INVITE to its call generation."""
+
+        session = self.get_session(call_id)
+        if session is None or not session.live:
+            return False
+        session.pending_invite = invite
+        self._publish(session)
+        return True
+
+    def take_pending_invite(self, call_id: str) -> Any | None:
+        """Remove and return the pending INVITE for explicit processing."""
+
+        session = self.get_session(call_id)
+        if session is None or session.phase is SessionPhase.TERMINATED:
+            return None
+        invite = session.pending_invite
+        session.pending_invite = None
+        if invite is not None:
+            self._publish(session)
+        return invite
+
     def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> bool:
         """Attach one destination dialog identity to its source session."""
 
@@ -300,7 +331,7 @@ class SipEndpointRuntime:
         """Remove and return one destination link without ending the session."""
 
         session = self.get_session(source_call_id)
-        if session is None or not session.live:
+        if session is None or session.phase is SessionPhase.TERMINATED:
             return ""
         dest_call_id = str(session.metadata.pop("bridge_dest_call_id", "") or "")
         if dest_call_id:
@@ -328,7 +359,7 @@ class SipEndpointRuntime:
 
         clean_call_id = str(call_id or "").strip()
         session = self.get_session(clean_call_id)
-        if session is None or not session.live:
+        if session is None or session.phase is SessionPhase.TERMINATED:
             return None
         resource_name = f"relay:{clean_call_id}"
         resource = next(
@@ -625,7 +656,7 @@ class SipEndpointRuntime:
         """Transfer a leg out of the session before an explicit cleanup."""
 
         session = self.get_session(call_id, generation=generation)
-        if session is None or not session.live:
+        if session is None or session.phase is SessionPhase.TERMINATED:
             return False
         return session.release_leg(leg_id, dialog=dialog) is not None
 
@@ -666,7 +697,7 @@ class SipEndpointRuntime:
         """Transfer one concrete resource to an explicit cleanup path."""
 
         session = self.get_session(call_id, generation=generation)
-        if session is None or not session.live:
+        if session is None or session.phase is SessionPhase.TERMINATED:
             return False
         return session.release_resource(name, value=value) is not None
 
@@ -696,7 +727,7 @@ class SipEndpointRuntime:
         """Transfer a task to an explicit cleanup path."""
 
         session = self.get_session(call_id, generation=generation)
-        if session is None or not session.live:
+        if session is None or session.phase is SessionPhase.TERMINATED:
             return False
         return session.release_task(task)
 

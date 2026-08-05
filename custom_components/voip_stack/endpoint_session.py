@@ -173,6 +173,7 @@ class EndpointCallSession:
         self.tasks: set[asyncio.Task[Any]] = set()
         self.named_tasks: dict[str, asyncio.Task[Any]] = {}
         self.endpoint_claims: dict[str, str] = {}
+        self.pending_invite: Any | None = None
         self.metadata: dict[str, Any] = {}
         self.termination_started = asyncio.Event()
         self.terminated = asyncio.Event()
@@ -199,6 +200,12 @@ class EndpointCallSession:
     def ensure_live(self, token: CallToken | None = None) -> None:
         if not self.live or (token is not None and not self.owns(token)):
             raise RuntimeError(f"call session {self.call_id!r} is no longer current")
+
+    def ensure_transferable(self) -> None:
+        """Allow terminal adapters to detach resources before cleanup starts."""
+
+        if self.phase is SessionPhase.TERMINATED or self._termination_task is not None:
+            raise RuntimeError(f"call session {self.call_id!r} cleanup has started")
 
     def transition(
         self,
@@ -259,7 +266,7 @@ class EndpointCallSession:
     ) -> ManagedResource | None:
         """Transfer a live resource away without closing it."""
 
-        self.ensure_live()
+        self.ensure_transferable()
         for index, resource in enumerate(self.resources):
             if resource.name == name and (value is None or resource.value is value):
                 return self.resources.pop(index)
@@ -273,7 +280,7 @@ class EndpointCallSession:
     ) -> CallLeg | None:
         """Transfer a leg to an explicit legacy cleanup path."""
 
-        self.ensure_live()
+        self.ensure_transferable()
         leg = self.legs.get(str(leg_id or "").strip())
         if leg is None or (dialog is not None and leg.dialog is not dialog):
             return None
@@ -305,7 +312,7 @@ class EndpointCallSession:
     def release_task(self, task: asyncio.Task[Any]) -> bool:
         """Transfer a background task away from session cancellation."""
 
-        self.ensure_live()
+        self.ensure_transferable()
         if task not in self.tasks:
             return False
         self.tasks.discard(task)

@@ -167,6 +167,12 @@ class CallSessionOwner(Protocol):
 
     def forget_bridge_link(self, source_call_id: str) -> str: ...
 
+    def pending_invites_snapshot(self) -> dict[str, Any]: ...
+
+    def set_pending_invite(self, call_id: str, invite: Any) -> bool: ...
+
+    def take_pending_invite(self, call_id: str) -> Any | None: ...
+
     def attach_relay(self, call_id: str, relay: Any) -> bool: ...
 
     def take_relay(self, call_id: str) -> Any | None: ...
@@ -234,7 +240,7 @@ class CallRegistry:
         self.sessions: dict[str, CallSession] = {}
         self.leg_index: dict[str, str] = {}
         self.pending_routes: dict[str, dict[str, Any]] = {}
-        self.pending_invites: dict[str, Any] = {}
+        self._legacy_pending_invites: dict[str, Any] = {}
         self.preanswered: dict[str, dict[str, Any]] = {}
         self.softphone_media: dict[str, dict[str, Any]] = {}
         self.video_parameter_sets: dict[str, tuple[bytes, ...]] = {}
@@ -314,6 +320,30 @@ class CallRegistry:
         if self._session_owner is not None:
             return self._session_owner.bridge_links_snapshot()
         return self._legacy_bridge_clients
+
+    @property
+    def pending_invites(self) -> dict[str, Any]:
+        """Compatibility projection of session-owned inbound INVITEs."""
+
+        if self._session_owner is not None:
+            return self._session_owner.pending_invites_snapshot()
+        return self._legacy_pending_invites
+
+    def set_pending_invite(self, call_id: str, invite: Any) -> None:
+        """Attach an INVITE to the sole current call owner."""
+
+        if self._session_owner is None:
+            self._legacy_pending_invites[call_id] = invite
+            return
+        if not self._session_owner.set_pending_invite(call_id, invite):
+            raise RuntimeError(f"call session {call_id!r} is unavailable")
+
+    def take_pending_invite(self, call_id: str) -> Any | None:
+        """Take an INVITE without mutating a detached compatibility view."""
+
+        if self._session_owner is None:
+            return self._legacy_pending_invites.pop(call_id, None)
+        return self._session_owner.take_pending_invite(call_id)
 
     def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> None:
         """Record a bridge link on the sole current call owner."""
@@ -1280,7 +1310,7 @@ class CallRegistry:
         self.leg_index.pop(call_id, None)
         for context_id in event_context_ids:
             self.event_contexts.pop(context_id, None)
-        self.pending_invites.pop(session_id, None)
+        self.take_pending_invite(session_id)
         self.video_parameter_sets.pop(session_id, None)
         self.video_parameter_sets.pop(call_id, None)
         route = self.pending_routes.pop(session_id, None)
@@ -1436,7 +1466,7 @@ class CallRegistry:
         self.sessions.clear()
         self.leg_index.clear()
         self.pending_routes.clear()
-        self.pending_invites.clear()
+        self._legacy_pending_invites.clear()
         self.preanswered.clear()
         self.softphone_media.clear()
         self.video_parameter_sets.clear()

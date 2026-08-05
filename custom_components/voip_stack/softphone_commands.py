@@ -179,7 +179,7 @@ async def async_decline_browser_call(
     endpoint_pending = endpoint_call_ids(registry, pending, endpoint_id)
     if not call_id and len(endpoint_pending) == 1:
         call_id = endpoint_pending[0]
-    pending.pop(call_id, None)
+    registry.take_pending_invite(call_id)
     preanswered_item = registry.take_media(call_id, provisional=True) if call_id else None
     if preanswered_item is not None:
         release_media_reservation(preanswered_item)

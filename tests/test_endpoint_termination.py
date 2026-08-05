@@ -33,6 +33,9 @@ class _Registry:
         self.begin_calls.append((call_id, reason))
         return self.begin_result
 
+    def take_pending_invite(self, call_id: str):
+        return self.pending_invites.pop(call_id, None)
+
     @staticmethod
     def resolve_session_id(call_id: str) -> str:
         return call_id

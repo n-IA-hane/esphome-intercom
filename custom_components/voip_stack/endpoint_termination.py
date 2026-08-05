@@ -67,7 +67,7 @@ class EndpointTerminationHandler:
                         "decline_reason": (reason or TerminalReason.CANCELLED.value),
                     }
                 )
-        invite = registry.pending_invites.pop(call_id, None)
+        invite = registry.take_pending_invite(call_id)
         active_media = registry.softphone_media.get(call_id, {})
         active_media_invite = active_media.get("invite")
         if invite is None:

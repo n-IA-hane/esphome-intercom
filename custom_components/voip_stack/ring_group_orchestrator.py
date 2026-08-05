@@ -659,7 +659,7 @@ async def run_ring_group_call(
                 "endpoint_id": winner.endpoint_id,
                 "media_client_id": winner_media_client_id,
             }
-            registry.pending_invites.pop(invite.call_id, None)
+            registry.take_pending_invite(invite.call_id)
             registry.attach_media(invite.call_id, media)
             registry.add_leg(
                 invite.call_id,

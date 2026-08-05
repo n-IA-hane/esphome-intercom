@@ -100,7 +100,6 @@ def prepare_trunk_preanswer(
                 "SIP trunk DTMF video socket unavailable; collecting digits audio-only: %s",
                 err,
             )
-    registry.pending_invites[invite.call_id] = invite
     preanswered_media = {
         # Early media is provisional. The winning endpoint owns the final
         # answer and may narrow media according to its capabilities.
@@ -125,6 +124,7 @@ def prepare_trunk_preanswer(
         ingress="trunk",
         origin="trunk",
     )
+    registry.set_pending_invite(invite.call_id, invite)
     registry.attach_media(
         invite.call_id,
         preanswered_media,

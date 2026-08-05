@@ -237,6 +237,20 @@ class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events, ["resource:remote_hangup"])
         self.assertEqual(result.closed_resources, ("leg-adjacent",))
 
+    async def test_terminal_adapter_can_transfer_before_cleanup_barrier(self) -> None:
+        session = endpoint_session.EndpointCallSession("call-1", 1)
+        relay = object()
+        session.add_resource("relay", relay, lambda _reason: None)
+
+        self.assertTrue(session.claim_termination("remote_hangup"))
+        transferred = session.release_resource("relay", value=relay)
+
+        self.assertIs(transferred.value, relay)
+        cleanup = session.start_termination("remote_hangup")
+        with self.assertRaisesRegex(RuntimeError, "cleanup has started"):
+            session.release_resource("relay")
+        await cleanup
+
     def test_generation_token_rejects_stale_owner(self) -> None:
         session = endpoint_session.EndpointCallSession("call-1", 3)
 

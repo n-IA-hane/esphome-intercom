@@ -394,7 +394,7 @@ async def async_forward_existing_call(
                 )
             return
 
-        registry.pending_invites.pop(call_id, None)
+        registry.take_pending_invite(call_id)
         preanswered = registry.take_media(call_id, provisional=True)
         if preanswered is not None:
             _release_media_reservation(preanswered)
@@ -734,7 +734,6 @@ async def async_forward_existing_call(
                         TerminalReason.CANCELLED.value,
                         keep_endpoint_id=winner.endpoint_id,
                     )
-                    registry.pending_invites[call_id] = invite
                     registry.upsert(
                         call_id,
                         state=CallState.RINGING.value,
@@ -745,6 +744,7 @@ async def async_forward_existing_call(
                         endpoint_id=winner.endpoint_id,
                         session_device_id=winner.device_id,
                     )
+                    registry.set_pending_invite(call_id, invite)
                     answer_commits = hass.data.setdefault(DOMAIN, {}).setdefault(
                         "ring_group_answer_commits", set()
                     )
@@ -860,7 +860,7 @@ async def async_forward_existing_call(
                     source_call_id=call_id,
                 )
                 registry.attach_relay(call_id, relay)
-                registry.pending_invites.pop(call_id, None)
+                registry.take_pending_invite(call_id)
                 consumed_preanswer = registry.take_media(
                     call_id, provisional=True
                 )
@@ -989,7 +989,7 @@ async def async_forward_existing_call(
                         "OK",
                         answer_sdp=answer,
                     )
-                registry.pending_invites.pop(call_id, None)
+                registry.take_pending_invite(call_id)
                 registry.take_media(call_id, provisional=True)
                 current = registry.sessions.get(
                     registry.resolve_session_id(call_id)
@@ -1296,7 +1296,7 @@ async def async_forward_existing_call(
                 source_call_id=call_id,
             )
             registry.attach_relay(call_id, relay)
-            registry.pending_invites.pop(call_id, None)
+            registry.take_pending_invite(call_id)
             registry.take_media(call_id, provisional=True)
             if preanswered is None or not bool(
                 preanswered.get("final_response_sent", True)

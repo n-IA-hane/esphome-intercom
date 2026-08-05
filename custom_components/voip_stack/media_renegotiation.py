@@ -449,7 +449,7 @@ async def async_prepare_media_update(
                 _release_video_media_reservation(current)
                 current["local_video_rtp_port"] = 0
             current["video_direction"] = video_direction
-            registry.pending_invites[call_id] = updated
+            registry.set_pending_invite(call_id, updated)
 
         async def _rollback_preanswered_update() -> None:
             _release_staged_preanswer_video()
