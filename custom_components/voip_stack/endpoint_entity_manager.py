@@ -12,7 +12,6 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
 from .endpoint_device import (
     async_ensure_endpoint_device,
     endpoint_config_subentry_id,
@@ -31,16 +30,16 @@ _EntityT = TypeVar("_EntityT", bound=Entity)
 @callback
 def register_endpoint_entity_manager(
     entry: ConfigEntry,
-    bucket: dict,
     key: str,
     manager: "EndpointEntityManager",
 ) -> None:
     """Store a platform manager and remove it with a void unload callback."""
-    bucket[key] = manager
+    managers = entry.runtime_data.entity_managers
+    managers[key] = manager
 
     @callback
     def _remove_manager() -> None:
-        bucket.pop(key, None)
+        managers.pop(key, None)
 
     entry.async_on_unload(_remove_manager)
 
@@ -64,9 +63,7 @@ class EndpointEntityManager(Generic[_EntityT]):
         self.predicate = predicate
         self.entities: dict[str, _EntityT] = {}
         self._creating_endpoint_ids: set[str] = set()
-        self.registry: EndpointRegistry | None = hass.data.get(DOMAIN, {}).get(
-            "endpoint_registry"
-        )
+        self.registry: EndpointRegistry = entry.runtime_data.endpoints
 
     @callback
     def async_setup(self) -> None:

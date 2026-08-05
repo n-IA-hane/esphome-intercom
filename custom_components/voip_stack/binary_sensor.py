@@ -11,7 +11,6 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
 from .endpoint_device import (
     async_link_endpoint_entity,
     endpoint_device_info,
@@ -39,9 +38,8 @@ async def async_setup_entry(
         PhoneEndpointConnectivityBinarySensor,
     )
     manager.async_setup()
-    bucket = hass.data.setdefault(DOMAIN, {})
     register_endpoint_entity_manager(
-        entry, bucket, "endpoint_connectivity_entity_manager", manager
+        entry, "endpoint_connectivity_entity_manager", manager
     )
 
 

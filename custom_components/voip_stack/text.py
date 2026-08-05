@@ -10,7 +10,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
 from .endpoint_device import async_link_endpoint_entity, endpoint_device_info
 from .endpoint_entity_manager import (
     EndpointEntityManager,
@@ -50,7 +49,6 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    bucket = hass.data.setdefault(DOMAIN, {})
     for setting in _SETTINGS:
         manager = EndpointEntityManager(
             hass,
@@ -62,7 +60,6 @@ async def async_setup_entry(
         manager.async_setup()
         register_endpoint_entity_manager(
             entry,
-            bucket,
             f"endpoint_{setting.key}_entity_manager",
             manager,
         )

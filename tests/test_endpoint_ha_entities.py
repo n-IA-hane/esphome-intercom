@@ -352,6 +352,7 @@ def test_dynamic_entity_creation_is_not_reentered_by_device_id_update(
     unload_callbacks = []
     entry = types.SimpleNamespace(
         async_on_unload=unload_callbacks.append,
+        runtime_data=types.SimpleNamespace(endpoints=registry),
     )
     added: list[tuple[list[object], str | None]] = []
     created: list[str] = []
@@ -389,7 +390,10 @@ def test_entity_manager_predicate_excludes_unsupported_phone_kind(monkeypatch) -
     hass = types.SimpleNamespace(
         data={"voip_stack": {"endpoint_registry": registry}}
     )
-    entry = types.SimpleNamespace(async_on_unload=lambda _callback: None)
+    entry = types.SimpleNamespace(
+        async_on_unload=lambda _callback: None,
+        runtime_data=types.SimpleNamespace(endpoints=registry),
+    )
     added = []
     monkeypatch.setattr(
         entity_manager,
@@ -481,17 +485,20 @@ def test_browser_phone_setting_entities_share_the_service_settings_writer(
 def test_manager_bucket_unload_callback_returns_none() -> None:
     """HA unload callbacks must never leak the removed manager as a job."""
     callbacks = []
-    entry = types.SimpleNamespace(async_on_unload=callbacks.append)
+    managers = {}
+    entry = types.SimpleNamespace(
+        async_on_unload=callbacks.append,
+        runtime_data=types.SimpleNamespace(entity_managers=managers),
+    )
     manager = object()
-    bucket = {}
 
     entity_manager.register_endpoint_entity_manager(
-        entry, bucket, "endpoint_manager", manager
+        entry, "endpoint_manager", manager
     )
 
-    assert bucket["endpoint_manager"] is manager
+    assert managers["endpoint_manager"] is manager
     assert callbacks[0]() is None
-    assert "endpoint_manager" not in bucket
+    assert "endpoint_manager" not in managers
 
 
 def test_dynamic_entities_leave_hass_ownership_to_entity_platform() -> None:
@@ -547,7 +554,10 @@ def test_endpoint_reconfigure_refreshes_device_and_entity(monkeypatch) -> None:
     hass = types.SimpleNamespace(
         data={"voip_stack": {"endpoint_registry": registry}}
     )
-    entry = types.SimpleNamespace(async_on_unload=lambda _callback: None)
+    entry = types.SimpleNamespace(
+        async_on_unload=lambda _callback: None,
+        runtime_data=types.SimpleNamespace(endpoints=registry),
+    )
     ensured_names: list[str] = []
 
     class FakeEntity:

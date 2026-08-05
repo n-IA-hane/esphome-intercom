@@ -83,9 +83,8 @@ async def async_setup_entry(
         PhoneEndpointDndSwitch,
     )
     manager.async_setup()
-    bucket = hass.data.setdefault(DOMAIN, {})
     register_endpoint_entity_manager(
-        entry, bucket, "endpoint_dnd_entity_manager", manager
+        entry, "endpoint_dnd_entity_manager", manager
     )
     conference_manager = EndpointEntityManager(
         hass,
@@ -97,7 +96,6 @@ async def async_setup_entry(
     conference_manager.async_setup()
     register_endpoint_entity_manager(
         entry,
-        bucket,
         "endpoint_conference_ring_entity_manager",
         conference_manager,
     )
@@ -115,7 +113,6 @@ async def async_setup_entry(
         preference_manager.async_setup()
         register_endpoint_entity_manager(
             entry,
-            bucket,
             key,
             preference_manager,
         )

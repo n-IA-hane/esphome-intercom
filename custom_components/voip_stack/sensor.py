@@ -116,7 +116,7 @@ async def async_setup_entry(
     bucket["ha_softphone_endpoint_sensor"] = ha_endpoint_sensor
     bucket["phonebook_sensor"] = unified_sensor
     register_endpoint_entity_manager(
-        entry, bucket, "endpoint_call_state_entity_manager", endpoint_manager
+        entry, "endpoint_call_state_entity_manager", endpoint_manager
     )
 
 

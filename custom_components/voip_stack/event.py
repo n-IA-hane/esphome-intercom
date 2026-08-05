@@ -37,9 +37,8 @@ async def async_setup_entry(
         PhoneEndpointCallEvent,
     )
     endpoint_manager.async_setup()
-    bucket = hass.data.setdefault(DOMAIN, {})
     register_endpoint_entity_manager(
-        entry, bucket, "endpoint_call_event_entity_manager", endpoint_manager
+        entry, "endpoint_call_event_entity_manager", endpoint_manager
     )
 
 
