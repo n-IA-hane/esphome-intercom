@@ -26,7 +26,6 @@ from .const import (
     CONF_TRUNK_USERNAME,
     CONF_VIDEO_CAMERA_SEND,
     HA_PEER_FALLBACK_NAME,
-    HA_SOFTPHONE_DEVICE_ID,
 )
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
 from .endpoint_registry import EndpointBusyError
@@ -51,14 +50,12 @@ from .media_session_updates import (
     commit_video_session_update,
 )
 from .outbound_lifecycle import (
-    HA_SOFTPHONE_ACTIVE_STATES,
     attach_outbound_connected_identity_state,
     async_prepare_ha_outbound_call as _async_prepare_ha_outbound_call,
     async_track_outbound_sip_client as _track_outbound_sip_client,
 )
 from .peer_snapshot import async_advertise_host as _ha_advertise_host
 from .phone_endpoint import (
-    DEFAULT_ENDPOINT_ID,
     EndpointAvailability,
     EndpointKind,
 )
@@ -111,19 +108,6 @@ async def _mark_sip_account_unreachable(hass: HomeAssistant, username: str) -> N
         # binary sensor stale even though routing already returned 480.
         registrar.remove_registration(username)
         _LOGGER.info("SIP registrar contact marked unreachable user=%s", username)
-
-
-def _ha_softphone_has_active_call(
-    hass: HomeAssistant,
-    *,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
-    ignore_call_id: str = "",
-) -> bool:
-    store = _ha_softphone_store(hass, endpoint_id)
-    if ignore_call_id and str(store.get("call_id") or "") == ignore_call_id:
-        return False
-    state = str(store.get("state") or CallState.IDLE.value)
-    return bool(store.get("session_device_id") or state in HA_SOFTPHONE_ACTIVE_STATES)
 
 
 def _ha_peer_name(hass: HomeAssistant) -> str:
@@ -202,9 +186,7 @@ async def async_originate_browser_call(
     ):
         raise ServiceValidationError(f"{browser_endpoint.name} is disabled")
     local_name = _browser_endpoint_name(hass, endpoint_id, browser_endpoint)
-    source_device_id = str(
-        getattr(browser_endpoint, "device_id", "") or HA_SOFTPHONE_DEVICE_ID
-    )
+    source_device_id = str(getattr(browser_endpoint, "device_id", ""))
     _ha_softphone_store(hass, endpoint_id)["device_id"] = source_device_id
     cfg = _get_transport_config(hass)
     trunk = sip_trunk(hass)

@@ -8,7 +8,7 @@ import logging
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
-from .const import HA_PEER_FALLBACK_NAME, HA_SOFTPHONE_DEVICE_ID
+from .const import HA_PEER_FALLBACK_NAME
 from .endpoint_lifecycle import call_registry
 from .fsm import (
     CallState,
@@ -16,7 +16,6 @@ from .fsm import (
     sip_public_state,
     sip_terminal_reason,
 )
-from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .runtime_data import call_runtime_artifacts
 from .session_cleanup import async_cleanup_sip_runtime
 from .websocket_api import _ha_softphone_store, _set_ha_softphone_call_state
@@ -97,9 +96,9 @@ async def async_track_outbound_sip_client(
     result: str,
     target: str,
     sip_uri: str = "",
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
     local_name: str = "",
-    session_device_id: str = HA_SOFTPHONE_DEVICE_ID,
+    session_device_id: str = "",
     target_device_id: str = "",
     video_requested: bool = False,
     video_failure_reason: str = "",
@@ -331,7 +330,7 @@ async def async_track_outbound_sip_client(
 
 async def async_prepare_ha_outbound_call(
     hass: HomeAssistant,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
 ) -> None:
     """Close stale HA softphone SIP clients before creating a new dialog."""
     artifacts = call_runtime_artifacts(hass)
@@ -348,7 +347,7 @@ async def async_prepare_ha_outbound_call(
             session = registry.sessions.get(registry.resolve_session_id(call_id))
             session_endpoint_id = str(
                 (session.metadata if session is not None else {}).get("endpoint_id")
-                or DEFAULT_ENDPOINT_ID
+                or ""
             )
             if session_endpoint_id != endpoint_id:
                 continue

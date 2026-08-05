@@ -16,7 +16,6 @@ import logging
 from homeassistant.core import HomeAssistant
 
 from .assist_runtime import AssistMediaSession
-from .const import HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry as _call_registry
 from .media_offer_answer import (
     validate_bridged_video_reoffer,
@@ -30,7 +29,6 @@ from .media_session_updates import (
     commit_audio_session_update,
     commit_video_session_update,
 )
-from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .runtime_data import endpoint_directory, require_runtime_data
 from .sdp import (
     build_answer_directional,
@@ -476,12 +474,11 @@ async def async_prepare_media_update(
                     "endpoint_id"
                 )
             )
-            or DEFAULT_ENDPOINT_ID
         ).strip()
+        if not media_endpoint_id:
+            return SipInviteResult(481, "Call/Transaction Does Not Exist")
         media_endpoint = endpoint_directory(hass).get(media_endpoint_id)
-        media_device_id = str(
-            getattr(media_endpoint, "device_id", "") or HA_SOFTPHONE_DEVICE_ID
-        )
+        media_device_id = str(getattr(media_endpoint, "device_id", ""))
         local_rtp_port = int(media.get("local_rtp_port") or 0)
         if not local_rtp_port:
             return SipInviteResult(488, "Not Acceptable Here")

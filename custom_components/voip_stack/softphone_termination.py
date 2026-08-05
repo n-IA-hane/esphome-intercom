@@ -10,10 +10,8 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .bridge_manager import async_terminate_sip_bridge
 from .call_scope import endpoint_call_ids, pending_routes, take_pending_route
-from .const import HA_SOFTPHONE_DEVICE_ID
 from .fsm import CallState, TerminalReason, sip_public_state
 from .media_ports import release_media_reservation
-from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .route_decisions import set_pending_route_decision
 from .runtime_data import call_runtime_artifacts, conference_component
 from .session_cleanup import async_cleanup_sip_runtime
@@ -34,13 +32,13 @@ async def async_terminate_sip_bridge_session(
     hass: HomeAssistant,
     call_id: str,
     *,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
-    session_device_id: str = HA_SOFTPHONE_DEVICE_ID,
+    endpoint_id: str = "",
+    session_device_id: str = "",
     terminal_reason: str = TerminalReason.LOCAL_HANGUP.value,
 ) -> tuple[bool, str, str, bool, bool]:
     """Terminate one B2BUA bridge and publish its terminal projections."""
 
-    softphone = _ha_softphone_store(hass, endpoint_id)
+    softphone = _ha_softphone_store(hass, endpoint_id) if endpoint_id else {}
     softphone_call_id = str(softphone.get("call_id") or "")
     bridge = dict(_sip_bridge_store(hass))
     result = await async_terminate_sip_bridge(

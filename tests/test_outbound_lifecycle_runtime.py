@@ -237,6 +237,7 @@ class OutboundLifecycleRuntimeTest(unittest.IsolatedAsyncioTestCase):
             client=client,
             result="busy",
             target="Kitchen",
+            endpoint_id="phone",
         )
 
         self.assertEqual(client.closed, 1)
@@ -288,6 +289,7 @@ class OutboundLifecycleRuntimeTest(unittest.IsolatedAsyncioTestCase):
             client=client,
             result="ringing",
             target="Kitchen",
+            endpoint_id="phone",
         )
         watcher = self.registry.watchers["call-1"]
         self.registry.sip_clients["call-1"] = object()
@@ -303,7 +305,7 @@ class OutboundLifecycleRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.registry.sip_clients["call-1"] = client
 
         with self.assertRaisesRegex(ServiceValidationError, "already has"):
-            await self.module.async_prepare_ha_outbound_call(self.hass)
+            await self.module.async_prepare_ha_outbound_call(self.hass, "default")
 
         self.assertIs(self.registry.sip_clients["call-1"], client)
         self.cleanup.assert_not_awaited()
