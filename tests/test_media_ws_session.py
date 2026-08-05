@@ -42,6 +42,26 @@ def _load_module(name: str):
 
 _load_module("session_cleanup")
 websocket_owner = _load_module("websocket_owner")
+
+
+class _MediaRuntime(dict):
+    """Test view that keeps legacy assertions readable around the new owner."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.shutdown = asyncio.Event()
+
+    @property
+    def identity_locks(self):
+        return self.setdefault("media_identity_locks", {})
+
+    def owners_for(self, channel):
+        return self.setdefault(f"{channel}_ws_owners", {})
+
+    def owner_lock_for(self, channel):
+        return self.setdefault(f"{channel}_ws_owner_lock", asyncio.Lock())
+
+
 runtime_data = types.ModuleType(f"{PKG_NAME}.runtime_data")
 runtime_data.call_projection = lambda hass: hass.data.get("voip_stack", {}).get(
     "call_registry"
@@ -56,6 +76,7 @@ runtime_data.sip_trunk = lambda hass: hass.data.get("voip_stack", {}).get(
 runtime_data.sip_endpoint_manager = lambda hass: hass.data.get(
     "voip_stack", {}
 ).get("sip_endpoint")
+runtime_data.require_runtime_data = lambda hass: hass.runtime
 sys.modules[runtime_data.__name__] = runtime_data
 media_ws_session = _load_module("media_ws_session")
 
@@ -279,7 +300,7 @@ class MediaWebSocketSessionTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_context_claims_and_releases_audio_owner_then_publishes(self) -> None:
-        bucket: dict = {}
+        bucket = _MediaRuntime()
         owner = websocket_owner.MediaWebSocketOwner(user_id="u", client_id="c")
         published: list[str] = []
 
@@ -303,7 +324,11 @@ class MediaWebSocketSessionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(published, ["published"])
 
     async def test_shared_claim_builds_the_channel_websocket_and_owner(self) -> None:
-        hass = types.SimpleNamespace(data={"voip_stack": {}})
+        media = _MediaRuntime()
+        hass = types.SimpleNamespace(
+            data={"voip_stack": {}},
+            runtime=types.SimpleNamespace(media=media),
+        )
         context = media_ws_session.MediaWebSocketRequestContext(
             hass=hass,
             user_id="user-1",
@@ -335,20 +360,18 @@ class MediaWebSocketSessionTest(unittest.IsolatedAsyncioTestCase):
                     "browser-document-1234",
                 )
                 self.assertIs(
-                    hass.data["voip_stack"]["audio_ws_owners"][
-                        "phone|call-1"
-                    ],
+                    media.owners_for("audio")["phone|call-1"],
                     claimed.owner,
                 )
 
         self.assertEqual(
-            hass.data["voip_stack"]["audio_ws_owners"],
+            media.owners_for("audio"),
             {},
         )
         self.assertEqual(published, ["published"])
 
     async def test_local_lease_releases_only_after_both_media_owners_are_gone(self) -> None:
-        bucket: dict = {}
+        bucket = _MediaRuntime()
         bridge = _Bridge()
         audio_owner = websocket_owner.MediaWebSocketOwner(user_id="u", client_id="c")
         video_owner = websocket_owner.MediaWebSocketOwner(user_id="u", client_id="c")
@@ -385,7 +408,7 @@ class MediaWebSocketSessionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(bridge.releases), 1)
 
     async def test_cancelled_close_waiter_cannot_skip_release_or_publication(self) -> None:
-        bucket = {"audio_ws_owners": {}}
+        bucket = _MediaRuntime({"audio_ws_owners": {}})
         owner_lock = asyncio.Lock()
         await owner_lock.acquire()
         owner = websocket_owner.MediaWebSocketOwner(user_id="u", client_id="c")
@@ -412,7 +435,7 @@ class MediaWebSocketSessionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(published, ["published"])
 
     async def test_publication_failure_does_not_restore_released_owner(self) -> None:
-        bucket: dict = {}
+        bucket = _MediaRuntime()
         owner = websocket_owner.MediaWebSocketOwner(user_id="u", client_id="c")
 
         async with media_ws_session.async_media_websocket_session(

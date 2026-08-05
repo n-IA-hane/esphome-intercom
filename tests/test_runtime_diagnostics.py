@@ -47,20 +47,21 @@ class _Registry:
 class RuntimeDiagnosticsTest(unittest.TestCase):
     def test_snapshot_combines_registry_media_ports_owners_and_tasks(self) -> None:
         diagnostics = _load_module()
-        bucket = {
-            "active_audio_sessions": {"call-1": object()},
-            "active_video_sessions": {"call-1": object()},
-            "audio_ws_owners": {"phone|call-1": object()},
-            "video_ws_owners": {},
-            "media_identity_locks": {"phone|call-1": object()},
-            "sip_rtp_port_pool": {"used": {40002, 40004}},
-            "runtime_tasks": {_Task(False), _Task(True)},
-        }
+        bucket = {"runtime_tasks": {_Task(False), _Task(True)}}
+        sessions = {"audio": {"call-1": object()}, "video": {"call-1": object()}}
+        owners = {"audio": {"phone|call-1": object()}, "video": {}}
+        media = SimpleNamespace(
+            sessions_for=lambda channel: sessions[channel],
+            owners_for=lambda channel: owners[channel],
+            identity_locks={"phone|call-1": object()},
+        )
 
         snapshot = diagnostics.runtime_resource_snapshot(
             bucket,
             _Registry(),
             detailed=True,
+            browser_media=media,
+            rtp_port_pool={"used": {40002, 40004}},
             call_artifacts=SimpleNamespace(
                 forward_tasks={"call-1": _Task(False), "old": _Task(True)},
                 deadlines={"call-1": _Task(False)},

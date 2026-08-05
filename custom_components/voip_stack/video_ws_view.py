@@ -30,7 +30,7 @@ from .media_ws_session import (
     async_prepare_media_websocket_request,
 )
 from .queue_utils import drain_queue
-from .runtime_data import call_projection
+from .runtime_data import call_projection, require_runtime_data
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import SipCallClient
 from .video_rtcp import (
@@ -1370,7 +1370,7 @@ async def _run_video_session(
     except BaseException:
         await close_setup_resources()
         raise
-    active_sessions = hass.data.setdefault(DOMAIN, {}).setdefault("active_video_sessions", {})
+    active_sessions = require_runtime_data(hass).media.sessions_for("video")
     active_sessions[session.call_id] = session
     _LOGGER.info(
         "HA softphone video websocket attached call_id=%s local_rtp=%s remote=%s:%s format=%s direction=%s",

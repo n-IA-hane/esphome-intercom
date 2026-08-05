@@ -16,7 +16,7 @@ import logging
 from homeassistant.core import HomeAssistant
 
 from .assist_runtime import AssistMediaSession
-from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
+from .const import HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry as _call_registry
 from .media_offer_answer import (
     validate_bridged_video_reoffer,
@@ -31,7 +31,7 @@ from .media_session_updates import (
     commit_video_session_update,
 )
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
-from .runtime_data import endpoint_directory
+from .runtime_data import endpoint_directory, require_runtime_data
 from .sdp import (
     build_answer_directional,
     constrained_media_direction,
@@ -485,18 +485,11 @@ async def async_prepare_media_update(
         local_rtp_port = int(media.get("local_rtp_port") or 0)
         if not local_rtp_port:
             return SipInviteResult(488, "Not Acceptable Here")
-        audio_session = (
-            hass.data.setdefault(DOMAIN, {})
-            .setdefault("active_audio_sessions", {})
-            .get(call_id)
-        )
+        browser_media = require_runtime_data(hass).media
+        audio_session = browser_media.sessions_for("audio").get(call_id)
         previous_video = previous.video_format
         updated_video = updated.video_format
-        video_session = (
-            hass.data.setdefault(DOMAIN, {})
-            .setdefault("active_video_sessions", {})
-            .get(call_id)
-        )
+        video_session = browser_media.sessions_for("video").get(call_id)
         new_video_reservation = None
         new_video_rtp_socket = None
         new_video_rtcp_socket = None

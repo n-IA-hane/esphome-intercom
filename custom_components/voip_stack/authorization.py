@@ -339,8 +339,10 @@ async def async_require_media_controller(
     user_id = str(getattr(user, "id", "") or "")
     if not user_id:
         raise Unauthorized(user_id=None)
-    bucket = hass.data.setdefault(_DOMAIN, {})
-    lock: asyncio.Lock = bucket.setdefault("media_controller_lock", asyncio.Lock())
+    lock = getattr(registry, "media_controller_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+        registry.media_controller_lock = lock
     async with lock:
         session_id = registry.resolve_session_id(str(call_id or "").strip())
         session = registry.sessions.get(session_id)

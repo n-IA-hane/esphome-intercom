@@ -158,6 +158,11 @@ class _FakeHass:
             shutdown_task=None,
             rtp_port_pool={},
             next_rtp_port=0,
+            media=types.SimpleNamespace(
+                sessions_for=lambda _channel: {},
+                owners_for=lambda _channel: {},
+                identity_locks={},
+            ),
             call_artifacts=types.SimpleNamespace(
                 forward_tasks={},
                 forward_claims=set(),

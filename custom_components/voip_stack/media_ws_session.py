@@ -7,16 +7,19 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .session_cleanup import async_wait_for_cleanup
-from .runtime_data import call_projection
+from .runtime_data import call_projection, require_runtime_data
 from .websocket_owner import (
     MediaWebSocketOwner,
     async_claim_call_media_owner,
     async_release_local_media_if_unowned,
     async_release_media_owner,
 )
+
+if TYPE_CHECKING:
+    from .runtime_data import BrowserMediaRuntime
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,7 +29,7 @@ _LOGGER = logging.getLogger(__name__)
 class MediaWebSocketSession:
     """One claimed audio/video owner plus an optional local bridge lease."""
 
-    bucket: dict[str, Any]
+    media: BrowserMediaRuntime
     owners: dict[str, object]
     owner_lock: asyncio.Lock
     owner_key: str
@@ -54,7 +57,7 @@ class MediaWebSocketSession:
             try:
                 if self.local_lease is not None:
                     await async_release_local_media_if_unowned(
-                        self.bucket,
+                        self.media,
                         self.local_bridge,
                         self.local_lease,
                     )
@@ -184,8 +187,6 @@ async def async_claimed_media_websocket(
 
     from aiohttp import web
 
-    from .const import DOMAIN
-
     ws = web.WebSocketResponse(max_msg_size=max_msg_size)
     owner = MediaWebSocketOwner(
         websocket=ws,
@@ -193,17 +194,16 @@ async def async_claimed_media_websocket(
         user_id=context.user_id,
         client_id=context.client_id,
     )
-    bucket = context.hass.data.setdefault(DOMAIN, {})
-    shutdown_event = bucket.setdefault("media_shutdown", asyncio.Event())
+    media = require_runtime_data(context.hass).media
     async with async_media_websocket_session(
-        bucket,
+        media,
         registry,
         context.call_id,
         context.endpoint_id,
         owner,
         channel=channel,
         timeout=timeout,
-        shutdown_event=shutdown_event,
+        shutdown_event=media.shutdown,
         pin_client_identity=local_call is None,
         local_bridge=(
             context.local_bridge if local_call is not None else None
@@ -310,7 +310,7 @@ async def async_prepare_media_websocket_request(
 
 @asynccontextmanager
 async def async_media_websocket_session(
-    bucket: dict[str, Any],
+    media: BrowserMediaRuntime,
     registry: Any,
     call_id: str,
     endpoint_id: str,
@@ -326,7 +326,7 @@ async def async_media_websocket_session(
     """Claim and always release one media channel through a shared barrier."""
 
     owners, owner_lock, owner_key = await async_claim_call_media_owner(
-        bucket,
+        media,
         registry,
         call_id,
         endpoint_id,
@@ -338,7 +338,7 @@ async def async_media_websocket_session(
         local_bridge=local_bridge,
     )
     session = MediaWebSocketSession(
-        bucket,
+        media,
         owners,
         owner_lock,
         owner_key,

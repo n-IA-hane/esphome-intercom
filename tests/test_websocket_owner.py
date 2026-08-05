@@ -35,6 +35,20 @@ async_revoke_media_owners = OWNER_MODULE.async_revoke_media_owners
 media_websocket_owner_status = OWNER_MODULE.media_websocket_owner_status
 
 
+class _MediaRuntime(dict):
+    """Test view that keeps legacy assertions readable around the new owner."""
+
+    @property
+    def identity_locks(self):
+        return self.setdefault("media_identity_locks", {})
+
+    def owners_for(self, channel):
+        return self.setdefault(f"{channel}_ws_owners", {})
+
+    def owner_lock_for(self, channel):
+        return self.setdefault(f"{channel}_ws_owner_lock", asyncio.Lock())
+
+
 class _FakeWebSocket:
     def __init__(self, *, fail: bool = False) -> None:
         self.force_close_calls = 0
@@ -84,7 +98,7 @@ class _CallRegistry:
 class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
     def test_owner_status_never_exposes_browser_identity(self) -> None:
         key = "kitchen|call-1"
-        bucket: dict[str, object] = {}
+        bucket = _MediaRuntime()
         self.assertEqual(
             media_websocket_owner_status(
                 bucket, _CallRegistry(), "call-1", "kitchen", "document-a"
@@ -129,7 +143,7 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
     async def test_handoff_for_one_call_does_not_block_an_unrelated_call(
         self,
     ) -> None:
-        bucket: dict[str, object] = {}
+        bucket = _MediaRuntime()
         registry = _CallRegistry("document-a")
         registry.add_call("call-2", "document-b")
         previous = MediaWebSocketOwner(
@@ -191,7 +205,7 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
     def test_pinned_originator_blocks_other_client_before_socket_attach(
         self,
     ) -> None:
-        bucket: dict[str, object] = {}
+        bucket = _MediaRuntime()
         registry = _CallRegistry("android-originator")
         self.assertEqual(
             media_websocket_owner_status(
@@ -217,7 +231,7 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
     async def test_disconnected_other_document_cannot_rebind_call_identity(
         self,
     ) -> None:
-        bucket: dict[str, object] = {}
+        bucket = _MediaRuntime()
         registry = _CallRegistry("closed-document")
         replacement = MediaWebSocketOwner(
             user_id="user-a",
@@ -248,7 +262,7 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
     async def test_live_channel_blocks_other_document_identity_takeover(
         self,
     ) -> None:
-        bucket: dict[str, object] = {}
+        bucket = _MediaRuntime()
         registry = _CallRegistry("document-a")
         first = MediaWebSocketOwner(user_id="user-a", client_id="document-a")
         await async_claim_call_media_owner(
@@ -282,7 +296,7 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bucket.get("video_ws_owners"), {})
 
     async def test_disconnected_local_leg_rebinds_before_owner_claim(self) -> None:
-        bucket: dict[str, object] = {}
+        bucket = _MediaRuntime()
         registry = _CallRegistry()
         snapshot = types.SimpleNamespace(
             caller_endpoint_id="office",
@@ -323,7 +337,7 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
     async def test_local_rebind_race_is_reported_as_busy_without_owner_leak(
         self,
     ) -> None:
-        bucket: dict[str, object] = {}
+        bucket = _MediaRuntime()
         registry = _CallRegistry()
         snapshot = types.SimpleNamespace(
             caller_endpoint_id="office",
@@ -361,10 +375,10 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_local_lease_releases_only_after_last_media_channel(self) -> None:
         key = "kitchen|call-1"
-        bucket: dict[str, object] = {
+        bucket = _MediaRuntime({
             "audio_ws_owners": {key: object()},
             "video_ws_owners": {key: object()},
-        }
+        })
         releases: list[tuple[str, str, str]] = []
         bridge = types.SimpleNamespace(
             release_media=lambda call_id, endpoint_id, token: (
@@ -405,7 +419,7 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
 
         with self.assertLogs(OWNER_MODULE._LOGGER.name, level="DEBUG") as logs:
             released = await async_release_local_media_if_unowned(
-                {},
+                _MediaRuntime(),
                 bridge,
                 lease,
             )

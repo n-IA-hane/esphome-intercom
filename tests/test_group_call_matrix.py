@@ -164,6 +164,13 @@ class _FakeHass:
             sip=None,
             rtp_port_pool={},
             next_rtp_port=0,
+            media=types.SimpleNamespace(
+                sessions={"audio": {}, "video": {}},
+                owners={"audio": {}, "video": {}},
+                owners_for=lambda channel: self.runtime.media.owners[channel],
+                sessions_for=lambda channel: self.runtime.media.sessions[channel],
+                identity_locks={},
+            ),
         )
 
 
@@ -174,14 +181,15 @@ def _test_runtime(hass):
 runtime_data_module.require_runtime_data = _test_runtime
 runtime_data_module.runtime_data = _test_runtime
 endpoint_lifecycle_module.require_runtime_data = _test_runtime
+websocket_api.runtime_data = _test_runtime
 
 
 class GroupCallMatrixTest(unittest.TestCase):
     def test_debug_snapshot_exposes_cleanup_ownership_only_when_enabled(self) -> None:
         hass = _FakeHass()
         bucket = hass.data[const.DOMAIN]
-        bucket["audio_ws_owners"] = {"audio-call": object()}
-        bucket["video_ws_owners"] = {"video-call": object()}
+        hass.runtime.media.owners["audio"] = {"audio-call": object()}
+        hass.runtime.media.owners["video"] = {"video-call": object()}
         bucket["video_transcoder_active"] = types.SimpleNamespace(
             call_id="transcoded-call"
         )

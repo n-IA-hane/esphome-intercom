@@ -6,7 +6,10 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .runtime_data import BrowserMediaRuntime
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,12 +56,10 @@ class _MediaIdentityLock:
 
 
 @asynccontextmanager
-async def _media_identity_guard(bucket: dict[str, Any], owner_key: str):
+async def _media_identity_guard(media: BrowserMediaRuntime, owner_key: str):
     """Serialize one call without head-of-line blocking unrelated calls."""
 
-    locks: dict[str, _MediaIdentityLock] = bucket.setdefault(
-        "media_identity_locks", {}
-    )
+    locks: dict[str, _MediaIdentityLock] = media.identity_locks
     entry = locks.get(owner_key)
     if entry is None:
         entry = _MediaIdentityLock()
@@ -86,7 +87,7 @@ def _call_media_client_id(registry: Any, call_id: str) -> str:
 
 
 def media_websocket_owner_status(
-    bucket: dict[str, Any],
+    media: BrowserMediaRuntime,
     registry: Any,
     call_id: str,
     endpoint_id: str,
@@ -104,7 +105,7 @@ def media_websocket_owner_status(
         owner
         for channel in ("audio", "video")
         if (
-            owner := bucket.get(f"{channel}_ws_owners", {}).get(owner_key)
+            owner := media.owners_for(channel).get(owner_key)
         )
         is not None
     ]
@@ -135,7 +136,7 @@ def _set_call_media_client_id(registry: Any, call_id: str, client_id: str) -> No
 
 
 async def async_claim_call_media_owner(
-    bucket: dict[str, Any],
+    media: BrowserMediaRuntime,
     registry: Any,
     call_id: str,
     endpoint_id: str,
@@ -161,19 +162,15 @@ async def async_claim_call_media_owner(
     call_id = str(call_id or "").strip()
     endpoint_id = str(endpoint_id or "").strip()
     owner_key = f"{endpoint_id}|{call_id}"
-    owners_key = f"{channel}_ws_owners"
-    owner_lock_key = f"{channel}_ws_owner_lock"
-    owners = bucket.setdefault(owners_key, {})
-    owner_lock: asyncio.Lock = bucket.setdefault(owner_lock_key, asyncio.Lock())
+    owners = media.owners_for(channel)
+    owner_lock = media.owner_lock_for(channel)
 
-    async with _media_identity_guard(bucket, owner_key):
+    async with _media_identity_guard(media, owner_key):
         live_owners = [
             candidate_owner
             for candidate in ("audio", "video")
             if (
-                candidate_owner := bucket.setdefault(
-                    f"{candidate}_ws_owners", {}
-                ).get(owner_key)
+                candidate_owner := media.owners_for(candidate).get(owner_key)
             )
             is not None
         ]
@@ -227,16 +224,15 @@ async def async_claim_call_media_owner(
 
 
 async def async_release_local_media_if_unowned(
-    bucket: dict[str, Any],
+    media: BrowserMediaRuntime,
     bridge: Any,
     lease: Any,
 ) -> bool:
     """Release a local-call lease after its last audio/video socket closes."""
     owner_key = f"{lease.endpoint_id}|{lease.call_id}"
-    async with _media_identity_guard(bucket, owner_key):
+    async with _media_identity_guard(media, owner_key):
         if any(
-            bucket.setdefault(f"{channel}_ws_owners", {}).get(owner_key)
-            is not None
+            media.owners_for(channel).get(owner_key) is not None
             for channel in ("audio", "video")
         ):
             return False

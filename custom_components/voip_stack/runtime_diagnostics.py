@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .runtime_data import BrowserMediaRuntime
 
 
 def _active_task_count(value: object) -> int:
@@ -34,6 +37,7 @@ def runtime_resource_snapshot(
     detailed: bool = False,
     rtp_port_pool: dict[str, Any] | None = None,
     call_artifacts: Any | None = None,
+    browser_media: BrowserMediaRuntime | None = None,
 ) -> dict[str, Any]:
     """Return stable counts used to prove that a call cleaned up completely.
 
@@ -50,11 +54,11 @@ def runtime_resource_snapshot(
         str(key): int(value)
         for key, value in dict(registry_snapshot.get("resource_counts") or {}).items()
     }
-    active_audio = bucket.get("active_audio_sessions")
-    active_video = bucket.get("active_video_sessions")
-    audio_owners = bucket.get("audio_ws_owners")
-    video_owners = bucket.get("video_ws_owners")
-    identity_locks = bucket.get("media_identity_locks")
+    active_audio = browser_media.sessions_for("audio") if browser_media else {}
+    active_video = browser_media.sessions_for("video") if browser_media else {}
+    audio_owners = browser_media.owners_for("audio") if browser_media else {}
+    video_owners = browser_media.owners_for("video") if browser_media else {}
+    identity_locks = browser_media.identity_locks if browser_media else {}
     port_pool = rtp_port_pool or bucket.get("sip_rtp_port_pool")
     used_ports = (
         set(port_pool.get("used") or ()) if isinstance(port_pool, dict) else set()

@@ -5,7 +5,6 @@ control is expressed in SIP/SDP/RTP terms only; logical targets are resolved by
 the central phonebook and routed through HA as SIP dialogs when needed.
 """
 
-import asyncio
 import logging
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
@@ -390,9 +389,6 @@ async def _async_apply_assist_intents(hass: HomeAssistant, enabled: bool) -> Non
 async def _async_setup_shared(hass: HomeAssistant, config: dict | None = None) -> None:
     """Shared setup logic for both YAML and config entry."""
     bucket = hass.data.setdefault(DOMAIN, {})
-    # Views survive config-entry reloads; reopen media ownership only after a
-    # new setup begins.
-    bucket.setdefault("media_shutdown", asyncio.Event()).clear()
     if bucket.get("initialized"):
         # Services, websocket commands and HTTP views stay registered across a
         # config-entry reload. The event listeners are explicitly removed by

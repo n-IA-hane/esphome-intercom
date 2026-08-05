@@ -20,6 +20,41 @@ if TYPE_CHECKING:
 
 
 @dataclass(slots=True)
+class BrowserMediaRuntime:
+    """Entry-owned browser transports, separate from authoritative call state."""
+
+    active_sessions: dict[str, dict[str, Any]] = field(
+        default_factory=lambda: {"audio": {}, "video": {}}
+    )
+    owners: dict[str, dict[str, Any]] = field(
+        default_factory=lambda: {"audio": {}, "video": {}}
+    )
+    owner_locks: dict[str, asyncio.Lock] = field(
+        default_factory=lambda: {
+            "audio": asyncio.Lock(),
+            "video": asyncio.Lock(),
+        }
+    )
+    identity_locks: dict[str, Any] = field(default_factory=dict)
+    shutdown: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def sessions_for(self, channel: str) -> dict[str, Any]:
+        """Return live sessions for one supported media channel."""
+
+        return self.active_sessions[channel]
+
+    def owners_for(self, channel: str) -> dict[str, Any]:
+        """Return live owners for one supported media channel."""
+
+        return self.owners[channel]
+
+    def owner_lock_for(self, channel: str) -> asyncio.Lock:
+        """Return the serialization lock for one supported media channel."""
+
+        return self.owner_locks[channel]
+
+
+@dataclass(slots=True)
 class VoipStackRuntime:
     """Entry-scoped configuration used by the live SIP runtime."""
 
@@ -44,6 +79,7 @@ class VoipStackRuntime:
     device_resolver: VoipDeviceResolver | None = None
     rtp_port_pool: dict[str, Any] = field(default_factory=dict)
     next_rtp_port: int = 0
+    media: BrowserMediaRuntime = field(default_factory=BrowserMediaRuntime)
 
 
 type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]

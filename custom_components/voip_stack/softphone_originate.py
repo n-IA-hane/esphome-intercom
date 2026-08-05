@@ -64,7 +64,12 @@ from .phone_endpoint import (
     EndpointKind,
 )
 from .router import RouteAction, RouteReason, ha_uri_for, resolve_ha_router
-from .runtime_data import endpoint_directory, sip_registrar, sip_trunk
+from .runtime_data import (
+    endpoint_directory,
+    require_runtime_data,
+    sip_registrar,
+    sip_trunk,
+)
 from .service_endpoints import (
     async_require_phone_service_control as _require_phone_service_control,
     browser_endpoint_name as _browser_endpoint_name,
@@ -548,13 +553,13 @@ async def async_originate_browser_call(
         if session is None:
             return None
         call_generation = session.generation
-        bucket = hass.data.setdefault(DOMAIN, {})
-        audio_session = bucket.setdefault("active_audio_sessions", {}).get(call_id)
+        browser_media = require_runtime_data(hass).media
+        audio_session = browser_media.sessions_for("audio").get(call_id)
         previous_video = previous.video_format
         updated_video = updated.video_format
         if (previous_video is None) != (updated_video is None):
             return None
-        video_session = bucket.setdefault("active_video_sessions", {}).get(call_id)
+        video_session = browser_media.sessions_for("video").get(call_id)
         if previous_video is not None and updated_video is not None:
             if not (
                 video_formats_renegotiation_compatible(

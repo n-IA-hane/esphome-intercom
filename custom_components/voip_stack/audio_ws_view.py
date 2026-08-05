@@ -41,7 +41,7 @@ from .media_call_lifetime import (
     listen_for_media_call_end as _listen_for_call_end,
 )
 from .queue_utils import drain_queue, put_drop_oldest
-from .runtime_data import conference_component
+from .runtime_data import conference_component, require_runtime_data
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder, SipCallClient
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
@@ -1065,7 +1065,7 @@ async def _run_audio_session(
     call_ended, remove_call_listener = _listen_for_call_end(
         hass, session.call_id, endpoint_id
     )
-    active_sessions = hass.data.setdefault(DOMAIN, {}).setdefault("active_audio_sessions", {})
+    active_sessions = require_runtime_data(hass).media.sessions_for("audio")
     active_sessions[session.call_id] = session
 
     async def session_updates_to_ws() -> None:

@@ -7,7 +7,6 @@ from typing import Any
 from homeassistant.components import system_health
 from homeassistant.core import HomeAssistant, callback
 
-from .const import DOMAIN
 from .phone_endpoint import EndpointAvailability, EndpointKind
 from .runtime_data import (
     runtime_data,
@@ -31,7 +30,6 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
     """Return bounded operational counters without SIP identities."""
 
     runtime = runtime_data(hass)
-    bucket = hass.data.get(DOMAIN, {})
     endpoint = sip_endpoint_manager(hass)
     phones = tuple(runtime.endpoints.endpoints) if runtime is not None else ()
     registrar = sip_registrar(hass)
@@ -57,8 +55,7 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
         "reserved_rtp_ports": len(used_ports) if isinstance(used_ports, set) else 0,
         "runtime_tasks": len(runtime.tasks) if runtime is not None else 0,
         "active_media_owners": sum(
-            len(value)
-            for key in ("audio_ws_owners", "video_ws_owners")
-            if isinstance((value := bucket.get(key)), dict)
-        ),
+            len(runtime.media.owners_for(channel))
+            for channel in ("audio", "video")
+        ) if runtime is not None else 0,
     }

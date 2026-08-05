@@ -160,6 +160,7 @@ def _runtime_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, A
             detailed=False,
             rtp_port_pool=runtime.rtp_port_pool if runtime is not None else None,
             call_artifacts=runtime.sip if runtime is not None else None,
+            browser_media=runtime.media if runtime is not None else None,
         ),
     }
 
@@ -246,5 +247,6 @@ async def async_get_device_diagnostics(
             detailed=False,
             rtp_port_pool=runtime.rtp_port_pool if runtime is not None else None,
             call_artifacts=runtime.sip if runtime is not None else None,
+            browser_media=runtime.media if runtime is not None else None,
         ),
     }

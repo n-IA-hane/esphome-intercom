@@ -57,6 +57,7 @@ from .debug_capture import debug_capture_pending_writes
 from .runtime_diagnostics import runtime_resource_snapshot
 from .runtime_data import (
     endpoint_directory,
+    require_runtime_data,
     runtime_data,
     sip_endpoint_manager,
     sip_registrar,
@@ -546,14 +547,16 @@ async def _async_shutdown_all(hass: HomeAssistant) -> None:
     bucket.pop("sip_bridge_state", None)
     # HTTP views remain registered across a config-entry reload. Gate claims
     # before taking owner snapshots so a concurrent GET cannot outlive unload.
-    bucket.setdefault("media_shutdown", asyncio.Event()).set()
+    runtime = runtime_data(hass)
+    media = runtime.media if runtime is not None else None
+    if media is not None:
+        media.shutdown.set()
     owner_shutdowns = []
-    for owner_key, lock_key in (
-        ("audio_ws_owners", "audio_ws_owner_lock"),
-        ("video_ws_owners", "video_ws_owner_lock"),
-    ):
-        owners = bucket.setdefault(owner_key, {})
-        owner_lock = bucket.setdefault(lock_key, asyncio.Lock())
+    for channel in ("audio", "video"):
+        owners = media.owners_for(channel) if media is not None else {}
+        owner_lock = (
+            media.owner_lock_for(channel) if media is not None else asyncio.Lock()
+        )
         owner_shutdowns.append(
             async_revoke_media_owners(owners, owner_lock, timeout=5.0)
         )
@@ -889,6 +892,7 @@ def _sip_runtime_snapshot(
         detailed=detailed,
         rtp_port_pool=runtime.rtp_port_pool if runtime is not None else None,
         call_artifacts=runtime.sip if runtime is not None else None,
+        browser_media=runtime.media if runtime is not None else None,
     )
     return data
 
@@ -905,6 +909,7 @@ def _ha_softphone_state(
     )
     debug_mode = current_debug_mode(hass)
     runtime = _sip_runtime_snapshot(hass, detailed=debug_mode)
+    entry_runtime = runtime_data(hass)
     transport_config = current_transport_config(hass)
     active_softphone = store.get("state") in {
         CallState.CALLING.value,
@@ -933,8 +938,16 @@ def _ha_softphone_state(
             {
                 "call_registry": registry.snapshot(),
                 "runtime_resources": runtime["runtime_resources"],
-                "audio_ws_owner_call_ids": sorted(bucket.get("audio_ws_owners", {})),
-                "video_ws_owner_call_ids": sorted(bucket.get("video_ws_owners", {})),
+                "audio_ws_owner_call_ids": sorted(
+                    entry_runtime.media.owners_for("audio")
+                    if entry_runtime is not None
+                    else ()
+                ),
+                "video_ws_owner_call_ids": sorted(
+                    entry_runtime.media.owners_for("video")
+                    if entry_runtime is not None
+                    else ()
+                ),
                 "video_transcoder_call_id": str(
                     getattr(active_transcoder, "call_id", "") or ""
                 ),
@@ -1758,7 +1771,7 @@ async def websocket_ha_softphone_state(
     media_client_id = str(msg.get("media_client_id") or "")
     if media_client_id:
         owner_status = media_websocket_owner_status(
-            hass.data.get(DOMAIN, {}),
+            require_runtime_data(hass).media,
             call_registry(hass),
             str(state.get("call_id") or ""),
             endpoint_id,

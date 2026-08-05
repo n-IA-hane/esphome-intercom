@@ -861,6 +861,12 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_audio_websocket_reinvite_rebuilds_live_encoder_and_decoder(self) -> None:
         audio_ws_view = _load_audio_ws_runtime_module()
+        audio_sessions: dict[str, object] = {}
+        audio_ws_view.require_runtime_data = lambda _hass: types.SimpleNamespace(
+            media=types.SimpleNamespace(
+                sessions_for=lambda _channel: audio_sessions,
+            )
+        )
         audio_ws = _load_intercom_module("audio_ws")
         const = _load_intercom_module("const")
         from aiohttp import WSMsgType
@@ -1025,6 +1031,12 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_audio_websocket_projects_negotiated_rfc4733_once(self) -> None:
         audio_ws_view = _load_audio_ws_runtime_module()
+        audio_sessions: dict[str, object] = {}
+        audio_ws_view.require_runtime_data = lambda _hass: types.SimpleNamespace(
+            media=types.SimpleNamespace(
+                sessions_for=lambda _channel: audio_sessions,
+            )
+        )
         const = _load_intercom_module("const")
 
         class Bus:

@@ -72,6 +72,7 @@ def _load_module(registry, answer_calls: list[dict]):
         endpoint_directory=lambda _hass: types.SimpleNamespace(
             get=lambda _endpoint_id: None,
         ),
+        require_runtime_data=lambda hass: hass.runtime,
     )
 
     def build_answer_directional(*_args, **kwargs):

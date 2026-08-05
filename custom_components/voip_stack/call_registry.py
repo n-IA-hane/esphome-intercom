@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass, field
 import time
@@ -87,6 +88,7 @@ class CallRegistry:
     """Observable call index backed by the authoritative PBX runtime."""
 
     def __init__(self) -> None:
+        self.media_controller_lock = asyncio.Lock()
         self.sessions: dict[str, CallSession] = {}
         self.leg_index: dict[str, str] = {}
         self.event_contexts: dict[str, CallEventContext] = {}

@@ -16,6 +16,18 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components" / "voip_stack"
 
 
+def _media(*, active: bool = False):
+    return SimpleNamespace(
+        sessions_for=lambda channel: (
+            {"private-call-id": object()}
+            if active and channel == "audio"
+            else {}
+        ),
+        owners_for=lambda _channel: {},
+        identity_locks={},
+    )
+
+
 def _redact(data, keys):
     if isinstance(data, list):
         return [_redact(item, keys) for item in data]
@@ -209,6 +221,7 @@ def test_config_entry_diagnostics_are_bounded_and_private(monkeypatch) -> None:
         trunk=_Trunk(),
         sip=SimpleNamespace(forward_tasks={}, deadlines={}),
         rtp_port_pool={"used": {40000, 40002}},
+        media=_media(active=True),
     )
     hass = SimpleNamespace(
         data={
@@ -294,6 +307,7 @@ def test_device_diagnostics_expose_behavior_not_identity(monkeypatch) -> None:
             trunk=None,
             sip=None,
             rtp_port_pool={},
+            media=_media(),
         ),
     )
     device = SimpleNamespace(id="private-device", identifiers=frozenset())
@@ -339,6 +353,7 @@ def test_device_diagnostics_are_safe_when_device_is_not_an_endpoint(monkeypatch)
             trunk=None,
             sip=None,
             rtp_port_pool={},
+            media=_media(),
         ),
     )
     device = SimpleNamespace(
