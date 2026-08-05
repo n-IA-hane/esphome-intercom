@@ -217,7 +217,6 @@ def test_deferred_browser_answer_rings_and_claims_source() -> None:
 
     result = module.defer_browser_softphone_invite(
         registry=registry,
-        endpoint_registry=_EndpointRegistry(browser),
         invite=_invite(),
         decision=_decision(),
         resolved_callee="HA",
@@ -239,15 +238,15 @@ def test_deferred_browser_answer_releases_busy_call() -> None:
     module, _states, _answers, _ports = _load_module()
     registry = _Registry(busy=True)
     source = _Endpoint("esp", _EndpointKind.ESPHOME)
+    browser = _Endpoint("browser", _EndpointKind.BROWSER, device_id="browser-device")
 
     result = module.defer_browser_softphone_invite(
         registry=registry,
-        endpoint_registry=None,
         invite=_invite(),
         decision=_decision(),
         resolved_callee="HA",
         source_endpoint=source,
-        target_endpoint=None,
+        target_endpoint=browser,
         defer_invite=lambda *_args, **_kwargs: None,
     )
 
@@ -270,7 +269,6 @@ def test_immediate_answer_rejects_unavailable_browser() -> None:
         hass=SimpleNamespace(),
         local_ip="192.0.2.10",
         registry=_Registry(),
-        endpoint_registry=_EndpointRegistry(browser),
         invite=_invite(),
         decision=_decision(),
         resolved_callee="HA",
@@ -298,7 +296,6 @@ def test_immediate_audio_answer_owns_media_and_publishes_state() -> None:
         hass=hass,
         local_ip="192.0.2.10",
         registry=registry,
-        endpoint_registry=_EndpointRegistry(browser),
         invite=_invite(),
         decision=_decision(),
         resolved_callee="HA",

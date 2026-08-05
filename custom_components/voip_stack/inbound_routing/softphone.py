@@ -8,12 +8,10 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
-from ..const import HA_SOFTPHONE_DEVICE_ID
 from ..endpoint_registry import EndpointBusyError
 from ..fsm import CallState, TerminalReason
 from ..media_ports import allocate_sip_rtp_port, reserve_sip_video_media
 from ..phone_endpoint import (
-    DEFAULT_ENDPOINT_ID,
     EndpointAvailability,
     EndpointKind,
     PhoneEndpoint,
@@ -25,7 +23,6 @@ from ..websocket_api import _set_ha_softphone_call_state
 
 if TYPE_CHECKING:
     from ..pbx_runtime import SipEndpointRuntime
-    from ..endpoint_registry import EndpointRegistry
     from ..router import RouteDecision
     from ..sip_listener import SipInvite
 
@@ -42,31 +39,23 @@ class BrowserRouteTarget:
 
 
 def _resolve_browser_target(
-    endpoint_registry: EndpointRegistry | None,
     target_endpoint: PhoneEndpoint | None,
     *,
     require_browser_kind: bool,
-) -> BrowserRouteTarget:
+) -> BrowserRouteTarget | None:
     endpoint = target_endpoint
     if require_browser_kind and (
         endpoint is None or endpoint.kind is not EndpointKind.BROWSER
     ):
         endpoint = None
-    if endpoint is None and endpoint_registry is not None:
-        endpoint = endpoint_registry.get(DEFAULT_ENDPOINT_ID)
-    endpoint_id = (
-        endpoint.endpoint_id if endpoint is not None else DEFAULT_ENDPOINT_ID
-    )
-    device_id = str(
-        getattr(endpoint, "device_id", "") or HA_SOFTPHONE_DEVICE_ID
-    )
-    return BrowserRouteTarget(endpoint, endpoint_id, device_id)
+    if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
+        return None
+    return BrowserRouteTarget(endpoint, endpoint.endpoint_id, endpoint.device_id)
 
 
 def defer_browser_softphone_invite(
     *,
     registry: SipEndpointRuntime,
-    endpoint_registry: EndpointRegistry | None,
     invite: SipInvite,
     decision: RouteDecision,
     resolved_callee: str,
@@ -77,10 +66,16 @@ def defer_browser_softphone_invite(
     """Publish ringing and leave the final answer to the owning browser."""
 
     target = _resolve_browser_target(
-        endpoint_registry,
         target_endpoint,
         require_browser_kind=False,
     )
+    if target is None:
+        return SipInviteResult(
+            480,
+            "Temporarily Unavailable",
+            to_tag="",
+            decline_reason=RouteReason.TARGET_UNREACHABLE.value,
+        )
     try:
         if (
             source_endpoint is not None
@@ -129,7 +124,6 @@ def answer_inbound_ha_softphone(
     hass: HomeAssistant,
     local_ip: str,
     registry: SipEndpointRuntime,
-    endpoint_registry: EndpointRegistry | None,
     invite: SipInvite,
     decision: RouteDecision,
     resolved_callee: str,
@@ -140,10 +134,16 @@ def answer_inbound_ha_softphone(
     """Accept an inbound SIP call into the selected browser softphone."""
 
     target = _resolve_browser_target(
-        endpoint_registry,
         target_endpoint,
         require_browser_kind=True,
     )
+    if target is None:
+        return SipInviteResult(
+            480,
+            "Temporarily Unavailable",
+            to_tag="",
+            decline_reason=RouteReason.TARGET_UNREACHABLE.value,
+        )
     browser_endpoint = target.endpoint
     if browser_endpoint is not None:
         if browser_endpoint.dnd or (

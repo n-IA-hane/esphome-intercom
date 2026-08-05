@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from homeassistant.core import HomeAssistant
 
 from .audio_format import HA_TRUNK_AUDIO_FORMATS
-from .const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING, HA_SOFTPHONE_DEVICE_ID
+from .const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
 from .endpoint_lifecycle import create_runtime_task
 from .endpoint_routing import (
     EndpointRouteResolver,
@@ -26,7 +26,8 @@ from .media_ports import (
 )
 from .outbound_attempts import BrowserLeg, OutboundLeg
 from .pbx_routing import roster_entry_for_target
-from .phone_endpoint import DEFAULT_ENDPOINT_ID, EndpointKind
+from .phone_endpoint import EndpointKind
+from .runtime_data import preferred_browser_phone
 from .sip import parse_sip_uri
 from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
 from .sip_client import SipCallClient
@@ -103,23 +104,16 @@ class EndpointDialer:
         """Resolve one member to its browser endpoint candidate."""
 
         endpoint = self.route_resolver.logical_endpoint(member, peers, entries)
-        if endpoint is not None:
-            if endpoint.kind is not EndpointKind.BROWSER:
-                return None
-            return BrowserLeg(
-                member=member,
-                endpoint_id=endpoint.endpoint_id,
-                name=endpoint.name,
-                device_id=str(endpoint.device_id or HA_SOFTPHONE_DEVICE_ID),
-            )
-        if self.route_resolver.is_ha_target(member):
-            return BrowserLeg(
-                member=member,
-                endpoint_id=DEFAULT_ENDPOINT_ID,
-                name=self.ha_peer_name(self.hass),
-                device_id=HA_SOFTPHONE_DEVICE_ID,
-            )
-        return None
+        if endpoint is None and self.route_resolver.is_ha_target(member):
+            endpoint = preferred_browser_phone(self.hass)
+        if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
+            return None
+        return BrowserLeg(
+            member=member,
+            endpoint_id=endpoint.endpoint_id,
+            name=endpoint.name,
+            device_id=endpoint.device_id,
+        )
 
     def prepare_outbound_leg(
         self,

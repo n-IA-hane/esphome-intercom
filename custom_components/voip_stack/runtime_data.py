@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .endpoint_registry import EndpointRegistry
+from .phone_endpoint import EndpointKind, PhoneEndpoint
 
 if TYPE_CHECKING:
     from .device_resolver import VoipDeviceResolver
@@ -131,6 +132,21 @@ def endpoint_directory(hass: HomeAssistant) -> EndpointRegistry:
     """Return the entry-owned logical phone directory."""
 
     return require_runtime_data(hass).endpoints
+
+
+def preferred_browser_phone(hass: HomeAssistant) -> PhoneEndpoint | None:
+    """Return the explicitly preferred, or sole, browser phone."""
+
+    runtime = require_runtime_data(hass)
+    endpoint = runtime.endpoints.by_device_id(runtime.preferred_phone_device_id)
+    if endpoint is not None and endpoint.kind is EndpointKind.BROWSER:
+        return endpoint
+    candidates = tuple(
+        item
+        for item in runtime.endpoints.endpoints
+        if item.kind is EndpointKind.BROWSER
+    )
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def call_runtime_artifacts(hass: HomeAssistant) -> SipEndpointRuntime:

@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant
 
 from . import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
-from .runtime_data import endpoint_directory, sip_trunk
+from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
     CONF_TRUNK_DTMF_ENABLED,
@@ -425,7 +425,7 @@ async def route_invite(
             trunk_config=trunk_cfg,
             bridge_to_trunk=bridge_to_trunk,
             source_endpoint=source_endpoint,
-            target_endpoint=target_endpoint,
+            target_endpoint=target_endpoint or preferred_browser_phone(hass),
             resolved_callee=resolved_callee,
             trunk_invite=trunk_invite,
             registry=registry,
@@ -435,7 +435,6 @@ async def route_invite(
     if not force_ha_softphone and decision.action is RouteAction.ANSWER_HA:
         return defer_browser_softphone_invite(
             registry=registry,
-            endpoint_registry=endpoint_registry,
             invite=invite,
             decision=decision,
             resolved_callee=resolved_callee,
@@ -447,11 +446,10 @@ async def route_invite(
         hass=hass,
         local_ip=local_ip,
         registry=registry,
-        endpoint_registry=endpoint_registry,
         invite=invite,
         decision=decision,
         resolved_callee=resolved_callee,
         source_endpoint=source_endpoint,
-        target_endpoint=target_endpoint,
+        target_endpoint=target_endpoint or preferred_browser_phone(hass),
         dtmf_format=sip_sdp.first_offered_dtmf_format(invite.remote_sdp),
     )
