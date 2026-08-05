@@ -430,7 +430,6 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(registry.relays["source"], relay)
         self.assertEqual(registry._legacy_relays, {})
         self.assertIs(registry.softphone_media["source"], media)
-        self.assertEqual(registry._legacy_resources, {})
         self.assertEqual(
             [resource.name for resource in authoritative.resources],
             ["relay:source", "softphone_media:source"],

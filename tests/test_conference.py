@@ -707,17 +707,19 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         watcher = asyncio.create_task(asyncio.Event().wait())
         runtime_task = endpoint_lifecycle.create_runtime_task(hass, asyncio.Event().wait())
+        registry.upsert("call", state="in_call")
+        registry.upsert("inbound", state="in_call")
+        registry.upsert("preanswered", state="ringing")
         registry.relays["call"] = Relay()
         registry.sip_clients["call"] = Client()
         registry.client_watchers["call"] = watcher
-        registry.softphone_media["inbound"] = {
+        registry.attach_media("inbound", {
             "rtp_reservation": Reservation("inbound"),
             "video_rtp_socket": VideoSocket(),
-        }
-        registry.preanswered["preanswered"] = {
+        })
+        registry.attach_media("preanswered", {
             "rtp_reservation": Reservation("preanswered"),
-        }
-        registry.upsert("call", state="in_call")
+        }, provisional=True)
         hass.data[const.DOMAIN]["conference_manager"] = Manager()
         hass.data[const.DOMAIN]["sip_endpoint"] = Endpoint()
 

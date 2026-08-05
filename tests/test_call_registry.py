@@ -86,8 +86,8 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry.add_leg("call-1", "destination", role="callee", state="in_call")
         registry.set_pending_route("call-1", {})
         registry.set_pending_invite("call-1", object())
-        registry.preanswered["call-1"] = {}
-        registry.softphone_media["call-1"] = {}
+        registry.attach_media("call-1", {}, provisional=True)
+        registry.attach_media("call-1", {})
         registry.sip_clients["destination"] = object()
         registry.client_watchers["destination"] = object()
         registry.relays["call-1"] = object()

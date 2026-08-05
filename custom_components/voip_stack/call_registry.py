@@ -67,6 +67,7 @@ class CallSession:
     legs: dict[str, CallLeg] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     artifacts: dict[str, Any] = field(default_factory=dict, repr=False)
+    resources: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass(slots=True)
@@ -87,7 +88,6 @@ class CallRegistry:
     def __init__(self) -> None:
         self.sessions: dict[str, CallSession] = {}
         self.leg_index: dict[str, str] = {}
-        self._legacy_resources: dict[str, dict[str, Any]] = {}
         self._legacy_sip_clients: dict[str, Any] = {}
         self._legacy_client_watchers: dict[str, Any] = {}
         self._legacy_relays: dict[str, Any] = {}
@@ -164,7 +164,13 @@ class CallRegistry:
     def _resource_view(self, name: str) -> dict[str, Any]:
         if self._session_owner is not None:
             return self._session_owner.resources_snapshot(name)
-        return self._legacy_resources.setdefault(name, {})
+        prefix = f"{name}:"
+        return {
+            key.removeprefix(prefix): value
+            for session in self.sessions.values()
+            for key, value in session.resources.items()
+            if key.startswith(prefix)
+        }
 
     @property
     def relays(self) -> dict[str, Any]:
@@ -238,14 +244,10 @@ class CallRegistry:
 
     @property
     def preanswered(self) -> dict[str, dict[str, Any]]:
-        """Compatibility projection of provisional session media."""
-
         return self._resource_view("preanswered")
 
     @property
     def softphone_media(self) -> dict[str, dict[str, Any]]:
-        """Compatibility projection of established browser media."""
-
         return self._resource_view("softphone_media")
 
     def set_pending_invite(self, call_id: str, invite: Any) -> None:
@@ -1016,13 +1018,11 @@ class CallRegistry:
         *,
         provisional: bool = False,
     ) -> None:
-        """Index reserved media while the call session owns its release."""
-
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
         prefix = "preanswered" if provisional else "softphone_media"
         if self._session_owner is None:
-            self._resource_view(prefix)[call_id] = media
+            self.sessions[session_id].resources[f"{prefix}:{call_id}"] = media
             return
         if session is None:
             raise RuntimeError(f"call session {call_id!r} is unavailable")
@@ -1047,13 +1047,13 @@ class CallRegistry:
         provisional: bool = False,
         default: Any | None = None,
     ) -> Any:
-        """Transfer reserved media to another owner or cleanup caller."""
-
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
         prefix = "preanswered" if provisional else "softphone_media"
         if self._session_owner is None:
-            return self._resource_view(prefix).pop(call_id, default)
+            if session is None:
+                return default
+            return session.resources.pop(f"{prefix}:{call_id}", default)
         index = self._resource_view(prefix)
         media = index.get(call_id, default)
         if media is default or session is None:
@@ -1331,7 +1331,6 @@ class CallRegistry:
         self._release_all_endpoint_claims()
         self.sessions.clear()
         self.leg_index.clear()
-        self._legacy_resources.clear()
         self._legacy_sip_clients.clear()
         self._legacy_client_watchers.clear()
         self._legacy_relays.clear()
