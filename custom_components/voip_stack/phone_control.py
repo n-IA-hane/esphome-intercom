@@ -10,7 +10,7 @@ from typing import Any, Protocol
 from homeassistant.core import Context, HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
-from .const import DOMAIN
+from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
 from .endpoint_registry import EndpointRegistry
 from .esphome_actions import (
     async_call_action,
@@ -18,11 +18,8 @@ from .esphome_actions import (
     async_resolve_source_device,
     has_action,
 )
-from .phone_endpoint import EndpointKind, PhoneEndpoint
-from .service_endpoints import (
-    async_require_phone_service_control,
-    service_browser_endpoint,
-)
+from .phone_endpoint import DEFAULT_ENDPOINT_ID, EndpointKind, PhoneEndpoint
+from .service_endpoints import async_require_phone_service_control
 from .softphone_originate import async_originate_browser_call
 from .softphone_answer import async_answer_browser_call
 from .softphone_commands import (
@@ -381,7 +378,11 @@ class PhoneAdapterRegistry:
                 translation_domain=DOMAIN,
                 translation_key="phone_selection_required",
             )
-        endpoint = self._endpoints.resolve(selector) if selector else None
+        endpoint = (
+            self._endpoints.get(DEFAULT_ENDPOINT_ID)
+            if selector == HA_SOFTPHONE_DEVICE_ID
+            else self._endpoints.resolve(selector)
+        )
         if endpoint is not None:
             if endpoint.kind is EndpointKind.SIP_ACCOUNT:
                 return self._endpoint_handle(endpoint, frozenset())
@@ -426,23 +427,18 @@ class PhoneAdapterRegistry:
                 transport_data=device,
             )
 
-        endpoint_id, browser = service_browser_endpoint(self._hass, call)
-        return self._endpoint_handle(
-            browser,
-            ALL_PHONE_OPERATIONS,
-            endpoint_id=endpoint_id,
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="unknown_phone_device",
         )
 
     @staticmethod
     def _endpoint_handle(
         endpoint: PhoneEndpoint | None,
         capabilities: frozenset[PhoneOperation],
-        *,
-        endpoint_id: str = "",
     ) -> PhoneHandle:
-        resolved_id = str(getattr(endpoint, "endpoint_id", "") or endpoint_id)
         return PhoneHandle(
-            endpoint_id=resolved_id,
+            endpoint_id=str(getattr(endpoint, "endpoint_id", "") or ""),
             device_id=str(getattr(endpoint, "device_id", "") or ""),
             name=str(getattr(endpoint, "name", "") or "Home Assistant"),
             kind=getattr(endpoint, "kind", EndpointKind.BROWSER),

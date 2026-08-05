@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 from homeassistant.exceptions import ServiceValidationError
 import pytest
 
+from custom_components.voip_stack.const import HA_SOFTPHONE_DEVICE_ID
 from custom_components.voip_stack.endpoint_registry import EndpointRegistry
 from custom_components.voip_stack.phone_control import (
     CallControlRequest,
@@ -107,11 +108,7 @@ async def test_esphome_originate_uses_native_action_and_canonical_response(
     assert response["destination"] == "P4"
 
 
-async def test_sip_account_fails_by_capability_without_browser_resolution(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from custom_components.voip_stack import phone_control
-
+async def test_sip_account_fails_by_capability_without_browser_resolution() -> None:
     endpoint = _endpoint(
         endpoint_id="sip:zoiper",
         device_id="device-zoiper",
@@ -120,8 +117,6 @@ async def test_sip_account_fails_by_capability_without_browser_resolution(
     )
     endpoints = EndpointRegistry()
     endpoints.register(endpoint)
-    browser_resolver = MagicMock()
-    monkeypatch.setattr(phone_control, "service_browser_endpoint", browser_resolver)
     hass = MagicMock()
     call = _call(hass, device_id=endpoint.device_id, destination="P4")
 
@@ -136,7 +131,6 @@ async def test_sip_account_fails_by_capability_without_browser_resolution(
         "phone": "Zoiper",
         "operation": "originate",
     }
-    browser_resolver.assert_not_called()
 
 
 async def test_browser_originate_uses_the_same_result_type(
@@ -153,11 +147,6 @@ async def test_browser_originate_uses_the_same_result_type(
     endpoints = EndpointRegistry()
     endpoints.register(endpoint)
     originate = AsyncMock()
-    monkeypatch.setattr(
-        phone_control,
-        "service_browser_endpoint",
-        lambda *_args, **_kwargs: (endpoint.endpoint_id, endpoint),
-    )
     monkeypatch.setattr(phone_control, "async_originate_browser_call", originate)
     monkeypatch.setattr(
         phone_control,
@@ -185,6 +174,36 @@ async def test_browser_originate_uses_the_same_result_type(
         browser_endpoint=endpoint,
         force_ha_bridge=False,
     )
+
+
+async def test_legacy_default_selector_resolves_through_endpoint_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.voip_stack import phone_control
+
+    endpoint = _endpoint(
+        endpoint_id="default",
+        device_id="device-casa",
+        name="Casa",
+        kind=EndpointKind.BROWSER,
+    )
+    endpoints = EndpointRegistry()
+    endpoints.register(endpoint)
+    originate = AsyncMock()
+    monkeypatch.setattr(phone_control, "async_originate_browser_call", originate)
+    monkeypatch.setattr(phone_control, "_ha_softphone_state", lambda *_args: {})
+    call = _call(
+        MagicMock(),
+        device_id=HA_SOFTPHONE_DEVICE_ID,
+        destination="P4",
+    )
+
+    await PhoneAdapterRegistry(call.hass, endpoints).originate(
+        call,
+        OriginateRequest(destination="P4"),
+    )
+
+    originate.assert_awaited_once()
 
 
 async def test_implicit_source_requires_an_explicit_preferred_phone() -> None:
