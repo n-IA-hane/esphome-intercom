@@ -983,45 +983,14 @@ class CallRegistry:
             if not self._session_owner.attach_relay(call_id, relay):
                 raise RuntimeError(f"call session {call_id!r} is unavailable")
             return
-
-        session_id = self.resolve_session_id(str(call_id or "").strip())
-        session = self.sessions.get(session_id)
         self._legacy_relays[call_id] = relay
-        if session is None or self._session_owner is None:
-            return
-        resource_name = f"relay:{call_id}"
-
-        async def _stop_relay(_reason: str) -> None:
-            if self._legacy_relays.get(call_id) is relay:
-                self._legacy_relays.pop(call_id, None)
-            await relay.stop()
-
-        self._session_owner.own_resource(
-            session_id,
-            resource_name,
-            relay,
-            _stop_relay,
-            stage=CleanupStage.MEDIA,
-            generation=session.generation,
-        )
 
     def take_relay(self, call_id: str) -> Any | None:
         """Transfer a relay to an explicit cleanup caller."""
 
         if self._session_owner is not None:
             return self._session_owner.take_relay(call_id)
-
-        session_id = self.resolve_session_id(str(call_id or "").strip())
-        session = self.sessions.get(session_id)
-        relay = self._legacy_relays.pop(call_id, None)
-        if relay is not None and session is not None and self._session_owner is not None:
-            self._session_owner.release_resource(
-                session_id,
-                f"relay:{call_id}",
-                value=relay,
-                generation=session.generation,
-            )
-        return relay
+        return self._legacy_relays.pop(call_id, None)
 
     def attach_client_watcher(self, call_id: str, task: Any) -> None:
         """Index a watcher while the owning session controls cancellation."""
@@ -1030,21 +999,21 @@ class CallRegistry:
         session = self.sessions.get(session_id)
         if self._session_owner is None:
             self._legacy_client_watchers[call_id] = task
-        elif session is not None:
-            self._session_owner.own_task(
-                session_id,
-                task,
-                name=f"client_watcher:{call_id}",
-                generation=session.generation,
-            )
-        else:
+
+            def _forget(completed: Any) -> None:
+                if self._legacy_client_watchers.get(call_id) is completed:
+                    self._legacy_client_watchers.pop(call_id, None)
+
+            task.add_done_callback(_forget)
+            return
+        if session is None:
             raise RuntimeError(f"call session {call_id!r} is unavailable")
-
-        def _forget(completed: Any) -> None:
-            if self._legacy_client_watchers.get(call_id) is completed:
-                self._legacy_client_watchers.pop(call_id, None)
-
-        task.add_done_callback(_forget)
+        self._session_owner.own_task(
+            session_id,
+            task,
+            name=f"client_watcher:{call_id}",
+            generation=session.generation,
+        )
 
     def take_client_watcher(self, call_id: str) -> Any | None:
         """Transfer a watcher to an explicit cleanup caller."""
