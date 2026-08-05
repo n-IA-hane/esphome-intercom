@@ -118,6 +118,8 @@ class EndpointRegistry:
         self._username_index: dict[str, str] = {}
         self._route_index: dict[str, str] = {}
         self._listeners: set[EndpointRegistryListener] = set()
+        self.subentry_ids: dict[str, str] = {}
+        self.pending_removals: set[str] = set()
 
     @property
     def endpoints(self) -> tuple[PhoneEndpoint, ...]:

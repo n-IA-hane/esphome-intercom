@@ -179,10 +179,9 @@ def test_managed_device_id_is_written_back_to_registry() -> None:
     endpoint_device.dr.async_get = lambda _hass: DeviceRegistry()
     registry = endpoint_registry.EndpointRegistry()
     registry.register(_endpoint())
+    registry.subentry_ids["kitchen"] = "sub-kitchen"
     endpoint_device.async_ensure_endpoint_device(
-        types.SimpleNamespace(
-            data={"voip_stack": {"endpoint_subentry_ids": {"kitchen": "sub-kitchen"}}}
-        ),
+        types.SimpleNamespace(data={"voip_stack": {"endpoint_registry": registry}}),
         types.SimpleNamespace(entry_id="voip-entry"),
         registry.require("kitchen"),
         registry,

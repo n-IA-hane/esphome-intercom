@@ -85,15 +85,6 @@ def phone_subentry_by_endpoint_id(
     )
 
 
-def endpoint_subentry_id(hass: HomeAssistant, endpoint_id: str) -> str | None:
-    """Return the HA config-subentry id backing one logical endpoint."""
-    return (
-        hass.data.get(DOMAIN, {})
-        .get("endpoint_subentry_ids", {})
-        .get(str(endpoint_id or "").strip())
-    )
-
-
 def new_browser_endpoint_id() -> str:
     """Create a stable opaque identity independent from the user-facing name."""
     return f"browser:{uuid4().hex}"
@@ -410,9 +401,8 @@ def async_setup_endpoint_registry(
         subentry_ids[endpoint.endpoint_id] = subentry.subentry_id
     bucket = hass.data.setdefault(DOMAIN, {})
     bucket["endpoint_registry"] = registry
-    bucket["endpoint_subentry_ids"] = subentry_ids
-    pending_removals: set[str] = set()
-    bucket["pending_endpoint_removals"] = pending_removals
+    registry.subentry_ids = subentry_ids
+    pending_removals = registry.pending_removals
 
     def _remove_pending_endpoint(endpoint_id: str) -> None:
         if endpoint_id not in pending_removals:
@@ -472,10 +462,8 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # Entity/device listeners run synchronously from registry.upsert(). Publish
     # ownership before the first event so a newly added phone is immediately
     # associated with its native HA config subentry.
-    bucket["endpoint_subentry_ids"] = subentry_ids
-    pending_removals: set[str] = bucket.setdefault(
-        "pending_endpoint_removals", set()
-    )
+    registry.subentry_ids = subentry_ids
+    pending_removals = registry.pending_removals
     presence = bucket.get("ha_softphone_presence", {})
     for subentry in subentries:
         candidate = endpoint_from_subentry(entry, subentry)

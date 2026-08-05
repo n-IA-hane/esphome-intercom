@@ -560,7 +560,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -
     unsub = hass.data.get(DOMAIN, {}).pop("pending_endpoint_removal_unsub", None)
     if unsub is not None:
         unsub()
-    hass.data.get(DOMAIN, {}).pop("pending_endpoint_removals", None)
     hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     return unload_ok
 
@@ -568,8 +567,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -
 _REMOVED_ENTRY_RUNTIME_KEYS = (
     # Configured endpoint graph and its dynamic HA entity adapters.
     "endpoint_registry",
-    "endpoint_subentry_ids",
-    "pending_endpoint_removals",
     "endpoint_connectivity_entity_manager",
     "endpoint_call_event_entity_manager",
     "endpoint_call_state_entity_manager",

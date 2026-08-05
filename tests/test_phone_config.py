@@ -181,12 +181,7 @@ def test_renamed_registered_sip_account_becomes_offline_until_new_register() -> 
         subentries={subentry.subentry_id: subentry},
     )
     hass = types.SimpleNamespace(
-        data={
-            "voip_stack": {
-                "endpoint_registry": registry,
-                "pending_endpoint_removals": set(),
-            }
-        }
+        data={"voip_stack": {"endpoint_registry": registry}}
     )
 
     phone_config.sync_registry_from_entry(hass, entry)
@@ -208,13 +203,7 @@ def test_active_removed_endpoint_is_unavailable_until_deferred_teardown() -> Non
         )
     )
     hass = types.SimpleNamespace(
-        data={
-            "voip_stack": {
-                "endpoint_registry": registry,
-                "endpoint_subentry_ids": {},
-                "pending_endpoint_removals": set(),
-            }
-        }
+        data={"voip_stack": {"endpoint_registry": registry}}
     )
     entry = types.SimpleNamespace(subentries={})
 
@@ -226,9 +215,7 @@ def test_active_removed_endpoint_is_unavailable_until_deferred_teardown() -> Non
         draining.availability
         is phone_endpoint.EndpointAvailability.UNAVAILABLE
     )
-    assert hass.data["voip_stack"]["pending_endpoint_removals"] == {
-        "kitchen"
-    }
+    assert registry.pending_removals == {"kitchen"}
 
 
 def test_deferred_browser_removal_clears_presence_after_terminal_call() -> None:

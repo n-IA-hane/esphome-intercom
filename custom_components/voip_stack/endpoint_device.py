@@ -44,13 +44,17 @@ def endpoint_device_identifier(endpoint_id: str) -> str:
 
 
 def endpoint_config_subentry_id(
-    hass: HomeAssistant, endpoint_id: str
+    hass: HomeAssistant,
+    endpoint_id: str,
+    registry: EndpointRegistry | None = None,
 ) -> str | None:
     """Return the config subentry currently backing an endpoint."""
+    if registry is None:
+        registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
     return (
-        hass.data.get(DOMAIN, {})
-        .get("endpoint_subentry_ids", {})
-        .get(str(endpoint_id or "").strip())
+        registry.subentry_ids.get(str(endpoint_id or "").strip())
+        if registry is not None
+        else None
     )
 
 
@@ -99,7 +103,7 @@ def async_ensure_endpoint_device(
     device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         config_subentry_id=endpoint_config_subentry_id(
-            hass, endpoint.endpoint_id
+            hass, endpoint.endpoint_id, registry
         ),
         **info,
     )
