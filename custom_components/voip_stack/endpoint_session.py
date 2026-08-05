@@ -59,7 +59,6 @@ class CleanupStage(IntEnum):
     MEDIA = 30
     LEG = 20
     RESERVATION = 10
-    PROJECTION = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +171,6 @@ class EndpointCallSession:
         generation: int,
         *,
         phase: SessionPhase = SessionPhase.NEW,
-        on_changed: Callable[["EndpointCallSession"], None] | None = None,
         on_terminated: Callable[["EndpointCallSession", SessionTerminationResult], None]
         | None = None,
     ) -> None:
@@ -203,7 +201,6 @@ class EndpointCallSession:
         self.terminated = asyncio.Event()
         self._termination_task: asyncio.Task[SessionTerminationResult] | None = None
         self._termination_initiator: asyncio.Task[Any] | None = None
-        self._on_changed = on_changed
         self._on_terminated = on_terminated
 
     @property
@@ -247,20 +244,12 @@ class EndpointCallSession:
                 f"invalid call transition {self.phase.value}->{phase.value}"
             )
         self.phase = phase
-        if self._on_changed is not None:
-            self._on_changed(self)
 
     def update_metadata(self, **values: Any) -> None:
         """Update observable call metadata while this generation is live."""
 
         self.ensure_live()
-        changed = False
-        for key, value in values.items():
-            if self.metadata.get(key) != value:
-                self.metadata[key] = value
-                changed = True
-        if changed and self._on_changed is not None:
-            self._on_changed(self)
+        self.metadata.update(values)
 
     def add_leg(self, leg: CallLeg) -> CallLeg:
         self.ensure_live()
@@ -472,8 +461,6 @@ class EndpointCallSession:
         self.phase = SessionPhase.TERMINATING
         self.terminal_reason = str(reason or "terminated")
         self.termination_started.set()
-        if self._on_changed is not None:
-            self._on_changed(self)
         return True
 
     def start_termination(self, reason: str) -> asyncio.Task[SessionTerminationResult]:
