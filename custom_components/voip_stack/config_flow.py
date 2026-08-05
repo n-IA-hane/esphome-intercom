@@ -184,6 +184,37 @@ def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
     return data
 
 
+def _base_entry_data(existing: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the non-trunk settings preserved by direct trunk edits."""
+
+    return {
+        "sip_port": int(existing.get("sip_port", VOIP_STACK_SIP_PORT)),
+        "rtp_port": int(existing.get("rtp_port", VOIP_STACK_RTP_PORT)),
+        "advertise_host": str(existing.get("advertise_host", "") or "").strip(),
+        CONF_ASSIST_INTENTS: bool(existing.get(CONF_ASSIST_INTENTS, False)),
+        CONF_ASSIST_ENDPOINT_ENABLED: bool(
+            existing.get(CONF_ASSIST_ENDPOINT_ENABLED, False)
+        ),
+        CONF_ASSIST_EXTENSION: str(
+            existing.get(CONF_ASSIST_EXTENSION, "") or ""
+        ).strip(),
+        CONF_ASSIST_PIPELINE: str(
+            existing.get(CONF_ASSIST_PIPELINE, "") or ""
+        ).strip(),
+        CONF_ASSIST_ADVANCED_CALL_CONTEXT: bool(
+            existing.get(CONF_ASSIST_ADVANCED_CALL_CONTEXT, False)
+        ),
+        CONF_DEBUG_MODE: bool(existing.get(CONF_DEBUG_MODE, False)),
+        CONF_MEDIA_CAPTURE: bool(existing.get(CONF_MEDIA_CAPTURE, False)),
+        CONF_SIP_VIDEO: bool(existing.get(CONF_SIP_VIDEO, False)),
+        CONF_VIDEO_TRANSCODING: bool(
+            existing.get(CONF_VIDEO_TRANSCODING, False)
+        ),
+        CONF_VIDEO_CAMERA_SEND: bool(existing.get(CONF_VIDEO_CAMERA_SEND, False)),
+        CONF_REGISTRAR_ENABLED: bool(existing.get(CONF_REGISTRAR_ENABLED, False)),
+    }
+
+
 class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for VoIP Stack."""
 
@@ -564,47 +595,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
             )
             if trunk_fields_empty:
-                data = dict(
-                    self._base_input
-                    or {
-                        "sip_port": int(existing.get("sip_port", VOIP_STACK_SIP_PORT)),
-                        "rtp_port": int(existing.get("rtp_port", VOIP_STACK_RTP_PORT)),
-                        "advertise_host": str(
-                            existing.get("advertise_host", "") or ""
-                        ).strip(),
-                        CONF_ASSIST_INTENTS: bool(
-                            existing.get(CONF_ASSIST_INTENTS, False)
-                        ),
-                        CONF_ASSIST_ENDPOINT_ENABLED: bool(
-                            existing.get(CONF_ASSIST_ENDPOINT_ENABLED, False)
-                        ),
-                        CONF_ASSIST_EXTENSION: str(
-                            existing.get(CONF_ASSIST_EXTENSION, "") or ""
-                        ).strip(),
-                        CONF_ASSIST_PIPELINE: str(
-                            existing.get(CONF_ASSIST_PIPELINE, "") or ""
-                        ).strip(),
-                        CONF_ASSIST_ADVANCED_CALL_CONTEXT: bool(
-                            existing.get(CONF_ASSIST_ADVANCED_CALL_CONTEXT, False)
-                        ),
-                        CONF_DEBUG_MODE: bool(existing.get(CONF_DEBUG_MODE, False)),
-                        CONF_MEDIA_CAPTURE: bool(
-                            existing.get(CONF_MEDIA_CAPTURE, False)
-                        ),
-                        CONF_SIP_VIDEO: bool(
-                            existing.get(CONF_SIP_VIDEO, False)
-                        ),
-                        CONF_VIDEO_TRANSCODING: bool(
-                            existing.get(CONF_VIDEO_TRANSCODING, False)
-                        ),
-                        CONF_VIDEO_CAMERA_SEND: bool(
-                            existing.get(CONF_VIDEO_CAMERA_SEND, False)
-                        ),
-                        CONF_REGISTRAR_ENABLED: bool(
-                            existing.get(CONF_REGISTRAR_ENABLED, False)
-                        ),
-                    }
-                )
+                data = dict(self._base_input or _base_entry_data(existing))
                 return self._store_entry(_disabled_trunk_data(data, existing))
             if not user_input[CONF_TRUNK_SERVER]:
                 errors["base"] = "trunk_server_required"
@@ -613,47 +604,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
             elif not user_input[CONF_TRUNK_PASSWORD]:
                 errors["base"] = "trunk_password_required"
             if not errors:
-                data = dict(
-                    self._base_input
-                    or {
-                        "sip_port": int(existing.get("sip_port", VOIP_STACK_SIP_PORT)),
-                        "rtp_port": int(existing.get("rtp_port", VOIP_STACK_RTP_PORT)),
-                        "advertise_host": str(
-                            existing.get("advertise_host", "") or ""
-                        ).strip(),
-                        CONF_ASSIST_INTENTS: bool(
-                            existing.get(CONF_ASSIST_INTENTS, False)
-                        ),
-                        CONF_ASSIST_ENDPOINT_ENABLED: bool(
-                            existing.get(CONF_ASSIST_ENDPOINT_ENABLED, False)
-                        ),
-                        CONF_ASSIST_EXTENSION: str(
-                            existing.get(CONF_ASSIST_EXTENSION, "") or ""
-                        ).strip(),
-                        CONF_ASSIST_PIPELINE: str(
-                            existing.get(CONF_ASSIST_PIPELINE, "") or ""
-                        ).strip(),
-                        CONF_ASSIST_ADVANCED_CALL_CONTEXT: bool(
-                            existing.get(CONF_ASSIST_ADVANCED_CALL_CONTEXT, False)
-                        ),
-                        CONF_DEBUG_MODE: bool(existing.get(CONF_DEBUG_MODE, False)),
-                        CONF_MEDIA_CAPTURE: bool(
-                            existing.get(CONF_MEDIA_CAPTURE, False)
-                        ),
-                        CONF_SIP_VIDEO: bool(
-                            existing.get(CONF_SIP_VIDEO, False)
-                        ),
-                        CONF_VIDEO_TRANSCODING: bool(
-                            existing.get(CONF_VIDEO_TRANSCODING, False)
-                        ),
-                        CONF_VIDEO_CAMERA_SEND: bool(
-                            existing.get(CONF_VIDEO_CAMERA_SEND, False)
-                        ),
-                        CONF_REGISTRAR_ENABLED: bool(
-                            existing.get(CONF_REGISTRAR_ENABLED, False)
-                        ),
-                    }
-                )
+                data = dict(self._base_input or _base_entry_data(existing))
                 data[CONF_TRUNK_ENABLED] = True
                 data.setdefault("sip_accounts", existing.get("sip_accounts", []))
                 data.setdefault(
