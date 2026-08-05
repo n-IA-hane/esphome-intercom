@@ -212,10 +212,6 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(projected.generation, authoritative.generation)
         self.assertIs(authoritative.phase, SessionPhase.RINGING)
         self.assertIs(projected, authoritative)
-        self.assertEqual(authoritative.metadata["owner"], "router")
-        self.assertEqual(authoritative.metadata["caller"], "door")
-        self.assertEqual(authoritative.metadata["callee"], "home")
-        self.assertEqual(authoritative.metadata["route_kind"], "")
         self.assertNotIn("pbx_phase", authoritative.metadata)
         self.assertEqual(
             authoritative.legs["door-leg"].kind,
@@ -303,25 +299,21 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("pbx_phase", authoritative.metadata)
 
     async def test_late_public_state_cannot_regress_established_call(self) -> None:
-        runtime = SipEndpointRuntime()
+        registry, runtime = _registry_runtime()
         runtime.activate()
-        session = runtime.create_session("call-1")
-
-        self.assertTrue(runtime.observe_call("call-1", state="in_call"))
-        self.assertTrue(runtime.observe_call("call-1", state="ringing"))
+        session = registry.upsert("call-1", state="in_call")
+        registry.transition("call-1", state="ringing")
 
         self.assertIs(session.phase, SessionPhase.ESTABLISHED)
 
     async def test_connecting_call_can_return_to_ringing_after_failed_forward(
         self,
     ) -> None:
-        runtime = SipEndpointRuntime()
+        registry, runtime = _registry_runtime()
         runtime.activate()
-        session = runtime.create_session("call-1")
-
-        self.assertTrue(runtime.observe_call("call-1", state="ringing"))
-        self.assertTrue(runtime.observe_call("call-1", state="connecting"))
-        self.assertTrue(runtime.observe_call("call-1", state="ringing"))
+        session = registry.upsert("call-1", state="ringing")
+        registry.transition("call-1", state="connecting")
+        registry.transition("call-1", state="ringing")
 
         self.assertIs(session.phase, SessionPhase.RINGING)
 

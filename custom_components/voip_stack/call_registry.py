@@ -44,32 +44,12 @@ MAX_TERMINATED_CALL_IDS = 512
 MAX_TERMINAL_SUMMARY_IDS = 512
 
 
-def _owner_observation_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    """Exclude fields computed by the authoritative PBX projection itself."""
-
-    return {key: value for key, value in metadata.items() if key != "pbx_phase"}
-
-
 class CallRuntimeApi:
     """Call operations implemented directly by the authoritative runtime."""
 
     def _observe_session(self, session: EndpointCallSession) -> None:
-        observation = _owner_observation_metadata(session.metadata)
-        observation.update(
-            owner=session.owner,
-            outcome=session.outcome,
-            caller=session.caller,
-            callee=session.callee,
-            route_kind=session.route_kind,
-            terminal_reason=session.terminal_reason,
-        )
         revision = session.revision
-        self.observe_call(
-            session.id,
-            state=session.state,
-            generation=session.generation,
-            **observation,
-        )
+        self._observe_phase(session, session.state)
         session.revision = revision
 
     def _artifact_view(self, name: str) -> dict[str, Any]:
