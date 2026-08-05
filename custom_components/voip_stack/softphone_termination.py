@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
 from .bridge_manager import async_terminate_sip_bridge
-from .call_scope import endpoint_call_ids, pending_routes
+from .call_scope import endpoint_call_ids, pending_routes, take_pending_route
 from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
 from .fsm import CallState, TerminalReason, sip_public_state
 from .media_ports import release_media_reservation
@@ -155,7 +155,7 @@ async def async_hangup_browser_call(
     if call_id and call_id in routes:
         future = routes[call_id].get("future")
         if future is not None and future.done():
-            routes.pop(call_id, None)
+            take_pending_route(hass, call_id)
         else:
             set_pending_route_decision(
                 hass,

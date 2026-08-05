@@ -388,6 +388,9 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         registry.upsert("source", state="ringing", owner="router")
         invite = object()
         registry.set_pending_invite("source", invite)
+        route_future = asyncio.get_running_loop().create_future()
+        route = {"future": route_future, "destination": "100"}
+        registry.set_pending_route("source", route)
         watcher = asyncio.create_task(asyncio.Event().wait())
         registry.register_bridge(
             source_call_id="source",
@@ -408,6 +411,9 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(registry.pending_invites["source"], invite)
         self.assertEqual(registry._legacy_pending_invites, {})
         self.assertIs(authoritative.pending_invite, invite)
+        self.assertIs(registry.pending_routes["source"], route)
+        self.assertEqual(registry._legacy_pending_routes, {})
+        self.assertIs(authoritative.pending_route, route)
         self.assertEqual(
             authoritative.metadata["bridge_dest_call_id"],
             "destination",
@@ -439,6 +445,8 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registry.client_watchers, {})
         self.assertEqual(registry.bridge_clients, {})
         self.assertEqual(registry.pending_invites, {})
+        self.assertEqual(registry.pending_routes, {})
+        self.assertTrue(route_future.cancelled())
 
     async def test_authoritative_session_owns_endpoint_claims_and_cleanup(self) -> None:
         class Endpoints:

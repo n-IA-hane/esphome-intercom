@@ -6,10 +6,11 @@ import asyncio
 from dataclasses import dataclass
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 
 from homeassistant.core import HomeAssistant
 
+from ..call_scope import set_pending_route, take_pending_route
 from ..fsm import CallState, TerminalReason
 from ..sip_listener import SipInviteResult
 from ..websocket_api import _set_sip_bridge_call_state
@@ -57,7 +58,6 @@ async def request_route_override(
     runtime: AutomationRouteRuntime,
     invite: SipInvite,
     decision: RouteDecision,
-    route_bucket: dict[str, dict[str, Any]],
     registered_source: bool,
     caller_is_trusted_endpoint: bool,
     automation_routing_enabled: bool,
@@ -83,7 +83,7 @@ async def request_route_override(
     loop = asyncio.get_running_loop()
     future: asyncio.Future = loop.create_future()
     expires_at = time.time() + SIP_ROUTE_DECISION_TIMEOUT
-    route_bucket[invite.call_id] = {
+    set_pending_route(hass, invite.call_id, {
         "future": future,
         "invite": invite,
         "decision": decision,
@@ -91,7 +91,7 @@ async def request_route_override(
         "expires_at": expires_at,
         "decision_deadline": expires_at,
         "fallback_destination": decision.target,
-    }
+    })
     _set_sip_bridge_call_state(
         hass,
         CallState.CONNECTING.value,
@@ -146,7 +146,7 @@ async def request_route_override(
     except asyncio.TimeoutError:
         payload = {}
     finally:
-        route_bucket.pop(invite.call_id, None)
+        take_pending_route(hass, invite.call_id)
     return AutomationRoute.from_payload(payload)
 
 

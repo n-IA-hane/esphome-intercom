@@ -169,6 +169,12 @@ class CallSessionOwner(Protocol):
 
     def pending_invites_snapshot(self) -> dict[str, Any]: ...
 
+    def pending_routes_snapshot(self) -> dict[str, dict[str, Any]]: ...
+
+    def set_pending_route(self, call_id: str, route: dict[str, Any]) -> bool: ...
+
+    def take_pending_route(self, call_id: str) -> dict[str, Any] | None: ...
+
     def set_pending_invite(self, call_id: str, invite: Any) -> bool: ...
 
     def take_pending_invite(self, call_id: str) -> Any | None: ...
@@ -241,7 +247,7 @@ class CallRegistry:
     def __init__(self) -> None:
         self.sessions: dict[str, CallSession] = {}
         self.leg_index: dict[str, str] = {}
-        self.pending_routes: dict[str, dict[str, Any]] = {}
+        self._legacy_pending_routes: dict[str, dict[str, Any]] = {}
         self._legacy_pending_invites: dict[str, Any] = {}
         self._legacy_preanswered: dict[str, dict[str, Any]] = {}
         self._legacy_softphone_media: dict[str, dict[str, Any]] = {}
@@ -330,6 +336,30 @@ class CallRegistry:
         if self._session_owner is not None:
             return self._session_owner.pending_invites_snapshot()
         return self._legacy_pending_invites
+
+    @property
+    def pending_routes(self) -> dict[str, dict[str, Any]]:
+        """Compatibility projection of session-owned routing state."""
+
+        if self._session_owner is not None:
+            return self._session_owner.pending_routes_snapshot()
+        return self._legacy_pending_routes
+
+    def set_pending_route(self, call_id: str, route: dict[str, Any]) -> None:
+        """Attach route state through the authoritative owner when present."""
+
+        if self._session_owner is None:
+            self._legacy_pending_routes[call_id] = route
+            return
+        if not self._session_owner.set_pending_route(call_id, route):
+            raise RuntimeError(f"call session {call_id!r} is no longer current")
+
+    def take_pending_route(self, call_id: str) -> dict[str, Any] | None:
+        """Detach route state from its authoritative call generation."""
+
+        if self._session_owner is None:
+            return self._legacy_pending_routes.pop(call_id, None)
+        return self._session_owner.take_pending_route(call_id)
 
     @property
     def preanswered(self) -> dict[str, dict[str, Any]]:
@@ -1342,7 +1372,7 @@ class CallRegistry:
         self.take_pending_invite(session_id)
         self.video_parameter_sets.pop(session_id, None)
         self.video_parameter_sets.pop(call_id, None)
-        route = self.pending_routes.pop(session_id, None)
+        route = self.take_pending_route(session_id)
         if route is not None:
             future = route.get("future")
             if (
@@ -1494,7 +1524,7 @@ class CallRegistry:
         self._release_all_endpoint_claims()
         self.sessions.clear()
         self.leg_index.clear()
-        self.pending_routes.clear()
+        self._legacy_pending_routes.clear()
         self._legacy_pending_invites.clear()
         self._legacy_preanswered.clear()
         self._legacy_softphone_media.clear()

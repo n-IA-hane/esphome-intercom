@@ -7,7 +7,7 @@ import time
 
 from homeassistant.core import HomeAssistant
 
-from .call_scope import pending_routes
+from .call_scope import set_pending_route, take_pending_route
 from .const import CONF_TRUNK_INBOUND_DEFAULT_TARGET
 from .fsm import CallState
 from .websocket_api import _set_sip_bridge_call_state
@@ -35,15 +35,14 @@ async def async_request_inbound_destination(
     now = time.time()
     expires_at = now + float(timeout)
     fallback = trunk_default_target(trunk_config)
-    routes = pending_routes(hass)
-    routes[invite.call_id] = {
+    set_pending_route(hass, invite.call_id, {
         "future": future,
         "invite": invite,
         "created_at": now,
         "expires_at": expires_at,
         "decision_deadline": expires_at,
         "fallback_destination": fallback,
-    }
+    })
     _set_sip_bridge_call_state(
         hass,
         CallState.CONNECTING.value,
@@ -72,4 +71,4 @@ async def async_request_inbound_destination(
     except TimeoutError:
         return {}
     finally:
-        routes.pop(invite.call_id, None)
+        take_pending_route(hass, invite.call_id)

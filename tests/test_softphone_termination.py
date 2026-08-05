@@ -43,10 +43,11 @@ def termination(monkeypatch):
     )
     dependencies = {
         "bridge_manager": {"async_terminate_sip_bridge": AsyncMock()},
-        "call_scope": {
-            "endpoint_call_ids": Mock(return_value=[]),
-            "pending_routes": Mock(return_value={}),
-        },
+            "call_scope": {
+                "endpoint_call_ids": Mock(return_value=[]),
+                "pending_routes": Mock(return_value={}),
+                "take_pending_route": Mock(),
+            },
             "const": {
                 "DOMAIN": "voip_stack",
                 "HA_SOFTPHONE_DEVICE_ID": "ha-device",

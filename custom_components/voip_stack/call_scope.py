@@ -11,8 +11,18 @@ from .phone_endpoint import DEFAULT_ENDPOINT_ID
 
 
 def pending_routes(hass: HomeAssistant) -> dict:
-    """Return the canonical pending-route registry."""
+    """Return a detached read projection of pending routes."""
     return call_registry(hass).pending_routes
+
+
+def set_pending_route(hass: HomeAssistant, call_id: str, route: dict) -> None:
+    """Attach route state to the authoritative call generation."""
+    call_registry(hass).set_pending_route(call_id, route)
+
+
+def take_pending_route(hass: HomeAssistant, call_id: str) -> dict | None:
+    """Detach route state for explicit completion or cancellation."""
+    return call_registry(hass).take_pending_route(call_id)
 
 
 def call_endpoint_id(registry, call_id: str) -> str:

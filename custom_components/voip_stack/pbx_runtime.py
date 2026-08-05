@@ -308,6 +308,37 @@ class SipEndpointRuntime:
             if session.pending_invite is not None
         }
 
+    def pending_routes_snapshot(self) -> dict[str, dict[str, Any]]:
+        """Return pending routes directly from authoritative sessions."""
+
+        return {
+            call_id: route
+            for call_id, session in self.calls.items()
+            if (route := session.pending_route) is not None
+        }
+
+    def set_pending_route(self, call_id: str, route: dict[str, Any]) -> bool:
+        """Attach routing state to the current call generation."""
+
+        session = self.get_session(call_id)
+        if session is None or not session.live:
+            return False
+        session.pending_route = route
+        self._publish(session)
+        return True
+
+    def take_pending_route(self, call_id: str) -> dict[str, Any] | None:
+        """Detach routing state for explicit completion or cancellation."""
+
+        session = self.get_session(call_id)
+        if session is None or session.phase is SessionPhase.TERMINATED:
+            return None
+        route = session.pending_route
+        session.pending_route = None
+        if route is not None:
+            self._publish(session)
+        return route
+
     def set_pending_invite(self, call_id: str, invite: Any) -> bool:
         """Attach the current inbound INVITE to its call generation."""
 

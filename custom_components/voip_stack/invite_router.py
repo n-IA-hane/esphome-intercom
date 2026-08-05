@@ -283,7 +283,6 @@ async def route_invite(
         runtime=runtime,
         invite=invite,
         decision=decision,
-        route_bucket=route_bucket,
         registered_source=registered_source,
         caller_is_trusted_endpoint=caller_is_trusted_endpoint,
         automation_routing_enabled=bool(

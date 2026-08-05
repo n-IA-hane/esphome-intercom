@@ -13,7 +13,10 @@ from typing import TYPE_CHECKING, Any, Callable
 from homeassistant.core import HomeAssistant
 
 from .bridge_manager import async_watch_sip_bridge_destination
-from .call_scope import pending_routes as _pending_routes
+from .call_scope import (
+    set_pending_route as _set_pending_route,
+    take_pending_route as _take_pending_route,
+)
 from .config import media_capture_enabled as _media_capture_enabled
 from .const import CONF_VIDEO_TRANSCODING, DOMAIN, HA_SOFTPHONE_DEVICE_ID
 from .dial_fork import (
@@ -263,14 +266,14 @@ async def run_ring_group_call(
         )
         return
     route_future: asyncio.Future = asyncio.get_running_loop().create_future()
-    _pending_routes(hass)[invite.call_id] = {
+    _set_pending_route(hass, invite.call_id, {
         "invite": invite,
         "future": route_future,
         "ring_group_endpoint_ids": tuple(
             leg.endpoint_id for leg in browser_legs
         ),
         "declined_endpoint_ids": set(),
-    }
+    })
     try:
         _publish_browser_candidates_ringing(
             hass,
@@ -286,7 +289,7 @@ async def run_ring_group_call(
             origin_media_client_id=origin_media_client_id,
         )
     except asyncio.CancelledError:
-        _pending_routes(hass).pop(invite.call_id, None)
+        _take_pending_route(hass, invite.call_id)
         _settle_browser_candidates(
             CallState.CANCELLED.value,
             TerminalReason.CANCELLED.value,
@@ -304,7 +307,7 @@ async def run_ring_group_call(
             invite.call_id,
             err,
         )
-        _pending_routes(hass).pop(invite.call_id, None)
+        _take_pending_route(hass, invite.call_id)
         _settle_browser_candidates(
             CallState.TRANSPORT_UNREACHABLE.value,
             TerminalReason.PROTOCOL_ERROR.value,
@@ -324,7 +327,7 @@ async def run_ring_group_call(
         )
         return
     if not attempts and not browser_legs and not preflight_failures:
-        _pending_routes(hass).pop(invite.call_id, None)
+        _take_pending_route(hass, invite.call_id)
         _publish_ring_group_origin_state(
             hass,
             enabled=ha_origin,
@@ -375,7 +378,7 @@ async def run_ring_group_call(
 
     async def _cleanup_ring_resources(reason: str) -> None:
         """Tear down every ownership layer after an aborted group call."""
-        _pending_routes(hass).pop(invite.call_id, None)
+        _take_pending_route(hass, invite.call_id)
         (
             _source_call_id,
             _dest_call_id,
@@ -509,7 +512,7 @@ async def run_ring_group_call(
         if await _abort_stale_ring_group():
             return
         if reroute_decision is not None:
-            route = _pending_routes(hass).pop(invite.call_id, None) or {}
+            route = _take_pending_route(hass, invite.call_id) or {}
             _settle_browser_candidates(
                 CallState.IDLE.value,
                 "forwarded",
@@ -538,7 +541,7 @@ async def run_ring_group_call(
             ),
         )
         if winner is None:
-            _pending_routes(hass).pop(invite.call_id, None)
+            _take_pending_route(hass, invite.call_id)
             status_code, sip_reason, terminal_reason, public_state = (
                 _sip_failure_response(final_result)
             )
@@ -588,7 +591,7 @@ async def run_ring_group_call(
         if browser_winner and isinstance(winner, BrowserLeg):
             if await _abort_stale_ring_group():
                 return
-            _pending_routes(hass).pop(invite.call_id, None)
+            _take_pending_route(hass, invite.call_id)
             connected_party = winner.name
             winner_media_client_id = str(
                 browser_decision.get("media_client_id") or ""
@@ -718,7 +721,7 @@ async def run_ring_group_call(
                 route_kind=GROUP_TYPE_RING,
             )
             return
-        _pending_routes(hass).pop(invite.call_id, None)
+        _take_pending_route(hass, invite.call_id)
         if not isinstance(winner, OutboundLeg):
             _LOGGER.error(
                 "SIP ring group selected an invalid winner for call_id=%s",

@@ -608,14 +608,14 @@ async def async_forward_existing_call(
                             leg.endpoint_id for leg in browser_legs
                         ),
                     )
-                    registry.pending_routes[call_id] = {
+                    registry.set_pending_route(call_id, {
                         "invite": invite,
                         "future": browser_route_future,
                         "ring_group_endpoint_ids": tuple(
                             leg.endpoint_id for leg in browser_legs
                         ),
                         "declined_endpoint_ids": set(),
-                    }
+                    })
                     for browser_leg in browser_legs:
                         runtime.publish_pending_ringing(
                             invite,
@@ -665,14 +665,14 @@ async def async_forward_existing_call(
                         )
                     )
                 except asyncio.CancelledError:
-                    registry.pending_routes.pop(call_id, None)
+                    registry.take_pending_route(call_id)
                     _settle_browser_candidates(
                         CallState.CANCELLED.value,
                         TerminalReason.CANCELLED.value,
                     )
                     raise
                 except Exception:
-                    registry.pending_routes.pop(call_id, None)
+                    registry.take_pending_route(call_id)
                     _settle_browser_candidates(
                         CallState.TRANSPORT_UNREACHABLE.value,
                         TerminalReason.PROTOCOL_ERROR.value,
@@ -694,7 +694,7 @@ async def async_forward_existing_call(
                     else None
                 )
                 if reroute_decision is not None:
-                    route = registry.pending_routes.pop(call_id, None) or {}
+                    route = registry.take_pending_route(call_id) or {}
                     _settle_browser_candidates(
                         CallState.IDLE.value,
                         "forwarded",
@@ -721,7 +721,7 @@ async def async_forward_existing_call(
                         fork_result.outcome.disposition,
                         fork_result.outcome.reason or "transport_unreachable",
                     )
-                    registry.pending_routes.pop(call_id, None)
+                    registry.take_pending_route(call_id)
                     _settle_browser_candidates(
                         CallState.TRANSPORT_UNREACHABLE.value,
                         TerminalReason.TRANSPORT_UNREACHABLE.value,
@@ -729,7 +729,7 @@ async def async_forward_existing_call(
                     raise RuntimeError(failure)
 
                 if isinstance(winner, BrowserLeg):
-                    registry.pending_routes.pop(call_id, None)
+                    registry.take_pending_route(call_id)
                     _settle_browser_candidates(
                         CallState.CANCELLED.value,
                         TerminalReason.CANCELLED.value,
@@ -773,7 +773,7 @@ async def async_forward_existing_call(
                         answer_commits.discard(call_id)
                     return
 
-                registry.pending_routes.pop(call_id, None)
+                registry.take_pending_route(call_id)
                 _settle_browser_candidates(
                     CallState.CANCELLED.value,
                     TerminalReason.CANCELLED.value,

@@ -1261,12 +1261,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             ) : ring_group.index("if not isinstance(winner, OutboundLeg):")
         ]
         self.assertIn(
-            "_pending_routes(hass).pop(invite.call_id, None)", browser_winner
+            "_take_pending_route(hass, invite.call_id)", browser_winner
         )
         bridge_index = ring_group.index("registry.register_bridge(")
         self.assertNotEqual(
             ring_group.rfind(
-                "_pending_routes(hass).pop(invite.call_id, None)",
+                "_take_pending_route(hass, invite.call_id)",
                 0,
                 bridge_index,
             ),
@@ -1276,7 +1276,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         hangup = SOFTPHONE_TERMINATION.read_text()
         self.assertIn('future = routes[call_id].get("future")', hangup)
         self.assertIn("if future is not None and future.done():", hangup)
-        self.assertIn("routes.pop(call_id, None)", hangup)
+        self.assertIn("take_pending_route(hass, call_id)", hangup)
 
     def test_ring_group_ha_winner_publishes_connected_party_to_esp_mirrors(self) -> None:
         ring_group = self.ring_group

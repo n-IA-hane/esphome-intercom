@@ -33,7 +33,16 @@ def trunk_routing(monkeypatch):
 
     routes: dict = {}
     dependencies = {
-        "call_scope": {"pending_routes": Mock(return_value=routes)},
+        "call_scope": {
+            "set_pending_route": Mock(
+                side_effect=lambda _hass, call_id, route: routes.__setitem__(
+                    call_id, route
+                )
+            ),
+            "take_pending_route": Mock(
+                side_effect=lambda _hass, call_id: routes.pop(call_id, None)
+            ),
+        },
         "const": {"CONF_TRUNK_INBOUND_DEFAULT_TARGET": "fallback"},
         "fsm": {
             "CallState": SimpleNamespace(
