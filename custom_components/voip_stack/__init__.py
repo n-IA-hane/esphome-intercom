@@ -407,7 +407,6 @@ async def _async_setup_shared(hass: HomeAssistant, config: dict | None = None) -
 
     bucket["initialized"] = True
 
-    await _async_load_ha_softphone_store(hass)
     async_register_websocket_api(hass)
     from .audio_ws_view import async_register_audio_ws_view
 
@@ -463,9 +462,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
             data = dict(entry.data)
             data[CONF_PREFERRED_PHONE_DEVICE_ID] = preferred_phone_device_id
             hass.config_entries.async_update_entry(entry, data=data)
-    from .local_softphone_runtime import async_setup_local_softphone_bridge
-
-    async_setup_local_softphone_bridge(hass)
     cfg = _entry_transport_config(entry)
     assist_cfg = _entry_assist_config(entry)
     trunk_cfg = _entry_trunk_config(entry)
@@ -494,6 +490,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
             if isinstance(item, dict)
         ),
     )
+    from .local_softphone_runtime import async_setup_local_softphone_bridge
+
+    async_setup_local_softphone_bridge(hass)
     from .repairs import async_sync_runtime_issues
 
     async_sync_runtime_issues(hass)

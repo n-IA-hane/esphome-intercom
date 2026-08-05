@@ -56,6 +56,7 @@ from .phone_config import (
 from .debug_capture import debug_capture_pending_writes
 from .runtime_diagnostics import runtime_resource_snapshot
 from .runtime_data import (
+    endpoint_directory,
     runtime_data,
     sip_endpoint_manager,
     sip_registrar,
@@ -316,8 +317,7 @@ def _ha_softphone_store(
     key = _normalise_endpoint_id(endpoint_id)
     store = stores.setdefault(key, {"dnd": False})
     store.setdefault("endpoint_id", key)
-    registry = bucket.get("endpoint_registry")
-    endpoint = registry.get(key) if registry is not None else None
+    endpoint = endpoint_directory(hass).get(key)
     if endpoint is not None and endpoint.kind is EndpointKind.BROWSER:
         store.setdefault("device_id", endpoint.device_id)
         store.setdefault("local_name", endpoint.name)
@@ -331,8 +331,8 @@ def _ha_softphone_stores(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
 
 
 def _endpoint_registry(hass: HomeAssistant):
-    """Return the logical endpoint registry when config-entry setup owns one."""
-    return hass.data.get(DOMAIN, {}).get("endpoint_registry")
+    """Return the entry-owned logical endpoint registry."""
+    return endpoint_directory(hass)
 
 
 def _browser_endpoint(hass: HomeAssistant, endpoint_id: object):

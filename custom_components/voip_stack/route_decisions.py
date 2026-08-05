@@ -7,9 +7,10 @@ import logging
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
-from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
+from .const import HA_SOFTPHONE_DEVICE_ID
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState, TerminalReason
+from .runtime_data import endpoint_directory
 from .websocket_api import _set_ha_softphone_call_state, _set_sip_bridge_call_state
 
 _LOGGER = logging.getLogger(__name__)
@@ -76,12 +77,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             source=f"phone:{endpoint_id}",
         )
         registry.release_endpoint_claim(call_id, endpoint_id)
-        endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-        endpoint = (
-            endpoint_registry.get(endpoint_id)
-            if endpoint_registry is not None
-            else None
-        )
+        endpoint = endpoint_directory(hass).get(endpoint_id)
         app_reason = str(data.get("decline_reason") or "").strip() or (
             TerminalReason.BUSY.value
             if action == "busy"
@@ -159,12 +155,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             status = status or 603
             app_reason = app_reason or TerminalReason.DECLINED.value
             state = "declined"
-        endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-        selected_endpoint = (
-            endpoint_registry.get(endpoint_id)
-            if endpoint_registry is not None and endpoint_id
-            else None
-        )
+        selected_endpoint = endpoint_directory(hass).get(endpoint_id) if endpoint_id else None
         _set_ha_softphone_call_state(
             hass,
             state,
@@ -185,12 +176,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             last_sip_event="SIP_RESPONSE",
         )
     elif action in {"answer_ha", "default"} and invite is not None:
-        endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-        selected_endpoint = (
-            endpoint_registry.get(endpoint_id)
-            if endpoint_registry is not None and endpoint_id
-            else None
-        )
+        selected_endpoint = endpoint_directory(hass).get(endpoint_id) if endpoint_id else None
         _set_ha_softphone_call_state(
             hass,
             CallState.CONNECTING.value,

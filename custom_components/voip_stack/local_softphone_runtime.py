@@ -19,6 +19,7 @@ from .local_softphone_bridge import (
     LocalCallState,
     LocalSoftphoneBridge,
 )
+from .runtime_data import endpoint_directory
 
 if TYPE_CHECKING:
     from .phone_endpoint import PhoneEndpoint
@@ -83,8 +84,7 @@ def start_local_softphone_call(
 
 
 def _endpoint(hass: HomeAssistant, endpoint_id: str) -> PhoneEndpoint | None:
-    registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-    return registry.get(endpoint_id) if registry is not None else None
+    return endpoint_directory(hass).get(endpoint_id)
 
 
 def _device_id(endpoint: PhoneEndpoint | None) -> str:
@@ -327,9 +327,7 @@ def async_setup_local_softphone_bridge(
     existing = local_softphone_bridge(hass)
     if existing is not None:
         return existing
-    endpoint_registry = bucket.get("endpoint_registry")
-    if endpoint_registry is None:
-        return None
+    endpoint_registry = endpoint_directory(hass)
     bridge = LocalSoftphoneBridge(endpoint_registry)
     bucket["local_softphone_bridge"] = bridge
     bucket["local_softphone_bridge_unsub"] = bridge.subscribe(
