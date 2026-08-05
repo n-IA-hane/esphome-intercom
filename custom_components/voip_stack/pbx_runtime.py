@@ -257,6 +257,19 @@ class SipEndpointRuntime:
                     relays[resource.name.removeprefix("relay:")] = resource.value
         return relays
 
+    def resources_snapshot(self, prefix: str) -> dict[str, Any]:
+        """Return one named class of resources from authoritative sessions."""
+
+        marker = f"{str(prefix or '').strip()}:"
+        if marker == ":":
+            return {}
+        return {
+            resource.name.removeprefix(marker): resource.value
+            for session in self.calls.values()
+            for resource in session.resources
+            if resource.name.startswith(marker)
+        }
+
     def sip_clients_snapshot(self) -> dict[str, Any]:
         """Return dialogs indexed by their SIP Call-ID from owned legs."""
 

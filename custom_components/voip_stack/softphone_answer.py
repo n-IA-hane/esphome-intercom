@@ -323,8 +323,6 @@ async def async_answer_browser_call(
     }
 
     def _release_answer_media(_reason: str) -> None:
-        if registry.softphone_media.get(call_id) is softphone_media:
-            registry.softphone_media.pop(call_id, None)
         release_media_reservation(softphone_media)
 
     transaction = AnswerTransaction(

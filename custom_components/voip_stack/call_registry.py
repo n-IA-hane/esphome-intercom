@@ -173,6 +173,8 @@ class CallSessionOwner(Protocol):
 
     def take_pending_invite(self, call_id: str) -> Any | None: ...
 
+    def resources_snapshot(self, prefix: str) -> dict[str, Any]: ...
+
     def attach_relay(self, call_id: str, relay: Any) -> bool: ...
 
     def take_relay(self, call_id: str) -> Any | None: ...
@@ -241,8 +243,8 @@ class CallRegistry:
         self.leg_index: dict[str, str] = {}
         self.pending_routes: dict[str, dict[str, Any]] = {}
         self._legacy_pending_invites: dict[str, Any] = {}
-        self.preanswered: dict[str, dict[str, Any]] = {}
-        self.softphone_media: dict[str, dict[str, Any]] = {}
+        self._legacy_preanswered: dict[str, dict[str, Any]] = {}
+        self._legacy_softphone_media: dict[str, dict[str, Any]] = {}
         self.video_parameter_sets: dict[str, tuple[bytes, ...]] = {}
         self._legacy_sip_clients: dict[str, Any] = {}
         self._legacy_client_watchers: dict[str, Any] = {}
@@ -328,6 +330,22 @@ class CallRegistry:
         if self._session_owner is not None:
             return self._session_owner.pending_invites_snapshot()
         return self._legacy_pending_invites
+
+    @property
+    def preanswered(self) -> dict[str, dict[str, Any]]:
+        """Compatibility projection of provisional session media."""
+
+        if self._session_owner is not None:
+            return self._session_owner.resources_snapshot("preanswered")
+        return self._legacy_preanswered
+
+    @property
+    def softphone_media(self) -> dict[str, dict[str, Any]]:
+        """Compatibility projection of established browser media."""
+
+        if self._session_owner is not None:
+            return self._session_owner.resources_snapshot("softphone_media")
+        return self._legacy_softphone_media
 
     def set_pending_invite(self, call_id: str, invite: Any) -> None:
         """Attach an INVITE to the sole current call owner."""
@@ -1156,16 +1174,20 @@ class CallRegistry:
 
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
-        index = self.preanswered if provisional else self.softphone_media
-        index[call_id] = media
-        if session is None or self._session_owner is None:
+        if self._session_owner is None:
+            index = (
+                self._legacy_preanswered
+                if provisional
+                else self._legacy_softphone_media
+            )
+            index[call_id] = media
             return
+        if session is None:
+            raise RuntimeError(f"call session {call_id!r} is unavailable")
         prefix = "preanswered" if provisional else "softphone_media"
         resource_name = f"{prefix}:{call_id}"
 
         def _release_media(_reason: str) -> None:
-            if index.get(call_id) is media:
-                index.pop(call_id, None)
             release_media_reservation(media)
 
         self._session_owner.own_resource(
@@ -1188,9 +1210,16 @@ class CallRegistry:
 
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
+        if self._session_owner is None:
+            index = (
+                self._legacy_preanswered
+                if provisional
+                else self._legacy_softphone_media
+            )
+            return index.pop(call_id, default)
         index = self.preanswered if provisional else self.softphone_media
-        media = index.pop(call_id, default)
-        if media is default or session is None or self._session_owner is None:
+        media = index.get(call_id, default)
+        if media is default or session is None:
             return media
         prefix = "preanswered" if provisional else "softphone_media"
         self._session_owner.release_resource(
@@ -1467,8 +1496,8 @@ class CallRegistry:
         self.leg_index.clear()
         self.pending_routes.clear()
         self._legacy_pending_invites.clear()
-        self.preanswered.clear()
-        self.softphone_media.clear()
+        self._legacy_preanswered.clear()
+        self._legacy_softphone_media.clear()
         self.video_parameter_sets.clear()
         self._legacy_sip_clients.clear()
         self._legacy_client_watchers.clear()

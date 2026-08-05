@@ -172,7 +172,6 @@ async def async_hangup_browser_call(
     clients = registry.sip_clients
     pending = registry.pending_invites
     media_sessions = registry.softphone_media
-    preanswered = registry.preanswered
     softphone_store = _ha_softphone_store(hass, endpoint_id)
     endpoint_bridge_calls = endpoint_call_ids(
         registry,
@@ -280,7 +279,7 @@ async def async_hangup_browser_call(
         invite = registry.take_pending_invite(pending_call_id)
         if invite is None:
             continue
-        preanswered_item = preanswered.pop(pending_call_id, None)
+        preanswered_item = registry.take_media(pending_call_id, provisional=True)
         if preanswered_item is not None:
             release_media_reservation(preanswered_item)
             if send_bye(hass, pending_call_id):

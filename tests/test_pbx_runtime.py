@@ -397,6 +397,8 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             state="connecting",
         )
         registry.attach_relay("source", relay)
+        media = {"call_id": "source"}
+        registry.attach_media("source", media)
         authoritative = runtime.get_session("source")
 
         self.assertIs(registry.sip_clients["destination"], client)
@@ -418,9 +420,11 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIs(registry.relays["source"], relay)
         self.assertEqual(registry._legacy_relays, {})
+        self.assertIs(registry.softphone_media["source"], media)
+        self.assertEqual(registry._legacy_softphone_media, {})
         self.assertEqual(
             [resource.name for resource in authoritative.resources],
-            ["relay:source"],
+            ["relay:source", "softphone_media:source"],
         )
 
         registry.finish_and_pop("source", reason="cancelled", state="cancelled")
@@ -430,6 +434,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(watcher.cancelled())
         self.assertEqual(events, ["relay-stop", "client-terminate", "client-close"])
         self.assertEqual(registry.relays, {})
+        self.assertEqual(registry.softphone_media, {})
         self.assertEqual(registry.sip_clients, {})
         self.assertEqual(registry.client_watchers, {})
         self.assertEqual(registry.bridge_clients, {})
