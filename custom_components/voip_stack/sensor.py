@@ -67,6 +67,36 @@ TERMINAL_CALL_STATES = {
     "protocol_error",
     "error",
 }
+LEGACY_DEFAULT_CALL_STATE_UNIQUE_ID = "voip_stack_ha_softphone_call_state"
+
+
+@callback
+def _migrate_default_call_state_entity(hass, entry, endpoint) -> None:
+    """Move the historical HA-phone entity onto the unified endpoint class."""
+
+    entity_registry = er.async_get(hass)
+    old_entity_id = entity_registry.async_get_entity_id(
+        "sensor", entry.domain, LEGACY_DEFAULT_CALL_STATE_UNIQUE_ID
+    )
+    if old_entity_id is None:
+        return
+    new_unique_id = f"phone_endpoint_{endpoint.endpoint_id}_call_state"
+    duplicate_id = entity_registry.async_get_entity_id(
+        "sensor", entry.domain, new_unique_id
+    )
+    if duplicate_id is not None and duplicate_id != old_entity_id:
+        entity_registry.async_remove(duplicate_id)
+    entity_registry.async_update_entity(
+        old_entity_id,
+        new_unique_id=new_unique_id,
+        config_entry_id=entry.entry_id,
+        config_subentry_id=endpoint_config_subentry_id(
+            hass, endpoint.endpoint_id
+        ),
+        device_id=endpoint.device_id or None,
+        has_entity_name=True,
+        translation_key="phone_endpoint_call_state",
+    )
 
 
 def _state_is_available(state) -> bool:
@@ -93,6 +123,7 @@ async def async_setup_entry(
 ) -> None:
     registry = endpoint_directory(hass)
     default_endpoint = registry.get(DEFAULT_ENDPOINT_ID)
+    _migrate_default_call_state_entity(hass, entry, default_endpoint)
     ha_endpoint_sensor = HaSoftphoneEndpointSensor(hass, default_endpoint, registry)
     unified_sensor = VoipPhonebookSensor(hass)
     async_add_entities(

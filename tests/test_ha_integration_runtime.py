@@ -124,6 +124,52 @@ async def test_default_browser_call_response_does_not_require_an_open_card(
     originate.assert_awaited_once()
 
 
+async def test_default_phone_call_state_keeps_its_historical_entity_id(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.voip_stack.sensor import (
+        LEGACY_DEFAULT_CALL_STATE_UNIQUE_ID,
+        _migrate_default_call_state_entity,
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    old = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        LEGACY_DEFAULT_CALL_STATE_UNIQUE_ID,
+        suggested_object_id="voip_stack_call_state",
+        config_entry=entry,
+    )
+    duplicate = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "phone_endpoint_default_call_state",
+        suggested_object_id="casa_stato_chiamata",
+        config_entry=entry,
+    )
+    monkeypatch.setattr(
+        "custom_components.voip_stack.sensor.endpoint_config_subentry_id",
+        lambda *_args: None,
+    )
+
+    _migrate_default_call_state_entity(
+        hass,
+        entry,
+        SimpleNamespace(endpoint_id="default", device_id=""),
+    )
+
+    migrated = registry.async_get(old.entity_id)
+    assert migrated is not None
+    assert migrated.unique_id == "phone_endpoint_default_call_state"
+    assert migrated.entity_id == old.entity_id
+    assert registry.async_get(duplicate.entity_id) is None
+
+
 async def test_purge_devices_is_disabled_before_resolving_or_removing_devices(
     hass: HomeAssistant,
 ) -> None:
