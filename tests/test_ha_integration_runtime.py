@@ -71,13 +71,6 @@ async def test_physical_phone_call_response_uses_the_selected_esp_endpoint(
             "state": "accepted",
             "destination": "Casa",
         },
-        "endpoint_id": "esphome:kitchen",
-        "endpoint_type": "esphome",
-        "device_id": "device-kitchen",
-        "name": "Waveshare P4 Touch",
-        "call_id": "",
-        "state": "accepted",
-        "destination": "Casa",
     }
     action_result = MagicMock()
     action_result.as_service_response.return_value = service_response
@@ -98,9 +91,7 @@ async def test_physical_phone_call_response_uses_the_selected_esp_endpoint(
 
     assert response == service_response
     originate.assert_awaited_once()
-    action_result.as_service_response.assert_called_once_with(
-        include_legacy_fields=True
-    )
+    action_result.as_service_response.assert_called_once_with()
 
 
 async def test_default_browser_call_response_does_not_require_an_open_card(

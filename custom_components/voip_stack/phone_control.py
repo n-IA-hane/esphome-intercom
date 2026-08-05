@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from collections.abc import Mapping
 from typing import Any, Protocol
 
 from homeassistant.core import Context, HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
-from .const import DOMAIN, HA_SOFTPHONE_DEVICE_ID
+from .const import DOMAIN
 from .endpoint_registry import EndpointRegistry
 from .esphome_actions import (
     async_call_action,
@@ -18,7 +17,7 @@ from .esphome_actions import (
     async_resolve_source_device,
     has_action,
 )
-from .phone_endpoint import DEFAULT_ENDPOINT_ID, EndpointKind, PhoneEndpoint
+from .phone_endpoint import EndpointKind, PhoneEndpoint
 from .service_endpoints import async_require_phone_service_control
 from .softphone_originate import async_originate_browser_call
 from .softphone_answer import async_answer_browser_call
@@ -88,18 +87,8 @@ class PhoneActionResult:
     accepted: bool = True
     call_id: str = ""
     state: str = "accepted"
-    legacy_fields: Mapping[str, object] = field(
-        default_factory=dict,
-        repr=False,
-        compare=False,
-    )
-
-    def as_service_response(
-        self,
-        *,
-        include_legacy_fields: bool = True,
-    ) -> dict[str, object]:
-        """Serialize schema 2 and its temporary flat compatibility fields."""
+    def as_service_response(self) -> dict[str, object]:
+        """Serialize the canonical service response."""
 
         response: dict[str, object] = {
             "schema_version": 2,
@@ -116,20 +105,6 @@ class PhoneActionResult:
                 "destination": self.destination,
             },
         }
-        if include_legacy_fields:
-            # COMPAT: remove flat response fields after 2026.10.
-            response.update(self.legacy_fields)
-            response.update(
-                {
-                    "endpoint_id": self.phone.endpoint_id,
-                    "endpoint_type": self.phone.kind.value,
-                    "device_id": self.phone.device_id,
-                    "name": self.phone.name,
-                    "call_id": self.call_id,
-                    "state": self.state,
-                    "destination": self.destination,
-                }
-            )
         return response
 
 
@@ -177,7 +152,6 @@ class BrowserPhoneAdapter:
             destination=request.destination,
             call_id=str(snapshot.get("call_id") or ""),
             state=str(snapshot.get("state") or "accepted"),
-            legacy_fields=snapshot,
         )
 
     async def control(
@@ -378,11 +352,7 @@ class PhoneAdapterRegistry:
                 translation_domain=DOMAIN,
                 translation_key="phone_selection_required",
             )
-        endpoint = (
-            self._endpoints.get(DEFAULT_ENDPOINT_ID)
-            if selector == HA_SOFTPHONE_DEVICE_ID
-            else self._endpoints.resolve(selector)
-        )
+        endpoint = self._endpoints.resolve(selector)
         if endpoint is not None:
             if endpoint.kind is EndpointKind.SIP_ACCOUNT:
                 return self._endpoint_handle(endpoint, frozenset())

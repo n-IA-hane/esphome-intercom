@@ -273,7 +273,7 @@ async def _handle_sip_call_target_service(
     )
     if not call.return_response:
         return None
-    return result.as_service_response(include_legacy_fields=True)
+    return result.as_service_response()
 
 
 async def _originate_phone_action(
