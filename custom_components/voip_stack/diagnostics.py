@@ -13,6 +13,7 @@ from homeassistant.helpers.device_registry import DeviceEntry
 from .config import trunk_config
 from .const import DOMAIN, INTEGRATION_VERSION
 from .runtime_diagnostics import runtime_resource_snapshot
+from .runtime_data import call_projection
 
 
 # SIP identities, routing aliases and network topology are private even when
@@ -148,7 +149,7 @@ def _runtime_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, A
         "trunk": _trunk_summary(hass, bucket),
         "resources": runtime_resource_snapshot(
             bucket,
-            bucket.get("call_registry"),
+            call_projection(hass) or bucket.get("call_registry"),
             detailed=False,
         ),
     }
@@ -231,7 +232,7 @@ async def async_get_device_diagnostics(
         "phone": _device_summary(bucket, device),
         "resources": runtime_resource_snapshot(
             bucket,
-            bucket.get("call_registry"),
+            call_projection(hass) or bucket.get("call_registry"),
             detailed=False,
         ),
     }

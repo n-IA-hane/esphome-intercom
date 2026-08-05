@@ -28,6 +28,7 @@ from .const import (
 from .dial_fork import DialDisposition, DialForkController
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
+from .runtime_data import sip_endpoint_runtime
 from .endpoint_routing import (
     EndpointRouteResolver,
     peer_audio_formats as _peer_audio_formats,
@@ -575,7 +576,7 @@ async def async_forward_existing_call(
                     if current_session is not None
                     else 0
                 )
-                pbx_runtime = hass.data.get(DOMAIN, {}).get("pbx_runtime")
+                pbx_runtime = sip_endpoint_runtime(hass)
                 authoritative_session = (
                     pbx_runtime.get_session(
                         call_id,

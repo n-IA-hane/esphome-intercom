@@ -532,10 +532,7 @@ def _sip_bridge_store(hass: HomeAssistant) -> dict[str, Any]:
 async def _async_shutdown_all(hass: HomeAssistant) -> None:
     """Clear HA softphone volatile state before SIP transports are stopped."""
     bucket = hass.data.setdefault(DOMAIN, {})
-    registry = bucket.get("call_registry")
-    if not isinstance(registry, CallRegistry):
-        registry = CallRegistry()
-        bucket["call_registry"] = registry
+    registry = call_registry(hass)
     for route in list(registry.pending_routes.values()):
         future = route.get("future") if isinstance(route, dict) else None
         if future is not None and not future.done():
@@ -754,7 +751,7 @@ def _sip_runtime_snapshot(
     detailed: bool = False,
 ) -> dict[str, Any]:
     bucket = hass.data.get(DOMAIN, {})
-    registry = bucket.get("call_registry")
+    registry = call_registry(hass)
     if not isinstance(registry, CallRegistry):
         registry = None
     endpoint = bucket.get("sip_endpoint")

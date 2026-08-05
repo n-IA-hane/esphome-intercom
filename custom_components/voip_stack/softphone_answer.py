@@ -19,6 +19,7 @@ from .media_ports import (
     reserve_sip_video_media,
 )
 from .peer_snapshot import async_advertise_host
+from .runtime_data import sip_endpoint_runtime
 from .route_decisions import set_pending_route_decision
 from .sip_runtime import send_bye, send_final_response
 from .softphone_commands import BrowserCallCommand, bind_service_call_controller
@@ -167,7 +168,7 @@ async def async_answer_browser_call(
         )
 
     session = registry.sessions.get(registry.resolve_session_id(call_id))
-    pbx_runtime = bucket.get("pbx_runtime")
+    pbx_runtime = sip_endpoint_runtime(hass) or bucket.get("pbx_runtime")
     authoritative_session = (
         pbx_runtime.get_session(
             registry.resolve_session_id(call_id),

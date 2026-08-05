@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
+from .runtime_data import call_projection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ def _connected_identity_for_call(
     from .sip import parse_sip_uri
 
     bucket = hass.data.get(DOMAIN, {})
-    registry = bucket.get("call_registry")
+    registry = call_projection(hass) or bucket.get("call_registry")
     if registry is None:
         return "", ""
     session_id = registry.resolve_session_id(call_id)

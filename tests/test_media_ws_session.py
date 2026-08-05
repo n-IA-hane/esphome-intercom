@@ -42,6 +42,11 @@ def _load_module(name: str):
 
 _load_module("session_cleanup")
 websocket_owner = _load_module("websocket_owner")
+runtime_data = types.ModuleType(f"{PKG_NAME}.runtime_data")
+runtime_data.call_projection = lambda hass: hass.data.get("voip_stack", {}).get(
+    "call_registry"
+)
+sys.modules[runtime_data.__name__] = runtime_data
 media_ws_session = _load_module("media_ws_session")
 
 

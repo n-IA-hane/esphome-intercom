@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -185,6 +186,41 @@ async def test_entry_runtime_exposes_configuration_without_global_mirrors(
         "debug_mode",
         "media_capture",
     }.intersection(hass.data.get(DOMAIN, {}))
+
+
+async def test_entry_runtime_owns_call_projection_and_detached_tasks(
+    hass: HomeAssistant,
+) -> None:
+    from custom_components.voip_stack.endpoint_lifecycle import (
+        call_registry,
+        cancel_runtime_tasks,
+        create_runtime_task,
+    )
+    from custom_components.voip_stack.runtime_data import VoipStackRuntime
+
+    runtime = VoipStackRuntime(
+        transport_config={},
+        assist_config={},
+        trunk_config={},
+        endpoints=MagicMock(),
+        phones=MagicMock(),
+    )
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    entry.runtime_data = runtime
+
+    registry = call_registry(hass)
+    task = create_runtime_task(hass, asyncio.sleep(60))
+
+    assert runtime.calls is registry
+    assert task in runtime.tasks
+    assert not {"call_registry", "runtime_tasks"}.intersection(
+        hass.data.get(DOMAIN, {})
+    )
+
+    await cancel_runtime_tasks(hass)
+    assert task.cancelled()
+    assert runtime.tasks == set()
 
 
 async def test_deleting_the_last_browser_phone_does_not_restore_a_default(

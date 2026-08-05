@@ -50,6 +50,11 @@ def media_call_lifetime(monkeypatch):
         "call_registry": {"CallRegistry": _Registry},
         "const": {"DOMAIN": "voip_stack"},
         "phone_endpoint": {"DEFAULT_ENDPOINT_ID": "default"},
+        "runtime_data": {
+            "call_projection": lambda hass: hass.data.get("voip_stack", {}).get(
+                "call_registry"
+            )
+        },
         "websocket_api": {
             "CALL_EVENT": "voip_stack_call_event",
             "_ha_softphone_store": lambda hass, endpoint_id="default": hass.stores[

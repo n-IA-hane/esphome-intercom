@@ -23,6 +23,7 @@ from .dial_fork import (
 from .dial_plan import RingPolicy
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry
+from .runtime_data import sip_endpoint_runtime
 from .fsm import (
     CallState,
     TerminalReason,
@@ -449,7 +450,7 @@ async def run_ring_group_call(
     reroute_decision: dict[str, Any] | None = None
     final_result = "timeout"
     try:
-        pbx_runtime = hass.data.get(DOMAIN, {}).get("pbx_runtime")
+        pbx_runtime = sip_endpoint_runtime(hass)
         authoritative_session = (
             pbx_runtime.get_session(
                 invite.call_id,

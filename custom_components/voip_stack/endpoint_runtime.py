@@ -71,6 +71,7 @@ from .phone_endpoint import (
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .router import RouteReason
 from .ring_group_orchestrator import RingGroupRuntime, run_ring_group_call
+from .runtime_data import runtime_data
 from .store import sip_accounts as _sip_accounts
 from .trunk_inbound_router import (
     TrunkInboundRuntime,
@@ -779,19 +780,27 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     pbx_runtime.attach_component("udp_listener", endpoint, closer=endpoint.stop)
     pbx_runtime.activate()
     registry.bind_session_owner(pbx_runtime)
-    bucket["pbx_runtime"] = pbx_runtime
+    runtime = runtime_data(hass)
+    if runtime is not None:
+        runtime.sip = pbx_runtime
+    else:
+        bucket["pbx_runtime"] = pbx_runtime
     try:
         started = await endpoint.start()
     except BaseException:
         registry.bind_session_owner(None)
         await pbx_runtime.shutdown()
-        if bucket.get("pbx_runtime") is pbx_runtime:
+        if runtime is not None and runtime.sip is pbx_runtime:
+            runtime.sip = None
+        elif bucket.get("pbx_runtime") is pbx_runtime:
             bucket.pop("pbx_runtime", None)
         raise
     if not started:
         registry.bind_session_owner(None)
         await pbx_runtime.shutdown()
-        if bucket.get("pbx_runtime") is pbx_runtime:
+        if runtime is not None and runtime.sip is pbx_runtime:
+            runtime.sip = None
+        elif bucket.get("pbx_runtime") is pbx_runtime:
             bucket.pop("pbx_runtime", None)
         return False
     hass.data[DOMAIN]["async_forward_call"] = _async_forward_existing_call

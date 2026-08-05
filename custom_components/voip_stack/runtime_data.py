@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -12,6 +13,8 @@ from .const import DOMAIN
 from .endpoint_registry import EndpointRegistry
 
 if TYPE_CHECKING:
+    from .call_registry import CallRegistry
+    from .pbx_runtime import SipEndpointRuntime
     from .phone_control import PhoneAdapterRegistry
 
 
@@ -27,6 +30,9 @@ class VoipStackRuntime:
     preferred_phone_device_id: str = ""
     debug_mode: bool = False
     media_capture: bool = False
+    calls: CallRegistry | None = None
+    sip: SipEndpointRuntime | None = None
+    tasks: set[asyncio.Task[Any]] = field(default_factory=set)
 
 
 type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]
@@ -44,3 +50,17 @@ def runtime_data(hass: HomeAssistant) -> VoipStackRuntime | None:
         if isinstance(value, VoipStackRuntime):
             return value
     return None
+
+
+def call_projection(hass: HomeAssistant) -> CallRegistry | None:
+    """Return the entry-owned observable call index, if initialized."""
+
+    runtime = runtime_data(hass)
+    return runtime.calls if runtime is not None else None
+
+
+def sip_endpoint_runtime(hass: HomeAssistant) -> SipEndpointRuntime | None:
+    """Return the entry-owned authoritative SIP runtime, if active."""
+
+    runtime = runtime_data(hass)
+    return runtime.sip if runtime is not None else None

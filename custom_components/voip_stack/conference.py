@@ -28,6 +28,7 @@ from .rtp import RtpPacket, build_packet, next_sequence, next_timestamp, parse_p
 from .sdp import build_answer_directional
 from . import sdp
 from .session_cleanup import async_wait_for_cleanup
+from .runtime_data import sip_endpoint_runtime
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder
 from .sip_listener import SipInvite, SipInviteResult
 from .websocket_api import _fire_call_event, _set_ha_softphone_call_state
@@ -1124,7 +1125,7 @@ def conference_manager(
             on_inbound_timeout=on_inbound_timeout,
         )
         bucket["conference_manager"] = manager
-        pbx_runtime = bucket.get("pbx_runtime")
+        pbx_runtime = sip_endpoint_runtime(hass) or bucket.get("pbx_runtime")
         if pbx_runtime is not None:
             pbx_runtime.adopt_component(
                 "conference_manager",
