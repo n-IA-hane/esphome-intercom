@@ -41,6 +41,7 @@ from .endpoint_entity_manager import (
 from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .peer_snapshot import async_advertise_host, async_build_peer_snapshot
 from .config import transport_config
+from .runtime_data import endpoint_directory
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,8 +94,8 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-    default_endpoint = registry.get(DEFAULT_ENDPOINT_ID) if registry is not None else None
+    registry = endpoint_directory(hass)
+    default_endpoint = registry.get(DEFAULT_ENDPOINT_ID)
     ha_endpoint_sensor = HaSoftphoneEndpointSensor(hass, default_endpoint, registry)
     unified_sensor = VoipPhonebookSensor(hass)
     async_add_entities(

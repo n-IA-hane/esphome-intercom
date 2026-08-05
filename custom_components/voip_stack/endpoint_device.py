@@ -16,6 +16,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceEntry, DeviceEntryType, DeviceInfo
 
 from .const import DOMAIN, INTEGRATION_VERSION
+from .runtime_data import endpoint_directory
 
 if TYPE_CHECKING:
     from .endpoint_registry import EndpointRegistry
@@ -50,12 +51,8 @@ def endpoint_config_subentry_id(
 ) -> str | None:
     """Return the config subentry currently backing an endpoint."""
     if registry is None:
-        registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
-    return (
-        registry.subentry_ids.get(str(endpoint_id or "").strip())
-        if registry is not None
-        else None
-    )
+        registry = endpoint_directory(hass)
+    return registry.subentry_ids.get(str(endpoint_id or "").strip())
 
 
 def endpoint_device_info(endpoint: PhoneEndpoint) -> DeviceInfo | None:

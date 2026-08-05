@@ -149,7 +149,7 @@ class EndpointEntityManager(Generic[_EntityT]):
             apply_endpoint(endpoint)
 
     def _subentry_id(self, endpoint_id: str) -> str | None:
-        return endpoint_config_subentry_id(self.hass, endpoint_id)
+        return endpoint_config_subentry_id(self.hass, endpoint_id, self.registry)
 
     async def _async_remove_entity(self, entity: _EntityT) -> None:
         """Remove runtime state and its now-orphaned Entity Registry entry."""

@@ -540,6 +540,11 @@ def test_sip_account_dnd_is_persisted_without_transport_hook(monkeypatch) -> Non
         sys.modules, f"{PKG_NAME}.phone_config", fake_phone_config
     )
     monkeypatch.setitem(sys.modules, f"{PKG_NAME}.store", fake_store)
+    monkeypatch.setattr(
+        endpoint_switch,
+        "endpoint_directory",
+        lambda _hass: registry,
+    )
 
     asyncio.run(endpoint_switch.async_set_endpoint_dnd(hass, "kitchen", True))
 

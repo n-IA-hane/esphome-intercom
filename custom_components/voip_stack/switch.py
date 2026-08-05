@@ -17,6 +17,7 @@ from .endpoint_entity_manager import (
     register_endpoint_entity_manager,
 )
 from .phone_endpoint import EndpointKind
+from .runtime_data import endpoint_directory
 
 
 async def async_set_endpoint_dnd(
@@ -34,8 +35,8 @@ async def async_set_endpoint_dnd(
         if inspect.isawaitable(result):
             await result
 
-    registry = bucket.get("endpoint_registry")
-    endpoint = registry.get(endpoint_id) if registry is not None else None
+    registry = endpoint_directory(hass)
+    endpoint = registry.get(endpoint_id)
     if endpoint is None:
         raise ValueError(f"Unknown phone endpoint: {endpoint_id}")
 
