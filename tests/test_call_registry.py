@@ -75,7 +75,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
             generation=projected.generation,
             phase=types.SimpleNamespace(value="established"),
             terminal_reason="completed",
-            metadata={"route_kind": "direct", "pbx_phase": "stale"},
+            metadata={"pbx_phase": "stale", "route_kind": "direct"},
         )
         registry.publish(snapshot)
 
@@ -110,6 +110,22 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(projected.metadata["route_kind"], "direct")
         self.assertEqual(projected.terminal_reason, "completed")
         self.assertEqual(set(registry.sessions), {"call-1"})
+
+        fresh = call_registry.CallRegistry()
+        fresh.publish(
+            types.SimpleNamespace(
+                call_id="new-call",
+                generation=7,
+                phase="ringing",
+                terminal_reason="",
+                metadata={"source": "trunk"},
+            )
+        )
+        created = fresh.sessions["new-call"]
+        self.assertEqual(created.id, "new-call")
+        self.assertEqual(created.generation, 7)
+        self.assertEqual(created.metadata["pbx_phase"], "ringing")
+        self.assertEqual(created.metadata["source"], "trunk")
 
     def test_active_count_filters_terminal_and_ha_softphone_sessions(self) -> None:
         registry = call_registry.CallRegistry()
