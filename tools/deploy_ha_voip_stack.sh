@@ -14,7 +14,7 @@ Usage: tools/deploy_ha_voip_stack.sh
 
 Deploy the local VoIP Stack custom component to the configured Home Assistant,
 create a timestamped pre-deploy backup, restart Home Assistant and wait until
-the service is active.
+Home Assistant completes initialization.
 
 Environment overrides:
   HA_HOST           SSH alias or host (default: hass)
@@ -68,11 +68,16 @@ ssh "$HA_HOST" "
   sudo -n mkdir -p '$HA_COMPONENT_DIR'
   sudo -n rsync -a --delete --exclude='__pycache__/' '$REMOTE_STAGE/' '$HA_COMPONENT_DIR/'
   sudo -n chown -R hass:hass '$HA_COMPONENT_DIR'
+  restart_marker=\$(date -u '+%Y-%m-%d %H:%M:%S')
   sudo -n systemctl restart '$HA_SERVICE'
-  for attempt in \$(seq 1 90); do
+  for attempt in \$(seq 1 120); do
     state=\$(systemctl is-active '$HA_SERVICE' 2>/dev/null || true)
-    if [ \"\$state\" = active ]; then
-      echo 'Home Assistant active; VoIP Stack deployment complete.'
+    if [ \"\$state\" = active ] && sudo -n journalctl \
+      -u '$HA_SERVICE' \
+      --since \"\$restart_marker\" \
+      --no-pager \
+      -q | grep -Fq 'Home Assistant initialized'; then
+      echo 'Home Assistant initialized; VoIP Stack deployment complete.'
       exit 0
     fi
     if [ \"\$state\" = failed ]; then
@@ -81,6 +86,7 @@ ssh "$HA_HOST" "
     fi
     sleep 1
   done
-  echo 'Timed out waiting for Home Assistant to become active.' >&2
+  echo 'Timed out waiting for Home Assistant initialization.' >&2
+  sudo -n journalctl -u '$HA_SERVICE' -n 80 --no-pager >&2
   exit 1
 "
