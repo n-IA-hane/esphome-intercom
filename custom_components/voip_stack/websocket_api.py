@@ -522,7 +522,8 @@ async def async_set_ha_softphone_settings(
         groups["conference_ring"] = False
     store["groups"] = groups
     await _async_save_ha_softphone_store(hass, endpoint_id)
-    endpoint_sensor = hass.data.get(DOMAIN, {}).get("ha_softphone_endpoint_sensor")
+    runtime = runtime_data(hass)
+    endpoint_sensor = runtime.ha_endpoint_sensor if runtime is not None else None
     if endpoint_sensor is not None:
         await endpoint_sensor.async_update()
     state = _ha_softphone_state(hass, endpoint_id)

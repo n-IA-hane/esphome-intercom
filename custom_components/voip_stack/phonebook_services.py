@@ -13,10 +13,9 @@ from .config_validation import route_namespace_conflicts
 from .const import (
     CONF_ASSIST_ENDPOINT_ENABLED,
     CONF_ASSIST_EXTENSION,
-    DOMAIN,
 )
 from .phonebook_runtime import push_roster_json_to_esps
-from .runtime_data import endpoint_directory
+from .runtime_data import endpoint_directory, runtime_data
 from .roster import RosterEntry, normalize_roster_key, parse_roster_json
 from .store import manual_roster_entries, store_manual_roster_entries
 
@@ -196,7 +195,8 @@ def build_phonebook_service_handlers(
 
     async def export_phonebook(call: ServiceCall) -> dict[str, str]:
         hass = call.hass
-        sensor = hass.data.get(DOMAIN, {}).get("phonebook_sensor")
+        runtime = runtime_data(hass)
+        sensor = runtime.phonebook_sensor if runtime is not None else None
         if sensor is not None:
             await sensor.async_update()
             roster_json = sensor.extra_state_attributes.get("roster_json", "")
@@ -207,7 +207,8 @@ def build_phonebook_service_handlers(
 
     async def push_phonebook(call: ServiceCall) -> None:
         hass = call.hass
-        sensor = hass.data.get(DOMAIN, {}).get("phonebook_sensor")
+        runtime = runtime_data(hass)
+        sensor = runtime.phonebook_sensor if runtime is not None else None
         if sensor is not None:
             await sensor.async_update()
             roster_json = sensor.extra_state_attributes.get("roster_json", "")

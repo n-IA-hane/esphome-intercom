@@ -44,6 +44,7 @@ def _load_phonebook_services(monkeypatch, route_conflicts=None):
     runtime_data.endpoint_directory = lambda hass: hass.data.get(
         "voip_stack", {}
     ).get("endpoint_registry", types.SimpleNamespace(endpoints=()))
+    runtime_data.runtime_data = lambda hass: getattr(hass, "runtime", None)
     roster = types.ModuleType(f"{PACKAGE}.roster")
     roster.RosterEntry = object
     roster.normalize_roster_key = lambda value: "".join(
@@ -88,6 +89,7 @@ def test_export_returns_roster_only_in_service_response(monkeypatch) -> None:
 
     hass = types.SimpleNamespace(
         data={"voip_stack": {"phonebook_sensor": Sensor()}},
+        runtime=types.SimpleNamespace(phonebook_sensor=Sensor()),
     )
     call = types.SimpleNamespace(hass=hass, data={})
     handlers = module.build_phonebook_service_handlers(refresh)

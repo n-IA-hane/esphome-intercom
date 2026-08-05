@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 
 from .audio_format import HA_SIP_PCM_FORMATS
 from .config import transport_config
-from .const import DOMAIN, HA_SOFTPHONE_ENDPOINT_ENTITY_ID
+from .const import HA_SOFTPHONE_ENDPOINT_ENTITY_ID
 from .device_resolver import parse_voip_endpoint
 from .peer import Peer
 from .phone_endpoint import (
@@ -17,7 +17,7 @@ from .phone_endpoint import (
     EndpointAvailability,
     EndpointKind,
 )
-from .runtime_data import endpoint_directory
+from .runtime_data import endpoint_directory, runtime_data
 from .websocket_api import _get_voip_devices
 
 _LOGGER = logging.getLogger(__name__)
@@ -194,7 +194,8 @@ async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
     elif not browser_endpoints:
         # The SIP endpoint starts before config-entry platforms. The deferred
         # phonebook sync discovers the sensor as soon as the platform is ready.
-        if hass.data.get(DOMAIN, {}).get("ha_softphone_endpoint_sensor") is None:
+        runtime = runtime_data(hass)
+        if runtime is None or runtime.ha_endpoint_sensor is None:
             _LOGGER.debug(
                 "HA softphone endpoint sensor is not ready; phonebook sync is deferred"
             )
