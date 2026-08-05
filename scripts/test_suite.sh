@@ -146,6 +146,21 @@ case "$MODE" in
       printf '%s\n' "Mutation tests require a disposable git worktree" >&2
       exit 2
     }
+    if [[ -n $HA_PYTHON ]]; then
+      if [[ $HA_PYTHON != */* ]]; then
+        HA_PYTHON=$(command -v "$HA_PYTHON" || true)
+      fi
+      [[ -x $HA_PYTHON ]] || {
+        printf 'HA test Python not found: %s\n' "$HA_PYTHON" >&2
+        exit 2
+      }
+      ha_site_packages=$(
+        "$HA_PYTHON" -c \
+          'import site; print(site.getsitepackages()[0])'
+      )
+      export PYTHONPATH="$ha_site_packages${PYTHONPATH:+:$PYTHONPATH}"
+      export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+    fi
     "$PYTHON" -m mutmut run
     "$PYTHON" -m mutmut export-cicd-stats
     exec "$PYTHON" scripts/check_mutation_score.py \

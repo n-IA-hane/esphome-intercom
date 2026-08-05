@@ -31,6 +31,18 @@ device YAML edits. The score gate is 63.5 percent and covers selected lifecycle,
 endpoint, SIP transaction and video relay modules. Raise the floor only after a
 complete run from a clean committed worktree.
 
+If a selected production module imports Home Assistant, keep the regular test
+environment as `PYTHON` and provide the HA laboratory interpreter separately:
+
+```bash
+HA_PYTHON=/path/to/ha-venv/bin/python ./scripts/test_suite.sh mutation
+```
+
+The runner adds only the HA packages to the mutation process and disables
+unrelated pytest plugin auto-loading. This preserves Hypothesis and mutmut from
+the regular environment without loading HA's complete Bluetooth/DBus test
+stack.
+
 ## Layers
 
 - `unit`: protocol parsing, codecs, value objects and lifecycle primitives.
