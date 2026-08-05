@@ -88,8 +88,9 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry.set_pending_invite("call-1", object())
         registry.attach_media("call-1", {}, provisional=True)
         registry.attach_media("call-1", {})
-        registry.sip_clients["destination"] = object()
-        registry.client_watchers["destination"] = object()
+        registry.attach_sip_client("call-1", "destination", object())
+        watcher = mock.Mock()
+        registry.attach_client_watcher("destination", watcher)
         registry.attach_relay("call-1", object())
         registry.set_bridge_link("call-1", "destination")
         registry.endpoint_claims["call-1"] = {

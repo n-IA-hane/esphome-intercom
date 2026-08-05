@@ -407,7 +407,6 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         authoritative = runtime.get_session("source")
 
         self.assertIs(registry.sip_clients["destination"], client)
-        self.assertEqual(registry._legacy_sip_clients, {})
         self.assertEqual(registry.bridge_clients, {"source": "destination"})
         self.assertIs(registry.pending_invites["source"], invite)
         self.assertIs(authoritative.artifacts["pending_invite"], invite)
@@ -422,7 +421,6 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "destination",
         )
         self.assertIs(registry.client_watchers["destination"], watcher)
-        self.assertEqual(registry._legacy_client_watchers, {})
         self.assertIs(
             authoritative.named_tasks["client_watcher:destination"],
             watcher,

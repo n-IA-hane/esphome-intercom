@@ -711,8 +711,8 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         registry.upsert("inbound", state="in_call")
         registry.upsert("preanswered", state="ringing")
         registry.attach_relay("call", Relay())
-        registry.sip_clients["call"] = Client()
-        registry.client_watchers["call"] = watcher
+        registry.attach_sip_client("call", "call", Client())
+        registry.attach_client_watcher("call", watcher)
         registry.attach_media("inbound", {
             "rtp_reservation": Reservation("inbound"),
             "video_rtp_socket": VideoSocket(),

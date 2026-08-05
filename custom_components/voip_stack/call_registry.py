@@ -88,8 +88,6 @@ class CallRegistry:
     def __init__(self) -> None:
         self.sessions: dict[str, CallSession] = {}
         self.leg_index: dict[str, str] = {}
-        self._legacy_sip_clients: dict[str, Any] = {}
-        self._legacy_client_watchers: dict[str, Any] = {}
         self.event_contexts: dict[str, CallEventContext] = {}
         self.terminal_summary_ids: OrderedDict[str, None] = OrderedDict()
         self._legacy_endpoint_claims: dict[str, dict[str, str]] = {}
@@ -184,19 +182,25 @@ class CallRegistry:
 
     @property
     def sip_clients(self) -> dict[str, Any]:
-        """Compatibility projection of dialogs owned by call legs."""
-
         if self._session_owner is not None:
             return self._session_owner.sip_clients_snapshot()
-        return self._legacy_sip_clients
+        return {
+            key.removeprefix("sip_client:"): value
+            for session in self.sessions.values()
+            for key, value in session.resources.items()
+            if key.startswith("sip_client:")
+        }
 
     @property
     def client_watchers(self) -> dict[str, Any]:
-        """Compatibility projection of session-owned lifecycle tasks."""
-
         if self._session_owner is not None:
             return self._session_owner.client_watchers_snapshot()
-        return self._legacy_client_watchers
+        return {
+            key.removeprefix("client_watcher:"): value
+            for session in self.sessions.values()
+            for key, value in session.resources.items()
+            if key.startswith("client_watcher:")
+        }
 
     @property
     def bridge_clients(self) -> dict[str, str]:
@@ -917,12 +921,10 @@ class CallRegistry:
         role: LegRole = "callee",
         state: str = "",
     ) -> None:
-        """Index a SIP client while its session leg owns cleanup."""
-
         session_id = self.resolve_session_id(str(source_call_id or "").strip())
         session = self.sessions.get(session_id)
         if self._session_owner is None:
-            self._legacy_sip_clients[dest_call_id] = client
+            self.sessions[session_id].resources[f"sip_client:{dest_call_id}"] = client
             return
         if session is None:
             raise RuntimeError(f"call session {source_call_id!r} is unavailable")
@@ -942,12 +944,10 @@ class CallRegistry:
         )
 
     def take_sip_client(self, call_id: str) -> Any | None:
-        """Transfer a SIP client to an explicit cleanup caller."""
-
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
         if self._session_owner is None:
-            return self._legacy_sip_clients.pop(call_id, None)
+            return session.resources.pop(f"sip_client:{call_id}", None) if session else None
         client = self.sip_clients.get(call_id)
         if client is not None and session is not None:
             self._session_owner.release_leg(
@@ -973,16 +973,15 @@ class CallRegistry:
         return session.resources.pop(f"relay:{call_id}", None) if session else None
 
     def attach_client_watcher(self, call_id: str, task: Any) -> None:
-        """Index a watcher while the owning session controls cancellation."""
-
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
         if self._session_owner is None:
-            self._legacy_client_watchers[call_id] = task
+            key = f"client_watcher:{call_id}"
+            self.sessions[session_id].resources[key] = task
 
             def _forget(completed: Any) -> None:
-                if self._legacy_client_watchers.get(call_id) is completed:
-                    self._legacy_client_watchers.pop(call_id, None)
+                if session.resources.get(key) is completed:
+                    session.resources.pop(key, None)
 
             task.add_done_callback(_forget)
             return
@@ -996,12 +995,10 @@ class CallRegistry:
         )
 
     def take_client_watcher(self, call_id: str) -> Any | None:
-        """Transfer a watcher to an explicit cleanup caller."""
-
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
         if self._session_owner is None:
-            return self._legacy_client_watchers.pop(call_id, None)
+            return session.resources.pop(f"client_watcher:{call_id}", None) if session else None
         task = self.client_watchers.get(call_id)
         if task is not None and session is not None:
             self._session_owner.release_task(
@@ -1331,8 +1328,6 @@ class CallRegistry:
         self._release_all_endpoint_claims()
         self.sessions.clear()
         self.leg_index.clear()
-        self._legacy_sip_clients.clear()
-        self._legacy_client_watchers.clear()
         self.event_contexts.clear()
         self.terminal_summary_ids.clear()
         self.terminated_call_ids.clear()
