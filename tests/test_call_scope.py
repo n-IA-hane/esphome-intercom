@@ -91,11 +91,11 @@ class CallScopeTest(unittest.TestCase):
     def add(self, call_id: str, **metadata) -> None:
         self.registry.sessions[call_id] = SimpleNamespace(metadata=metadata)
 
-    def test_legacy_call_defaults_to_master_endpoint(self) -> None:
+    def test_unscoped_call_does_not_invent_a_master_endpoint(self) -> None:
         self.add("legacy")
         self.assertEqual(
             call_scope.call_endpoint_ids(self.registry, "legacy"),
-            frozenset({"default"}),
+            frozenset(),
         )
 
     def test_local_call_is_controllable_by_both_endpoints(self) -> None:

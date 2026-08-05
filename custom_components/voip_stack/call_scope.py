@@ -7,7 +7,6 @@ from collections.abc import Iterable
 from homeassistant.core import HomeAssistant
 
 from .endpoint_lifecycle import call_registry
-from .phone_endpoint import DEFAULT_ENDPOINT_ID
 
 
 def pending_routes(hass: HomeAssistant) -> dict:
@@ -31,7 +30,7 @@ def call_endpoint_id(registry, call_id: str) -> str:
     session = registry.sessions.get(session_id)
     return str(
         ((session.metadata if session is not None else {}) or {}).get("endpoint_id")
-        or DEFAULT_ENDPOINT_ID
+        or ""
     ).strip()
 
 
@@ -59,8 +58,6 @@ def call_endpoint_ids(registry, call_id: str) -> frozenset[str]:
         for value in (metadata.get("ring_endpoint_ids") or ())
     )
     endpoint_ids.discard("")
-    if not endpoint_ids:
-        endpoint_ids.add(DEFAULT_ENDPOINT_ID)
     return frozenset(endpoint_ids)
 
 
@@ -84,7 +81,7 @@ def endpoint_call_ids(
 
 def single_pending_route_call_id(
     hass: HomeAssistant,
-    endpoint_id: str = DEFAULT_ENDPOINT_ID,
+    endpoint_id: str,
 ) -> str:
     """Return the only pending route visible to one endpoint, if unambiguous."""
     registry = call_registry(hass)
