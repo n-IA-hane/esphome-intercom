@@ -346,19 +346,16 @@ class CallRegistry:
             session.revision += 1
 
     def remove(self, snapshot: Any) -> None:
-        """Record owner completion; legacy indexes are cleared by their caller.
+        """Remove the read model when its authoritative owner completes."""
 
-        During the atomic cutover synchronous SIP callbacks still consume the
-        observable record until ``finish_and_pop`` returns.  Owner completion
-        may race that callback, so this projection hook must never delete it.
-        """
-
-        session = self.sessions.get(str(snapshot.call_id or "").strip())
+        call_id = str(snapshot.call_id or "").strip()
+        session = self.sessions.get(call_id)
         if session is None or session.generation != int(snapshot.generation):
             return
-        session.metadata["pbx_phase"] = "terminated"
         if snapshot.terminal_reason:
             session.terminal_reason = str(snapshot.terminal_reason)
+        self._remember_terminated(call_id, generation=session.generation)
+        self.pop(call_id)
 
     def _remember_terminated(
         self,

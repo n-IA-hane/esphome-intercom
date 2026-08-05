@@ -289,6 +289,20 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events, ["relay:remote_hangup"])
         self.assertIsNone(runtime.get_session("call-1"))
 
+    async def test_owner_completion_removes_the_call_projection(self) -> None:
+        registry = call_registry.CallRegistry()
+        runtime = SipEndpointRuntime(projection=registry)
+        runtime.activate()
+        registry.bind_session_owner(runtime)
+        registry.upsert("call-1", state="in_call", owner="bridge")
+
+        result = await runtime.terminate_session("call-1", "remote_hangup")
+
+        self.assertIsNotNone(result)
+        self.assertNotIn("call-1", registry.sessions)
+        self.assertEqual(registry.active_count(), 0)
+        self.assertTrue(registry.is_terminated("call-1"))
+
     async def test_waited_removal_allows_same_call_id_to_change_owner(self) -> None:
         registry = call_registry.CallRegistry()
         runtime = SipEndpointRuntime(projection=registry)
