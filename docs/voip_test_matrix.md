@@ -16,8 +16,13 @@ agree. Counters alone are not proof of audible bidirectional audio.
 - SIP signaling available on UDP and TCP; RTP audio remains UDP in the current
   phone profile.
 - `Via` and `Contact` include correct transport and host:port.
+- Trunk REGISTER uses the registrar domain as Request-URI while `To` and `From`
+  retain the account address of record. Qualify this against both a strict
+  FRITZBox registrar and the configured provider/PBX.
 - SDP never emits `a=fmtp:<pt> ptime=N`; only `a=ptime` and `a=maxptime`.
 - Default payload limit rejects `48000:s16le:1:20`.
+- Native 48 kHz mono signed-16 PCM profiles use 10 ms frames, 960 payload
+  bytes, and remain below the default 1200-byte RTP payload budget.
 - JSON roster entries are data-driven; direct ESP and softphone entries include
   explicit SIP transport or route through HA without user-authored `kind`.
 - ESP endpoint declarations never include a separate `sip` protocol column.
@@ -177,6 +182,8 @@ snapshots.
 - HA/Baresip legs negotiate Opus at 48 kHz where offered and supported; a
   separate L16 48 kHz case verifies high-rate PCM without implying that ESP
   endpoints support compressed codecs.
+- A FRITZBox-style PCMA call that advertises 16 ms but sends 10 ms RTP packets
+  is reframed without decode drops and produces complete Assist input frames.
 - A caller with display name `Dio Cane` remains exactly `Dio Cane` on the
   receiving card and ESP. Spaces must not become underscores, and roster data
   must not replace the peer's valid `From` display name.

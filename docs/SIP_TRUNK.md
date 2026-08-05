@@ -34,6 +34,13 @@ details:
 - optional experimental automation routing override
 - DTMF timeout and optional terminator
 
+The REGISTER Request-URI identifies the registrar domain, for example
+`sip:example.invalid`. The account address of record remains in `To` and
+`From`, for example `sip:alice@example.invalid`. Keeping the username out of
+the Request-URI is required by FRITZBox and remains valid for ordinary SIP
+registrars. Digest authentication still uses the configured auth username and
+realm.
+
 ## Outbound routing
 
 Local targets still resolve through the phonebook first.
@@ -121,6 +128,12 @@ them with the same relay/resampler used for local HA bridge calls. ESP devices
 remain PCM-only and reject unsupported media with standard SIP errors. HA trunk
 and softphone legs may accept common SIP codecs such as Opus, G.722, PCMA or PCMU,
 then convert toward ESP PCM when the route requires it.
+
+RTP packet duration is treated as a negotiated target, not an assumption about
+every received datagram. When the codec, sample rate, channel count and PCM
+layout already match, shorter aligned packets are accumulated and emitted at
+the destination frame size. This supports peers that advertise 16 or 20 ms but
+send 10 ms PCMA/PCMU packets without hiding malformed or unaligned payloads.
 
 ## Observability
 

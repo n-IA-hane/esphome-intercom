@@ -9,7 +9,7 @@ import logging
 
 from homeassistant.core import HomeAssistant
 
-from .call_scope import pending_routes
+from .call_scope import take_pending_route
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState, TerminalReason
 from .runtime_data import (
@@ -55,7 +55,7 @@ class EndpointTerminationHandler:
             forward_task.cancel()
             await asyncio.gather(forward_task, return_exceptions=True)
         artifacts.trunk_info_queues.pop(call_id, None)
-        route = pending_routes(self.hass).pop(call_id, None)
+        route = take_pending_route(self.hass, call_id)
         closed_calls = artifacts.trunk_closed_calls
         if len(closed_calls) >= 256:
             closed_calls.pop()

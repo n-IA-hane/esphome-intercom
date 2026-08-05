@@ -421,6 +421,10 @@ integration loaded successfully.
 - automatic Dahua `PCM/16000` interoperability for matching registered
   door-station profiles;
 - stronger SIP digest stale-nonce recovery and registered TCP-flow reuse;
+- FRITZBox-compatible trunk REGISTER Request-URI handling and RTP reframing
+  when a peer sends packets shorter than its negotiated `ptime`;
+- one persisted preferred Home Assistant phone, selected by its real Device ID,
+  so service calls remain deterministic with multiple browser phones;
 - faster vectorized G.711 conversion on HA;
 - smaller call-routing orchestrators with the existing single authoritative
   call lifecycle preserved;

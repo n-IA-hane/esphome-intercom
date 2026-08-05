@@ -220,11 +220,11 @@ logger:
     custom_components.voip_stack: debug
 ```
 
-The **Debug mode** option in the VoIP Stack config flow enables optional
-SIP/RTP diagnostics and media captures; it does not by itself change Home
-Assistant's logger level. Disable both forms of debug after collecting the
-trace, because logs and captures can contain call metadata or conversation
-audio.
+The **Debug mode** option enables detailed SIP/RTP diagnostics; it does not
+change Home Assistant's logger level and it does not record conversations.
+**Media capture** is a separate explicit option. Disable both after collecting
+the required evidence because logs contain call metadata and captures contain
+conversation audio.
 
 Useful filters:
 

@@ -160,6 +160,10 @@ the dialog if that ACK never arrives.
   increase do not prove audible audio.
 - If audio is rhythmic, choppy or "machine gun" style, compare the negotiated
   `ptime`/frame size against the actual RTP payload byte size.
+- A peer may advertise one `ptime` and still send shorter aligned packets.
+  Record both SDP and several RTP payload lengths. VoIP Stack can accumulate
+  matching-rate PCMA, PCMU or PCM packets, but conversion paths still reject
+  malformed sizes rather than guessing.
 - If one direction is silent but counters increase, inspect the source device:
   mic-only/speaker-only mode, muted switch, low analog gain, AFE/AEC output
   surface, or silence in the room.

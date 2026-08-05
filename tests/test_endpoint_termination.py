@@ -116,7 +116,10 @@ def endpoint_termination(monkeypatch):
 
     dependencies = {
         "call_scope": {
-            "pending_routes": lambda hass: hass.routes,
+            "take_pending_route": lambda hass, call_id: hass.routes.pop(
+                call_id,
+                None,
+            ),
         },
         "const": {
             "DOMAIN": "voip_stack",
@@ -237,6 +240,7 @@ def test_bridge_termination_projects_before_session_owned_cleanup(
         hass.routes["call-1"] = {"future": future}
         await handler.handle("call-1", "remote_hangup")
         assert future.result()["action"] == "cancel"
+        assert "call-1" not in hass.routes
 
     asyncio.run(run())
 
