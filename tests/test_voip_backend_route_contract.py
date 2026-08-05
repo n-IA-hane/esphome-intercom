@@ -1525,19 +1525,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             runner.index("decision = runtime.route_resolver.route(") :
         ]
         self.assertIn("if decision.action is RouteAction.ANSWER_HA:", browser_route)
-        self.assertIn("await runtime.forward_existing_call(", browser_route)
-        self.assertIn("destination=destination", browser_route)
+        self.assertIn("runtime.defer_invite_to_softphone(", browser_route)
+        self.assertNotIn("await runtime.forward_existing_call(", browser_route)
 
-    def test_dtmf_route_to_current_master_is_assignment_not_self_forward(self) -> None:
+    def test_dtmf_browser_route_assigns_the_initial_phone_owner(self) -> None:
         runner = self.trunk_inbound_router
-        same_endpoint = runner[
-            runner.index("current_endpoint_id = str(") :
-            runner.index(
-                "await runtime.forward_existing_call(",
-                runner.index("current_endpoint_id = str("),
-            )
-        ]
-        self.assertIn("target_endpoint.endpoint_id == current_endpoint_id", same_endpoint)
+        same_endpoint = runner[runner.index("if decision.action is RouteAction.ANSWER_HA:") :]
         self.assertIn("runtime.defer_invite_to_softphone(", same_endpoint)
         self.assertIn('last_sip_event="DTMF_ROUTE"', same_endpoint)
         self.assertIn(

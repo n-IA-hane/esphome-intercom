@@ -137,6 +137,8 @@ class EndpointTerminationHandler:
                 last_sip_event="BYE",
             )
         elif (
+            session_endpoint_id
+            and
             relay is None
             and client is None
             and (invite is not None or (call_id and softphone_call_id == call_id))
@@ -158,7 +160,7 @@ class EndpointTerminationHandler:
                 reason=terminal_reason,
                 origin="remote",
             )
-        elif session is not None:
+        elif session is not None or invite is not None:
             # A caller can cancel while a router-owned fork has only early
             # outbound legs. There is then no bridge or browser media object,
             # but the logical session still owes observers one terminal event.
@@ -178,7 +180,7 @@ class EndpointTerminationHandler:
                     if terminal_reason == TerminalReason.CANCELLED.value
                     else "BYE"
                 ),
-                route_kind=session.route_kind,
+                route_kind=session.route_kind if session is not None else "trunk",
             )
         # begin_termination makes this callback the sole teardown owner.
         # Finalize exactly once even when transport reports a call without a

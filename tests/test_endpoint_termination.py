@@ -356,3 +356,45 @@ def test_early_router_cancel_publishes_one_terminal_event(
     assert registry.finished == [
         ("call-3", {"reason": "cancelled", "state": "cancelled"})
     ]
+
+
+def test_preanswer_cancel_without_phone_owner_projects_bridge_terminal(
+    endpoint_termination,
+) -> None:
+    registry = _Registry()
+    registry.preanswered = None
+    registry.active_media = {}
+    registry.pending_invites["call-4"] = SimpleNamespace(
+        caller="Door",
+        target="HA",
+    )
+    hass = _hass(registry)
+    endpoint_termination.hass_holder["hass"] = hass
+    handler = endpoint_termination.EndpointTerminationHandler(
+        hass,
+        lambda _hass: "Home Assistant",
+    )
+
+    asyncio.run(handler.handle("call-4", "remote_hangup"))
+
+    assert hass.events == [
+        (
+            "bridge",
+            "idle",
+            {
+                "call_id": "call-4",
+                "caller": "Door",
+                "callee": "HA",
+                "peer_name": "HA",
+                "target": "HA",
+                "reason": "remote_hangup",
+                "terminal_reason": "remote_hangup",
+                "origin": "remote",
+                "last_sip_event": "BYE",
+                "route_kind": "trunk",
+            },
+        )
+    ]
+    assert registry.finished == [
+        ("call-4", {"reason": "remote_hangup", "state": "idle"})
+    ]

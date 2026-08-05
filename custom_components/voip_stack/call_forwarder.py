@@ -31,6 +31,7 @@ from .runtime_data import (
     call_runtime_artifacts,
     browser_phone,
     endpoint_directory,
+    preferred_browser_phone,
     sip_endpoint_runtime,
 )
 from .endpoint_routing import (
@@ -280,6 +281,8 @@ async def async_forward_existing_call(
                 or ""
             ),
         )
+        if session_endpoint is None and initial_selection:
+            session_endpoint = preferred_browser_phone(hass)
         if session_endpoint is None:
             raise ServiceValidationError(
                 f"call_id {call_id} has no Home Assistant phone owner"

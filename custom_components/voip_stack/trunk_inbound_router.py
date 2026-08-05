@@ -169,13 +169,20 @@ async def async_route_trunk_invite(
             ).strip()
             or "HA",
         )
-        await runtime.forward_existing_call(
-            call_id=invite.call_id,
-            destination=automation_destination,
-            on_failure="resume",
-            initial_selection=True,
-        )
-        return
+        # The caller is still in the initial, pre-answered routing phase. Feed
+        # the selected destination into the canonical dispatcher below rather
+        # than invoking the in-call forwarding primitive, which requires an
+        # already assigned Home Assistant phone owner.
+        destination = automation_destination
+        automation_route = runtime.route_resolver.route(destination, roster_entries)
+        if automation_route.action is RouteAction.GROUP:
+            await runtime.forward_existing_call(
+                call_id=invite.call_id,
+                destination=destination,
+                on_failure="resume",
+                initial_selection=True,
+            )
+            return
     if automation_action in {"decline", "busy", "cancel"}:
         registry.take_pending_invite(invite.call_id)
         preanswered = registry.take_media(invite.call_id, provisional=True)
@@ -364,21 +371,8 @@ async def async_route_trunk_invite(
             decision.target or destination,
             peers,
             roster,
-        )
-        session = registry.sessions.get(
-            registry.resolve_session_id(invite.call_id)
-        )
-        current_endpoint_id = str(
-            ((session.metadata if session is not None else {}) or {}).get(
-                "endpoint_id"
-            )
-            or ""
-        ).strip()
-        if (
-            target_endpoint is not None
-            and target_endpoint.kind is EndpointKind.BROWSER
-            and target_endpoint.endpoint_id == current_endpoint_id
-        ):
+        ) or preferred_browser_phone(hass)
+        if target_endpoint is not None and target_endpoint.kind is EndpointKind.BROWSER:
             runtime.defer_invite_to_softphone(
                 invite,
                 route_kind="trunk",
@@ -390,11 +384,8 @@ async def async_route_trunk_invite(
                 last_sip_event="DTMF_ROUTE",
             )
             return
-        await runtime.forward_existing_call(
-            call_id=invite.call_id,
-            destination=destination,
-            on_failure="resume",
-        )
+        send_final_response(hass, invite.call_id, 480, "Temporarily Unavailable")
+        bridge_ports.release()
         return
     registry.take_pending_invite(invite.call_id)
     preanswered = registry.take_media(invite.call_id, provisional=True)

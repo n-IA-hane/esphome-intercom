@@ -100,7 +100,12 @@ def main() -> int:
         browser = playwright.chromium.launch(
             headless=True,
             executable_path="/usr/bin/chromium",
-            args=["--autoplay-policy=no-user-gesture-required"],
+            args=[
+                "--use-fake-ui-for-media-stream",
+                "--use-fake-device-for-media-stream",
+                "--autoplay-policy=no-user-gesture-required",
+                f"--unsafely-treat-insecure-origin-as-secure={args.url.split('/lovelace', 1)[0]}",
+            ],
         )
         context = browser.new_context(**context_kwargs())
         page = context.new_page()
@@ -112,17 +117,19 @@ def main() -> int:
         # HA may replace the initial dashboard route once while restoring its
         # frontend navigation state. Do not attach to that disposable realm.
         page.wait_for_timeout(5_000)
-        page.wait_for_function(
-            """() => {
+        card_ready = """() => {
               const all = (root = document) => {
                 let found = [...root.querySelectorAll('voip-stack-card, intercom-card')];
                 for (const node of root.querySelectorAll('*')) if (node.shadowRoot) found = found.concat(all(node.shadowRoot));
                 return found;
               };
               return all().some((card) => (card.config?.mode || card.config?.card_mode || '') === 'ha_softphone');
-            }""",
-            timeout=30_000,
-        )
+            }"""
+        try:
+            page.wait_for_function(card_ready, timeout=15_000)
+        except Exception:
+            page.reload(wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_function(card_ready, timeout=30_000)
         page.evaluate(INSTALL_TRACE)
         started = time.monotonic()
         while time.monotonic() - started < args.seconds:

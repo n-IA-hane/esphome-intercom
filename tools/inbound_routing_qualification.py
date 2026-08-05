@@ -42,7 +42,6 @@ ROUTE_AUTOMATION = f"automation.{ROUTE_AUTOMATION_ID}"
 TIMEOUT_AUTOMATION_ID = "codex_voip_no_answer_matrix"
 TIMEOUT_AUTOMATION = f"automation.{TIMEOUT_AUTOMATION_ID}"
 CALL_EVENT_ENTITY = "event.voip_stack_call"
-CALL_STATE_ENTITY = "sensor.voip_stack_call_state"
 WS3_AUTO_ANSWER = "switch.cucina_waveshare_s3_audio_auto_answer"
 TRUNK_NUMBER = "427"
 ROUTE_DESTINATION = "Waveshare S3 Audio"
@@ -410,13 +409,17 @@ class FlowSnapshot:
         # generation marker when the replacement publishes the same value, so
         # wait on the public readiness state instead.
         wait_for(
-            lambda: (
-                state
-                if (
-                    state := api.state("sensor.voip_stack_ha_softphone_voip_endpoint")
-                ).get("state")
-                == "online"
-                else None
+            lambda: next(
+                (
+                    state
+                    for state in api.get("/api/states")
+                    if str(state.get("entity_id") or "").startswith("sensor.")
+                    and str((state.get("attributes") or {}).get("endpoint_id") or "")
+                    .strip()
+                    .startswith(("default", "browser:"))
+                    and str(state.get("state") or "") not in {"unavailable", "unknown"}
+                ),
+                None,
             ),
             15,
             "VoIP Stack endpoint reload",
@@ -440,8 +443,26 @@ def wait_for(predicate: Callable[[], Any], timeout: float, label: str) -> Any:
     raise RuntimeError(f"timeout waiting for {label}; last={last!r}")
 
 
+def browser_call_state_entity(api: HomeAssistantApi) -> str:
+    """Return the preferred browser phone call-state sensor."""
+
+    candidates = [
+        state
+        for state in api.get("/api/states")
+        if str(state.get("entity_id") or "").startswith("sensor.")
+        and str((state.get("attributes") or {}).get("endpoint_id") or "").strip()
+        == "default"
+        and "ringing" in ((state.get("attributes") or {}).get("options") or ())
+    ]
+    if len(candidates) != 1:
+        raise RuntimeError(
+            f"expected one preferred browser call-state sensor, found {len(candidates)}"
+        )
+    return str(candidates[0]["entity_id"])
+
+
 def call_state(api: HomeAssistantApi) -> dict[str, Any]:
-    state = api.state(CALL_STATE_ENTITY)
+    state = api.state(browser_call_state_entity(api))
     return {"state": state["state"], **dict(state.get("attributes") or {})}
 
 
@@ -466,7 +487,11 @@ def wait_call_state(
             return None
         return state
 
-    return wait_for(_match, timeout, f"{CALL_STATE_ENTITY}={expected}/{callee}")
+    return wait_for(
+        _match,
+        timeout,
+        f"{browser_call_state_entity(api)}={expected}/{callee}",
+    )
 
 
 def wait_event_state(
@@ -515,6 +540,7 @@ def automation_last_triggered(api: HomeAssistantApi, entity_id: str) -> str:
 
 
 def create_automations(api: HomeAssistantApi) -> None:
+    call_state_entity = browser_call_state_entity(api)
     for automation_id in (ROUTE_AUTOMATION_ID, TIMEOUT_AUTOMATION_ID):
         api.delete(f"/api/config/automation/config/{automation_id}", allow_missing=True)
     api.post(
@@ -559,7 +585,7 @@ def create_automations(api: HomeAssistantApi) -> None:
             "triggers": [
                 {
                     "trigger": "state",
-                    "entity_id": CALL_STATE_ENTITY,
+                    "entity_id": call_state_entity,
                     "to": "ringing",
                     "for": "00:00:02",
                 }
@@ -567,7 +593,7 @@ def create_automations(api: HomeAssistantApi) -> None:
             "conditions": [
                 {
                     "condition": "state",
-                    "entity_id": CALL_STATE_ENTITY,
+                    "entity_id": call_state_entity,
                     "attribute": "direction",
                     "state": "incoming",
                 }
@@ -961,13 +987,29 @@ def main() -> int:
             )
             set_automation(api, ROUTE_AUTOMATION, True)
             previous = automation_last_triggered(api, ROUTE_AUTOMATION)
+            previous_call_id = str(event_state(api).get("call_id") or "")
             sip = caller()
             with EventTrace(api) as trace:
                 sip.dial()
                 sip.wait_for_dtmf_media()
                 time.sleep(0.35)
                 sip.hangup()
-                idle = wait_event_state(api, "idle", 8)
+                terminal = wait_for(
+                    lambda: (
+                        item
+                        if (
+                            (item := event_state(api)).get("call_id")
+                            != previous_call_id
+                            and str(item.get("state") or "")
+                            not in {"ringing", "connecting", "in_call"}
+                            and str(item.get("terminal_reason") or "")
+                            in {"cancelled", "remote_hangup"}
+                        )
+                        else None
+                    ),
+                    8,
+                    "cancelled DTMF call terminal event",
+                )
                 time.sleep(3.2)
             triggered = automation_last_triggered(api, ROUTE_AUTOMATION)
             if triggered != previous:
@@ -980,7 +1022,7 @@ def main() -> int:
             ]
             if live:
                 raise RuntimeError(f"cancelled call resurrected: {live}")
-            return {"state": idle}
+            return {"state": terminal}
 
         case("caller_cancel_during_dtmf_window", cancel_during_dtmf)
     finally:
