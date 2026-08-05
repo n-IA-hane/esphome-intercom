@@ -399,6 +399,12 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(registry.sip_clients["destination"], client)
         self.assertEqual(registry._legacy_sip_clients, {})
+        self.assertIs(registry.client_watchers["destination"], watcher)
+        self.assertEqual(registry._legacy_client_watchers, {})
+        self.assertIs(
+            authoritative.named_tasks["client_watcher:destination"],
+            watcher,
+        )
         self.assertIs(registry.relays["source"], relay)
         self.assertEqual(registry._legacy_relays, {})
         self.assertEqual(

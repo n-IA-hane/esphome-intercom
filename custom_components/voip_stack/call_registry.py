@@ -98,6 +98,7 @@ class CallSessionOwner(Protocol):
         call_id: str,
         task: Any,
         *,
+        name: str = "",
         generation: int | None = None,
     ) -> bool: ...
 
@@ -157,6 +158,8 @@ class CallSessionOwner(Protocol):
     def relays_snapshot(self) -> dict[str, Any]: ...
 
     def sip_clients_snapshot(self) -> dict[str, Any]: ...
+
+    def client_watchers_snapshot(self) -> dict[str, Any]: ...
 
     def attach_relay(self, call_id: str, relay: Any) -> bool: ...
 
@@ -230,7 +233,7 @@ class CallRegistry:
         self.softphone_media: dict[str, dict[str, Any]] = {}
         self.video_parameter_sets: dict[str, tuple[bytes, ...]] = {}
         self._legacy_sip_clients: dict[str, Any] = {}
-        self.client_watchers: dict[str, Any] = {}
+        self._legacy_client_watchers: dict[str, Any] = {}
         self._legacy_relays: dict[str, Any] = {}
         self.bridge_clients: dict[str, str] = {}
         self.event_contexts: dict[str, CallEventContext] = {}
@@ -289,6 +292,14 @@ class CallRegistry:
         if self._session_owner is not None:
             return self._session_owner.sip_clients_snapshot()
         return self._legacy_sip_clients
+
+    @property
+    def client_watchers(self) -> dict[str, Any]:
+        """Compatibility projection of session-owned lifecycle tasks."""
+
+        if self._session_owner is not None:
+            return self._session_owner.client_watchers_snapshot()
+        return self._legacy_client_watchers
 
     @property
     def endpoint_claims(self) -> dict[str, dict[str, str]]:
@@ -1040,17 +1051,21 @@ class CallRegistry:
 
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
-        self.client_watchers[call_id] = task
-        if session is not None and self._session_owner is not None:
+        if self._session_owner is None:
+            self._legacy_client_watchers[call_id] = task
+        elif session is not None:
             self._session_owner.own_task(
                 session_id,
                 task,
+                name=f"client_watcher:{call_id}",
                 generation=session.generation,
             )
+        else:
+            raise RuntimeError(f"call session {call_id!r} is unavailable")
 
         def _forget(completed: Any) -> None:
-            if self.client_watchers.get(call_id) is completed:
-                self.client_watchers.pop(call_id, None)
+            if self._legacy_client_watchers.get(call_id) is completed:
+                self._legacy_client_watchers.pop(call_id, None)
 
         task.add_done_callback(_forget)
 
@@ -1059,8 +1074,10 @@ class CallRegistry:
 
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
-        task = self.client_watchers.pop(call_id, None)
-        if task is not None and session is not None and self._session_owner is not None:
+        if self._session_owner is None:
+            return self._legacy_client_watchers.pop(call_id, None)
+        task = self.client_watchers.get(call_id)
+        if task is not None and session is not None:
             self._session_owner.release_task(
                 session_id,
                 task,
@@ -1394,7 +1411,7 @@ class CallRegistry:
         self.softphone_media.clear()
         self.video_parameter_sets.clear()
         self._legacy_sip_clients.clear()
-        self.client_watchers.clear()
+        self._legacy_client_watchers.clear()
         self._legacy_relays.clear()
         self.bridge_clients.clear()
         self.event_contexts.clear()

@@ -267,6 +267,16 @@ class SipEndpointRuntime:
                     clients[leg.sip_call_id or leg.leg_id] = leg.dialog
         return clients
 
+    def client_watchers_snapshot(self) -> dict[str, asyncio.Task[Any]]:
+        """Return lifecycle watchers derived from session-owned named tasks."""
+
+        watchers: dict[str, asyncio.Task[Any]] = {}
+        for session in self.calls.values():
+            for name, task in session.named_tasks.items():
+                if name.startswith("client_watcher:"):
+                    watchers[name.removeprefix("client_watcher:")] = task
+        return watchers
+
     def attach_relay(self, call_id: str, relay: Any) -> bool:
         """Make one RTP relay a media resource of its call session."""
 
@@ -635,6 +645,7 @@ class SipEndpointRuntime:
         call_id: str,
         task: asyncio.Task[Any],
         *,
+        name: str = "",
         generation: int | None = None,
     ) -> bool:
         """Make one background call task part of the cleanup barrier."""
@@ -642,7 +653,7 @@ class SipEndpointRuntime:
         session = self.get_session(call_id, generation=generation)
         if session is None or not session.live:
             return False
-        session.own_task(task)
+        session.own_task(task, name=name)
         return True
 
     def release_task(

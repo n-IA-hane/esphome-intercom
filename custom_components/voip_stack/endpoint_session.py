@@ -171,6 +171,7 @@ class EndpointCallSession:
         self.legs: dict[str, CallLeg] = {}
         self.resources: list[ManagedResource] = []
         self.tasks: set[asyncio.Task[Any]] = set()
+        self.named_tasks: dict[str, asyncio.Task[Any]] = {}
         self.endpoint_claims: dict[str, str] = {}
         self.metadata: dict[str, Any] = {}
         self.termination_started = asyncio.Event()
@@ -278,10 +279,27 @@ class EndpointCallSession:
             return None
         return self.legs.pop(leg.leg_id)
 
-    def own_task(self, task: asyncio.Task[Any]) -> asyncio.Task[Any]:
+    def own_task(
+        self,
+        task: asyncio.Task[Any],
+        *,
+        name: str = "",
+    ) -> asyncio.Task[Any]:
         self.ensure_live()
+        clean_name = str(name or "").strip()
+        if clean_name:
+            current = self.named_tasks.get(clean_name)
+            if current is not None and current is not task:
+                raise ValueError(f"duplicate task name {clean_name!r}")
+            self.named_tasks[clean_name] = task
         self.tasks.add(task)
-        task.add_done_callback(self.tasks.discard)
+
+        def _forget(completed: asyncio.Task[Any]) -> None:
+            self.tasks.discard(completed)
+            if clean_name and self.named_tasks.get(clean_name) is completed:
+                self.named_tasks.pop(clean_name, None)
+
+        task.add_done_callback(_forget)
         return task
 
     def release_task(self, task: asyncio.Task[Any]) -> bool:
@@ -291,6 +309,9 @@ class EndpointCallSession:
         if task not in self.tasks:
             return False
         self.tasks.discard(task)
+        for name, owned in tuple(self.named_tasks.items()):
+            if owned is task:
+                self.named_tasks.pop(name, None)
         return True
 
     def create_task(
