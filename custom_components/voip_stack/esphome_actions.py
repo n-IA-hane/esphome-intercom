@@ -7,6 +7,7 @@ import logging
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
+from .const import DOMAIN
 from .device_resolver import get_resolver
 from .phone_endpoint import EndpointKind
 from .runtime_data import endpoint_directory
@@ -81,13 +82,21 @@ async def async_call_action(
     route_id = str(device.get("route_id") or "").strip()
     if not route_id:
         raise ServiceValidationError(
-            f"{device.get('name') or 'ESP phone'} has no ESPHome service route"
+            translation_domain=DOMAIN,
+            translation_key="esphome_route_missing",
+            translation_placeholders={
+                "phone": str(device.get("name") or "ESPHome phone")
+            },
         )
     service = f"{route_id}_{action}"
     if not hass.services.has_service("esphome", service):
         raise ServiceValidationError(
-            f"ESPHome service esphome.{service} is not available; "
-            "include packages/voip/ha_phone.yaml in the device firmware"
+            translation_domain=DOMAIN,
+            translation_key="esphome_action_missing",
+            translation_placeholders={
+                "phone": str(device.get("name") or "ESPHome phone"),
+                "action": action,
+            },
         )
     await hass.services.async_call(
         "esphome",
@@ -148,7 +157,9 @@ async def async_resolve_source_device(
     if endpoint is not None and getattr(endpoint, "kind", None) is EndpointKind.ESPHOME:
         name = str(getattr(endpoint, "name", "") or "ESPHome phone")
         raise ServiceValidationError(
-            f"{name} is an ESPHome phone, but its live VoIP endpoint is unavailable"
+            translation_domain=DOMAIN,
+            translation_key="phone_unavailable",
+            translation_placeholders={"phone": name},
         )
     return None
 

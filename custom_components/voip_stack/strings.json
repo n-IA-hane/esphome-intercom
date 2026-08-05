@@ -209,6 +209,12 @@
     "destination_required": {
       "message": "A call destination is required."
     },
+    "esphome_action_missing": {
+      "message": "{phone} does not expose the required ESPHome action {action}. Update its VoIP phone package and firmware."
+    },
+    "esphome_route_missing": {
+      "message": "{phone} does not expose an ESPHome call-control route."
+    },
     "phone_not_browser": {
       "message": "The selected device is not a Home Assistant browser phone."
     },

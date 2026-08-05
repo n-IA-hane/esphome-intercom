@@ -19,7 +19,18 @@ PKG_DIR = ROOT / "custom_components" / "voip_stack"
 
 
 class ServiceValidationError(ValueError):
-    pass
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        translation_domain: str = "",
+        translation_key: str = "",
+        translation_placeholders: dict | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.translation_domain = translation_domain
+        self.translation_key = translation_key
+        self.translation_placeholders = translation_placeholders or {}
 
 
 class EndpointKind(Enum):
@@ -92,11 +103,10 @@ def test_known_esp_never_falls_through_to_browser_resolver() -> None:
         data={"voip_stack": {"endpoint_registry": _registry(endpoint)}}
     )
 
-    with pytest.raises(
-        ServiceValidationError,
-        match="ESPHome phone.*live VoIP endpoint is unavailable",
-    ):
+    with pytest.raises(ServiceValidationError) as raised:
         asyncio.run(module.async_resolve_command_phone(hass, _call("esp-device")))
+    assert raised.value.translation_key == "phone_unavailable"
+    assert raised.value.translation_placeholders == {"phone": "Kitchen"}
 
     endpoint.kind = EndpointKind.BROWSER
     assert asyncio.run(
@@ -122,11 +132,13 @@ def test_live_esp_resolves_and_missing_native_action_is_explained() -> None:
         asyncio.run(module.async_resolve_command_phone(hass, _call("esp-device")))
         is device
     )
-    with pytest.raises(
-        ServiceValidationError,
-        match="esphome.kitchen_start_call.*ha_phone.yaml",
-    ):
+    with pytest.raises(ServiceValidationError) as raised:
         asyncio.run(module.async_call_action(hass, device, "start_call", {"dest": "667"}))
+    assert raised.value.translation_key == "esphome_action_missing"
+    assert raised.value.translation_placeholders == {
+        "phone": "Kitchen",
+        "action": "start_call",
+    }
 
     available.add(("esphome", "kitchen_start_call"))
     asyncio.run(module.async_call_action(hass, device, "start_call", {"dest": "667"}))

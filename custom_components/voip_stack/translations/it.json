@@ -209,6 +209,12 @@
     "destination_required": {
       "message": "È richiesta una destinazione per la chiamata."
     },
+    "esphome_action_missing": {
+      "message": "{phone} non espone l'azione ESPHome richiesta {action}. Aggiorna il package telefonico VoIP e il firmware."
+    },
+    "esphome_route_missing": {
+      "message": "{phone} non espone un percorso ESPHome per il controllo delle chiamate."
+    },
     "phone_operation_not_supported": {
       "message": "{phone} non supporta l'operazione {operation}."
     },
