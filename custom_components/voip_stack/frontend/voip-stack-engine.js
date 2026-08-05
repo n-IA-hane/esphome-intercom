@@ -258,14 +258,6 @@ class VoipStackEngine extends EventTarget {
     return softphoneStateMatches(state, selector, subscriptionSelector);
   }
 
-  _isLegacySchemaError(err) {
-    const code = String(err?.code || err?.error || "").toLowerCase();
-    const message = String(err?.message || err || "").toLowerCase();
-    return code.includes("invalid_format") || code.includes("unknown_command") ||
-      message.includes("extra keys") || message.includes("not allowed") ||
-      message.includes("unknown command");
-  }
-
   _isUnknownEndpointError(err) {
     const code = String(err?.code || err?.error || "").toLowerCase();
     const message = String(err?.message || err || "").toLowerCase();
@@ -280,16 +272,10 @@ class VoipStackEngine extends EventTarget {
     const request = { type: WS_SUBSCRIBE_HA_SOFTPHONE };
     if (record.selector.endpoint_id) request.endpoint_id = record.selector.endpoint_id;
     if (record.selector.device_id) request.device_id = record.selector.device_id;
-    const subscribe = (message, legacy = false) => conn.subscribeMessage(
+    conn.subscribeMessage(
       (event) => this._onSoftphoneState(event, record.selector),
-      message,
-    ).catch((err) => {
-      if (!legacy && record.selector.endpoint_id === DEFAULT_SOFTPHONE_ENDPOINT_ID && this._isLegacySchemaError(err)) {
-        return subscribe({ type: WS_SUBSCRIBE_HA_SOFTPHONE }, true);
-      }
-      throw err;
-    });
-    subscribe(request).then((unsub) => {
+      request,
+    ).then((unsub) => {
       if (this._busConnection === conn && this._softphoneScopeSubscriptions.get(record.key) === record) {
         record.unsub = unsub;
         if (record.selector.endpoint_id === DEFAULT_SOFTPHONE_ENDPOINT_ID) this._softphoneBusUnsub = unsub;
