@@ -19,25 +19,18 @@ export function softphoneScopeKey(selector = {}) {
 export function softphoneStateMatches(
   state,
   selector = {},
-  subscriptionSelector = null,
 ) {
   if (!state) return false;
   const wanted = normaliseSoftphoneSelector(selector);
-  const source = normaliseSoftphoneSelector(subscriptionSelector || {});
   const stateEndpoint = String(state.endpoint_id || "").trim();
   const stateDevice = String(
     state.device_id || state.endpoint_device_id || "",
   ).trim();
   if (wanted.endpoint_id) {
-    if (stateEndpoint) return stateEndpoint === wanted.endpoint_id;
-    // Endpoint-less legacy state belongs exclusively to the historical
-    // default phone and must never leak into another logical softphone.
-    return wanted.endpoint_id === DEFAULT_SOFTPHONE_ENDPOINT_ID &&
-      (!source.endpoint_id || source.endpoint_id === DEFAULT_SOFTPHONE_ENDPOINT_ID);
+    return !!stateEndpoint && stateEndpoint === wanted.endpoint_id;
   }
   if (wanted.device_id) {
-    if (stateDevice) return stateDevice === wanted.device_id;
-    return source.device_id === wanted.device_id && !!stateEndpoint;
+    return !!stateDevice && stateDevice === wanted.device_id;
   }
   return false;
 }

@@ -146,14 +146,11 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("request.endpoint_id = record.selector.endpoint_id", subscription)
         self.assertIn("request.device_id = record.selector.device_id", subscription)
         self.assertIn(
-            "softphoneStateMatches(state, selector, subscriptionSelector)",
+            "softphoneStateMatches(state, selector)",
             state_match,
         )
         self.assertIn("stateEndpoint === wanted.endpoint_id", session_model)
-        self.assertIn(
-            "wanted.endpoint_id === DEFAULT_SOFTPHONE_ENDPOINT_ID",
-            session_model,
-        )
+        self.assertIn("!!stateEndpoint", session_model)
         self.assertIn('type: "call_service"', start)
         self.assertIn('domain: "voip_stack"', start)
         self.assertIn('service: "call"', start)

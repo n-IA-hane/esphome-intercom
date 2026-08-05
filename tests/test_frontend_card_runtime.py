@@ -482,8 +482,7 @@ engine.prepareVideoCameraPermission = async () => {{
   return false;
 }};
 
-// Cards accept only snapshots belonging to their configured logical phone;
-// a legacy endpoint-less snapshot remains exclusive to the default card.
+// Cards accept only snapshots belonging to their configured logical phone.
 const kitchen = makeCard();
 kitchen.config = {{
   mode: "ha_softphone",
@@ -496,7 +495,7 @@ kitchen._onSoftphoneState({{ endpoint_id: "kitchen", device_id: "device-kitchen"
 assert.equal(kitchen._softphoneSnapshot.call_id, "right");
 const defaultCard = makeCard();
 defaultCard._onSoftphoneState({{ state: "ringing", call_id: "legacy" }});
-assert.equal(defaultCard._softphoneSnapshot.call_id, "legacy");
+assert.equal(defaultCard._softphoneSnapshot, null);
 
 // A newly opened page can adopt authoritative media for an already answered
 // call even when it did not initiate or answer the dialog locally.

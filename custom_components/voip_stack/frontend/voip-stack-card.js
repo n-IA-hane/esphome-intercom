@@ -989,8 +989,7 @@ class VoipStackCard extends HTMLElement {
     const endpointId = String(payload.endpoint_id || "").trim();
     const deviceId = String(payload.device_id || payload.endpoint_device_id || "").trim();
     if (selector.endpoint_id) {
-      if (endpointId) return endpointId === selector.endpoint_id;
-      return selector.endpoint_id === DEFAULT_SOFTPHONE_ENDPOINT_ID;
+      return !!endpointId && endpointId === selector.endpoint_id;
     }
     return !!selector.device_id && !!deviceId && selector.device_id === deviceId;
   }

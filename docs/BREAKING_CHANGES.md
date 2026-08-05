@@ -64,6 +64,10 @@ directional `send` and `receive` objects. Custom clients must stop reading the
 former flat `codec`, `encoding`, `clock_rate`, `payload_type` and `fmtp`
 aliases from the negotiation root.
 
+Softphone state events must include `endpoint_id` or `device_id`. The frontend
+no longer assigns an endpoint-less event to the default phone from the
+subscription that delivered it.
+
 ## 2026.8.0: upgrade checklist
 
 1. Read the `2026.8.0` sections below and the

@@ -254,8 +254,8 @@ class VoipStackEngine extends EventTarget {
     return softphoneScopeKey(selector);
   }
 
-  _softphoneStateMatches(state, selector = {}, subscriptionSelector = null) {
-    return softphoneStateMatches(state, selector, subscriptionSelector);
+  _softphoneStateMatches(state, selector = {}) {
+    return softphoneStateMatches(state, selector);
   }
 
   _isUnknownEndpointError(err) {
@@ -744,25 +744,22 @@ class VoipStackEngine extends EventTarget {
 
   _onSoftphoneState(state, subscriptionSelector = null) {
     if (!state) return;
-    const endpointId = String(state.endpoint_id || subscriptionSelector?.endpoint_id || "").trim();
-    const deviceId = String(state.device_id || state.endpoint_device_id || subscriptionSelector?.device_id || "").trim();
-    const key = endpointId ? `endpoint:${endpointId}` : deviceId ? `device:${deviceId}` : "endpoint:default";
-    const snapshot = endpointId && !state.endpoint_id ? { ...state, endpoint_id: endpointId } : state;
-    this._lastSoftphoneState = snapshot;
-    this._lastSoftphoneStates.set(key, snapshot);
+    const endpointId = String(state.endpoint_id || "").trim();
+    const deviceId = String(state.device_id || state.endpoint_device_id || "").trim();
+    if (!endpointId && !deviceId) return;
+    const key = endpointId ? `endpoint:${endpointId}` : `device:${deviceId}`;
+    this._lastSoftphoneState = state;
+    this._lastSoftphoneStates.set(key, state);
     for (const cb of this._softphoneSubscribers) {
       const selector = this._softphoneSubscriberSelectors.get(cb) || {};
-      // The same logical endpoint can temporarily have both an endpoint-id
-      // subscription and a legacy device-id subscription (for example while
-      // an old dashboard and a newly configured card coexist). Dispatch only
-      // through the subscription owned by this callback so a single backend
-      // event cannot be delivered twice via overlapping selectors.
+      // Dispatch only through the subscription owned by this callback so one
+      // backend event cannot be delivered twice via overlapping selectors.
       if (
         subscriptionSelector &&
         this._softphoneScopeKey(selector) !== this._softphoneScopeKey(subscriptionSelector)
       ) continue;
-      if (!this._softphoneStateMatches(snapshot, selector, subscriptionSelector)) continue;
-      try { cb(snapshot); } catch (err) { console.error("voip-stack-engine softphone subscriber", err); }
+      if (!this._softphoneStateMatches(state, selector)) continue;
+      try { cb(state); } catch (err) { console.error("voip-stack-engine softphone subscriber", err); }
     }
   }
 

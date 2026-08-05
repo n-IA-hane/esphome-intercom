@@ -238,8 +238,7 @@ assert.equal(
   "kitchen",
 );
 
-// Snapshot replay and delivery are isolated by endpoint. Legacy snapshots
-// without endpoint_id belong only to the historical default softphone.
+// Snapshot replay and delivery are isolated by explicit endpoint identity.
 const isolated = new Engine();
 const defaultStates = [];
 const kitchenStates = [];
@@ -261,7 +260,7 @@ isolated._onSoftphoneState(kitchenSnapshot, {{ device_id: "kitchen-device" }});
 isolated._onSoftphoneState({{ call_id: "D", state: "ringing" }}, {{ endpoint_id: "default" }});
 assert.deepEqual(kitchenStates, ["K"]);
 assert.deepEqual(kitchenDeviceStates, ["K"]);
-assert.deepEqual(defaultStates, ["D"]);
+assert.deepEqual(defaultStates, []);
 
 // Browser media claims and UI controllers are endpoint-local. Two logical
 // phones can therefore coexist without one endpoint releasing the other.
@@ -969,7 +968,7 @@ assert.equal(model.softphoneStateMatches(
 assert.equal(model.softphoneStateMatches(
   {{ call_id: "legacy" }},
   {{ endpoint_id: "default" }},
-), true);
+), false);
 assert.equal(model.softphoneStateMatches(
   {{ call_id: "legacy" }},
   {{ endpoint_id: "kitchen" }},
