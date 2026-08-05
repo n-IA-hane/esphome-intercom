@@ -133,6 +133,24 @@ def test_rtp_is_normalized_to_assist_pcm() -> None:
     assert session.counters["rtp_rx"] == 1
 
 
+def test_fritzbox_pcma_packets_are_reframed_to_assist_duration() -> None:
+    negotiated = sdp.RtpPcmFormat(120, "PCMA", 16000, 1, 16)
+    session = _session(
+        replace(_invite(), send_format=negotiated, recv_format=negotiated)
+    )
+    session._accepting_input = True
+
+    for sequence in (1, 2):
+        packet = rtp.build_packet(
+            rtp.RtpPacket(120, sequence, sequence * 160, 3, bytes(160))
+        )
+        session.handle_rtp(packet, ("192.0.2.20", 40000))
+
+    assert session.counters["rtp_rx"] == 2
+    assert session.counters["drop_decode"] == 0
+    assert len(session.rx_queue.get_nowait()) == 640
+
+
 def test_legacy_connection_hold_suppresses_only_assist_rtp_tx() -> None:
     async def run() -> None:
         invite = replace(

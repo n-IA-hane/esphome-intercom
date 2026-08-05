@@ -122,13 +122,26 @@ class PcmFrameConverter:
         )
         self._pending = np.empty((dst.channels, 0), dtype=np.float64)
 
+    def _same_pcm_contract(self) -> bool:
+        return (
+            self.src.sample_rate == self.dst.sample_rate
+            and self.src.pcm_format is self.dst.pcm_format
+            and self.src.channels == self.dst.channels
+        )
+
     def convert(self, data: bytes) -> list[bytes]:
-        if len(data) != self.src.nominal_frame_bytes:
+        variable_packet = self._same_pcm_contract()
+        if variable_packet:
+            stride = self.src.container_bytes_per_sample * self.src.channels
+            valid_length = bool(data) and len(data) % stride == 0
+        else:
+            valid_length = len(data) == self.src.nominal_frame_bytes
+        if not valid_length:
             raise ValueError(
                 f"audio frame length {len(data)} does not match {self.src.wire_token()} "
                 f"({self.src.nominal_frame_bytes} bytes)"
             )
-        if self.src == self.dst:
+        if self.src == self.dst and len(data) == self.dst.nominal_frame_bytes:
             return [data]
 
         channels = _map_channels(_decode_frame(data, self.src), self.dst.channels)

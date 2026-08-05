@@ -146,6 +146,12 @@ class SipTrunkClient:
     def address_uri(self) -> str:
         return str(sip.SipUri(self.config.username, self.domain))
 
+    @property
+    def registration_uri(self) -> str:
+        """Return the registrar location service URI required by RFC 3261."""
+
+        return str(sip.SipUri("", self.domain))
+
     async def start(self) -> None:
         async with self._lifecycle_lock:
             if self._stopped:
@@ -684,7 +690,7 @@ class SipTrunkClient:
         retried = False
         while True:
             self.cseq += 1
-            request_uri = self.address_uri
+            request_uri = self.registration_uri
             headers = self._register_headers(expires_value, auth_value=auth_value)
             via_values = [value for key, value in headers if key.lower() == "via"]
             expected_branch = sip.parse_via(via_values[0] if via_values else "").branch

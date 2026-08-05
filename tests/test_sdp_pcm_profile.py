@@ -1145,6 +1145,15 @@ class SdpPcmProfileTest(unittest.TestCase):
         self.assertEqual(len(restored), 1)
         self.assertEqual(restored[0][:8], s24_pair)
 
+    def test_pcm_converter_reframes_shorter_same_format_rtp_packets(self) -> None:
+        negotiated = audio_format.AudioFormat(16000, "s16le", 1, 16)
+        assist = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        converter = audio_pcm.PcmFrameConverter(negotiated, assist)
+        ten_ms = bytes(320)
+
+        self.assertEqual(converter.convert(ten_ms), [])
+        self.assertEqual(converter.convert(ten_ms), [bytes(640)])
+
     def test_bounded_sip_udp_queue_keeps_freshest_datagram(self) -> None:
         queue: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(maxsize=2)
         protocol = sip_client._SipClientProtocol(queue)

@@ -1325,6 +1325,9 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(trunk.status_code, 200)
             self.assertEqual(len(registrar.requests), 2)
             first, second = registrar.requests
+            self.assertEqual(first[0].uri, "sip:fritz.box")
+            self.assertEqual(second[0].uri, "sip:fritz.box")
+            self.assertIn("<sip:ha@fritz.box>", first[0].header("To"))
             self.assertEqual(first[1], second[1])
             self.assertFalse(first[0].header("Authorization"))
             self.assertTrue(second[0].header("Authorization").startswith("Digest "))
