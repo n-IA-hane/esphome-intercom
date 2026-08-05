@@ -589,7 +589,6 @@ _REMOVED_ENTRY_RUNTIME_KEYS = (
     "ha_softphone_presence",
     "ha_softphone_start_locks",
     "ha_softphone_endpoint_sensor",
-    "ha_softphone_call_state_sensor",
     "phonebook_sensor",
     # SIP/B2BUA and local logical-phone runtime.
     "call_registry",

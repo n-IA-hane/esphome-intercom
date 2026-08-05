@@ -16,7 +16,6 @@ import logging
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
@@ -24,7 +23,6 @@ from homeassistant.helpers.event import async_track_state_change_event
 from .audio_format import HA_SIP_PCM_FORMATS
 from .const import (
     DOMAIN,
-    HA_SOFTPHONE_CALL_STATE_ENTITY_ID,
     HA_SOFTPHONE_ENDPOINT_ENTITY_ID,
 )
 from .endpoint_device import (
@@ -98,12 +96,9 @@ async def async_setup_entry(
     registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
     default_endpoint = registry.get(DEFAULT_ENDPOINT_ID) if registry is not None else None
     ha_endpoint_sensor = HaSoftphoneEndpointSensor(hass, default_endpoint, registry)
-    call_state_sensor = HaSoftphoneCallStateSensor(
-        hass, entry, default_endpoint, registry
-    )
     unified_sensor = VoipPhonebookSensor(hass)
     async_add_entities(
-        [ha_endpoint_sensor, call_state_sensor],
+        [ha_endpoint_sensor],
         True,
         config_subentry_id=endpoint_config_subentry_id(
             hass, DEFAULT_ENDPOINT_ID
@@ -115,119 +110,14 @@ async def async_setup_entry(
         entry,
         async_add_entities,
         PhoneEndpointCallStateSensor,
-        include_default=False,
     )
     endpoint_manager.async_setup()
     bucket = hass.data.setdefault(DOMAIN, {})
     bucket["ha_softphone_endpoint_sensor"] = ha_endpoint_sensor
-    bucket["ha_softphone_call_state_sensor"] = call_state_sensor
     bucket["phonebook_sensor"] = unified_sensor
     register_endpoint_entity_manager(
         entry, bucket, "endpoint_call_state_entity_manager", endpoint_manager
     )
-
-
-class HaSoftphoneCallStateSensor(SensorEntity):
-    """Durable state of the current HA-controlled logical SIP call."""
-
-    _attr_device_class = SensorDeviceClass.ENUM
-    _attr_has_entity_name = False
-    _attr_options = PHONE_CALL_STATES
-    _attr_should_poll = False
-    _attr_icon = "mdi:phone-in-talk"
-
-    def __init__(
-        self, hass: HomeAssistant, entry: ConfigEntry, endpoint=None, registry=None
-    ) -> None:
-        self.hass = hass
-        self._attr_unique_id = "voip_stack_ha_softphone_call_state"
-        self._attr_name = "VoIP Stack Call State"
-        self.entity_id = HA_SOFTPHONE_CALL_STATE_ENTITY_ID
-        self._attr_native_value = "idle"
-        self._attr_extra_state_attributes: dict[str, object] = {}
-        self._active_call_id = ""
-        self._revision = -1
-        self.endpoint = endpoint
-        self.endpoint_registry = registry
-        self._attr_device_info = endpoint_device_info(endpoint) if endpoint is not None else DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.title or "VoIP Stack",
-        )
-
-    async def async_added_to_hass(self) -> None:
-        from .websocket_api import CALL_EVENT, _ha_softphone_state
-
-        await super().async_added_to_hass()
-        async_link_endpoint_entity(
-            self.endpoint_registry, DEFAULT_ENDPOINT_ID, self.entity_id
-        )
-        self._apply_snapshot(_ha_softphone_state(self.hass, DEFAULT_ENDPOINT_ID))
-        self.async_on_remove(self.hass.bus.async_listen(CALL_EVENT, self._async_state_event))
-
-    @callback
-    def _async_state_event(self, event: Event) -> None:
-        snapshot = dict(event.data)
-        endpoint_id = str(snapshot.get("endpoint_id") or DEFAULT_ENDPOINT_ID)
-        if endpoint_id != DEFAULT_ENDPOINT_ID:
-            return
-        if self.endpoint is not None:
-            if not event_projects_endpoint_state(
-                snapshot,
-                self.endpoint,
-                self.endpoint_registry,
-            ):
-                return
-        elif str(snapshot.get("scope") or "") != "session":
-            return
-        call_id = str(snapshot.get("call_id") or "").strip()
-        state = str(snapshot.get("state") or "idle")
-        terminal = state in TERMINAL_CALL_STATES
-        incoming_revision = int(snapshot.get("revision") or snapshot.get("sequence") or 0)
-        if (
-            call_id
-            and self._active_call_id
-            and call_id != self._active_call_id
-            and self._attr_native_value != "idle"
-        ):
-            return
-        if (
-            not terminal
-            and call_id == self._active_call_id
-            and incoming_revision < self._revision
-        ):
-            return
-        self.async_set_context(event.context)
-        self._apply_snapshot(snapshot)
-        self.async_write_ha_state()
-
-    @callback
-    def _apply_snapshot(self, snapshot: dict[str, object]) -> None:
-        state = str(snapshot.get("state") or "idle")
-        terminal_reason = str(snapshot.get("terminal_reason") or snapshot.get("reason") or "")
-        call_id = str(snapshot.get("call_id") or "").strip()
-        revision = int(snapshot.get("revision") or snapshot.get("sequence") or 0)
-        terminal = state in TERMINAL_CALL_STATES
-        self._attr_native_value = "idle" if terminal else state
-        if call_id:
-            self._active_call_id = call_id
-            self._revision = revision
-        if terminal and terminal_reason != "forwarded":
-            self._active_call_id = ""
-            self._revision = -1
-        self._attr_extra_state_attributes = endpoint_call_state_attributes(
-            self.endpoint,
-            snapshot,
-            extra_keys=(
-                "caller",
-                "callee",
-                "origin",
-                "dialed_target",
-                "sequence",
-                "revision",
-                "owner",
-            ),
-            include_empty=True,
-        )
 
 
 class HaSoftphoneEndpointSensor(SensorEntity):
@@ -304,6 +194,8 @@ class PhoneEndpointCallStateSensor(SensorEntity):
         self._attr_device_info = endpoint_device_info(endpoint)
         self._attr_native_value = self._idle_state(endpoint)
         self._attr_extra_state_attributes = endpoint_public_attributes(endpoint)
+        self._active_call_id = ""
+        self._revision = -1
 
     async def async_added_to_hass(self) -> None:
         from .websocket_api import CALL_EVENT, _ha_softphone_state
@@ -341,22 +233,47 @@ class PhoneEndpointCallStateSensor(SensorEntity):
             self.registry,
         ):
             return
-        self._apply_call_payload(payload)
+        if not self._apply_call_payload(payload):
+            return
         self.async_set_context(event.context)
         self.async_write_ha_state()
 
     @callback
-    def _apply_call_payload(self, payload: dict[str, object]) -> None:
+    def _apply_call_payload(self, payload: dict[str, object]) -> bool:
         state = str(payload.get("state") or "idle").strip().lower()
-        if state in TERMINAL_CALL_STATES:
+        call_id = str(payload.get("call_id") or "").strip()
+        revision = int(payload.get("revision") or payload.get("sequence") or 0)
+        terminal_reason = str(payload.get("terminal_reason") or payload.get("reason") or "")
+        terminal = state in TERMINAL_CALL_STATES
+        if (
+            call_id
+            and self._active_call_id
+            and call_id != self._active_call_id
+            and self._attr_native_value not in {"idle", "offline"}
+        ):
+            return False
+        if (
+            not terminal
+            and call_id == self._active_call_id
+            and revision < self._revision
+        ):
+            return False
+        if terminal:
             state = self._idle_state(self.endpoint)
         elif state not in PHONE_CALL_STATES:
             state = self._attr_native_value
+        if call_id:
+            self._active_call_id = call_id
+            self._revision = revision
+        if terminal and terminal_reason != "forwarded":
+            self._active_call_id = ""
+            self._revision = -1
         self._attr_native_value = state
         self._attr_extra_state_attributes = endpoint_call_state_attributes(
             self.endpoint,
             payload,
         )
+        return True
 
 
 class VoipPhonebookSensor(SensorEntity):

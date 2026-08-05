@@ -68,6 +68,12 @@ Softphone state events must include `endpoint_id` or `device_id`. The frontend
 no longer assigns an endpoint-less event to the default phone from the
 subscription that delivered it.
 
+The original singleton `sensor.voip_stack_call_state` has been removed. The
+historical default Home Assistant phone now uses the same translated,
+Device-owned call-state entity as every other browser phone. Update
+automations to select that phone's `Call state` entity from its Home Assistant
+Device instead of relying on the former global entity ID.
+
 ## 2026.8.0: upgrade checklist
 
 1. Read the `2026.8.0` sections below and the

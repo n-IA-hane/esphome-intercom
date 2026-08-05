@@ -206,15 +206,15 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertNotIn("store_value or runtime_value", body)
         self.assertNotIn("max(store_value, runtime_value)", body)
 
-    def test_default_call_state_sensor_normalizes_every_terminal_state(self) -> None:
+    def test_all_phone_call_state_sensors_normalize_every_terminal_state(self) -> None:
         sensor = SENSOR.read_text()
-        default_sensor = sensor.split(
-            "class HaSoftphoneCallStateSensor", 1
-        )[1].split("class HaSoftphoneEndpointSensor", 1)[0]
+        phone_sensor = sensor.split(
+            "class PhoneEndpointCallStateSensor", 1
+        )[1].split("class VoipPhonebookSensor", 1)[0]
 
-        self.assertIn("terminal = state in TERMINAL_CALL_STATES", default_sensor)
+        self.assertIn("state in TERMINAL_CALL_STATES", phone_sensor)
         self.assertIn('"protocol_error"', sensor)
-        self.assertNotIn("terminal = state in {", default_sensor)
+        self.assertNotIn("state in {", phone_sensor)
 
     def test_video_reorder_timeout_and_teardown_publish_final_loss(self) -> None:
         body = VIDEO_WS.read_text(encoding="utf-8")
