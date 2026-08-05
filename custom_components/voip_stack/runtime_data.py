@@ -149,6 +149,22 @@ def preferred_browser_phone(hass: HomeAssistant) -> PhoneEndpoint | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
+def browser_phone(
+    hass: HomeAssistant, endpoint_id: str = ""
+) -> PhoneEndpoint | None:
+    """Resolve an explicit browser phone, or the configured implicit one."""
+
+    selector = str(endpoint_id or "").strip()
+    if not selector:
+        return preferred_browser_phone(hass)
+    endpoint = endpoint_directory(hass).get(selector)
+    return (
+        endpoint
+        if endpoint is not None and endpoint.kind is EndpointKind.BROWSER
+        else None
+    )
+
+
 def call_runtime_artifacts(hass: HomeAssistant) -> SipEndpointRuntime:
     """Return call coordination from the authoritative SIP runtime."""
 

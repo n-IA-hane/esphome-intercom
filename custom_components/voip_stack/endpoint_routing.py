@@ -15,9 +15,8 @@ from .audio_format import (
 )
 from .config import assist_config, trunk_config, trunk_enabled
 from .peer import Peer
-from .phone_endpoint import DEFAULT_ENDPOINT_ID
 from .router import resolve_ha_router
-from .runtime_data import endpoint_directory, sip_trunk
+from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk
 from .store import manual_roster_entries
 
 _LOGGER = logging.getLogger(__name__)
@@ -100,7 +99,8 @@ def logical_endpoint_for_member(
         )
         endpoint_id = str(getattr(peer, "endpoint_id", "") or "").strip()
     if not endpoint_id and is_ha_target(hass, member):
-        endpoint_id = DEFAULT_ENDPOINT_ID
+        endpoint = preferred_browser_phone(hass)
+        endpoint_id = endpoint.endpoint_id if endpoint is not None else ""
     return endpoint_registry.get(endpoint_id) if endpoint_id else None
 
 

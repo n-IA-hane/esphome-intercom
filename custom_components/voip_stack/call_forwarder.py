@@ -23,13 +23,13 @@ from .const import (
     CONF_TRUNK_TRANSPORT,
     CONF_TRUNK_USERNAME,
     DOMAIN,
-    HA_SOFTPHONE_DEVICE_ID,
 )
 from .dial_fork import DialDisposition, DialForkController, terminal_reason
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
 from .runtime_data import (
     call_runtime_artifacts,
+    browser_phone,
     endpoint_directory,
     sip_endpoint_runtime,
 )
@@ -66,11 +66,7 @@ from .outbound_attempts import (
     async_close_outbound_leg as _close_outbound_leg,
 )
 from .pbx_routing import unique_group_members as _unique_group_members
-from .phone_endpoint import (
-    DEFAULT_ENDPOINT_ID,
-    EndpointAvailability,
-    EndpointKind,
-)
+from .phone_endpoint import EndpointAvailability, EndpointKind
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .ring_group import (
     settle_browser_candidates as _settle_ring_browser_candidates,
@@ -231,7 +227,6 @@ async def async_forward_existing_call(
             _registered_roster_entries(hass),
         )
         decision = runtime.route_resolver.route(destination, roster_entries)
-        endpoint_registry = endpoint_directory(hass)
         if decision.action is RouteAction.ANSWER_HA:
             target_browser_endpoint = runtime.route_resolver.logical_endpoint(
                 decision.target or destination,
@@ -278,10 +273,18 @@ async def async_forward_existing_call(
                 source="automation",
             )
         session = registry.sessions.get(registry.resolve_session_id(call_id))
-        session_endpoint_id = str(
-            (session.metadata if session is not None else {}).get("endpoint_id")
-            or DEFAULT_ENDPOINT_ID
-        ).strip()
+        session_endpoint = browser_phone(
+            hass,
+            str(
+                (session.metadata if session is not None else {}).get("endpoint_id")
+                or ""
+            ),
+        )
+        if session_endpoint is None:
+            raise ServiceValidationError(
+                f"call_id {call_id} has no Home Assistant phone owner"
+            )
+        session_endpoint_id = session_endpoint.endpoint_id
         if (
             not initial_selection
             and target_browser_endpoint is not None
@@ -290,11 +293,7 @@ async def async_forward_existing_call(
             raise ServiceValidationError(
                 "a Home Assistant phone cannot forward a call to itself"
             )
-        session_endpoint = endpoint_registry.get(session_endpoint_id)
-        session_device_id = str(
-            getattr(session_endpoint, "device_id", "")
-            or HA_SOFTPHONE_DEVICE_ID
-        )
+        session_device_id = session_endpoint.device_id
         original_callee = session.callee if session is not None else invite.target
         original_route_kind = session.route_kind if session is not None else ""
         # A trunk call is already SIP-answered while its DTMF/automation
@@ -480,9 +479,7 @@ async def async_forward_existing_call(
                         invite,
                         route_kind=decision.action.value,
                         endpoint_id=endpoint.endpoint_id,
-                        endpoint_device_id=str(
-                            endpoint.device_id or HA_SOFTPHONE_DEVICE_ID
-                        ),
+                        endpoint_device_id=endpoint.device_id,
                         callee=endpoint.name,
                         sip_uri=decision.sip_uri,
                         last_sip_event="ROUTE_FORWARD",

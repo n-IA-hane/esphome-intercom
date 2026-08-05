@@ -17,7 +17,6 @@ from .const import (
     CONF_TRUNK_DTMF_TERMINATOR,
     CONF_TRUNK_DTMF_TIMEOUT_MS,
     CONF_TRUNK_INBOUND_DEFAULT_TARGET,
-    HA_SOFTPHONE_DEVICE_ID,
 )
 from .endpoint_lifecycle import call_registry
 from .endpoint_routing import (
@@ -43,10 +42,10 @@ from .media_ports import (
 from .outbound_attempts import async_close_client_and_release
 from .pbx_routing import dtmf_extension_routes
 from .peer_snapshot import async_build_peer_snapshot
-from .phone_endpoint import DEFAULT_ENDPOINT_ID, EndpointKind
+from .phone_endpoint import EndpointKind
 from .phonebook_runtime import registered_roster_entries
 from .router import CallContext, RouteAction, RouteReason, route_inbound_trunk
-from .runtime_data import call_runtime_artifacts
+from .runtime_data import call_runtime_artifacts, preferred_browser_phone
 from .sip import parse_sip_uri
 from .sip_bridge import build_invite_client_relay
 from .sip_client import SipCallClient
@@ -338,12 +337,19 @@ async def async_route_trunk_invite(
         return
 
     if runtime.route_resolver.is_ha_target(destination):
+        endpoint = preferred_browser_phone(hass)
+        if endpoint is None:
+            registry.take_pending_invite(invite.call_id)
+            preanswered = registry.take_media(invite.call_id, provisional=True)
+            release_media_reservation(preanswered)
+            send_final_response(hass, invite.call_id, 480, "Temporarily Unavailable")
+            return
         runtime.defer_invite_to_softphone(
             invite,
             route_kind="trunk",
-            endpoint_id=DEFAULT_ENDPOINT_ID,
-            endpoint_device_id=HA_SOFTPHONE_DEVICE_ID,
-            callee=runtime.ha_peer_name,
+            endpoint_id=endpoint.endpoint_id,
+            endpoint_device_id=endpoint.device_id,
+            callee=endpoint.name,
             last_sip_event="DTMF_ROUTE",
         )
         return
@@ -366,7 +372,7 @@ async def async_route_trunk_invite(
             ((session.metadata if session is not None else {}) or {}).get(
                 "endpoint_id"
             )
-            or DEFAULT_ENDPOINT_ID
+            or ""
         ).strip()
         if (
             target_endpoint is not None
@@ -378,7 +384,7 @@ async def async_route_trunk_invite(
                 route_kind="trunk",
                 endpoint_id=target_endpoint.endpoint_id,
                 endpoint_device_id=(
-                    target_endpoint.device_id or HA_SOFTPHONE_DEVICE_ID
+                    target_endpoint.device_id
                 ),
                 callee=target_endpoint.name,
                 last_sip_event="DTMF_ROUTE",
