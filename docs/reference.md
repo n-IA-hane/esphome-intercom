@@ -165,11 +165,12 @@ normal in-dialog method.
 
 ## HA logical phones
 
-The integration entry always owns a backward-compatible default Home Assistant
-phone. Add more under **Settings > Devices & services > VoIP Stack > Add
-phone**. Each phone is stored as a native Home Assistant config subentry and is
-addressable by stable `endpoint_id`, Device ID, one of its Entity IDs, unique
-name, extension or SIP username.
+The integration creates one normal Home Assistant browser phone on first
+setup, named from the Home Assistant location. Add or remove phones under
+**Settings > Devices & services > VoIP Stack > Add phone**. Each phone is
+stored as a native Home Assistant config subentry and selected publicly by its
+Device ID. Names, extensions and SIP usernames remain dial-plan destinations,
+not local-phone selectors.
 
 | Phone kind | HA representation | Transport behavior |
 | --- | --- | --- |
@@ -246,11 +247,13 @@ remains local and is never stored by Home Assistant.
 
 `call`, `answer`, `decline`, `hangup`, `forward`, `set_dnd` and
 `set_ha_softphone_settings` expose one optional `device_id` phone selector. If
-omitted, the default HA phone is used. This is the local phone performing the
-action, not the remote destination: `destination` is resolved independently by
-the central phonebook. Internal endpoint and entity IDs are reported in
-state/events for correlation, but are not alternative action inputs. Use
-`call_id` when a concurrent-call automation must select one call.
+omitted, the explicitly preferred phone is used, or the sole compatible phone
+when only one exists. An ambiguous selection fails instead of guessing. This
+is the local phone performing the action, not the remote destination:
+`destination` is resolved independently by the central phonebook. Internal
+endpoint IDs are reported in state and events for PBX correlation, but are not
+alternative action inputs. Use `call_id` when a concurrent-call automation
+must select one call.
 
 `route` applies an automation decision to a pending inbound SIP route. Use
 `action: answer_ha`, `decline`, `busy`, `cancel`, `forward`, `bridge`, or

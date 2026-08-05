@@ -65,8 +65,8 @@ former flat `codec`, `encoding`, `clock_rate`, `payload_type` and `fmtp`
 aliases from the negotiation root.
 
 Softphone state events must include `endpoint_id` or `device_id`. The frontend
-no longer assigns an endpoint-less event to the default phone from the
-subscription that delivered it.
+no longer guesses a phone for an endpoint-less event from the subscription
+that delivered it.
 
 The original singleton `sensor.voip_stack_call_state` has been removed. The
 historical default Home Assistant phone now uses the same translated,
@@ -87,16 +87,17 @@ Device instead of relying on the former global entity ID.
    card. An old JavaScript module cannot safely drive the new backend.
 
 Do not delete and recreate the integration merely to perform this upgrade.
-Config entry version 3 automatically creates the mandatory default Home
-Assistant phone subentry, carries forward its persisted DND/extension/group
-settings and converts existing local SIP registrar accounts into phone
-subentries. The old inline account list is removed after that migration.
+Config entry version 3 migrated the historical Home Assistant phone and its
+persisted DND, extension and group settings into a phone subentry. Version 5
+removes its special default behavior. A new installation creates one ordinary
+browser phone named from the Home Assistant location, and that phone can be
+renamed or removed like any other. Existing local SIP registrar accounts are
+also converted into phone subentries.
 
 ## 2026.8.0: every logical phone is a separate Home Assistant device
 
 The former single HA softphone model is now a collection of native config
-subentries and Devices. The migrated default phone remains available, while
-additional browser phones and standard SIP accounts are created with
+subentries and Devices. Browser phones and standard SIP accounts are created with
 **Settings > Devices & services > VoIP Stack > Add phone**.
 
 Each phone owns its call state, DND, extension, groups and video settings.
@@ -112,10 +113,8 @@ Consequently:
   phone exists. An offline browser phone may still ring logically so that
   timeout and forwarding automations can run.
 
-The default phone deliberately retains
-`sensor.voip_stack_call_state`. Additional phones receive entity IDs generated
-by Home Assistant; select them from their Device instead of constructing an ID
-from the phone name.
+Every phone receives its Device-owned entity IDs from Home Assistant. Select
+entities from the Device instead of constructing an ID from the phone name.
 
 Card YAML contains only `device_id`. The backend supplies the internal
 `endpoint_id` in runtime snapshots when the frontend needs to correlate media
@@ -150,8 +149,7 @@ After:
 `destination` is resolved by the central phonebook; no Device ID is needed to
 identify Kitchen. The optional `device_id` selects the **local calling phone**,
 not the remote destination. For example, add the Device ID of a Reception
-browser phone only when Reception, rather than the default HA phone, must place
-the call:
+browser phone when Reception must place the call:
 
 ```yaml
 - action: voip_stack.call
@@ -160,7 +158,8 @@ the call:
     device_id: <reception_phone_device_id>
 ```
 
-Omit `device_id` to use the migrated default Home Assistant phone. This same
+Omit `device_id` only when a preferred phone is configured or exactly one
+compatible phone exists. An ambiguous request fails explicitly. This same
 local-phone selector rule applies to `answer`, `decline`, `hangup`, `forward`,
 `set_dnd` and `set_ha_softphone_settings`. `call_id` remains an optional flat
 action field when one of several concurrent calls must be selected;

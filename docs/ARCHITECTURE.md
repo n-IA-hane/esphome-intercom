@@ -66,6 +66,14 @@ Component ownership:
 - Cards never own the call FSM. They render state pushed by the owner and send
   user commands back to that owner.
 
+Home Assistant actions and card configuration select the local phone only by
+`device_id`. The backend also assigns an internal `endpoint_id` in a common
+namespace covering browser phones, ESPHome phones and registered SIP accounts.
+That identifier lets the protocol core correlate a logical phone, call leg and
+media owner without depending on Home Assistant Device Registry APIs. It is
+reported in runtime snapshots for diagnostics and correlation, but it is not a
+second user-selectable identity and is never stored by new card configuration.
+
 ### HA runtime ownership model
 
 The PBX ownership core is built alongside the existing SIP dispatcher as a
@@ -82,11 +90,8 @@ independent dial plans.
   ring groups and other parallel dial attempts.
 - `AnswerTransaction` implements prepare, final response and commit with
   rollback of ports, sockets and optional video resources.
-- `CallRegistry` is the observable compatibility index/projection used by HA
-  entities, services and existing runtime adapters; it is not a second
-  lifecycle owner.
 - `ActiveMediaCall` resolves the one generation-current browser media session
-  from the endpoint store and `CallRegistry`. Audio and video WebSocket views
+  from `SipEndpointRuntime`. Audio and video WebSocket views
   subscribe to the same call-lifetime primitive instead of maintaining
   independent interpretations of when a call has ended.
 - audio and video renegotiation commit the complete media contract before they
@@ -106,9 +111,10 @@ Termination is generation-guarded, idempotent and cancellation-safe. The
 session enters `terminating` synchronously, then waits for a shielded cleanup
 barrier so late dial winners, media callbacks or duplicate BYE/CANCEL observers
 cannot resurrect the call. A transport callback may claim that terminal state
-before handing off a legacy adapter, but only `EndpointCallSession` starts and
-owns the cleanup barrier. `CallRegistry` records the bounded tombstone needed
-to absorb delayed SIP observations and never starts a second teardown.
+before handing off a transport adapter, but only `EndpointCallSession` starts
+and owns the cleanup barrier. `SipEndpointRuntime` records the bounded
+tombstone needed to absorb delayed SIP observations and never starts a second
+teardown.
 
 Card commands use standard Home Assistant service actions. Outbound card calls
 request the optional response from `voip_stack.call`; the backend returns the
@@ -116,10 +122,9 @@ authoritative endpoint snapshot instead of making the frontend infer a new
 Call-ID or state. Integration-specific WebSocket subscriptions remain where
 they carry live call/media presence rather than one-shot commands.
 
-`endpoint_runtime.py` still contains the legacy dispatcher while flows are
-moved behind these ownership primitives. This is intentionally a transitional
-boundary: new routing policy must enter the canonical dispatcher and must not
-create a parallel code path in the ownership core.
+`endpoint_runtime.py` assembles the canonical dispatcher from the routing and
+session primitives. New routing policy must enter that dispatcher and must not
+create a parallel lifecycle or dial plan.
 
 ## Call control
 
@@ -255,8 +260,8 @@ Terminal reasons are backend-owned and may contain exact SIP/application
 reasons. The frontend must display the supplied reason rather than mapping it
 through a private parallel FSM.
 
-HA runtime call ownership is centralized in `EndpointCallSession`; the
-`CallRegistry` projects and indexes that ownership for compatibility. Pending
+HA runtime call ownership is centralized in `EndpointCallSession`, indexed by
+the single `SipEndpointRuntime`. Pending
 routes, pending INVITEs, pre-answered trunk legs, HA softphone media, SIP
 clients, bridge clients, relays and watcher tasks are generation-bound to the
 same logical session. Service handlers, inbound SIP callbacks, WebSocket media

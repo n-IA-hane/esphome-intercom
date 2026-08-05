@@ -100,7 +100,8 @@ HA-bridged sequences are in [`docs/CALL_FLOWS.md`](docs/CALL_FLOWS.md).
 
 ## Logical Home Assistant phones
 
-The integration creates one default Home Assistant browser phone. Add more
+The integration creates one ordinary Home Assistant browser phone on first
+setup, named from Home Assistant's location. Add or remove phones
 from:
 
 **Settings → Devices & services → VoIP Stack → Add phone → Home Assistant
@@ -131,7 +132,9 @@ data:
   destination: Garage
 ```
 
-Omit `device_id` to originate from the default HA phone.
+Omit `device_id` only when a preferred phone is configured or exactly one
+compatible phone exists. Otherwise the action asks you to select the local
+phone explicitly.
 
 The card's idle `Options` panel includes a `Microphone anti-alias filter`.
 It is enabled by default and stored per browser and logical phone. The setting

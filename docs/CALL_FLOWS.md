@@ -284,11 +284,10 @@ The decision point is not expected for:
 
 ## Unanswered HA forward
 
-1. The default route places the HA-owned logical call in `ringing`.
+1. The selected route places the HA-owned logical call in `ringing`.
 2. The call-state Sensor Entity attached to the destination phone publishes
-   the same state and Call-ID as its softphone/card stream. The migrated
-   default phone retains `sensor.voip_stack_call_state` for compatibility;
-   additional phones have their own generated entity IDs.
+   the same state and Call-ID as its softphone/card stream. Every phone uses
+   the same Device-owned entity model.
 3. A native HA state trigger may wait with `for:`, for example 30 seconds.
 4. `voip_stack.forward` resolves the only forwardable call and claims a new
    routing revision.

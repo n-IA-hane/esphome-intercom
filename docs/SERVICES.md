@@ -10,11 +10,13 @@ logic.
 ## Softphone services
 
 The normal automation editor shows one optional `device_id` phone picker. If
-it is omitted, the default HA phone is selected. This is the only public phone
-selector: it identifies the local phone performing the action, never the
-remote destination. Internal endpoint and entity IDs are deliberately not
-alternative action inputs. `call_id` and stale-decision guards remain under
-the collapsed **Advanced options** section where concurrency requires them.
+it is omitted, VoIP Stack uses the configured preferred phone, or the sole
+compatible phone when only one exists. An ambiguous request fails explicitly.
+This is the only public phone selector: it identifies the local phone
+performing the action, never the remote destination. Internal endpoint and
+entity IDs are deliberately not alternative action inputs. `call_id` and
+stale-decision guards remain under the collapsed **Advanced options** section
+where concurrency requires them.
 
 ### `voip_stack.call`
 
@@ -305,9 +307,7 @@ Each integration-owned phone Device also exposes a scoped call Event Entity
 and an enum call-state Sensor Entity. Prefer those entities for automations
 about one room/handset, such as "Casa has rung for 30 seconds" or "Test missed
 an incoming call". Use the aggregate entity for PBX-wide logic and
-`route_requested`. The default phone's state sensor keeps the historical
-`sensor.voip_stack_call_state` entity ID for compatibility even though it is
-now attached to that phone Device.
+`route_requested`. Every phone has its own Device-owned call-state sensor.
 
 The call-state sensor is durable and therefore supports native state triggers
 with `for:`. Its attributes include `call_id`, `direction`, `ingress`,

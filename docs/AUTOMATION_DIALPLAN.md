@@ -266,11 +266,9 @@ identify the intended `call_id`. Ambiguous requests fail explicitly instead of
 guessing.
 
 With multiple logical phones, select the call-state entity attached to the
-phone that owns the ringing leg. The migrated default phone deliberately keeps
-the compatibility entity ID `sensor.voip_stack_call_state`; additional phones
-receive normal generated IDs such as `sensor.test_call_state` (localized HA
-installations may use a translated form). Always select the entity from the
-phone Device in the automation editor instead of guessing its ID.
+phone that owns the ringing leg. Home Assistant generates and may localize the
+entity ID, so always select it from the phone Device in the automation editor
+instead of guessing its ID.
 
 Logical ringing is independent from browser connectivity. A browser softphone
 that belongs to a ring group is allowed to enter `ringing` while its
@@ -544,9 +542,8 @@ own Event Entity for room-specific logic.
 ### Durable state sensor
 
 Each logical browser/SIP-account phone exposes an enum call-state Sensor Entity.
-The default phone keeps `sensor.voip_stack_call_state` for backward
-compatibility. Each sensor follows only its phone through ringing, bridging and
-Assist. Its stable states are:
+Each sensor follows only its phone through ringing, bridging and Assist. Its
+stable states are:
 
 - `offline`
 - `idle`
