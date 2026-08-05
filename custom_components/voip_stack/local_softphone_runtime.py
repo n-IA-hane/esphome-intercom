@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant, callback
 
-from .audio_format import HA_SIP_PCM_FORMATS
+from .core.audio_format import HA_SIP_PCM_FORMATS
 from .endpoint_lifecycle import call_registry
 from .local_softphone_bridge import (
     LocalBridgeEvent,

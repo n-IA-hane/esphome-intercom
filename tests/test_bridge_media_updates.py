@@ -76,7 +76,7 @@ def bridge_media_updates(monkeypatch):
         "endpoint_lifecycle": {
             "call_registry": lambda hass: hass.registry,
         },
-        "sdp": {
+        "core.sdp": {
             "video_formats_passthrough_compatible": lambda left, right: left == right,
         },
         "sip_bridge": {
@@ -88,6 +88,12 @@ def bridge_media_updates(monkeypatch):
         },
     }
     for name, values in dependencies.items():
+        if "." in name:
+            parent = name.rsplit(".", 1)[0]
+            parent_name = f"{package_name}.{parent}"
+            parent_module = ModuleType(parent_name)
+            parent_module.__path__ = []
+            monkeypatch.setitem(sys.modules, parent_name, parent_module)
         dependency = ModuleType(f"{package_name}.{name}")
         for key, value in values.items():
             setattr(dependency, key, value)

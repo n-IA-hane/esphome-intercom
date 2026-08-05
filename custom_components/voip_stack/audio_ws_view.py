@@ -17,11 +17,11 @@ from aiohttp import WSMsgType, web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-from . import rtp
+from .core import rtp
 from .audio_ws import decode_audio_frame, encode_audio_frame
 from .config import debug_mode, media_capture_enabled
 from .const import DOMAIN
-from .audio_format import HA_SIP_PCM_FORMATS
+from .core.audio_format import HA_SIP_PCM_FORMATS
 from .debug_capture import (
     DEBUG_CAPTURE_DIR,
     DEBUG_CAPTURE_MAX_PENDING_WRITES,
@@ -470,7 +470,7 @@ def _active_softphone_media_session(
             if not isinstance(rtp_source, rtp.AudioRtpSenderState):
                 rtp_source = rtp.AudioRtpSenderState.create()
                 item["audio_rtp_source"] = rtp_source
-            from .sdp import offered_dtmf_formats
+            from .core.sdp import offered_dtmf_formats
 
             dtmf_formats = offered_dtmf_formats(invite.remote_sdp)
             dtmf_format = dtmf_formats[0] if dtmf_formats else None

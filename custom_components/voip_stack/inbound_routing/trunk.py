@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from homeassistant.core import HomeAssistant
 
-from .. import sdp as sip_sdp
+from ..core import sdp as sip_sdp
 from ..const import (
     CONF_SIP_VIDEO,
     CONF_TRUNK_DTMF_ENABLED,
@@ -22,7 +22,7 @@ from ..endpoint_lifecycle import create_runtime_task
 from ..fsm import CallState
 from ..media_ports import RtpPortReservation, reserve_sip_video_media
 from ..runtime_data import call_runtime_artifacts
-from ..sdp import build_answer_directional, constrained_video_direction
+from ..core.sdp import build_answer_directional, constrained_video_direction
 from ..sip_listener import SipInviteResult
 from ..websocket_api import _set_sip_bridge_call_state
 

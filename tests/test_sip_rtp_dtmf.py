@@ -13,6 +13,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 PKG_NAME = "custom_components.voip_stack"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
+CORE_MODULES = {"audio_format", "rtp"}
 
 
 def _load(name: str):
@@ -24,10 +25,16 @@ def _load(name: str):
         package = types.ModuleType(PKG_NAME)
         package.__path__ = [str(PKG_DIR)]
         sys.modules[PKG_NAME] = package
-    full_name = f"{PKG_NAME}.{name}"
+    is_core = name in CORE_MODULES
+    if is_core and f"{PKG_NAME}.core" not in sys.modules:
+        core_pkg = types.ModuleType(f"{PKG_NAME}.core")
+        core_pkg.__path__ = [str(PKG_DIR / "core")]
+        sys.modules[f"{PKG_NAME}.core"] = core_pkg
+    full_name = f"{PKG_NAME}.{'core.' if is_core else ''}{name}"
     if full_name in sys.modules:
         return sys.modules[full_name]
-    spec = importlib.util.spec_from_file_location(full_name, PKG_DIR / f"{name}.py")
+    path = PKG_DIR / ("core" if is_core else "") / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(full_name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[full_name] = module

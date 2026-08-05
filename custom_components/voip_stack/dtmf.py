@@ -10,7 +10,7 @@ import struct
 import time
 from typing import Callable
 
-from .rtp import parse_packet
+from .core.rtp import parse_packet
 
 
 _LOGGER = logging.getLogger(__name__)

@@ -12,9 +12,9 @@ import socket
 from typing import Any, Callable
 import wave
 
-from . import rtp
-from .audio_format import AudioFormat
-from .audio_pcm import PcmFrameConverter
+from .core import rtp
+from .core.audio_format import AudioFormat
+from .core.audio_pcm import PcmFrameConverter
 from .debug_capture import (
     DEBUG_CAPTURE_DIR,
     capture_temp_path,
@@ -32,7 +32,7 @@ from .dtmf import (
     telephone_event_code,
 )
 from .queue_utils import drain_queue, put_drop_oldest
-from .sdp import RtpPcmFormat, audio_format_to_rtp
+from .core.sdp import RtpPcmFormat, audio_format_to_rtp
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder
 

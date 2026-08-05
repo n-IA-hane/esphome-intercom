@@ -49,7 +49,7 @@ def main() -> int:
          "custom_components/voip_stack/__init__.py",
          "custom_components/voip_stack/sip_client.py",
          "custom_components/voip_stack/sip_listener.py",
-         "custom_components/voip_stack/video_rtp.py",
+         "custom_components/voip_stack/core/video_rtp.py",
          "custom_components/voip_stack/video_ws_view.py",
          "custom_components/voip_stack/websocket_api.py",
          "tools/sip_video_browser_probe.py",

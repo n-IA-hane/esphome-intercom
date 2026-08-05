@@ -20,7 +20,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .audio_format import HA_SIP_PCM_FORMATS
+from .core.audio_format import HA_SIP_PCM_FORMATS
 from .const import HA_SOFTPHONE_ENDPOINT_ENTITY_ID
 from .endpoint_device import (
     async_link_endpoint_entity,

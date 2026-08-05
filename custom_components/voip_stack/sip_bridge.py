@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from . import sdp
+from .core import sdp
 from .sip_client import SipCallClient, SipDialog
 from .sip_listener import SipInvite
 from .sip_rtp_bridge import RtpPeer, SipRtpRelay

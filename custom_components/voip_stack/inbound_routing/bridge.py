@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 from homeassistant.core import HomeAssistant
 
 from ..bridge_manager import async_watch_sip_bridge_destination
-from ..audio_format import HA_TRUNK_AUDIO_FORMATS
+from ..core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from ..config import media_capture_enabled
 from ..const import (
     CONF_SIP_VIDEO,
@@ -43,8 +43,8 @@ from ..media_ports import (
 from ..outbound_attempts import async_close_client_and_release
 from ..phone_endpoint import EndpointKind
 from ..runtime_data import call_runtime_artifacts
-from ..sdp import build_answer_directional, first_offered_dtmf_format
-from ..sip import parse_sip_uri, sip_endpoints_equal, sip_uri_targets_listener
+from ..core.sdp import build_answer_directional, first_offered_dtmf_format
+from ..core.sip import parse_sip_uri, sip_endpoints_equal, sip_uri_targets_listener
 from ..sip_bridge import (
     build_invite_client_relay,
     build_pending_invite_video_relay,

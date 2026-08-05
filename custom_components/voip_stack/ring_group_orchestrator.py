@@ -58,7 +58,7 @@ from .ring_group_candidates import (
     async_prepare_ring_group_candidates,
 )
 from .ring_group_fork import build_ring_group_fork
-from .sdp import build_answer_directional, first_offered_dtmf_format
+from .core.sdp import build_answer_directional, first_offered_dtmf_format
 from .session_cleanup import async_cleanup_sip_runtime, async_wait_for_cleanup
 from .sip_bridge import (
     build_invite_client_relay,

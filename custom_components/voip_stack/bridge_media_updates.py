@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant
 
 from .endpoint_lifecycle import call_registry
-from .sdp import video_formats_passthrough_compatible
+from .core.sdp import video_formats_passthrough_compatible
 from .sip_bridge import dialog_rtp_peer, dialog_video_rtp_peer
 
 if TYPE_CHECKING:

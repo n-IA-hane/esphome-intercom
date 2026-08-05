@@ -13,7 +13,7 @@ only_mutate = [
   "custom_components/voip_stack/call_registry.py",
   "custom_components/voip_stack/service_endpoints.py",
   "custom_components/voip_stack/session_cleanup.py",
-  "custom_components/voip_stack/sip_transaction.py",
+  "custom_components/voip_stack/core/sip_transaction.py",
   "custom_components/voip_stack/sip_video_relay.py",
 ]
 also_copy = ["pytest.ini"]

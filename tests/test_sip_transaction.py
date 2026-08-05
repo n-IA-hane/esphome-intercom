@@ -28,8 +28,13 @@ def _load_module(name: str):
         package = types.ModuleType(PKG_NAME)
         package.__path__ = [str(PKG_DIR)]
         sys.modules[PKG_NAME] = package
-    full_name = f"{PKG_NAME}.{name}"
-    spec = importlib.util.spec_from_file_location(full_name, PKG_DIR / f"{name}.py")
+    core_pkg = types.ModuleType(f"{PKG_NAME}.core")
+    core_pkg.__path__ = [str(PKG_DIR / "core")]
+    sys.modules.setdefault(f"{PKG_NAME}.core", core_pkg)
+    full_name = f"{PKG_NAME}.core.{name}"
+    spec = importlib.util.spec_from_file_location(
+        full_name, PKG_DIR / "core" / f"{name}.py"
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {full_name}")
     module = importlib.util.module_from_spec(spec)

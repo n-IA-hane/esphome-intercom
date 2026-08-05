@@ -16,7 +16,7 @@ from ..groups import GROUP_TYPE_CONFERENCE, GROUP_TYPE_RING
 from ..media_ports import RtpPortReservation
 from ..phone_endpoint import EndpointKind
 from ..router import RouteAction
-from ..sdp import build_answer_directional
+from ..core.sdp import build_answer_directional
 from ..sip_listener import SipInviteResult
 
 if TYPE_CHECKING:

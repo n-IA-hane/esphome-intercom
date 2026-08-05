@@ -9,7 +9,7 @@ from typing import Any, Awaitable, Callable
 
 from homeassistant.core import HomeAssistant
 
-from .audio_format import HA_TRUNK_AUDIO_FORMATS
+from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .bridge_manager import async_watch_sip_bridge_destination
 from .config import media_capture_enabled as _media_capture_enabled, trunk_config as _get_trunk_config
 from .const import (
@@ -73,9 +73,9 @@ from .ring_group import (
 )
 from .ring_group_fork import build_ring_group_fork
 from .router import RouteAction
-from .sdp import build_answer_directional, first_offered_dtmf_format
+from .core.sdp import build_answer_directional, first_offered_dtmf_format
 from .session_cleanup import async_cleanup_sip_runtime
-from .sip import parse_sip_uri
+from .core.sip import parse_sip_uri
 from .sip_bridge import (
     build_invite_client_relay,
     build_pending_invite_video_relay,

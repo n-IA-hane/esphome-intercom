@@ -7,7 +7,7 @@ import logging
 from homeassistant.components import network
 from homeassistant.core import HomeAssistant
 
-from .audio_format import HA_SIP_PCM_FORMATS
+from .core.audio_format import HA_SIP_PCM_FORMATS
 from .config import transport_config
 from .const import HA_SOFTPHONE_ENDPOINT_ENTITY_ID
 from .device_resolver import parse_voip_endpoint

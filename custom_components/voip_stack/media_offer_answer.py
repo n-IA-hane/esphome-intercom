@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .sdp import (
+from .core.sdp import (
     RtpVideoFormat,
     directional_video_renegotiation_compatible,
     video_formats_passthrough_compatible,

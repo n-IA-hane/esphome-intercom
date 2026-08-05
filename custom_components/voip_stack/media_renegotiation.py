@@ -30,7 +30,7 @@ from .media_session_updates import (
     commit_video_session_update,
 )
 from .runtime_data import endpoint_directory, require_runtime_data
-from .sdp import (
+from .core.sdp import (
     build_answer_directional,
     constrained_media_direction,
     constrained_video_direction,

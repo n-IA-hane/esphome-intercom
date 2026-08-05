@@ -11,7 +11,11 @@ import pytest
 
 
 MODULE_PATH = (
-    Path(__file__).resolve().parents[1] / "custom_components" / "voip_stack" / "g711.py"
+    Path(__file__).resolve().parents[1]
+    / "custom_components"
+    / "voip_stack"
+    / "core"
+    / "g711.py"
 )
 SPEC = importlib.util.spec_from_file_location("voip_stack_g711_test", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None

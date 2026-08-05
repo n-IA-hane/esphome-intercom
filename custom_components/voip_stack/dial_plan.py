@@ -7,7 +7,7 @@ from typing import Any, Iterable, Mapping
 
 from .dial_fork import ForkStrategy
 from .roster import RosterEntry, find_entry
-from .sip import parse_sip_uri
+from .core.sip import parse_sip_uri
 
 
 @dataclass(frozen=True, slots=True)

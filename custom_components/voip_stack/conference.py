@@ -16,17 +16,17 @@ import numpy as np
 
 from homeassistant.core import HomeAssistant
 
-from .audio_format import AudioFormat, PcmFormat
-from .audio_pcm import PcmFrameConverter
+from .core.audio_format import AudioFormat, PcmFormat
+from .core.audio_pcm import PcmFrameConverter
 from .const import DOMAIN
 from .endpoint_lifecycle import call_registry
 from .endpoint_registry import EndpointBusyError
 from .fsm import CallState, TerminalReason
 from .groups import GROUP_TYPE_CONFERENCE
 from .media_ports import RtpPortReservation
-from .rtp import RtpPacket, build_packet, next_sequence, next_timestamp, parse_packet
-from .sdp import build_answer_directional
-from . import sdp
+from .core.rtp import RtpPacket, build_packet, next_sequence, next_timestamp, parse_packet
+from .core.sdp import build_answer_directional
+from .core import sdp
 from .session_cleanup import async_wait_for_cleanup
 from .runtime_data import (
     browser_phone,

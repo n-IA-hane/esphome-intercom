@@ -8,7 +8,7 @@ import logging
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
-from .audio_format import HA_TRUNK_AUDIO_FORMATS
+from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .authorization import async_require_service_admin
 from .config import (
     transport_config as _get_transport_config,
@@ -165,7 +165,7 @@ async def async_originate_browser_call(
 ) -> None:
     """Originate a standards SIP call from one Home Assistant browser phone."""
     from .roster import parse_roster_json
-    from .sip import parse_sip_uri
+    from .core.sip import parse_sip_uri
     from .sip_client import SIP_TIMER_B, SipCallClient
 
     hass: HomeAssistant = call.hass
@@ -464,7 +464,7 @@ async def async_originate_browser_call(
     else:
         local_rtp_port = _allocate_sip_rtp_port(hass)
         local_video_rtp_port = 0
-    from .sdp import (
+    from .core.sdp import (
         DEFAULT_VIDEO_FORMATS,
         browser_video_send_supported,
         video_formats_renegotiation_compatible,

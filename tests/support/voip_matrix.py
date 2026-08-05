@@ -30,7 +30,13 @@ UNAVAILABLE = "unavailable"
 
 def _ha_audio_formats() -> tuple[str, ...]:
     """Load HA SIP audio formats without importing the Home Assistant package."""
-    module_path = Path(__file__).resolve().parents[2] / "custom_components" / "voip_stack" / "audio_format.py"
+    module_path = (
+        Path(__file__).resolve().parents[2]
+        / "custom_components"
+        / "voip_stack"
+        / "core"
+        / "audio_format.py"
+    )
     spec = importlib.util.spec_from_file_location("_voip_stack_audio_format", module_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {module_path}")

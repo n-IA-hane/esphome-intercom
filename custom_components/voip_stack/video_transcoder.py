@@ -16,9 +16,9 @@ import shutil
 import socket
 from typing import TYPE_CHECKING
 
-from . import sdp
+from .core import sdp
 from .runtime_data import require_runtime_data
-from .sdp import RtpVideoFormat
+from .core.sdp import RtpVideoFormat
 from .session_cleanup import async_wait_for_cleanup
 
 if TYPE_CHECKING:

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
-from . import sdp as sip_sdp
+from .core import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
 from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk
 from .const import (

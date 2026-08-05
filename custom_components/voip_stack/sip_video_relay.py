@@ -9,8 +9,8 @@ import socket
 import struct
 from typing import Any, Callable
 
-from . import rtp
-from .sdp import RtpVideoFormat, video_formats_passthrough_compatible
+from .core import rtp
+from .core.sdp import RtpVideoFormat, video_formats_passthrough_compatible
 from .session_cleanup import async_wait_for_cleanup
 from .video_transcoder import (
     FfmpegVideoTranscoder,
@@ -18,7 +18,7 @@ from .video_transcoder import (
     _release_transcoder_slot,
     video_transcode_supported,
 )
-from .video_rtcp import RtcpError, parse_compound
+from .core.video_rtcp import RtcpError, parse_compound
 
 
 _LOGGER = logging.getLogger(__name__)

@@ -25,10 +25,16 @@ def _load_module(name: str):
         pkg = types.ModuleType(PKG_NAME)
         pkg.__path__ = [str(PKG_DIR)]
         sys.modules[PKG_NAME] = pkg
-    full_name = f"{PKG_NAME}.{name}"
+    is_core = name == "audio_format"
+    if is_core and f"{PKG_NAME}.core" not in sys.modules:
+        core_pkg = types.ModuleType(f"{PKG_NAME}.core")
+        core_pkg.__path__ = [str(PKG_DIR / "core")]
+        sys.modules[f"{PKG_NAME}.core"] = core_pkg
+    full_name = f"{PKG_NAME}.{'core.' if is_core else ''}{name}"
     if full_name in sys.modules:
         return sys.modules[full_name]
-    spec = importlib.util.spec_from_file_location(full_name, PKG_DIR / f"{name}.py")
+    path = PKG_DIR / ("core" if is_core else "") / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(full_name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {full_name}")
     module = importlib.util.module_from_spec(spec)
@@ -52,8 +58,11 @@ def _load_runtime_module():
     package = types.ModuleType(package_name)
     package.__path__ = [str(PKG_DIR)]
     sys.modules[package_name] = package
-    for name in ("audio_format", "const"):
-        sys.modules[f"{package_name}.{name}"] = _load_module(name)
+    core_package = types.ModuleType(f"{package_name}.core")
+    core_package.__path__ = []
+    sys.modules[core_package.__name__] = core_package
+    sys.modules[f"{package_name}.core.audio_format"] = _load_module("audio_format")
+    sys.modules[f"{package_name}.const"] = _load_module("const")
     sys.modules[f"{package_name}.local_softphone_bridge"] = bridge_module
     endpoint_lifecycle = types.ModuleType(
         f"{package_name}.endpoint_lifecycle"

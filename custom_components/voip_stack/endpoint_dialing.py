@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
-from .audio_format import HA_TRUNK_AUDIO_FORMATS
+from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
 from .endpoint_lifecycle import create_runtime_task
 from .endpoint_routing import (
@@ -28,7 +28,7 @@ from .outbound_attempts import BrowserLeg, OutboundLeg
 from .pbx_routing import roster_entry_for_target
 from .phone_endpoint import EndpointKind
 from .runtime_data import preferred_browser_phone
-from .sip import parse_sip_uri
+from .core.sip import parse_sip_uri
 from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
 from .sip_client import SipCallClient
 

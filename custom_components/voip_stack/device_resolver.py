@@ -14,7 +14,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
-from .audio_format import parse_audio_format_list
+from .core.audio_format import parse_audio_format_list
 from .const import DOMAIN
 from .device_registry_compat import device_config_entry_ids
 from .runtime_data import runtime_data

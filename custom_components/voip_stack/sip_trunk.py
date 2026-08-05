@@ -17,9 +17,9 @@ import socket
 import time
 from typing import Any, Awaitable, Callable
 
-from . import sip
-from .sip_auth import build_digest_authorization
-from .sip_transaction import SIP_T1, SIP_T2, SipClientTransaction
+from .core import sip
+from .core.sip_auth import build_digest_authorization
+from .core.sip_transaction import SIP_T1, SIP_T2, SipClientTransaction
 from .sip_udp_io import SipDatagramQueueProtocol
 from .sip_tcp_io import SipTcpWriter, read_sip_stream_message as _read_sip_stream_message
 from .queue_utils import put_drop_oldest

@@ -46,7 +46,7 @@ from .phone_endpoint import EndpointKind
 from .phonebook_runtime import registered_roster_entries
 from .router import CallContext, RouteAction, RouteReason, route_inbound_trunk
 from .runtime_data import call_runtime_artifacts, preferred_browser_phone
-from .sip import parse_sip_uri
+from .core.sip import parse_sip_uri
 from .sip_bridge import build_invite_client_relay
 from .sip_client import SipCallClient
 from .sip_runtime import (

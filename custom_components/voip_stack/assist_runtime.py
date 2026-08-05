@@ -13,9 +13,9 @@ from typing import Any, TYPE_CHECKING
 
 from homeassistant.core import Context, HomeAssistant
 
-from . import rtp
-from .audio_format import AudioFormat
-from .audio_pcm import PcmFrameConverter
+from .core import rtp
+from .core.audio_format import AudioFormat
+from .core.audio_pcm import PcmFrameConverter
 from .queue_utils import put_drop_oldest
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder
 from .sip_listener import SipInvite

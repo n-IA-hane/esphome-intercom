@@ -17,7 +17,7 @@ from ..phone_endpoint import (
     PhoneEndpoint,
 )
 from ..router import RouteReason
-from ..sdp import build_answer_directional, constrained_video_direction
+from ..core.sdp import build_answer_directional, constrained_video_direction
 from ..sip_listener import SipInviteResult
 from ..websocket_api import _set_ha_softphone_call_state
 

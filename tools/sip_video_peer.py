@@ -28,6 +28,7 @@ import types
 ROOT = Path(__file__).resolve().parents[1]
 PKG_NAME = "custom_components.voip_stack"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
+CORE_MODULES = {"rtp", "sdp", "sip", "video_rtcp", "video_rtp"}
 
 
 def _load(name: str):
@@ -41,10 +42,16 @@ def _load(name: str):
         package = types.ModuleType(PKG_NAME)
         package.__path__ = [str(PKG_DIR)]
         sys.modules[PKG_NAME] = package
-    full_name = f"{PKG_NAME}.{name}"
+    is_core = name in CORE_MODULES
+    if is_core and f"{PKG_NAME}.core" not in sys.modules:
+        core_package = types.ModuleType(f"{PKG_NAME}.core")
+        core_package.__path__ = [str(PKG_DIR / "core")]
+        sys.modules[core_package.__name__] = core_package
+    full_name = f"{PKG_NAME}.{'core.' if is_core else ''}{name}"
     if full_name in sys.modules:
         return sys.modules[full_name]
-    spec = importlib.util.spec_from_file_location(full_name, PKG_DIR / f"{name}.py")
+    path = PKG_DIR / ("core" if is_core else "") / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(full_name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {full_name}")
     module = importlib.util.module_from_spec(spec)

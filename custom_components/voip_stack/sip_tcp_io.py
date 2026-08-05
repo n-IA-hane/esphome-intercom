@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 
-from . import sip
+from .core import sip
 
 _LOGGER = logging.getLogger(__name__)
 

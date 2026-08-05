@@ -24,7 +24,7 @@ def _connected_identity_for_call(
 ) -> tuple[str, str]:
     """Resolve one human name and stable SIP user from canonical call ownership."""
 
-    from .sip import parse_sip_uri
+    from .core.sip import parse_sip_uri
 
     registry = call_projection(hass)
     if registry is None:

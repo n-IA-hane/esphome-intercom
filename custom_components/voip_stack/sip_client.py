@@ -11,17 +11,17 @@ import secrets
 import socket
 from typing import Any, Awaitable, Callable
 
-from .audio_format import AudioFormat, HA_SIP_PCM_FORMATS, PcmFormat
-from . import g711
-from .codec_capabilities import supports_dahua_pcm
-from .g722_codec import G722Decoder, G722Encoder
-from .opus_codec import OpusDecoder, OpusEncoder
+from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS, PcmFormat
+from .core import g711
+from .core.codec_capabilities import supports_dahua_pcm
+from .core.g722_codec import G722Decoder, G722Encoder
+from .core.opus_codec import OpusDecoder, OpusEncoder
 from .session_cleanup import async_wait_for_cleanup
-from . import sdp, sip
-from .sip_auth import build_digest_authorization
+from .core import sdp, sip
+from .core.sip_auth import build_digest_authorization
 from .sip_tcp_io import SipTcpWriter, read_sip_stream_message as _read_sip_stream_message
 from .sip_udp_io import SipDatagramQueueProtocol
-from .sip_transaction import (
+from .core.sip_transaction import (
     SIP_T1,
     SIP_T2,
     SIP_TIMER_B,

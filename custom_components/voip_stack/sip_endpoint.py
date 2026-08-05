@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 import logging
-from .audio_format import AudioFormat
+from .core.audio_format import AudioFormat
 from .session_cleanup import async_wait_for_cleanup
 from .sip_listener import (
     InfoHandler,

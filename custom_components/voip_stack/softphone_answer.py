@@ -27,7 +27,7 @@ from .runtime_data import (
 from .route_decisions import set_pending_route_decision
 from .sip_runtime import send_bye, send_final_response
 from .softphone_commands import BrowserCallCommand, bind_service_call_controller
-from .video_rtp import RtpSenderState
+from .core.video_rtp import RtpSenderState
 from .websocket_api import _set_ha_softphone_call_state
 
 
@@ -187,7 +187,7 @@ async def async_answer_browser_call(
         )
 
     preanswered = registry.take_media(call_id, provisional=True)
-    from .sdp import (
+    from .core.sdp import (
         browser_video_send_supported,
         build_answer_directional,
         constrained_video_direction,

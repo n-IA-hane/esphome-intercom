@@ -16,6 +16,13 @@ PACKAGE = "voip_assist_reinvite_test"
 
 
 def _module(name: str, **values):
+    if "." in name:
+        parent = name.rsplit(".", 1)[0]
+        parent_name = f"{PACKAGE}.{parent}"
+        if parent_name not in sys.modules:
+            package = types.ModuleType(parent_name)
+            package.__path__ = []
+            sys.modules[parent_name] = package
     module = types.ModuleType(f"{PACKAGE}.{name}")
     for key, value in values.items():
         setattr(module, key, value)
@@ -80,7 +87,7 @@ def _load_module(registry, answer_calls: list[dict]):
         return "m=audio 41000 RTP/AVP 111\r\nm=video 0 RTP/AVP 104\r\n"
 
     _module(
-        "sdp",
+        "core.sdp",
         build_answer_directional=build_answer_directional,
         constrained_media_direction=lambda *_args, **_kwargs: "sendrecv",
         constrained_video_direction=lambda *_args, **_kwargs: "inactive",

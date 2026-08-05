@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
 
-from . import sdp as sip_sdp
-from .audio_format import (
+from .core import sdp as sip_sdp
+from .core.audio_format import (
     HA_SIP_PCM_FORMATS,
     HA_SIP_PCM_RX_FORMATS,
     HA_SIP_PCM_TX_FORMATS,
@@ -113,7 +113,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         send_final_response as _sip_send_final_response,
         uri_transport as _sip_uri_transport,
     )
-    from .sip import parse_sip_uri
+    from .core.sip import parse_sip_uri
     from .sip_endpoint import SipEndpointManager
     from .sip_listener import SipInvite, SipInviteResult
     from .sip_registrar import SipRegistrar

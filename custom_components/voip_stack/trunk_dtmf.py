@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 import logging
 
-from . import sdp
+from .core import sdp
 from .dtmf import DtmfCollector, collect_info_digits
 
 

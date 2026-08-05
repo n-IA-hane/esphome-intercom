@@ -12,9 +12,9 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from . import sip
-from .codec_capabilities import supports_dahua_pcm
-from .sip_auth import parse_digest_challenge, sip_digest_md5
+from .core import sip
+from .core.codec_capabilities import supports_dahua_pcm
+from .core.sip_auth import parse_digest_challenge, sip_digest_md5
 from .roster import RosterEntry
 
 

@@ -23,7 +23,10 @@ def trunk_dtmf(monkeypatch):
     package.__path__ = [str(MODULE.parent)]
     monkeypatch.setitem(sys.modules, package_name, package)
 
-    sdp = types.ModuleType(f"{package_name}.sdp")
+    core_package = types.ModuleType(f"{package_name}.core")
+    core_package.__path__ = []
+    monkeypatch.setitem(sys.modules, core_package.__name__, core_package)
+    sdp = types.ModuleType(f"{package_name}.core.sdp")
     sdp.offered_dtmf_formats = lambda _offer: []
     monkeypatch.setitem(sys.modules, sdp.__name__, sdp)
 

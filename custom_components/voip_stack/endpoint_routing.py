@@ -7,7 +7,7 @@ import logging
 
 from homeassistant.core import HomeAssistant
 
-from .audio_format import (
+from .core.audio_format import (
     AudioFormat,
     HA_SIP_PCM_RX_FORMATS,
     HA_SIP_PCM_TX_FORMATS,

@@ -18,7 +18,7 @@ from aiohttp import WSMsgType, web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-from . import rtp, sdp
+from .core import rtp, sdp
 from .config import debug_mode, transport_config
 from .const import CONF_VIDEO_TRANSCODING, DOMAIN
 from .media_debug import merge_media_debug
@@ -31,7 +31,7 @@ from .queue_utils import drain_queue
 from .runtime_data import call_projection, require_runtime_data
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import SipCallClient
-from .video_rtcp import (
+from .core.video_rtcp import (
     RtcpError,
     build_fir,
     build_pli,
@@ -44,7 +44,7 @@ from .video_transcoder import (
     FfmpegVideoTranscoder,
     VideoTranscoderError,
 )
-from .video_rtp import (
+from .core.video_rtp import (
     H264Depacketizer,
     H264RtpError,
     JpegDepacketizer,
