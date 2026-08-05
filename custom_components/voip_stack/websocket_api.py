@@ -1443,6 +1443,7 @@ def _ha_softphone_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
 
 async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
     from .device_resolver import get_resolver
+    from .repairs import async_sync_esphome_action_issue
 
     devices = await get_resolver(hass).list_devices()
     registry = _endpoint_registry(hass)
@@ -1495,6 +1496,7 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
         device["endpoint_id"] = endpoint_id
         device["endpoint_type"] = EndpointKind.ESPHOME.value
         device["capabilities"] = sorted(capabilities)
+        async_sync_esphome_action_issue(hass, device)
 
     # Keep physical devices represented when temporarily unreachable; only
     # their transport availability changes. VoIP Stack never creates/adopts

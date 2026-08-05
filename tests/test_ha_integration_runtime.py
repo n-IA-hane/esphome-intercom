@@ -408,6 +408,43 @@ async def test_system_health_and_media_capture_repair_are_privacy_safe(
     assert ir.async_get(hass).async_get_issue(DOMAIN, MEDIA_CAPTURE_ISSUE_ID) is None
 
 
+async def test_esphome_call_control_repair_tracks_missing_actions(
+    hass: HomeAssistant,
+) -> None:
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.voip_stack.repairs import (
+        ESPHOME_ACTION_ISSUE_PREFIX,
+        async_sync_esphome_action_issue,
+    )
+
+    device = {
+        "device_id": "p4-device",
+        "name": "P4",
+        "route_id": "p4",
+    }
+    issue_id = f"{ESPHOME_ACTION_ISSUE_PREFIX}p4-device"
+
+    async_sync_esphome_action_issue(hass, device)
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+
+    assert issue is not None
+    assert issue.translation_placeholders == {
+        "phone": "P4",
+        "actions": "start_call, answer_call, decline_call, hangup_call",
+    }
+
+    async def handle_action(_call) -> None:
+        return None
+
+    for action in ("start_call", "answer_call", "decline_call", "hangup_call"):
+        hass.services.async_register("esphome", f"p4_{action}", handle_action)
+
+    async_sync_esphome_action_issue(hass, device)
+
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
 async def test_deleting_the_last_browser_phone_does_not_restore_a_default(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,

@@ -200,6 +200,10 @@
     }
   },
   "issues": {
+    "esphome_actions_incomplete": {
+      "title": "Il controllo del telefono ESPHome è incompleto",
+      "description": "A {phone} mancano le azioni ESPHome per le chiamate: {actions}. Aggiorna il package telefonico VoIP e il firmware."
+    },
     "media_capture_enabled": {
       "title": "La cattura dei media privati è attiva",
       "description": "VoIP Stack sta salvando i media privati delle chiamate per la diagnostica. Disattiva la cattura dei media al termine della verifica."

@@ -200,6 +200,10 @@
     }
   },
   "issues": {
+    "esphome_actions_incomplete": {
+      "title": "ESPHome phone control is incomplete",
+      "description": "{phone} is missing the ESPHome call-control actions: {actions}. Update its VoIP phone package and firmware."
+    },
     "media_capture_enabled": {
       "title": "Private media capture is enabled",
       "description": "VoIP Stack is saving private call media for diagnostics. Disable media capture when troubleshooting is complete."
