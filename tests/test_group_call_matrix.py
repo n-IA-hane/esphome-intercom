@@ -177,7 +177,7 @@ class _FakeHass:
                 debug_capture_dropped_writes=0,
             ),
         )
-        endpoint_lifecycle_module.call_registry(self).session_owner().activate()
+        endpoint_lifecycle_module.call_registry(self).activate()
 
 
 def _test_runtime(hass):

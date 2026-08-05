@@ -181,7 +181,7 @@ class _FakeHass:
             ),
         )
         if activate_calls:
-            endpoint_lifecycle.call_registry(self).session_owner().activate()
+            endpoint_lifecycle.call_registry(self).activate()
 
     def async_create_task(self, coro):
         return asyncio.create_task(coro)
@@ -771,7 +771,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         runtime_task = endpoint_lifecycle.create_runtime_task(hass, asyncio.Event().wait())
         endpoint = Endpoint()
         manager = Manager()
-        owner = registry.session_owner()
+        owner = registry
         owner.attach_component("conference_manager", manager, closer=manager.close)
         owner.attach_component("udp_listener", endpoint, closer=endpoint.stop)
         owner.activate()

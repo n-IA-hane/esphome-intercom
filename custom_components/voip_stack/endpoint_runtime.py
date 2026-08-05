@@ -195,7 +195,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     registry = _call_registry(hass)
     # Call control and its HA projection share one runtime owner.  It remains
     # dark until every listener component has transferred into it.
-    pbx_runtime = registry.session_owner()
+    pbx_runtime = registry
     pbx_runtime.attach_component("registrar", registrar)
     route_resolver = EndpointRouteResolver(
         hass=hass,

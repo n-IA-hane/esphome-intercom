@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from .endpoint_session import (
     CallEventContext,
@@ -14,10 +14,6 @@ from .endpoint_session import (
 from .automation_routing import CALL_EVENT_SCHEMA_VERSION
 from .media_reservation import release_media_reservation
 from .session_cleanup import async_cleanup_sip_runtime
-
-if TYPE_CHECKING:
-    from .pbx_runtime import SipEndpointRuntime
-
 
 LegRole = Literal[
     "caller",
@@ -57,11 +53,6 @@ def _owner_observation_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
 class CallRuntimeApi:
     """Call operations implemented directly by the authoritative runtime."""
 
-    def session_owner(self) -> SipEndpointRuntime:
-        """Return the sole call owner."""
-
-        return self._session_owner
-
     def _observe_session(self, session: EndpointCallSession) -> None:
         observation = _owner_observation_metadata(session.metadata)
         observation.update(
@@ -73,7 +64,7 @@ class CallRuntimeApi:
             terminal_reason=session.terminal_reason,
         )
         revision = session.revision
-        self._session_owner.observe_call(
+        self.observe_call(
             session.id,
             state=session.state,
             generation=session.generation,
@@ -82,35 +73,35 @@ class CallRuntimeApi:
         session.revision = revision
 
     def _artifact_view(self, name: str) -> dict[str, Any]:
-        return self._session_owner.artifacts_snapshot(name)
+        return self.artifacts_snapshot(name)
 
     def _set_artifact(self, call_id: str, name: str, value: Any) -> None:
-        if not self._session_owner.set_artifact(call_id, name, value):
+        if not self.set_artifact(call_id, name, value):
             raise RuntimeError(f"call session {call_id!r} is unavailable")
 
     def _take_artifact(self, call_id: str, name: str) -> Any | None:
-        return self._session_owner.take_artifact(call_id, name)
+        return self.take_artifact(call_id, name)
 
     def _resource_view(self, name: str) -> dict[str, Any]:
-        return self._session_owner.resources_snapshot(name)
+        return self.resources_snapshot(name)
 
     @property
     def relays(self) -> dict[str, Any]:
-        return self._session_owner.relays_snapshot()
+        return self.relays_snapshot()
 
     @property
     def sip_clients(self) -> dict[str, Any]:
-        return self._session_owner.sip_clients_snapshot()
+        return self.sip_clients_snapshot()
 
     @property
     def client_watchers(self) -> dict[str, Any]:
-        return self._session_owner.client_watchers_snapshot()
+        return self.client_watchers_snapshot()
 
     @property
     def bridge_clients(self) -> dict[str, str]:
         """Return a detached projection of bridge links."""
 
-        return self._session_owner.bridge_links_snapshot()
+        return self.bridge_links_snapshot()
 
     @property
     def pending_invites(self) -> dict[str, Any]:
@@ -139,7 +130,7 @@ class CallRuntimeApi:
     def set_pending_route(self, call_id: str, route: dict[str, Any]) -> None:
         """Begin routing on the authoritative owner and attach its decision state."""
 
-        if self._session_owner.get_session(call_id) is None:
+        if self.get_session(call_id) is None:
             self.upsert(call_id, state="connecting", owner="router")
 
         self._set_artifact(call_id, "pending_route", route)
@@ -167,20 +158,9 @@ class CallRuntimeApi:
 
         return self._take_artifact(call_id, "pending_invite")
 
-    def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> None:
-        """Record a bridge link on its call session."""
-
-        if not self._session_owner._set_bridge_link(source_call_id, dest_call_id):
-            raise RuntimeError(f"call session {source_call_id!r} is unavailable")
-
-    def forget_bridge_link(self, source_call_id: str) -> str:
-        """Forget a bridge link from its call session."""
-
-        return self._session_owner._forget_bridge_link(source_call_id)
-
     @property
     def endpoint_claims(self) -> dict[str, dict[str, str]]:
-        return self._session_owner.endpoint_claims_snapshot()
+        return self.endpoint_claims_snapshot()
 
     def publish(self, snapshot: Any) -> None:
         """Accept owner notifications without maintaining a second session."""
@@ -259,7 +239,7 @@ class CallRuntimeApi:
             return False
         session = self.sessions.get(session_id)
         if session is not None:
-            if not self._session_owner.claim_termination(
+            if not self.claim_termination(
                 session_id,
                 reason,
                 generation=session.generation,
@@ -285,75 +265,11 @@ class CallRuntimeApi:
         ``release_call`` protocol.  This keeps the SIP session model reusable in
         pure tests while making teardown the single owner of endpoint release.
         """
-        if registry is self._session_owner.endpoint_registry:
+        if registry is self.endpoint_registry:
             return
         if self.endpoint_claims:
             self._release_all_endpoint_claims()
-        self._session_owner._bind_endpoint_registry(registry)
-
-    def claim_endpoint(
-        self,
-        call_id: str,
-        endpoint_id: str,
-        *,
-        role: str = "endpoint",
-        adopt_transport: bool = False,
-    ) -> bool:
-        """Atomically reserve an endpoint for this logical call.
-
-        Returns ``False`` only when no endpoint registry is configured (the
-        supported YAML-only compatibility mode).  Busy errors from the bound
-        registry remain authoritative and are intentionally propagated.
-        ``adopt_transport`` may replace only the provisional ``physical:``
-        claim emitted by an ESP state entity; it can never steal a real call.
-        """
-        registry = self._session_owner.endpoint_registry
-        endpoint_id = str(endpoint_id or "").strip()
-        if registry is None or not endpoint_id:
-            return False
-        session_id = self.resolve_session_id(str(call_id or "").strip())
-        if not session_id:
-            raise ValueError("call_id must not be empty")
-        session = self.sessions.get(session_id) or self.upsert(
-            session_id,
-            state="new",
-        )
-        claimed = self._session_owner._claim_endpoint(
-            session_id,
-            endpoint_id,
-            role=role,
-            adopt_transport=adopt_transport,
-            generation=session.generation,
-        )
-        if claimed:
-            session.revision += 1
-        return claimed
-
-    def release_endpoint_claims(self, call_id: str) -> None:
-        """Release every logical endpoint owned by a call or one of its legs."""
-        session_id = self.resolve_session_id(str(call_id or "").strip())
-        session = self.sessions.get(session_id)
-        if session is not None:
-            self._session_owner._release_endpoint_claims(
-                session_id,
-                generation=session.generation,
-            )
-
-    def release_endpoint_claim(self, call_id: str, endpoint_id: str) -> bool:
-        """Release one losing/finished endpoint leg without ending the call."""
-        session_id = self.resolve_session_id(str(call_id or "").strip())
-        endpoint_id = str(endpoint_id or "").strip()
-        session = self.sessions.get(session_id)
-        if session is not None:
-            released = self._session_owner._release_endpoint_claim(
-                session_id,
-                endpoint_id,
-                generation=session.generation,
-            )
-            if released:
-                session.revision += 1
-            return released
-        return False
+        self._bind_endpoint_registry(registry)
 
     def _release_all_endpoint_claims(self) -> None:
         for session_id in tuple(self.endpoint_claims):
@@ -529,7 +445,7 @@ class CallRuntimeApi:
             ownership_metadata["ingress"] = ingress
         if origin:
             ownership_metadata["origin"] = origin
-        authoritative = self._session_owner.ensure_session(
+        authoritative = self.ensure_session(
             call_id,
             caller=caller,
             callee=callee,
@@ -666,7 +582,7 @@ class CallRuntimeApi:
             ):
                 session.metadata.update(clean_metadata)
                 session.revision += 1
-        self._session_owner.observe_leg(
+        self.observe_leg(
             call_id,
             leg_id,
             role=role,
@@ -688,7 +604,7 @@ class CallRuntimeApi:
         if session is None:
             return None
         leg = session.legs.get(leg_id)
-        if leg is not None and self._session_owner.release_leg(
+        if leg is not None and self.release_leg(
             session_id,
             leg_id,
             generation=session.generation,
@@ -715,7 +631,7 @@ class CallRuntimeApi:
         async def _close_client(_reason: str) -> None:
             await async_cleanup_sip_runtime(client=client, terminate_client=True)
 
-        self._session_owner.observe_leg(
+        self.observe_leg(
             session_id,
             dest_call_id,
             role=role,
@@ -731,7 +647,7 @@ class CallRuntimeApi:
         session = self.sessions.get(session_id)
         client = self.sip_clients.get(call_id)
         if client is not None and session is not None:
-            self._session_owner.release_leg(
+            self.release_leg(
                 session_id,
                 call_id,
                 dialog=client,
@@ -739,19 +655,12 @@ class CallRuntimeApi:
             )
         return client
 
-    def attach_relay(self, call_id: str, relay: Any) -> None:
-        if not self._session_owner._attach_relay(call_id, relay):
-            raise RuntimeError(f"call session {call_id!r} is unavailable")
-
-    def take_relay(self, call_id: str) -> Any | None:
-        return self._session_owner._take_relay(call_id)
-
     def attach_client_watcher(self, call_id: str, task: Any) -> None:
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
         if session is None:
             raise RuntimeError(f"call session {call_id!r} is unavailable")
-        self._session_owner.own_task(
+        self.own_task(
             session_id,
             task,
             name=f"client_watcher:{call_id}",
@@ -763,7 +672,7 @@ class CallRuntimeApi:
         session = self.sessions.get(session_id)
         task = self.client_watchers.get(call_id)
         if task is not None and session is not None:
-            self._session_owner.release_task(
+            self.release_task(
                 session_id,
                 task,
                 generation=session.generation,
@@ -787,7 +696,7 @@ class CallRuntimeApi:
         def _release_media(_reason: str) -> None:
             release_media_reservation(media)
 
-        self._session_owner.own_resource(
+        self.own_resource(
             session_id,
             resource_name,
             media,
@@ -810,7 +719,7 @@ class CallRuntimeApi:
         media = index.get(call_id, default)
         if media is default or session is None:
             return media
-        self._session_owner.release_resource(
+        self.release_resource(
             session_id,
             f"{prefix}:{call_id}",
             value=media,
@@ -904,16 +813,16 @@ class CallRuntimeApi:
     def pop(self, call_id: str) -> EndpointCallSession | None:
         call_id = str(call_id or "").strip()
         session_id = self.resolve_session_id(call_id)
-        if not self._session_owner.active:
+        if not self.active:
             self.release_endpoint_claims(session_id)
         session = self.sessions.get(session_id)
-        if session is not None and self._session_owner.active:
-            self._session_owner.request_termination(
+        if session is not None and self.active:
+            self.request_termination(
                 session_id,
                 session.terminal_reason or session.outcome or "removed",
                 generation=session.generation,
             )
-        if not self._session_owner.active:
+        if not self.active:
             self.sessions.pop(session_id, None)
         self.forget_bridge_link(session_id)
         event_context_ids = {call_id, session_id}
@@ -987,7 +896,7 @@ class CallRuntimeApi:
         session = self.sessions.get(session_id)
         barrier = None
         if session is not None:
-            barrier = self._session_owner.request_termination(
+            barrier = self.request_termination(
                 session_id,
                 reason or session.terminal_reason or session.outcome or "removed",
                 generation=session.generation,
@@ -1052,7 +961,7 @@ class CallRuntimeApi:
             expected_generation,
         ):
             return None
-        if lifecycle_task is None and self._session_owner.active:
+        if lifecycle_task is None and self.active:
             raise ValueError("SIP bridge requires a lifecycle task")
         session = self.upsert(
             source_call_id,
@@ -1086,7 +995,7 @@ class CallRuntimeApi:
         return session
 
     def clear_runtime(self) -> None:
-        if self._session_owner.calls:
+        if self.calls:
             raise RuntimeError("cannot clear projection before PBX shutdown")
         self._release_all_endpoint_claims()
         self.sessions.clear()

@@ -169,7 +169,6 @@ class SipEndpointRuntime(CallRuntimeApi):
         self.terminal_summary_ids: OrderedDict[str, None] = OrderedDict()
         self.terminated_call_ids: OrderedDict[str, int] = OrderedDict()
         self.media_controller_lock = asyncio.Lock()
-        self._session_owner = self
         self._generation = 0
         self._projection = projection
         self._allow_dark_sessions = allow_dark_sessions
@@ -354,17 +353,16 @@ class SipEndpointRuntime(CallRuntimeApi):
             return None
         return session.artifacts.pop(name, None)
 
-    def _set_bridge_link(self, source_call_id: str, dest_call_id: str) -> bool:
+    def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> None:
         """Attach one destination dialog identity to its source session."""
 
         session = self.get_session(source_call_id)
         clean_dest_call_id = str(dest_call_id or "").strip()
         if session is None or not session.live or not clean_dest_call_id:
-            return False
+            raise RuntimeError(f"call session {source_call_id!r} is unavailable")
         session.update_metadata(bridge_dest_call_id=clean_dest_call_id)
-        return True
 
-    def _forget_bridge_link(self, source_call_id: str) -> str:
+    def forget_bridge_link(self, source_call_id: str) -> str:
         """Remove and return one destination link without ending the session."""
 
         session = self.get_session(source_call_id)
@@ -375,7 +373,7 @@ class SipEndpointRuntime(CallRuntimeApi):
             self._publish(session)
         return dest_call_id
 
-    def _attach_relay(self, call_id: str, relay: Any) -> bool:
+    def attach_relay(self, call_id: str, relay: Any) -> None:
         """Make one RTP relay a media resource of its call session."""
 
         clean_call_id = str(call_id or "").strip()
@@ -383,15 +381,16 @@ class SipEndpointRuntime(CallRuntimeApi):
         async def _stop_relay(_reason: str) -> None:
             await relay.stop()
 
-        return self.own_resource(
+        if not self.own_resource(
             clean_call_id,
             f"relay:{clean_call_id}",
             relay,
             _stop_relay,
             stage=CleanupStage.MEDIA,
-        )
+        ):
+            raise RuntimeError(f"call session {call_id!r} is unavailable")
 
-    def _take_relay(self, call_id: str) -> Any | None:
+    def take_relay(self, call_id: str) -> Any | None:
         """Transfer one relay out of the authoritative cleanup barrier."""
 
         clean_call_id = str(call_id or "").strip()
@@ -408,22 +407,24 @@ class SipEndpointRuntime(CallRuntimeApi):
         session.release_resource(resource_name, value=resource.value)
         return resource.value
 
-    def _claim_endpoint(
+    def claim_endpoint(
         self,
         call_id: str,
         endpoint_id: str,
         *,
         role: str = "endpoint",
         adopt_transport: bool = False,
-        generation: int | None = None,
     ) -> bool:
         """Reserve one phone as a resource of the authoritative session."""
 
         registry = self._endpoint_registry
-        session = self.get_session(call_id, generation=generation)
+        session_id = self.resolve_session_id(str(call_id or "").strip())
         clean_endpoint_id = str(endpoint_id or "").strip()
-        if registry is None or session is None or not clean_endpoint_id:
+        if registry is None or not clean_endpoint_id:
             return False
+        if not session_id:
+            raise ValueError("call_id must not be empty")
+        session = self.sessions.get(session_id) or self.upsert(session_id, state="new")
         if adopt_transport and hasattr(registry, "adopt_transport_call"):
             registry.adopt_transport_call(clean_endpoint_id, session.call_id)
         else:
@@ -448,19 +449,19 @@ class SipEndpointRuntime(CallRuntimeApi):
                 stage=CleanupStage.RESERVATION,
             )
         if previous != session.endpoint_claims[clean_endpoint_id]:
+            session.revision += 1
             self._publish(session)
         return True
 
-    def _release_endpoint_claim(
+    def release_endpoint_claim(
         self,
         call_id: str,
         endpoint_id: str,
-        *,
-        generation: int | None = None,
     ) -> bool:
         """Release one losing phone without terminating the whole call."""
 
-        session = self.get_session(call_id, generation=generation)
+        session_id = self.resolve_session_id(str(call_id or "").strip())
+        session = self.sessions.get(session_id)
         clean_endpoint_id = str(endpoint_id or "").strip()
         if (
             session is None
@@ -479,26 +480,20 @@ class SipEndpointRuntime(CallRuntimeApi):
             not hasattr(registry, "get") or registry.get(clean_endpoint_id) is not None
         ):
             released = bool(registry.release_call(clean_endpoint_id, session.call_id))
+        if released:
+            session.revision += 1
         self._publish(session)
         return released
 
-    def _release_endpoint_claims(
-        self,
-        call_id: str,
-        *,
-        generation: int | None = None,
-    ) -> None:
+    def release_endpoint_claims(self, call_id: str) -> None:
         """Release every phone claim owned by one live call."""
 
-        session = self.get_session(call_id, generation=generation)
+        session_id = self.resolve_session_id(str(call_id or "").strip())
+        session = self.sessions.get(session_id)
         if session is None:
             return
         for endpoint_id in tuple(session.endpoint_claims):
-            self._release_endpoint_claim(
-                session.call_id,
-                endpoint_id,
-                generation=session.generation,
-            )
+            self.release_endpoint_claim(session.call_id, endpoint_id)
 
     def activate(self) -> None:
         """Make this owner authoritative without starting any I/O itself."""

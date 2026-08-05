@@ -126,7 +126,7 @@ def test_generated_lifecycle_sequences_preserve_registry_invariants(
                 generations[call_id],
             )
 
-    asyncio.run(registry.session_owner().shutdown())
+    asyncio.run(registry.shutdown())
     registry.clear_runtime()
     assert all(
         count == 0

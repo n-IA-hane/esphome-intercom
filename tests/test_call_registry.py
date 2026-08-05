@@ -622,7 +622,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         session = registry.sessions["route-first"]
         assert session.state == "connecting"
         assert session.owner == "router"
-        assert registry.session_owner().get_session("route-first") is not None
+        assert registry.get_session("route-first") is not None
         assert "route-first" in registry.pending_routes
 
     def test_endpoint_claims_are_atomic_and_released_by_leg_teardown(self) -> None:
@@ -667,7 +667,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry.upsert("call-1", state="in_call", owner="bridge")
         registry.claim_endpoint("call-1", "office")
 
-        asyncio.run(registry.session_owner().shutdown())
+        asyncio.run(registry.shutdown())
         registry.clear_runtime()
 
         self.assertEqual(endpoints.active, {})
