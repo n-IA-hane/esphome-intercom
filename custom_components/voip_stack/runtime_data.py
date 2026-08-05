@@ -98,3 +98,12 @@ def conference_component(hass: HomeAssistant) -> Any | None:
     """Return the conference manager owned by the active SIP runtime."""
 
     return sip_component(hass, "conference_manager")
+
+
+def sip_endpoint_manager(hass: HomeAssistant) -> Any | None:
+    """Return the shared UDP/TCP endpoint manager owned by the SIP runtime."""
+
+    runtime = sip_endpoint_runtime(hass)
+    if runtime is not None:
+        return runtime.component("udp_listener")
+    return hass.data.get(DOMAIN, {}).get("sip_endpoint")

@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-from .runtime_data import call_projection, sip_trunk
+from .runtime_data import call_projection, sip_endpoint_manager, sip_trunk
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,12 +54,12 @@ def _connected_identity_for_call(
 
 def sip_servers(hass: HomeAssistant) -> list[object]:
     """Return every signaling endpoint that may own an inbound dialog."""
-    bucket = hass.data.get(DOMAIN, {})
     servers: list[object] = []
-    endpoint = bucket.get("sip_endpoint")
+    endpoint = sip_endpoint_manager(hass)
     if endpoint is not None:
         servers.append(endpoint)
     else:
+        bucket = hass.data.get(DOMAIN, {})
         servers.extend(
             server
             for server in (bucket.get("sip_server"), bucket.get("sip_tcp_server"))
@@ -142,7 +142,7 @@ def enable_reused_tcp_connection(
     """
     if uri_transport(uri).upper() != "TCP":
         return False
-    endpoint = hass.data.get(DOMAIN, {}).get("sip_endpoint")
+    endpoint = sip_endpoint_manager(hass)
     tcp_server = getattr(endpoint, "tcp_server", None)
     if tcp_server is None:
         _LOGGER.debug(

@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from .call_registry import CallRegistry
 from .const import DOMAIN
 from .media_ports import release_media_reservation
-from .runtime_data import conference_component, runtime_data
+from .runtime_data import conference_component, runtime_data, sip_endpoint_manager
 from .session_cleanup import async_cleanup_sip_runtime, async_wait_for_cleanup
 
 _LOGGER = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ async def async_stop_sip_endpoint(hass: HomeAssistant) -> None:
 async def _async_stop_sip_endpoint(hass: HomeAssistant) -> None:
     registry = call_registry(hass)
     bucket = hass.data.get(DOMAIN, {})
-    endpoint = bucket.get("sip_endpoint")
+    endpoint = sip_endpoint_manager(hass)
     runtime = runtime_data(hass)
     pbx_runtime = runtime.sip if runtime is not None else bucket.get("pbx_runtime")
 

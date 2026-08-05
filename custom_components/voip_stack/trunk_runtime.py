@@ -21,7 +21,7 @@ from .const import (
     DOMAIN,
 )
 from .session_cleanup import async_wait_for_cleanup
-from .runtime_data import sip_endpoint_runtime, sip_trunk
+from .runtime_data import sip_endpoint_manager, sip_endpoint_runtime, sip_trunk
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ async def async_start_sip_trunk(hass: HomeAssistant, *, local_ip: str) -> bool:
         local_ip=local_ip,
         local_sip_port=int(transport_config(hass)["sip_port"]),
     )
-    endpoint = hass.data.get(DOMAIN, {}).get("sip_endpoint")
+    endpoint = sip_endpoint_manager(hass)
     if endpoint is not None:
         trunk.attach_endpoint_manager(endpoint)
     bucket = hass.data.setdefault(DOMAIN, {})

@@ -13,7 +13,12 @@ from homeassistant.helpers.device_registry import DeviceEntry
 from .config import trunk_config
 from .const import DOMAIN, INTEGRATION_VERSION
 from .runtime_diagnostics import runtime_resource_snapshot
-from .runtime_data import call_projection, runtime_data, sip_trunk
+from .runtime_data import (
+    call_projection,
+    runtime_data,
+    sip_endpoint_manager,
+    sip_trunk,
+)
 
 
 # SIP identities, routing aliases and network topology are private even when
@@ -104,10 +109,10 @@ def _endpoint_summary(bucket: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _signaling_summary(bucket: dict[str, Any]) -> dict[str, Any]:
+def _signaling_summary(hass: HomeAssistant) -> dict[str, Any]:
     """Return bounded listener state without Call-IDs or peer addresses."""
 
-    endpoint = bucket.get("sip_endpoint")
+    endpoint = sip_endpoint_manager(hass)
     snapshot = getattr(endpoint, "snapshot", None)
     if not callable(snapshot):
         return {"configured": False}
@@ -146,7 +151,7 @@ def _runtime_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, A
     runtime = runtime_data(hass)
     return {
         "endpoints": _endpoint_summary(bucket),
-        "signaling": _signaling_summary(bucket),
+        "signaling": _signaling_summary(hass),
         "trunk": _trunk_summary(hass, bucket),
         "resources": runtime_resource_snapshot(
             bucket,

@@ -9,7 +9,12 @@ from homeassistant.core import HomeAssistant, callback
 
 from .const import DOMAIN
 from .phone_endpoint import EndpointAvailability, EndpointKind
-from .runtime_data import runtime_data, sip_registrar, sip_trunk
+from .runtime_data import (
+    runtime_data,
+    sip_endpoint_manager,
+    sip_registrar,
+    sip_trunk,
+)
 
 
 @callback
@@ -27,7 +32,7 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
 
     runtime = runtime_data(hass)
     bucket = hass.data.get(DOMAIN, {})
-    endpoint = bucket.get("sip_endpoint")
+    endpoint = sip_endpoint_manager(hass)
     phones = tuple(runtime.endpoints.endpoints) if runtime is not None else ()
     registrar = sip_registrar(hass)
     registrar_snapshot = registrar.snapshot() if registrar is not None else {}

@@ -71,7 +71,7 @@ from .phone_endpoint import (
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .router import RouteReason
 from .ring_group_orchestrator import RingGroupRuntime, run_ring_group_call
-from .runtime_data import runtime_data, sip_trunk
+from .runtime_data import runtime_data, sip_endpoint_manager, sip_trunk
 from .store import sip_accounts as _sip_accounts
 from .trunk_inbound_router import (
     TrunkInboundRuntime,
@@ -124,7 +124,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     )
     from .groups import GROUP_TYPE_CONFERENCE, GROUP_TYPE_RING
 
-    if hass.data.get(DOMAIN, {}).get("sip_endpoint") is not None:
+    if sip_endpoint_manager(hass) is not None:
         _LOGGER.debug("Stopping existing SIP endpoint before rebinding listeners")
         await async_stop_sip_endpoint(hass)
 
@@ -803,9 +803,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             bucket.pop("pbx_runtime", None)
         return False
     hass.data[DOMAIN]["async_forward_call"] = _async_forward_existing_call
-    hass.data[DOMAIN]["sip_endpoint"] = endpoint
-    hass.data[DOMAIN]["sip_server"] = endpoint.udp_server
-    hass.data[DOMAIN]["sip_tcp_server"] = endpoint.tcp_server
     _LOGGER.info(
         "SIP endpoint enabled on UDP+TCP/%s (RTP base %s)",
         cfg["sip_port"],

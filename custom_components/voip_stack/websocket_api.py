@@ -55,7 +55,12 @@ from .phone_config import (
 )
 from .debug_capture import debug_capture_pending_writes
 from .runtime_diagnostics import runtime_resource_snapshot
-from .runtime_data import runtime_data, sip_registrar, sip_trunk
+from .runtime_data import (
+    runtime_data,
+    sip_endpoint_manager,
+    sip_registrar,
+    sip_trunk,
+)
 from .websocket_owner import (
     async_revoke_media_owners,
     media_websocket_owner_status,
@@ -755,7 +760,7 @@ def _sip_runtime_snapshot(
     registry = call_registry(hass)
     if not isinstance(registry, CallRegistry):
         registry = None
-    endpoint = bucket.get("sip_endpoint")
+    endpoint = sip_endpoint_manager(hass)
     data: dict[str, Any] = {
         "sip_udp_ready": False,
         "sip_tcp_ready": False,

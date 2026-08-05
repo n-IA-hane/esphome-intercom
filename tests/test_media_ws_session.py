@@ -49,6 +49,9 @@ runtime_data.call_projection = lambda hass: hass.data.get("voip_stack", {}).get(
 runtime_data.sip_trunk = lambda hass: hass.data.get("voip_stack", {}).get(
     "sip_trunk"
 )
+runtime_data.sip_endpoint_manager = lambda hass: hass.data.get(
+    "voip_stack", {}
+).get("sip_endpoint")
 sys.modules[runtime_data.__name__] = runtime_data
 media_ws_session = _load_module("media_ws_session")
 
