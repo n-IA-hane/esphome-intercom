@@ -42,6 +42,9 @@ class PhoneOperation(StrEnum):
     HANGUP = "hangup"
 
 
+ALL_PHONE_OPERATIONS = frozenset(PhoneOperation)
+
+
 @dataclass(frozen=True, slots=True)
 class PhoneHandle:
     """Resolved local phone and its control surface."""
@@ -383,17 +386,7 @@ class PhoneAdapterRegistry:
             if endpoint.kind is EndpointKind.SIP_ACCOUNT:
                 return self._endpoint_handle(endpoint, frozenset())
             if endpoint.kind is EndpointKind.BROWSER:
-                return self._endpoint_handle(
-                    endpoint,
-                    frozenset(
-                        {
-                            PhoneOperation.ORIGINATE,
-                            PhoneOperation.ANSWER,
-                            PhoneOperation.DECLINE,
-                            PhoneOperation.HANGUP,
-                        }
-                    ),
-                )
+                return self._endpoint_handle(endpoint, ALL_PHONE_OPERATIONS)
 
         device = await async_resolve_source_device(
             self._hass,
@@ -436,14 +429,7 @@ class PhoneAdapterRegistry:
         endpoint_id, browser = service_browser_endpoint(self._hass, call)
         return self._endpoint_handle(
             browser,
-            frozenset(
-                {
-                    PhoneOperation.ORIGINATE,
-                    PhoneOperation.ANSWER,
-                    PhoneOperation.DECLINE,
-                    PhoneOperation.HANGUP,
-                }
-            ),
+            ALL_PHONE_OPERATIONS,
             endpoint_id=endpoint_id,
         )
 
