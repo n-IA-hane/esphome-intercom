@@ -156,6 +156,8 @@ class CallSessionOwner(Protocol):
 
     def relays_snapshot(self) -> dict[str, Any]: ...
 
+    def sip_clients_snapshot(self) -> dict[str, Any]: ...
+
     def attach_relay(self, call_id: str, relay: Any) -> bool: ...
 
     def take_relay(self, call_id: str) -> Any | None: ...
@@ -227,7 +229,7 @@ class CallRegistry:
         self.preanswered: dict[str, dict[str, Any]] = {}
         self.softphone_media: dict[str, dict[str, Any]] = {}
         self.video_parameter_sets: dict[str, tuple[bytes, ...]] = {}
-        self.sip_clients: dict[str, Any] = {}
+        self._legacy_sip_clients: dict[str, Any] = {}
         self.client_watchers: dict[str, Any] = {}
         self._legacy_relays: dict[str, Any] = {}
         self.bridge_clients: dict[str, str] = {}
@@ -279,6 +281,14 @@ class CallRegistry:
         if self._session_owner is not None:
             return self._session_owner.relays_snapshot()
         return self._legacy_relays
+
+    @property
+    def sip_clients(self) -> dict[str, Any]:
+        """Compatibility projection of dialogs owned by call legs."""
+
+        if self._session_owner is not None:
+            return self._session_owner.sip_clients_snapshot()
+        return self._legacy_sip_clients
 
     @property
     def endpoint_claims(self) -> dict[str, dict[str, str]]:
@@ -941,13 +951,13 @@ class CallRegistry:
 
         session_id = self.resolve_session_id(str(source_call_id or "").strip())
         session = self.sessions.get(session_id)
-        self.sip_clients[dest_call_id] = client
-        if session is None or self._session_owner is None:
+        if self._session_owner is None:
+            self._legacy_sip_clients[dest_call_id] = client
             return
+        if session is None:
+            raise RuntimeError(f"call session {source_call_id!r} is unavailable")
 
         async def _close_client(_reason: str) -> None:
-            if self.sip_clients.get(dest_call_id) is client:
-                self.sip_clients.pop(dest_call_id, None)
             await async_cleanup_sip_runtime(client=client, terminate_client=True)
 
         self._session_owner.observe_leg(
@@ -966,8 +976,10 @@ class CallRegistry:
 
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
-        client = self.sip_clients.pop(call_id, None)
-        if client is not None and session is not None and self._session_owner is not None:
+        if self._session_owner is None:
+            return self._legacy_sip_clients.pop(call_id, None)
+        client = self.sip_clients.get(call_id)
+        if client is not None and session is not None:
             self._session_owner.release_leg(
                 session_id,
                 call_id,
@@ -1381,7 +1393,7 @@ class CallRegistry:
         self.preanswered.clear()
         self.softphone_media.clear()
         self.video_parameter_sets.clear()
-        self.sip_clients.clear()
+        self._legacy_sip_clients.clear()
         self.client_watchers.clear()
         self._legacy_relays.clear()
         self.bridge_clients.clear()

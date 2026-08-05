@@ -397,6 +397,8 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         registry.attach_relay("source", relay)
         authoritative = runtime.get_session("source")
 
+        self.assertIs(registry.sip_clients["destination"], client)
+        self.assertEqual(registry._legacy_sip_clients, {})
         self.assertIs(registry.relays["source"], relay)
         self.assertEqual(registry._legacy_relays, {})
         self.assertEqual(

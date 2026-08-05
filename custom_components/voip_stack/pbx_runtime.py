@@ -257,6 +257,16 @@ class SipEndpointRuntime:
                     relays[resource.name.removeprefix("relay:")] = resource.value
         return relays
 
+    def sip_clients_snapshot(self) -> dict[str, Any]:
+        """Return dialogs indexed by their SIP Call-ID from owned legs."""
+
+        clients: dict[str, Any] = {}
+        for session in self.calls.values():
+            for leg in session.legs.values():
+                if leg.dialog is not None:
+                    clients[leg.sip_call_id or leg.leg_id] = leg.dialog
+        return clients
+
     def attach_relay(self, call_id: str, relay: Any) -> bool:
         """Make one RTP relay a media resource of its call session."""
 
