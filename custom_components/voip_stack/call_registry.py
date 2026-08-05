@@ -187,7 +187,7 @@ class CallRegistry:
         """Compatibility projection of session-owned inbound INVITEs."""
 
         if self._session_owner is not None:
-            return self._session_owner.pending_invites_snapshot()
+            return self._session_owner.artifacts_snapshot("pending_invite")
         return self._legacy_pending_invites
 
     @property
@@ -195,7 +195,7 @@ class CallRegistry:
         """Compatibility projection of session-owned routing state."""
 
         if self._session_owner is not None:
-            return self._session_owner.pending_routes_snapshot()
+            return self._session_owner.artifacts_snapshot("pending_route")
         return self._legacy_pending_routes
 
     @property
@@ -203,7 +203,7 @@ class CallRegistry:
         """Compatibility projection of session-owned codec configuration."""
 
         if self._session_owner is not None:
-            return self._session_owner.video_parameter_sets_snapshot()
+            return self._session_owner.artifacts_snapshot("video_parameter_sets")
         return self._legacy_video_parameter_sets
 
     def cache_video_parameter_sets(
@@ -214,7 +214,9 @@ class CallRegistry:
         if self._session_owner is None:
             self._legacy_video_parameter_sets[call_id] = tuple(parameter_sets)
             return
-        if not self._session_owner.set_video_parameter_sets(call_id, parameter_sets):
+        if not self._session_owner.set_artifact(
+            call_id, "video_parameter_sets", tuple(parameter_sets)
+        ):
             raise RuntimeError(f"call session {call_id!r} is no longer current")
 
     def clear_video_parameter_sets(self, call_id: str) -> None:
@@ -223,7 +225,7 @@ class CallRegistry:
         if self._session_owner is None:
             self._legacy_video_parameter_sets.pop(call_id, None)
             return
-        self._session_owner.clear_video_parameter_sets(call_id)
+        self._session_owner.take_artifact(call_id, "video_parameter_sets")
 
     def set_pending_route(self, call_id: str, route: dict[str, Any]) -> None:
         """Attach route state through the authoritative owner when present."""
@@ -231,7 +233,7 @@ class CallRegistry:
         if self._session_owner is None:
             self._legacy_pending_routes[call_id] = route
             return
-        if not self._session_owner.set_pending_route(call_id, route):
+        if not self._session_owner.set_artifact(call_id, "pending_route", route):
             raise RuntimeError(f"call session {call_id!r} is no longer current")
 
     def take_pending_route(self, call_id: str) -> dict[str, Any] | None:
@@ -239,7 +241,7 @@ class CallRegistry:
 
         if self._session_owner is None:
             return self._legacy_pending_routes.pop(call_id, None)
-        return self._session_owner.take_pending_route(call_id)
+        return self._session_owner.take_artifact(call_id, "pending_route")
 
     @property
     def preanswered(self) -> dict[str, dict[str, Any]]:
@@ -263,7 +265,7 @@ class CallRegistry:
         if self._session_owner is None:
             self._legacy_pending_invites[call_id] = invite
             return
-        if not self._session_owner.set_pending_invite(call_id, invite):
+        if not self._session_owner.set_artifact(call_id, "pending_invite", invite):
             raise RuntimeError(f"call session {call_id!r} is unavailable")
 
     def take_pending_invite(self, call_id: str) -> Any | None:
@@ -271,7 +273,7 @@ class CallRegistry:
 
         if self._session_owner is None:
             return self._legacy_pending_invites.pop(call_id, None)
-        return self._session_owner.take_pending_invite(call_id)
+        return self._session_owner.take_artifact(call_id, "pending_invite")
 
     def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> None:
         """Record a bridge link on the sole current call owner."""

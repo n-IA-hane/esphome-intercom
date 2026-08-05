@@ -299,97 +299,31 @@ class SipEndpointRuntime:
             if (dest_call_id := str(session.metadata.get("bridge_dest_call_id") or ""))
         }
 
-    def pending_invites_snapshot(self) -> dict[str, Any]:
-        """Return pending INVITEs directly from authoritative sessions."""
+    def artifacts_snapshot(self, name: str) -> dict[str, Any]:
+        """Return one class of generation-owned call artifacts."""
 
         return {
-            call_id: session.pending_invite
+            call_id: value
             for call_id, session in self.calls.items()
-            if session.pending_invite is not None
+            if (value := session.artifacts.get(name)) is not None
         }
 
-    def pending_routes_snapshot(self) -> dict[str, dict[str, Any]]:
-        """Return pending routes directly from authoritative sessions."""
-
-        return {
-            call_id: route
-            for call_id, session in self.calls.items()
-            if (route := session.pending_route) is not None
-        }
-
-    def video_parameter_sets_snapshot(self) -> dict[str, tuple[bytes, ...]]:
-        """Return cached video parameter sets from authoritative sessions."""
-
-        return {
-            call_id: session.video_parameter_sets
-            for call_id, session in self.calls.items()
-            if session.video_parameter_sets
-        }
-
-    def set_video_parameter_sets(
-        self, call_id: str, parameter_sets: tuple[bytes, ...]
-    ) -> bool:
-        """Cache codec configuration for the current media generation."""
+    def set_artifact(self, call_id: str, name: str, value: Any) -> bool:
+        """Attach an artifact to the current call generation."""
 
         session = self.get_session(call_id)
         if session is None or not session.live:
             return False
-        session.video_parameter_sets = tuple(parameter_sets)
-        self._publish(session)
+        session.artifacts[name] = value
         return True
 
-    def clear_video_parameter_sets(self, call_id: str) -> None:
-        """Discard codec configuration when media is renegotiated."""
-
-        session = self.get_session(call_id)
-        if session is None or not session.video_parameter_sets:
-            return
-        session.video_parameter_sets = ()
-        self._publish(session)
-
-    def set_pending_route(self, call_id: str, route: dict[str, Any]) -> bool:
-        """Attach routing state to the current call generation."""
-
-        session = self.get_session(call_id)
-        if session is None or not session.live:
-            return False
-        session.pending_route = route
-        self._publish(session)
-        return True
-
-    def take_pending_route(self, call_id: str) -> dict[str, Any] | None:
-        """Detach routing state for explicit completion or cancellation."""
+    def take_artifact(self, call_id: str, name: str) -> Any | None:
+        """Detach an artifact for explicit completion or cancellation."""
 
         session = self.get_session(call_id)
         if session is None or session.phase is SessionPhase.TERMINATED:
             return None
-        route = session.pending_route
-        session.pending_route = None
-        if route is not None:
-            self._publish(session)
-        return route
-
-    def set_pending_invite(self, call_id: str, invite: Any) -> bool:
-        """Attach the current inbound INVITE to its call generation."""
-
-        session = self.get_session(call_id)
-        if session is None or not session.live:
-            return False
-        session.pending_invite = invite
-        self._publish(session)
-        return True
-
-    def take_pending_invite(self, call_id: str) -> Any | None:
-        """Remove and return the pending INVITE for explicit processing."""
-
-        session = self.get_session(call_id)
-        if session is None or session.phase is SessionPhase.TERMINATED:
-            return None
-        invite = session.pending_invite
-        session.pending_invite = None
-        if invite is not None:
-            self._publish(session)
-        return invite
+        return session.artifacts.pop(name, None)
 
     def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> bool:
         """Attach one destination dialog identity to its source session."""

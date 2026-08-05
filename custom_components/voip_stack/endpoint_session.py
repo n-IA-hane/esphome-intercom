@@ -173,9 +173,7 @@ class EndpointCallSession:
         self.tasks: set[asyncio.Task[Any]] = set()
         self.named_tasks: dict[str, asyncio.Task[Any]] = {}
         self.endpoint_claims: dict[str, str] = {}
-        self.pending_invite: Any | None = None
-        self.pending_route: dict[str, Any] | None = None
-        self.video_parameter_sets: tuple[bytes, ...] = ()
+        self.artifacts: dict[str, Any] = {}
         self.metadata: dict[str, Any] = {}
         self.termination_started = asyncio.Event()
         self.terminated = asyncio.Event()
