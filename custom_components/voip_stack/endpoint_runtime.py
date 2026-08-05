@@ -120,7 +120,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     from .sip import parse_sip_uri
     from .sip_endpoint import SipEndpointManager
     from .sip_listener import SipInvite, SipInviteResult
-    from .pbx_runtime import SipEndpointRuntime
     from .sip_registrar import SipRegistrar
     from .conference_ringing import (
         ConferenceRingRuntime,
@@ -194,11 +193,9 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     )
     runtime = require_runtime_data(hass)
     registry = _call_registry(hass)
-    # The explicit runtime owns call generations and ordered cleanup.  The
-    # registry remains the observable/resource compatibility index consumed by
-    # existing HA adapters; binding the projection keeps both views correlated
-    # without creating two independent FSMs.
-    pbx_runtime = SipEndpointRuntime(projection=registry)
+    # Call control and its HA projection share one runtime owner.  It remains
+    # dark until every listener component has transferred into it.
+    pbx_runtime = registry.session_owner()
     pbx_runtime.attach_component("registrar", registrar)
     route_resolver = EndpointRouteResolver(
         hass=hass,
@@ -768,7 +765,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     pbx_runtime.attach_component("tcp_listener", endpoint)
     pbx_runtime.attach_component("udp_listener", endpoint, closer=endpoint.stop)
     pbx_runtime.activate()
-    registry.bind_session_owner(pbx_runtime)
     runtime.sip = pbx_runtime
     try:
         started = await endpoint.start()

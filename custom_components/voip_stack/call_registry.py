@@ -98,6 +98,17 @@ class CallRegistry:
         self._endpoint_registry: Any | None = None
         self._session_owner: SipEndpointRuntime | None = None
 
+    def session_owner(self) -> SipEndpointRuntime:
+        """Return the sole call owner, creating its dark runtime if needed."""
+
+        owner = self._session_owner
+        if owner is None:
+            from .pbx_runtime import SipEndpointRuntime
+
+            owner = SipEndpointRuntime(projection=self)
+            self.bind_session_owner(owner)
+        return owner
+
     def bind_session_owner(self, owner: SipEndpointRuntime | None) -> None:
         """Bind the authoritative PBX session owner at listener cutover."""
 
