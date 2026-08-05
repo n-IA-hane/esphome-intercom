@@ -5,6 +5,7 @@ from __future__ import annotations
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .endpoint_device import async_link_endpoint_entity, endpoint_device_info
@@ -108,6 +109,7 @@ class PhoneEndpointDndSwitch(SwitchEntity):
     _attr_should_poll = False
     _attr_translation_key = "phone_endpoint_dnd"
     _attr_icon = "mdi:phone-off"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, hass, endpoint, registry) -> None:
         self.endpoint = endpoint
@@ -143,6 +145,7 @@ class PhoneEndpointConferenceRingSwitch(SwitchEntity):
     _attr_should_poll = False
     _attr_translation_key = "phone_endpoint_conference_ring"
     _attr_icon = "mdi:phone-in-talk"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, hass, endpoint, registry) -> None:
         self.endpoint = endpoint
@@ -187,6 +190,7 @@ class _PhoneEndpointBrowserPreferenceSwitch(SwitchEntity):
 
     _attr_has_entity_name = True
     _attr_should_poll = False
+    _attr_entity_category = EntityCategory.CONFIG
     preference_name = ""
 
     def __init__(self, hass, endpoint, registry) -> None:

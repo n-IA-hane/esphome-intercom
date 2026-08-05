@@ -75,7 +75,6 @@ def _load_module(name: str):
 
 
 device_resolver = _load_module("device_resolver")
-device_registry_compat = _load_module("device_registry_compat")
 
 
 class SipEndpointParseTest(unittest.TestCase):
@@ -200,17 +199,6 @@ class SipEndpointParseTest(unittest.TestCase):
         )
         self.assertEqual(collected["camera"], "camera.renamed_preview")
 
-    def test_device_config_entry_id_prefers_the_2026_8_owner(self) -> None:
-        device = SimpleNamespace(
-            config_entry_id="entry-current",
-            config_entries={"entry-legacy"},
-        )
-
-        self.assertEqual(
-            device_registry_compat.device_config_entry_ids(device),
-            ("entry-current",),
-        )
-
     def test_list_devices_re_reads_live_endpoint_state(self) -> None:
         class FakeEntity:
             def __init__(self, entity_id: str) -> None:
@@ -233,7 +221,7 @@ class SipEndpointParseTest(unittest.TestCase):
             device_id = "dev-ws3"
             identifiers = {("esphome", "waveshare-s3")}
             connections = set()
-            config_entries = {"entry-ws3"}
+            config_entry_id = "entry-ws3"
 
         class FakeDeviceRegistry:
             devices = {"dev-ws3": FakeDevice()}

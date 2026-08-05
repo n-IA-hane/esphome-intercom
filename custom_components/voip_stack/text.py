@@ -8,6 +8,7 @@ from functools import partial
 from homeassistant.components.text import TextEntity, TextMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .endpoint_device import async_link_endpoint_entity, endpoint_device_info
@@ -71,6 +72,7 @@ class PhoneEndpointSettingText(TextEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_mode = TextMode.TEXT
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, hass, endpoint, registry, *, setting: _PhoneTextSetting) -> None:
         self.endpoint = endpoint

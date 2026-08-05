@@ -16,7 +16,6 @@ from homeassistant.helpers import entity_registry as er
 
 from .core.audio_format import parse_audio_format_list
 from .const import DOMAIN
-from .device_registry_compat import device_config_entry_ids
 from .runtime_data import runtime_data
 
 _LOGGER = logging.getLogger(__name__)
@@ -228,11 +227,10 @@ class VoipDeviceResolver:
 
         entry = _esphome_entry_for_host(self.hass, host)
         if entry is None and device is not None:
-            for entry_id in device_config_entry_ids(device):
-                candidate = self.hass.config_entries.async_get_entry(entry_id)
-                if candidate is not None and candidate.domain == "esphome":
-                    entry = candidate
-                    break
+            entry_id = str(device.config_entry_id or "")
+            candidate = self.hass.config_entries.async_get_entry(entry_id)
+            if candidate is not None and candidate.domain == "esphome":
+                entry = candidate
         if entry is None:
             return ""
         return str(entry.data.get("device_name") or "").strip()
@@ -245,10 +243,10 @@ class VoipDeviceResolver:
                     continue
                 if 'ip' not in conn_type.lower() and conn_type != 'network_ip':
                     continue
-                for entry_id in device_config_entry_ids(device):
-                    entry = self.hass.config_entries.async_get_entry(entry_id)
-                    if entry and entry.domain == "esphome":
-                        return entry
+                entry_id = str(device.config_entry_id or "")
+                entry = self.hass.config_entries.async_get_entry(entry_id)
+                if entry and entry.domain == "esphome":
+                    return entry
         return None
 
     async def list_devices(self) -> list[dict]:
@@ -359,11 +357,11 @@ class VoipDeviceResolver:
 
     def _route_id_from_device(self, device) -> str:
         """Find the owning ESPHome entry and return its service slug."""
-        for entry_id in device_config_entry_ids(device):
-            entry = self.hass.config_entries.async_get_entry(entry_id)
-            if entry and entry.domain == "esphome":
-                raw = entry.data.get("device_name") or entry.title or ""
-                return slugify_route_id(raw)
+        entry_id = str(device.config_entry_id or "")
+        entry = self.hass.config_entries.async_get_entry(entry_id)
+        if entry and entry.domain == "esphome":
+            raw = entry.data.get("device_name") or entry.title or ""
+            return slugify_route_id(raw)
         return ""
 
     @staticmethod

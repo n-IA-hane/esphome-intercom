@@ -12,7 +12,6 @@ from homeassistant.helpers import intent
 from homeassistant.helpers.intent import Intent, IntentHandler, IntentResponse
 
 from .const import DOMAIN
-from .device_registry_compat import device_config_entry_ids
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -127,16 +126,14 @@ async def _origin_device(intent_obj: Intent) -> dict[str, Any] | None:
         _LOGGER.info("Assist VoIP command source device_id=%s is not in HA device registry", device_id)
         return None
 
-    source_entries = set(device_config_entry_ids(source_device))
-    if source_entries:
+    source_entry_id = str(source_device.config_entry_id or "")
+    if source_entry_id:
         entry_matches: list[dict[str, Any]] = []
         for device in devices:
             registry_device = device_registry.async_get(str(device.get("device_id") or ""))
             if registry_device is None:
                 continue
-            if source_entries.intersection(
-                set(device_config_entry_ids(registry_device))
-            ):
+            if str(registry_device.config_entry_id or "") == source_entry_id:
                 entry_matches.append(device)
         if len(entry_matches) == 1:
             _LOGGER.info(

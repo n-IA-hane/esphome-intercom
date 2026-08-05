@@ -67,6 +67,7 @@ def _install_ha_fakes() -> None:
         "homeassistant.helpers.entity", types.ModuleType("homeassistant.helpers.entity")
     )
     entity.Entity = type("Entity", (), {})
+    entity.EntityCategory = types.SimpleNamespace(CONFIG="config", DIAGNOSTIC="diagnostic")
     entity_registry = sys.modules.setdefault(
         "homeassistant.helpers.entity_registry",
         types.ModuleType("homeassistant.helpers.entity_registry"),
