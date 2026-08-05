@@ -28,6 +28,26 @@ yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophon
 The ESPHome node name and entity identities are unchanged. Only the example
 YAML filename and references to it must be updated.
 
+## 2026.8.1: phone actions and cards use Device IDs only
+
+VoIP Stack no longer accepts the synthetic
+`__voip_stack_ha_softphone__` selector or a card `endpoint_id`. Open each
+`ha_softphone` card in the editor and select its Home Assistant phone again.
+The saved card configuration must contain only the selected `device_id`.
+Omitting the selection uses the preferred Home Assistant phone configured by
+the integration.
+
+Update copied automations so `device_id` contains the real Home Assistant
+Device Registry ID of the local phone. `endpoint_id` remains visible in call
+state and WebSocket snapshots for internal session and media correlation, but
+it is not accepted as user configuration.
+
+The `voip_stack.call` action response now exposes only schema version 2. Read
+the selected phone from `phone.device_id`, `phone.kind` and `phone.name`; read
+call state from `call.call_id`, `call.state` and `call.destination`. The former
+duplicate flat fields such as top-level `device_id`, `endpoint_id`, `call_id`
+and `destination` were removed.
+
 ## 2026.8.0: upgrade checklist
 
 1. Read the `2026.8.0` sections below and the
@@ -71,9 +91,9 @@ The default phone deliberately retains
 by Home Assistant; select them from their Device instead of constructing an ID
 from the phone name.
 
-Card YAML may contain both `device_id` and the stable internal `endpoint_id` so
-the frontend can preserve its exact binding. Public Home Assistant actions use
-only `device_id`; `endpoint_id` is not an alternative action field.
+Card YAML contains only `device_id`. The backend supplies the internal
+`endpoint_id` in runtime snapshots when the frontend needs to correlate media
+with a call.
 
 ## 2026.8.0: one Home Assistant call-action vocabulary
 
