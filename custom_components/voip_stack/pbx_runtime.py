@@ -493,6 +493,15 @@ class SipEndpointRuntime:
             raise RuntimeError(f"cannot activate PBX runtime from {self.phase.value}")
         self.phase = RuntimePhase.ACTIVE
 
+    def bind_projection(self, projection: CallProjection) -> None:
+        """Attach the read model before activation and before any call exists."""
+
+        if self.phase is not RuntimePhase.DARK or self.calls:
+            raise RuntimeError("PBX projection must be bound before activation")
+        if self._projection is not None and self._projection is not projection:
+            raise RuntimeError("PBX projection is already bound")
+        self._projection = projection
+
     def _snapshot(self, session: EndpointCallSession) -> CallProjectionSnapshot:
         return CallProjectionSnapshot(
             call_id=session.call_id,

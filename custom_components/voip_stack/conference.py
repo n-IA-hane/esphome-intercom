@@ -785,6 +785,7 @@ class ConferenceManager:
         """
         registry = call_registry(self.hass)
         for _endpoint_id, call_id in reservations:
+            registry.release_endpoint_claims(call_id)
             try:
                 if room is not None and call_id in room._ha_softphone_announced:
                     room._set_softphone_idle(reason, call_id=call_id)

@@ -177,6 +177,7 @@ class _FakeHass:
                 debug_capture_dropped_writes=0,
             ),
         )
+        endpoint_lifecycle_module.call_registry(self).session_owner().activate()
 
 
 def _test_runtime(hass):
@@ -817,7 +818,12 @@ class GroupCallMatrixTest(unittest.TestCase):
             caller="Door",
             callee="Casa",
         )
-        registry.finish_and_pop("finished-call", reason="remote_hangup")
+        asyncio.run(
+            registry.finish_and_pop_wait(
+                "finished-call",
+                reason="remote_hangup",
+            )
+        )
         websocket_api._set_ha_softphone_call_state(
             hass,
             fsm.CallState.IDLE.value,

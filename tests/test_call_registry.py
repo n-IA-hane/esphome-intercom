@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 import types
@@ -37,6 +38,14 @@ def _load_module(name: str):
 
 call_registry = _load_module("call_registry")
 automation_routing = _load_module("automation_routing")
+pbx_runtime = _load_module("pbx_runtime")
+
+
+def _registry():
+    owner = pbx_runtime.SipEndpointRuntime(allow_dark_sessions=True)
+    registry = call_registry.CallRegistry(owner)
+    owner.bind_projection(registry)
+    return registry
 
 
 class _EndpointRegistryStub:
@@ -66,7 +75,7 @@ class _EndpointRegistryStub:
 
 class CallRegistryEventContextTest(unittest.TestCase):
     def test_authoritative_snapshots_update_only_the_current_projection(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         projected = registry.upsert("call-1", state="ringing", owner="router")
         initial_revision = projected.revision
 
@@ -111,7 +120,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(projected.terminal_reason, "completed")
         self.assertEqual(set(registry.sessions), {"call-1"})
 
-        fresh = call_registry.CallRegistry()
+        fresh = _registry()
         fresh.publish(
             types.SimpleNamespace(
                 call_id="new-call",
@@ -128,7 +137,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(created.metadata["source"], "trunk")
 
     def test_active_count_filters_terminal_and_ha_softphone_sessions(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
 
         registry.upsert("terminal-first", state="idle", owner="bridge")
         registry.upsert("active-physical", state="in_call", owner="bridge")
@@ -160,7 +169,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         )
 
     def test_snapshot_exposes_every_owned_runtime_resource(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         registry.bind_endpoint_registry(_EndpointRegistryStub())
         registry.upsert("call-1", state="in_call", owner="bridge")
         registry.add_leg("call-1", "source", role="caller", state="in_call")
@@ -194,35 +203,11 @@ class CallRegistryEventContextTest(unittest.TestCase):
             },
         )
 
-        registry.clear_runtime()
-        self.assertTrue(
-            all(count == 0 for count in registry.snapshot()["resource_counts"].values())
-        )
-
-        replacement = registry.session_owner()
-        projected = registry.upsert(
-            "call-2",
-            state="ringing",
-            owner="router",
-        )
-        authoritative = replacement.get_session("call-2")
-        self.assertIsNotNone(authoritative)
-        self.assertEqual(projected.generation, authoritative.generation)
-        self.assertTrue(
-            replacement.observe_call(
-                "call-2",
-                state="connecting",
-                generation=authoritative.generation,
-                route_kind="direct",
-            )
-        )
-        self.assertEqual(
-            registry.sessions["call-2"].metadata["pbx_phase"], "connecting"
-        )
-        self.assertEqual(registry.sessions["call-2"].metadata["route_kind"], "direct")
+        with self.assertRaisesRegex(RuntimeError, "before PBX shutdown"):
+            registry.clear_runtime()
 
     def test_only_one_terminal_observer_owns_teardown(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         registry.upsert("source", state="in_call", owner="bridge")
         registry.add_leg("source", "destination", role="callee", state="in_call")
 
@@ -232,7 +217,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertFalse(registry.begin_termination("destination"))
 
     def test_async_generation_stops_owning_call_at_begin_termination(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         session = registry.upsert("call-1", state="in_call", owner="bridge")
 
         self.assertTrue(registry.is_generation_current("call-1", session.generation))
@@ -244,7 +229,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertFalse(registry.is_generation_current("call-1", session.generation))
 
     def test_stale_generation_cannot_register_or_resurrect_bridge(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         session = registry.upsert("source", state="ringing", owner="router")
         client = object()
 
@@ -266,7 +251,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertNotIn("late-destination", registry.leg_index)
 
     def test_wrong_generation_rejects_bridge_before_mutating_indexes(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         session = registry.upsert("source", state="ringing", owner="router")
 
         attached = registry.register_bridge(
@@ -283,7 +268,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(session.legs, {})
 
     def test_sequence_advances_only_for_canonical_state_changes(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
 
         first = registry.event_fields("call-1", "ringing")
         duplicate = registry.event_fields("call-1", "ringing")
@@ -296,7 +281,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(answered["previous_state"], "ringing")
 
     def test_terminal_event_reports_connected_call_duration(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
 
         with mock.patch(
             "custom_components.voip_stack.call_registry.time.monotonic",
@@ -310,7 +295,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
     def test_terminal_duration_is_frozen_and_resets_for_reused_physical_id(
         self,
     ) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
 
         with mock.patch(
             "custom_components.voip_stack.call_registry.time.monotonic",
@@ -328,7 +313,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(second["duration_seconds"], 7)
 
     def test_terminal_summary_claim_is_once_per_lifecycle(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
 
         registry.event_fields("call-1", "ringing")
         self.assertTrue(registry.claim_terminal_summary("call-1"))
@@ -339,7 +324,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertTrue(registry.claim_terminal_summary("call-1"))
 
     def test_unanswered_terminal_event_has_no_call_duration(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
 
         registry.event_fields("call-1", "ringing")
         ended = registry.event_fields("call-1", "idle")
@@ -347,7 +332,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertNotIn("duration_seconds", ended)
 
     def test_event_schema_v2_exposes_generation_phase_and_call_origin(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         session = registry.upsert(
             "call-1",
             state="connecting",
@@ -365,7 +350,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(fields["origin"], "trunk")
 
     def test_bridge_registration_preserves_transport_provenance(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
 
         registry.register_bridge(
             source_call_id="source",
@@ -382,7 +367,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(fields["origin"], "trunk")
 
     def test_route_history_is_bounded_and_returned_with_events(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         registry.event_fields("call-1", "route_requested")
         for index in range(10):
             registry.record_route(
@@ -397,7 +382,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(event["route_history"][-1]["destination"], "9")
 
     def test_leg_id_resolves_to_source_event_context(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         registry.register_bridge(
             source_call_id="source",
             dest_call_id="destination",
@@ -412,7 +397,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         )
 
     def test_event_fields_for_leg_alias_advances_canonical_context(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         registry.register_bridge(
             source_call_id="source",
             dest_call_id="destination",
@@ -429,7 +414,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertNotIn("destination", registry.event_contexts)
 
     def test_pop_by_leg_alias_removes_alias_event_context(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         registry.event_fields("destination", "queued")
         registry.register_bridge(
             source_call_id="source",
@@ -448,7 +433,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
     def test_revision_advances_for_owner_and_destination_without_state_change(
         self,
     ) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         session = registry.upsert(
             "call-1", state="connecting", callee="Home Assistant", owner="ha_softphone"
         )
@@ -472,7 +457,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(fields["owner"], "router")
 
     def test_event_fields_use_owned_endpoint_ids_not_display_names(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         endpoints = _EndpointRegistryStub()
         registry.bind_endpoint_registry(endpoints)
         registry.upsert(
@@ -495,7 +480,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertNotIn("caller", fields)
 
     def test_stale_revision_or_owner_cannot_mutate_session(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         session = registry.upsert("call-1", state="ringing", owner="ha_softphone")
 
         self.assertIsNone(
@@ -517,7 +502,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(session.owner, "ha_softphone")
 
     def test_queued_ringing_callback_cannot_resurrect_released_ha_owner(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         session = registry.upsert("call-1", state="ringing", owner="ha_softphone")
         queued_revision = session.revision
         published: list[str] = []
@@ -541,7 +526,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(registry.sessions["call-1"].owner, "router")
 
     def test_failed_route_resumes_ha_owner_exactly_once(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         session = registry.upsert("call-1", state="connecting", owner="router")
 
         resumed = registry.transition(
@@ -564,7 +549,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(session.owner, "ha_softphone")
 
     def test_leg_add_replace_remove_and_finish_advance_control_revision(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         session = registry.upsert("call-1", state="connecting", owner="router")
         initial = session.revision
         registry.add_leg("call-1", "leg-1", role="callee", state="ringing")
@@ -583,7 +568,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(session.outcome, "remote_hangup")
 
     def test_leg_state_never_regresses_aggregate_session_state(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         session = registry.upsert("call-1", state="in_call", owner="bridge")
 
         registry.add_leg("call-1", "late-ringing-leg", role="callee", state="ringing")
@@ -592,7 +577,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(session.legs["late-ringing-leg"].state, "ringing")
 
     def test_terminal_tombstones_evict_oldest_deterministically(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         for index in range(call_registry.MAX_TERMINATED_CALL_IDS + 1):
             self.assertTrue(registry.begin_termination(f"call-{index}"))
 
@@ -603,7 +588,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         )
 
     def test_generation_guards_async_transition_and_terminal_tombstone(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         session = registry.upsert("call-1", state="ringing", owner="ha_softphone")
 
         self.assertIsNone(
@@ -627,7 +612,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertFalse(registry.is_current("call-1", revision=session.revision))
 
     def test_terminal_pop_removes_event_context_and_pending_indexes(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         registry.upsert("call-1", state="ringing", owner="ha_softphone")
         registry.event_fields("call-1", "ringing")
         registry.set_pending_invite("call-1", object())
@@ -640,7 +625,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertNotIn("call-1", registry.pending_routes)
 
     def test_pending_route_begins_its_authoritative_call_generation(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
 
         registry.set_pending_route("route-first", {"future": object()})
 
@@ -651,7 +636,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         assert "route-first" in registry.pending_routes
 
     def test_endpoint_claims_are_atomic_and_released_by_leg_teardown(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         endpoints = _EndpointRegistryStub()
         registry.bind_endpoint_registry(endpoints)
         registry.upsert("source", state="connecting", owner="router")
@@ -674,7 +659,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(registry.endpoint_claims, {})
 
     def test_busy_endpoint_claim_never_records_partial_ownership(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         endpoints = _EndpointRegistryStub()
         endpoints.active["kitchen"] = "existing"
         registry.bind_endpoint_registry(endpoints)
@@ -686,12 +671,13 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(endpoints.active, {"kitchen": "existing"})
 
     def test_clear_runtime_releases_endpoint_claims_before_indexes(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         endpoints = _EndpointRegistryStub()
         registry.bind_endpoint_registry(endpoints)
         registry.upsert("call-1", state="in_call", owner="bridge")
         registry.claim_endpoint("call-1", "office")
 
+        asyncio.run(registry.session_owner().shutdown())
         registry.clear_runtime()
 
         self.assertEqual(endpoints.active, {})
@@ -699,7 +685,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(registry.sessions, {})
 
     def test_source_call_can_adopt_provisional_physical_state_token(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         endpoints = _EndpointRegistryStub()
         endpoints.active["kiosk"] = "physical:kiosk"
         registry.bind_endpoint_registry(endpoints)
@@ -716,7 +702,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(endpoints.active, {})
 
     def test_controller_identity_is_sticky_and_preserves_first_ha_context(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         registry.upsert("call-1", state="calling", owner="ha_softphone")
         first_context = types.SimpleNamespace(user_id="user-a", id="context-a")
         duplicate_context = types.SimpleNamespace(user_id="user-a", id="context-b")
@@ -729,7 +715,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertIs(session.metadata["ha_context"], first_context)
 
     def test_controller_identity_cannot_be_reassigned_to_another_user(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         registry.upsert("call-1", state="ringing", owner="ha_softphone")
         registry.bind_controller("call-1", user_id="user-a")
 
@@ -742,7 +728,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         )
 
     def test_local_bridge_has_one_sticky_controller_per_phone_leg(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         registry.upsert(
             "call-1",
             state="ringing",
@@ -763,7 +749,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
             registry.bind_controller("call-1", user_id="user-c", endpoint_id="kitchen")
 
     def test_internal_context_survives_later_admin_media_binding(self) -> None:
-        registry = call_registry.CallRegistry()
+        registry = _registry()
         registry.upsert("call-1", state="in_call", owner="ha_softphone")
         automation_context = types.SimpleNamespace(user_id=None, id="automation")
 

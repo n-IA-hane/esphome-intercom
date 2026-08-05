@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from hypothesis import given, settings, strategies as st
@@ -12,6 +13,14 @@ from tests.support.module_loader import load_voip_stack_module
 
 pytestmark = pytest.mark.unit
 call_registry = load_voip_stack_module("call_registry")
+pbx_runtime = load_voip_stack_module("pbx_runtime")
+
+
+def _registry():
+    owner = pbx_runtime.SipEndpointRuntime(allow_dark_sessions=True)
+    registry = call_registry.CallRegistry(owner)
+    owner.bind_projection(registry)
+    return registry
 
 
 CALL_IDS = ("call-a", "call-b", "physical:esp")
@@ -68,7 +77,7 @@ def _assert_indexes_are_consistent(registry) -> None:
 def test_generated_lifecycle_sequences_preserve_registry_invariants(
     sequence: list[Operation],
 ) -> None:
-    registry = call_registry.CallRegistry()
+    registry = _registry()
     generations: dict[str, int] = {}
 
     for index, operation in enumerate(sequence):
@@ -121,6 +130,7 @@ def test_generated_lifecycle_sequences_preserve_registry_invariants(
                 generations[call_id],
             )
 
+    asyncio.run(registry.session_owner().shutdown())
     registry.clear_runtime()
     assert all(
         count == 0
@@ -140,7 +150,7 @@ def test_generated_lifecycle_sequences_preserve_registry_invariants(
     ),
 )
 def test_terminal_faults_cannot_resurrect_or_duplicate_calls(fault: str) -> None:
-    registry = call_registry.CallRegistry()
+    registry = _registry()
     session = registry.upsert("physical:esp", state="in_call", owner="bridge")
     generation = session.generation
 

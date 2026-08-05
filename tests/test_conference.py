@@ -101,6 +101,12 @@ endpoint_lifecycle = _load_module("endpoint_lifecycle")
 
 
 def _test_runtime_component(hass, key):
+    runtime = getattr(hass, "runtime", None)
+    sip = getattr(runtime, "sip", None)
+    if sip is not None:
+        component = sip.component(key)
+        if component is not None:
+            return component
     return hass.data.get("voip_stack", {}).get(key)
 
 
@@ -136,7 +142,7 @@ class _FakeBus:
 
 
 class _FakeHass:
-    def __init__(self) -> None:
+    def __init__(self, *, activate_calls: bool = True) -> None:
         endpoints = endpoint_registry_module.EndpointRegistry()
         endpoints.register(
             phone_endpoint.PhoneEndpoint(
@@ -174,6 +180,8 @@ class _FakeHass:
                 trunk_closed_calls=set(),
             ),
         )
+        if activate_calls:
+            endpoint_lifecycle.call_registry(self).session_owner().activate()
 
     def async_create_task(self, coro):
         return asyncio.create_task(coro)
@@ -707,7 +715,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(manager.rooms)
 
     async def test_endpoint_shutdown_closes_resources_before_clearing_registry(self) -> None:
-        hass = _FakeHass()
+        hass = _FakeHass(activate_calls=False)
         registry = endpoint_lifecycle.call_registry(hass)
         calls: list[str] = []
 
@@ -754,11 +762,10 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         runtime_task = endpoint_lifecycle.create_runtime_task(hass, asyncio.Event().wait())
         endpoint = Endpoint()
         manager = Manager()
-        owner = pbx_runtime_module.SipEndpointRuntime(projection=registry)
+        owner = registry.session_owner()
         owner.attach_component("conference_manager", manager, closer=manager.close)
         owner.attach_component("udp_listener", endpoint, closer=endpoint.stop)
         owner.activate()
-        registry.bind_session_owner(owner)
         hass.runtime.sip = owner
         endpoint_lifecycle.sip_endpoint_manager = lambda _hass: endpoint
         registry.upsert("call", state="in_call")

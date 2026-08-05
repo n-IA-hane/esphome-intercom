@@ -96,7 +96,7 @@ class CallEventContext:
 class CallRegistry:
     """Observable call index backed by the authoritative PBX runtime."""
 
-    def __init__(self) -> None:
+    def __init__(self, session_owner: SipEndpointRuntime) -> None:
         self.media_controller_lock = asyncio.Lock()
         self.sessions: dict[str, CallSession] = {}
         self.leg_index: dict[str, str] = {}
@@ -104,45 +104,12 @@ class CallRegistry:
         self.terminal_summary_ids: OrderedDict[str, None] = OrderedDict()
         self.terminated_call_ids: OrderedDict[str, int] = OrderedDict()
         self._endpoint_registry: Any | None = None
-        from .pbx_runtime import SipEndpointRuntime
-
-        self._session_owner = SipEndpointRuntime(
-            projection=self,
-            allow_dark_sessions=True,
-        )
+        self._session_owner = session_owner
 
     def session_owner(self) -> SipEndpointRuntime:
         """Return the sole call owner."""
 
         return self._session_owner
-
-    def bind_session_owner(self, owner: SipEndpointRuntime) -> None:
-        """Bind the authoritative PBX session owner at listener cutover."""
-
-        if owner is self._session_owner:
-            return
-        if self.sessions:
-            raise RuntimeError("cannot replace the PBX owner while calls are active")
-        self._session_owner = owner
-        owner.bind_endpoint_registry(self._endpoint_registry)
-        for session in tuple(self.sessions.values()):
-            authoritative = owner.ensure_session(
-                session.id,
-                caller=session.caller,
-                callee=session.callee,
-                route_kind=session.route_kind,
-            )
-            session.generation = int(authoritative.generation)
-            self._observe_session(session)
-
-    def reset_session_owner(self) -> None:
-        """Replace a stopped owner with one side-effect-free dark runtime."""
-
-        from .pbx_runtime import SipEndpointRuntime
-
-        self.bind_session_owner(
-            SipEndpointRuntime(projection=self, allow_dark_sessions=True)
-        )
 
     def _observe_session(self, session: CallSession) -> None:
         observation = _owner_observation_metadata(session.metadata)
@@ -1213,13 +1180,14 @@ class CallRegistry:
         return session
 
     def clear_runtime(self) -> None:
+        if self._session_owner.calls:
+            raise RuntimeError("cannot clear projection before PBX shutdown")
         self._release_all_endpoint_claims()
         self.sessions.clear()
         self.leg_index.clear()
         self.event_contexts.clear()
         self.terminal_summary_ids.clear()
         self.terminated_call_ids.clear()
-        self.reset_session_owner()
 
     def active_count(self, *, include_ha_softphone: bool = True) -> int:
         count = 0

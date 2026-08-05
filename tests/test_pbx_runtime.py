@@ -44,6 +44,13 @@ RuntimePhase = pbx_runtime.RuntimePhase
 SipEndpointRuntime = pbx_runtime.SipEndpointRuntime
 
 
+def _registry_runtime():
+    runtime = SipEndpointRuntime()
+    registry = call_registry.CallRegistry(runtime)
+    runtime.bind_projection(registry)
+    return registry, runtime
+
+
 class _Projection:
     def __init__(self) -> None:
         self.published: list[CallProjectionSnapshot] = []
@@ -74,10 +81,8 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             runtime.create_session("call-1")
 
     async def test_live_bridge_requires_lifecycle_owner_before_registration(self) -> None:
-        registry = call_registry.CallRegistry()
-        runtime = SipEndpointRuntime(projection=registry)
+        registry, runtime = _registry_runtime()
         runtime.activate()
-        registry.bind_session_owner(runtime)
         registry.upsert("source", state="ringing", owner="router")
 
         with self.assertRaisesRegex(ValueError, "requires a lifecycle task"):
@@ -224,10 +229,8 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(runtime.phase, RuntimePhase.STOPPED)
 
     async def test_registry_is_projection_of_runtime_owned_generation(self) -> None:
-        registry = call_registry.CallRegistry()
-        runtime = SipEndpointRuntime(projection=registry)
+        registry, runtime = _registry_runtime()
         runtime.activate()
-        registry.bind_session_owner(runtime)
 
         projected = registry.upsert(
             "call-1",
@@ -267,10 +270,8 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_registry_delegates_terminal_claim_to_session_owner(self) -> None:
         events: list[str] = []
-        registry = call_registry.CallRegistry()
-        runtime = SipEndpointRuntime(projection=registry)
+        registry, runtime = _registry_runtime()
         runtime.activate()
-        registry.bind_session_owner(runtime)
         projected = registry.upsert("call-1", state="in_call", owner="bridge")
         authoritative = runtime.get_session("call-1")
         self.assertIsNotNone(authoritative)
@@ -294,10 +295,8 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(runtime.get_session("call-1"))
 
     async def test_owner_completion_removes_the_call_projection(self) -> None:
-        registry = call_registry.CallRegistry()
-        runtime = SipEndpointRuntime(projection=registry)
+        registry, runtime = _registry_runtime()
         runtime.activate()
-        registry.bind_session_owner(runtime)
         registry.upsert("call-1", state="in_call", owner="bridge")
 
         result = await runtime.terminate_session("call-1", "remote_hangup")
@@ -308,10 +307,8 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(registry.is_terminated("call-1"))
 
     async def test_waited_removal_allows_same_call_id_to_change_owner(self) -> None:
-        registry = call_registry.CallRegistry()
-        runtime = SipEndpointRuntime(projection=registry)
+        registry, runtime = _registry_runtime()
         runtime.activate()
-        registry.bind_session_owner(runtime)
 
         first = registry.upsert("call-1", state="ringing", owner="router")
         await registry.finish_and_pop_wait(
@@ -333,10 +330,8 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         await registry.finish_and_pop_wait("call-1", reason="test_complete")
 
     async def test_projected_phase_cannot_override_authoritative_phase(self) -> None:
-        registry = call_registry.CallRegistry()
-        runtime = SipEndpointRuntime(projection=registry)
+        registry, runtime = _registry_runtime()
         runtime.activate()
-        registry.bind_session_owner(runtime)
 
         registry.upsert("call-1", state="new", owner="router")
         registry.sessions["call-1"].metadata["pbx_phase"] = "new"
@@ -397,10 +392,8 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             async def stop(self) -> None:
                 events.append("relay-stop")
 
-        registry = call_registry.CallRegistry()
-        runtime = SipEndpointRuntime(projection=registry)
+        registry, runtime = _registry_runtime()
         runtime.activate()
-        registry.bind_session_owner(runtime)
         client = Client()
         relay = Relay()
         registry.upsert("source", state="ringing", owner="router")
@@ -486,11 +479,9 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 return True
 
         endpoints = Endpoints()
-        registry = call_registry.CallRegistry()
-        runtime = SipEndpointRuntime(projection=registry)
+        registry, runtime = _registry_runtime()
         runtime.activate()
         registry.bind_endpoint_registry(endpoints)
-        registry.bind_session_owner(runtime)
         registry.upsert("call-1", state="connecting", owner="router")
 
         registry.claim_endpoint("call-1", "caller", role="source")
@@ -510,10 +501,8 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registry.endpoint_claims, {})
 
     async def test_watcher_that_ends_call_is_not_cancelled_by_own_cleanup(self) -> None:
-        registry = call_registry.CallRegistry()
-        runtime = SipEndpointRuntime(projection=registry)
+        registry, runtime = _registry_runtime()
         runtime.activate()
-        registry.bind_session_owner(runtime)
         registry.upsert("call-1", state="ringing", owner="router")
         completed = asyncio.Event()
 
