@@ -14,66 +14,10 @@ wifi:
     - delay: 1s
     - voip_stack.publish_entity_states:
 
+packages:
+  voip_ha_actions: !include ha_actions.yaml
+
 api:
   on_client_connected:
     - delay: 1s
     - voip_stack.publish_entity_states:
-  actions:
-    # Card/HA -> voip_stack.call(source=this) ends up here. The ESP first
-    # tries its local phonebook cache; unresolved targets route through HA.
-    - action: start_call
-      variables:
-        dest: string
-      then:
-        - voip_stack.call:
-            target: !lambda 'return dest;'
-    # Direct ESP-side decline with an optional free-form reason. This keeps
-    # HA automations useful even for ESP<->ESP calls where HA is only
-    # mirroring state and is not the signaling bridge.
-    - action: decline_call
-      variables:
-        reason: string
-      then:
-        - voip_stack.decline_call:
-            reason: !lambda 'return reason;'
-    # Set by voip_stack at config-entry setup so logical SIP targets can
-    # route through the live HA bridge name from hass.config.location_name.
-    - action: set_ha_peer_name
-      variables:
-        name: string
-      then:
-        - voip_stack.set_ha_peer_name:
-            name: !lambda 'return name;'
-    # Canonical central roster management. HA publishes the same JSON document
-    # that cards/services read from sensor.voip_phonebook.
-    - action: set_roster_json
-      variables:
-        roster_json: string
-      then:
-        - voip_stack.set_roster_json:
-            roster_json: !lambda 'return roster_json;'
-    # Local/manual SIP phonebook actions for YAML scripts and test tools.
-    - action: set_contacts
-      variables:
-        contacts_csv: string
-      then:
-        - voip_stack.set_contacts:
-            contacts_csv: !lambda 'return contacts_csv;'
-    - action: add_contact
-      variables:
-        entry: string
-      then:
-        - voip_stack.add_contact:
-            entry: !lambda 'return entry;'
-    - action: remove_contact
-      variables:
-        entry: string
-      then:
-        - voip_stack.remove_contact:
-            entry: !lambda 'return entry;'
-    - action: flush_contacts
-      then:
-        - voip_stack.flush_contacts:
-    - action: update_contacts
-      then:
-        - voip_stack.update_contacts:

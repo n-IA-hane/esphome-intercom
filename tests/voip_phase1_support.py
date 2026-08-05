@@ -23,6 +23,31 @@ PKG_NAME = "custom_components.voip_stack"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
 
 
+def _install_runtime_data_ha_fakes() -> None:
+    """Keep pure protocol tests independent from a Home Assistant install."""
+
+    if "homeassistant" in sys.modules:
+        return
+    package = types.ModuleType("homeassistant")
+    package.__path__ = []
+    config_entries = types.ModuleType("homeassistant.config_entries")
+    core = types.ModuleType("homeassistant.core")
+
+    class ConfigEntry:
+        @classmethod
+        def __class_getitem__(cls, _item):
+            return cls
+
+    config_entries.ConfigEntry = ConfigEntry
+    core.HomeAssistant = object
+    sys.modules["homeassistant"] = package
+    sys.modules["homeassistant.config_entries"] = config_entries
+    sys.modules["homeassistant.core"] = core
+
+
+_install_runtime_data_ha_fakes()
+
+
 def _load_intercom_module(name: str):
     if "custom_components" not in sys.modules:
         root_pkg = types.ModuleType("custom_components")

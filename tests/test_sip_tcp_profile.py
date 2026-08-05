@@ -7,6 +7,7 @@ from .voip_phase1_support import (
     _reserved_udp_ports,
     asyncio,
     audio_format,
+    patch,
     sdp,
     sip,
     sip_auth,
@@ -219,24 +220,21 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
                 include_common_codecs=True,
                 peer_user_agent=binding.user_agent,
             )
-            hass = types.SimpleNamespace(
-                data={
-                    "voip_stack": {
-                        "sip_endpoint": types.SimpleNamespace(
-                            tcp_server=server,
-                        )
-                    }
-                }
-            )
-            self.assertTrue(
-                sip_runtime.enable_reused_tcp_connection(
-                    hass,
-                    client,
-                    sip.parse_sip_uri(binding.contact_uri),
-                    target="Dahua VTO",
-                    default_sip_port=sip_port,
+            hass = types.SimpleNamespace()
+            with patch.object(
+                sip_runtime,
+                "sip_endpoint_manager",
+                return_value=types.SimpleNamespace(tcp_server=server),
+            ):
+                self.assertTrue(
+                    sip_runtime.enable_reused_tcp_connection(
+                        hass,
+                        client,
+                        sip.parse_sip_uri(binding.contact_uri),
+                        target="Dahua VTO",
+                        default_sip_port=sip_port,
+                    )
                 )
-            )
 
             async def dahua_answer() -> None:
                 raw_invite = await asyncio.wait_for(

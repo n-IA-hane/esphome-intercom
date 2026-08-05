@@ -1,0 +1,57 @@
+# Shared Home Assistant API actions for every managed VoIP phone.
+api:
+  actions:
+    - action: start_call
+      variables:
+        dest: string
+      then:
+        - voip_stack.call:
+            target: !lambda 'return dest;'
+    - action: answer_call
+      then:
+        - voip_stack.answer_call:
+    - action: decline_call
+      variables:
+        reason: string
+      then:
+        - voip_stack.decline_call:
+            reason: !lambda 'return reason;'
+    - action: hangup_call
+      then:
+        - voip_stack.stop:
+    - action: set_ha_peer_name
+      variables:
+        name: string
+      then:
+        - voip_stack.set_ha_peer_name:
+            name: !lambda 'return name;'
+    - action: set_roster_json
+      variables:
+        roster_json: string
+      then:
+        - voip_stack.set_roster_json:
+            roster_json: !lambda 'return roster_json;'
+    - action: set_contacts
+      variables:
+        contacts_csv: string
+      then:
+        - voip_stack.set_contacts:
+            contacts_csv: !lambda 'return contacts_csv;'
+    - action: add_contact
+      variables:
+        entry: string
+      then:
+        - voip_stack.add_contact:
+            entry: !lambda 'return entry;'
+    - action: remove_contact
+      variables:
+        entry: string
+      then:
+        - voip_stack.remove_contact:
+            entry: !lambda 'return entry;'
+    - action: flush_contacts
+      then:
+        - voip_stack.flush_contacts:
+    - action: update_contacts
+      then:
+        - voip_stack.update_contacts:

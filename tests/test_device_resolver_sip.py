@@ -24,6 +24,10 @@ def _install_ha_fakes() -> None:
     if not hasattr(helpers, "__path__"):
         helpers.__path__ = []
     core = sys.modules.setdefault("homeassistant.core", types.ModuleType("homeassistant.core"))
+    config_entries = sys.modules.setdefault(
+        "homeassistant.config_entries",
+        types.ModuleType("homeassistant.config_entries"),
+    )
     device_registry = sys.modules.setdefault(
         "homeassistant.helpers.device_registry",
         types.ModuleType("homeassistant.helpers.device_registry"),
@@ -35,6 +39,15 @@ def _install_ha_fakes() -> None:
     core.HomeAssistant = getattr(core, "HomeAssistant", type("HomeAssistant", (), {}))
     core.ServiceCall = getattr(core, "ServiceCall", type("ServiceCall", (), {}))
     core.callback = getattr(core, "callback", lambda fn: fn)
+    config_entries.ConfigEntry = getattr(
+        config_entries,
+        "ConfigEntry",
+        type(
+            "ConfigEntry",
+            (),
+            {"__class_getitem__": classmethod(lambda cls, _item: cls)},
+        ),
+    )
     device_registry.async_get = getattr(device_registry, "async_get", lambda _hass: None)
     entity_registry.async_get = getattr(entity_registry, "async_get", lambda _hass: None)
 
