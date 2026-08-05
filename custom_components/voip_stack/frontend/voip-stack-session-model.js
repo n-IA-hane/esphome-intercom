@@ -31,5 +31,9 @@ export function softphoneStateMatches(
   if (wanted.device_id) {
     return !!stateDevice && stateDevice === wanted.device_id;
   }
-  return false;
+  // The backend resolves an empty selector to the explicitly preferred
+  // browser phone before it creates this dedicated subscription. Accept the
+  // resolved identity carried by that subscription instead of discarding
+  // every preferred-phone update locally.
+  return !!stateEndpoint && !!stateDevice;
 }

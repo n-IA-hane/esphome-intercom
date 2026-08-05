@@ -966,6 +966,14 @@ assert.deepEqual(model.normaliseSoftphoneSelector({{ device_id: " kiosk " }}), {
 assert.equal(model.softphoneScopeKey({{ endpoint_id: "kitchen" }}), "endpoint:kitchen");
 assert.equal(model.softphoneScopeKey({{ device_id: "kiosk" }}), "device:kiosk");
 assert.equal(model.softphoneScopeKey({{}}), "preferred");
+assert.equal(model.softphoneStateMatches(
+  {{ endpoint_id: "default", device_id: "preferred-device", call_id: "P" }},
+  {{}},
+), true);
+assert.equal(model.softphoneStateMatches(
+  {{ call_id: "identity-missing" }},
+  {{}},
+), false);
 
 assert.equal(model.softphoneStateMatches(
   {{ endpoint_id: "kitchen", call_id: "K" }},
