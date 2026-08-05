@@ -251,7 +251,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(authoritative)
         self.assertEqual(projected.generation, authoritative.generation)
         self.assertIs(authoritative.phase, SessionPhase.RINGING)
-        self.assertEqual(projected.metadata["pbx_phase"], "ringing")
+        self.assertIs(projected, authoritative)
         self.assertEqual(authoritative.metadata["owner"], "router")
         self.assertEqual(authoritative.metadata["caller"], "door")
         self.assertEqual(authoritative.metadata["callee"], "home")
@@ -285,7 +285,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(registry.begin_termination("call-1", "remote_hangup"))
         self.assertFalse(registry.begin_termination("call-1", "duplicate"))
         self.assertIs(authoritative.phase, SessionPhase.TERMINATING)
-        self.assertEqual(projected.metadata["pbx_phase"], "terminating")
+        self.assertIs(projected, authoritative)
         self.assertEqual(events, [])
 
         registry.finish_and_pop("call-1", reason="remote_hangup")
@@ -334,14 +334,13 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         runtime.activate()
 
         registry.upsert("call-1", state="new", owner="router")
-        registry.sessions["call-1"].metadata["pbx_phase"] = "new"
         projected = registry.upsert("call-1", state="ringing", owner="router")
         authoritative = runtime.get_session("call-1")
 
         self.assertIsNotNone(authoritative)
+        self.assertIs(projected, authoritative)
         self.assertIs(authoritative.phase, SessionPhase.RINGING)
         self.assertNotIn("pbx_phase", authoritative.metadata)
-        self.assertEqual(projected.metadata["pbx_phase"], "ringing")
 
     async def test_late_public_state_cannot_regress_established_call(self) -> None:
         runtime = SipEndpointRuntime()

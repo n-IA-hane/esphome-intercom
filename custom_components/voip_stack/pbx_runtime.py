@@ -531,7 +531,6 @@ class SipEndpointRuntime:
         if self.calls.get(session.call_id) is not session:
             return
         snapshot = self._snapshot(session)
-        self.calls.pop(session.call_id, None)
         if self._projection is not None:
             try:
                 self._projection.remove(snapshot)
@@ -541,6 +540,7 @@ class SipEndpointRuntime:
                     session.call_id,
                     session.generation,
                 )
+        self.calls.pop(session.call_id, None)
 
     def create_session(
         self,
@@ -633,6 +633,7 @@ class SipEndpointRuntime:
             session.metadata.update(clean_metadata)
             changed = True
         if changed:
+            session.revision += 1
             self._publish(session)
         return True
 
@@ -668,12 +669,18 @@ class SipEndpointRuntime:
                     sip_call_id=str(sip_call_id or clean_leg_id).strip(),
                     dialog=dialog,
                     media=media,
+                    role=str(role or ""),
+                    state=str(state or ""),
                     closer=closer,
                 )
             )
         next_phase = _PUBLIC_LEG_PHASES.get(str(state or "").strip())
         if next_phase is not None:
             leg.phase = next_phase
+        if role:
+            leg.role = str(role)
+        if state:
+            leg.state = str(state)
         if endpoint_id:
             leg.endpoint_id = str(endpoint_id).strip()
         if sip_call_id:
@@ -684,6 +691,7 @@ class SipEndpointRuntime:
             leg.media = media
         if closer is not None:
             leg.closer = closer
+        session.revision += 1
         self._publish(session)
         return True
 

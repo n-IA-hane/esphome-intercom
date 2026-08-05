@@ -74,7 +74,7 @@ class _EndpointRegistryStub:
 
 
 class CallRegistryEventContextTest(unittest.TestCase):
-    def test_authoritative_snapshots_update_only_the_current_projection(self) -> None:
+    def test_projection_snapshots_cannot_mutate_the_authoritative_session(self) -> None:
         registry = _registry()
         projected = registry.upsert("call-1", state="ringing", owner="router")
         initial_revision = projected.revision
@@ -88,13 +88,13 @@ class CallRegistryEventContextTest(unittest.TestCase):
         )
         registry.publish(snapshot)
 
-        self.assertEqual(projected.metadata["pbx_phase"], "established")
-        self.assertEqual(projected.metadata["route_kind"], "direct")
-        self.assertEqual(projected.terminal_reason, "completed")
-        self.assertEqual(projected.revision, initial_revision + 1)
+        self.assertNotIn("pbx_phase", projected.metadata)
+        self.assertEqual(projected.route_kind, "")
+        self.assertEqual(projected.terminal_reason, "")
+        self.assertEqual(projected.revision, initial_revision)
 
         registry.publish(snapshot)
-        self.assertEqual(projected.revision, initial_revision + 1)
+        self.assertEqual(projected.revision, initial_revision)
 
         registry.publish(
             types.SimpleNamespace(
@@ -115,9 +115,9 @@ class CallRegistryEventContextTest(unittest.TestCase):
             )
         )
 
-        self.assertEqual(projected.metadata["pbx_phase"], "established")
-        self.assertEqual(projected.metadata["route_kind"], "direct")
-        self.assertEqual(projected.terminal_reason, "completed")
+        self.assertNotIn("pbx_phase", projected.metadata)
+        self.assertEqual(projected.route_kind, "")
+        self.assertEqual(projected.terminal_reason, "")
         self.assertEqual(set(registry.sessions), {"call-1"})
 
         fresh = _registry()
@@ -130,11 +130,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
                 metadata={"source": "trunk"},
             )
         )
-        created = fresh.sessions["new-call"]
-        self.assertEqual(created.id, "new-call")
-        self.assertEqual(created.generation, 7)
-        self.assertEqual(created.metadata["pbx_phase"], "ringing")
-        self.assertEqual(created.metadata["source"], "trunk")
+        self.assertNotIn("new-call", fresh.sessions)
 
     def test_active_count_filters_terminal_and_ha_softphone_sessions(self) -> None:
         registry = _registry()
@@ -222,10 +218,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
 
         self.assertTrue(registry.is_generation_current("call-1", session.generation))
         self.assertTrue(registry.begin_termination("call-1"))
-        self.assertEqual(
-            registry.sessions["call-1"].metadata["pbx_phase"],
-            "terminating",
-        )
+        self.assertEqual(registry.sessions["call-1"].phase.value, "terminating")
         self.assertFalse(registry.is_generation_current("call-1", session.generation))
 
     def test_stale_generation_cannot_register_or_resurrect_bridge(self) -> None:

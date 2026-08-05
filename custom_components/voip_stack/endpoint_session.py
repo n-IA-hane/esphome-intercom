@@ -87,6 +87,10 @@ class CallLeg:
     phase: LegPhase = LegPhase.NEW
     dialog: Any | None = None
     media: Any | None = None
+    role: str = ""
+    state: str = ""
+    local_uri: str = ""
+    remote_uri: str = ""
     closer: AsyncCloser | None = field(default=None, repr=False)
     _close_task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
 
@@ -166,6 +170,13 @@ class EndpointCallSession:
             raise ValueError("generation must be positive")
         self.call_id = clean_call_id
         self.generation = int(generation)
+        self.revision = 0
+        self.state = phase.value
+        self.owner = ""
+        self.outcome = ""
+        self.caller = ""
+        self.callee = ""
+        self.route_kind = ""
         self.phase = phase
         self.terminal_reason = ""
         self.legs: dict[str, CallLeg] = {}
@@ -181,6 +192,10 @@ class EndpointCallSession:
         self._termination_initiator: asyncio.Task[Any] | None = None
         self._on_changed = on_changed
         self._on_terminated = on_terminated
+
+    @property
+    def id(self) -> str:
+        return self.call_id
 
     @property
     def token(self) -> CallToken:

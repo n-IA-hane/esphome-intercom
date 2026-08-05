@@ -243,6 +243,12 @@ async def _wait_for_sample(queue: asyncio.Queue[bytes], expected: int) -> bytes:
                 return frame
 
 
+async def _wait_call_cleanup(registry) -> None:
+    sessions = tuple(registry.sessions.values())
+    if sessions:
+        await asyncio.gather(*(session.terminated.wait() for session in sessions))
+
+
 class ConferenceMixerTest(unittest.TestCase):
     def test_mix_frames_is_n_minus_one(self) -> None:
         out = conference.mix_frames([_frame(1000), _frame(2000), _frame(-500)])
@@ -310,6 +316,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
             )
 
         registry = endpoint_lifecycle.call_registry(hass)
+        await _wait_call_cleanup(registry)
         self.assertFalse(manager.rooms)
         self.assertFalse(manager.ha_calls)
         self.assertFalse(registry.sessions)
@@ -346,6 +353,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
             )
 
         registry = endpoint_lifecycle.call_registry(hass)
+        await _wait_call_cleanup(registry)
         self.assertFalse(manager.ha_calls)
         self.assertFalse(registry.sessions)
         self.assertFalse(registry.endpoint_claims)
@@ -376,6 +384,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
             manager.start_ha_softphone("Conference", endpoint_id="kitchen")
 
         registry = endpoint_lifecycle.call_registry(hass)
+        await _wait_call_cleanup(registry)
         self.assertFalse(manager.rooms)
         self.assertFalse(manager.ha_calls)
         self.assertFalse(registry.sessions)
