@@ -11,9 +11,9 @@ const VOIP_STACK_MODULE_VERSION = (() => {
 const {
   audioModeLabel,
   normaliseAudioMode,
+  normaliseCardConfig,
 } = await import(`./voip-stack-card-model.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 
-const HA_SOFTPHONE_DEVICE_ID = "__voip_stack_ha_softphone__";
 const DEFAULT_SOFTPHONE_ENDPOINT_ID = "default";
 
 class VoipStackCardEditor extends HTMLElement {
@@ -26,6 +26,7 @@ class VoipStackCardEditor extends HTMLElement {
     this._devicesLoading = false;
     this._devicesRetryTimer = null;
     this._els = null;
+    this._legacyEndpointId = "";
   }
 
   connectedCallback() {
@@ -40,7 +41,9 @@ class VoipStackCardEditor extends HTMLElement {
   }
 
   setConfig(config) {
-    this._config = config;
+    const normalised = normaliseCardConfig(config);
+    this._config = normalised.config;
+    this._legacyEndpointId = normalised.legacyEndpointId;
     this._render();
   }
 
@@ -71,6 +74,7 @@ class VoipStackCardEditor extends HTMLElement {
       if (result?.devices) {
         this._devices = result.devices;
         this._devicesLoaded = true;
+        this._migrateLegacySelector();
         this._render();
       }
     } catch (err) {
@@ -231,18 +235,16 @@ class VoipStackCardEditor extends HTMLElement {
     const placeholder = document.createElement("option");
     placeholder.value = "";
     placeholder.textContent = softphoneMode
-      ? "Default Home Assistant softphone"
+      ? "Preferred Home Assistant phone"
       : "-- Select device --";
     const newOptions = [placeholder];
     const selectableDevices = this._devices.filter((device) => softphoneMode
-      ? this._isSoftphoneDevice(device) &&
-        String(device.endpoint_id || "") !== DEFAULT_SOFTPHONE_ENDPOINT_ID &&
-        String(device.device_id || "") !== HA_SOFTPHONE_DEVICE_ID
+      ? this._isSoftphoneDevice(device) && !!device.device_id
       : !this._isSoftphoneDevice(device));
     const configuredDeviceId = String(
       this._config.device_id || this._config.entity_id || "",
     );
-    const configuredEndpointId = String(this._config.endpoint_id || "");
+    const configuredEndpointId = this._legacyEndpointId;
     const selectedDevice = selectableDevices.find((device) =>
       (configuredDeviceId && device.device_id === configuredDeviceId) ||
       (
@@ -291,11 +293,11 @@ class VoipStackCardEditor extends HTMLElement {
         "The configured Home Assistant phone no longer exists. Select another phone or the default.";
     } else if (selectedDevice) {
       els.deviceInfo.textContent = softphoneMode
-        ? `Endpoint: ${selectedDevice.endpoint_id || DEFAULT_SOFTPHONE_ENDPOINT_ID}`
+        ? `Phone: ${selectedDevice.name || selectedDevice.device_id}`
         : `Audio: ${this._normaliseAudioMode(selectedDevice.audio_mode).replace("_", " ")}`;
     } else {
       els.deviceInfo.textContent = softphoneMode
-        ? "Omit the selection to use the default Home Assistant phone."
+        ? "Omit the selection to use the preferred Home Assistant phone."
         : "Required for ESP mirror mode.";
     }
 
@@ -328,19 +330,27 @@ class VoipStackCardEditor extends HTMLElement {
   _deviceChanged(deviceId) {
     const newConfig = { ...this._config };
     if (deviceId) {
-      const selected = this._devices.find(
-        (device) => device.device_id === deviceId,
-      );
       newConfig.device_id = deviceId;
       delete newConfig.entity_id;
-      if (selected?.endpoint_id) newConfig.endpoint_id = selected.endpoint_id;
-      else delete newConfig.endpoint_id;
+      delete newConfig.endpoint_id;
     } else {
       delete newConfig.device_id;
       delete newConfig.entity_id;
       delete newConfig.endpoint_id;
     }
     this._dispatchConfig(newConfig);
+  }
+
+  _migrateLegacySelector() {
+    if (!this._legacyEndpointId || this._config.device_id) return;
+    const selected = this._devices.find(
+      (device) => String(device?.endpoint_id || "").trim() ===
+        this._legacyEndpointId,
+    );
+    if (!selected?.device_id) return;
+    this._config = { ...this._config, device_id: selected.device_id };
+    this._legacyEndpointId = "";
+    this._dispatchConfig(this._config);
   }
 
   _valueChanged(key, value) {

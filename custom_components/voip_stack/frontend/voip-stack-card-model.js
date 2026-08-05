@@ -183,3 +183,11 @@ export function formatVideoFailureReason(reason) {
       return reason ? String(reason).replaceAll("_", " ") : "";
   }
 }
+export function normaliseCardConfig(rawConfig = {}) {
+  const config = { ...rawConfig };
+  const legacyEndpointId = !config.device_id
+    ? String(config.endpoint_id || "").trim()
+    : "";
+  delete config.endpoint_id;
+  return { config, legacyEndpointId };
+}

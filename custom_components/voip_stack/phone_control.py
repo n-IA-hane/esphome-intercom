@@ -118,7 +118,6 @@ class PhoneActionResult:
             "success": self.accepted,
             "operation": self.operation.value,
             "phone": {
-                "endpoint_id": self.phone.endpoint_id,
                 "device_id": self.phone.device_id,
                 "kind": self.phone.kind.value,
                 "name": self.phone.name,

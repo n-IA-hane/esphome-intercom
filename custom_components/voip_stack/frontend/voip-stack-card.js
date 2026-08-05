@@ -31,6 +31,7 @@ const {
   formatKnownReason,
   formatVideoFailureReason,
   normaliseAudioMode,
+  normaliseCardConfig,
   normaliseTransport,
   reasonKey,
   targetFromRosterEntry,
@@ -118,6 +119,7 @@ class VoipStackCard extends HTMLElement {
     this._availableDevices = [];
     this._availableDevicesLoading = false;
     this._availableDevicesRetryTimer = null;
+    this._legacyConfiguredEndpointId = "";
     this._rosterEntries = [];
     this._rosterSourceKey = null;
     this._softphoneTargetOptionsKey = null;
@@ -648,12 +650,15 @@ class VoipStackCard extends HTMLElement {
   }
 
   setConfig(config) {
-    const oldSelector = `${this.config?.endpoint_id || ""}|${this.config?.entity_id || this.config?.device_id || ""}`;
-    const oldEndpointId = String(this.config?.endpoint_id || "").trim();
+    const oldLegacyEndpointId = this._legacyConfiguredEndpointId;
+    const oldSelector = `${oldLegacyEndpointId}|${this.config?.entity_id || this.config?.device_id || ""}`;
+    const oldEndpointId = oldLegacyEndpointId;
     const oldDeviceId = String(this.config?.device_id || "");
     const oldMode = this.config?.mode || this.config?.card_mode || "esp_mirror";
-    this.config = config;
-    const newSelector = `${this.config?.endpoint_id || ""}|${this.config?.entity_id || this.config?.device_id || ""}`;
+    const normalised = normaliseCardConfig(config);
+    this._legacyConfiguredEndpointId = normalised.legacyEndpointId;
+    this.config = normalised.config;
+    const newSelector = `${this._legacyConfiguredEndpointId}|${this.config?.entity_id || this.config?.device_id || ""}`;
     const newMode = this.config?.mode || this.config?.card_mode || "esp_mirror";
     if (oldMode === "ha_softphone" && newMode !== "ha_softphone") {
       this._lifecycleGeneration++;
@@ -954,7 +959,10 @@ class VoipStackCard extends HTMLElement {
 
   _getSoftphoneEndpointId() {
     if (!this._isHaSoftphoneMode()) return "";
-    const configured = String(this.config?.endpoint_id || "").trim();
+    // COMPAT: direct runtime assignments are tolerated through 2026.9.
+    // setConfig() strips endpoint_id from every persisted configuration.
+    const configured = this._legacyConfiguredEndpointId ||
+      String(this.config?.endpoint_id || "").trim();
     if (configured) return configured;
     // A card with a Device Registry target but no endpoint_id is resolved by
     // the backend; until its first scoped snapshot arrives it must not claim
@@ -978,7 +986,8 @@ class VoipStackCard extends HTMLElement {
   }
 
   _softphoneRuntimeKey() {
-    const configuredEndpoint = String(this.config?.endpoint_id || "").trim();
+    const configuredEndpoint = this._legacyConfiguredEndpointId ||
+      String(this.config?.endpoint_id || "").trim();
     if (configuredEndpoint) return configuredEndpoint;
     const configuredDevice = String(this.config?.device_id || "").trim();
     return configuredDevice
@@ -1608,6 +1617,7 @@ class VoipStackCard extends HTMLElement {
       });
       if (result?.devices) {
         this._availableDevices = result.devices;
+        this._migrateLegacyPhoneSelector();
         this._render();
       }
     } catch (err) {
@@ -1616,6 +1626,22 @@ class VoipStackCard extends HTMLElement {
     } finally {
       this._availableDevicesLoading = false;
     }
+  }
+
+  _migrateLegacyPhoneSelector() {
+    if (!this._legacyConfiguredEndpointId || this.config?.device_id) return;
+    const device = this._availableDevices.find(
+      (candidate) => String(candidate?.endpoint_id || "").trim() ===
+        this._legacyConfiguredEndpointId,
+    );
+    if (!device?.device_id) return;
+    this.config = { ...this.config, device_id: device.device_id };
+    this._legacyConfiguredEndpointId = "";
+    this.dispatchEvent(new CustomEvent("config-changed", {
+      detail: { config: { ...this.config } },
+      bubbles: true,
+      composed: true,
+    }));
   }
 
   _isVoipStackLoaded() {

@@ -60,7 +60,6 @@ async def test_physical_phone_call_response_uses_the_selected_esp_endpoint(
         "success": True,
         "operation": "originate",
         "phone": {
-            "endpoint_id": "esphome:kitchen",
             "device_id": "device-kitchen",
             "kind": "esphome",
             "name": "Waveshare P4 Touch",

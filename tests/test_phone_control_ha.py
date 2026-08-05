@@ -99,7 +99,6 @@ async def test_esphome_originate_uses_native_action_and_canonical_response(
     response = result.as_service_response()
     assert response["schema_version"] == 2
     assert response["phone"] == {
-        "endpoint_id": endpoint.endpoint_id,
         "device_id": endpoint.device_id,
         "kind": "esphome",
         "name": endpoint.name,
