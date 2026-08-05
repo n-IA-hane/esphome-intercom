@@ -209,9 +209,6 @@
     "destination_required": {
       "message": "A call destination is required."
     },
-    "default_phone_unavailable": {
-      "message": "The default Home Assistant phone is unavailable."
-    },
     "phone_not_browser": {
       "message": "The selected device is not a Home Assistant browser phone."
     },

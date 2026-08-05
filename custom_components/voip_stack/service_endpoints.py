@@ -9,13 +9,12 @@ from .authorization import (
     async_require_service_endpoint_control,
     async_require_service_entity_control,
 )
-from .const import DOMAIN, HA_PEER_FALLBACK_NAME, HA_SOFTPHONE_DEVICE_ID
+from .const import DOMAIN, HA_PEER_FALLBACK_NAME
 from .phone_endpoint import (
-    DEFAULT_ENDPOINT_ID,
     EndpointKind,
     PhoneEndpoint,
 )
-from .runtime_data import endpoint_directory
+from .runtime_data import endpoint_directory, preferred_browser_phone
 
 
 def _service_error(message: str, key: str) -> ServiceValidationError:
@@ -37,20 +36,18 @@ def service_browser_endpoint(
     """Resolve the logical HA/browser phone originating a service action."""
     registry = endpoint_directory(hass)
     device_id = str(call.data.get("device_id") or "").strip()
-    endpoint = (
-        registry.get(DEFAULT_ENDPOINT_ID)
-        if not device_id or device_id == HA_SOFTPHONE_DEVICE_ID
-        else registry.by_device_id(device_id)
-    )
+    endpoint = registry.by_device_id(device_id) if device_id else preferred_browser_phone(hass)
     if endpoint is None:
-        if device_id and device_id != HA_SOFTPHONE_DEVICE_ID:
+        if device_id:
             raise _service_error(
                 "Unknown Home Assistant phone device",
                 "unknown_phone_device",
             )
-        endpoint_id = DEFAULT_ENDPOINT_ID
-    else:
-        endpoint_id = endpoint.endpoint_id
+        raise _service_error(
+            "Select a Home Assistant phone",
+            "phone_selection_required",
+        )
+    endpoint_id = endpoint.endpoint_id
     if endpoint is not None and endpoint.kind is not EndpointKind.BROWSER:
         if strict or device_id:
             raise _service_error(
@@ -66,19 +63,15 @@ def service_configured_endpoint(hass: HomeAssistant, call: ServiceCall):
     registry = endpoint_directory(hass)
 
     device_id = str(call.data.get("device_id") or "").strip()
-    endpoint = (
-        registry.get(DEFAULT_ENDPOINT_ID)
-        if not device_id or device_id == HA_SOFTPHONE_DEVICE_ID
-        else registry.by_device_id(device_id)
-    )
+    endpoint = registry.by_device_id(device_id) if device_id else preferred_browser_phone(hass)
     if endpoint is None:
         raise _service_error(
             (
                 "Unknown Home Assistant phone device"
                 if device_id
-                else "The default Home Assistant phone is unavailable"
+                else "Select a Home Assistant phone"
             ),
-            "unknown_phone_device" if device_id else "default_phone_unavailable",
+            "unknown_phone_device" if device_id else "phone_selection_required",
         )
     if endpoint.kind not in {EndpointKind.BROWSER, EndpointKind.SIP_ACCOUNT}:
         raise _service_error(

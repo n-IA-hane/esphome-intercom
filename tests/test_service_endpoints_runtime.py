@@ -103,6 +103,9 @@ def _load_service_endpoints(
     runtime_data.endpoint_directory = lambda hass: hass.data.get(
         "voip_stack", {}
     ).get("endpoint_registry", _Registry())
+    runtime_data.preferred_browser_phone = lambda hass: runtime_data.endpoint_directory(
+        hass
+    ).get("default")
 
     module_name = f"{PKG_NAME}.service_endpoints"
     spec = importlib.util.spec_from_file_location(
@@ -140,13 +143,10 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             config=types.SimpleNamespace(location_name="Casa"),
         )
 
-    def test_browser_selector_is_independent_from_card_presence(self) -> None:
-        endpoint_id, endpoint = self.module.service_browser_endpoint(
-            self.hass,
-            _Call(),
-        )
-        self.assertEqual(endpoint_id, "default")
-        self.assertIsNone(endpoint)
+    def test_browser_selector_requires_a_configured_phone(self) -> None:
+        with self.assertRaisesRegex(ServiceValidationError, "Select") as raised:
+            self.module.service_browser_endpoint(self.hass, _Call())
+        self.assertEqual(raised.exception.translation_key, "phone_selection_required")
 
         with self.assertRaisesRegex(ServiceValidationError, "Unknown") as raised:
             self.module.service_browser_endpoint(
@@ -279,10 +279,10 @@ class ServiceEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "phone_not_integration_owned",
         )
 
-    def test_configured_selector_rejects_an_unavailable_default(self) -> None:
+    def test_configured_selector_requires_an_available_phone(self) -> None:
         with self.assertRaisesRegex(
             ServiceValidationError,
-            "default Home Assistant phone is unavailable",
+            "Select a Home Assistant phone",
         ):
             self.module.service_configured_endpoint(self.hass, _Call())
         with self.assertRaisesRegex(
