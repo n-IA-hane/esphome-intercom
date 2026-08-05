@@ -18,7 +18,7 @@ from .call_scope import (
     take_pending_route as _take_pending_route,
 )
 from .config import media_capture_enabled as _media_capture_enabled
-from .const import CONF_VIDEO_TRANSCODING, DOMAIN, HA_SOFTPHONE_DEVICE_ID
+from .const import CONF_VIDEO_TRANSCODING, HA_SOFTPHONE_DEVICE_ID
 from .dial_fork import (
     DialDisposition,
     DialForkController,
@@ -26,7 +26,7 @@ from .dial_fork import (
 from .dial_plan import RingPolicy
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry
-from .runtime_data import sip_endpoint_runtime
+from .runtime_data import endpoint_directory, sip_endpoint_runtime
 from .fsm import (
     CallState,
     TerminalReason,
@@ -116,10 +116,10 @@ async def run_ring_group_call(
     _terminate_sip_bridge = runtime.terminate_sip_bridge
     registry = _call_registry(hass)
     origin_endpoint_id = str(origin_endpoint_id or "").strip()
-    endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
+    endpoint_registry = endpoint_directory(hass)
     origin_endpoint = (
         endpoint_registry.get(origin_endpoint_id)
-        if endpoint_registry is not None and origin_endpoint_id
+        if origin_endpoint_id
         else None
     )
     origin_device_id = str(

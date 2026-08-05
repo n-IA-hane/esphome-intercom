@@ -28,7 +28,7 @@ from .const import (
 from .dial_fork import DialDisposition, DialForkController
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
-from .runtime_data import sip_endpoint_runtime
+from .runtime_data import endpoint_directory, sip_endpoint_runtime
 from .endpoint_routing import (
     EndpointRouteResolver,
     peer_audio_formats as _peer_audio_formats,
@@ -228,7 +228,7 @@ async def async_forward_existing_call(
             _registered_roster_entries(hass),
         )
         decision = runtime.route_resolver.route(destination, roster_entries)
-        endpoint_registry = hass.data.get(DOMAIN, {}).get("endpoint_registry")
+        endpoint_registry = endpoint_directory(hass)
         if decision.action is RouteAction.ANSWER_HA:
             target_browser_endpoint = runtime.route_resolver.logical_endpoint(
                 decision.target or destination,
@@ -287,11 +287,7 @@ async def async_forward_existing_call(
             raise ServiceValidationError(
                 "a Home Assistant phone cannot forward a call to itself"
             )
-        session_endpoint = (
-            endpoint_registry.get(session_endpoint_id)
-            if endpoint_registry is not None
-            else None
-        )
+        session_endpoint = endpoint_registry.get(session_endpoint_id)
         session_device_id = str(
             getattr(session_endpoint, "device_id", "")
             or HA_SOFTPHONE_DEVICE_ID
@@ -519,9 +515,7 @@ async def async_forward_existing_call(
                 candidates = ForwardGroupCandidates()
                 attempts = candidates.attempts
                 browser_legs = candidates.browser_legs
-                endpoint_registry = hass.data.get(DOMAIN, {}).get(
-                    "endpoint_registry"
-                )
+                endpoint_registry = endpoint_directory(hass)
 
                 def _settle_browser_candidates(
                     state: str,
@@ -1055,9 +1049,7 @@ async def async_forward_existing_call(
                 sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
                 sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
             trunk_cfg = _get_trunk_config(hass)
-            endpoint_registry = hass.data.get(DOMAIN, {}).get(
-                "endpoint_registry"
-            )
+            endpoint_registry = endpoint_directory(hass)
             source_route_endpoint_id = str(
                 ((session.metadata if session is not None else {}) or {}).get(
                     "source_endpoint_id"
@@ -1072,12 +1064,12 @@ async def async_forward_existing_call(
             ).strip()
             source_route_endpoint = (
                 endpoint_registry.get(source_route_endpoint_id)
-                if endpoint_registry is not None and source_route_endpoint_id
+                if source_route_endpoint_id
                 else None
             )
             target_route_endpoint = (
                 endpoint_registry.get(target_route_endpoint_id)
-                if endpoint_registry is not None and target_route_endpoint_id
+                if target_route_endpoint_id
                 else None
             )
             forward_video_enabled = bool(

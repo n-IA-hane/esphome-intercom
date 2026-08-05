@@ -28,7 +28,7 @@ from .rtp import RtpPacket, build_packet, next_sequence, next_timestamp, parse_p
 from .sdp import build_answer_directional
 from . import sdp
 from .session_cleanup import async_wait_for_cleanup
-from .runtime_data import conference_component, sip_endpoint_runtime
+from .runtime_data import conference_component, endpoint_directory, sip_endpoint_runtime
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder
 from .sip_listener import SipInvite, SipInviteResult
 from .websocket_api import _fire_call_event, _set_ha_softphone_call_state
@@ -620,12 +620,7 @@ class ConferenceRoom:
         caller: str = "",
         target: str = "",
     ) -> None:
-        endpoint_registry = self.hass.data.get(DOMAIN, {}).get("endpoint_registry")
-        endpoint = (
-            endpoint_registry.get(endpoint_id)
-            if endpoint_registry is not None
-            else None
-        )
+        endpoint = endpoint_directory(self.hass).get(endpoint_id)
         self._ha_softphone_announced[call_id] = endpoint_id
         _set_ha_softphone_call_state(
             self.hass,
@@ -655,17 +650,13 @@ class ConferenceRoom:
             if call_id
             else dict(self._ha_softphone_announced)
         )
-        endpoint_registry = self.hass.data.get(DOMAIN, {}).get("endpoint_registry")
+        endpoint_registry = endpoint_directory(self.hass)
         registry = call_registry(self.hass)
         manager = conference_component(self.hass)
         for softphone_call_id, endpoint_id in selected.items():
             if not endpoint_id:
                 continue
-            endpoint = (
-                endpoint_registry.get(endpoint_id)
-                if endpoint_registry is not None
-                else None
-            )
+            endpoint = endpoint_registry.get(endpoint_id)
             _set_ha_softphone_call_state(
                 self.hass,
                 CallState.IDLE.value,
@@ -752,12 +743,7 @@ class ConferenceManager:
             if existing != (room_name, endpoint_id):
                 raise ValueError(f"conference call_id {candidate!r} is already bound")
             return candidate
-        endpoint_registry = self.hass.data.get(DOMAIN, {}).get("endpoint_registry")
-        endpoint = (
-            endpoint_registry.get(endpoint_id)
-            if endpoint_registry is not None
-            else None
-        )
+        endpoint = endpoint_directory(self.hass).get(endpoint_id)
         registry.upsert(
             candidate,
             state=state,
@@ -831,16 +817,12 @@ class ConferenceManager:
         room = self.rooms.get(room_key)
         if room is None or room._closed:
             return ()
-        endpoint_registry = self.hass.data.get(DOMAIN, {}).get("endpoint_registry")
+        endpoint_registry = endpoint_directory(self.hass)
         call_ids: list[str] = []
         reservations: list[tuple[str, str]] = []
         try:
             for endpoint_id in endpoint_ids:
-                endpoint = (
-                    endpoint_registry.get(endpoint_id)
-                    if endpoint_registry is not None
-                    else None
-                )
+                endpoint = endpoint_registry.get(endpoint_id)
                 if endpoint is not None and (
                     endpoint.kind is not EndpointKind.BROWSER
                     or endpoint.dnd
@@ -888,15 +870,11 @@ class ConferenceManager:
         requested_endpoint_ids = ring_endpoint_ids or (
             (DEFAULT_ENDPOINT_ID,) if ring_ha else ()
         )
-        endpoint_registry = self.hass.data.get(DOMAIN, {}).get("endpoint_registry")
+        endpoint_registry = endpoint_directory(self.hass)
         ring_endpoints: list[tuple[str, str]] = []
         try:
             for endpoint_id in requested_endpoint_ids:
-                endpoint = (
-                    endpoint_registry.get(endpoint_id)
-                    if endpoint_registry is not None
-                    else None
-                )
+                endpoint = endpoint_registry.get(endpoint_id)
                 if endpoint is not None and (
                     endpoint.kind is not EndpointKind.BROWSER
                     or endpoint.dnd
