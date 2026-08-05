@@ -16,7 +16,6 @@ const {
   desiredAudioPaths,
   normaliseAudioDirection,
   normaliseAudioMode,
-  parsePcmFormat,
   resolveSessionFormats,
   sameAudioFormat,
 } = await import(`./voip-stack-media-model.js?v=${encodeURIComponent(MODULE_VERSION)}`);
@@ -244,18 +243,6 @@ class VoipStackEngine extends EventTarget {
     for (const record of this._softphoneScopeSubscriptions.values()) {
       this._ensureSoftphoneScopeSubscription(conn, record);
     }
-  }
-
-  _normaliseSoftphoneSelector(selector = {}) {
-    return normaliseSoftphoneSelector(selector);
-  }
-
-  _softphoneScopeKey(selector = {}) {
-    return softphoneScopeKey(selector);
-  }
-
-  _softphoneStateMatches(state, selector = {}) {
-    return softphoneStateMatches(state, selector);
   }
 
   _isUnknownEndpointError(err) {
@@ -756,16 +743,16 @@ class VoipStackEngine extends EventTarget {
       // backend event cannot be delivered twice via overlapping selectors.
       if (
         subscriptionSelector &&
-        this._softphoneScopeKey(selector) !== this._softphoneScopeKey(subscriptionSelector)
+        softphoneScopeKey(selector) !== softphoneScopeKey(subscriptionSelector)
       ) continue;
-      if (!this._softphoneStateMatches(state, selector)) continue;
+      if (!softphoneStateMatches(state, selector)) continue;
       try { cb(state); } catch (err) { console.error("voip-stack-engine softphone subscriber", err); }
     }
   }
 
   subscribeSoftphoneState(cb, selector = {}) {
-    const normalised = this._normaliseSoftphoneSelector(selector);
-    const key = this._softphoneScopeKey(normalised);
+    const normalised = normaliseSoftphoneSelector(selector);
+    const key = softphoneScopeKey(normalised);
     this._softphoneSubscribers.add(cb);
     this._softphoneSubscriberSelectors.set(cb, normalised);
     let record = this._softphoneScopeSubscriptions.get(key);
@@ -783,7 +770,7 @@ class VoipStackEngine extends EventTarget {
     record.refs++;
     if (this._busConnection) this._ensureSoftphoneScopeSubscription(this._busConnection, record);
     for (const state of this._lastSoftphoneStates.values()) {
-      if (!this._softphoneStateMatches(state, normalised)) continue;
+      if (!softphoneStateMatches(state, normalised)) continue;
       try { cb(state); } catch (err) { console.error("voip-stack-engine softphone replay", err); }
     }
     return () => {
@@ -1066,7 +1053,7 @@ class VoipStackEngine extends EventTarget {
         }
         if (msg.audio_direction) {
           if (this._audioReady) void this._reconcileAudioMedia(msg);
-          else this._audioDirection = this._normaliseAudioDirection(msg.audio_direction);
+          else this._audioDirection = normaliseAudioDirection(msg.audio_direction);
         } else if (this._audioReady && (msg.tx_format || msg.rx_format)) {
           void this._reconcileAudioMedia(msg);
         }
@@ -1093,20 +1080,12 @@ class VoipStackEngine extends EventTarget {
     return new Ctor();
   }
 
-  _parseFormat(token, label = "audio format") {
-    return parsePcmFormat(token, label);
-  }
-
-  _resolveSessionFormats(negotiated = null) {
-    return resolveSessionFormats(negotiated);
-  }
-
   async _setupAudio(deviceInfo, negotiated = null, attachKey = "") {
-    const audioMode = this._normaliseAudioMode(deviceInfo?.audio_mode);
-    const audioDirection = this._normaliseAudioDirection(negotiated?.audio_direction);
-    const formats = this._resolveSessionFormats(negotiated);
+    const audioMode = normaliseAudioMode(deviceInfo?.audio_mode);
+    const audioDirection = normaliseAudioDirection(negotiated?.audio_direction);
+    const formats = resolveSessionFormats(negotiated);
     const microphoneAntiAlias = deviceInfo?.microphone_anti_alias !== false;
-    const { capture, playback } = this._desiredAudioPaths(audioMode, audioDirection);
+    const { capture, playback } = desiredAudioPaths(audioMode, audioDirection);
     const setupGeneration = ++this._audioSetupGeneration;
     const expectedCallId = this._callId;
     const resources = {
@@ -1214,34 +1193,18 @@ class VoipStackEngine extends EventTarget {
     }
   }
 
-  _normaliseAudioMode(value) {
-    return normaliseAudioMode(value);
-  }
-
-  _normaliseAudioDirection(value) {
-    return normaliseAudioDirection(value);
-  }
-
-  _desiredAudioPaths(audioMode, audioDirection) {
-    return desiredAudioPaths(audioMode, audioDirection);
-  }
-
-  _sameAudioFormat(left, right) {
-    return sameAudioFormat(left, right);
-  }
-
   async _reconcileAudioMedia(update = {}) {
     if (!this._audioReady || !this._callId) return;
     const negotiated = { ...(this._lastSessionPayload || {}), ...(update || {}) };
     if (update?.tx_format || update?.rx_format) this._lastSessionPayload = negotiated;
-    const direction = this._normaliseAudioDirection(
+    const direction = normaliseAudioDirection(
       negotiated.audio_direction || this._audioDirection,
     );
-    const formats = this._resolveSessionFormats(negotiated);
-    const desired = this._desiredAudioPaths(this._audioMode, direction);
+    const formats = resolveSessionFormats(negotiated);
+    const desired = desiredAudioPaths(this._audioMode, direction);
     if (
-      this._sameAudioFormat(formats.tx, this._txFormat) &&
-      this._sameAudioFormat(formats.rx, this._rxFormat) &&
+      sameAudioFormat(formats.tx, this._txFormat) &&
+      sameAudioFormat(formats.rx, this._rxFormat) &&
       desired.capture === Boolean(this._captureNode) &&
       desired.playback === Boolean(this._playbackNode)
     ) {
@@ -1277,7 +1240,7 @@ class VoipStackEngine extends EventTarget {
   }
 
   _applyAudioDirection(value) {
-    const nextDirection = this._normaliseAudioDirection(value);
+    const nextDirection = normaliseAudioDirection(value);
     let changed = nextDirection !== this._audioDirection;
     this._audioDirection = nextDirection;
     const enabled = this._canSendAudio();
@@ -1500,7 +1463,7 @@ class VoipStackEngine extends EventTarget {
     if (statePayload.audio_direction) {
       this._lastSessionPayload = { ...(this._lastSessionPayload || {}), ...statePayload };
       if (this._audioReady) await this._reconcileAudioMedia(statePayload);
-      else this._audioDirection = this._normaliseAudioDirection(statePayload.audio_direction);
+      else this._audioDirection = normaliseAudioDirection(statePayload.audio_direction);
     }
     await this._ensureVideo(statePayload);
   }

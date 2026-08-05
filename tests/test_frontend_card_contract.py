@@ -138,17 +138,13 @@ class FrontendCardContractTest(unittest.TestCase):
             ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-stack-session-model.js"
         ).read_text()
         subscription = _method_body(engine, "_ensureSoftphoneScopeSubscription")
-        state_match = _method_body(engine, "_softphoneStateMatches")
         start = _method_body(engine, "async startHaSoftphone")
         audio_url = _method_body(engine, "async _wsUrl")
         video = (ROOT / "custom_components" / "voip_stack" / "frontend" / "voip-stack-video.js").read_text()
 
         self.assertIn("request.endpoint_id = record.selector.endpoint_id", subscription)
         self.assertIn("request.device_id = record.selector.device_id", subscription)
-        self.assertIn(
-            "softphoneStateMatches(state, selector)",
-            state_match,
-        )
+        self.assertIn("softphoneStateMatches(state, selector)", engine)
         self.assertIn("stateEndpoint === wanted.endpoint_id", session_model)
         self.assertIn("!!stateEndpoint", session_model)
         self.assertIn('type: "call_service"', start)
@@ -728,7 +724,6 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("if (!this._canSendAudio()) return", engine)
         self.assertIn("!this._canReceiveAudio()", engine)
         self.assertIn("void this._reconcileAudioMedia(msg)", engine)
-        self.assertIn("_desiredAudioPaths(audioMode, audioDirection)", engine)
         self.assertIn("desiredAudioPaths(audioMode, audioDirection)", engine)
         self.assertIn("Audio WebSocket negotiation timed out", engine)
         self.assertIn('"sendrecv", "sendonly", "recvonly", "inactive"', media_model)
