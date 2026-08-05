@@ -317,6 +317,36 @@ class SipEndpointRuntime:
             if (route := session.pending_route) is not None
         }
 
+    def video_parameter_sets_snapshot(self) -> dict[str, tuple[bytes, ...]]:
+        """Return cached video parameter sets from authoritative sessions."""
+
+        return {
+            call_id: session.video_parameter_sets
+            for call_id, session in self.calls.items()
+            if session.video_parameter_sets
+        }
+
+    def set_video_parameter_sets(
+        self, call_id: str, parameter_sets: tuple[bytes, ...]
+    ) -> bool:
+        """Cache codec configuration for the current media generation."""
+
+        session = self.get_session(call_id)
+        if session is None or not session.live:
+            return False
+        session.video_parameter_sets = tuple(parameter_sets)
+        self._publish(session)
+        return True
+
+    def clear_video_parameter_sets(self, call_id: str) -> None:
+        """Discard codec configuration when media is renegotiated."""
+
+        session = self.get_session(call_id)
+        if session is None or not session.video_parameter_sets:
+            return
+        session.video_parameter_sets = ()
+        self._publish(session)
+
     def set_pending_route(self, call_id: str, route: dict[str, Any]) -> bool:
         """Attach routing state to the current call generation."""
 

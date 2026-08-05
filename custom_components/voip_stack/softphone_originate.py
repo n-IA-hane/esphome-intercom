@@ -585,7 +585,7 @@ async def async_originate_browser_call(
                     dtmf_events=updated.dtmf_events,
                 )
             if video_session is not None and updated_video is not None:
-                registry.video_parameter_sets.pop(call_id, None)
+                registry.clear_video_parameter_sets(call_id)
                 commit_video_session_update(
                     video_session,
                     updated,

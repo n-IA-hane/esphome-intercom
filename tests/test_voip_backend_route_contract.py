@@ -1824,7 +1824,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         commit = media_update[
             start : media_update.index("return SipInviteResult(", start)
         ]
-        self.assertIn("registry.video_parameter_sets.pop(call_id, None)", commit)
+        self.assertIn("registry.clear_video_parameter_sets(call_id)", commit)
         self.assertIn("commit_video_session_update(", commit)
         self.assertIn("[*parameter_sets, *_sdp_parameter_sets(browser_format)]", video_ws)
         self.assertIn("outbound_clock.reset_browser()", video_ws)

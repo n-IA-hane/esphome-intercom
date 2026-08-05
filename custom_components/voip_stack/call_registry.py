@@ -175,6 +175,14 @@ class CallSessionOwner(Protocol):
 
     def take_pending_route(self, call_id: str) -> dict[str, Any] | None: ...
 
+    def video_parameter_sets_snapshot(self) -> dict[str, tuple[bytes, ...]]: ...
+
+    def set_video_parameter_sets(
+        self, call_id: str, parameter_sets: tuple[bytes, ...]
+    ) -> bool: ...
+
+    def clear_video_parameter_sets(self, call_id: str) -> None: ...
+
     def set_pending_invite(self, call_id: str, invite: Any) -> bool: ...
 
     def take_pending_invite(self, call_id: str) -> Any | None: ...
@@ -251,7 +259,7 @@ class CallRegistry:
         self._legacy_pending_invites: dict[str, Any] = {}
         self._legacy_preanswered: dict[str, dict[str, Any]] = {}
         self._legacy_softphone_media: dict[str, dict[str, Any]] = {}
-        self.video_parameter_sets: dict[str, tuple[bytes, ...]] = {}
+        self._legacy_video_parameter_sets: dict[str, tuple[bytes, ...]] = {}
         self._legacy_sip_clients: dict[str, Any] = {}
         self._legacy_client_watchers: dict[str, Any] = {}
         self._legacy_relays: dict[str, Any] = {}
@@ -344,6 +352,33 @@ class CallRegistry:
         if self._session_owner is not None:
             return self._session_owner.pending_routes_snapshot()
         return self._legacy_pending_routes
+
+    @property
+    def video_parameter_sets(self) -> dict[str, tuple[bytes, ...]]:
+        """Compatibility projection of session-owned codec configuration."""
+
+        if self._session_owner is not None:
+            return self._session_owner.video_parameter_sets_snapshot()
+        return self._legacy_video_parameter_sets
+
+    def cache_video_parameter_sets(
+        self, call_id: str, parameter_sets: tuple[bytes, ...]
+    ) -> None:
+        """Cache video configuration on the current call generation."""
+
+        if self._session_owner is None:
+            self._legacy_video_parameter_sets[call_id] = tuple(parameter_sets)
+            return
+        if not self._session_owner.set_video_parameter_sets(call_id, parameter_sets):
+            raise RuntimeError(f"call session {call_id!r} is no longer current")
+
+    def clear_video_parameter_sets(self, call_id: str) -> None:
+        """Clear video configuration without mutating a detached projection."""
+
+        if self._session_owner is None:
+            self._legacy_video_parameter_sets.pop(call_id, None)
+            return
+        self._session_owner.clear_video_parameter_sets(call_id)
 
     def set_pending_route(self, call_id: str, route: dict[str, Any]) -> None:
         """Attach route state through the authoritative owner when present."""
@@ -1370,8 +1405,9 @@ class CallRegistry:
         for context_id in event_context_ids:
             self.event_contexts.pop(context_id, None)
         self.take_pending_invite(session_id)
-        self.video_parameter_sets.pop(session_id, None)
-        self.video_parameter_sets.pop(call_id, None)
+        self.clear_video_parameter_sets(session_id)
+        if call_id != session_id:
+            self.clear_video_parameter_sets(call_id)
         route = self.take_pending_route(session_id)
         if route is not None:
             future = route.get("future")
@@ -1528,7 +1564,7 @@ class CallRegistry:
         self._legacy_pending_invites.clear()
         self._legacy_preanswered.clear()
         self._legacy_softphone_media.clear()
-        self.video_parameter_sets.clear()
+        self._legacy_video_parameter_sets.clear()
         self._legacy_sip_clients.clear()
         self._legacy_client_watchers.clear()
         self._legacy_relays.clear()

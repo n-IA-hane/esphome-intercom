@@ -1583,7 +1583,10 @@ async def _run_video_session(
         if browser_format.encoding == "H264" and isinstance(depacketizer, H264Depacketizer):
             parameter_sets = depacketizer.parameter_sets
             if len(parameter_sets) == 2 and isinstance(registry, CallRegistry):
-                registry.video_parameter_sets[session.call_id] = parameter_sets
+                registry.cache_video_parameter_sets(
+                    session.call_id,
+                    parameter_sets,
+                )
         if needs_key_frame and not access_unit.key_frame:
             counters["video_drop_error"] += 1
             request_key_frame(now)
