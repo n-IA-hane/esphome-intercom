@@ -35,6 +35,26 @@ class DialDisposition(StrEnum):
     PROTOCOL_ERROR = "protocol_error"
 
 
+_TERMINAL_REASON = {
+    DialDisposition.BUSY: "busy",
+    DialDisposition.DND: "dnd",
+    DialDisposition.DECLINED: "declined",
+    DialDisposition.TIMEOUT: "timeout",
+    DialDisposition.MEDIA_INCOMPATIBLE: "media_incompatible",
+    DialDisposition.AUTH_FAILED: "auth_required_unsupported",
+    DialDisposition.CANCELLED: "cancelled",
+    DialDisposition.SOURCE_CANCELLED: "cancelled",
+    DialDisposition.PROTOCOL_ERROR: "protocol_error",
+    DialDisposition.UNAVAILABLE: "transport_unreachable",
+}
+
+
+def terminal_reason(disposition: DialDisposition, fallback: str) -> str:
+    """Translate one fork disposition into its stable public reason."""
+
+    return _TERMINAL_REASON.get(disposition, fallback)
+
+
 class LegCloseMode(StrEnum):
     """Required signaling cleanup for a losing or abandoned branch."""
 

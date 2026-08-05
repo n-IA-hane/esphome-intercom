@@ -22,6 +22,7 @@ from .const import CONF_VIDEO_TRANSCODING, HA_SOFTPHONE_DEVICE_ID
 from .dial_fork import (
     DialDisposition,
     DialForkController,
+    terminal_reason as fork_terminal_reason,
 )
 from .dial_plan import RingPolicy
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
@@ -482,18 +483,10 @@ async def run_ring_group_call(
             browser_winner = isinstance(winner, BrowserLeg)
         elif fork_result.outcome.disposition is DialDisposition.REROUTE:
             reroute_decision = dict(browser_decision)
-        final_result = {
-            DialDisposition.BUSY: "busy",
-            DialDisposition.DND: "dnd",
-            DialDisposition.DECLINED: "declined",
-            DialDisposition.TIMEOUT: "timeout",
-            DialDisposition.MEDIA_INCOMPATIBLE: "media_incompatible",
-            DialDisposition.AUTH_FAILED: "auth_required_unsupported",
-            DialDisposition.CANCELLED: "cancelled",
-            DialDisposition.SOURCE_CANCELLED: "cancelled",
-            DialDisposition.PROTOCOL_ERROR: "protocol_error",
-            DialDisposition.UNAVAILABLE: "transport_unreachable",
-        }.get(fork_result.outcome.disposition, final_result)
+        final_result = fork_terminal_reason(
+            fork_result.outcome.disposition,
+            final_result,
+        )
         if await _abort_stale_ring_group():
             return
         winner_endpoint_id = str(

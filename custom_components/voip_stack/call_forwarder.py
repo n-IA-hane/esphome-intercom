@@ -25,7 +25,7 @@ from .const import (
     DOMAIN,
     HA_SOFTPHONE_DEVICE_ID,
 )
-from .dial_fork import DialDisposition, DialForkController
+from .dial_fork import DialDisposition, DialForkController, terminal_reason
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
 from .runtime_data import (
@@ -699,20 +699,7 @@ async def async_forward_existing_call(
                         handoff.set_result(dict(reroute_decision))
                     return
                 if winner is None:
-                    failure = {
-                        DialDisposition.BUSY: "busy",
-                        DialDisposition.DND: "dnd",
-                        DialDisposition.DECLINED: "declined",
-                        DialDisposition.TIMEOUT: "timeout",
-                        DialDisposition.MEDIA_INCOMPATIBLE: "media_incompatible",
-                        DialDisposition.AUTH_FAILED: (
-                            "auth_required_unsupported"
-                        ),
-                        DialDisposition.CANCELLED: "cancelled",
-                        DialDisposition.SOURCE_CANCELLED: "cancelled",
-                        DialDisposition.PROTOCOL_ERROR: "protocol_error",
-                        DialDisposition.UNAVAILABLE: "transport_unreachable",
-                    }.get(
+                    failure = terminal_reason(
                         fork_result.outcome.disposition,
                         fork_result.outcome.reason or "transport_unreachable",
                     )
