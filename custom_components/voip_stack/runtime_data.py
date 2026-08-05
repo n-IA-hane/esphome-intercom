@@ -24,6 +24,7 @@ class VoipStackRuntime:
     trunk_config: dict[str, Any]
     endpoints: EndpointRegistry
     phones: PhoneAdapterRegistry
+    preferred_phone_device_id: str = ""
     debug_mode: bool = False
     media_capture: bool = False
 

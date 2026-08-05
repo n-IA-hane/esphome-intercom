@@ -124,9 +124,11 @@ async def async_resolve_target_device(
 async def async_resolve_source_device(
     hass: HomeAssistant,
     call: ServiceCall,
+    *,
+    selector: str = "",
 ) -> dict | None:
     """Resolve the explicit physical source of a phone action."""
-    source = str(call.data.get("device_id") or "").strip()
+    source = str(selector or call.data.get("device_id") or "").strip()
     if not source:
         return None
     devices = await _get_voip_devices(hass)

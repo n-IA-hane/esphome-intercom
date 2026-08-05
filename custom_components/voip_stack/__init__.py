@@ -33,6 +33,7 @@ from .const import (
     CONF_ASSIST_INTENTS,
     CONF_DEBUG_MODE,
     CONF_MEDIA_CAPTURE,
+    CONF_PREFERRED_PHONE_DEVICE_ID,
     CONF_SIP_VIDEO,
     CONF_PHONEBOOK_CONTACTS,
     CONF_AUTOMATION_ROUTING_ENABLED,
@@ -71,6 +72,7 @@ from .phone_config import (
     async_setup_endpoint_registry,
     phone_subentries,
 )
+from .endpoint_device import async_ensure_endpoint_device
 from .route_decisions import set_pending_route_decision as _set_pending_route_decision
 from .runtime_data import (
     VoipStackConfigEntry,
@@ -124,6 +126,9 @@ async def async_migrate_entry(
         )
         hass.config_entries.async_update_entry(config_entry, version=3)
         _LOGGER.info("Migrated VoIP Stack phones to config subentries")
+    if config_entry.version < 4:
+        hass.config_entries.async_update_entry(config_entry, version=4)
+        _LOGGER.info("Prepared VoIP Stack phones for Device-based selection")
     return True
 
 
@@ -442,8 +447,24 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -> bool:
     """Set up VoIP Stack from a config entry (UI setup)."""
-    async_ensure_phone_subentries(hass, entry)
     endpoint_registry = async_setup_endpoint_registry(hass, entry)
+    for configured_endpoint in tuple(endpoint_registry.endpoints):
+        async_ensure_endpoint_device(
+            hass,
+            entry,
+            configured_endpoint,
+            endpoint_registry,
+        )
+    preferred_phone_device_id = str(
+        entry.data.get(CONF_PREFERRED_PHONE_DEVICE_ID) or ""
+    ).strip()
+    if not preferred_phone_device_id:
+        legacy_default = endpoint_registry.get("default")
+        if legacy_default is not None and legacy_default.device_id:
+            preferred_phone_device_id = legacy_default.device_id
+            data = dict(entry.data)
+            data[CONF_PREFERRED_PHONE_DEVICE_ID] = preferred_phone_device_id
+            hass.config_entries.async_update_entry(entry, data=data)
     from .local_softphone_runtime import async_setup_local_softphone_bridge
 
     async_setup_local_softphone_bridge(hass)
@@ -455,7 +476,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
         assist_config=assist_cfg,
         trunk_config=trunk_cfg,
         endpoints=endpoint_registry,
-        phones=PhoneAdapterRegistry(hass, endpoint_registry),
+        phones=PhoneAdapterRegistry(
+            hass,
+            endpoint_registry,
+            preferred_phone_device_id=preferred_phone_device_id,
+        ),
+        preferred_phone_device_id=preferred_phone_device_id,
         debug_mode=bool(entry.data.get(CONF_DEBUG_MODE, False)),
         media_capture=bool(entry.data.get(CONF_MEDIA_CAPTURE, False)),
     )

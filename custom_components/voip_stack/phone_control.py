@@ -351,9 +351,18 @@ def _unsupported(
 class PhoneAdapterRegistry:
     """Resolve one local phone and dispatch through its transport adapter."""
 
-    def __init__(self, hass: HomeAssistant, endpoints: EndpointRegistry) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        endpoints: EndpointRegistry,
+        *,
+        preferred_phone_device_id: str = "",
+    ) -> None:
         self._hass = hass
         self._endpoints = endpoints
+        self._preferred_phone_device_id = str(
+            preferred_phone_device_id or ""
+        ).strip()
         self._adapters: dict[EndpointKind, PhoneAdapter] = {
             EndpointKind.BROWSER: BrowserPhoneAdapter(),
             EndpointKind.ESPHOME: EspHomePhoneAdapter(),
@@ -402,11 +411,35 @@ class PhoneAdapterRegistry:
 
     async def _resolve_source(self, call: ServiceCall) -> PhoneHandle:
         selector = str(call.data.get("device_id") or "").strip()
+        if not selector:
+            selector = self._preferred_phone_device_id
+        if not selector:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="phone_selection_required",
+            )
         endpoint = self._endpoints.resolve(selector) if selector else None
-        if endpoint is not None and endpoint.kind is EndpointKind.SIP_ACCOUNT:
-            return self._endpoint_handle(endpoint, frozenset())
+        if endpoint is not None:
+            if endpoint.kind is EndpointKind.SIP_ACCOUNT:
+                return self._endpoint_handle(endpoint, frozenset())
+            if endpoint.kind is EndpointKind.BROWSER:
+                return self._endpoint_handle(
+                    endpoint,
+                    frozenset(
+                        {
+                            PhoneCapability.ORIGINATE,
+                            PhoneCapability.ANSWER,
+                            PhoneCapability.DECLINE,
+                            PhoneCapability.HANGUP,
+                        }
+                    ),
+                )
 
-        device = await async_resolve_source_device(self._hass, call)
+        device = await async_resolve_source_device(
+            self._hass,
+            call,
+            selector=selector,
+        )
         if device is not None:
             live_endpoint = self._endpoints.by_device_id(
                 str(device.get("device_id") or "")

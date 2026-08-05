@@ -296,26 +296,6 @@ def async_ensure_phone_subentries(
         hass.config_entries.async_update_entry(entry, data=data)
 
 
-def restore_default_phone_subentry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    previous_data: Mapping[str, Any] | None = None,
-) -> ConfigSubentry:
-    """Restore the mandatory master phone after an unsupported native delete."""
-    existing = phone_subentry_by_endpoint_id(entry, DEFAULT_ENDPOINT_ID)
-    if existing is not None:
-        return existing
-    data = dict(previous_data or default_phone_data(hass, entry))
-    data[CONF_PHONE_ENDPOINT_ID] = DEFAULT_ENDPOINT_ID
-    data[CONF_PHONE_KIND] = EndpointKind.BROWSER.value
-    return _add_phone_subentry(
-        hass,
-        entry,
-        data=data,
-        title=str(data.get(CONF_PHONE_NAME) or HA_PEER_FALLBACK_NAME),
-    )
-
-
 def _endpoint_capabilities(entry: ConfigEntry, data: Mapping[str, Any]) -> set[str]:
     capabilities = {"audio", "dtmf"}
     if bool(entry.data.get(CONF_SIP_VIDEO, False)) and bool(

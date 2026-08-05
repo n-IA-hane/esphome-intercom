@@ -201,6 +201,9 @@
     "phone_operation_not_supported": {
       "message": "{phone} does not support the {operation} operation."
     },
+    "phone_selection_required": {
+      "message": "Select the phone that should perform this action."
+    },
     "phone_unavailable": {
       "message": "{phone} is currently unavailable."
     },

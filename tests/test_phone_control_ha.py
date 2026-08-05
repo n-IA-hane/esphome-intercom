@@ -168,7 +168,11 @@ async def test_browser_originate_uses_the_same_result_type(
     hass = MagicMock()
     call = _call(hass, destination="P4")
 
-    result = await PhoneAdapterRegistry(hass, endpoints).originate(
+    result = await PhoneAdapterRegistry(
+        hass,
+        endpoints,
+        preferred_phone_device_id=endpoint.device_id,
+    ).originate(
         call,
         OriginateRequest(destination="P4"),
     )
@@ -182,6 +186,26 @@ async def test_browser_originate_uses_the_same_result_type(
         browser_endpoint=endpoint,
         force_ha_bridge=False,
     )
+
+
+async def test_implicit_source_requires_an_explicit_preferred_phone() -> None:
+    endpoints = EndpointRegistry()
+    endpoint = _endpoint(
+        endpoint_id="casa",
+        device_id="device-casa",
+        name="Casa",
+        kind=EndpointKind.BROWSER,
+    )
+    endpoints.register(endpoint)
+    call = _call(MagicMock(), destination="P4")
+
+    with pytest.raises(ServiceValidationError) as raised:
+        await PhoneAdapterRegistry(call.hass, endpoints).originate(
+            call,
+            OriginateRequest(destination="P4"),
+        )
+
+    assert raised.value.translation_key == "phone_selection_required"
 
 
 async def test_esphome_answer_preserves_context_and_control_scope(

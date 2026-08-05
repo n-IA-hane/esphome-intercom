@@ -13,10 +13,9 @@ from .const import CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS, DOMAIN
 from .endpoint_lifecycle import create_runtime_task
 from .phone_config import (
     phone_subentries,
-    restore_default_phone_subentry,
     sync_registry_from_entry,
 )
-from .phone_endpoint import DEFAULT_ENDPOINT_ID, EndpointKind
+from .phone_endpoint import EndpointKind
 from .phonebook_runtime import push_roster_json_to_esps
 from .store import manual_roster_entries, sip_accounts
 from .websocket_api import (
@@ -86,27 +85,6 @@ async def async_config_entry_updated(
     """Apply native config/subentry changes as soon as HA persists them."""
 
     bucket = hass.data.setdefault(DOMAIN, {})
-    if not any(
-        str(subentry.data.get("endpoint_id") or "").strip()
-        == DEFAULT_ENDPOINT_ID
-        for subentry in phone_subentries(entry)
-    ):
-        previous_records = bucket.get("entry_phone_records", {})
-        restore_default_phone_subentry(
-            hass,
-            entry,
-            previous_records.get(DEFAULT_ENDPOINT_ID),
-        )
-        bucket["entry_phone_signature"] = entry_phone_signature(entry)
-        bucket["entry_phone_records"] = {
-            str(subentry.data.get("endpoint_id") or "").strip(): dict(
-                subentry.data
-            )
-            for subentry in phone_subentries(entry)
-        }
-        await hass.config_entries.async_reload(entry.entry_id)
-        return
-
     runtime_signature = entry_runtime_signature(entry)
     phone_signature = entry_phone_signature(entry)
     contacts_signature = tuple(

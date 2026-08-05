@@ -186,3 +186,28 @@ async def test_entry_runtime_exposes_configuration_without_global_mirrors(
         "debug_mode",
         "media_capture",
     }.intersection(hass.data.get(DOMAIN, {}))
+
+
+async def test_deleting_the_last_browser_phone_does_not_restore_a_default(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.voip_stack.config_entry_runtime import (
+        async_config_entry_updated,
+        entry_phone_signature,
+        entry_runtime_signature,
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, data={}, version=4)
+    entry.add_to_hass(hass)
+    bucket = hass.data.setdefault(DOMAIN, {})
+    bucket["entry_runtime_signature"] = entry_runtime_signature(entry)
+    bucket["entry_phone_signature"] = entry_phone_signature(entry)
+    bucket["entry_contacts_signature"] = ()
+    reload_entry = AsyncMock()
+    monkeypatch.setattr(hass.config_entries, "async_reload", reload_entry)
+
+    await async_config_entry_updated(hass, entry)
+
+    assert not entry.subentries
+    reload_entry.assert_not_awaited()
