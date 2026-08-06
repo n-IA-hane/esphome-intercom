@@ -243,9 +243,10 @@ class EndpointRegistryTest(unittest.TestCase):
             endpoint("office", "Office", extension="402", device_id="dev-office")
         )
         with self.assertRaises(endpoint_registry.EndpointCollisionError):
-            self.registry.update("office", extension="401")
+            self.registry.update("office", name="Kitchen")
 
         self.assertEqual(self.registry.get("office"), office)
+        self.assertEqual(self.registry.by_name("Office"), office)
         self.assertEqual(self.registry.by_extension("402"), office)
         self.assertEqual(self.registry.by_extension("401"), self.kitchen)
 
@@ -285,6 +286,33 @@ class EndpointRegistryTest(unittest.TestCase):
         with self.assertRaises(endpoint_registry.EndpointAmbiguousError) as ctx:
             self.registry.resolve("401")
         self.assertEqual(set(ctx.exception.endpoint_ids), {"kitchen", "office"})
+
+    def test_duplicate_extensions_keep_both_devices_addressable(self) -> None:
+        office = self.registry.register(
+            endpoint(
+                "office",
+                "Office",
+                extension="401",
+                device_id="dev-office",
+            )
+        )
+
+        self.assertEqual(self.registry.by_device_id("dev-kitchen"), self.kitchen)
+        self.assertEqual(self.registry.by_device_id("dev-office"), office)
+        self.assertEqual(self.registry.by_name("Kitchen"), self.kitchen)
+        self.assertEqual(self.registry.by_name("Office"), office)
+        with self.assertRaises(endpoint_registry.EndpointAmbiguousError) as ctx:
+            self.registry.by_extension("401")
+        self.assertEqual(set(ctx.exception.endpoint_ids), {"kitchen", "office"})
+
+    def test_extension_cannot_shadow_another_endpoint_name_or_username(self) -> None:
+        for candidate in (
+            endpoint("office", "Office", extension="Kitchen"),
+            endpoint("office", "Office", extension="kitchen-sip"),
+        ):
+            with self.subTest(candidate=candidate):
+                with self.assertRaises(endpoint_registry.EndpointCollisionError):
+                    self.registry.register(candidate)
 
     @pytest.mark.fault
     def test_call_claim_is_idempotent_busy_safe_and_guarded_on_release(self) -> None:

@@ -114,9 +114,9 @@ class EndpointRegistry:
         self._device_index: dict[str, str] = {}
         self._entity_index: dict[str, str] = {}
         self._name_index: dict[str, str] = {}
-        self._extension_index: dict[str, str] = {}
+        self._extension_index: dict[str, set[str]] = {}
         self._username_index: dict[str, str] = {}
-        self._route_index: dict[str, str] = {}
+        self._route_index: dict[str, set[str]] = {}
         self._listeners: set[EndpointRegistryListener] = set()
         self.subentry_ids: dict[str, str] = {}
         self.pending_removals: set[str] = set()
@@ -246,7 +246,16 @@ class EndpointRegistry:
         return self._from_index(self._name_index, name)
 
     def by_extension(self, extension: object) -> PhoneEndpoint | None:
-        return self._from_index(self._extension_index, extension)
+        value = str(extension or "").strip()
+        endpoint_keys = self._extension_index.get(_key(value), set())
+        if len(endpoint_keys) > 1:
+            raise EndpointAmbiguousError(
+                value,
+                tuple(sorted(self._endpoints[key].endpoint_id for key in endpoint_keys)),
+            )
+        if not endpoint_keys:
+            return None
+        return self._endpoints[next(iter(endpoint_keys))]
 
     def by_username(self, username: object) -> PhoneEndpoint | None:
         return self._from_index(self._username_index, username)
@@ -386,22 +395,31 @@ class EndpointRegistry:
             self._validate_index_value(
                 endpoint, "entity_id", entity_id, self._entity_index, replacing_key
             )
-        for field_name, value in (
-            ("name", endpoint.name),
-            ("extension", endpoint.extension),
-            ("username", endpoint.username),
-        ):
+        for field_name, value in (("name", endpoint.name), ("username", endpoint.username)):
             value_key = normalize_roster_key(value)
             if not value_key:
                 continue
-            owner_key = self._route_index.get(value_key)
-            if owner_key is not None and owner_key != replacing_key:
+            owner_keys = self._route_index.get(value_key, set()) - {replacing_key}
+            if owner_keys:
+                owner_key = next(iter(owner_keys))
                 self._raise_collision(
                     endpoint,
                     field_name,
                     value,
                     self._endpoints[owner_key],
                 )
+
+        extension_key = normalize_roster_key(endpoint.extension)
+        if extension_key:
+            owner_keys = self._route_index.get(extension_key, set()) - {replacing_key}
+            for owner_key in owner_keys:
+                owner = self._endpoints[owner_key]
+                if extension_key not in {
+                    normalize_roster_key(owner.name),
+                    normalize_roster_key(owner.username),
+                }:
+                    continue
+                self._raise_collision(endpoint, "extension", endpoint.extension, owner)
 
     def _validate_index_value(
         self,
@@ -467,18 +485,28 @@ class EndpointRegistry:
             for entity_id in endpoint.entity_ids:
                 self._add_index(self._entity_index, entity_id, endpoint_key)
             self._add_index(self._name_index, endpoint.name, endpoint_key)
-            self._add_index(self._extension_index, endpoint.extension, endpoint_key)
+            self._add_multi_index(
+                self._extension_index, endpoint.extension, endpoint_key
+            )
             self._add_index(self._username_index, endpoint.username, endpoint_key)
             for alias in endpoint.route_aliases:
                 route_key = normalize_roster_key(alias)
                 if route_key:
-                    self._route_index[route_key] = endpoint_key
+                    self._route_index.setdefault(route_key, set()).add(endpoint_key)
 
     @staticmethod
     def _add_index(index: dict[str, str], value: str, endpoint_key: str) -> None:
         value_key = _key(value)
         if value_key:
             index[value_key] = endpoint_key
+
+    @staticmethod
+    def _add_multi_index(
+        index: dict[str, set[str]], value: str, endpoint_key: str
+    ) -> None:
+        value_key = _key(value)
+        if value_key:
+            index.setdefault(value_key, set()).add(endpoint_key)
 
     def _emit(self, event: EndpointRegistryEvent) -> None:
         for listener in tuple(self._listeners):

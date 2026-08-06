@@ -49,6 +49,11 @@ least `state`, `caller`, `destination` and `last_reason`.
 If the ESP does not appear in the HA phonebook, check that it exposes
 `endpoint` and that the endpoint state is not `unknown` or `unavailable`.
 
+The ESPHome Device ID is the stable control identity. Two physical phones may
+publish the same extension and remain independently selectable by Device ID or
+name. Dialing that shared extension is intentionally rejected as ambiguous
+until each phone is assigned a unique extension.
+
 ## Entity-only package and manual YAML
 
 `ha_integration.yaml` is intentionally the low-level entity-only package. It
