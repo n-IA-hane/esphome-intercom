@@ -199,6 +199,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=ROOT / "test_captures" / "sipp-answered-lab",
     )
+    parser.add_argument(
+        "--quiescence-only",
+        action="store_true",
+        help="check that HA has no call-scoped resources and exit",
+    )
     return parser.parse_args()
 
 
@@ -206,6 +211,9 @@ def main() -> int:
     args = parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     token = _lab_token(args.ha_url, args.credentials)
+    if args.quiescence_only:
+        print(json.dumps(asyncio.run(_runtime_quiescence(args.ha_url, token))))
+        return 0
     cases = (
         ("caller_bye", ROOT / "tests/sipp/answered-local-bye.xml", 16062),
         ("callee_bye", ROOT / "tests/sipp/answered-remote-bye.xml", 16064),
