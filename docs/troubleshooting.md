@@ -127,6 +127,22 @@ every Dahua firmware revision has been tested on physical hardware. When
 reporting a variant, attach sanitized REGISTER, INVITE/answer SDP, final status
 and RTP payload-size evidence.
 
+## Browser or companion app cannot answer a call
+
+The card verifies browser audio support and microphone access before it sends
+Answer. If that check fails, the SIP call remains ringing and the card reports
+the local media problem. It must not answer first and then send BYE merely
+because `navigator.mediaDevices` or `getUserMedia` is unavailable.
+
+- Use Home Assistant through HTTPS or another secure browser context.
+- Grant microphone permission to the browser or Companion app.
+- After updating VoIP Stack, restart HA and reset the frontend cache. In the
+  Companion app use **Settings > Companion App > Troubleshooting > Reset
+  frontend cache**.
+- If the problem remains, report the browser or app version, operating system,
+  `window.isSecureContext`, whether `navigator.mediaDevices` exists and the
+  exact card error. Do not include tokens or authenticated dashboard URLs.
+
 ## Busy or DND
 
 DND and active-call contention should produce `486 Busy Here` or a terminal

@@ -423,6 +423,9 @@ integration loaded successfully.
 - stronger SIP digest stale-nonce recovery and registered TCP-flow reuse;
 - FRITZBox-compatible trunk REGISTER Request-URI handling and RTP reframing
   when a peer sends packets shorter than its negotiated `ptime`;
+- browser media preflight before Call or Answer, so a missing microphone API
+  leaves an incoming call ringing instead of answering and immediately sending
+  BYE;
 - one persisted preferred Home Assistant phone, selected by its real Device ID,
   so service calls remain deterministic with multiple browser phones;
 - faster vectorized G.711 conversion on HA;

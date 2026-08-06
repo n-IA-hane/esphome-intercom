@@ -152,6 +152,8 @@ snapshots.
   bidirectional.
 - Spotpear calls HA; HA card rings, Answer works, audio is immediately
   bidirectional.
+- Browser without `navigator.mediaDevices` cannot send Answer, leaves the
+  remote dialog ringing and displays an actionable local-media error.
 - ESP calling HA then ESP hangs up; HA card returns idle/disconnected.
 - ESP calling HA then HA declines; ESP last reason updates.
 - WS3 calls Spotpear direct TCP SIP.

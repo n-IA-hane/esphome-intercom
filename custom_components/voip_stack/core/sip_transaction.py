@@ -11,6 +11,7 @@ from typing import Generic, TypeVar
 SIP_T1 = 0.5
 SIP_T2 = 4.0
 SIP_TIMER_B = 64 * SIP_T1
+SIP_TIMER_F = 64 * SIP_T1
 SIP_TIMER_H = 64 * SIP_T1
 
 _T = TypeVar("_T")

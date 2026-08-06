@@ -302,6 +302,45 @@ class SipProtocolBugFixTest(unittest.TestCase):
 
 
 class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
+    async def test_trunk_start_schedules_rfc_registration_without_blocking_setup(
+        self,
+    ) -> None:
+        config = sip_trunk.SipTrunkConfig(
+            enabled=True,
+            transport="udp",
+            server="127.0.0.1",
+            port=5060,
+            domain="fritz.box",
+            username="ha",
+            auth_username="ha",
+            password="secret",
+            expires=300,
+        )
+        trunk = sip_trunk.SipTrunkClient(
+            config=config,
+            local_ip="127.0.0.1",
+            local_sip_port=5060,
+        )
+        registration_started = asyncio.Event()
+
+        async def connect() -> None:
+            return None
+
+        async def register(*, expires=None, timeout=sip_trunk.SIP_TIMER_F) -> str:
+            self.assertIsNone(expires)
+            self.assertEqual(timeout, sip_trunk.SIP_TIMER_F)
+            registration_started.set()
+            await asyncio.Event().wait()
+            return "registered"
+
+        trunk._connect_udp = connect
+        trunk._ensure_receive_task = lambda: None
+        trunk.register = register
+
+        await asyncio.wait_for(trunk.start(), timeout=0.1)
+        await asyncio.wait_for(registration_started.wait(), timeout=0.1)
+        await trunk.stop()
+
     @staticmethod
     def _confirmed_audio_client():
         sent: list[tuple[bytes, tuple[str, int]]] = []

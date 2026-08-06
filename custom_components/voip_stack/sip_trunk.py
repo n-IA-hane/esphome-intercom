@@ -19,7 +19,7 @@ from typing import Any, Awaitable, Callable
 
 from .core import sip
 from .core.sip_auth import build_digest_authorization
-from .core.sip_transaction import SIP_T1, SIP_T2, SipClientTransaction
+from .core.sip_transaction import SIP_T1, SIP_T2, SIP_TIMER_F, SipClientTransaction
 from .sip_udp_io import SipDatagramQueueProtocol
 from .sip_tcp_io import SipTcpWriter, read_sip_stream_message as _read_sip_stream_message
 from .queue_utils import put_drop_oldest
@@ -180,7 +180,6 @@ class SipTrunkClient:
             if self._stopped:
                 return
             self._ensure_receive_task()
-            await self.register(timeout=2.0)
         except Exception as err:
             if self._stopped:
                 return
@@ -188,13 +187,17 @@ class SipTrunkClient:
             self.status_code = 0
             self.status_reason = str(err)
             _LOGGER.warning(
-                "SIP trunk initial registration failed server=%s transport=%s error=%s; background retry will continue",
+                "SIP trunk transport startup failed server=%s transport=%s error=%s; background retry will continue",
                 self.config.server,
                 self.transport_name,
                 err,
             )
         if not self._stopped:
             self._ensure_refresh_task()
+            # Registration follows the RFC non-INVITE transaction deadline,
+            # but Home Assistant setup must not wait up to Timer F for an
+            # unreachable PBX. Wake the owned background lifecycle instead.
+            self._refresh_wakeup.set()
 
     async def stop(self) -> None:
         async with self._lifecycle_lock:
@@ -289,7 +292,7 @@ class SipTrunkClient:
                 elif self.transport_name != "TCP":
                     await self._connect_udp()
                 self._ensure_receive_task()
-                result = await self.register(timeout=2.0)
+                result = await self.register()
             except asyncio.CancelledError:
                 raise
             except Exception as err:
@@ -684,7 +687,12 @@ class SipTrunkClient:
             self.status_reason = str(err)
             _LOGGER.warning("SIP trunk receive loop stopped server=%s transport=%s error=%s", self.config.server, self.transport_name, err)
 
-    async def register(self, *, expires: int | None = None, timeout: float = 2.0) -> str:
+    async def register(
+        self,
+        *,
+        expires: int | None = None,
+        timeout: float = SIP_TIMER_F,
+    ) -> str:
         expires_value = int(self.config.expires if expires is None else expires)
         auth_value = ""
         retried = False

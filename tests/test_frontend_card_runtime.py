@@ -63,6 +63,7 @@ source = source
 const serviceCalls = [];
 const engineEvents = [];
 let cameraPermissionChecks = 0;
+let audioPermissionChecks = 0;
 const engine = {{
   active: false,
   callId: "",
@@ -137,6 +138,7 @@ const engine = {{
   async reconcileSession() {{}},
   async resumeSession() {{ return true; }},
   async prepareVideoCameraPermission() {{ cameraPermissionChecks++; return false; }},
+  async prepareAudioCall() {{ audioPermissionChecks++; return true; }},
   async startHaSoftphone() {{ throw new Error("not configured"); }},
 }};
 
@@ -823,12 +825,33 @@ incoming._applySoftphoneSnapshot({{
 }});
 await incoming._answer();
 assert.equal(incoming._softphoneSnapshot.state, "ringing");
+assert.equal(audioPermissionChecks > 0, true);
 assert.equal(cameraPermissionChecks, 0);
 assert.equal(JSON.stringify(serviceCalls.at(-1)), JSON.stringify([
   "voip_stack",
   "answer",
   {{ device_id: "device-office", call_id: "incoming-A", send_video: false }},
 ]));
+engine.releaseSoftphoneSession("incoming-A", "browser:office");
+
+// A browser without getUserMedia must not answer the SIP dialog and then
+// compensate with BYE. The call remains ringing and the card explains why.
+const unsupportedMedia = makeCard();
+unsupportedMedia._applySoftphoneSnapshot({{
+  endpoint_id: "browser:unsupported", device_id: "device-unsupported",
+  state: "ringing", direction: "incoming", call_id: "unsupported-A",
+  caller: "Dahua", sequence: 1,
+}});
+engine.prepareAudioCall = async () => {{
+  throw new Error("Microphone access is unavailable in this browser or Home Assistant app.");
+}};
+const unsupportedServiceCount = serviceCalls.length;
+await unsupportedMedia._answer();
+assert.equal(serviceCalls.length, unsupportedServiceCount);
+assert.equal(unsupportedMedia._softphoneSnapshot.state, "ringing");
+assert.match(unsupportedMedia._errorMsg, /Microphone access is unavailable/);
+assert.equal(engine.ownsSoftphoneSession("unsupported-A", "browser:unsupported"), false);
+engine.prepareAudioCall = async () => {{ audioPermissionChecks++; return true; }};
 incoming._applySoftphoneSnapshot({{
   endpoint_id: "browser:office", device_id: "device-office",
   state: "answering",

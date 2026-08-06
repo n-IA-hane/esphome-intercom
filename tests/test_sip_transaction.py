@@ -47,6 +47,11 @@ sip_transaction = _load_module("sip_transaction")
 
 
 class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
+    def test_rfc_client_transaction_deadlines(self) -> None:
+        self.assertEqual(sip_transaction.SIP_TIMER_B, 32.0)
+        self.assertEqual(sip_transaction.SIP_TIMER_F, 32.0)
+        self.assertEqual(sip_transaction.SIP_TIMER_H, 32.0)
+
     async def test_udp_client_retransmits_exponentially_until_response(self) -> None:
         sends: list[float] = []
         response_ready = asyncio.Event()

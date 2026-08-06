@@ -41,6 +41,11 @@ the Request-URI is required by FRITZBox and remains valid for ordinary SIP
 registrars. Digest authentication still uses the configured auth username and
 realm.
 
+REGISTER runs as a background SIP client transaction. Home Assistant setup
+does not block while an unreachable registrar consumes the RFC non-INVITE
+deadline. UDP retransmissions retain the same transaction identity, while an
+authenticated retry after `401` or `407` uses a new CSeq and Via branch.
+
 ## Outbound routing
 
 Local targets still resolve through the phonebook first.

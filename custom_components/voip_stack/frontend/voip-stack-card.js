@@ -2215,6 +2215,8 @@ class VoipStackCard extends HTMLElement {
       softphone: true,
     };
     this._activeDeviceInfo = sessionInfo;
+    await voipStackEngine.prepareAudioCall({ needsMicrophone: true });
+    if (operationId !== this._callOperationId) return;
     let sendVideo = Boolean(
       this._softphoneSupportsVideo() &&
       this._softphoneSnapshot?.video_camera_send_enabled &&
@@ -2283,6 +2285,16 @@ class VoipStackCard extends HTMLElement {
           this._softphoneSnapshot?.video_camera_send_enabled &&
           this._softphoneSnapshot?.send_video
         );
+        const audioDirection = String(
+          this._softphoneSnapshot?.audio_direction || "sendrecv"
+        ).toLowerCase();
+        await voipStackEngine.prepareAudioCall({
+          needsMicrophone: ["sendonly", "sendrecv"].includes(audioDirection),
+        });
+        if (
+          operationId !== this._callOperationId ||
+          this._sessionCallId() !== callId
+        ) return;
         // A peer such as Wildix commonly establishes audio first and adds
         // video with an in-dialog re-INVITE.  A manual answer must preserve
         // the user's existing Send Camera choice for that later offer; auto

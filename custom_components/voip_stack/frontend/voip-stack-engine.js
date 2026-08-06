@@ -536,6 +536,30 @@ class VoipStackEngine extends EventTarget {
     return Boolean(this._video?.canSend);
   }
 
+  async prepareAudioCall({ needsMicrophone = true } = {}) {
+    if (window.isSecureContext === false) {
+      throw new Error("Browser audio requires Home Assistant over HTTPS or another secure context.");
+    }
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor || typeof globalThis.AudioWorkletNode !== "function") {
+      throw new Error("This browser does not provide the Web Audio features required for calls.");
+    }
+    if (!needsMicrophone) return true;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Microphone access is unavailable in this browser or Home Assistant app.");
+    }
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!stream?.getAudioTracks?.()[0]) {
+        throw new Error("No microphone audio track is available.");
+      }
+      return true;
+    } finally {
+      for (const track of stream?.getTracks?.() || []) track.stop();
+    }
+  }
+
   suspendVideoForHangup(
     callId,
     endpointId,

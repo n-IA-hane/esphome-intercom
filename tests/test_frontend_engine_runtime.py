@@ -112,8 +112,11 @@ const context = vm.createContext({{
     removeItem(key) {{ session.delete(key); }},
   }},
   navigator: {{}},
+  AudioWorkletNode: class AudioWorkletNode {{}},
   window: {{
     location: {{ protocol: "https:", host: "ha.example" }},
+    isSecureContext: true,
+    AudioContext: class AudioContext {{}},
     addEventListener() {{}},
     setInterval,
     clearInterval,
@@ -130,6 +133,26 @@ const module = new vm.SourceTextModule(source, {{ context }});
 await module.link(() => {{ throw new Error("unexpected import"); }});
 await module.evaluate();
 const Engine = module.namespace.VoipStackEngine;
+
+// Browser media capability is checked before SIP Answer or Call. Missing
+// getUserMedia must fail here, not after a remote dialog has received 200 OK.
+const audioPreflight = new Engine();
+await assert.rejects(
+  audioPreflight.prepareAudioCall(),
+  /Microphone access is unavailable/,
+);
+let audioTrackStops = 0;
+context.navigator.mediaDevices = {{
+  getUserMedia: async () => {{
+    const track = {{ stop() {{ audioTrackStops++; }} }};
+    return {{
+      getAudioTracks() {{ return [track]; }},
+      getTracks() {{ return [track]; }},
+    }};
+  }},
+}};
+assert.equal(await audioPreflight.prepareAudioCall(), true);
+assert.equal(audioTrackStops, 1);
 
 // sessionStorage is only a reload/handoff hint. A backend snapshot is
 // authoritative and must prune a claim whose call already ended, while a
