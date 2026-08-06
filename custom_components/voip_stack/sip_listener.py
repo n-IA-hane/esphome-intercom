@@ -183,6 +183,8 @@ class _ActiveDialog:
     remote_uri: str = ""
     remote_display_name: str = ""
     update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    session_timer: sip.SipSessionTimer = field(default_factory=sip.SipSessionTimer)
+    session_timer_task: asyncio.Task[None] | None = None
 
 
 @dataclass(slots=True)
@@ -612,6 +614,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         for dialog in tuple(self.active_dialogs.values()):
             self._cancel_invite_2xx(dialog)
             self._cancel_connected_identity(dialog)
+            self._cancel_session_timer(dialog)
         for pending in tuple(self.pending_invites.values()):
             self._cancel_pending_expiry(pending)
         for completed in tuple(self.completed_invites.values()):
@@ -669,6 +672,27 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         dialog.connected_identity_task = None
         if task is not None and task is not asyncio.current_task():
             task.cancel()
+
+    @staticmethod
+    def _cancel_session_timer(dialog: _ActiveDialog) -> None:
+        task = dialog.session_timer_task
+        dialog.session_timer_task = None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
+    def _activate_dialog(
+        self,
+        call_id: str,
+        dialog: _ActiveDialog,
+        request: sip.SipMessage,
+    ) -> None:
+        self.active_dialogs[call_id] = dialog
+        self._arm_session_timer(
+            call_id,
+            dialog,
+            sip.negotiate_uas_session_timer(request),
+            local_role="uas",
+        )
 
     @staticmethod
     def _accept_remote_connected_identity(
@@ -828,24 +852,100 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     if received is None:
                         return None
                     response, _addr = received
-                    try:
-                        cseq = sip.parse_cseq(response.header("CSeq"))
-                        vias = response.header_values("Via")
-                        branch = sip.parse_via(vias[0] if vias else "").branch
-                    except (TypeError, ValueError, sip.SipError):
-                        continue
                     if (
-                        cseq == sip.SipCSeq(ids.cseq, "UPDATE")
-                        and branch == ids.branch
-                        and response.header("Call-ID") == call_id
-                        and sip.extract_tag(response.header("From")) == ids.local_tag
-                        and sip.extract_tag(response.header("To")) == ids.remote_tag
+                        sip.response_matches_dialog_transaction(
+                            response,
+                            ids,
+                            "UPDATE",
+                        )
                         and int(response.status_code or 0) >= 200
                     ):
                         return response
             finally:
                 self._client_transaction_responses.pop(ids.branch, None)
         return None
+
+    def _arm_session_timer(
+        self,
+        call_id: str,
+        dialog: _ActiveDialog,
+        timer: sip.SipSessionExpires | None,
+        *,
+        local_role: str,
+    ) -> None:
+        """Own one RFC 4028 refresh or expiry timer on the dialog."""
+
+        self._cancel_session_timer(dialog)
+        dialog.session_timer.configure(timer, local_role=local_role)
+        if timer is None:
+            return
+
+        async def _run() -> None:
+            try:
+                while self.active_dialogs.get(call_id) is dialog:
+                    await asyncio.sleep(
+                        dialog.session_timer.interval
+                        * (0.5 if dialog.session_timer.local_refresher else 2 / 3)
+                    )
+                    if self.active_dialogs.get(call_id) is not dialog:
+                        return
+                    if not dialog.session_timer.local_refresher:
+                        break
+                    for attempt in range(2):
+                        response = await self._send_dialog_update(
+                            call_id,
+                            dialog,
+                            extra_headers=(
+                                ("Supported", "timer"),
+                                (
+                                    "Session-Expires",
+                                    f"{dialog.session_timer.interval};refresher=uac",
+                                ),
+                            ),
+                        )
+                        if response is None:
+                            break
+                        if response.status_code != 422:
+                            break
+                        try:
+                            minimum = sip.parse_session_expires(
+                                response.header("Min-SE")
+                            ).seconds
+                        except sip.SipError:
+                            response = None
+                            break
+                        dialog.session_timer.interval = max(
+                            dialog.session_timer.interval,
+                            minimum,
+                        )
+                    if response is None or not 200 <= int(response.status_code or 0) < 300:
+                        break
+                    try:
+                        negotiated = sip.parse_session_expires(response.header("Session-Expires"))
+                    except sip.SipError:
+                        break
+                    dialog.session_timer.configure(
+                        negotiated,
+                        local_role="uac",
+                    )
+                if self.active_dialogs.get(call_id) is dialog:
+                    if not self.send_bye(call_id):
+                        self.active_dialogs.pop(call_id, None)
+                    if self.on_terminated is not None:
+                        await self.on_terminated(call_id, "session_timer_expired")
+            except asyncio.CancelledError:
+                return
+            finally:
+                if dialog.session_timer_task is asyncio.current_task():
+                    dialog.session_timer_task = None
+
+        task = asyncio.create_task(
+            _run(),
+            name=f"voip-sip-session-timer-{call_id}",
+        )
+        dialog.session_timer_task = task
+        self._maintenance_tasks.add(task)
+        task.add_done_callback(self._maintenance_tasks.discard)
 
     @staticmethod
     def _cancel_invite_non2xx(completed: _PendingInvite) -> None:
@@ -999,6 +1099,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 "Contact",
                 f"<{_response_contact_uri(request, local_ip=self.local_ip, local_sip_port=self.local_sip_port, transport=self.signaling_transport)}>",
             ))
+            headers.extend(sip.session_timer_response_headers(request))
         if request.method == "INVITE" and 101 <= int(status) < 300:
             headers.append(
                 ("Supported", ", ".join(sorted(sip.SUPPORTED_OPTION_TAGS)))
@@ -1064,6 +1165,21 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         if request_cseq.method != request.method:
             self._send_response(request, addr, 400, "Bad Request")
             return
+        if request.method in {"INVITE", "UPDATE"}:
+            try:
+                sip.negotiate_uas_session_timer(request)
+            except sip.SipSessionIntervalTooSmall as err:
+                self._send_response(
+                    request,
+                    addr,
+                    422,
+                    "Session Interval Too Small",
+                    extra_headers=(("Min-SE", str(err.minimum)),),
+                )
+                return
+            except sip.SipError:
+                self._send_response(request, addr, 400, "Bad Request")
+                return
         if request.method == "OPTIONS":
             self._send_response(request, addr, 200, "OK")
             return
@@ -1185,6 +1301,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 return
             self._cancel_invite_2xx(dialog)
             self._cancel_connected_identity(dialog)
+            self._cancel_session_timer(dialog)
             self._remember_terminated_invite(dialog)
             self.active_dialogs.pop(call_id, None)
             self._remember_completed(
@@ -1295,6 +1412,13 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                             request,
                         )
                         existing_dialog.renegotiations += 1
+                        if request.header("Session-Expires"):
+                            self._arm_session_timer(
+                                call_id,
+                                existing_dialog,
+                                sip.negotiate_uas_session_timer(request),
+                                local_role="uas",
+                            )
                     self._remember_dialog_response(
                         existing_dialog,
                         request,
@@ -1483,6 +1607,13 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     existing_dialog.invite = updated_invite
                     existing_dialog.local_sdp_session_version = next_sdp_version
                     existing_dialog.renegotiations += 1
+                    if request.header("Session-Expires"):
+                        self._arm_session_timer(
+                            call_id,
+                            existing_dialog,
+                            sip.negotiate_uas_session_timer(request),
+                            local_role="uas",
+                        )
                     _LOGGER.info(
                         "SIP in-dialog %s accepted call_id=%s remote_rtp=%s:%s audio_direction=%s",
                         request.method,
@@ -1572,7 +1703,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                             request, "from-change"
                         ),
                     )
-                    self.active_dialogs[invite.call_id] = dialog
+                    self._activate_dialog(invite.call_id, dialog, request)
                     self._remember_dialog_response(
                         dialog,
                         request,
@@ -1711,7 +1842,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     request, "from-change"
                 ),
             )
-            self.active_dialogs[invite.call_id] = dialog
+            self._activate_dialog(invite.call_id, dialog, request)
             self._remember_dialog_response(
                 dialog,
                 request,
@@ -1817,7 +1948,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     pending.request, "from-change"
                 ),
             )
-            self.active_dialogs[call_id] = dialog
+            self._activate_dialog(call_id, dialog, pending.request)
             self._remember_dialog_response(
                 dialog,
                 pending.request,
@@ -1896,6 +2027,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         dialog.local_cseq += 1
         self._cancel_invite_2xx(dialog)
         self._cancel_connected_identity(dialog)
+        self._cancel_session_timer(dialog)
         self._remember_terminated_invite(dialog)
         self.active_dialogs.pop(call_id, None)
         _LOGGER.info("SIP TX BYE call_id=%s to %s:%s", call_id, target_addr[0], target_addr[1])

@@ -23,7 +23,7 @@ MAX_SIP_BODY_BYTES = 4096
 SUPPORTED_METHODS = frozenset(
     {"INVITE", "ACK", "BYE", "CANCEL", "INFO", "OPTIONS", "REGISTER", "UPDATE"}
 )
-SUPPORTED_OPTION_TAGS = frozenset({"from-change"})
+SUPPORTED_OPTION_TAGS = frozenset({"from-change", "timer"})
 KNOWN_UNSUPPORTED_METHODS = frozenset(
     {
         "MESSAGE",
@@ -55,6 +55,12 @@ _SINGLETON_HEADERS = frozenset({"call-id", "cseq", "from", "to"})
 
 class SipError(ValueError):
     """Malformed or unsupported SIP message."""
+
+
+class SipSessionIntervalTooSmall(SipError):
+    def __init__(self, minimum: int) -> None:
+        self.minimum = int(minimum)
+        super().__init__(f"session interval is below {self.minimum} seconds")
 
 
 def normalize_sip_host(value: str) -> str:
@@ -216,6 +222,42 @@ class SipCSeq:
 class SipSessionExpires:
     seconds: int
     refresher: str = ""
+
+
+@dataclass(slots=True)
+class SipSessionTimer:
+    """One dialog-owned RFC 4028 timer state."""
+
+    interval: int = 0
+    local_refresher: bool = False
+    deadline: float = 0.0
+    refresh_at: float = 0.0
+
+    def configure(
+        self,
+        timer: SipSessionExpires | None,
+        *,
+        local_role: str,
+        now: float = 0.0,
+    ) -> None:
+        if timer is None:
+            self.interval = 0
+            self.local_refresher = False
+            self.deadline = 0.0
+            self.refresh_at = 0.0
+            return
+        self.interval = timer.seconds
+        self.local_refresher = timer.refresher == local_role
+        self.deadline = now + timer.seconds if now else 0.0
+        self.refresh_at = (
+            now + timer.seconds / 2 if now and self.local_refresher else 0.0
+        )
+
+    @property
+    def expiration_notice_at(self) -> float:
+        if not self.deadline:
+            return 0.0
+        return self.deadline - min(32.0, self.interval / 3)
 
 
 @dataclass(frozen=True, slots=True)
@@ -599,6 +641,75 @@ def parse_rack(value: str) -> SipRAck:
     ):
         raise SipError(f"bad RAck header: {value!r}")
     return SipRAck(response_number, cseq_number, method)
+
+
+def response_matches_dialog_transaction(
+    response: SipMessage,
+    ids: SipDialogIds,
+    method: str,
+) -> bool:
+    """Match one response to an exact in-dialog client transaction."""
+
+    if not response.is_response:
+        return False
+    try:
+        cseq = parse_cseq(response.header("CSeq"))
+        vias = response.header_values("Via")
+        branch = parse_via(vias[0] if vias else "").branch
+    except (TypeError, ValueError, SipError):
+        return False
+    return (
+        cseq == SipCSeq(ids.cseq, method.upper())
+        and branch == ids.branch
+        and response.header("Call-ID") == ids.call_id
+        and extract_tag(response.header("From")) == ids.local_tag
+        and extract_tag(response.header("To")) == ids.remote_tag
+    )
+
+
+def negotiate_uas_session_timer(
+    request: SipMessage,
+    *,
+    local_minimum: int = 90,
+) -> SipSessionExpires | None:
+    """Validate an RFC 4028 request and select the response refresher."""
+
+    minimum = max(90, int(local_minimum))
+    if raw_minimum := request.header("Min-SE"):
+        requested_minimum = parse_session_expires(raw_minimum)
+        if requested_minimum.refresher:
+            raise SipError("Min-SE cannot select a refresher")
+        minimum = max(minimum, requested_minimum.seconds)
+    raw_timer = request.header("Session-Expires")
+    if not raw_timer:
+        return None
+    timer = parse_session_expires(raw_timer)
+    supports_timer = supports_option(request, "timer")
+    if timer.refresher and not supports_timer:
+        raise SipError("refresher selection requires timer support")
+    if timer.seconds < minimum:
+        raise SipSessionIntervalTooSmall(minimum)
+    return SipSessionExpires(
+        timer.seconds,
+        timer.refresher or ("uac" if supports_timer else "uas"),
+    )
+
+
+def session_timer_response_headers(
+    request: SipMessage,
+    *,
+    local_minimum: int = 90,
+) -> tuple[tuple[str, str], ...]:
+    timer = negotiate_uas_session_timer(
+        request,
+        local_minimum=local_minimum,
+    )
+    if timer is None:
+        return ()
+    headers = [("Session-Expires", f"{timer.seconds};refresher={timer.refresher}")]
+    if timer.refresher == "uac" or supports_option(request, "timer"):
+        headers.insert(0, ("Require", "timer"))
+    return tuple(headers)
 
 
 def sip_failure_reason(status_code: int) -> str:

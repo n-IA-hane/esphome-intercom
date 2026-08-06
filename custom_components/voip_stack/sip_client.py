@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import logging
 import re
 import secrets
@@ -246,6 +246,7 @@ class SipDialog:
     local_sdp_session_version: int = 0
     local_sdp_body: str = ""
     peer_supports_from_change: bool = False
+    session_timer: sip.SipSessionTimer = field(default_factory=sip.SipSessionTimer)
 
     @property
     def selected_format(self) -> sdp.RtpPcmFormat:
@@ -704,25 +705,26 @@ class SipCallClient:
             return fallback_host, int(fallback_port)
         return target.host, int(target.port or 5060)
 
+    @staticmethod
     def _response_matches_transaction(
-        self,
         message: sip.SipMessage,
         *,
         method: str,
         cseq: int,
         branch: str,
     ) -> bool:
+        """Match an initial transaction before a remote dialog tag exists."""
+
         if not message.is_response:
             return False
         try:
             response_cseq = sip.parse_cseq(message.header("CSeq"))
-            via_values = message.header_values("Via")
-            response_branch = sip.parse_via(via_values[0] if via_values else "").branch
+            vias = message.header_values("Via")
+            response_branch = sip.parse_via(vias[0] if vias else "").branch
         except (TypeError, ValueError, sip.SipError):
             return False
         return (
-            response_cseq.method == method.upper()
-            and response_cseq.number == int(cseq)
+            response_cseq == sip.SipCSeq(int(cseq), method.upper())
             and bool(branch)
             and response_branch == branch
         )
@@ -779,6 +781,7 @@ class SipCallClient:
         ]
         if 200 <= int(status) < 300 and request.method in {"INVITE", "UPDATE"}:
             headers.append(("Contact", f"<{self.dialog.local_uri}>" if self.dialog else f"<{self._pending_local_uri}>"))
+            headers.extend(sip.session_timer_response_headers(request))
         if request.method == "INVITE" and 101 <= int(status) < 300:
             headers.append(
                 ("Supported", ", ".join(sorted(sip.SUPPORTED_OPTION_TAGS)))
@@ -1712,6 +1715,21 @@ class SipCallClient:
         except (TypeError, ValueError, sip.SipError):
             self._send_response_to_request(request, host, port, 400, "Bad Request")
             return None
+        try:
+            requested_timer = sip.negotiate_uas_session_timer(request)
+        except sip.SipSessionIntervalTooSmall as err:
+            self._send_response_to_request(
+                request,
+                host,
+                port,
+                422,
+                "Session Interval Too Small",
+                extra_headers=(("Min-SE", str(err.minimum)),),
+            )
+            return None
+        except sip.SipError:
+            self._send_response_to_request(request, host, port, 400, "Bad Request")
+            return None
         if request_cseq.number <= self._remote_cseq:
             self._send_response_to_request(
                 request,
@@ -1851,6 +1869,12 @@ class SipCallClient:
                 self.dialog,
                 remote_target_uri=refreshed_remote_target,
             )
+        if 200 <= status < 300 and requested_timer is not None and self.dialog is not None:
+            self.dialog.session_timer.configure(
+                requested_timer,
+                local_role="uas",
+                now=asyncio.get_running_loop().time(),
+            )
         if (
             method == "UPDATE"
             and 200 <= status < 300
@@ -1881,6 +1905,157 @@ class SipCallClient:
                         )
         return None
 
+    async def _send_in_dialog_request(
+        self,
+        method: str,
+        *,
+        extra_headers: tuple[tuple[str, str], ...] = (),
+        body: bytes = b"",
+        content_type: str = "",
+        timeout: float = 8.0,
+    ) -> sip.SipMessage | None:
+        """Run one serialized non-INVITE client transaction on the dialog."""
+
+        async with self._dialog_read_lock:
+            dialog = self.dialog
+            if dialog is None:
+                return None
+            try:
+                routing = sip.dialog_request_routing(
+                    dialog.remote_target_uri or dialog.remote_uri,
+                    dialog.route_set,
+                )
+                ids = sip.SipDialogIds(
+                    call_id=self.dialog_ids.call_id,
+                    local_tag=self.dialog_ids.local_tag,
+                    remote_tag=self.dialog_ids.remote_tag,
+                    cseq=self._next_dialog_cseq(),
+                    branch=sip.make_branch(),
+                )
+                headers = sip.dialog_headers(
+                    request_uri=routing.request_uri,
+                    local_uri=dialog.local_uri,
+                    remote_uri=dialog.remote_uri,
+                    dialog=ids,
+                    method=method,
+                    contact_uri=dialog.local_uri,
+                    content_type=content_type,
+                    transport=self.signaling_transport,
+                    local_display_name=self.local_name,
+                    remote_display_name=self._dialog_remote_display_name,
+                )
+                headers.extend(("Route", value) for value in routing.route_headers)
+                headers.extend(extra_headers)
+                raw = sip.build_request(method, routing.request_uri, headers, body)
+                next_host, next_port = self._dialog_next_hop(
+                    routing.next_hop_uri,
+                    dialog.remote_host,
+                    dialog.remote_sip_port,
+                )
+            except (TypeError, ValueError, sip.SipError):
+                return None
+            transaction = SipClientTransaction[
+                tuple[sip.SipMessage, tuple[str, int]]
+            ](
+                transport=self.signaling_transport,
+                timeout=timeout,
+                t1=SIP_T1,
+                t2=SIP_T2,
+            )
+
+            async def _retransmit() -> None:
+                if not self._send_dialog_request(raw, next_host, next_port):
+                    raise ConnectionError("SIP signaling path is unavailable")
+
+            async def _read(read_timeout: float):
+                deadline = asyncio.get_running_loop().time() + read_timeout
+                while self.dialog is dialog:
+                    received = await self._read_response(
+                        max(0.0, deadline - asyncio.get_running_loop().time())
+                    )
+                    if received is None:
+                        return None
+                    message, addr = received
+                    if not message.is_response:
+                        terminal = await self._dispatch_in_dialog_request(
+                            message,
+                            addr,
+                        )
+                        if terminal is not None:
+                            raise ConnectionAbortedError(terminal)
+                        continue
+                    if sip.response_matches_dialog_transaction(message, ids, method):
+                        return received
+                return None
+
+            if not self._send_dialog_request(raw, next_host, next_port):
+                return None
+            sip.mark_sip_event(self, method)
+            while self.dialog is dialog:
+                try:
+                    received = await transaction.receive(_read, _retransmit)
+                except ConnectionAbortedError:
+                    raise
+                except (ConnectionError, OSError):
+                    return None
+                if received is None:
+                    return None
+                response, _addr = received
+                if int(response.status_code or 0) >= 200:
+                    return response
+        return None
+
+    async def _refresh_session(
+        self,
+        dialog: SipDialog,
+        *,
+        retry_422: bool = True,
+    ) -> str:
+        """Refresh one RFC 4028 session and commit its next deadline."""
+
+        try:
+            response = await self._send_in_dialog_request(
+                "UPDATE",
+                extra_headers=(
+                    ("Supported", "timer"),
+                    (
+                        "Session-Expires",
+                        f"{dialog.session_timer.interval};refresher=uac",
+                    ),
+                ),
+            )
+        except ConnectionAbortedError as err:
+            return str(err) or "remote_hangup"
+        if response is None or self.dialog is not dialog:
+            return "failed"
+        if response.status_code == 422:
+            if not retry_422:
+                return "failed"
+            try:
+                minimum = sip.parse_session_expires(response.header("Min-SE")).seconds
+            except sip.SipError:
+                return "failed"
+            dialog.session_timer.interval = max(
+                dialog.session_timer.interval,
+                minimum,
+            )
+            return await self._refresh_session(dialog, retry_422=False)
+        if not 200 <= int(response.status_code or 0) < 300:
+            return "failed"
+        if not response.header("Session-Expires"):
+            dialog.session_timer.configure(None, local_role="uac")
+            return "refreshed"
+        try:
+            timer = sip.parse_session_expires(response.header("Session-Expires"))
+        except sip.SipError:
+            return "failed"
+        dialog.session_timer.configure(
+            timer,
+            local_role="uac",
+            now=asyncio.get_running_loop().time(),
+        )
+        return "refreshed"
+
     async def wait_for_dialog_termination(self, timeout: float | None = None) -> str:
         """Wait for a remote BYE on a confirmed outbound dialog.
 
@@ -1893,8 +2068,30 @@ class SipCallClient:
             return "not_in_call"
         deadline = None if timeout is None else asyncio.get_running_loop().time() + float(timeout)
         while True:
-            if self.dialog is None:
+            dialog = self.dialog
+            if dialog is None:
                 return "remote_hangup"
+            now = asyncio.get_running_loop().time()
+            timer = getattr(dialog, "session_timer", sip.SipSessionTimer())
+            session_local_refresher = timer.local_refresher
+            session_refresh_at = timer.refresh_at
+            session_deadline = timer.deadline
+            if session_local_refresher and (
+                session_refresh_at and now >= session_refresh_at
+            ):
+                refresh_result = await self._refresh_session(dialog)
+                if refresh_result == "refreshed":
+                    continue
+                if refresh_result != "failed":
+                    return refresh_result
+                self.bye()
+                self.dialog = None
+                return "session_timer_failed"
+            expiration_notice_at = timer.expiration_notice_at
+            if session_deadline and now >= expiration_notice_at:
+                self.bye()
+                self.dialog = None
+                return "session_timer_expired"
             read_task: asyncio.Task[
                 tuple[sip.SipMessage, tuple[str, int]] | None
             ] | None = None
@@ -1909,11 +2106,18 @@ class SipCallClient:
                 if self._local_offer_requested.is_set():
                     continue
                 wait_timeout = 3600.0
+                timer_at = (
+                    session_refresh_at
+                    if session_local_refresher
+                    else expiration_notice_at
+                )
+                if timer_at:
+                    wait_timeout = max(0.05, timer_at - asyncio.get_running_loop().time())
                 if deadline is not None:
                     remaining = deadline - asyncio.get_running_loop().time()
                     if remaining <= 0:
                         return "timeout"
-                    wait_timeout = max(0.05, remaining)
+                    wait_timeout = min(wait_timeout, max(0.05, remaining))
                 read_task = asyncio.create_task(
                     self._read_response(wait_timeout),
                     name=f"voip-sip-dialog-read-{self.dialog_ids.call_id}",
@@ -1965,7 +2169,10 @@ class SipCallClient:
                 if reader_acquired:
                     self._dialog_read_lock.release()
             if received is None:
-                if deadline is not None:
+                if (
+                    deadline is not None
+                    and asyncio.get_running_loop().time() >= deadline
+                ):
                     return "timeout"
                 continue
             msg, addr = received
@@ -2699,6 +2906,32 @@ class SipCallClient:
             if dtmf_direction is not None
             else dtmf_recv
         )
+        session_timer: sip.SipSessionExpires | None = None
+        if raw_session_timer := msg.header("Session-Expires"):
+            try:
+                session_timer = sip.parse_session_expires(raw_session_timer)
+                if not session_timer.refresher:
+                    raise sip.SipError("Session-Expires response lacks refresher")
+            except sip.SipError:
+                self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
+                self._send_ack(
+                    remote_host,
+                    int(remote_sip_port),
+                    remote_target_uri,
+                    local_uri,
+                    remote_uri,
+                    route_set=route_set,
+                )
+                self._send_bye_request(
+                    remote_host,
+                    int(remote_sip_port),
+                    remote_target_uri,
+                    local_uri,
+                    remote_uri,
+                    route_set=route_set,
+                )
+                return False
+        now = asyncio.get_running_loop().time() if session_timer else 0.0
         self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
         self.dialog = SipDialog(
             target=target,
@@ -2776,7 +3009,9 @@ class SipCallClient:
             local_sdp_session_version=0,
             local_sdp_body=self._local_sdp_body,
             peer_supports_from_change=sip.supports_option(msg, "from-change"),
+            session_timer=sip.SipSessionTimer(),
         )
+        self.dialog.session_timer.configure(session_timer, local_role="uac", now=now)
         _LOGGER.info(
             "SIP 200 OK media selected call_id=%s tx=%s rx=%s answer=[%s]",
             self.dialog_ids.call_id,

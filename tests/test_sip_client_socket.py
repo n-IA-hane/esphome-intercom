@@ -33,6 +33,38 @@ from .voip_phase1_support import (
 
 
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
+    async def test_listener_rejects_too_short_session_interval_before_routing(
+        self,
+    ) -> None:
+        sent: list[bytes] = []
+        endpoint = sip_listener.SipUdpEndpoint(
+            local_ip="192.0.2.20",
+            local_sip_port=5060,
+            local_rtp_port=42000,
+            supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
+            on_invite=lambda _: self.fail("short timer reached call routing"),
+            send_override=lambda data, _addr: sent.append(data),
+        )
+        invite = sip.build_request(
+            "INVITE",
+            "sip:Casa@192.0.2.20:5060",
+            [
+                ("Via", "SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bKshort"),
+                ("From", "<sip:test@192.0.2.10>;tag=remote"),
+                ("To", "<sip:Casa@192.0.2.20>"),
+                ("Call-ID", "short-session"),
+                ("CSeq", "1 INVITE"),
+                ("Supported", "timer"),
+                ("Session-Expires", "60;refresher=uac"),
+            ],
+        )
+
+        await endpoint._handle_datagram(invite, ("192.0.2.10", 5060))
+
+        response = sip.parse_message(sent[-1])
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.header("Min-SE"), "90")
+
     async def test_listener_sends_rfc4916_identity_after_initial_ack(self) -> None:
         sent: list[tuple[bytes, tuple[str, int]]] = []
         fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)

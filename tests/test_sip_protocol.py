@@ -41,6 +41,51 @@ class SipProtocolBugFixTest(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(sip.SipError):
                 sip.parse_session_expires(invalid)
 
+    def test_session_timer_negotiation_selects_refresher_and_minimum(self) -> None:
+        request = sip.parse_message(
+            sip.build_request(
+                "INVITE",
+                "sip:phone@pbx.local",
+                [
+                    ("Supported", "timer"),
+                    ("Session-Expires", "1800"),
+                    ("Min-SE", "120"),
+                ],
+            )
+        )
+        self.assertEqual(
+            sip.negotiate_uas_session_timer(request),
+            sip.SipSessionExpires(1800, "uac"),
+        )
+        self.assertEqual(
+            sip.session_timer_response_headers(request),
+            (
+                ("Require", "timer"),
+                ("Session-Expires", "1800;refresher=uac"),
+            ),
+        )
+        legacy_request = sip.parse_message(
+            sip.build_request(
+                "INVITE",
+                "sip:phone@pbx.local",
+                [("Session-Expires", "1800")],
+            )
+        )
+        self.assertEqual(
+            sip.session_timer_response_headers(legacy_request),
+            (("Session-Expires", "1800;refresher=uas"),),
+        )
+        too_short = sip.parse_message(
+            sip.build_request(
+                "INVITE",
+                "sip:phone@pbx.local",
+                [("Supported", "timer"), ("Session-Expires", "90"), ("Min-SE", "120")],
+            )
+        )
+        with self.assertRaises(sip.SipSessionIntervalTooSmall) as raised:
+            sip.negotiate_uas_session_timer(too_short)
+        self.assertEqual(raised.exception.minimum, 120)
+
     def test_rack_parser_preserves_case_sensitive_method(self) -> None:
         self.assertEqual(
             sip.parse_rack("776656 1 INVITE"),
@@ -64,7 +109,7 @@ class SipProtocolBugFixTest(unittest.TestCase):
 
         self.assertEqual(
             sip.unsupported_required_options(request),
-            ("100rel", "timer"),
+            ("100rel",),
         )
 
     def test_dialog_headers_advertise_connected_identity_support(self) -> None:
@@ -85,7 +130,10 @@ class SipProtocolBugFixTest(unittest.TestCase):
         )
 
         self.assertTrue(sip.supports_option(message, "from-change"))
-        self.assertEqual(sip.option_tags(message), frozenset({"from-change"}))
+        self.assertEqual(
+            sip.option_tags(message),
+            frozenset({"from-change", "timer"}),
+        )
 
     def test_dtmf_collector_emits_one_digit_per_event(self) -> None:
         digits: list[str] = []
@@ -432,6 +480,133 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 return requests[-1]
             await asyncio.sleep(0)
         raise AssertionError(f"SIP {method} was not sent")
+
+    async def test_outbound_session_refresh_uses_owned_update_transaction(self) -> None:
+        client, dialog, sent, _negotiated = self._confirmed_audio_client()
+        dialog.session_timer.interval = 1800
+        refresh = asyncio.create_task(client._refresh_session(dialog))
+        request = await self._wait_for_sent_request(sent, "UPDATE")
+        self.assertEqual(request.header("Session-Expires"), "1800;refresher=uac")
+        response_headers = [
+            *(("Via", value) for value in request.header_values("Via")),
+            ("From", request.header("From")),
+            ("To", request.header("To")),
+            ("Call-ID", request.header("Call-ID")),
+            ("CSeq", request.header("CSeq")),
+            ("Session-Expires", "900;refresher=uas"),
+        ]
+        client.queue.put_nowait(
+            (
+                sip.build_response(200, "OK", response_headers),
+                ("127.0.0.2", 5060),
+            )
+        )
+
+        self.assertEqual(
+            await asyncio.wait_for(refresh, timeout=0.2),
+            "refreshed",
+        )
+        self.assertEqual(dialog.session_timer.interval, 900)
+        self.assertFalse(dialog.session_timer.local_refresher)
+        self.assertGreater(
+            dialog.session_timer.deadline,
+            asyncio.get_running_loop().time(),
+        )
+
+    async def test_remote_bye_wins_over_local_session_refresh(self) -> None:
+        client, dialog, sent, _negotiated = self._confirmed_audio_client()
+        dialog.session_timer.interval = 1800
+        refresh = asyncio.create_task(client._refresh_session(dialog))
+        await self._wait_for_sent_request(sent, "UPDATE")
+        client.queue.put_nowait(
+            (
+                self._remote_dialog_request(client, "BYE", 2),
+                ("127.0.0.2", 5060),
+            )
+        )
+
+        self.assertEqual(
+            await asyncio.wait_for(refresh, timeout=0.2),
+            "remote_hangup",
+        )
+        self.assertIsNone(client.dialog)
+        requests = [
+            message.method
+            for raw, _addr in sent
+            if (message := sip.parse_message(raw)).is_request
+        ]
+        self.assertEqual(requests, ["UPDATE"])
+
+    async def test_successful_refresh_can_disable_session_timer(self) -> None:
+        client, dialog, sent, _negotiated = self._confirmed_audio_client()
+        dialog.session_timer.interval = 1800
+        refresh = asyncio.create_task(client._refresh_session(dialog))
+        request = await self._wait_for_sent_request(sent, "UPDATE")
+        client.queue.put_nowait(
+            (
+                self._response_to_request(request, 200, "OK"),
+                ("127.0.0.2", 5060),
+            )
+        )
+
+        self.assertEqual(await asyncio.wait_for(refresh, timeout=0.2), "refreshed")
+        self.assertEqual(dialog.session_timer.interval, 0)
+        self.assertEqual(dialog.session_timer.deadline, 0.0)
+
+    async def test_session_refresh_retries_422_with_minimum_immediately(self) -> None:
+        client, dialog, sent, _negotiated = self._confirmed_audio_client()
+        dialog.session_timer.interval = 900
+        refresh = asyncio.create_task(client._refresh_session(dialog))
+        first = await self._wait_for_sent_request(sent, "UPDATE")
+        client.queue.put_nowait(
+            (
+                sip.build_response(
+                    422,
+                    "Session Interval Too Small",
+                    [
+                        *(("Via", value) for value in first.header_values("Via")),
+                        ("From", first.header("From")),
+                        ("To", first.header("To")),
+                        ("Call-ID", first.header("Call-ID")),
+                        ("CSeq", first.header("CSeq")),
+                        ("Min-SE", "1800"),
+                    ],
+                ),
+                ("127.0.0.2", 5060),
+            )
+        )
+        for _ in range(100):
+            updates = [
+                message
+                for raw, _addr in sent
+                if (message := sip.parse_message(raw)).method == "UPDATE"
+            ]
+            if len(updates) == 2:
+                break
+            await asyncio.sleep(0)
+        self.assertEqual(len(updates), 2)
+        second = updates[-1]
+        self.assertEqual(second.header("Session-Expires"), "1800;refresher=uac")
+        self.assertNotEqual(second.header("CSeq"), first.header("CSeq"))
+        client.queue.put_nowait(
+            (
+                sip.build_response(
+                    200,
+                    "OK",
+                    [
+                        *(("Via", value) for value in second.header_values("Via")),
+                        ("From", second.header("From")),
+                        ("To", second.header("To")),
+                        ("Call-ID", second.header("Call-ID")),
+                        ("CSeq", second.header("CSeq")),
+                        ("Session-Expires", "1800;refresher=uac"),
+                    ],
+                ),
+                ("127.0.0.2", 5060),
+            )
+        )
+
+        self.assertEqual(await asyncio.wait_for(refresh, timeout=0.2), "refreshed")
 
     @staticmethod
     def _response_to_request(
