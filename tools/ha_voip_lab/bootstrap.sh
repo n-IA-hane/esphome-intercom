@@ -5,13 +5,23 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 lab_root="${HA_VOIP_LAB_ROOT:-$HOME/ha-voip-lab}"
 lab_user="${HA_VOIP_LAB_USER:-$(id -un)}"
 lab_group="${HA_VOIP_LAB_GROUP:-$(id -gn)}"
+ha_version="${HA_VOIP_LAB_VERSION:-2026.8.0}"
 config_dir="$lab_root/config"
 
 mkdir -p "$config_dir/custom_components"
 
 if [[ ! -x "$lab_root/.venv/bin/hass" ]]; then
   uv venv --python 3.14 "$lab_root/.venv"
-  uv pip install --python "$lab_root/.venv/bin/python" "homeassistant==2026.7.2"
+fi
+
+installed_version=$(
+  "$lab_root/.venv/bin/python" -c \
+    'from importlib.metadata import version; print(version("homeassistant"))' \
+    2>/dev/null || true
+)
+if [[ "$installed_version" != "$ha_version" ]]; then
+  uv pip install --python "$lab_root/.venv/bin/python" \
+    --upgrade "homeassistant==$ha_version"
 fi
 
 cp "$repo/tools/ha_voip_lab/configuration.yaml" "$config_dir/configuration.yaml"

@@ -13,10 +13,11 @@ sudo systemctl start home-assistant-voip-lab.service
 ```
 
 The default root is `$HOME/ha-voip-lab`. Set `HA_VOIP_LAB_ROOT`,
-`HA_VOIP_LAB_USER` or `HA_VOIP_LAB_GROUP` before bootstrap when the service
-must run elsewhere or under another local account. The bootstrap renders the
-systemd unit from the checked-in template; no developer home path is embedded
-in the repository.
+`HA_VOIP_LAB_USER`, `HA_VOIP_LAB_GROUP` or `HA_VOIP_LAB_VERSION` before
+bootstrap when the service must run elsewhere, under another local account or
+against another supported Home Assistant release. The bootstrap installs the
+exact requested Home Assistant version and renders the systemd unit from the
+checked-in template; no developer home path is embedded in the repository.
 
 The service listens on `127.0.0.1:18123`.  SIP uses port `15060`; the initial
 RTP port is `44000`.  The custom component is linked directly from the current
