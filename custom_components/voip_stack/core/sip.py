@@ -21,14 +21,23 @@ SIP_VERSION = "SIP/2.0"
 MAX_SIP_MESSAGE_BYTES = 8192
 MAX_SIP_BODY_BYTES = 4096
 SUPPORTED_METHODS = frozenset(
-    {"INVITE", "ACK", "BYE", "CANCEL", "INFO", "OPTIONS", "REGISTER", "UPDATE"}
+    {
+        "INVITE",
+        "ACK",
+        "BYE",
+        "CANCEL",
+        "INFO",
+        "OPTIONS",
+        "PRACK",
+        "REGISTER",
+        "UPDATE",
+    }
 )
-SUPPORTED_OPTION_TAGS = frozenset({"from-change", "timer"})
+SUPPORTED_OPTION_TAGS = frozenset({"100rel", "from-change", "timer"})
 KNOWN_UNSUPPORTED_METHODS = frozenset(
     {
         "MESSAGE",
         "NOTIFY",
-        "PRACK",
         "PUBLISH",
         "REFER",
         "SUBSCRIBE",

@@ -140,6 +140,29 @@ class _PendingInvite:
     connected_identity_user: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class _DeferredInviteFinal:
+    status: int
+    reason: str
+    answer_sdp: str
+    decline_reason: str
+    connected_identity_name: str
+    connected_identity_user: str
+
+
+@dataclass(slots=True)
+class _ReliableProvisional:
+    request: sip.SipMessage
+    addr: tuple[str, int]
+    to_tag: str
+    rseq: int
+    response_status: int
+    response_reason: str
+    answer_sdp: str = ""
+    task: asyncio.Task[None] | None = None
+    deferred_final: _DeferredInviteFinal | None = None
+
+
 @dataclass(slots=True)
 class _DialogResponse:
     request: sip.SipMessage
@@ -483,10 +506,12 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self.transport: asyncio.DatagramTransport | None = None
         self._closed_waiter: asyncio.Future[None] | None = None
         self.pending_invites: dict[str, _PendingInvite] = {}
+        self._reliable_provisionals: dict[str, _ReliableProvisional] = {}
         self.completed_invites: dict[str, _PendingInvite] = {}
         self.active_dialogs: dict[str, _ActiveDialog] = {}
         self.completed_byes: dict[str, _CompletedRequest] = {}
         self.completed_infos: dict[tuple[str, int], _CompletedRequest] = {}
+        self.completed_pracks: dict[tuple[str, int], _CompletedRequest] = {}
         self._logged_incompatible_invites: set[str] = set()
         self._request_tasks: set[asyncio.Task[None]] = set()
         self._invite_tasks: set[asyncio.Task[None]] = set()
@@ -617,6 +642,9 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             self._cancel_session_timer(dialog)
         for pending in tuple(self.pending_invites.values()):
             self._cancel_pending_expiry(pending)
+        for reliable in tuple(self._reliable_provisionals.values()):
+            self._cancel_reliable_provisional(reliable)
+        self._reliable_provisionals.clear()
         for completed in tuple(self.completed_invites.values()):
             self._cancel_invite_non2xx(completed)
 
@@ -626,6 +654,90 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         pending.expiry_task = None
         if task is not None and task is not asyncio.current_task():
             task.cancel()
+
+    @staticmethod
+    def _cancel_reliable_provisional(reliable: _ReliableProvisional) -> None:
+        task = reliable.task
+        reliable.task = None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
+    def _send_reliable_provisional(
+        self,
+        call_id: str,
+        pending: _PendingInvite,
+    ) -> bool:
+        """Send and own one RFC 3262 provisional transaction."""
+
+        reliable = _ReliableProvisional(
+            request=pending.request,
+            addr=pending.addr,
+            to_tag=pending.to_tag,
+            rseq=secrets.randbelow(0x7FFFFFFE) + 1,
+            response_status=pending.status,
+            response_reason=pending.reason,
+            answer_sdp=pending.answer_sdp,
+        )
+        self._reliable_provisionals[call_id] = reliable
+
+        if not self._transmit_reliable_provisional(reliable):
+            self._reliable_provisionals.pop(call_id, None)
+            return False
+
+        async def run() -> None:
+            interval = _SIP_T1
+            deadline = asyncio.get_running_loop().time() + _INVITE_2XX_TIMEOUT
+            try:
+                while self._reliable_provisionals.get(call_id) is reliable:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        break
+                    if self.pending_invites.get(call_id) is not pending:
+                        await asyncio.sleep(remaining)
+                        continue
+                    await asyncio.sleep(min(interval, remaining))
+                    if self._reliable_provisionals.get(call_id) is not reliable:
+                        return
+                    if self.pending_invites.get(call_id) is pending:
+                        self._transmit_reliable_provisional(reliable)
+                        interval *= 2
+                if (
+                    self._reliable_provisionals.pop(call_id, None) is reliable
+                    and self.pending_invites.get(call_id) is pending
+                ):
+                    self._send_final_response_now(
+                        call_id,
+                        504,
+                        "Server Time-out",
+                        decline_reason="prack_timeout",
+                    )
+                    if self.on_terminated is not None:
+                        await self.on_terminated(call_id, "prack_timeout")
+            except asyncio.CancelledError:
+                return
+            finally:
+                if reliable.task is asyncio.current_task():
+                    reliable.task = None
+
+        task = asyncio.create_task(run(), name=f"voip-sip-prack-{call_id}")
+        reliable.task = task
+        self._maintenance_tasks.add(task)
+        task.add_done_callback(self._maintenance_tasks.discard)
+        return True
+
+    def _transmit_reliable_provisional(
+        self,
+        reliable: _ReliableProvisional,
+    ) -> bool:
+        return self._send_response(
+            reliable.request,
+            reliable.addr,
+            reliable.response_status,
+            reliable.response_reason,
+            body=reliable.answer_sdp.encode() if reliable.answer_sdp else b"",
+            to_tag=reliable.to_tag,
+            extra_headers=(("Require", "100rel"), ("RSeq", str(reliable.rseq))),
+        )
 
     def _arm_pending_expiry(self, call_id: str, pending: _PendingInvite) -> None:
         self._cancel_pending_expiry(pending)
@@ -1149,7 +1261,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             self._send_response(request, addr, status, reason)
             return
         if unsupported := sip.unsupported_required_options(request):
-            self._send_response(
+            sent = self._send_response(
                 request,
                 addr,
                 420,
@@ -1196,6 +1308,149 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     _LOGGER.warning("SIP REGISTER response dropped for %s:%s", addr[0], addr[1])
                 return
             self._send_response(request, addr, 405, "Method Not Allowed")
+            return
+        if request.method == "PRACK":
+            call_id = request.header("Call-ID")
+            prack_key = (call_id, request_cseq.number)
+            completed = self.completed_pracks.get(prack_key)
+            if completed is not None:
+                if _same_request_transaction(
+                    request,
+                    completed.request,
+                    addr,
+                    completed.addr,
+                ):
+                    self._send_response(
+                        request,
+                        addr,
+                        completed.status,
+                        completed.reason,
+                    )
+                else:
+                    self._send_response(
+                        request,
+                        addr,
+                        481,
+                        "Call/Transaction Does Not Exist",
+                    )
+                return
+            reliable = self._reliable_provisionals.get(call_id)
+            try:
+                rack = sip.parse_rack(request.header("RAck"))
+                invite_cseq = sip.parse_cseq(reliable.request.header("CSeq"))
+                matches = bool(
+                    reliable is not None
+                    and reliable.addr[0] == addr[0]
+                    and sip.extract_tag(request.header("From"))
+                    == sip.extract_tag(reliable.request.header("From"))
+                    and sip.extract_tag(request.header("To")) == reliable.to_tag
+                    and rack
+                    == sip.SipRAck(reliable.rseq, invite_cseq.number, "INVITE")
+                )
+            except (AttributeError, TypeError, ValueError, sip.SipError):
+                matches = False
+            if not matches or reliable is None:
+                self._send_response(
+                    request,
+                    addr,
+                    481,
+                    "Call/Transaction Does Not Exist",
+                )
+                return
+            prack_result: SipInviteResult | None = None
+            if request.body:
+                if (
+                    request.header("Content-Type").split(";", 1)[0].strip().lower()
+                    != "application/sdp"
+                ):
+                    self._send_response(
+                        request,
+                        addr,
+                        415,
+                        "Unsupported Media Type",
+                        extra_headers=(("Accept", "application/sdp"),),
+                    )
+                    return
+                previous = self._parse_invite(reliable.request, reliable.addr)
+                updated = self._parse_invite(request, addr)
+                if (
+                    previous is not None
+                    and updated is not None
+                    and self.on_media_update is not None
+                ):
+                    try:
+                        prack_result = await self.on_media_update(
+                            previous,
+                            updated,
+                            "PRACK",
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        _LOGGER.exception(
+                            "SIP PRACK media update failed call_id=%s",
+                            call_id,
+                        )
+                if prack_result is None or not 200 <= prack_result.status < 300:
+                    self._reliable_provisionals.pop(call_id, None)
+                    self._cancel_reliable_provisional(reliable)
+                    self._send_response(request, addr, 488, "Not Acceptable Here")
+                    self._send_final_response_now(
+                        call_id,
+                        488,
+                        "Not Acceptable Here",
+                        decline_reason="media_incompatible",
+                    )
+                    return
+            self._reliable_provisionals.pop(call_id, None)
+            self._cancel_reliable_provisional(reliable)
+            self._remember_completed(
+                self.completed_pracks,
+                prack_key,
+                _CompletedRequest(request, addr, 200, "OK"),
+            )
+            sent = self._send_response(
+                request,
+                addr,
+                200,
+                "OK",
+                body=(
+                    prack_result.answer_sdp.encode()
+                    if prack_result is not None and prack_result.answer_sdp
+                    else b""
+                ),
+            )
+            if not sent:
+                if prack_result is not None and prack_result.rollback is not None:
+                    await prack_result.rollback()
+                return
+            if prack_result is not None and prack_result.commit is not None:
+                try:
+                    await prack_result.commit()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    _LOGGER.exception("SIP PRACK commit failed call_id=%s", call_id)
+                    if prack_result.rollback is not None:
+                        await prack_result.rollback()
+                    self._send_final_response_now(
+                        call_id,
+                        500,
+                        "Server Internal Error",
+                        decline_reason="media_update_failed",
+                    )
+                    return
+            if reliable.deferred_final is not None:
+                final = reliable.deferred_final
+                self._send_final_response_now(
+                    call_id,
+                    final.status,
+                    final.reason,
+                    answer_sdp=final.answer_sdp,
+                    decline_reason=final.decline_reason,
+                    connected_identity_name=final.connected_identity_name,
+                    connected_identity_user=final.connected_identity_user,
+                )
             return
         if request.method == "INFO":
             call_id = request.header("Call-ID")
@@ -1658,15 +1913,20 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             if not _same_request_transaction(request, existing_pending.request, addr, existing_pending.addr):
                 self._send_response(request, addr, 488, "Not Acceptable Here", to_tag=existing_pending.to_tag)
                 return
+            reliable = self._reliable_provisionals.get(invite.call_id)
             body = existing_pending.answer_sdp.encode("utf-8") if existing_pending.answer_sdp else b""
-            sent = self._send_response(
-                request,
-                addr,
-                existing_pending.status,
-                existing_pending.reason,
-                body=body,
-                to_tag=existing_pending.to_tag,
-                decline_reason=existing_pending.decline_reason,
+            sent = (
+                self._transmit_reliable_provisional(reliable)
+                if reliable is not None and existing_pending.status < 200
+                else self._send_response(
+                    request,
+                    addr,
+                    existing_pending.status,
+                    existing_pending.reason,
+                    body=body,
+                    to_tag=existing_pending.to_tag,
+                    decline_reason=existing_pending.decline_reason,
+                )
             )
             if sent and existing_pending.status >= 200:
                 self.pending_invites.pop(invite.call_id, None)
@@ -1781,15 +2041,25 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             pending.reason = str(result.reason)
             pending.answer_sdp = answer_sdp
             pending.decline_reason = result.decline_reason
-            body = answer_sdp.encode("utf-8") if answer_sdp else b""
-            self._send_response(
-                request,
-                addr,
-                result.status,
-                result.reason,
-                body=body,
-                to_tag=to_tag,
+            reliable = (
+                101 <= int(result.status) < 200
+                and (
+                    sip.supports_option(request, "100rel")
+                    or "100rel" in sip.option_tags(request, "Require")
+                )
             )
+            if reliable:
+                self._send_reliable_provisional(invite.call_id, pending)
+            else:
+                body = answer_sdp.encode("utf-8") if answer_sdp else b""
+                self._send_response(
+                    request,
+                    addr,
+                    result.status,
+                    result.reason,
+                    body=body,
+                    to_tag=to_tag,
+                )
             self._arm_pending_expiry(invite.call_id, pending)
             return
 
@@ -1873,6 +2143,42 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 )
 
     def send_final_response(
+        self,
+        call_id: str,
+        status: int,
+        reason: str,
+        *,
+        answer_sdp: str = "",
+        decline_reason: str = "",
+        connected_identity_name: str = "",
+        connected_identity_user: str = "",
+    ) -> bool:
+        reliable = self._reliable_provisionals.get(call_id)
+        if (
+            reliable is not None
+            and reliable.answer_sdp
+            and 200 <= int(status) < 300
+        ):
+            reliable.deferred_final = _DeferredInviteFinal(
+                int(status),
+                str(reason),
+                str(answer_sdp),
+                str(decline_reason),
+                str(connected_identity_name),
+                str(connected_identity_user),
+            )
+            return True
+        return self._send_final_response_now(
+            call_id,
+            status,
+            reason,
+            answer_sdp=answer_sdp,
+            decline_reason=decline_reason,
+            connected_identity_name=connected_identity_name,
+            connected_identity_user=connected_identity_user,
+        )
+
+    def _send_final_response_now(
         self,
         call_id: str,
         status: int,

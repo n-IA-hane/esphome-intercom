@@ -33,6 +33,337 @@ from .voip_phase1_support import (
 
 
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    async def _wait_for_sent_request(
+        sent: list[tuple[bytes, tuple[str, int]]],
+        method: str,
+    ) -> sip.SipMessage:
+        for _ in range(100):
+            for raw, _addr in sent:
+                message = sip.parse_message(raw)
+                if message.method == method:
+                    return message
+            await asyncio.sleep(0)
+        raise AssertionError(f"SIP {method} was not sent")
+
+    async def test_listener_retransmits_reliable_ringing_until_matching_prack(
+        self,
+    ) -> None:
+        sent: list[bytes] = []
+        repeated = asyncio.Event()
+        fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        offer = sdp.build_offer("192.0.2.10", "192.0.2.10", 41000, [fmt]).encode()
+
+        def capture(data: bytes, _addr: tuple[str, int]) -> None:
+            sent.append(data)
+            if sum(
+                sip.parse_message(raw).status_code == 180 for raw in sent
+            ) >= 2:
+                repeated.set()
+
+        async def on_invite(_invite):
+            return sip_listener.SipInviteResult(180, "Ringing", defer_final=True)
+
+        endpoint = sip_listener.SipUdpEndpoint(
+            local_ip="192.0.2.20",
+            local_sip_port=5060,
+            local_rtp_port=42000,
+            supported_formats=[fmt],
+            on_invite=on_invite,
+            send_override=capture,
+        )
+        invite = sip.build_request(
+            "INVITE",
+            "sip:Casa@192.0.2.20:5060",
+            [
+                ("Via", "SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bKrel"),
+                ("From", "<sip:test@192.0.2.10>;tag=remote"),
+                ("To", "<sip:Casa@192.0.2.20>"),
+                ("Contact", "<sip:test@192.0.2.10:5060>"),
+                ("Call-ID", "reliable-ringing"),
+                ("CSeq", "1 INVITE"),
+                ("Supported", "100rel"),
+                ("Content-Type", "application/sdp"),
+            ],
+            offer,
+        )
+        addr = ("192.0.2.10", 5060)
+        try:
+            with (
+                patch.object(sip_listener, "_SIP_T1", 0.005),
+                patch.object(sip_listener, "_INVITE_2XX_TIMEOUT", 0.1),
+            ):
+                await endpoint._handle_datagram(invite, addr)
+                await asyncio.wait_for(repeated.wait(), timeout=0.1)
+                ringing = next(
+                    message
+                    for raw in sent
+                    if (message := sip.parse_message(raw)).status_code == 180
+                )
+                self.assertIn("100rel", sip.option_tags(ringing, "Require"))
+                wrong_prack = sip.build_request(
+                    "PRACK",
+                    "sip:Casa@192.0.2.20:5060",
+                    [
+                        ("Via", "SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bKwrong"),
+                        ("From", "<sip:test@192.0.2.10>;tag=remote"),
+                        ("To", ringing.header("To")),
+                        ("Call-ID", "reliable-ringing"),
+                        ("CSeq", "2 PRACK"),
+                        ("RAck", "999 1 INVITE"),
+                    ],
+                )
+                await endpoint._handle_datagram(wrong_prack, addr)
+                self.assertEqual(sip.parse_message(sent[-1]).status_code, 481)
+                self.assertIn("reliable-ringing", endpoint._reliable_provisionals)
+                prack = sip.build_request(
+                    "PRACK",
+                    "sip:Casa@192.0.2.20:5060",
+                    [
+                        ("Via", "SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bKprack"),
+                        ("From", "<sip:test@192.0.2.10>;tag=remote"),
+                        ("To", f"<sip:Casa@192.0.2.20>;tag={sip.extract_tag(ringing.header('To'))}"),
+                        ("Call-ID", "reliable-ringing"),
+                        ("CSeq", "2 PRACK"),
+                        ("RAck", f"{ringing.header('RSeq')} 1 INVITE"),
+                    ],
+                )
+                await endpoint._handle_datagram(prack, addr)
+                count = len(sent)
+                await asyncio.sleep(0.02)
+
+                self.assertEqual(sip.parse_message(sent[count - 1]).status_code, 200)
+                self.assertEqual(len(sent), count)
+                self.assertNotIn("reliable-ringing", endpoint._reliable_provisionals)
+        finally:
+            endpoint.cancel_request_tasks()
+
+    async def test_listener_delays_final_after_reliable_early_answer(self) -> None:
+        sent: list[bytes] = []
+        fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        rtp_format = sdp.audio_format_to_rtp(fmt, 96)
+        offer = sdp.build_offer("192.0.2.10", "192.0.2.10", 41000, [fmt])
+        answer = sdp.build_answer_directional(
+            "192.0.2.20",
+            "192.0.2.20",
+            42000,
+            rtp_format,
+            rtp_format,
+            remote_sdp=offer,
+        )
+
+        async def on_invite(_invite):
+            return sip_listener.SipInviteResult(
+                183,
+                "Session Progress",
+                answer_sdp=answer,
+                defer_final=True,
+            )
+
+        endpoint = sip_listener.SipUdpEndpoint(
+            local_ip="192.0.2.20",
+            local_rtp_port=42000,
+            supported_formats=[fmt],
+            on_invite=on_invite,
+            send_override=lambda data, _addr: sent.append(data),
+        )
+        invite = sip.build_request(
+            "INVITE",
+            "sip:Casa@192.0.2.20",
+            [
+                ("Via", "SIP/2.0/UDP 192.0.2.10;branch=z9hG4bKearly"),
+                ("From", "<sip:test@192.0.2.10>;tag=remote"),
+                ("To", "<sip:Casa@192.0.2.20>"),
+                ("Call-ID", "reliable-early-answer"),
+                ("CSeq", "1 INVITE"),
+                ("Supported", "100rel"),
+                ("Content-Type", "application/sdp"),
+            ],
+            offer.encode(),
+        )
+        addr = ("192.0.2.10", 5060)
+        try:
+            await endpoint._handle_datagram(invite, addr)
+            progress = sip.parse_message(sent[-1])
+            self.assertEqual(progress.status_code, 183)
+            self.assertTrue(
+                endpoint.send_final_response(
+                    "reliable-early-answer",
+                    200,
+                    "OK",
+                    answer_sdp=answer,
+                )
+            )
+            self.assertNotEqual(sip.parse_message(sent[-1]).status_code, 200)
+            prack = sip.build_request(
+                "PRACK",
+                "sip:Casa@192.0.2.20",
+                [
+                    ("Via", "SIP/2.0/UDP 192.0.2.10;branch=z9hG4bKprackearly"),
+                    ("From", "<sip:test@192.0.2.10>;tag=remote"),
+                    ("To", progress.header("To")),
+                    ("Call-ID", "reliable-early-answer"),
+                    ("CSeq", "2 PRACK"),
+                    ("RAck", f"{progress.header('RSeq')} 1 INVITE"),
+                ],
+            )
+            await endpoint._handle_datagram(prack, addr)
+
+            self.assertEqual(
+                [sip.parse_message(raw).status_code for raw in sent[-2:]],
+                [200, 200],
+            )
+            self.assertIn("reliable-early-answer", endpoint.active_dialogs)
+        finally:
+            endpoint.cancel_request_tasks()
+
+    async def test_client_pracks_reliable_ringing_before_returning_progress(
+        self,
+    ) -> None:
+        sent: list[tuple[bytes, tuple[str, int]]] = []
+        client = sip_client.SipCallClient(
+            local_ip="192.0.2.10",
+            local_name="Casa",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        client.transport = types.SimpleNamespace(
+            sendto=lambda data, addr: sent.append((data, addr)),
+            close=lambda: None,
+        )
+        invite_task = asyncio.create_task(
+            client.invite(
+                target="P4",
+                remote_host="192.0.2.20",
+                remote_sip_port=5060,
+                request_uri="sip:P4@192.0.2.20:5060",
+            )
+        )
+        invite = await self._wait_for_sent_request(sent, "INVITE")
+        ringing = sip.build_response(
+            180,
+            "Ringing",
+            [
+                *(("Via", value) for value in invite.header_values("Via")),
+                ("From", invite.header("From")),
+                ("To", f"{invite.header('To')};tag=remote"),
+                ("Contact", "<sip:P4@192.0.2.20:5060>"),
+                ("Call-ID", invite.header("Call-ID")),
+                ("CSeq", invite.header("CSeq")),
+                ("Require", "100rel"),
+                ("RSeq", "101"),
+            ],
+        )
+        client.queue.put_nowait((ringing, ("192.0.2.20", 5060)))
+        prack = await self._wait_for_sent_request(sent, "PRACK")
+        self.assertEqual(prack.header("RAck"), "101 1 INVITE")
+        client.queue.put_nowait(
+            (
+                sip.build_response(
+                    200,
+                    "OK",
+                    [
+                        *(("Via", value) for value in prack.header_values("Via")),
+                        ("From", prack.header("From")),
+                        ("To", prack.header("To")),
+                        ("Call-ID", prack.header("Call-ID")),
+                        ("CSeq", prack.header("CSeq")),
+                    ],
+                ),
+                ("192.0.2.20", 5060),
+            )
+        )
+
+        self.assertEqual(await asyncio.wait_for(invite_task, timeout=0.2), "ringing")
+        await client.close()
+
+    async def test_reliable_early_answer_is_committed_by_bodyless_final(self) -> None:
+        sent: list[tuple[bytes, tuple[str, int]]] = []
+        fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        rtp_format = sdp.audio_format_to_rtp(fmt, 96)
+        client = sip_client.SipCallClient(
+            local_ip="192.0.2.10",
+            local_name="Casa",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            supported_formats=[fmt],
+        )
+        client.transport = types.SimpleNamespace(
+            sendto=lambda data, addr: sent.append((data, addr)),
+            close=lambda: None,
+        )
+        invite_task = asyncio.create_task(
+            client.invite(
+                target="P4",
+                remote_host="192.0.2.20",
+                remote_sip_port=5060,
+                request_uri="sip:P4@192.0.2.20:5060",
+            )
+        )
+        invite = await self._wait_for_sent_request(sent, "INVITE")
+        common_headers = [
+            *(("Via", value) for value in invite.header_values("Via")),
+            ("From", invite.header("From")),
+            ("To", f"{invite.header('To')};tag=remote"),
+            ("Contact", "<sip:P4@192.0.2.20:5060>"),
+            ("Call-ID", invite.header("Call-ID")),
+            ("CSeq", invite.header("CSeq")),
+        ]
+        early_answer = sdp.build_answer_directional(
+            "192.0.2.20",
+            "192.0.2.20",
+            42000,
+            rtp_format,
+            rtp_format,
+            remote_sdp=invite.body.decode(),
+        ).encode()
+        client.queue.put_nowait(
+            (
+                sip.build_response(
+                    183,
+                    "Session Progress",
+                    [
+                        *common_headers,
+                        ("Require", "100rel"),
+                        ("RSeq", "201"),
+                        ("Content-Type", "application/sdp"),
+                    ],
+                    early_answer,
+                ),
+                ("192.0.2.20", 5060),
+            )
+        )
+        prack = await self._wait_for_sent_request(sent, "PRACK")
+        client.queue.put_nowait(
+            (
+                sip.build_response(
+                    200,
+                    "OK",
+                    [
+                        *(("Via", value) for value in prack.header_values("Via")),
+                        ("From", prack.header("From")),
+                        ("To", prack.header("To")),
+                        ("Call-ID", prack.header("Call-ID")),
+                        ("CSeq", prack.header("CSeq")),
+                    ],
+                ),
+                ("192.0.2.20", 5060),
+            )
+        )
+        self.assertEqual(await asyncio.wait_for(invite_task, timeout=0.2), "ringing")
+        final_task = asyncio.create_task(client.wait_for_final(timeout=0.2))
+        client.queue.put_nowait(
+            (
+                sip.build_response(200, "OK", common_headers),
+                ("192.0.2.20", 5060),
+            )
+        )
+
+        self.assertEqual(await final_task, "in_call")
+        self.assertIsNotNone(client.dialog)
+        self.assertEqual(client.dialog.remote_rtp_port, 42000)
+        await client.close()
+
     async def test_listener_rejects_too_short_session_interval_before_routing(
         self,
     ) -> None:

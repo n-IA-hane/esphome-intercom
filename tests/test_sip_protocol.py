@@ -109,7 +109,7 @@ class SipProtocolBugFixTest(unittest.TestCase):
 
         self.assertEqual(
             sip.unsupported_required_options(request),
-            ("100rel",),
+            (),
         )
 
     def test_dialog_headers_advertise_connected_identity_support(self) -> None:
@@ -132,7 +132,7 @@ class SipProtocolBugFixTest(unittest.TestCase):
         self.assertTrue(sip.supports_option(message, "from-change"))
         self.assertEqual(
             sip.option_tags(message),
-            frozenset({"from-change", "timer"}),
+            frozenset({"100rel", "from-change", "timer"}),
         )
 
     def test_dtmf_collector_emits_one_digit_per_event(self) -> None:
@@ -1965,6 +1965,69 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await watcher, "remote_hangup")
         methods = [sip.parse_message(raw).method for raw, _addr in sent]
         self.assertIn("ACK", methods)
+
+    async def test_local_reinvite_pracks_reliable_early_video_answer(self) -> None:
+        client, current, sent, negotiated = self._confirmed_audio_client()
+        jpeg = sdp.DEFAULT_VIDEO_FORMATS[3]
+        prepared = asyncio.create_task(
+            client.async_prepare_video_reinvite(
+                local_video_rtp_port=43000,
+                video_formats=(jpeg,),
+            )
+        )
+        request = await self._wait_for_sent_request(sent, "INVITE")
+        answer = sdp.build_answer_directional(
+            "127.0.0.2",
+            "127.0.0.2",
+            42000,
+            negotiated,
+            negotiated,
+            remote_sdp=request.body,
+            video_port=44000,
+            video_format=jpeg,
+            video_direction="sendrecv",
+        )
+        provisional_headers = [
+            *(("Via", value) for value in request.header_values("Via")),
+            ("From", request.header("From")),
+            ("To", request.header("To")),
+            ("Contact", "<sip:P4@127.0.0.2:5060>"),
+            ("Call-ID", request.header("Call-ID")),
+            ("CSeq", request.header("CSeq")),
+            ("Require", "100rel"),
+            ("RSeq", "301"),
+            ("Content-Type", "application/sdp"),
+        ]
+        client.queue.put_nowait(
+            (
+                sip.build_response(
+                    183,
+                    "Session Progress",
+                    provisional_headers,
+                    answer.encode(),
+                ),
+                ("127.0.0.2", 5060),
+            )
+        )
+        prack = await self._wait_for_sent_request(sent, "PRACK")
+        client.queue.put_nowait(
+            (
+                self._response_to_request(prack, 200, "OK"),
+                ("127.0.0.2", 5060),
+            )
+        )
+        client.queue.put_nowait(
+            (
+                self._response_to_request(request, 200, "OK"),
+                ("127.0.0.2", 5060),
+            )
+        )
+
+        candidate = await asyncio.wait_for(prepared, timeout=0.2)
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertIs(client.dialog, current)
+        self.assertEqual(candidate.video_format.encoding, "JPEG")
 
     async def test_local_reinvite_removes_video_with_port_zero(self) -> None:
         client, current, sent, negotiated = self._confirmed_audio_client()

@@ -373,6 +373,8 @@ class SipCallClient:
         self._tcp_reuse_responses: asyncio.Queue[bytes] | None = None
         self._tcp_reuse_close: Callable[[], None] | None = None
         self.queue: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(maxsize=128)
+        self._deferred_signaling: list[tuple[sip.SipMessage, tuple[str, int]]] = []
+        self._reliable_rseq: dict[tuple[str, int], int] = {}
         self.dialog_ids = sip.SipDialogIds(call_id=sip.make_call_id("ha"), local_tag=sip.make_tag())
         self.dialog: SipDialog | None = None
         self.early_dialog: SipDialog | None = None
@@ -557,6 +559,8 @@ class SipCallClient:
         self._invite_transaction_active = False
         self.dialog = None
         self.early_dialog = None
+        self._reliable_rseq.clear()
+        self._deferred_signaling.clear()
 
         if self.transport is not None:
             self.transport.close()
@@ -1270,7 +1274,14 @@ class SipCallClient:
         await self._send_raw(raw, remote_host, int(remote_sip_port))
         return raw
 
-    async def _read_response(self, timeout: float) -> tuple[sip.SipMessage, tuple[str, int]] | None:
+    async def _read_response(
+        self,
+        timeout: float,
+        *,
+        network_only: bool = False,
+    ) -> tuple[sip.SipMessage, tuple[str, int]] | None:
+        if self._deferred_signaling and not network_only:
+            return self._deferred_signaling.pop(0)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.0, float(timeout))
         while True:
@@ -1303,6 +1314,130 @@ class SipCallClient:
                 )
                 continue
             return message, addr
+
+    async def _ack_reliable_provisional(
+        self,
+        response: sip.SipMessage,
+        addr: tuple[str, int],
+        *,
+        process_early_media: bool = True,
+    ) -> bool:
+        """Acknowledge one in-order RFC 3262 provisional response."""
+
+        if not (
+            101 <= int(response.status_code or 0) < 200
+            and "100rel" in sip.option_tags(response, "Require")
+        ):
+            return True
+        try:
+            rseq = int(response.header("RSeq"))
+            invite_cseq = sip.parse_cseq(response.header("CSeq"))
+            remote_tag = sip.extract_tag(response.header("To"))
+            if not 1 <= rseq <= 0xFFFFFFFF or not remote_tag:
+                return False
+            sequence_key = (remote_tag, invite_cseq.number)
+            previous = self._reliable_rseq.get(sequence_key)
+            if previous is not None:
+                if rseq == previous:
+                    return True
+                if rseq != previous + 1:
+                    return False
+            current = self.dialog
+            local_uri = current.local_uri if current is not None else self._pending_local_uri
+            remote_uri = current.remote_uri if current is not None else self._pending_remote_uri
+            remote_target = (
+                sip.contact_target_uri(response)
+                or (current.remote_target_uri if current is not None else remote_uri)
+            )
+            route_set = sip.record_route_set(response, reverse=True)
+            routing = sip.dialog_request_routing(remote_target, route_set)
+            ids = sip.SipDialogIds(
+                call_id=self.dialog_ids.call_id,
+                local_tag=self.dialog_ids.local_tag,
+                remote_tag=remote_tag,
+                cseq=self._next_dialog_cseq(),
+                branch=sip.make_branch(),
+            )
+            headers = sip.dialog_headers(
+                request_uri=routing.request_uri,
+                local_uri=local_uri,
+                remote_uri=remote_uri,
+                dialog=ids,
+                method="PRACK",
+                contact_uri=local_uri,
+                transport=self.signaling_transport,
+                local_display_name=self.local_name,
+                remote_display_name=self._pending_target_display,
+            )
+            headers.extend(("Route", value) for value in routing.route_headers)
+            headers.append(
+                (
+                    "RAck",
+                    f"{rseq} {invite_cseq.number} {invite_cseq.method}",
+                )
+            )
+            raw = sip.build_request("PRACK", routing.request_uri, headers)
+            next_host, next_port = self._dialog_next_hop(
+                routing.next_hop_uri,
+                addr[0],
+                addr[1],
+            )
+        except (TypeError, ValueError, sip.SipError):
+            return False
+        if process_early_media and response.body and not self._commit_200_ok(
+            response,
+            self._pending_target,
+            self._pending_remote_host or addr[0],
+            self._pending_remote_sip_port,
+            self._pending_request_uri,
+            self._pending_local_uri,
+            self._pending_remote_uri,
+            provisional=True,
+        ):
+            return False
+        transaction = SipClientTransaction[
+            tuple[sip.SipMessage, tuple[str, int]]
+        ](
+            transport=self.signaling_transport,
+            timeout=SIP_TIMER_B,
+            t1=SIP_T1,
+            t2=SIP_T2,
+        )
+
+        async def send() -> None:
+            if not self._send_dialog_request(raw, next_host, next_port):
+                raise ConnectionError("SIP signaling path is unavailable")
+
+        async def read(timeout: float):
+            deadline = asyncio.get_running_loop().time() + timeout
+            while True:
+                received = await self._read_response(
+                    max(0.0, deadline - asyncio.get_running_loop().time()),
+                    network_only=True,
+                )
+                if received is None:
+                    return None
+                message, _source = received
+                if sip.response_matches_dialog_transaction(message, ids, "PRACK"):
+                    return received
+                self._deferred_signaling.append(received)
+
+        try:
+            await send()
+            sip.mark_sip_event(self, "PRACK")
+            while True:
+                received = await transaction.receive(read, send)
+                if received is None:
+                    return False
+                prack_response, _source = received
+                status = int(prack_response.status_code or 0)
+                if status >= 200:
+                    accepted = 200 <= status < 300
+                    if accepted:
+                        self._reliable_rseq[sequence_key] = rseq
+                    return accepted
+        except (ConnectionError, OSError):
+            return False
 
     async def invite(
         self,
@@ -1383,6 +1518,8 @@ class SipCallClient:
         self._cancel_requested = False
         self._cancel_sent = False
         self._received_provisional = False
+        self._reliable_rseq.clear()
+        self._deferred_signaling.clear()
         offer = sdp.build_offer_directional(
             self.local_ip,
             self.local_ip,
@@ -1468,6 +1605,9 @@ class SipCallClient:
             if msg.status_code is not None and 100 <= msg.status_code < 200:
                 received_provisional = True
                 self._received_provisional = True
+                if not await self._ack_reliable_provisional(msg, addr):
+                    self.request_cancel()
+                    return "prack_failed"
                 if self._cancel_requested and not self._cancel_sent:
                     self._send_cancel()
                 if _is_invite_progress_response(msg.status_code):
@@ -1523,6 +1663,7 @@ class SipCallClient:
                     return self._transport_failure(err, target, remote_host, remote_sip_port)
                 transaction.restart_retransmissions()
                 received_provisional = False
+                self._reliable_rseq.clear()
                 continue
             if msg.status_code and msg.status_code >= 300:
                 self._send_invite_error_ack(msg, addr[0], addr[1])
@@ -1540,6 +1681,7 @@ class SipCallClient:
                     raw = retry_raw
                     transaction.restart_retransmissions()
                     received_provisional = False
+                    self._reliable_rseq.clear()
                     continue
                 self._invite_transaction_active = False
                 if self._cancel_requested or self._closing or self._closed:
@@ -1632,6 +1774,9 @@ class SipCallClient:
             if 100 <= msg.status_code < 200:
                 retry_received_provisional = True
                 self._received_provisional = True
+                if not await self._ack_reliable_provisional(msg, addr):
+                    self.request_cancel()
+                    return "prack_failed"
                 if self._cancel_requested and not self._cancel_sent:
                     self._send_cancel()
                 continue
@@ -1678,6 +1823,7 @@ class SipCallClient:
                         t2=SIP_T2,
                     )
                     retry_received_provisional = False
+                    self._reliable_rseq.clear()
                     continue
                 self._invite_transaction_active = False
                 if self._cancel_requested or self._closing or self._closed:
@@ -2586,6 +2732,7 @@ class SipCallClient:
                             raise ConnectionAbortedError(terminal)
 
                 received_provisional = False
+                early_candidate: SipDialog | None = None
                 while self.dialog is current:
                     try:
                         received = await transaction.receive(
@@ -2622,18 +2769,42 @@ class SipCallClient:
                     self.last_sip_reason = message.reason
                     if 100 <= status < 200:
                         received_provisional = True
+                        if not await self._ack_reliable_provisional(
+                            message,
+                            addr,
+                            process_early_media=False,
+                        ):
+                            return None
+                        if message.body:
+                            early_candidate = self._dialog_candidate_from_answer(
+                                current,
+                                offer,
+                                message,
+                                local_video_rtp_port=local_video_port,
+                                offered_video_formats=offered_video,
+                                video_direction=(
+                                    "inactive" if removing_video else video_direction
+                                ),
+                                session_version=session_version,
+                            )
+                            if early_candidate is None:
+                                return None
                         continue
                     if 200 <= status < 300:
-                        candidate = self._dialog_candidate_from_answer(
-                            current,
-                            offer,
-                            message,
-                            local_video_rtp_port=local_video_port,
-                            offered_video_formats=offered_video,
-                            video_direction=(
-                                "inactive" if removing_video else video_direction
-                            ),
-                            session_version=session_version,
+                        candidate = (
+                            self._dialog_candidate_from_answer(
+                                current,
+                                offer,
+                                message,
+                                local_video_rtp_port=local_video_port,
+                                offered_video_formats=offered_video,
+                                video_direction=(
+                                    "inactive" if removing_video else video_direction
+                                ),
+                                session_version=session_version,
+                            )
+                            if message.body
+                            else early_candidate
                         )
                         remote_tag = sip.extract_tag(message.header("To"))
                         ack_target = (
@@ -2751,8 +2922,11 @@ class SipCallClient:
         request_uri: str,
         local_uri: str,
         remote_uri: str,
+        *,
+        provisional: bool = False,
     ) -> bool:
-        self._invite_transaction_active = False
+        if not provisional:
+            self._invite_transaction_active = False
         if not request_uri:
             request_uri = str(sip.SipUri(target or "voip", remote_host, remote_sip_port))
         transport_param = (("transport", self.signaling_transport.lower()),)
@@ -2798,27 +2972,43 @@ class SipCallClient:
             _LOGGER.info(
                 "SIP 200 OK has invalid Record-Route; using direct dialog routing"
             )
+        if not provisional and not msg.body and self.early_dialog is not None:
+            candidate = self.early_dialog
+            candidate.remote_target_uri = remote_target_uri
+            candidate.route_set = route_set
+            self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
+            self.dialog = candidate
+            self.early_dialog = None
+            return self._send_ack(
+                remote_host,
+                int(remote_sip_port),
+                remote_target_uri,
+                local_uri,
+                remote_uri,
+                route_set=route_set,
+            )
         if self._closing or self._closed:
             # A 2xx terminates the INVITE transaction even when local teardown
             # won the race.  ACK it and immediately end the just-created remote
             # dialog, but never publish that dialog into a closing client.
-            self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
-            self._send_ack(
-                remote_host,
-                int(remote_sip_port),
-                remote_target_uri,
-                local_uri,
-                remote_uri,
-                route_set=route_set,
-            )
-            self._send_bye_request(
-                remote_host,
-                int(remote_sip_port),
-                remote_target_uri,
-                local_uri,
-                remote_uri,
-                route_set=route_set,
-            )
+            if not provisional:
+                self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
+                self._send_ack(
+                    remote_host,
+                    int(remote_sip_port),
+                    remote_target_uri,
+                    local_uri,
+                    remote_uri,
+                    route_set=route_set,
+                )
+                self._send_bye_request(
+                    remote_host,
+                    int(remote_sip_port),
+                    remote_target_uri,
+                    local_uri,
+                    remote_uri,
+                    route_set=route_set,
+                )
             return False
         negotiation_error: Exception | None = None
         try:
@@ -2859,23 +3049,24 @@ class SipCallClient:
                 offered,
                 negotiation_error or "none",
             )
-            self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
-            self._send_ack(
-                remote_host,
-                int(remote_sip_port),
-                remote_target_uri,
-                local_uri,
-                remote_uri,
-                route_set=route_set,
-            )
-            self._send_bye_request(
-                remote_host,
-                int(remote_sip_port),
-                remote_target_uri,
-                local_uri,
-                remote_uri,
-                route_set=route_set,
-            )
+            if not provisional:
+                self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
+                self._send_ack(
+                    remote_host,
+                    int(remote_sip_port),
+                    remote_target_uri,
+                    local_uri,
+                    remote_uri,
+                    route_set=route_set,
+                )
+                self._send_bye_request(
+                    remote_host,
+                    int(remote_sip_port),
+                    remote_target_uri,
+                    local_uri,
+                    remote_uri,
+                    route_set=route_set,
+                )
             return False
         parsed = sdp.parse_sdp(msg.body)
         video_directional = (
@@ -2913,27 +3104,28 @@ class SipCallClient:
                 if not session_timer.refresher:
                     raise sip.SipError("Session-Expires response lacks refresher")
             except sip.SipError:
-                self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
-                self._send_ack(
-                    remote_host,
-                    int(remote_sip_port),
-                    remote_target_uri,
-                    local_uri,
-                    remote_uri,
-                    route_set=route_set,
-                )
-                self._send_bye_request(
-                    remote_host,
-                    int(remote_sip_port),
-                    remote_target_uri,
-                    local_uri,
-                    remote_uri,
-                    route_set=route_set,
-                )
+                if not provisional:
+                    self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
+                    self._send_ack(
+                        remote_host,
+                        int(remote_sip_port),
+                        remote_target_uri,
+                        local_uri,
+                        remote_uri,
+                        route_set=route_set,
+                    )
+                    self._send_bye_request(
+                        remote_host,
+                        int(remote_sip_port),
+                        remote_target_uri,
+                        local_uri,
+                        remote_uri,
+                        route_set=route_set,
+                    )
                 return False
         now = asyncio.get_running_loop().time() if session_timer else 0.0
         self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
-        self.dialog = SipDialog(
+        candidate = SipDialog(
             target=target,
             remote_host=remote_host,
             remote_sip_port=int(remote_sip_port),
@@ -3011,7 +3203,7 @@ class SipCallClient:
             peer_supports_from_change=sip.supports_option(msg, "from-change"),
             session_timer=sip.SipSessionTimer(),
         )
-        self.dialog.session_timer.configure(session_timer, local_role="uac", now=now)
+        candidate.session_timer.configure(session_timer, local_role="uac", now=now)
         _LOGGER.info(
             "SIP 200 OK media selected call_id=%s tx=%s rx=%s answer=[%s]",
             self.dialog_ids.call_id,
@@ -3019,6 +3211,11 @@ class SipCallClient:
             selected.recv.wire_token(),
             ", ".join(sdp.offered_media_descriptions(msg.body)),
         )
+        if provisional:
+            self.early_dialog = candidate
+            return True
+        self.dialog = candidate
+        self.early_dialog = None
         self._send_ack(
             remote_host,
             int(remote_sip_port),
