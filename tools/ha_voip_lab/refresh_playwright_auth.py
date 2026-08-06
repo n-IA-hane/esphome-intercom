@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import time
 from urllib.parse import urlencode, urlsplit
+import urllib.error
 from urllib.request import Request, urlopen
 
 
@@ -66,6 +67,65 @@ def playwright_storage_origin(
     return candidates[0]
 
 
+def _request_token(url: str, fields: dict[str, str]) -> dict[str, object]:
+    request = Request(
+        url,
+        data=urlencode(fields).encode(),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urlopen(request, timeout=10) as response:  # noqa: S310 - explicit HA URL.
+        return json.load(response)
+
+
+def _login_token(
+    base_url: str,
+    credentials: dict[str, str],
+    client_id: str,
+) -> dict[str, object]:
+    username = credentials.get("username", "")
+    password = credentials.get("password", "")
+    if not username or not password:
+        raise ValueError("credentials file has no usable refresh token or login")
+
+    flow_request = Request(
+        f"{base_url}/auth/login_flow",
+        data=json.dumps(
+            {
+                "client_id": client_id,
+                "handler": ["homeassistant", None],
+                "redirect_uri": client_id,
+            }
+        ).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(flow_request, timeout=10) as response:  # noqa: S310
+        flow = json.load(response)
+    login_request = Request(
+        f"{base_url}/auth/login_flow/{flow['flow_id']}",
+        data=json.dumps(
+            {
+                "client_id": client_id,
+                "username": username,
+                "password": password,
+            }
+        ).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(login_request, timeout=10) as response:  # noqa: S310
+        login = json.load(response)
+    return _request_token(
+        f"{base_url}/auth/token",
+        {
+            "grant_type": "authorization_code",
+            "code": str(login["result"]),
+            "client_id": client_id,
+        },
+    )
+
+
 def refresh_playwright_auth(
     *,
     token_url: str,
@@ -78,8 +138,6 @@ def refresh_playwright_auth(
 
     credentials = _credentials(credentials_path)
     refresh_token = credentials.get("refresh_token", "")
-    if not refresh_token:
-        raise ValueError("credentials file has no refresh_token")
 
     desired_hass_url = str(storage_hass_url or "").rstrip("/")
     desired_origin = playwright_storage_origin(
@@ -115,21 +173,19 @@ def refresh_playwright_auth(
         or hass_tokens.get("clientId")
         or f"{desired_origin}/"
     )
-    body = urlencode(
-        {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": client_id,
-        }
-    ).encode()
-    request = Request(
-        f"{token_base_url}/auth/token",
-        data=body,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
-    with urlopen(request, timeout=10) as response:  # noqa: S310 - explicit HA URL.
-        refreshed = json.load(response)
+    try:
+        if not refresh_token:
+            raise ValueError("credentials file has no refresh_token")
+        refreshed = _request_token(
+            f"{token_base_url}/auth/token",
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": client_id,
+            },
+        )
+    except (ValueError, urllib.error.HTTPError):
+        refreshed = _login_token(token_base_url, credentials, client_id)
     access_token = str(refreshed.get("access_token") or "")
     if not access_token:
         raise RuntimeError("Home Assistant token refresh returned no access token")

@@ -669,6 +669,38 @@ def main() -> int:
 
             case("in_call_sip_info_dtmf_event", in_call_sip_info_dtmf_event)
 
+            def in_call_registered_sip_info_dtmf_event() -> dict[str, Any]:
+                caller = BareSip(
+                    LOCAL_CONFIG,
+                    headless_audio=True,
+                    dtmf_mode="info",
+                )
+                active.append(caller)
+                caller.dial(LOCAL_SIP_TARGET, wait_for="180 Ringing")
+                ringing = matching(page, "ringing")
+                if not page.evaluate(CLICK, "Answer"):
+                    raise RuntimeError("Answer button unavailable")
+                matching(page, "in_call")
+                caller.wait_for("Call established", 5)
+                caller.digits("5")
+                observed = wait_dtmf_event(
+                    ringing["backend"]["call_id"], "5", "sip_info"
+                )
+                caller.hangup()
+                matching(page, "idle")
+                return {
+                    "call_id": ringing["backend"]["call_id"],
+                    "digit": observed.get("digit"),
+                    "transport": observed.get("transport"),
+                    "source_leg": observed.get("source_leg"),
+                    "ingress": observed.get("ingress"),
+                }
+
+            case(
+                "in_call_registered_sip_info_dtmf_event",
+                in_call_registered_sip_info_dtmf_event,
+            )
+
             def in_call_rfc4733_dtmf_event() -> dict[str, Any]:
                 caller = BareSip(
                     LOCAL_CONFIG,
