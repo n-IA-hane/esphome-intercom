@@ -15,6 +15,12 @@ from .voip_phase1_support import (
 
 
 class SipUriTest(unittest.TestCase):
+    def test_fritzbox_service_code_round_trips_from_percent_encoded_uri(self) -> None:
+        parsed = sip.parse_sip_uri("sip:%2A%2A621@192.0.2.1")
+
+        self.assertEqual(parsed.user, "**621")
+        self.assertEqual(str(parsed), "sip:**621@192.0.2.1")
+
     def test_uri_user_is_percent_encoded_and_line_breaks_are_rejected(self) -> None:
         self.assertEqual(
             str(sip.SipUri("Home Assistant", "192.168.1.10", 5060)),

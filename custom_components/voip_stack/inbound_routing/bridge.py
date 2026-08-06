@@ -479,7 +479,6 @@ async def route_sip_bridge(
                 reason=terminal_reason,
                 state=public_state,
             )
-            registry.take_client_watcher(client.dialog_ids.call_id)
             await async_close_client_and_release(client, bridge_ports)
             if video_relay is not None:
                 await video_relay.stop()
@@ -569,7 +568,6 @@ async def route_sip_bridge(
                 reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
                 state=CallState.MEDIA_INCOMPATIBLE.value,
             )
-            registry.take_client_watcher(client.dialog_ids.call_id)
             await async_close_client_and_release(client, bridge_ports)
             if video_relay is not None:
                 await video_relay.stop()

@@ -275,6 +275,34 @@ class RouterContractTest(unittest.TestCase):
         ready = router.resolve_ha_router("0551234567", [], trunk_ready=True)
         self.assertEqual(ready.action, router.RouteAction.TRUNK)
 
+    def test_trunk_service_code_preserves_prefix_and_bypasses_local_extension(self) -> None:
+        entries = roster.parse_roster_json(
+            [
+                {
+                    "id": "Fritz App",
+                    "name": "Fritz App",
+                    "address": "192.0.2.61",
+                    "extension": "621",
+                }
+            ]
+        )
+
+        ready = router.resolve_ha_router("**621", entries, trunk_ready=True)
+        self.assertEqual(ready.action, router.RouteAction.TRUNK)
+        self.assertEqual(ready.target, "**621")
+        self.assertEqual(ready.source, "trunk")
+
+        unavailable = router.resolve_ha_router(
+            "**621", entries, trunk_ready=False
+        )
+        self.assertEqual(unavailable.action, router.RouteAction.REJECT)
+        self.assertEqual(unavailable.target, "**621")
+        self.assertEqual(unavailable.status, 503)
+        self.assertEqual(
+            unavailable.reason,
+            router.RouteReason.TRUNK_UNAVAILABLE,
+        )
+
     def test_roster_contact_fields_are_data_driven(self) -> None:
         entries = roster.parse_roster_json(
             [

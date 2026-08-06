@@ -71,6 +71,38 @@ class _EndpointRegistryStub:
 
 
 class CallRegistryEventContextTest(unittest.TestCase):
+    def test_terminal_bridge_cleanup_recognizes_its_current_watcher(self) -> None:
+        async def exercise() -> None:
+            registry = _registry()
+            registry.activate()
+            registry.upsert("source", state="remote_ringing", owner="bridge")
+            registry.add_leg(
+                "source",
+                "destination",
+                role="callee",
+                state="remote_ringing",
+            )
+            registry.set_bridge_link("source", "destination")
+            watcher = asyncio.current_task()
+            self.assertIsNotNone(watcher)
+            registry.attach_client_watcher("destination", watcher)
+
+            session = registry.discard_bridge_session(
+                "source",
+                "destination",
+                reason="temporarily_unavailable",
+                state="error",
+            )
+
+            self.assertIsNone(session)
+            owner = registry.sessions.get("source")
+            self.assertIsNotNone(owner)
+            self.assertTrue(owner.termination_started.is_set())
+            self.assertNotIn(watcher, owner.tasks)
+            await asyncio.sleep(0)
+
+        asyncio.run(exercise())
+
     def test_active_count_filters_terminal_and_ha_softphone_sessions(self) -> None:
         registry = _registry()
 

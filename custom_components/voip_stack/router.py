@@ -38,6 +38,7 @@ class RouteReason(StrEnum):
 class TargetClass(StrEnum):
     SIP_URI = "sip_uri"
     NAME_AT_HOST = "name_at_host"
+    TRUNK_SERVICE_CODE = "trunk_service_code"
     NUMERIC = "numeric"
     NAME = "name"
 
@@ -69,6 +70,7 @@ class RouteDecision:
 
 _PUBLIC_NUMBER_RE = re.compile(r"^\+?[0-9][0-9 .()/-]{2,}$")
 _NUMERIC_RE = re.compile(r"^[0-9][0-9 .()/-]*$")
+_TRUNK_SERVICE_CODE_RE = re.compile(r"^[*#][0-9*#]+$")
 
 
 def classify_target(target: str) -> TargetClass:
@@ -78,6 +80,8 @@ def classify_target(target: str) -> TargetClass:
         return TargetClass.SIP_URI
     if "@" in raw and raw.split("@", 1)[0].strip() and raw.split("@", 1)[1].strip():
         return TargetClass.NAME_AT_HOST
+    if _TRUNK_SERVICE_CODE_RE.fullmatch(raw):
+        return TargetClass.TRUNK_SERVICE_CODE
     if _NUMERIC_RE.match(raw):
         return TargetClass.NUMERIC
     return TargetClass.NAME
@@ -195,6 +199,15 @@ def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: b
     target_class = classify_target(target)
     if target_class in {TargetClass.SIP_URI, TargetClass.NAME_AT_HOST}:
         return RouteDecision(RouteAction.DIRECT, target=target, sip_uri=to_sip_uri(target), reason=RouteReason.DIRECT_URI)
+    if target_class is TargetClass.TRUNK_SERVICE_CODE:
+        if trunk_ready:
+            return RouteDecision(RouteAction.TRUNK, target=target, source="trunk")
+        return RouteDecision(
+            RouteAction.REJECT,
+            target=target,
+            status=503,
+            reason=RouteReason.TRUNK_UNAVAILABLE,
+        )
 
     entry = find_entry(entries, target)
     if entry is not None and not entry.enabled:
