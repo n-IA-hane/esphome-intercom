@@ -145,7 +145,6 @@ def prepare_trunk_preanswer(
         if source_video_port and invite.video_format is not None
         else "inactive"
     )
-    registry.preanswered[invite.call_id]["video_direction"] = preanswer_video_direction
     answer = build_answer_directional(
         local_ip,
         local_ip,
@@ -160,7 +159,13 @@ def prepare_trunk_preanswer(
         # the explicit answer action.
         video_direction=preanswer_video_direction,
     )
-    registry.preanswered[invite.call_id]["early_answer_sdp"] = answer
+    if not registry.update_media(
+        invite.call_id,
+        provisional=True,
+        video_direction=preanswer_video_direction,
+        early_answer_sdp=answer,
+    ):
+        raise RuntimeError("preanswered media owner disappeared during trunk setup")
     _set_sip_bridge_call_state(
         hass,
         CallState.CONNECTING.value,

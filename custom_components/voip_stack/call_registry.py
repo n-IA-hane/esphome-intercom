@@ -701,6 +701,23 @@ class CallRuntimeApi:
         )
         return media
 
+    def update_media(
+        self,
+        call_id: str,
+        *,
+        provisional: bool = False,
+        **values: Any,
+    ) -> bool:
+        """Update an owned media record without mutating a detached view."""
+
+        media = self._resource_view(
+            "preanswered" if provisional else "softphone_media"
+        ).get(call_id)
+        if not isinstance(media, dict):
+            return False
+        media.update(values)
+        return True
+
     def resolve_session_id(self, call_id: str) -> str:
         return self.leg_index.get(call_id, call_id)
 
