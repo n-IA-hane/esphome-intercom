@@ -15,7 +15,7 @@ beyond the project overview in the [top-level README](../README.md).
 | Resolve a specific failure | [Troubleshooting](troubleshooting.md) |
 
 Published release notes live with their immutable artifacts on GitHub:
-[2026.8.1](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.1),
+[2026.8.1-dev](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.1-dev),
 [2026.8.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.0),
 [2026.7.1](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.7.1)
 and

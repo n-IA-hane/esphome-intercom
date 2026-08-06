@@ -412,9 +412,9 @@ Before every upgrade:
 Never assume an automation still has the same contract merely because the
 integration loaded successfully.
 
-## What's new in `2026.8.1`
+## What's new in `2026.8.1-dev`
 
-`2026.8.1` is an interoperability and consolidation update:
+`2026.8.1-dev` is an interoperability and consolidation pre-release:
 
 - capability-gated G.722 on HA SIP legs, while ESP endpoints keep their native
   high-quality PCM path;
@@ -434,7 +434,7 @@ integration loaded successfully.
 - a substantially expanded, schema-checked automation cookbook.
 
 The complete delta is in the
-[`2026.8.1` pre-release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.1).
+[`2026.8.1-dev` pre-release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.1-dev).
 The illustrated
 [`2026.8.0` release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.0)
 remains the stable feature overview.

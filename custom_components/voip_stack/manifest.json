@@ -12,5 +12,5 @@
   "loggers": ["custom_components.voip_stack"],
   "requirements": [],
   "single_config_entry": true,
-  "version": "2026.8.1"
+  "version": "2026.8.1-dev"
 }
