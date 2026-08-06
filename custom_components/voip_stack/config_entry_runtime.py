@@ -156,7 +156,7 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
 
 
 def register_phonebook_service_event_sync(hass: HomeAssistant) -> None:
-    """Refresh the phonebook when an ESPHome roster service appears."""
+    """Restore the phonebook only on the ESPHome device whose service appears."""
 
     runtime = runtime_data(hass)
     if runtime is None:
@@ -171,9 +171,21 @@ def register_phonebook_service_event_sync(hass: HomeAssistant) -> None:
         service = str(event.data.get("service") or "")
         if not service.endswith("_set_roster_json"):
             return
-        create_runtime_task(hass, async_refresh_and_push_phonebook(hass))
+        create_runtime_task(hass, _async_restore_phonebook_service(hass, service))
 
     runtime.phonebook_service_event_unsub = hass.bus.async_listen(
         EVENT_SERVICE_REGISTERED,
         _on_service_registered,
+    )
+
+
+async def _async_restore_phonebook_service(hass: HomeAssistant, service: str) -> None:
+    """Rehydrate one restarted ESP without republishing to every phone."""
+
+    await async_refresh_phonebook_sensor(hass)
+    roster_json = await async_current_roster_json(hass)
+    await push_roster_json_to_esps(
+        hass,
+        roster_json,
+        target_services={service},
     )

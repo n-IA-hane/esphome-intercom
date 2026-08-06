@@ -9,6 +9,7 @@ Entity names:
 ESP YAMLs subscribe to the unified sensor and normalize it locally into their
 SIP dial plan.
 """
+
 import asyncio
 import contextlib
 import logging
@@ -34,6 +35,7 @@ from .endpoint_entity_manager import (
     register_endpoint_entity_manager,
 )
 from .peer_snapshot import async_build_peer_snapshot
+from .peer import Peer
 from .runtime_data import require_runtime_data
 
 _LOGGER = logging.getLogger(__name__)
@@ -85,9 +87,7 @@ def _migrate_default_call_state_entity(hass, entry, endpoint) -> None:
         old_entity_id,
         new_unique_id=new_unique_id,
         config_entry_id=entry.entry_id,
-        config_subentry_id=endpoint_config_subentry_id(
-            hass, endpoint.endpoint_id
-        ),
+        config_subentry_id=endpoint_config_subentry_id(hass, endpoint.endpoint_id),
         device_id=endpoint.device_id or None,
         has_entity_name=True,
         translation_key="phone_endpoint_call_state",
@@ -95,7 +95,10 @@ def _migrate_default_call_state_entity(hass, entry, endpoint) -> None:
 
 
 def _state_is_available(state) -> bool:
-    return state is not None and str(state.state or "").strip().lower() not in UNAVAILABLE_STATES
+    return (
+        state is not None
+        and str(state.state or "").strip().lower() not in UNAVAILABLE_STATES
+    )
 
 
 def _is_voip_roster_entity(entity_id: str) -> bool:
@@ -162,17 +165,26 @@ class PhoneEndpointCallStateSensor(SensorEntity):
             self._apply_call_payload(
                 _ha_softphone_state(self.hass, self.endpoint.endpoint_id)
             )
-        self.async_on_remove(self.hass.bus.async_listen(CALL_EVENT, self._on_call_event))
+        self.async_on_remove(
+            self.hass.bus.async_listen(CALL_EVENT, self._on_call_event)
+        )
 
     @staticmethod
     def _idle_state(endpoint) -> str:
         availability = enum_value(endpoint.availability)
-        return "idle" if availability in {"online", "available", "registered", "connected"} else "offline"
+        return (
+            "idle"
+            if availability in {"online", "available", "registered", "connected"}
+            else "offline"
+        )
 
     @callback
     def apply_endpoint(self, endpoint) -> None:
         self.endpoint = endpoint
-        if not endpoint.active_call_id or self._attr_native_value in {"idle", "offline"}:
+        if not endpoint.active_call_id or self._attr_native_value in {
+            "idle",
+            "offline",
+        }:
             self._attr_native_value = self._idle_state(endpoint)
         self._attr_extra_state_attributes = endpoint_public_attributes(endpoint)
         if self.hass is not None:
@@ -197,7 +209,9 @@ class PhoneEndpointCallStateSensor(SensorEntity):
         state = str(payload.get("state") or "idle").strip().lower()
         call_id = str(payload.get("call_id") or "").strip()
         revision = int(payload.get("revision") or payload.get("sequence") or 0)
-        terminal_reason = str(payload.get("terminal_reason") or payload.get("reason") or "")
+        terminal_reason = str(
+            payload.get("terminal_reason") or payload.get("reason") or ""
+        )
         terminal = state in TERMINAL_CALL_STATES
         if (
             call_id
@@ -247,10 +261,14 @@ class VoipPhonebookSensor(SensorEntity):
         self._roster_json = '{"version":2,"capabilities":["extension","ring_group","conference_group","conference_ring"],"contacts":[]}'
         self._count = 0
         self._tracked_entities: set[str] = set()
+        self._known_esp_peers: dict[str, Peer] = {}
+        self._online_esp_services: dict[str, str] = {}
+        self._rehydrate_services: set[str] = set()
         self._unsub_state = None
         self._unsub_registry = None
         self._recompute_task: asyncio.Task | None = None
         self._recompute_requested = False
+        self._delivery_ready = False
 
     @property
     def extra_state_attributes(self) -> dict[str, object]:
@@ -272,6 +290,7 @@ class VoipPhonebookSensor(SensorEntity):
             "entity_registry_updated", _on_registry_change
         )
         await self._refresh_tracked_entities(initial=True)
+        self._delivery_ready = True
 
     async def async_will_remove_from_hass(self) -> None:
         if self._unsub_state:
@@ -330,8 +349,16 @@ class VoipPhonebookSensor(SensorEntity):
             if "voip_endpoint" in entity_id:
                 old_value = old_state.state if old_state is not None else None
                 new_value = new_state.state if new_state is not None else None
-                old_endpoint = (old_state.attributes or {}).get("endpoint") if old_state is not None else None
-                new_endpoint = (new_state.attributes or {}).get("endpoint") if new_state is not None else None
+                old_endpoint = (
+                    (old_state.attributes or {}).get("endpoint")
+                    if old_state is not None
+                    else None
+                )
+                new_endpoint = (
+                    (new_state.attributes or {}).get("endpoint")
+                    if new_state is not None
+                    else None
+                )
                 if old_value != new_value or old_endpoint != new_endpoint:
                     self._schedule_recompute()
                 return
@@ -369,13 +396,19 @@ class VoipPhonebookSensor(SensorEntity):
         from .endpoint_routing import roster_from_peers
         from .roster import dump_roster_json
 
-        peers = await async_build_peer_snapshot(self.hass)
+        peers = self._stable_phonebook_peers(await async_build_peer_snapshot(self.hass))
         entries = [format_entry_unified(p) for p in peers]
-        roster_entries = roster_from_peers(self.hass, peers, registered_roster_entries(self.hass))
+        roster_entries = roster_from_peers(
+            self.hass, peers, registered_roster_entries(self.hass)
+        )
         phonebook = ",".join(entries)
         roster_json = dump_roster_json(roster_entries)
         visible_count = len(roster_entries)
-        new_value = f"{visible_count} entry" if visible_count == 1 else f"{visible_count} entries"
+        new_value = (
+            f"{visible_count} entry"
+            if visible_count == 1
+            else f"{visible_count} entries"
+        )
         if (
             new_value != self._attr_native_value
             or phonebook != self._phonebook
@@ -385,12 +418,72 @@ class VoipPhonebookSensor(SensorEntity):
             self._phonebook = phonebook
             self._roster_json = roster_json
             self._count = visible_count
-            _LOGGER.debug(
-                "Phonebook recomputed (%d entries)", visible_count
-            )
+            _LOGGER.debug("Phonebook recomputed (%d entries)", visible_count)
             if self.hass and self.entity_id:
                 self.async_write_ha_state()
-                await push_roster_json_to_esps(self.hass, roster_json)
+                if self._delivery_ready:
+                    await push_roster_json_to_esps(self.hass, roster_json)
+        if self._delivery_ready and self._rehydrate_services:
+            services = self._rehydrate_services
+            self._rehydrate_services = set()
+            await push_roster_json_to_esps(
+                self.hass,
+                roster_json,
+                target_services=services,
+            )
 
     async def async_update(self) -> None:
         await self._schedule_and_wait_recompute()
+
+    def _stable_phonebook_peers(self, live_peers: list[Peer]) -> list[Peer]:
+        """Keep configured ESP contacts stable across API reconnects."""
+
+        browser_peers: list[Peer] = []
+        online_services: dict[str, str] = {}
+        for peer in live_peers:
+            if peer.endpoint_kind != "esphome":
+                browser_peers.append(peer)
+                continue
+            key = peer.device_id or peer.endpoint_id
+            previous = self._known_esp_peers.get(key)
+            entities = (peer.device or {}).get("entities") or {}
+            restoring = any(
+                (state := self.hass.states.get(str(entities.get(role) or "")))
+                is None
+                or str(state.state or "").strip().lower()
+                in {"unknown", "unavailable"}
+                for role in (
+                    "voip_endpoint",
+                    "voip_extension",
+                    "voip_ring_groups",
+                    "voip_conference_groups",
+                    "voip_conference_ring",
+                )
+                if entities.get(role)
+            )
+            if previous is None or not restoring:
+                self._known_esp_peers[key] = peer
+            route_id = str((peer.device or {}).get("route_id") or "")
+            if route_id:
+                online_services[key] = f"{route_id}_set_roster_json"
+
+        runtime = require_runtime_data(self.hass)
+        for key in self._online_esp_services.keys() - online_services.keys():
+            runtime.phonebook_delivered_roster.pop(self._online_esp_services[key], None)
+        self._rehydrate_services.update(
+            online_services[key]
+            for key in online_services.keys() - self._online_esp_services.keys()
+        )
+        self._online_esp_services = online_services
+
+        for key, peer in tuple(self._known_esp_peers.items()):
+            endpoint_entity = str(
+                (((peer.device or {}).get("entities") or {}).get("voip_endpoint")) or ""
+            )
+            if endpoint_entity and endpoint_entity not in self._tracked_entities:
+                self._known_esp_peers.pop(key, None)
+
+        return [
+            *(self._known_esp_peers[key] for key in sorted(self._known_esp_peers)),
+            *browser_peers,
+        ]

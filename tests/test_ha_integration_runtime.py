@@ -288,6 +288,167 @@ async def test_entry_runtime_owns_call_projection_and_detached_tasks(
     assert runtime.tasks == set()
 
 
+async def test_phonebook_pushes_only_changed_content_and_rehydrates_one_device(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from homeassistant.const import EVENT_SERVICE_REGISTERED
+
+    from custom_components.voip_stack.config_entry_runtime import (
+        register_phonebook_service_event_sync,
+    )
+    from custom_components.voip_stack.phonebook_runtime import (
+        push_roster_json_to_esps,
+    )
+    from custom_components.voip_stack.runtime_data import VoipStackRuntime
+
+    runtime = VoipStackRuntime(
+        transport_config={},
+        assist_config={},
+        trunk_config={},
+        endpoints=MagicMock(),
+        phones=MagicMock(),
+        phonebook_sensor=SimpleNamespace(
+            async_update=AsyncMock(),
+            extra_state_attributes={"roster_json": '{"contacts":["Casa"]}'},
+        ),
+    )
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    entry.runtime_data = runtime
+
+    from custom_components.voip_stack import phonebook_runtime
+
+    monkeypatch.setattr(
+        phonebook_runtime,
+        "_get_voip_devices",
+        AsyncMock(
+            return_value=[
+                {"host": "192.0.2.10", "name": "P4"},
+                {"host": "192.0.2.11", "name": "S3"},
+            ]
+        ),
+    )
+    resolver = MagicMock()
+    resolver.route_id_for_host.side_effect = {
+        "192.0.2.10": "p4",
+        "192.0.2.11": "s3",
+    }.get
+    monkeypatch.setattr(phonebook_runtime, "get_resolver", lambda _hass: resolver)
+
+    deliveries: list[tuple[str, str]] = []
+
+    async def _record_delivery(call) -> None:
+        deliveries.append((call.service, call.data["roster_json"]))
+
+    hass.services.async_register("esphome", "p4_set_roster_json", _record_delivery)
+    hass.services.async_register("esphome", "s3_set_roster_json", _record_delivery)
+
+    first = '{"contacts":["Casa"]}'
+    await asyncio.gather(
+        push_roster_json_to_esps(hass, first),
+        push_roster_json_to_esps(hass, first),
+    )
+    assert deliveries == [
+        ("p4_set_roster_json", first),
+        ("s3_set_roster_json", first),
+    ]
+
+    changed = '{"contacts":["Casa","Test"]}'
+    await push_roster_json_to_esps(hass, changed)
+    assert deliveries[-2:] == [
+        ("p4_set_roster_json", changed),
+        ("s3_set_roster_json", changed),
+    ]
+
+    runtime.phonebook_sensor.extra_state_attributes["roster_json"] = changed
+    register_phonebook_service_event_sync(hass)
+    runtime.phonebook_delivered_roster.pop("p4_set_roster_json")
+    hass.bus.async_fire(
+        EVENT_SERVICE_REGISTERED,
+        {"domain": "esphome", "service": "p4_set_roster_json"},
+    )
+    await hass.async_block_till_done()
+
+    assert deliveries.count(("p4_set_roster_json", changed)) == 2
+    assert deliveries.count(("s3_set_roster_json", changed)) == 1
+
+
+async def test_phonebook_keeps_configured_peer_stable_during_esphome_restart(
+    hass: HomeAssistant,
+) -> None:
+    from custom_components.voip_stack.peer import Peer
+    from custom_components.voip_stack.runtime_data import VoipStackRuntime
+    from custom_components.voip_stack.sensor import VoipPhonebookSensor
+
+    runtime = VoipStackRuntime(
+        transport_config={},
+        assist_config={},
+        trunk_config={},
+        endpoints=MagicMock(),
+        phones=MagicMock(),
+    )
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    entry.runtime_data = runtime
+
+    endpoint_entity = "text_sensor.s3_voip_endpoint"
+    extension_entity = "text.s3_voip_extension"
+    groups_entity = "text.s3_voip_ring_groups"
+    conference_entity = "text.s3_voip_conference_groups"
+    conference_ring_entity = "switch.s3_voip_conference_ring"
+    entities = {
+        "voip_endpoint": endpoint_entity,
+        "voip_extension": extension_entity,
+        "voip_ring_groups": groups_entity,
+        "voip_conference_groups": conference_entity,
+        "voip_conference_ring": conference_ring_entity,
+    }
+    for entity_id, value in (
+        (endpoint_entity, "S3|192.0.2.11|5060|40000|full_duplex"),
+        (extension_entity, "669"),
+        (groups_entity, "home"),
+        (conference_entity, "all"),
+        (conference_ring_entity, "on"),
+    ):
+        hass.states.async_set(entity_id, value)
+
+    sensor = VoipPhonebookSensor(hass)
+    sensor._tracked_entities = set(entities.values())
+    original = Peer(
+        name="S3",
+        host="192.0.2.11",
+        endpoint_id="esphome:s3",
+        endpoint_kind="esphome",
+        extension="669",
+        ring_group="home",
+        conference_group="all",
+        conference_ring=True,
+        device={"device_id": "s3", "route_id": "s3", "entities": entities},
+    )
+
+    assert sensor._stable_phonebook_peers([original]) == [original]
+    sensor._rehydrate_services.clear()
+    runtime.phonebook_delivered_roster["s3_set_roster_json"] = "current"
+    assert sensor._stable_phonebook_peers([]) == [original]
+    assert "s3_set_roster_json" not in runtime.phonebook_delivered_roster
+
+    for entity_id in entities.values():
+        hass.states.async_set(entity_id, "unavailable")
+    restoring = Peer(
+        name="S3",
+        host="192.0.2.11",
+        endpoint_id="esphome:s3",
+        endpoint_kind="esphome",
+        device={"device_id": "s3", "route_id": "s3", "entities": entities},
+    )
+    assert sensor._stable_phonebook_peers([restoring]) == [original]
+    assert sensor._rehydrate_services == {"s3_set_roster_json"}
+
+    sensor._tracked_entities.clear()
+    assert sensor._stable_phonebook_peers([]) == []
+
+
 async def test_stale_esphome_state_event_uses_entry_generation(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,

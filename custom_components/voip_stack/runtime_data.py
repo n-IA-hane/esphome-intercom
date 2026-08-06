@@ -90,6 +90,8 @@ class VoipStackRuntime:
     softphone_presence: dict[str, int] = field(default_factory=dict)
     sip_bridge_state: dict[str, Any] = field(default_factory=dict)
     phonebook_sensor: Any | None = None
+    phonebook_delivered_roster: dict[str, str] = field(default_factory=dict)
+    phonebook_push_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     esp_state_event_bridge_unsub: Any | None = None
     phonebook_service_event_unsub: Any | None = None
 
@@ -169,9 +171,7 @@ def preferred_browser_phone(hass: HomeAssistant) -> PhoneEndpoint | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
-def browser_phone(
-    hass: HomeAssistant, endpoint_id: str = ""
-) -> PhoneEndpoint | None:
+def browser_phone(hass: HomeAssistant, endpoint_id: str = "") -> PhoneEndpoint | None:
     """Resolve an explicit browser phone, or the configured implicit one."""
 
     selector = str(endpoint_id or "").strip()

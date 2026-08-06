@@ -16,11 +16,7 @@ INIT = ROOT / "custom_components" / "voip_stack" / "__init__.py"
 ENDPOINT_RUNTIME = ROOT / "custom_components" / "voip_stack" / "endpoint_runtime.py"
 INVITE_ROUTER = ROOT / "custom_components" / "voip_stack" / "invite_router.py"
 INBOUND_BRIDGE = (
-    ROOT
-    / "custom_components"
-    / "voip_stack"
-    / "inbound_routing"
-    / "bridge.py"
+    ROOT / "custom_components" / "voip_stack" / "inbound_routing" / "bridge.py"
 )
 RING_GROUP_ORCHESTRATOR = (
     ROOT / "custom_components" / "voip_stack" / "ring_group_orchestrator.py"
@@ -28,16 +24,12 @@ RING_GROUP_ORCHESTRATOR = (
 MEDIA_RENEGOTIATION = (
     ROOT / "custom_components" / "voip_stack" / "media_renegotiation.py"
 )
-OUTBOUND_LIFECYCLE = (
-    ROOT / "custom_components" / "voip_stack" / "outbound_lifecycle.py"
-)
+OUTBOUND_LIFECYCLE = ROOT / "custom_components" / "voip_stack" / "outbound_lifecycle.py"
 ESPHOME_STATE_BRIDGE = (
     ROOT / "custom_components" / "voip_stack" / "esphome_state_bridge.py"
 )
 CALL_SCOPE = ROOT / "custom_components" / "voip_stack" / "call_scope.py"
-SERVICE_ENDPOINTS = (
-    ROOT / "custom_components" / "voip_stack" / "service_endpoints.py"
-)
+SERVICE_ENDPOINTS = ROOT / "custom_components" / "voip_stack" / "service_endpoints.py"
 SIP_BRIDGE = ROOT / "custom_components" / "voip_stack" / "sip_bridge.py"
 SERVICES = ROOT / "custom_components" / "voip_stack" / "services.py"
 ENDPOINT_ROUTING = ROOT / "custom_components" / "voip_stack" / "endpoint_routing.py"
@@ -50,9 +42,7 @@ CONFIG_ENTRY_RUNTIME = (
 SOFTPHONE_TERMINATION = (
     ROOT / "custom_components" / "voip_stack" / "softphone_termination.py"
 )
-SOFTPHONE_ANSWER = (
-    ROOT / "custom_components" / "voip_stack" / "softphone_answer.py"
-)
+SOFTPHONE_ANSWER = ROOT / "custom_components" / "voip_stack" / "softphone_answer.py"
 SOFTPHONE_ORIGINATE = (
     ROOT / "custom_components" / "voip_stack" / "softphone_originate.py"
 )
@@ -85,9 +75,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         cls.softphone_originate = SOFTPHONE_ORIGINATE.read_text()
 
     def test_hangup_publishes_authoritative_idle_state(self) -> None:
-        body = _function_body(
-            self.softphone_termination, "async_hangup_browser_call"
-        )
+        body = _function_body(self.softphone_termination, "async_hangup_browser_call")
         self.assertIn("_ha_softphone_store(hass, endpoint_id)", body)
         self.assertIn("_set_ha_softphone_call_state(", body)
         state_update = body.split("_set_ha_softphone_call_state(", 1)[1]
@@ -96,16 +84,12 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("last_sip_event=", state_update)
 
     def test_hangup_does_not_depend_on_card_side_inference(self) -> None:
-        body = _function_body(
-            self.softphone_termination, "async_hangup_browser_call"
-        )
+        body = _function_body(self.softphone_termination, "async_hangup_browser_call")
         self.assertNotIn("card", body.lower())
         self.assertNotIn("frontend", body.lower())
 
     def test_hangup_preserves_canonical_outbound_direction(self) -> None:
-        body = _function_body(
-            self.softphone_termination, "async_hangup_browser_call"
-        )
+        body = _function_body(self.softphone_termination, "async_hangup_browser_call")
         direction = body.split("direction = str(", 1)[1].split("\n    )", 1)[0]
         self.assertLess(
             direction.index('softphone_store.get("direction")'),
@@ -113,9 +97,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
 
     def test_bridge_hangup_uses_central_terminal_projection(self) -> None:
-        body = _function_body(
-            self.softphone_termination, "async_hangup_browser_call"
-        )
+        body = _function_body(self.softphone_termination, "async_hangup_browser_call")
         bridge_branch = body.split("if bridge_handled:", 1)[1].split("return", 1)[0]
         self.assertNotIn("_set_sip_bridge_call_state(", bridge_branch)
         self.assertNotIn("_set_ha_softphone_call_state(", bridge_branch)
@@ -208,9 +190,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
     def test_all_phone_call_state_sensors_normalize_every_terminal_state(self) -> None:
         sensor = SENSOR.read_text()
-        phone_sensor = sensor.split(
-            "class PhoneEndpointCallStateSensor", 1
-        )[1].split("class VoipPhonebookSensor", 1)[0]
+        phone_sensor = sensor.split("class PhoneEndpointCallStateSensor", 1)[1].split(
+            "class VoipPhonebookSensor", 1
+        )[0]
 
         self.assertIn("state in TERMINAL_CALL_STATES", phone_sensor)
         self.assertIn('"protocol_error"', sensor)
@@ -275,9 +257,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
         self.assertIn("rtp_send_lock = asyncio.Lock()", body)
         self.assertGreaterEqual(body.count("async with rtp_send_lock:"), 4)
-        self.assertGreaterEqual(
-            body.count(">= _VIDEO_RTP_RECEIVE_BURST_PACKETS"), 4
-        )
+        self.assertGreaterEqual(body.count(">= _VIDEO_RTP_RECEIVE_BURST_PACKETS"), 4)
         self.assertIn("build_keepalive(", body)
         self.assertIn("sequence = int(rtp_source.sequence)", body)
         self.assertIn("browser video TX drops=%s", body)
@@ -397,18 +377,6 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("CallState.IN_CALL.value", guard)
         self.assertIn("return", guard)
 
-    def test_esphome_roster_service_registration_refreshes_phonebook(self) -> None:
-        self.assertIn("EVENT_SERVICE_REGISTERED", self.config_entry_runtime)
-        body = _function_body(
-            self.config_entry_runtime,
-            "register_phonebook_service_event_sync",
-        )
-        self.assertIn("runtime.phonebook_service_event_unsub", body)
-        self.assertIn('event.data.get("domain") != "esphome"', body)
-        self.assertIn('service.endswith("_set_roster_json")', body)
-        self.assertIn("async_refresh_and_push_phonebook(hass)", body)
-        self.assertNotIn("retry", body.lower())
-
     def test_softphone_rtp_latches_source_port_and_ssrc(self) -> None:
         audio_ws = (
             ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
@@ -509,9 +477,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("rtcp_protocol.take_drop_counts()", sync_body)
         self.assertIn('counters["video_rtcp_drop_queue"] += queue_drops', sync_body)
         debug_line = next(
-            line
-            for line in body.splitlines()
-            if "if debug_mode(hass):" in line
+            line for line in body.splitlines() if "if debug_mode(hass):" in line
         )
         publish_line = next(
             line
@@ -635,7 +601,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
         self.assertIn("state=CallState.IN_CALL.value", accepted)
 
-    def test_outbound_call_claims_source_and_physical_destination_atomically(self) -> None:
+    def test_outbound_call_claims_source_and_physical_destination_atomically(
+        self,
+    ) -> None:
         outbound = _function_body(
             self.softphone_originate, "async_originate_browser_call"
         )
@@ -680,7 +648,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("_set_ha_softphone_call_state(", invite_error)
         self.assertIn("registry.finish_and_pop(", invite_error)
 
-    def test_esp_state_mirrors_physical_busy_ownership_into_logical_endpoint(self) -> None:
+    def test_esp_state_mirrors_physical_busy_ownership_into_logical_endpoint(
+        self,
+    ) -> None:
         bridge = _function_body(
             self.esphome_state_bridge,
             "async_emit_state_event",
@@ -692,12 +662,8 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
     def test_video_hold_resume_keeps_per_call_camera_authorization(self) -> None:
         answer = _function_body(self.softphone_answer, "async_answer_browser_call")
-        self.assertIn(
-            '"camera_send_authorized": bool(camera_send_enabled)', answer
-        )
-        authorization = answer.split('"camera_send_authorized":', 1)[1].split(
-            ",", 1
-        )[0]
+        self.assertIn('"camera_send_authorized": bool(camera_send_enabled)', answer)
+        authorization = answer.split('"camera_send_authorized":', 1)[1].split(",", 1)[0]
         self.assertNotIn("invite.video_format", authorization)
 
         media_update = MEDIA_RENEGOTIATION.read_text()
@@ -715,8 +681,10 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
     def test_browser_video_send_is_independent_from_receive_transcoding(self) -> None:
         video_ws = VIDEO_WS.read_text()
         can_send = video_ws[
-            video_ws.index("    def can_send(self) -> bool:")
-            : video_ws.index("    @property\n    def can_receive", video_ws.index("    def can_send(self) -> bool:"))
+            video_ws.index("    def can_send(self) -> bool:") : video_ws.index(
+                "    @property\n    def can_receive",
+                video_ws.index("    def can_send(self) -> bool:"),
+            )
         ]
         self.assertIn("self.camera_send_enabled", can_send)
         self.assertIn("self.send_video_format", can_send)
@@ -816,15 +784,11 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
     def test_invalid_new_sip_username_stays_a_form_validation_error(self) -> None:
         config_flow = CONFIG_FLOW.read_text()
         start = config_flow.index("    def _normalized_common(")
-        normalized = config_flow[
-            start : config_flow.index("    def _finish(", start)
-        ]
-        self.assertIn(
-            "elif CONF_PHONE_USERNAME not in errors:", normalized
-        )
-        guarded = normalized.split(
-            "elif CONF_PHONE_USERNAME not in errors:", 1
-        )[1].split("data = {", 1)[0]
+        normalized = config_flow[start : config_flow.index("    def _finish(", start)]
+        self.assertIn("elif CONF_PHONE_USERNAME not in errors:", normalized)
+        guarded = normalized.split("elif CONF_PHONE_USERNAME not in errors:", 1)[
+            1
+        ].split("data = {", 1)[0]
         self.assertIn("endpoint_id = new_sip_account_endpoint_id()", guarded)
 
     def test_dnd_targets_browser_and_registered_sip_phone_devices(self) -> None:
@@ -848,26 +812,18 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             self.source, "_handle_set_ha_softphone_settings_service"
         )
         self.assertIn("_service_configured_endpoint(hass, call)", dnd)
-        self.assertIn(
-            "_service_browser_endpoint(hass, call, strict=True)", settings
-        )
+        self.assertIn("_service_browser_endpoint(hass, call, strict=True)", settings)
 
     def test_browser_preference_services_use_the_canonical_phone_writer(self) -> None:
-        preference = _function_body(
-            self.source, "_handle_browser_preference_service"
-        )
-        self.assertIn(
-            "_service_browser_endpoint(hass, call, strict=True)", preference
-        )
+        preference = _function_body(self.source, "_handle_browser_preference_service")
+        self.assertIn("_service_browser_endpoint(hass, call, strict=True)", preference)
         self.assertIn("await async_set_ha_softphone_settings(", preference)
         self.assertIn("**{preference: enabled}", preference)
 
         websocket = (
             ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
         ).read_text()
-        settings = _function_body(
-            websocket, "async_set_ha_softphone_settings"
-        )
+        settings = _function_body(websocket, "async_set_ha_softphone_settings")
         self.assertIn('store["auto_answer"] = bool(auto_answer)', settings)
         self.assertIn('store["send_video"] = bool(send_video)', settings)
         self.assertIn(
@@ -971,9 +927,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertNotIn("registry.softphone_media.pop", conference_audio)
         self.assertNotIn("registry.finish_and_pop", conference_audio)
         self.assertIn("conference_media_handoff", conference_audio)
-        hangup = _function_body(
-            self.softphone_termination, "async_hangup_browser_call"
-        )
+        hangup = _function_body(self.softphone_termination, "async_hangup_browser_call")
         self.assertIn("await manager.leave_ha_softphone(", hangup)
         self.assertIn("conference_room,", hangup)
         self.assertIn("call_id=call_id", hangup)
