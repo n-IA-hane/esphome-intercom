@@ -726,10 +726,7 @@ class FrontendCardContractTest(unittest.TestCase):
         source = CARD.read_text()
         handler = _method_body(source, "_onMirroredBridgeStateEvent")
         self.assertIn('state === "in_call" || state === "answering"', handler)
-        self.assertIn(
-            "data.connected_party || data.answered_by || data.peer_name",
-            handler,
-        )
+        self.assertIn("terminalPeerLabel(data)", handler)
         self.assertIn('this._mirroredConnectedPeer = ""', handler)
         self.assertIn(
             "(!this._isHaSoftphoneMode() && this._mirroredConnectedPeer)",

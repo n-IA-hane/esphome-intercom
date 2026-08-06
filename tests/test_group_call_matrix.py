@@ -774,6 +774,31 @@ class GroupCallMatrixTest(unittest.TestCase):
         self.assertEqual(state["dialed_target"], "RG Casa")
         self.assertEqual(state["contact"], "Waveshare S3 Audio")
 
+    def test_incoming_forward_keeps_remote_caller_as_card_peer(self) -> None:
+        hass = _FakeHass()
+        websocket_api._set_ha_softphone_call_state(
+            hass,
+            fsm.CallState.IN_CALL.value,
+            endpoint_id="default",
+            session_device_id=const.HA_SOFTPHONE_DEVICE_ID,
+            caller="n-IA-hane",
+            callee="Waveshare P4 Touch",
+            peer_name="Waveshare P4 Touch",
+            direction="incoming",
+            call_id="zoiper-to-p4",
+            dialed_target="Waveshare P4 Touch",
+            connected_party="Waveshare P4 Touch",
+            answered_by="Waveshare P4 Touch",
+            last_sip_event="SIP_RESPONSE",
+            sip_status_code=200,
+        )
+
+        state = websocket_api._ha_softphone_state(hass, "default")
+        self.assertEqual(state["caller"], "n-IA-hane")
+        self.assertEqual(state["peer_name"], "n-IA-hane")
+        self.assertEqual(state["contact"], "n-IA-hane")
+        self.assertEqual(state["connected_party"], "Waveshare P4 Touch")
+
     def test_ha_softphone_terminal_state_preserves_incoming_dialed_extension(self) -> None:
         hass = _FakeHass()
         websocket_api._set_ha_softphone_call_state(

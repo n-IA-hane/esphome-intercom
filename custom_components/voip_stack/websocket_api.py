@@ -906,10 +906,12 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
     callee = store.get("callee", "") or store.get("last_terminal_callee", "")
     connected_party = str(store.get("connected_party", "") or store.get("answered_by", ""))
     peer_name = store.get("peer_name", "") or store.get("last_terminal_peer_name", "")
-    if store.get("state") == CallState.IN_CALL.value and connected_party:
+    direction = store.get("direction", "") or store.get("last_terminal_direction", "")
+    if direction == "incoming" and caller:
+        peer_name = caller
+    elif store.get("state") == CallState.IN_CALL.value and connected_party:
         peer_name = connected_party
     dialed_target = store.get("dialed_target", "") or store.get("last_terminal_dialed_target", "")
-    direction = store.get("direction", "") or store.get("last_terminal_direction", "")
     call_id = store.get("call_id", "") or store.get("last_terminal_call_id", "")
     registry = call_registry(hass)
     media_debug = dict(store.get("media_debug") or {}) if debug_mode else {}

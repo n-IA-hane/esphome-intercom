@@ -323,9 +323,7 @@ class VoipStackCard extends HTMLElement {
     if (!this._eventConcernsThisCard(data)) return;
     const state = String(data.state || data.sip_state || "").toLowerCase();
     if (state === "in_call" || state === "answering") {
-      this._mirroredConnectedPeer = String(
-        data.connected_party || data.answered_by || data.peer_name || "",
-      ).trim();
+      this._mirroredConnectedPeer = terminalPeerLabel(data).trim();
       this._render();
       return;
     }
@@ -445,8 +443,7 @@ class VoipStackCard extends HTMLElement {
     ).trim();
     const state = String(payload.state || payload.sip_state || "idle").toLowerCase();
     const direction = String(payload.direction || "").toLowerCase();
-    const peerName = payload.peer_name || payload.contact ||
-      (direction === "outgoing" ? payload.callee : payload.caller) || "";
+    const peerName = terminalPeerLabel({ ...payload, direction }) || payload.contact || "";
     return {
       ...payload,
       endpoint_id: endpointId,
@@ -1100,7 +1097,7 @@ class VoipStackCard extends HTMLElement {
   _getCallerName() {
     if (this._isHaSoftphoneMode()) {
       const snap = this._softphoneSnapshot || {};
-      if (snap.direction === "incoming") return snap.peer_name || snap.caller || "";
+      if (snap.direction === "incoming") return snap.caller || snap.peer_name || "";
       return snap.peer_name || snap.callee || "";
     }
     if (!this._hass || !this._callerEntityId) return "";
@@ -1200,8 +1197,7 @@ class VoipStackCard extends HTMLElement {
     }
 
     const peerName = String(
-      snapshot.peer_name || snapshot.connected_party ||
-      (snapshot.direction === "incoming" ? snapshot.caller : snapshot.callee) || "",
+      terminalPeerLabel(snapshot),
     ).trim();
     if (peerName) {
       const rosterTarget = this._softphoneTargets().find(

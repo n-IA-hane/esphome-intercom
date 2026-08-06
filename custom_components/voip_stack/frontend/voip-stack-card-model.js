@@ -44,17 +44,21 @@ export function targetFromRosterEntry(entry) {
 }
 
 export function terminalPeerLabel(snapshot = {}) {
-  const connected = snapshot.connected_party || snapshot.answered_by || snapshot.peer_name;
-  if (connected) return String(connected);
-
   const direction = String(snapshot.direction || "").trim().toLowerCase();
   if (direction === "incoming") {
-    return String(snapshot.caller || snapshot.target || snapshot.dialed_target || snapshot.callee || "");
+    return String(
+      snapshot.caller || snapshot.peer_name || snapshot.target ||
+      snapshot.dialed_target || snapshot.callee || "",
+    );
   }
   if (direction === "outgoing") {
-    return String(snapshot.callee || snapshot.target || snapshot.dialed_target || snapshot.caller || "");
+    return String(
+      snapshot.connected_party || snapshot.answered_by || snapshot.peer_name ||
+      snapshot.callee || snapshot.target || snapshot.dialed_target || snapshot.caller || "",
+    );
   }
   return String(
+    snapshot.connected_party || snapshot.answered_by || snapshot.peer_name ||
     snapshot.callee || snapshot.caller || snapshot.target || snapshot.dialed_target || "",
   );
 }

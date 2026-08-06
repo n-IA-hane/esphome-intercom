@@ -248,6 +248,20 @@ await module.link(() => {{ throw new Error("unexpected import"); }});
 await module.evaluate();
 const Card = module.namespace.VoipStackCard;
 
+assert.equal(cardModel.terminalPeerLabel({{
+  direction: "incoming",
+  caller: "n-IA-hane",
+  peer_name: "Waveshare P4 Touch",
+  connected_party: "Waveshare P4 Touch",
+  answered_by: "Waveshare P4 Touch",
+}}), "n-IA-hane");
+assert.equal(cardModel.terminalPeerLabel({{
+  direction: "outgoing",
+  callee: "RG Casa",
+  peer_name: "RG Casa",
+  connected_party: "Waveshare P4 Touch",
+}}), "Waveshare P4 Touch");
+
 function elements() {{
   const names = [
     "answerBtn", "autoAnswerCheckbox", "autoAnswerRow", "callBtn", "card",
