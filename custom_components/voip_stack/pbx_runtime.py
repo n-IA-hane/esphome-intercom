@@ -529,25 +529,29 @@ class SipEndpointRuntime(CallRuntimeApi):
             session.update_metadata(**metadata)
         return session
 
-    def _observe_phase(self, session: EndpointCallSession, state: str) -> None:
-        """Advance the internal phase from one accepted public observation."""
+    def _resolve_observation(
+        self,
+        session: EndpointCallSession,
+        state: str,
+    ) -> tuple[bool, SessionPhase | None]:
+        """Resolve an accepted public observation to its authoritative phase."""
 
         next_phase = _PUBLIC_PHASES.get(str(state or "").strip())
-        if next_phase is not None and session.phase is not next_phase:
-            if next_phase in _OBSERVED_PHASE_TRANSITIONS.get(
-                session.phase, frozenset()
-            ):
-                session.phase = next_phase
-                session.revision += 1
-            else:
-                _LOGGER.debug(
-                    "Ignoring stale PBX call phase call_id=%s generation=%s "
-                    "current=%s observed=%s",
-                    session.call_id,
-                    session.generation,
-                    session.phase.value,
-                    next_phase.value,
-                )
+        if next_phase is None:
+            return True, None
+        if session.phase is next_phase:
+            return True, next_phase
+        if next_phase in _OBSERVED_PHASE_TRANSITIONS.get(session.phase, frozenset()):
+            return True, next_phase
+        _LOGGER.debug(
+            "Ignoring stale PBX call phase call_id=%s generation=%s "
+            "current=%s observed=%s",
+            session.call_id,
+            session.generation,
+            session.phase.value,
+            next_phase.value,
+        )
+        return False, None
 
     def observe_leg(
         self,

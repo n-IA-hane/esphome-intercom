@@ -182,7 +182,7 @@ class EndpointCallSession:
         self.call_id = clean_call_id
         self.generation = int(generation)
         self.revision = 0
-        self.state = phase.value
+        self._state = phase.value
         self.owner = ""
         self.outcome = ""
         self.caller = ""
@@ -206,6 +206,25 @@ class EndpointCallSession:
     @property
     def id(self) -> str:
         return self.call_id
+
+    @property
+    def state(self) -> str:
+        """Return the public projection of the authoritative phase."""
+
+        return self._state
+
+    def apply_observation(
+        self,
+        state: str,
+        phase: SessionPhase | None,
+    ) -> bool:
+        """Apply one public state and accepted phase as one mutation."""
+
+        changed = self._state != state or (phase is not None and self.phase is not phase)
+        self._state = state
+        if phase is not None:
+            self.phase = phase
+        return changed
 
     @property
     def token(self) -> CallToken:

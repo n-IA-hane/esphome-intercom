@@ -307,6 +307,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         registry.transition("call-1", state="ringing")
 
         self.assertIs(session.phase, SessionPhase.ESTABLISHED)
+        self.assertEqual(session.state, "in_call")
 
     async def test_connecting_call_can_return_to_ringing_after_failed_forward(
         self,

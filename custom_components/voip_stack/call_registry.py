@@ -47,10 +47,11 @@ MAX_TERMINAL_SUMMARY_IDS = 512
 class CallRuntimeApi:
     """Call operations implemented directly by the authoritative runtime."""
 
-    def _observe_session(self, session: EndpointCallSession) -> None:
-        revision = session.revision
-        self._observe_phase(session, session.state)
-        session.revision = revision
+    def _set_state(self, session: EndpointCallSession, state: str) -> bool:
+        """Atomically update the public state and its authoritative phase."""
+
+        accepted, phase = self._resolve_observation(session, state)
+        return accepted and session.apply_observation(state, phase)
 
     def _artifact_view(self, name: str) -> dict[str, Any]:
         return self.artifacts_snapshot(name)
@@ -428,8 +429,9 @@ class CallRuntimeApi:
         )
         session = authoritative
         changed = False
+        if state and self._set_state(session, state):
+            changed = True
         for attribute, value in (
-            ("state", state),
             ("owner", owner),
             ("caller", caller),
             ("callee", callee),
@@ -451,7 +453,6 @@ class CallRuntimeApi:
             changed = True
         if changed:
             session.revision += 1
-        self._observe_session(session)
         return session
 
     def transition(
@@ -485,7 +486,7 @@ class CallRuntimeApi:
         if session.owner == "terminal" or session.state in TERMINAL_STATES:
             return None
         if state:
-            session.state = state
+            self._set_state(session, state)
         if owner is not None:
             session.owner = owner
         if outcome is not None:
@@ -500,7 +501,6 @@ class CallRuntimeApi:
             {key: value for key, value in metadata.items() if value not in (None, "")}
         )
         session.revision += 1
-        self._observe_session(session)
         return session
 
     def is_current(
@@ -777,7 +777,7 @@ class CallRuntimeApi:
         session = self.sessions.get(session_id)
         if session is None:
             return None
-        session.state = state
+        self._set_state(session, state)
         session.terminal_reason = reason or session.terminal_reason
         session.owner = "terminal"
         session.outcome = reason or session.outcome
