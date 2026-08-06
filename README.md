@@ -29,10 +29,19 @@ phonebook. Each room phone still has its own identity and call state._
   </tr>
 </table>
 
-> [!NOTE]
-> VoIP Stack is an enthusiast open-source project maintained primarily by one
-> person. It is designed for trusted home and laboratory networks, not as an
-> emergency telephone service.
+<table>
+  <tr>
+    <td>
+      <strong>Support this project</strong><br/>
+      If this work is useful to you, please consider a donation. It helps cover
+      development tools, services and test hardware, which means better
+      compatibility and fewer regressions for everyone.<br/><br/>
+      <a href="https://github.com/sponsors/n-IA-hane">
+        <img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-red?logo=github" alt="Sponsor"/>
+      </a>
+    </td>
+  </tr>
+</table>
 
 ## What can you build?
 
@@ -530,3 +539,8 @@ Project-owned code is licensed under the MIT License; see
 External Espressif components and optional system codecs keep their own
 licenses. They are consumed as upstream dependencies and are not copied into
 the project license.
+
+> [!NOTE]
+> VoIP Stack is an enthusiast open-source project maintained primarily by one
+> person. It is designed for trusted home and laboratory networks, not as an
+> emergency telephone service.
