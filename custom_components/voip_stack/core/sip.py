@@ -416,6 +416,12 @@ def supports_option(message: SipMessage, option: str) -> bool:
     return str(option or "").strip().lower() in option_tags(message)
 
 
+def unsupported_required_options(message: SipMessage) -> tuple[str, ...]:
+    """Return required option tags outside the implemented SIP profile."""
+
+    return tuple(sorted(option_tags(message, "Require") - SUPPORTED_OPTION_TAGS))
+
+
 def format_name_addr(uri: str | SipUri, display_name: str = "") -> str:
     """Render one standards-compliant SIP name-address."""
 

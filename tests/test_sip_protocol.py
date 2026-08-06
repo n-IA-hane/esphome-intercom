@@ -28,6 +28,23 @@ from .voip_phase1_support import (
 
 
 class SipProtocolBugFixTest(unittest.TestCase):
+    def test_required_option_tags_are_checked_as_a_set(self) -> None:
+        request = sip.parse_message(
+            sip.build_request(
+                "INVITE",
+                "sip:phone@pbx.local",
+                [
+                    ("Require", "100rel"),
+                    ("Require", "timer, from-change"),
+                ],
+            )
+        )
+
+        self.assertEqual(
+            sip.unsupported_required_options(request),
+            ("100rel", "timer"),
+        )
+
     def test_dialog_headers_advertise_connected_identity_support(self) -> None:
         headers = sip.dialog_headers(
             request_uri="sip:427@192.0.2.20:5060",

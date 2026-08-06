@@ -1049,6 +1049,15 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             status, reason = _unsupported_method_response(request.method or "")
             self._send_response(request, addr, status, reason)
             return
+        if unsupported := sip.unsupported_required_options(request):
+            self._send_response(
+                request,
+                addr,
+                420,
+                "Bad Extension",
+                extra_headers=(("Unsupported", ", ".join(unsupported)),),
+            )
+            return
         try:
             request_cseq = sip.parse_cseq(request.header("CSeq"))
         except (TypeError, ValueError, sip.SipError):
