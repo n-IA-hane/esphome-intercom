@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import re
 from secrets import token_hex
 
@@ -99,3 +100,60 @@ def build_digest_authorization(
         else:
             rendered.append(f'{key}="{str(val).replace(chr(34), "")}"')
     return "Digest " + ", ".join(rendered)
+
+
+def verify_digest_authorization(
+    *,
+    authorization_header: str,
+    username: str,
+    password: str,
+    method: str,
+    uri: str,
+    realm: str,
+    nonce: str,
+    body: str | bytes = b"",
+) -> tuple[str, str, int]:
+    """Verify one Digest response and return algorithm, cnonce and nonce-count."""
+
+    params = parse_digest_challenge(authorization_header)
+    algorithm = (params.get("algorithm") or "MD5").upper()
+    qop = params.get("qop", "").lower()
+    cnonce = params.get("cnonce", "")
+    nc = params.get("nc", "")
+    if (
+        params.get("username", "").casefold() != username.casefold()
+        or params.get("realm") != realm
+        or params.get("nonce") != nonce
+        or params.get("uri") != uri
+        or algorithm.removesuffix("-SESS") not in _HASH_NAMES
+        or qop not in {"auth", "auth-int"}
+        or not cnonce
+        or len(cnonce) > 128
+        or len(nc) != 8
+    ):
+        raise ValueError("invalid SIP digest authorization parameters")
+    try:
+        nonce_count = int(nc, 16)
+    except ValueError as err:
+        raise ValueError("invalid SIP digest nonce-count") from err
+    if nonce_count < 1:
+        raise ValueError("invalid SIP digest nonce-count")
+    challenge = (
+        f'Digest realm="{realm}", nonce="{nonce}", '
+        f'algorithm={algorithm}, qop="{qop}"'
+    )
+    expected = parse_digest_challenge(
+        build_digest_authorization(
+            challenge_header=challenge,
+            username=username,
+            password=password,
+            method=method,
+            uri=uri,
+            nonce_count=nonce_count,
+            cnonce=cnonce,
+            body=body,
+        )
+    ).get("response", "")
+    if not hmac.compare_digest(expected, params.get("response", "")):
+        raise ValueError("invalid SIP digest response")
+    return algorithm, cnonce, nonce_count

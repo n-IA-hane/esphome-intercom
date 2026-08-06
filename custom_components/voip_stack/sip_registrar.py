@@ -14,7 +14,7 @@ from typing import Any
 
 from .core import sip
 from .core.codec_capabilities import supports_dahua_pcm
-from .core.sip_auth import parse_digest_challenge, sip_digest_md5
+from .core.sip_auth import parse_digest_challenge, verify_digest_authorization
 from .roster import RosterEntry
 
 
@@ -435,6 +435,12 @@ class SipRegistrar:
         return bool(nonce and nonce in self.nonces)
 
     @staticmethod
+    def _modern_challenges(challenge: str) -> tuple[str, ...]:
+        """Offer RFC 8760 SHA-256 while retaining legacy MD5 interoperability."""
+
+        return (challenge.replace("algorithm=MD5", "algorithm=SHA-256"), challenge)
+
+    @staticmethod
     def _register_fingerprint(
         request: sip.SipMessage,
         addr: tuple[str, int],
@@ -468,37 +474,18 @@ class SipRegistrar:
                 if nonce
                 else _AuthorizationStatus.INVALID
             )
-        username = params.get("username", "")
-        if username.lower() != account.username.lower():
-            return _AuthorizationStatus.INVALID
-        realm = params.get("realm", REALM)
-        uri = params.get("uri", request.uri)
-        qop = params.get("qop", "").lower()
-        algorithm = params.get("algorithm", "MD5").upper()
-        cnonce = params.get("cnonce", "")
-        nc = params.get("nc", "")
-        if (
-            realm != REALM
-            or uri != request.uri
-            or qop != "auth"
-            or algorithm != "MD5"
-            or not cnonce
-            or len(cnonce) > 128
-            or len(nc) != 8
-        ):
-            return _AuthorizationStatus.INVALID
         try:
-            nonce_count = int(nc, 16)
+            _algorithm, cnonce, nonce_count = verify_digest_authorization(
+                authorization_header=request.header("Authorization"),
+                username=account.username,
+                password=account.password,
+                method="REGISTER",
+                uri=request.uri,
+                realm=REALM,
+                nonce=nonce,
+                body=request.body,
+            )
         except ValueError:
-            return _AuthorizationStatus.INVALID
-        if nonce_count <= 0:
-            return _AuthorizationStatus.INVALID
-        ha1 = sip_digest_md5(f"{account.username}:{realm}:{account.password}")
-        ha2 = sip_digest_md5(f"REGISTER:{uri}")
-        expected = sip_digest_md5(
-            f"{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}"
-        )
-        if not hmac.compare_digest(expected, params.get("response", "")):
             return _AuthorizationStatus.INVALID
         use_key = (nonce, account.username.lower(), cnonce)
         fingerprint = self._register_fingerprint(request, addr, transport)
@@ -549,7 +536,14 @@ class SipRegistrar:
                 force_new=stale,
                 stale=stale,
             )
-            return self._result(401, "Unauthorized", (("WWW-Authenticate", challenge),))
+            return self._result(
+                401,
+                "Unauthorized",
+                tuple(
+                    ("WWW-Authenticate", candidate)
+                    for candidate in self._modern_challenges(challenge)
+                ),
+            )
 
         try:
             cseq = _register_cseq(request)

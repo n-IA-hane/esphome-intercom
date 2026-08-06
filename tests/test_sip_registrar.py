@@ -115,6 +115,14 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual((known.status, unknown.status), (401, 401))
+        self.assertEqual(
+            [
+                sip_auth.parse_digest_challenge(value)["algorithm"]
+                for key, value in known.headers
+                if key == "WWW-Authenticate"
+            ],
+            ["SHA-256", "MD5"],
+        )
         known_nonce = sip_auth.parse_digest_challenge(
             dict(known.headers)["WWW-Authenticate"]
         )["nonce"]
@@ -547,6 +555,46 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             sip_auth.parse_digest_challenge(authorization)["qop"],
             "auth-int",
+        )
+
+    async def test_registrar_accepts_advertised_sha256_digest(self) -> None:
+        registrar = sip_registrar.SipRegistrar(
+            enabled=True,
+            accounts=[sip_registrar.SipAccount("Desk", "Desk", "secret")],
+            local_ip="192.168.1.10",
+            local_sip_port=5060,
+        )
+        _nonce, legacy = registrar._challenge("UDP:192.0.2.50")
+        modern = registrar._modern_challenges(legacy)[0]
+        authorization = sip_auth.build_digest_authorization(
+            challenge_header=modern,
+            username="Desk",
+            password="secret",
+            method="REGISTER",
+            uri="sip:192.168.1.10",
+        )
+        request = sip.parse_message(
+            sip.build_request(
+                "REGISTER",
+                "sip:192.168.1.10",
+                [
+                    ("Via", "SIP/2.0/UDP 192.0.2.50:5062;branch=z9hG4bKsha;rport"),
+                    ("From", "<sip:Desk@192.168.1.10>;tag=a"),
+                    ("To", "<sip:Desk@192.168.1.10>"),
+                    ("Call-ID", "sha-register"),
+                    ("CSeq", "1 REGISTER"),
+                    ("Contact", "<sip:Desk@192.0.2.50:5062>"),
+                    ("Authorization", authorization),
+                ],
+            )
+        )
+
+        result = await registrar.handle_register(request, ("192.0.2.50", 5062), "UDP")
+
+        self.assertEqual(result.status, 200)
+        self.assertEqual(
+            sip_auth.parse_digest_challenge(authorization)["algorithm"],
+            "SHA-256",
         )
 
     async def test_stale_unregister_does_not_remove_active_binding(self) -> None:
