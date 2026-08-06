@@ -69,6 +69,18 @@ path_mode=$(
 }
 
 pytest_args=(tests -q --tb=short)
+ha_tests=(
+  tests/test_ha_integration_runtime.py
+  tests/test_phone_control_ha.py
+  tests/test_call_forwarder_behavior.py
+  tests/test_invite_router_behavior.py
+  tests/test_ring_group_orchestrator_behavior.py
+  tests/test_trunk_inbound_router_behavior.py
+)
+ha_ignores=()
+for test_path in "${ha_tests[@]}"; do
+  ha_ignores+=("--ignore=$test_path")
+done
 if [[ $KEEP_GOING -eq 1 ]]; then
   pytest_args+=(--maxfail=0)
 fi
@@ -82,13 +94,11 @@ export YAML_PATH_MODE=$path_mode
 
 case "$MODE" in
   fast)
-    pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
-    pytest_args+=(--ignore=tests/test_phone_control_ha.py)
+    pytest_args+=("${ha_ignores[@]}")
     pytest_args+=(-m "not ha and not browser and not live and not mutation and not slow")
     ;;
   full)
-    pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
-    pytest_args+=(--ignore=tests/test_phone_control_ha.py)
+    pytest_args+=("${ha_ignores[@]}")
     pytest_args+=(-m "not live and not mutation")
     ;;
   peer)
@@ -140,22 +150,12 @@ case "$MODE" in
       tests
       -q
       --tb=short
-      --ignore=tests/test_ha_integration_runtime.py
-      --ignore=tests/test_phone_control_ha.py
-      --ignore=tests/test_call_forwarder_behavior.py
-      --ignore=tests/test_invite_router_behavior.py
-      --ignore=tests/test_ring_group_orchestrator_behavior.py
-      --ignore=tests/test_trunk_inbound_router_behavior.py
+      "${ha_ignores[@]}"
       -m "not architecture and not ha and not live and not mutation"
       "${coverage_args[@]}"
     )
     ha_args=(
-      tests/test_ha_integration_runtime.py
-      tests/test_phone_control_ha.py
-      tests/test_call_forwarder_behavior.py
-      tests/test_invite_router_behavior.py
-      tests/test_ring_group_orchestrator_behavior.py
-      tests/test_trunk_inbound_router_behavior.py
+      "${ha_tests[@]}"
       -q
       --tb=short
       "${coverage_args[@]}"
@@ -190,12 +190,7 @@ case "$MODE" in
     }
     PYTHON=$HA_PYTHON
     pytest_args=(
-      tests/test_ha_integration_runtime.py
-      tests/test_phone_control_ha.py
-      tests/test_call_forwarder_behavior.py
-      tests/test_invite_router_behavior.py
-      tests/test_ring_group_orchestrator_behavior.py
-      tests/test_trunk_inbound_router_behavior.py
+      "${ha_tests[@]}"
       -q
       --tb=short
     )
@@ -204,21 +199,11 @@ case "$MODE" in
     fi
     ;;
   browser)
-    pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
-    pytest_args+=(--ignore=tests/test_phone_control_ha.py)
-    pytest_args+=(--ignore=tests/test_call_forwarder_behavior.py)
-    pytest_args+=(--ignore=tests/test_invite_router_behavior.py)
-    pytest_args+=(--ignore=tests/test_ring_group_orchestrator_behavior.py)
-    pytest_args+=(--ignore=tests/test_trunk_inbound_router_behavior.py)
+    pytest_args+=("${ha_ignores[@]}")
     pytest_args+=(-m browser)
     ;;
   fault)
-    pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
-    pytest_args+=(--ignore=tests/test_phone_control_ha.py)
-    pytest_args+=(--ignore=tests/test_call_forwarder_behavior.py)
-    pytest_args+=(--ignore=tests/test_invite_router_behavior.py)
-    pytest_args+=(--ignore=tests/test_ring_group_orchestrator_behavior.py)
-    pytest_args+=(--ignore=tests/test_trunk_inbound_router_behavior.py)
+    pytest_args+=("${ha_ignores[@]}")
     pytest_args+=(-m fault)
     ;;
   mutation)
