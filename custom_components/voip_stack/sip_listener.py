@@ -182,6 +182,7 @@ class _ActiveDialog:
     connected_identity_task: asyncio.Task[None] | None = None
     remote_uri: str = ""
     remote_display_name: str = ""
+    update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 @dataclass(slots=True)
@@ -718,62 +719,92 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 params=original_local_uri.params,
             )
         )
-        contact_uri = _response_contact_uri(
-            dialog.request,
-            local_ip=self.local_ip,
-            local_sip_port=self.local_sip_port,
-            transport=dialog.transport,
-        )
-        try:
-            routing = sip.dialog_request_routing(
-                dialog.remote_target_uri or remote_uri,
-                dialog.route_set,
-            )
-        except (TypeError, ValueError, sip.SipError) as err:
-            _LOGGER.warning(
-                "SIP connected identity routing rejected call_id=%s: %s",
-                call_id,
-                err,
-            )
-            return
-        branch = sip.make_branch()
-        ids = sip.SipDialogIds(
-            call_id=call_id,
-            local_tag=dialog.to_tag,
-            remote_tag=remote_tag,
-            cseq=dialog.local_cseq,
-            branch=branch,
-        )
-        headers = sip.dialog_headers(
-            request_uri=routing.request_uri,
-            local_uri=identity_uri,
-            remote_uri=remote_uri,
-            dialog=ids,
-            method="UPDATE",
-            contact_uri=contact_uri,
-            transport=dialog.transport,
-            local_display_name=dialog.connected_identity_name,
-            remote_display_name=(
-                dialog.remote_display_name
-                or sip.name_addr_display_name(dialog.request.header("From"))
-            ),
-        )
-        headers.extend(("Route", value) for value in routing.route_headers)
-        raw = sip.build_request("UPDATE", routing.request_uri, headers, b"")
-        target_addr = dialog.addr
-        if dialog.transport == "UDP":
-            try:
-                target = sip.parse_sip_uri(routing.next_hop_uri)
-                target_addr = (target.host, int(target.port or 5060))
-            except (TypeError, ValueError, sip.SipError):
-                pass
-        responses: asyncio.Queue[tuple[sip.SipMessage, tuple[str, int]]] = (
-            asyncio.Queue(maxsize=8)
-        )
-        self._client_transaction_responses[branch] = responses
-        dialog.local_cseq += 1
-
         async def _run() -> None:
+            try:
+                response = await self._send_dialog_update(
+                    call_id,
+                    dialog,
+                    local_uri=identity_uri,
+                    local_display_name=dialog.connected_identity_name,
+                )
+                dialog.connected_identity_sent = response is not None
+            except asyncio.CancelledError:
+                return
+            finally:
+                if dialog.connected_identity_task is asyncio.current_task():
+                    dialog.connected_identity_task = None
+
+        task = asyncio.create_task(
+            _run(),
+            name=f"voip-sip-connected-identity-{call_id}",
+        )
+        dialog.connected_identity_task = task
+        self._maintenance_tasks.add(task)
+        task.add_done_callback(self._maintenance_tasks.discard)
+
+    async def _send_dialog_update(
+        self,
+        call_id: str,
+        dialog: _ActiveDialog,
+        *,
+        local_uri: str = "",
+        local_display_name: str = "",
+        extra_headers: tuple[tuple[str, str], ...] = (),
+    ) -> sip.SipMessage | None:
+        """Send one serialized offerless UPDATE on an owned dialog."""
+
+        async with dialog.update_lock:
+            if self.active_dialogs.get(call_id) is not dialog:
+                return None
+            remote_uri = dialog.remote_uri or _uri_text_from_header(
+                dialog.request.header("From")
+            )
+            remote_tag = sip.extract_tag(dialog.request.header("From"))
+            local_uri = local_uri or _uri_text_from_header(dialog.request.header("To"))
+            try:
+                routing = sip.dialog_request_routing(
+                    dialog.remote_target_uri or remote_uri,
+                    dialog.route_set,
+                )
+                ids = sip.SipDialogIds(
+                    call_id=call_id,
+                    local_tag=dialog.to_tag,
+                    remote_tag=remote_tag,
+                    cseq=dialog.local_cseq,
+                    branch=sip.make_branch(),
+                )
+                headers = sip.dialog_headers(
+                    request_uri=routing.request_uri,
+                    local_uri=local_uri,
+                    remote_uri=remote_uri,
+                    dialog=ids,
+                    method="UPDATE",
+                    contact_uri=_response_contact_uri(
+                        dialog.request,
+                        local_ip=self.local_ip,
+                        local_sip_port=self.local_sip_port,
+                        transport=dialog.transport,
+                    ),
+                    transport=dialog.transport,
+                    local_display_name=local_display_name,
+                    remote_display_name=dialog.remote_display_name,
+                )
+                headers.extend(("Route", value) for value in routing.route_headers)
+                headers.extend(extra_headers)
+                raw = sip.build_request("UPDATE", routing.request_uri, headers, b"")
+                target_addr = dialog.addr
+                if dialog.transport == "UDP":
+                    target = sip.parse_sip_uri(routing.next_hop_uri)
+                    target_addr = (target.host, int(target.port or 5060))
+            except (TypeError, ValueError, sip.SipError) as err:
+                _LOGGER.warning("SIP UPDATE routing rejected call_id=%s: %s", call_id, err)
+                return None
+
+            responses: asyncio.Queue[tuple[sip.SipMessage, tuple[str, int]]] = (
+                asyncio.Queue(maxsize=8)
+            )
+            self._client_transaction_responses[ids.branch] = responses
+            dialog.local_cseq += 1
             transaction = SipClientTransaction[tuple[sip.SipMessage, tuple[str, int]]](
                 transport=dialog.transport,
                 timeout=_INVITE_2XX_TIMEOUT,
@@ -790,64 +821,31 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
 
             try:
                 if not self._send(raw, target_addr):
-                    _LOGGER.warning(
-                        "SIP connected identity UPDATE dropped call_id=%s",
-                        call_id,
-                    )
-                    return
-                dialog.connected_identity_sent = True
+                    return None
                 sip.mark_sip_event(self, "UPDATE")
                 while self.active_dialogs.get(call_id) is dialog:
                     received = await transaction.receive(_read, _retransmit)
                     if received is None:
-                        _LOGGER.info(
-                            "SIP connected identity UPDATE timed out call_id=%s",
-                            call_id,
-                        )
-                        return
+                        return None
                     response, _addr = received
                     try:
                         cseq = sip.parse_cseq(response.header("CSeq"))
                         vias = response.header_values("Via")
-                        response_branch = sip.parse_via(
-                            vias[0] if vias else ""
-                        ).branch
+                        branch = sip.parse_via(vias[0] if vias else "").branch
                     except (TypeError, ValueError, sip.SipError):
                         continue
                     if (
-                        cseq.method != "UPDATE"
-                        or cseq.number != ids.cseq
-                        or response_branch != branch
-                        or response.header("Call-ID") != call_id
-                        or sip.extract_tag(response.header("From"))
-                        != ids.local_tag
-                        or sip.extract_tag(response.header("To"))
-                        != ids.remote_tag
+                        cseq == sip.SipCSeq(ids.cseq, "UPDATE")
+                        and branch == ids.branch
+                        and response.header("Call-ID") == call_id
+                        and sip.extract_tag(response.header("From")) == ids.local_tag
+                        and sip.extract_tag(response.header("To")) == ids.remote_tag
+                        and int(response.status_code or 0) >= 200
                     ):
-                        continue
-                    status = int(response.status_code or 0)
-                    if status < 200:
-                        continue
-                    _LOGGER.info(
-                        "SIP connected identity UPDATE completed call_id=%s status=%s",
-                        call_id,
-                        status,
-                    )
-                    return
-            except asyncio.CancelledError:
-                return
+                        return response
             finally:
-                self._client_transaction_responses.pop(branch, None)
-                if dialog.connected_identity_task is asyncio.current_task():
-                    dialog.connected_identity_task = None
-
-        task = asyncio.create_task(
-            _run(),
-            name=f"voip-sip-connected-identity-{call_id}",
-        )
-        dialog.connected_identity_task = task
-        self._maintenance_tasks.add(task)
-        task.add_done_callback(self._maintenance_tasks.discard)
+                self._client_transaction_responses.pop(ids.branch, None)
+        return None
 
     @staticmethod
     def _cancel_invite_non2xx(completed: _PendingInvite) -> None:
