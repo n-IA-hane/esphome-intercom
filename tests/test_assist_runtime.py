@@ -322,6 +322,49 @@ def test_stop_cancellation_still_closes_transport_and_releases_port() -> None:
     asyncio.run(run())
 
 
+def test_remote_hangup_while_listening_cancels_assist_without_ghost_completion() -> None:
+    async def run() -> None:
+        session = _session()
+        listening = asyncio.Event()
+        cancelled = asyncio.Event()
+        completions: list[str] = []
+        transport = types.SimpleNamespace(closed=False)
+        transport.close = lambda: setattr(transport, "closed", True)
+        session.transport = transport
+
+        async def on_complete(reason: str) -> None:
+            completions.append(reason)
+
+        async def listening_pipeline() -> None:
+            session._accepting_input = True
+            listening.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            finally:
+                if not session.closed.is_set():
+                    await session.on_complete("pipeline_complete")
+
+        session.on_complete = on_complete
+        session._pipeline_task = asyncio.create_task(listening_pipeline())
+        await asyncio.wait_for(listening.wait(), timeout=1)
+
+        await asyncio.wait_for(session.stop(), timeout=1)
+        await asyncio.sleep(0)
+
+        assert cancelled.is_set()
+        assert session.closed.is_set()
+        assert session._cleanup_done.is_set()
+        assert session.reservation.released is True
+        assert transport.closed is True
+        assert session.transport is None
+        assert completions == []
+
+    asyncio.run(run())
+
+
 def test_stop_racing_start_cannot_publish_transport_or_tasks() -> None:
     async def run() -> None:
         session = _session()

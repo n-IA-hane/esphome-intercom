@@ -92,6 +92,8 @@ def _load_module(registry, answer_calls: list[dict]):
         constrained_media_direction=lambda *_args, **_kwargs: "sendrecv",
         constrained_video_direction=lambda *_args, **_kwargs: "inactive",
         first_offered_dtmf_format=lambda _sdp: None,
+        remote_can_receive=lambda *_args, **_kwargs: False,
+        remote_can_send=lambda *_args, **_kwargs: False,
     )
     _module(
         "sip_bridge",
@@ -112,11 +114,7 @@ def _load_module(registry, answer_calls: list[dict]):
         rollback: object | None = None
 
     _module("sip_listener", SipInvite=object, SipInviteResult=SipInviteResult)
-    _module(
-        "sip_video_relay",
-        remote_can_receive=lambda *_args, **_kwargs: False,
-        remote_can_send=lambda *_args, **_kwargs: False,
-    )
+    _module("sip_video_relay")
     _module(
         "websocket_api",
         _fire_call_event=lambda *_args, **_kwargs: None,

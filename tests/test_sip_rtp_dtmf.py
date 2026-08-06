@@ -81,14 +81,14 @@ class SipRtpDtmfTest(unittest.IsolatedAsyncioTestCase):
                 queue,
                 routes={"1666": "P4", "667": "S3"},
                 timeout=0.03,
-                first_digit_timeout=0.2,
+                first_digit_timeout=0.3,
             )
         )
 
         # Model the caller listening to an IVR prompt. This is deliberately
         # later than the inter-digit timeout and would fail with the former
         # single deadline started at INVITE time.
-        await asyncio.sleep(0.08)
+        await asyncio.sleep(0.15)
         for digit in "1666":
             queue.put_nowait(digit)
             await asyncio.sleep(0.005)

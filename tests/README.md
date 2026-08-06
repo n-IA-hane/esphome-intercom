@@ -14,6 +14,7 @@ Assistant API tests use the matching environment in
 ```bash
 ./scripts/test_suite.sh fast
 ./scripts/test_suite.sh full
+./scripts/test_suite.sh peer
 ./scripts/test_suite.sh coverage
 ./scripts/test_suite.sh ha
 ./scripts/test_suite.sh browser
@@ -22,6 +23,10 @@ Assistant API tests use the matching environment in
 Tests stop at the first failure by default. Use `--keep-going` only when an
 independent failure inventory is useful. Use `--seed N` to reproduce generated
 state-machine cases.
+
+`peer` runs sanitized Zoiper, Wildix, FRITZ!Box, registrar, DTMF and Assist
+regressions in separate Python processes. This prevents Home Assistant test
+stubs from making protocol results depend on collection order.
 
 Mutation testing is intentionally refused in the primary checkout. Create a
 disposable linked worktree at a committed milestone, install

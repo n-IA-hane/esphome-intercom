@@ -31,6 +31,7 @@ def test_help_exposes_fail_fast_override_and_reproducible_seed() -> None:
     assert "--keep-going" in result.stdout
     assert "--seed N" in result.stdout
     assert "coverage" in result.stdout
+    assert "peer" in result.stdout
     assert "mutation" in result.stdout
 
 

@@ -10,7 +10,12 @@ import struct
 from typing import Any, Callable
 
 from .core import rtp
-from .core.sdp import RtpVideoFormat, video_formats_passthrough_compatible
+from .core.sdp import (
+    RtpVideoFormat,
+    remote_can_receive,
+    remote_can_send,
+    video_formats_passthrough_compatible,
+)
 from .session_cleanup import async_wait_for_cleanup
 from .video_transcoder import (
     FfmpegVideoTranscoder,
@@ -25,28 +30,6 @@ _LOGGER = logging.getLogger(__name__)
 _RTP_IP_TOS = 0x88
 _TRANSCODE_STARTUP_MAX_PACKETS = 64
 _TRANSCODE_STARTUP_MAX_BYTES = 256 * 1024
-
-
-def remote_can_send(video_format: RtpVideoFormat | None) -> bool:
-    """Return whether a remote endpoint may send media in its SDP direction."""
-
-    return bool(
-        video_format is not None and video_format.direction in {"sendonly", "sendrecv"}
-    )
-
-
-def remote_can_receive(
-    video_format: RtpVideoFormat | None,
-    *,
-    connection_held: bool = False,
-) -> bool:
-    """Return whether a remote endpoint may receive media in its SDP direction."""
-
-    return bool(
-        video_format is not None
-        and not connection_held
-        and video_format.direction in {"recvonly", "sendrecv"}
-    )
 
 
 @dataclass(slots=True)

@@ -365,6 +365,29 @@ def browser_video_receive_supported(video_format: RtpVideoFormat | None) -> bool
     )
 
 
+def remote_can_send(video_format: RtpVideoFormat | None) -> bool:
+    """Return whether a remote endpoint may send media in its SDP direction."""
+
+    return bool(
+        video_format is not None
+        and video_format.direction in {"sendonly", "sendrecv"}
+    )
+
+
+def remote_can_receive(
+    video_format: RtpVideoFormat | None,
+    *,
+    connection_held: bool = False,
+) -> bool:
+    """Return whether a remote endpoint may receive media in its SDP direction."""
+
+    return bool(
+        video_format is not None
+        and not connection_held
+        and video_format.direction in {"recvonly", "sendrecv"}
+    )
+
+
 def video_formats_passthrough_compatible(
     source: RtpVideoFormat | None,
     destination: RtpVideoFormat | None,

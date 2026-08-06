@@ -991,6 +991,74 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             ["ACK"],
         )
 
+    def test_zoiper_200_replay_commits_dialog_without_defensive_bye(self) -> None:
+        """A sanitized Zoiper answer must establish, not tear down, the call."""
+
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+        client = sip_client.SipCallClient(
+            local_ip="192.0.2.10",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            include_common_codecs=True,
+        )
+        transport = FakeTransport()
+        client.transport = transport  # type: ignore[assignment]
+        client._invite_cseq = 7
+        client._local_sdp_body = sdp.build_offer_directional(
+            "192.0.2.10",
+            "192.0.2.10",
+            41000,
+            client.supported_send_formats,
+            client.supported_recv_formats,
+            include_common_codecs=True,
+        )
+        answer = (
+            Path(__file__).parent
+            / "fixtures"
+            / "peer_sdp"
+            / "zoiper-audio-200.sdp"
+        ).read_bytes()
+        response = sip.parse_message(
+            sip.build_response(
+                200,
+                "OK",
+                [
+                    ("Via", "SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bKzoiper"),
+                    ("From", "<sip:HA@192.0.2.10>;tag=local"),
+                    ("To", "<sip:peer@192.0.2.20>;tag=remote"),
+                    ("Contact", "<sip:peer@192.0.2.20:5090>"),
+                    ("Call-ID", client.dialog_ids.call_id),
+                    ("CSeq", "7 INVITE"),
+                    ("Content-Type", "application/sdp"),
+                ],
+                answer,
+            )
+        )
+
+        self.assertTrue(
+            client._commit_200_ok(
+                response,
+                "peer",
+                "192.0.2.20",
+                5060,
+                "sip:peer@192.0.2.20:5060",
+                "sip:HA@192.0.2.10:5060",
+                "sip:peer@192.0.2.20:5060",
+            )
+        )
+        self.assertIsNotNone(client.dialog)
+        self.assertEqual(
+            [sip.parse_message(raw).method for raw, _addr in transport.sent],
+            ["ACK"],
+        )
+
     def test_invite_200_routes_ack_and_bye_through_reversed_record_route(self) -> None:
         class FakeTransport:
             def __init__(self) -> None:

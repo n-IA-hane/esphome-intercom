@@ -7,14 +7,13 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from .core import sdp
+from .core.sdp import remote_can_receive, remote_can_send
 from .sip_client import SipCallClient, SipDialog
 from .sip_listener import SipInvite
 from .sip_rtp_bridge import RtpPeer, SipRtpRelay
 from .sip_video_relay import (
     SipVideoRtpRelay,
     VideoRtpPeer,
-    remote_can_receive,
-    remote_can_send,
 )
 
 

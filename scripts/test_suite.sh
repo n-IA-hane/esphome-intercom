@@ -10,7 +10,7 @@ SEED=
 
 usage() {
   printf '%s\n' \
-    "Usage: scripts/test_suite.sh [fast|full|coverage|ha|browser|fault|mutation] [options]" \
+    "Usage: scripts/test_suite.sh [fast|full|peer|coverage|ha|browser|fault|mutation] [options]" \
     "" \
     "Options:" \
     "  --keep-going  run independent tests after a failure" \
@@ -90,6 +90,30 @@ case "$MODE" in
     pytest_args+=(--ignore=tests/test_ha_integration_runtime.py)
     pytest_args+=(--ignore=tests/test_phone_control_ha.py)
     pytest_args+=(-m "not live and not mutation")
+    ;;
+  peer)
+    peer_tests=(
+      tests/test_sip_protocol.py
+      tests/test_sip_wildix_replay.py
+      tests/test_sip_registrar.py
+      tests/test_sip_rtp_dtmf.py
+      tests/test_sip_uri.py
+      tests/test_assist_runtime.py
+    )
+    printf 'suite=peer yaml_paths=%s process_isolation=1\n' "$path_mode"
+    status=0
+    for peer_test in "${peer_tests[@]}"; do
+      printf 'suite=peer test=%s\n' "$peer_test"
+      command=("$PYTHON" -m pytest "$peer_test" -q --tb=short)
+      if [[ $KEEP_GOING -eq 1 ]]; then
+        command+=(--maxfail=0)
+      fi
+      "${command[@]}" || {
+        status=$?
+        [[ $KEEP_GOING -eq 1 ]] || exit "$status"
+      }
+    done
+    exit "$status"
     ;;
   coverage)
     if [[ -z $HA_PYTHON ]]; then

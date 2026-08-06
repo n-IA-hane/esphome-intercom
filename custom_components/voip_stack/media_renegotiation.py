@@ -35,13 +35,14 @@ from .core.sdp import (
     constrained_media_direction,
     constrained_video_direction,
     first_offered_dtmf_format,
+    remote_can_receive,
+    remote_can_send,
 )
 from .sip_bridge import (
     invite_rtp_peer,
     invite_video_rtp_peer,
 )
 from .sip_listener import SipInvite, SipInviteResult
-from .sip_video_relay import remote_can_receive, remote_can_send
 from .session_cleanup import async_wait_for_cleanup
 from .websocket_api import _fire_call_event, _ha_softphone_store
 

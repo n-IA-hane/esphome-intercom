@@ -13,9 +13,10 @@ from dataclasses import dataclass
 from .core.sdp import (
     RtpVideoFormat,
     directional_video_renegotiation_compatible,
+    remote_can_receive,
+    remote_can_send,
     video_formats_passthrough_compatible,
 )
-from .sip_video_relay import remote_can_receive, remote_can_send
 
 
 @dataclass(frozen=True, slots=True)
