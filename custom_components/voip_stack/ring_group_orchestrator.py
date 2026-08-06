@@ -201,6 +201,28 @@ async def run_ring_group_call(
             keep_endpoint_id=keep_endpoint_id,
         )
 
+    async def _abort_before_fork(
+        state: str,
+        reason: str,
+        *,
+        sip_status: int = 0,
+        sip_reason: str = "",
+    ) -> None:
+        """Close every candidate and the source through one failure path."""
+
+        _take_pending_route(hass, invite.call_id)
+        _settle_browser_candidates(state, reason)
+        await _cleanup_outbound_attempts([], attempts)
+        if sip_status:
+            _sip_send_final_response(
+                hass,
+                invite.call_id,
+                sip_status,
+                sip_reason,
+                decline_reason=reason,
+            )
+        registry.finish_and_pop(invite.call_id, reason=reason, state=state)
+
     try:
         await async_prepare_ring_group_candidates(
             candidates,
@@ -228,15 +250,9 @@ async def run_ring_group_call(
             await _cleanup_outbound_attempts([], attempts)
             return
     except asyncio.CancelledError:
-        _settle_browser_candidates(
+        await _abort_before_fork(
             CallState.CANCELLED.value,
             TerminalReason.CANCELLED.value,
-        )
-        await _cleanup_outbound_attempts([], attempts)
-        registry.finish_and_pop(
-            invite.call_id,
-            reason=TerminalReason.CANCELLED.value,
-            state=CallState.CANCELLED.value,
         )
         raise
     except Exception as err:
@@ -245,22 +261,11 @@ async def run_ring_group_call(
             invite.call_id,
             err,
         )
-        _settle_browser_candidates(
+        await _abort_before_fork(
             CallState.TRANSPORT_UNREACHABLE.value,
             TerminalReason.PROTOCOL_ERROR.value,
-        )
-        await _cleanup_outbound_attempts([], attempts)
-        _sip_send_final_response(
-            hass,
-            invite.call_id,
-            500,
-            "Server Internal Error",
-            decline_reason=TerminalReason.PROTOCOL_ERROR.value,
-        )
-        registry.finish_and_pop(
-            invite.call_id,
-            reason=TerminalReason.PROTOCOL_ERROR.value,
-            state=CallState.TRANSPORT_UNREACHABLE.value,
+            sip_status=500,
+            sip_reason="Server Internal Error",
         )
         return
     route_future: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -287,16 +292,9 @@ async def run_ring_group_call(
             origin_media_client_id=origin_media_client_id,
         )
     except asyncio.CancelledError:
-        _take_pending_route(hass, invite.call_id)
-        _settle_browser_candidates(
+        await _abort_before_fork(
             CallState.CANCELLED.value,
             TerminalReason.CANCELLED.value,
-        )
-        await _cleanup_outbound_attempts([], attempts)
-        registry.finish_and_pop(
-            invite.call_id,
-            reason=TerminalReason.CANCELLED.value,
-            state=CallState.CANCELLED.value,
         )
         raise
     except Exception as err:
@@ -305,23 +303,11 @@ async def run_ring_group_call(
             invite.call_id,
             err,
         )
-        _take_pending_route(hass, invite.call_id)
-        _settle_browser_candidates(
+        await _abort_before_fork(
             CallState.TRANSPORT_UNREACHABLE.value,
             TerminalReason.PROTOCOL_ERROR.value,
-        )
-        await _cleanup_outbound_attempts([], attempts)
-        _sip_send_final_response(
-            hass,
-            invite.call_id,
-            500,
-            "Server Internal Error",
-            decline_reason=TerminalReason.PROTOCOL_ERROR.value,
-        )
-        registry.finish_and_pop(
-            invite.call_id,
-            reason=TerminalReason.PROTOCOL_ERROR.value,
-            state=CallState.TRANSPORT_UNREACHABLE.value,
+            sip_status=500,
+            sip_reason="Server Internal Error",
         )
         return
     if not attempts and not browser_legs and not preflight_failures:
@@ -342,17 +328,11 @@ async def run_ring_group_call(
             last_sip_event="SIP_RESPONSE",
             sip_status_code=480,
         )
-        _sip_send_final_response(
-            hass,
-            invite.call_id,
-            480,
-            "Temporarily Unavailable",
-            decline_reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-        )
-        registry.finish_and_pop(
-            invite.call_id,
-            reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-            state=CallState.TRANSPORT_UNREACHABLE.value,
+        await _abort_before_fork(
+            CallState.TRANSPORT_UNREACHABLE.value,
+            TerminalReason.TRANSPORT_UNREACHABLE.value,
+            sip_status=480,
+            sip_reason="Temporarily Unavailable",
         )
         return
 
