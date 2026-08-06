@@ -84,12 +84,14 @@ jobs:
           ./scripts/test_suite.sh coverage
       - name: Compile all maintained firmware profiles sequentially
         working-directory: esphome-intercom
-        run: .venv/bin/python tools/voip_dev_check.py --compile-profiles
+        run: >-
+          .venv/bin/python tools/voip_dev_check.py
+          --compile-profiles --test-secrets
       - name: Record firmware artifact hashes
         if: always()
         working-directory: esphome-intercom
         run: |
-          find .esphome/build -type f -name 'firmware*.bin' -print0 2>/dev/null \
+          find . -path '*/.esphome/*' -type f -name 'firmware*.bin' -print0 2>/dev/null \
             | sort -z \
             | xargs -0 -r sha256sum > firmware-sha256.txt
       - name: Verify candidate identity
@@ -107,5 +109,5 @@ jobs:
             esphome-intercom/candidate-lock.json
             esphome-intercom/coverage.xml
             esphome-intercom/firmware-sha256.txt
-            esphome-intercom/.esphome/build/**/firmware*.bin
+            esphome-intercom/**/.esphome/**/firmware*.bin
           if-no-files-found: warn

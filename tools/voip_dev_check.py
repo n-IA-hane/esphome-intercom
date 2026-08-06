@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from pathlib import Path
 import subprocess
 import sys
@@ -32,6 +33,7 @@ COMPILE_PROFILES = [
     "yamls/voip-only/single-bus/waveshare-p4-touch-videophone-h264.yaml",
     "yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml",
 ]
+TEST_SECRETS = "wifi_ssid: qualification\nwifi_password: qualification\n"
 
 
 def run(cmd: list[str]) -> None:
@@ -39,9 +41,31 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, cwd=ROOT, check=True)
 
 
+@contextmanager
+def temporary_test_secrets(enabled: bool):
+    """Provide non-secret Wi-Fi values only for isolated compile checks."""
+    created: list[Path] = []
+    if enabled:
+        for directory in {Path(profile).parent for profile in COMPILE_PROFILES}:
+            path = ROOT / directory / "secrets.yaml"
+            if not path.exists():
+                path.write_text(TEST_SECRETS, encoding="utf-8")
+                created.append(path)
+    try:
+        yield
+    finally:
+        for path in created:
+            path.unlink()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compile-profiles", action="store_true", help="Compile maintained SIP ESPHome profiles.")
+    parser.add_argument(
+        "--test-secrets",
+        action="store_true",
+        help="Provide disposable non-secret Wi-Fi values while compiling.",
+    )
     args = parser.parse_args()
 
     py = str(PYTHON if PYTHON.exists() else Path(sys.executable))
@@ -71,8 +95,9 @@ def main() -> int:
 
     if args.compile_profiles:
         esphome = str(ROOT / ".venv/bin/esphome")
-        for profile in COMPILE_PROFILES:
-            run([esphome, "compile", profile])
+        with temporary_test_secrets(args.test_secrets):
+            for profile in COMPILE_PROFILES:
+                run([esphome, "compile", profile])
     return 0
 
 
