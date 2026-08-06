@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 import platform
 import subprocess
-from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,13 +25,12 @@ def _run(*command: str, cwd: Path | None = None) -> str:
     ).stdout.strip()
 
 
-def _local_repository(path: Path) -> dict[str, object] | None:
-    if not (path / ".git").exists() and not _is_worktree(path):
-        return None
+def _repository(path: Path) -> dict[str, object]:
+    if not _is_worktree(path):
+        raise RuntimeError(f"candidate repository is unavailable: {path}")
     return {
         "commit": _run("git", "rev-parse", "HEAD", cwd=path),
         "dirty": bool(_run("git", "status", "--porcelain", cwd=path)),
-        "source": "local",
     }
 
 
@@ -43,20 +41,6 @@ def _is_worktree(path: Path) -> bool:
         return False
 
 
-def _remote_repository(url: str, ref: str) -> dict[str, object]:
-    rows = _run("git", "ls-remote", url, ref).splitlines()
-    if len(rows) != 1:
-        raise RuntimeError(f"could not resolve exactly one commit for {url} {ref}")
-    commit, resolved_ref = rows[0].split(maxsplit=1)
-    return {
-        "commit": commit,
-        "dirty": False,
-        "source": "remote",
-        "url": url,
-        "ref": resolved_ref,
-    }
-
-
 def _package_version(name: str) -> str:
     try:
         return importlib.metadata.version(name)
@@ -65,7 +49,7 @@ def _package_version(name: str) -> str:
 
 
 def build_lock(
-    config: dict[str, Any],
+    config: dict[str, dict[str, dict[str, str]]],
     *,
     allow_dirty: bool,
     ha_python: str = "",
@@ -73,9 +57,7 @@ def build_lock(
     repositories: dict[str, object] = {}
     for name, source in config["repositories"].items():
         path = (ROOT / source["path"]).resolve()
-        resolved = _local_repository(path)
-        if resolved is None:
-            resolved = _remote_repository(source["url"], source["ref"])
+        resolved = _repository(path)
         if resolved["dirty"] and not allow_dirty:
             raise RuntimeError(f"candidate repository is dirty: {name}")
         repositories[name] = resolved
