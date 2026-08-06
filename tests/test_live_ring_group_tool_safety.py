@@ -41,6 +41,13 @@ def test_help_is_side_effect_free_and_returns_immediately() -> None:
     )
     assert completed.returncode == 0
     assert "--expect-video" in completed.stdout
+    assert "--skip-esp-winner" in completed.stdout
+
+
+def test_direct_route_uses_preanswer_destination_selection() -> None:
+    source = TOOL.read_text(encoding="utf-8")
+    assert '"action": "voip_stack.select_inbound_destination"' in source
+    assert '"action": "voip_stack.forward"' not in source
 
 
 def test_local_softphone_help_is_side_effect_free_and_returns_immediately() -> None:

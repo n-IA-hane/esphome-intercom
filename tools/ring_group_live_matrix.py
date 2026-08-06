@@ -24,6 +24,7 @@ TEST_URL = f"{HA_BASE}/lovelace/test"
 EXPECT_VIDEO = os.environ.get("EXPECT_VIDEO", "") == "1"
 DIRECT_VIDEO_ONLY = os.environ.get("DIRECT_VIDEO_ONLY", "") == "1"
 ESP_WINNER_ONLY = os.environ.get("ESP_WINNER_ONLY", "") == "1"
+SKIP_ESP_WINNER = os.environ.get("SKIP_ESP_WINNER", "") == "1"
 CALLER_CONFIG = (
     Path("/home/codex/.baresip-wildix-426-video")
     if EXPECT_VIDEO and "WILDIX_CONFIG" not in os.environ
@@ -133,6 +134,11 @@ def _parse_args() -> argparse.Namespace:
         "--esp-winner-only",
         action=argparse.BooleanOptionalAction,
         default=ESP_WINNER_ONLY,
+    )
+    parser.add_argument(
+        "--skip-esp-winner",
+        action=argparse.BooleanOptionalAction,
+        default=SKIP_ESP_WINNER,
     )
     return parser.parse_args()
 
@@ -545,10 +551,9 @@ def main(*, output: Path | None = None) -> int:
                             "conditions": [],
                             "actions": [
                                 {
-                                    "action": "voip_stack.forward",
+                                    "action": "voip_stack.select_inbound_destination",
                                     "data": {
                                         "destination": target_name,
-                                        "on_failure": "resume",
                                     },
                                 }
                             ],
@@ -641,7 +646,8 @@ def main(*, output: Path | None = None) -> int:
                 # Ring-group qualification owns it only for this bounded phase;
                 # the outer finally restores the exact original state.
                 _set_inbound_automation(True)
-                run_esp_winner()
+                if not arguments.skip_esp_winner:
+                    run_esp_winner()
                 if not ESP_WINNER_ONLY:
                     _set_esp_dnd(True)
                     run_case("casa_answers", winner_page=casa, winner_name="Casa")

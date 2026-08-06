@@ -32,6 +32,11 @@ Each live runner owns a distinct topology:
 `live_voip_qualification.py --esp-host ADDRESS` overrides a stale DHCP address
 without changing the checked-in device matrix.
 
+When the physical ESP member is unavailable,
+`ring_group_live_matrix.py --skip-esp-winner` still qualifies every browser
+winner, decline, cancellation and cleanup path. This is not a substitute for
+the separate ESP winner qualification.
+
 The isolated Home Assistant environment and browser-token refresh workflow are
 documented in [`ha_voip_lab/README.md`](ha_voip_lab/README.md).
 
