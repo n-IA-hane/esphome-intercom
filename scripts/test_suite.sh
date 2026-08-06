@@ -144,6 +144,8 @@ case "$MODE" in
       --ignore=tests/test_phone_control_ha.py
       --ignore=tests/test_call_forwarder_behavior.py
       --ignore=tests/test_invite_router_behavior.py
+      --ignore=tests/test_ring_group_orchestrator_behavior.py
+      --ignore=tests/test_trunk_inbound_router_behavior.py
       -m "not architecture and not ha and not live and not mutation"
       "${coverage_args[@]}"
     )
@@ -152,6 +154,8 @@ case "$MODE" in
       tests/test_phone_control_ha.py
       tests/test_call_forwarder_behavior.py
       tests/test_invite_router_behavior.py
+      tests/test_ring_group_orchestrator_behavior.py
+      tests/test_trunk_inbound_router_behavior.py
       -q
       --tb=short
       "${coverage_args[@]}"
@@ -190,6 +194,8 @@ case "$MODE" in
       tests/test_phone_control_ha.py
       tests/test_call_forwarder_behavior.py
       tests/test_invite_router_behavior.py
+      tests/test_ring_group_orchestrator_behavior.py
+      tests/test_trunk_inbound_router_behavior.py
       -q
       --tb=short
     )
@@ -202,6 +208,8 @@ case "$MODE" in
     pytest_args+=(--ignore=tests/test_phone_control_ha.py)
     pytest_args+=(--ignore=tests/test_call_forwarder_behavior.py)
     pytest_args+=(--ignore=tests/test_invite_router_behavior.py)
+    pytest_args+=(--ignore=tests/test_ring_group_orchestrator_behavior.py)
+    pytest_args+=(--ignore=tests/test_trunk_inbound_router_behavior.py)
     pytest_args+=(-m browser)
     ;;
   fault)
@@ -209,6 +217,8 @@ case "$MODE" in
     pytest_args+=(--ignore=tests/test_phone_control_ha.py)
     pytest_args+=(--ignore=tests/test_call_forwarder_behavior.py)
     pytest_args+=(--ignore=tests/test_invite_router_behavior.py)
+    pytest_args+=(--ignore=tests/test_ring_group_orchestrator_behavior.py)
+    pytest_args+=(--ignore=tests/test_trunk_inbound_router_behavior.py)
     pytest_args+=(-m fault)
     ;;
   mutation)
