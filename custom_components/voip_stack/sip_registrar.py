@@ -123,21 +123,10 @@ def _extract_uri(header: str) -> str:
 
 
 def _extract_register_username(request: sip.SipMessage) -> str:
-    candidates: list[str] = []
-    for raw_uri in (request.uri, _extract_uri(request.header("To")), _extract_uri(request.header("From"))):
-        if not raw_uri:
-            continue
-        try:
-            parsed = sip.parse_sip_uri(raw_uri)
-        except Exception:
-            continue
-        if parsed.user:
-            candidates.append(parsed.user)
-    if not candidates:
-        auth_username = parse_digest_challenge(request.header("Authorization")).get("username", "")
-        if auth_username:
-            candidates.append(auth_username)
-    return normalize_username(candidates[0])
+    """Return the address-of-record user from the mandatory To header."""
+
+    uri = sip.parse_sip_uri(_extract_uri(request.header("To")))
+    return normalize_username(uri.user)
 
 
 def _header_param(header: str, name: str) -> str:

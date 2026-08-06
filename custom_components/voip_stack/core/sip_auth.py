@@ -10,9 +10,25 @@ from secrets import token_hex
 _PARAM_RE = re.compile(r'([a-zA-Z0-9_-]+)=("([^"\\]*(?:\\.[^"\\]*)*)"|[^,\s]+)')
 
 
+_HASH_NAMES = {
+    "MD5": "md5",
+    "SHA-256": "sha256",
+    "SHA-512-256": "sha512_256",
+}
+
+
+def _digest(value: str | bytes, algorithm: str) -> str:
+    data = value.encode() if isinstance(value, str) else value
+    name = _HASH_NAMES.get(algorithm.removesuffix("-SESS"))
+    if name is None:
+        raise ValueError(f"unsupported SIP digest algorithm {algorithm}")
+    return hashlib.new(name, data, usedforsecurity=False).hexdigest()
+
+
 def sip_digest_md5(value: str) -> str:
-    """Return the MD5 hex required by the SIP Digest protocol."""
-    return hashlib.md5(value.encode(), usedforsecurity=False).hexdigest()
+    """Return the legacy MD5 hex used by existing registrar callers."""
+
+    return _digest(value, "MD5")
 
 
 def parse_digest_challenge(value: str) -> dict[str, str]:
@@ -37,41 +53,45 @@ def build_digest_authorization(
     auth_username: str = "",
     nonce_count: int = 1,
     cnonce: str = "",
+    body: str | bytes = b"",
 ) -> str:
     challenge = parse_digest_challenge(challenge_header)
     realm = challenge.get("realm", "")
     nonce = challenge.get("nonce", "")
     algorithm = (challenge.get("algorithm") or "MD5").upper()
     qop_raw = challenge.get("qop", "")
-    qops = [part.strip() for part in qop_raw.split(",") if part.strip()]
-    if qops and "auth" not in qops:
-        # auth-int hashes the entity body and is not implemented by this
-        # compact SIP client. Sending an auth-int label with an auth digest is
-        # worse than failing explicitly because it can hide interop failures.
+    qops = [part.strip().lower() for part in qop_raw.split(",") if part.strip()]
+    if qops and not {"auth", "auth-int"}.intersection(qops):
         raise ValueError(f"unsupported SIP digest qop {','.join(qops)}")
-    qop = "auth" if qops else ""
+    qop = "auth" if "auth" in qops else ("auth-int" if qops else "")
     digest_user = auth_username or username
-    if algorithm not in {"MD5", ""}:
-        raise ValueError(f"unsupported SIP digest algorithm {algorithm}")
-    ha1 = sip_digest_md5(f"{digest_user}:{realm}:{password}")
-    ha2 = sip_digest_md5(f"{method.upper()}:{uri}")
+    base_algorithm = algorithm.removesuffix("-SESS")
+    ha1 = _digest(f"{digest_user}:{realm}:{password}", base_algorithm)
+    if algorithm.endswith("-SESS"):
+        cnonce = cnonce or token_hex(8)
+        ha1 = _digest(f"{ha1}:{nonce}:{cnonce}", base_algorithm)
+    entity = f":{_digest(body, base_algorithm)}" if qop == "auth-int" else ""
+    ha2 = _digest(f"{method.upper()}:{uri}{entity}", base_algorithm)
     params = {
         "username": digest_user,
         "realm": realm,
         "nonce": nonce,
         "uri": uri,
         "response": "",
-        "algorithm": "MD5",
+        "algorithm": algorithm,
     }
     if qop:
         if int(nonce_count) < 1:
             raise ValueError("SIP digest nonce_count must be positive")
         cnonce = cnonce or token_hex(8)
         nc = f"{int(nonce_count):08x}"
-        response = sip_digest_md5(f"{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}")
+        response = _digest(
+            f"{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}",
+            base_algorithm,
+        )
         params.update({"qop": qop, "nc": nc, "cnonce": cnonce, "response": response})
     else:
-        params["response"] = sip_digest_md5(f"{ha1}:{nonce}:{ha2}")
+        params["response"] = _digest(f"{ha1}:{nonce}:{ha2}", base_algorithm)
     rendered = []
     for key, val in params.items():
         if key in {"algorithm", "qop", "nc"}:

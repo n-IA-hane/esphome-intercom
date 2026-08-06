@@ -62,6 +62,23 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
             registrar._challenge()
         self.assertEqual(len(registrar.nonces), sip_registrar.MAX_ACTIVE_NONCES)
 
+    def test_register_aor_comes_from_to_not_request_uri_or_from(self) -> None:
+        request = sip.parse_message(
+            sip.build_request(
+                "REGISTER",
+                "sip:wrong@192.168.1.10",
+                [
+                    ("From", "<sip:also-wrong@192.168.1.10>;tag=a"),
+                    ("To", "<sip:correct@192.168.1.10>"),
+                ],
+            )
+        )
+
+        self.assertEqual(
+            sip_registrar._extract_register_username(request),
+            "correct",
+        )
+
     async def test_register_challenge_hides_accounts_and_reuses_source_nonce(self) -> None:
         registrar = sip_registrar.SipRegistrar(
             enabled=True,
@@ -518,15 +535,19 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-    def test_digest_client_rejects_auth_int_only_challenge(self) -> None:
-        with self.assertRaisesRegex(ValueError, "unsupported SIP digest qop"):
-            sip_auth.build_digest_authorization(
-                challenge_header='Digest realm="test", nonce="nonce", qop="auth-int"',
-                username="desk",
-                password="secret",
-                method="REGISTER",
-                uri="sip:pbx.example",
-            )
+    def test_digest_client_accepts_auth_int_only_challenge(self) -> None:
+        authorization = sip_auth.build_digest_authorization(
+            challenge_header='Digest realm="test", nonce="nonce", qop="auth-int"',
+            username="desk",
+            password="secret",
+            method="REGISTER",
+            uri="sip:pbx.example",
+        )
+
+        self.assertEqual(
+            sip_auth.parse_digest_challenge(authorization)["qop"],
+            "auth-int",
+        )
 
     async def test_stale_unregister_does_not_remove_active_binding(self) -> None:
         registrar = sip_registrar.SipRegistrar(

@@ -1212,6 +1212,7 @@ class SipCallClient:
             method="INVITE",
             uri=self._pending_request_uri,
             nonce_count=self._digest_nonce_count,
+            body=self._pending_invite_body,
         )
         self._pending_invite_auth_header = (
             self._pending_invite_auth_header_name,
@@ -1500,6 +1501,7 @@ class SipCallClient:
                         method="INVITE",
                         uri=request_uri,
                         nonce_count=self._digest_nonce_count,
+                        body=self._pending_invite_body,
                     )
                 except Exception as err:
                     _LOGGER.info("SIP digest auth failed to build INVITE response: %s", err)
