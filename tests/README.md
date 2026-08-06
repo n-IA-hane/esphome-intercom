@@ -28,6 +28,10 @@ state-machine cases.
 regressions in separate Python processes. This prevents Home Assistant test
 stubs from making protocol results depend on collection order.
 
+The generated qualification matrix is only a scenario catalog. Its tests prove
+that intended axes are listed, not that calls were executed. Release evidence
+must come from executable peer and live-device runners.
+
 Mutation testing is intentionally refused in the primary checkout. Create a
 disposable linked worktree at a committed milestone, install
 `requirements-mutation-test.txt`, then run `./scripts/test_suite.sh mutation`

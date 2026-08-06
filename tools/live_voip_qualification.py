@@ -21,6 +21,7 @@ import json
 import os
 from pathlib import Path
 import ssl
+import subprocess
 import time
 from typing import Any
 import urllib.error
@@ -48,6 +49,25 @@ DEFAULT_AUTH_FILE = Path(
     "/home/codex/.secrets/esphome-intercom/ha_home_auth.json"
 )
 OUT = Path("test_runs/live_voip_qualification")
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def candidate_revision() -> dict[str, object]:
+    """Identify the exact source revision exercised by a live artifact."""
+
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        text=True,
+    ).strip()
+    dirty = bool(
+        subprocess.check_output(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=ROOT,
+            text=True,
+        ).strip()
+    )
+    return {"commit": commit, "dirty": dirty}
 
 
 def _refresh_ha_token(auth_file: Path) -> str:
@@ -1219,7 +1239,9 @@ async def run(args: argparse.Namespace) -> int:
             finally:
                 await restore_baseline(ctx, original)
                 artifact = {
+                    "schema_version": 2,
                     "created_at": datetime.now(UTC).isoformat(),
+                    "candidate": candidate_revision(),
                     "esp": esp_spec.key,
                     "results": results,
                     "samples": ctx.artifacts,

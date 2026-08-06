@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Generate and validate the SIP intercom qualification matrix.
+"""Generate and validate the SIP intercom scenario catalog.
 
 This is a planning harness, not a SIP runner. It gives the concrete scenario
 IDs that the automated runners must implement with unit tests, simulator
 scenarios, SIPp, PJSUA/baresip/manual checks, Playwright, and live ESP devices.
+Catalog validation proves only that intended axes were listed. It is never
+runtime qualification evidence and must not authorize a release.
 """
 
 from __future__ import annotations

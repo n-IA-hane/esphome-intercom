@@ -96,6 +96,17 @@ class LiveVoipQualificationContractTest(unittest.TestCase):
             runner.norm("Waveshare_P4_Touch"),
         )
 
+    def test_candidate_revision_records_commit_and_dirty_state(self) -> None:
+        with unittest.mock.patch.object(
+            runner.subprocess,
+            "check_output",
+            side_effect=["abc123\n", " M custom_components/voip_stack/a.py\n"],
+        ):
+            self.assertEqual(
+                runner.candidate_revision(),
+                {"commit": "abc123", "dirty": True},
+            )
+
     def test_matrix_covers_real_ha_and_esp_paths(self) -> None:
         scenarios = runner.SCENARIOS
         self.assertIn("ha_to_esp_extension_answer_hangup", scenarios)

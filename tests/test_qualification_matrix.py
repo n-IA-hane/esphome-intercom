@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Coverage contract for the SIP qualification matrix."""
+"""Completeness checks for the unexecuted SIP scenario catalog."""
 
 from __future__ import annotations
 
@@ -26,13 +26,13 @@ def _load_tool():
 matrix = _load_tool()
 
 
-class QualificationMatrixTest(unittest.TestCase):
-    def test_matrix_has_no_coverage_gaps(self) -> None:
+class QualificationScenarioCatalogTest(unittest.TestCase):
+    def test_catalog_has_no_declared_axis_gaps(self) -> None:
         scenarios = matrix.generate_matrix()
         self.assertGreaterEqual(len(scenarios), 400)
         self.assertEqual(matrix.validate_matrix(scenarios), [])
 
-    def test_matrix_covers_transport_mismatch_and_high_rate_audio(self) -> None:
+    def test_catalog_declares_transport_mismatch_and_high_rate_audio(self) -> None:
         scenarios = matrix.generate_matrix()
         self.assertTrue(
             any(
@@ -45,19 +45,19 @@ class QualificationMatrixTest(unittest.TestCase):
         self.assertTrue(any(scenario.tx_format == "48000:s16le:1:10" for scenario in scenarios))
         self.assertTrue(any(scenario.terminal_reason == "media_incompatible" for scenario in scenarios))
 
-    def test_matrix_requires_user_visible_and_protocol_assertions(self) -> None:
+    def test_catalog_requires_user_visible_and_protocol_assertions(self) -> None:
         scenarios = matrix.generate_matrix()
         self.assertTrue(any("ha_card_mirror" in scenario.assertions for scenario in scenarios))
         self.assertTrue(any("caller_terminal_screen" in scenario.assertions for scenario in scenarios))
         self.assertTrue(all("debug_sip_trace" in scenario.assertions for scenario in scenarios))
 
-    def test_usage_matrix_covers_every_supported_behavior_axis(self) -> None:
+    def test_usage_catalog_declares_every_supported_behavior_axis(self) -> None:
         scenarios = matrix.generate_usage_matrix()
 
         self.assertGreaterEqual(len(scenarios), 200)
         self.assertEqual(matrix.validate_usage_matrix(scenarios), [])
 
-    def test_usage_matrix_answers_no_automation_and_group_dnd_questions(self) -> None:
+    def test_usage_catalog_answers_no_automation_and_group_dnd_questions(self) -> None:
         by_id = {scenario.id: scenario for scenario in matrix.generate_usage_matrix()}
 
         no_automation = by_id["selection-trunk-ha_softphone-automation-off"]
