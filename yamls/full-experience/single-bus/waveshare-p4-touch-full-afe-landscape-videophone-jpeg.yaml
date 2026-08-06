@@ -440,9 +440,9 @@ esp_afe:
   task_priority: 18
   feed_task_priority: 18
   fetch_task_priority: 18
-  # Keep one completed 64 ms AFE frame ready. This is a fixed-latency reserve,
-  # not a wait or polling path, and absorbs bounded camera/display scheduler
-  # jitter without emitting a whole silent microphone frame.
+  # Keep one completed 64 ms AFE frame ready. This fixed-latency reserve
+  # absorbs bounded camera/display scheduler jitter without publishing a
+  # complete silent microphone frame.
   output_prebuffer_frames: 1
   type: fd
   mode: high_perf
