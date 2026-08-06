@@ -13,7 +13,7 @@ Assistant API tests use the matching environment in
 
 ```bash
 ./scripts/test_suite.sh fast
-./scripts/test_suite.sh full
+./scripts/test_suite.sh software-full
 ./scripts/test_suite.sh peer
 ./scripts/test_suite.sh coverage
 ./scripts/test_suite.sh ha

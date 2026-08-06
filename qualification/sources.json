@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "repositories": {
+    "esphome-intercom": {
+      "path": "."
+    },
+    "esphome-voip-stack": {
+      "path": "../esphome-voip-stack",
+      "url": "https://github.com/n-IA-hane/esphome-voip-stack.git",
+      "ref": "refs/heads/dev"
+    },
+    "esphome-audio-stack": {
+      "path": "../esphome-audio-stack",
+      "url": "https://github.com/n-IA-hane/esphome-audio-stack.git",
+      "ref": "refs/heads/dev"
+    },
+    "esphome-runtime-controller": {
+      "path": "../esphome-runtime-controller",
+      "url": "https://github.com/n-IA-hane/esphome-runtime-controller.git",
+      "ref": "refs/heads/dev"
+    }
+  }
+}

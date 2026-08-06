@@ -10,7 +10,7 @@ Run the regular suite through the project runner:
 
 ```bash
 cd <checkout>/esphome-intercom
-./scripts/test_suite.sh full
+./scripts/test_suite.sh software-full
 ```
 
 The repository `.venv` intentionally does not install Home Assistant. Run the

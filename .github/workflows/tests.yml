@@ -32,7 +32,7 @@ jobs:
       - name: Check YAML source paths
         run: ./scripts/yaml_paths.sh check --expect remote
       - name: Run test suite
-        run: ./scripts/test_suite.sh full
+        run: ./scripts/test_suite.sh software-full
       - name: Run isolated SIP peer regressions
         run: ./scripts/test_suite.sh peer
       - name: Measure runtime coverage

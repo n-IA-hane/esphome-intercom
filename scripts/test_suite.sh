@@ -10,7 +10,7 @@ SEED=
 
 usage() {
   printf '%s\n' \
-    "Usage: scripts/test_suite.sh [fast|full|peer|coverage|ha|browser|fault|mutation] [options]" \
+    "Usage: scripts/test_suite.sh [fast|software-full|peer|coverage|ha|browser|fault|mutation] [options]" \
     "" \
     "Options:" \
     "  --keep-going  run independent tests after a failure" \
@@ -97,7 +97,7 @@ case "$MODE" in
     pytest_args+=("${ha_ignores[@]}")
     pytest_args+=(-m "not ha and not browser and not live and not mutation and not slow")
     ;;
-  full)
+  software-full)
     pytest_args+=("${ha_ignores[@]}")
     pytest_args+=(-m "not live and not mutation")
     ;;
