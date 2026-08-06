@@ -64,7 +64,12 @@ def _package_version(name: str) -> str:
         return "unavailable"
 
 
-def build_lock(config: dict[str, Any], *, allow_dirty: bool) -> dict[str, object]:
+def build_lock(
+    config: dict[str, Any],
+    *,
+    allow_dirty: bool,
+    ha_python: str = "",
+) -> dict[str, object]:
     repositories: dict[str, object] = {}
     for name, source in config["repositories"].items():
         path = (ROOT / source["path"]).resolve()
@@ -75,6 +80,15 @@ def build_lock(config: dict[str, Any], *, allow_dirty: bool) -> dict[str, object
             raise RuntimeError(f"candidate repository is dirty: {name}")
         repositories[name] = resolved
 
+    home_assistant = (
+        _run(
+            ha_python,
+            "-c",
+            "import importlib.metadata; print(importlib.metadata.version('homeassistant'))",
+        )
+        if ha_python
+        else _package_version("homeassistant")
+    )
     return {
         "schema_version": 1,
         "repositories": repositories,
@@ -82,7 +96,7 @@ def build_lock(config: dict[str, Any], *, allow_dirty: bool) -> dict[str, object
             "python": platform.python_version(),
             "node": _run("node", "--version"),
             "esphome": _package_version("esphome"),
-            "home_assistant": _package_version("homeassistant"),
+            "home_assistant": home_assistant,
         },
     }
 
@@ -92,10 +106,15 @@ def main() -> int:
     parser.add_argument("--sources", type=Path, default=DEFAULT_SOURCES)
     parser.add_argument("--output", type=Path, default=Path("candidate-lock.json"))
     parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument("--ha-python", default="")
     args = parser.parse_args()
 
     config = json.loads(args.sources.read_text())
-    lock = build_lock(config, allow_dirty=args.allow_dirty)
+    lock = build_lock(
+        config,
+        allow_dirty=args.allow_dirty,
+        ha_python=args.ha_python,
+    )
     args.output.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n")
     print(args.output)
     return 0

@@ -1,0 +1,111 @@
+name: Qualification
+
+on:
+  pull_request:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: qualification-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualification-summary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Check out intercom candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: esphome-intercom
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out VoIP stack dependency
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: n-IA-hane/esphome-voip-stack
+          ref: dev
+          path: esphome-voip-stack
+          persist-credentials: false
+      - name: Check out audio stack dependency
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: n-IA-hane/esphome-audio-stack
+          ref: dev
+          path: esphome-audio-stack
+          persist-credentials: false
+      - name: Check out runtime controller dependency
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: n-IA-hane/esphome-runtime-controller
+          ref: dev
+          path: esphome-runtime-controller
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14.2"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Create isolated test environments
+        working-directory: esphome-intercom
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements-test.txt -r requirements-firmware-test.txt
+          python -m venv .ha-venv
+          .ha-venv/bin/pip install -r requirements-ha-test.txt
+      - name: Lock exact candidate sources
+        working-directory: esphome-intercom
+        run: >-
+          .venv/bin/python scripts/candidate_lock.py
+          --ha-python .ha-venv/bin/python
+          --output candidate-lock.json
+      - name: Use locked local component sources
+        working-directory: esphome-intercom
+        run: ./scripts/yaml_paths.sh --local
+      - name: Static checks
+        working-directory: esphome-intercom
+        run: |
+          .venv/bin/ruff check custom_components esphome scripts tests tools
+          shellcheck scripts/*.sh
+          find custom_components/voip_stack/frontend -name '*.js' -print0 | xargs -0 -n1 node --check
+          ./scripts/yaml_paths.sh check --expect local
+      - name: Software qualification
+        working-directory: esphome-intercom
+        env:
+          HA_PYTHON: .ha-venv/bin/python
+        run: |
+          ./scripts/test_suite.sh software-full
+          ./scripts/test_suite.sh peer
+          ./scripts/test_suite.sh ha
+          ./scripts/test_suite.sh coverage
+      - name: Compile all maintained firmware profiles sequentially
+        working-directory: esphome-intercom
+        run: .venv/bin/python tools/voip_dev_check.py --compile-profiles
+      - name: Record firmware artifact hashes
+        if: always()
+        working-directory: esphome-intercom
+        run: |
+          find .esphome/build -type f -name 'firmware*.bin' -print0 2>/dev/null \
+            | sort -z \
+            | xargs -0 -r sha256sum > firmware-sha256.txt
+      - name: Verify candidate identity
+        if: success()
+        working-directory: esphome-intercom
+        run: |
+          test "$(python -c 'import json; print(json.load(open("candidate-lock.json"))["repositories"]["esphome-intercom"]["commit"])')" = "$GITHUB_SHA"
+          test -s firmware-sha256.txt
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: qualification-${{ github.sha }}
+          path: |
+            esphome-intercom/candidate-lock.json
+            esphome-intercom/coverage.xml
+            esphome-intercom/firmware-sha256.txt
+            esphome-intercom/.esphome/build/**/firmware*.bin
+          if-no-files-found: warn
