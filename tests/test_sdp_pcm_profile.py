@@ -331,7 +331,7 @@ class SdpPcmProfileTest(unittest.TestCase):
         )
         self.assertIsNone(sdp.first_offered_dtmf_format(audio_only))
 
-    def test_answer_cannot_add_rtcp_mux_or_feedback_capabilities(self) -> None:
+    def test_answer_tolerates_rtcp_mux_but_rejects_unoffered_feedback(self) -> None:
         offer = (
             "v=0\r\no=- 1 1 IN IP4 192.0.2.10\r\n"
             "s=offer\r\nc=IN IP4 192.0.2.10\r\nt=0 0\r\n"
@@ -344,9 +344,7 @@ class SdpPcmProfileTest(unittest.TestCase):
             "m=video 40002", "m=video 41002"
         )
 
-        with self.subTest("rtcp-mux"), self.assertRaisesRegex(
-            sdp.SdpError, "unoffered rtcp-mux"
-        ):
+        with self.subTest("rtcp-mux"):
             sdp.validate_sdp_answer(
                 offer,
                 base_answer.replace("a=sendrecv", "a=rtcp-mux\r\na=sendrecv"),

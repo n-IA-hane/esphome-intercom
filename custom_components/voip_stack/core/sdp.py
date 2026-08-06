@@ -1818,12 +1818,11 @@ def validate_sdp_answer(
                 raise SdpError(
                     f"SDP answer media section {index} selected an unoffered format"
                 )
-        if bool(answered_section["rtcp_mux"]) and not bool(
-            offered_section["rtcp_mux"]
-        ):
-            raise SdpError(
-                f"SDP answer media section {index} added unoffered rtcp-mux"
-            )
+        # Some deployed SIP UAs, including Zoiper, add ``a=rtcp-mux`` to an
+        # RTP/AVP answer even when the offer omitted it. RFC 5761 requires the
+        # attribute to be offered first, but rejecting an otherwise compatible
+        # audio answer tears down the established dialog. We do not advertise
+        # mux support and safely ignore the unsolicited answer attribute.
         if bool(answered_section["rtcp_mux_only"]) and not bool(
             offered_section["rtcp_mux_only"]
         ):
