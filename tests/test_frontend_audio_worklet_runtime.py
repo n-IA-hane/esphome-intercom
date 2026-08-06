@@ -11,7 +11,7 @@ import subprocess
 import pytest
 
 
-pytestmark = pytest.mark.browser
+pytestmark = pytest.mark.js_runtime
 
 
 PROCESSOR = (

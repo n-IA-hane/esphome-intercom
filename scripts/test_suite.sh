@@ -10,7 +10,7 @@ SEED=
 
 usage() {
   printf '%s\n' \
-    "Usage: scripts/test_suite.sh [fast|software-full|peer|coverage|ha|browser|fault|mutation] [options]" \
+    "Usage: scripts/test_suite.sh [fast|software-full|peer|coverage|ha|js-runtime|fault|mutation] [options]" \
     "" \
     "Options:" \
     "  --keep-going  run independent tests after a failure" \
@@ -95,7 +95,7 @@ export YAML_PATH_MODE=$path_mode
 case "$MODE" in
   fast)
     pytest_args+=("${ha_ignores[@]}")
-    pytest_args+=(-m "not ha and not browser and not live and not mutation and not slow")
+    pytest_args+=(-m "not ha and not js_runtime and not live and not mutation and not slow")
     ;;
   software-full)
     pytest_args+=("${ha_ignores[@]}")
@@ -198,9 +198,9 @@ case "$MODE" in
       pytest_args+=(--maxfail=0)
     fi
     ;;
-  browser)
+  js-runtime)
     pytest_args+=("${ha_ignores[@]}")
-    pytest_args+=(-m browser)
+    pytest_args+=(-m js_runtime)
     ;;
   fault)
     pytest_args+=("${ha_ignores[@]}")

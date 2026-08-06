@@ -17,7 +17,7 @@ Assistant API tests use the matching environment in
 ./scripts/test_suite.sh peer
 ./scripts/test_suite.sh coverage
 ./scripts/test_suite.sh ha
-./scripts/test_suite.sh browser
+./scripts/test_suite.sh js-runtime
 ```
 
 Tests stop at the first failure by default. Use `--keep-going` only when an
