@@ -213,6 +213,19 @@ class SipCSeq:
 
 
 @dataclass(frozen=True, slots=True)
+class SipSessionExpires:
+    seconds: int
+    refresher: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class SipRAck:
+    response_number: int
+    cseq_number: int
+    method: str
+
+
+@dataclass(frozen=True, slots=True)
 class SipDialogRoute:
     """Routing contract for one request inside an established dialog."""
 
@@ -545,6 +558,47 @@ def parse_cseq(value: str) -> SipCSeq:
     if method not in SUPPORTED_METHODS:
         raise SipError(f"unsupported CSeq method {method}")
     return SipCSeq(number=number, method=method)
+
+
+def parse_session_expires(value: str) -> SipSessionExpires:
+    """Parse RFC 4028 Session-Expires or Min-SE syntax strictly."""
+
+    head, params = _split_semicolon_params(str(value or "").strip())
+    try:
+        seconds = int(head)
+    except ValueError as err:
+        raise SipError(f"bad session interval: {value!r}") from err
+    if not 1 <= seconds <= 0x7FFFFFFF:
+        raise SipError(f"bad session interval: {value!r}")
+    refresher = ""
+    for key, raw in params:
+        if key != "refresher":
+            continue
+        candidate = str(raw or "").lower()
+        if candidate not in {"uac", "uas"} or refresher:
+            raise SipError(f"bad refresher parameter: {value!r}")
+        refresher = candidate
+    return SipSessionExpires(seconds=seconds, refresher=refresher)
+
+
+def parse_rack(value: str) -> SipRAck:
+    """Parse the RFC 3262 response number, CSeq and method tuple."""
+
+    parts = str(value or "").strip().split()
+    if len(parts) != 3:
+        raise SipError(f"bad RAck header: {value!r}")
+    try:
+        response_number, cseq_number = (int(parts[0]), int(parts[1]))
+    except ValueError as err:
+        raise SipError(f"bad RAck header: {value!r}") from err
+    method = parts[2]
+    if (
+        not 1 <= response_number <= 0xFFFFFFFF
+        or not 0 <= cseq_number <= 0x7FFFFFFF
+        or not is_sip_token(method)
+    ):
+        raise SipError(f"bad RAck header: {value!r}")
+    return SipRAck(response_number, cseq_number, method)
 
 
 def sip_failure_reason(status_code: int) -> str:

@@ -28,6 +28,28 @@ from .voip_phase1_support import (
 
 
 class SipProtocolBugFixTest(unittest.TestCase):
+    def test_session_timer_headers_are_strict_and_typed(self) -> None:
+        self.assertEqual(
+            sip.parse_session_expires("1800;refresher=uas"),
+            sip.SipSessionExpires(1800, "uas"),
+        )
+        self.assertEqual(
+            sip.parse_session_expires("90"),
+            sip.SipSessionExpires(90),
+        )
+        for invalid in ("", "0", "abc", "90;refresher=peer", "90;refresher=uac;refresher=uas"):
+            with self.subTest(invalid=invalid), self.assertRaises(sip.SipError):
+                sip.parse_session_expires(invalid)
+
+    def test_rack_parser_preserves_case_sensitive_method(self) -> None:
+        self.assertEqual(
+            sip.parse_rack("776656 1 INVITE"),
+            sip.SipRAck(776656, 1, "INVITE"),
+        )
+        for invalid in ("", "0 1 INVITE", "1 -1 INVITE", "1 1 bad method"):
+            with self.subTest(invalid=invalid), self.assertRaises(sip.SipError):
+                sip.parse_rack(invalid)
+
     def test_required_option_tags_are_checked_as_a_set(self) -> None:
         request = sip.parse_message(
             sip.build_request(
