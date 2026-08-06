@@ -11,6 +11,7 @@ from .dtmf import DtmfCollector, collect_info_digits
 
 
 _LOGGER = logging.getLogger(__name__)
+_FIRST_DIGIT_TIMEOUT = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +39,7 @@ async def collect_trunk_dtmf(
                 info_queue,
                 routes=routes,
                 timeout=timeout,
+                first_digit_timeout=max(_FIRST_DIGIT_TIMEOUT, timeout),
                 terminator=terminator,
             ),
             name=f"voip-trunk-info-dtmf-{invite.call_id}",
@@ -54,6 +56,7 @@ async def collect_trunk_dtmf(
                     payload_type=dtmf_format.payload_type,
                     routes=routes,
                     timeout=timeout,
+                    first_digit_timeout=max(_FIRST_DIGIT_TIMEOUT, timeout),
                     terminator=terminator,
                     remote_host=invite.remote_rtp_host,
                 ).collect(),
@@ -63,7 +66,7 @@ async def collect_trunk_dtmf(
     else:
         _LOGGER.info(
             "SIP trunk inbound call has no telephone-event SDP offer; "
-            "collecting SIP INFO for %.1fs",
+            "collecting SIP INFO with %.1fs inter-digit timeout",
             timeout,
         )
 

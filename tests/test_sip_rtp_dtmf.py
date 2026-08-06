@@ -44,6 +44,7 @@ def _load(name: str):
 
 audio_format = _load("audio_format")
 rtp = _load("rtp")
+dtmf = _load("dtmf")
 sip_rtp_bridge = _load("sip_rtp_bridge")
 
 
@@ -71,6 +72,29 @@ class _Transport:
 
 
 class SipRtpDtmfTest(unittest.IsolatedAsyncioTestCase):
+    async def test_delayed_first_info_digit_uses_separate_inter_digit_timeout(
+        self,
+    ) -> None:
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        result = asyncio.create_task(
+            dtmf.collect_info_digits(
+                queue,
+                routes={"1666": "P4", "667": "S3"},
+                timeout=0.03,
+                first_digit_timeout=0.2,
+            )
+        )
+
+        # Model the caller listening to an IVR prompt. This is deliberately
+        # later than the inter-digit timeout and would fail with the former
+        # single deadline started at INVITE time.
+        await asyncio.sleep(0.08)
+        for digit in "1666":
+            queue.put_nowait(digit)
+            await asyncio.sleep(0.005)
+
+        self.assertEqual(await result, ("1666", "P4"))
+
     def _relay(
         self,
         *,

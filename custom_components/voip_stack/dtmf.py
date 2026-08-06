@@ -119,16 +119,24 @@ async def collect_info_digits(
     *,
     routes: dict[str, str],
     timeout: float,
+    first_digit_timeout: float | None = None,
     terminator: str = "",
 ) -> tuple[str, str]:
-    """Collect SIP INFO digits until a route resolves or timeout expires."""
+    """Collect SIP INFO digits with separate first and inter-digit timers."""
     started = time.monotonic()
-    deadline = started + max(0.1, float(timeout))
+    inter_digit_timeout = max(0.1, float(timeout))
+    first_timeout = max(
+        inter_digit_timeout,
+        float(first_digit_timeout or inter_digit_timeout),
+    )
     buffer = ""
     destination = ""
-    while (remaining := deadline - time.monotonic()) > 0:
+    while True:
         try:
-            digit = await asyncio.wait_for(queue.get(), timeout=remaining)
+            digit = await asyncio.wait_for(
+                queue.get(),
+                timeout=first_timeout if not buffer else inter_digit_timeout,
+            )
         except asyncio.TimeoutError:
             break
         buffer += digit
@@ -197,6 +205,7 @@ class DtmfCollector:
         payload_type: int,
         routes: dict[str, str],
         timeout: float,
+        first_digit_timeout: float | None = None,
         terminator: str = "",
         remote_host: str = "",
     ) -> None:
@@ -205,15 +214,21 @@ class DtmfCollector:
         self.payload_type = int(payload_type)
         self.routes = routes
         self.timeout = max(0.1, float(timeout))
+        self.first_digit_timeout = max(
+            self.timeout,
+            float(first_digit_timeout or self.timeout),
+        )
         self.terminator = terminator
         self.remote_host = str(remote_host or "")
         self.buffer = ""
         self.transport: asyncio.DatagramTransport | None = None
         self._done: asyncio.Future[str] | None = None
+        self._activity: asyncio.Event | None = None
 
     async def collect(self) -> tuple[str, str]:
         loop = asyncio.get_running_loop()
         self._done = loop.create_future()
+        self._activity = asyncio.Event()
         protocol = _DtmfProtocol(
             self.payload_type,
             self._on_digit,
@@ -227,9 +242,24 @@ class DtmfCollector:
         self.transport = transport  # type: ignore[assignment]
         started = time.monotonic()
         try:
-            try:
-                destination = await asyncio.wait_for(self._done, timeout=self.timeout)
-            except asyncio.TimeoutError:
+            destination = ""
+            while not self._done.done():
+                assert self._activity is not None
+                self._activity.clear()
+                try:
+                    await asyncio.wait_for(
+                        self._activity.wait(),
+                        timeout=(
+                            self.first_digit_timeout
+                            if not self.buffer
+                            else self.timeout
+                        ),
+                    )
+                except asyncio.TimeoutError:
+                    break
+            if self._done.done():
+                destination = self._done.result()
+            elif self.buffer:
                 destination = self.routes.get(self.buffer, "")
             _LOGGER.info(
                 "SIP trunk DTMF collection finished buffer=%s destination=%s elapsed_ms=%d",
@@ -246,6 +276,8 @@ class DtmfCollector:
         if self._done is None or self._done.done():
             return
         self.buffer += digit
+        if self._activity is not None:
+            self._activity.set()
         destination, terminal = _match_dtmf(self.buffer, self.routes, terminator=self.terminator)
         if terminal:
             self._done.set_result(destination)

@@ -87,7 +87,7 @@
           "trunk_inbound_default_target": "Phonebook name, SIP URI, extension or number used only when no DTMF extension or automation selects another destination.",
           "trunk_inbound_mode": "Route immediately skips digit collection. Collect extension with DTMF answers the trunk leg first and lets explicit digits select a phonebook extension.",
           "automation_routing_enabled": "Before using the fallback destination, publish a short routing request that an automation may answer. Explicit DTMF digits always keep priority.",
-          "trunk_dtmf_timeout_ms": "Digit collection window used only in DTMF mode. Default is 3 seconds, maximum is 10 seconds.",
+          "trunk_dtmf_timeout_ms": "Inter-digit timeout used in DTMF mode. The first digit is allowed 10 seconds. Default is 3 seconds, maximum is 10 seconds.",
           "trunk_dtmf_terminator": "Optional terminator digit such as #. Empty means timeout or exact phonebook extension match decides."
         }
       }

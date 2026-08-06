@@ -346,7 +346,7 @@ When `trunk_enabled` is true, the second step adds:
 | `trunk_inbound_default_target` | Canonical phonebook target used by Direct mode or by the DTMF no-digits fallback. Default `HA`. |
 | `trunk_inbound_mode` | `direct` resolves the default target immediately; `dtmf` pre-answers and collects an explicit phonebook extension. |
 | `automation_routing_enabled` | Experimental, disabled by default. Exposes a bounded automation decision before Direct routing or the DTMF no-digits fallback. Explicit digits are never overridden. |
-| `trunk_dtmf_timeout_ms` | DTMF-mode digit window. The setup UI shows seconds; internally this is stored in milliseconds. Default 3 s, maximum 10 s. |
+| `trunk_dtmf_timeout_ms` | DTMF inter-digit timeout. The first digit is allowed 10 s. The setup UI shows seconds; internally this is stored in milliseconds. Default 3 s, maximum 10 s. |
 | `trunk_dtmf_terminator` | Optional terminator digit such as `#`. Empty means timeout or exact phonebook extension match decides. |
 
 Ambiguous DTMF digit prefixes are resolved at runtime against the live
