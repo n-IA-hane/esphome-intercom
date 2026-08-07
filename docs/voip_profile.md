@@ -25,6 +25,10 @@ unauthenticated on the local network.
 Home Assistant may register one optional provider/PBX trunk and may separately
 act as a Digest-authenticating registrar for standard SIP endpoints. Both
 features belong to HA and do not create registrations for ESP devices.
+The HA SIP surfaces share one RFC 7616/8760 Digest implementation supporting
+MD5, SHA-256 and SHA-512-256, including `auth` and `auth-int` where the request
+body is available. Stale nonces are challenged explicitly and authentication
+retries create a new client transaction.
 
 Phonebook membership and HA registration are not inbound caller admission
 rules. Any peer that can reach an ESP or HA SIP listener may send an INVITE;
@@ -56,8 +60,11 @@ Required SIP methods:
 - `BYE`
 - `OPTIONS`
 - `REGISTER` on the HA trunk client and HA local registrar only
-- `INFO` is acknowledged by HA, but its body is not used as a digit source;
-  DTMF routing is based on RTP `telephone-event`
+- `INFO` carries in-dialog `application/dtmf-relay` digits when negotiated by
+  the peer; RTP `telephone-event` remains the preferred media-plane transport
+- `UPDATE` and in-dialog `INVITE` refresh or renegotiate HA-owned dialogs
+- `PRACK` confirms reliable provisional responses when `100rel` is negotiated
+- `REFER` and its `NOTIFY` subscription transfer established HA-owned calls
 - `MESSAGE` accepts UTF-8 `text/plain` messages from the authenticated signaling
   flow of an active local registration and publishes `voip_stack_sip_message`
   on the Home Assistant event bus
@@ -108,6 +115,12 @@ HA-owned dialogs also accept an offerless re-INVITE. The `200 OK` contains a
 new local offer and ACK must carry the compatible SDP answer. Media ownership
 changes only after that ACK is validated; a missing or invalid answer closes
 the dialog instead of leaving a half-negotiated call alive.
+
+HA-owned dialogs negotiate RFC 4028 session timers through `Session-Expires`
+and `Min-SE`. The negotiated refresher sends UPDATE or re-INVITE before expiry;
+an expired dialog is terminated through the same authoritative cleanup path as
+a remote BYE. Reliable provisional responses use RFC 3262 RSeq, RAck and PRACK,
+including SDP offer-answer carried by PRACK when required.
 
 SIP signaling transports:
 

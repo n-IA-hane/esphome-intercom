@@ -27,6 +27,27 @@ find custom_components/voip_stack/frontend -name '*.js' -print0 \
   | xargs -0 -n1 node --check
 ```
 
+## Candidate qualification
+
+The GitHub `Qualification` workflow is the fail-closed product gate. It resolves
+the exact commits of `esphome-intercom`, `esphome-voip-stack`,
+`esphome-audio-stack` and `esphome-runtime-controller` before testing, records
+them in `candidate-lock.json`, and switches every maintained YAML to those
+local checkouts. No firmware build reads a moving remote component branch after
+the lock has been created.
+
+The single summary job then runs `software-full`, isolated peer tests, the real
+Home Assistant runtime suite and coverage before compiling all six maintained
+S3 and P4 profiles sequentially. Its artifact contains the source lock,
+coverage report, firmware binaries and their SHA-256 hashes. A failed or
+cancelled step fails the one summary check, so a partial matrix cannot be
+reported as a qualified candidate.
+
+This software and compile gate still does not claim physical interoperability.
+A release candidate also needs the applicable live browser, SIP peer and ESP
+matrix below, with both peers observed and call-scoped resources returned to
+their pre-test baseline.
+
 Some tests deliberately lock down source-level routing contracts; they catch
 accidental branch removal but do not prove a real SIP transaction, browser
 codec or RTP path. Release evidence must include the real matrix below.
