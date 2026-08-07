@@ -1,5 +1,8 @@
 # Testing and debug
 
+Community-reported compatibility contracts and their current evidence are
+tracked in [COMMUNITY_REGRESSIONS.md](COMMUNITY_REGRESSIONS.md).
+
 This project has enough call paths that manual spot checks are not enough.
 Use this page as the standard regression checklist before release-level
 changes.
