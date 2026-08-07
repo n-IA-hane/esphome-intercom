@@ -127,6 +127,20 @@ class SipRequestResult:
     status: int = 200
     reason: str = "OK"
     headers: tuple[tuple[str, str], ...] = ()
+    to_tag: str = ""
+    follow_up: "SipFollowUpRequest | None" = None
+    follow_up_lock: asyncio.Lock | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SipFollowUpRequest:
+    """One request sent in the dialog established by an application method."""
+
+    method: str
+    headers: tuple[tuple[str, str], ...] = ()
+    body: bytes = b""
+    content_type: str = ""
+    cseq: int = 1
 
 
 @dataclass(slots=True)
@@ -234,8 +248,13 @@ RegisterHandler = Callable[[sip.SipMessage, tuple[str, int], str], Awaitable[Any
 InfoHandler = Callable[[sip.SipMessage, tuple[str, int], str], Awaitable[None]]
 MediaUpdateHandler = Callable[[SipInvite, SipInvite, str], Awaitable[SipInviteResult]]
 ReferHandler = Callable[[str, sip_transfer.SipReferTarget], Awaitable[int]]
+FollowUpSender = Callable[
+    [sip.SipMessage, tuple[str, int], SipRequestResult],
+    Awaitable[sip.SipMessage | None],
+]
 RequestHandler = Callable[
-    [sip.SipMessage, tuple[str, int], str], Awaitable[SipRequestResult]
+    [sip.SipMessage, tuple[str, int], str, FollowUpSender],
+    Awaitable[SipRequestResult],
 ]
 SendHandler = Callable[[bytes, tuple[str, int]], bool | None]
 TcpDialogSender = Callable[[bytes], bool | None]
@@ -530,6 +549,9 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self.completed_byes: dict[str, _CompletedRequest] = {}
         self.completed_infos: dict[tuple[str, int], _CompletedRequest] = {}
         self.completed_pracks: dict[tuple[str, int], _CompletedRequest] = {}
+        self.completed_application_requests: dict[
+            tuple[str, int, str], tuple[_CompletedRequest, SipRequestResult]
+        ] = {}
         self._logged_incompatible_invites: set[str] = set()
         self._request_tasks: set[asyncio.Task[None]] = set()
         self._invite_tasks: set[asyncio.Task[None]] = set()
@@ -966,46 +988,141 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 _LOGGER.warning("SIP %s routing rejected call_id=%s: %s", method, call_id, err)
                 return None
 
-            responses: asyncio.Queue[tuple[sip.SipMessage, tuple[str, int]]] = (
-                asyncio.Queue(maxsize=8)
-            )
-            self._client_transaction_responses[ids.branch] = responses
             dialog.local_cseq += 1
-            transaction = SipClientTransaction[tuple[sip.SipMessage, tuple[str, int]]](
+            return await self._run_client_transaction(
+                raw=raw,
+                addr=target_addr,
+                ids=ids,
+                method=method,
                 transport=dialog.transport,
-                timeout=_INVITE_2XX_TIMEOUT,
-                t1=_SIP_T1,
-                t2=_SIP_T2,
+                active=lambda: self.active_dialogs.get(call_id) is dialog,
             )
 
-            async def _read(timeout: float):
-                return await asyncio.wait_for(responses.get(), timeout=timeout)
+    async def _run_client_transaction(
+        self,
+        *,
+        raw: bytes,
+        addr: tuple[str, int],
+        ids: sip.SipDialogIds,
+        method: str,
+        transport: str,
+        active: Callable[[], bool] = lambda: True,
+    ) -> sip.SipMessage | None:
+        """Run the shared non-INVITE transaction for this listener transport."""
 
-            async def _retransmit() -> None:
-                if self.active_dialogs.get(call_id) is dialog:
-                    self._send(raw, target_addr)
+        responses: asyncio.Queue[tuple[sip.SipMessage, tuple[str, int]]] = (
+            asyncio.Queue(maxsize=8)
+        )
+        self._client_transaction_responses[ids.branch] = responses
+        transaction = SipClientTransaction[tuple[sip.SipMessage, tuple[str, int]]](
+            transport=transport,
+            timeout=_INVITE_2XX_TIMEOUT,
+            t1=_SIP_T1,
+            t2=_SIP_T2,
+        )
 
-            try:
-                if not self._send(raw, target_addr):
+        async def _read(timeout: float):
+            return await asyncio.wait_for(responses.get(), timeout=timeout)
+
+        async def _retransmit() -> None:
+            if active():
+                self._send(raw, addr)
+
+        try:
+            if not active() or not self._send(raw, addr):
+                return None
+            sip.mark_sip_event(self, method)
+            while active():
+                received = await transaction.receive(_read, _retransmit)
+                if received is None:
                     return None
-                sip.mark_sip_event(self, method)
-                while self.active_dialogs.get(call_id) is dialog:
-                    received = await transaction.receive(_read, _retransmit)
-                    if received is None:
-                        return None
-                    response, _addr = received
-                    if (
-                        sip.response_matches_dialog_transaction(
-                            response,
-                            ids,
-                            method,
-                        )
-                        and int(response.status_code or 0) >= 200
-                    ):
-                        return response
-            finally:
-                self._client_transaction_responses.pop(ids.branch, None)
+                response, _response_addr = received
+                if (
+                    sip.response_matches_dialog_transaction(response, ids, method)
+                    and int(response.status_code or 0) >= 200
+                ):
+                    return response
+        finally:
+            self._client_transaction_responses.pop(ids.branch, None)
         return None
+
+    async def _send_application_follow_up(
+        self,
+        request: sip.SipMessage,
+        addr: tuple[str, int],
+        result: SipRequestResult,
+    ) -> sip.SipMessage | None:
+        """Run one client transaction in an application-created dialog."""
+
+        lock = result.follow_up_lock
+        if lock is not None:
+            async with lock:
+                return await self._send_application_follow_up_unlocked(
+                    request, addr, result
+                )
+        return await self._send_application_follow_up_unlocked(request, addr, result)
+
+    async def _send_application_follow_up_unlocked(
+        self,
+        request: sip.SipMessage,
+        addr: tuple[str, int],
+        result: SipRequestResult,
+    ) -> sip.SipMessage | None:
+        follow_up = result.follow_up
+        if follow_up is None or not result.to_tag:
+            return None
+        try:
+            local_uri = _uri_text_from_header(request.header("To"))
+            remote_uri = _uri_text_from_header(request.header("From"))
+            remote_target = (
+                _uri_text_from_header(request.header("Contact")) or remote_uri
+            )
+            routing = sip.dialog_request_routing(
+                remote_target,
+                tuple(request.header_values("Record-Route")),
+            )
+            ids = sip.SipDialogIds(
+                call_id=request.header("Call-ID"),
+                local_tag=result.to_tag,
+                remote_tag=sip.extract_tag(request.header("From")),
+                cseq=follow_up.cseq,
+                branch=sip.make_branch(),
+            )
+            contact_uri = _response_contact_uri(
+                request,
+                local_ip=self.local_ip,
+                local_sip_port=self.local_sip_port,
+                transport=self.signaling_transport,
+            )
+            headers = sip.dialog_headers(
+                request_uri=routing.request_uri,
+                local_uri=local_uri,
+                remote_uri=remote_uri,
+                dialog=ids,
+                method=follow_up.method,
+                contact_uri=contact_uri,
+                content_type=follow_up.content_type,
+                transport=self.signaling_transport,
+            )
+            headers.extend(("Route", value) for value in routing.route_headers)
+            headers.extend(follow_up.headers)
+            raw = sip.build_request(
+                follow_up.method,
+                routing.request_uri,
+                headers,
+                follow_up.body,
+            )
+        except (TypeError, ValueError, sip.SipError) as err:
+            _LOGGER.warning("SIP application follow-up rejected: %s", err)
+            return None
+
+        return await self._run_client_transaction(
+            raw=raw,
+            addr=addr,
+            ids=ids,
+            method=follow_up.method,
+            transport=self.signaling_transport,
+        )
 
     async def _handle_dialog_refer(
         self,
@@ -1410,23 +1527,72 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 return
             self._send_response(request, addr, 405, "Method Not Allowed")
             return
-        if request.method == "MESSAGE":
-            if self.signaling_transport == "UDP" and len(data) > 1300:
+        if request.method in {"MESSAGE", "PUBLISH", "SUBSCRIBE"}:
+            if (
+                request.method == "MESSAGE"
+                and self.signaling_transport == "UDP"
+                and len(data) > 1300
+            ):
                 self._send_response(request, addr, 513, "Message Too Large")
                 return
             if self.on_request is None:
                 self._send_response(request, addr, 405, "Method Not Allowed")
                 return
+            request_key = (
+                request.header("Call-ID"),
+                request_cseq.number,
+                request.method,
+            )
+            completed_application = self.completed_application_requests.get(
+                request_key
+            )
+            if completed_application is not None:
+                completed_request, completed_result = completed_application
+                if _same_request_transaction(
+                    request,
+                    completed_request.request,
+                    addr,
+                    completed_request.addr,
+                ):
+                    self._send_response(
+                        request,
+                        addr,
+                        completed_result.status,
+                        completed_result.reason,
+                        to_tag=completed_result.to_tag,
+                        extra_headers=completed_result.headers,
+                    )
+                else:
+                    self._send_response(
+                        request, addr, 481, "Call/Transaction Does Not Exist"
+                    )
+                return
             result = await self.on_request(
-                request, addr, self.signaling_transport
+                request,
+                addr,
+                self.signaling_transport,
+                self._send_application_follow_up,
+            )
+            self._remember_completed(
+                self.completed_application_requests,
+                request_key,
+                (_CompletedRequest(request, addr, result.status, result.reason), result),
             )
             self._send_response(
                 request,
                 addr,
                 result.status,
                 result.reason,
+                to_tag=result.to_tag,
                 extra_headers=result.headers,
             )
+            if result.follow_up is not None and 200 <= result.status < 300:
+                task = asyncio.create_task(
+                    self._send_application_follow_up(request, addr, result),
+                    name=f"voip-sip-{result.follow_up.method.lower()}-{request.header('Call-ID')}",
+                )
+                self._maintenance_tasks.add(task)
+                task.add_done_callback(self._maintenance_tasks.discard)
             return
         if request.method == "PRACK":
             call_id = request.header("Call-ID")

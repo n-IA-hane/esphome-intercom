@@ -215,6 +215,11 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     from .sip_application import SipApplicationMethods
 
     application_methods = SipApplicationMethods(hass, registrar)
+    pbx_runtime.attach_component(
+        "sip_application",
+        application_methods,
+        closer=application_methods.stop,
+    )
 
     def _is_trunk_invite(invite: SipInvite) -> bool:
         trunk_cfg = _get_trunk_config(hass)

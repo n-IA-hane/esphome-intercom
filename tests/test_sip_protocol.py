@@ -32,6 +32,8 @@ class SipProtocolBugFixTest(unittest.TestCase):
     def test_message_is_advertised_as_supported_application_method(self) -> None:
         self.assertIn("MESSAGE", sip.SUPPORTED_METHODS)
         self.assertNotIn("MESSAGE", sip.KNOWN_UNSUPPORTED_METHODS)
+        self.assertIn("PUBLISH", sip.SUPPORTED_METHODS)
+        self.assertNotIn("PUBLISH", sip.KNOWN_UNSUPPORTED_METHODS)
 
     def test_refer_target_round_trip_preserves_attended_dialog(self) -> None:
         target = sip_transfer.SipReferTarget(
@@ -3224,7 +3226,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         async def on_invite(_invite):
             raise AssertionError("not used")
 
-        async def on_request(request, addr, transport):
+        async def on_request(request, addr, transport, _send_follow_up):
             received.append((request.body.decode(), addr, transport))
             return sip_listener.SipRequestResult()
 
@@ -3248,6 +3250,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         request = sip.build_request("MESSAGE", "sip:ha@localhost", headers, b"hello")
 
         await endpoint._handle_datagram(request, ("127.0.0.2", 5060))
+        await endpoint._handle_datagram(request, ("127.0.0.2", 5060))
 
         self.assertEqual(received, [("hello", ("127.0.0.2", 5060), "UDP")])
         self.assertEqual(sip.parse_message(sent[-1]).status_code, 200)
@@ -3261,6 +3264,79 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         await endpoint._handle_datagram(oversized, ("127.0.0.2", 5060))
         self.assertEqual(sip.parse_message(sent[-1]).status_code, 513)
         self.assertEqual(len(received), 1)
+
+    async def test_subscribe_response_precedes_owned_notify_transaction(self) -> None:
+        sent: list[bytes] = []
+
+        async def on_invite(_invite):
+            raise AssertionError("not used")
+
+        async def on_request(request, _addr, _transport, _send_follow_up):
+            self.assertEqual(request.method, "SUBSCRIBE")
+            return sip_listener.SipRequestResult(
+                headers=(("Expires", "300"),),
+                to_tag="server-tag",
+                follow_up=sip_listener.SipFollowUpRequest(
+                    method="NOTIFY",
+                    headers=(
+                        ("Event", "presence"),
+                        ("Subscription-State", "active;expires=300"),
+                    ),
+                    body=b"<presence/>",
+                    content_type="application/pidf+xml",
+                ),
+            )
+
+        endpoint = sip_listener.SipUdpEndpoint(
+            local_ip="127.0.0.1",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
+            on_invite=on_invite,
+            on_request=on_request,
+            send_override=lambda raw, _addr: not sent.append(raw),
+        )
+        subscribe = sip.build_request(
+            "SUBSCRIBE",
+            "sip:alice@localhost",
+            [
+                ("Via", "SIP/2.0/UDP 127.0.0.2:5060;branch=z9hG4bKsubscribe"),
+                ("From", "<sip:bob@localhost>;tag=subscriber"),
+                ("To", "<sip:alice@localhost>"),
+                ("Contact", "<sip:bob@127.0.0.2:5060>"),
+                ("Call-ID", "subscribe-call"),
+                ("CSeq", "1 SUBSCRIBE"),
+                ("Event", "presence"),
+                ("Expires", "300"),
+            ],
+        )
+
+        await endpoint._handle_datagram(subscribe, ("127.0.0.2", 5060))
+        for _ in range(100):
+            parsed = [sip.parse_message(raw) for raw in sent]
+            notify = next((item for item in parsed if item.method == "NOTIFY"), None)
+            if notify is not None:
+                break
+            await asyncio.sleep(0)
+        else:
+            self.fail("NOTIFY was not sent")
+
+        self.assertEqual(parsed[0].status_code, 200)
+        self.assertEqual(sip.extract_tag(parsed[0].header("To")), "server-tag")
+        self.assertEqual(notify.header("Subscription-State"), "active;expires=300")
+        response_headers = [
+            *(('Via', value) for value in notify.header_values("Via")),
+            ("From", notify.header("From")),
+            ("To", notify.header("To")),
+            ("Call-ID", notify.header("Call-ID")),
+            ("CSeq", notify.header("CSeq")),
+        ]
+        await endpoint._handle_datagram(
+            sip.build_response(200, "OK", response_headers),
+            ("127.0.0.2", 5060),
+        )
+        await endpoint.wait_closed()
+        self.assertFalse(endpoint._maintenance_tasks)
 
     async def test_udp_endpoint_caps_concurrent_handler_tasks(self) -> None:
         async def on_invite(_invite):

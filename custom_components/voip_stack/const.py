@@ -5,6 +5,7 @@ from pathlib import Path
 
 DOMAIN = "voip_stack"
 EVENT_SIP_MESSAGE = f"{DOMAIN}_sip_message"
+EVENT_SIP_PRESENCE = f"{DOMAIN}_sip_presence"
 SIP_CALL_ENDED_EVENT = "voip_stack.call_ended"
 CONF_ASSIST_INTENTS = "assist_intents"
 CONF_ASSIST_ENDPOINT_ENABLED = "assist_endpoint_enabled"

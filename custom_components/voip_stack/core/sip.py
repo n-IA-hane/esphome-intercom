@@ -29,20 +29,17 @@ SUPPORTED_METHODS = frozenset(
         "INFO",
         "MESSAGE",
         "OPTIONS",
+        "PUBLISH",
         "PRACK",
         "REFER",
         "REGISTER",
+        "SUBSCRIBE",
         "NOTIFY",
         "UPDATE",
     }
 )
 SUPPORTED_OPTION_TAGS = frozenset({"100rel", "from-change", "replaces", "timer"})
-KNOWN_UNSUPPORTED_METHODS = frozenset(
-    {
-        "PUBLISH",
-        "SUBSCRIBE",
-    }
-)
+KNOWN_UNSUPPORTED_METHODS = frozenset()
 _TOKEN_SEPARATORS = set("()<>@,;:\\\"/[]?={} \t")
 _QUOTED_STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"')
 _TAG_RE = re.compile(r"(?:^|;)tag=([^;>\s]+)", re.IGNORECASE)
