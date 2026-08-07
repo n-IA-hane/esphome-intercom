@@ -43,6 +43,8 @@ class EndpointTerminationHandler:
 
         artifacts = call_runtime_artifacts(self.hass)
         registry = call_registry(self.hass)
+        if artifacts.artifact(call_id, "trunk_info_queue") is not None:
+            artifacts.set_artifact(call_id, "trunk_closed", True)
         if not registry.begin_termination(call_id, reason):
             _LOGGER.debug(
                 "Ignoring duplicate SIP termination call_id=%s reason=%s",
@@ -50,16 +52,12 @@ class EndpointTerminationHandler:
                 reason,
             )
             return
-        forward_task = artifacts.forward_tasks.get(call_id)
+        forward_task = artifacts.task_for(call_id, "forward")
         if forward_task is not None and forward_task is not asyncio.current_task():
             forward_task.cancel()
             await asyncio.gather(forward_task, return_exceptions=True)
-        artifacts.trunk_info_queues.pop(call_id, None)
+        artifacts.take_artifact(call_id, "trunk_info_queue")
         route = take_pending_route(self.hass, call_id)
-        closed_calls = artifacts.trunk_closed_calls
-        if len(closed_calls) >= 256:
-            closed_calls.pop()
-        closed_calls.add(call_id)
         if route is not None:
             future = route.get("future")
             if future is not None and not future.done():

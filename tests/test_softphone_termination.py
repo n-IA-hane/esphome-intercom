@@ -101,7 +101,7 @@ def termination(monkeypatch):
 
 def test_pending_ring_group_hangup_cancels_only_its_leg(termination) -> None:
     hass = SimpleNamespace(
-        data={}, artifacts=SimpleNamespace(forward_tasks={})
+        data={}, artifacts=SimpleNamespace(task_for=lambda call_id, name: None)
     )
     future = Mock()
     future.done.return_value = False
@@ -131,7 +131,7 @@ def test_pending_ring_group_hangup_cancels_only_its_leg(termination) -> None:
 
 def test_bridge_projection_is_scoped_to_matching_softphone(termination) -> None:
     hass = SimpleNamespace(
-        data={}, artifacts=SimpleNamespace(forward_tasks={})
+        data={}, artifacts=SimpleNamespace(task_for=lambda call_id, name: None)
     )
     termination._ha_softphone_store = Mock(
         return_value={
@@ -185,7 +185,7 @@ def test_bridge_projection_is_scoped_to_matching_softphone(termination) -> None:
 
 def test_bridge_projection_does_not_overwrite_another_active_call(termination) -> None:
     hass = SimpleNamespace(
-        data={}, artifacts=SimpleNamespace(forward_tasks={})
+        data={}, artifacts=SimpleNamespace(task_for=lambda call_id, name: None)
     )
     termination._ha_softphone_store = Mock(return_value={})
     termination._sip_bridge_store = Mock(
@@ -212,7 +212,7 @@ def test_bridge_projection_does_not_overwrite_another_active_call(termination) -
 
 def test_remote_bridge_bye_publishes_remote_terminal_reason(termination) -> None:
     hass = SimpleNamespace(
-        data={}, artifacts=SimpleNamespace(forward_tasks={})
+        data={}, artifacts=SimpleNamespace(task_for=lambda call_id, name: None)
     )
     termination._ha_softphone_store = Mock(return_value={})
     termination._sip_bridge_store = Mock(

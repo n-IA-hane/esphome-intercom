@@ -33,9 +33,11 @@ def _runtime() -> trunk_inbound_router.TrunkInboundRuntime:
 async def test_source_bye_before_routing_releases_only_reserved_media(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    stored = {"trunk_closed": True, "trunk_info_queue": object()}
     artifacts = SimpleNamespace(
-        trunk_closed_calls={"call-1"},
-        trunk_info_queues={"call-1": object()},
+        artifact=lambda call_id, name: stored.get(name),
+        set_artifact=lambda call_id, name, value: not stored.__setitem__(name, value),
+        take_artifact=lambda call_id, name: stored.pop(name, None),
     )
     registry = Mock()
     ports = SimpleNamespace(ports=(40000, 40002), release=Mock())
@@ -83,7 +85,6 @@ async def test_source_bye_before_routing_releases_only_reserved_media(
     )
 
     ports.release.assert_called_once_with()
-    assert artifacts.trunk_closed_calls == set()
-    assert artifacts.trunk_info_queues == {}
+    assert stored == {}
     route.assert_not_called()
     registry.take_pending_invite.assert_not_called()

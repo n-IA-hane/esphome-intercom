@@ -81,12 +81,12 @@ def runtime_resource_snapshot(
             if isinstance(identity_locks, dict)
             else 0,
             "allocated_rtp_ports": len(used_ports),
-            "forward_tasks": _active_task_count(
-                getattr(call_artifacts, "forward_tasks", {})
-            ),
-            "call_deadlines": _active_task_count(
-                getattr(call_artifacts, "deadlines", {})
-            ),
+            "forward_tasks": call_artifacts.named_task_count("forward")
+            if call_artifacts is not None
+            else 0,
+            "call_deadlines": call_artifacts.named_task_count("deadline")
+            if call_artifacts is not None
+            else 0,
             "runtime_tasks": _active_task_count(runtime_tasks),
             "video_transcoders": int(
                 browser_media is not None and browser_media.transcoder is not None

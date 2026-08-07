@@ -44,6 +44,25 @@ class _Registry:
         return self.context if call_id == "call-1" else None
 
 
+class _Artifacts:
+    def __init__(self) -> None:
+        self.tasks: dict[str, asyncio.Task] = {}
+
+    def task_for(self, _call_id: str, name: str):
+        return self.tasks.get(name)
+
+    def cancel_task(self, _call_id: str, name: str):
+        task = self.tasks.pop(name, None)
+        if task is not None and not task.done():
+            task.cancel()
+        return task
+
+    def replace_task(self, _call_id: str, task: asyncio.Task, *, name: str) -> bool:
+        current = self.cancel_task(_call_id, name)
+        self.tasks[name] = task
+        return current is not task
+
+
 def _load_deadlines(registry: _Registry, events: list[tuple[dict, str]], artifacts):
     if "custom_components" not in sys.modules:
         root = types.ModuleType("custom_components")
@@ -111,7 +130,7 @@ class CallDeadlineRuntimeTest(unittest.IsolatedAsyncioTestCase):
     async def test_unchanged_call_fires_one_scoped_timeout_event(self) -> None:
         registry = _Registry()
         events: list[tuple[dict, str]] = []
-        artifacts = types.SimpleNamespace(deadlines={})
+        artifacts = _Artifacts()
         deadlines = _load_deadlines(registry, events, artifacts)
         hass = types.SimpleNamespace(data={})
 
@@ -125,7 +144,8 @@ class CallDeadlineRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 "expected_sequence": 4,
             },
         )
-        task = artifacts.deadlines["call-1"]
+        task = artifacts.task_for("call-1", "deadline")
+        self.assertIsNotNone(task)
         await task
 
         self.assertEqual(len(events), 1)
@@ -134,12 +154,11 @@ class CallDeadlineRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["event_type"], "ringing_timeout_requested")
         self.assertEqual(payload["scope"], "automation_deadline")
         self.assertEqual(payload["armed_sequence"], 4)
-        self.assertEqual(artifacts.deadlines, {})
 
     async def test_state_or_sequence_change_suppresses_stale_timeout(self) -> None:
         registry = _Registry()
         events: list[tuple[dict, str]] = []
-        artifacts = types.SimpleNamespace(deadlines={})
+        artifacts = _Artifacts()
         deadlines = _load_deadlines(registry, events, artifacts)
         hass = types.SimpleNamespace(data={})
 
@@ -151,17 +170,17 @@ class CallDeadlineRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 "timeout": 0.01,
             },
         )
-        task = artifacts.deadlines["call-1"]
+        task = artifacts.task_for("call-1", "deadline")
+        self.assertIsNotNone(task)
         registry.context = _Context("in_call", 5)
         await task
 
         self.assertEqual(events, [])
-        self.assertEqual(artifacts.deadlines, {})
 
     async def test_replacing_deadline_cancels_previous_owned_task(self) -> None:
         registry = _Registry()
         events: list[tuple[dict, str]] = []
-        artifacts = types.SimpleNamespace(deadlines={})
+        artifacts = _Artifacts()
         deadlines = _load_deadlines(registry, events, artifacts)
         hass = types.SimpleNamespace(data={})
 
@@ -169,12 +188,14 @@ class CallDeadlineRuntimeTest(unittest.IsolatedAsyncioTestCase):
             hass,
             {"call_id": "call-1", "phase": "ringing", "timeout": 10},
         )
-        previous = artifacts.deadlines["call-1"]
+        previous = artifacts.task_for("call-1", "deadline")
+        self.assertIsNotNone(previous)
         await deadlines.async_set_call_deadline(
             hass,
             {"call_id": "call-1", "phase": "ringing", "timeout": 0},
         )
-        current = artifacts.deadlines["call-1"]
+        current = artifacts.task_for("call-1", "deadline")
+        self.assertIsNotNone(current)
         with self.assertRaises(asyncio.CancelledError):
             await previous
         await current
@@ -185,7 +206,7 @@ class CallDeadlineRuntimeTest(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_or_wrong_phase_call_is_rejected(self) -> None:
         registry = _Registry(state="in_call")
         events: list[tuple[dict, str]] = []
-        artifacts = types.SimpleNamespace(deadlines={})
+        artifacts = _Artifacts()
         deadlines = _load_deadlines(registry, events, artifacts)
         hass = types.SimpleNamespace(data={})
 

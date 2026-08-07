@@ -220,7 +220,7 @@ def test_config_entry_diagnostics_are_bounded_and_private(monkeypatch) -> None:
         calls=_CallRegistry(),
         endpoint=_SipEndpoint(),
         trunk=_Trunk(),
-        sip=SimpleNamespace(forward_tasks={}, deadlines={}),
+        sip=SimpleNamespace(named_task_count=lambda name: 0),
         rtp_port_pool={"used": {40000, 40002}},
         media=_media(active=True),
     )

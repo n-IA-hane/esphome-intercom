@@ -401,8 +401,7 @@ async def route_sip_bridge(
         )
 
     artifacts = call_runtime_artifacts(hass)
-    if invite.call_id in artifacts.trunk_closed_calls:
-        artifacts.trunk_closed_calls.discard(invite.call_id)
+    if artifacts.take_artifact(invite.call_id, "trunk_closed"):
         _LOGGER.info(
             "SIP bridge invite completed after caller cancelled call_id=%s; closing outbound leg",
             invite.call_id,

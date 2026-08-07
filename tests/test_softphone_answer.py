@@ -119,7 +119,8 @@ def test_ring_group_answer_is_submitted_to_fork_controller(softphone_answer) -> 
     hass = SimpleNamespace(
         data={},
         artifacts=SimpleNamespace(
-            forward_tasks={}, forward_claims=set(), answer_commits=set()
+            task_for=lambda call_id, name: None,
+            artifact=lambda call_id, name: None,
         ),
     )
     call = SimpleNamespace(
@@ -150,7 +151,8 @@ def test_generic_forward_owner_rejects_direct_answer(softphone_answer) -> None:
     hass = SimpleNamespace(
         data={"voip_stack": {}},
         artifacts=SimpleNamespace(
-            forward_tasks={}, forward_claims={"call-1"}, answer_commits=set()
+            task_for=lambda call_id, name: None,
+            artifact=lambda call_id, name: name == "forward_claim",
         ),
     )
     call = SimpleNamespace(data={}, context=object())

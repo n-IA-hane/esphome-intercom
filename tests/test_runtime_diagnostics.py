@@ -62,8 +62,7 @@ class RuntimeDiagnosticsTest(unittest.TestCase):
             browser_media=media,
             rtp_port_pool={"used": {40002, 40004}},
             call_artifacts=SimpleNamespace(
-                forward_tasks={"call-1": _Task(False), "old": _Task(True)},
-                deadlines={"call-1": _Task(False)},
+                named_task_count=lambda name: 1,
             ),
             runtime_tasks={_Task(False), _Task(True)},
         )

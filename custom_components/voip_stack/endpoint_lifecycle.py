@@ -80,11 +80,6 @@ async def _async_stop_sip_endpoint(hass: HomeAssistant) -> None:
 
     await cancel_runtime_tasks(hass)
     if pbx_runtime is not None:
-        pbx_runtime.forward_tasks.clear()
-        pbx_runtime.forward_claims.clear()
-        pbx_runtime.deadlines.clear()
-        pbx_runtime.trunk_info_queues.clear()
-        pbx_runtime.trunk_closed_calls.clear()
         pbx_runtime.forward_call = None
 
     if pbx_runtime is not None:

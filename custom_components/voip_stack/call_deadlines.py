@@ -20,11 +20,9 @@ from .websocket_api import _fire_call_event
 
 def cancel_call_deadline(hass: HomeAssistant, call_id: str) -> None:
     """Cancel an armed deadline, if present."""
-    task = call_runtime_artifacts(hass).deadlines.pop(
-        str(call_id or "").strip(), None
+    call_runtime_artifacts(hass).cancel_task(
+        str(call_id or "").strip(), "deadline"
     )
-    if task is not None and not task.done():
-        task.cancel()
 
 
 async def async_set_call_deadline(hass: HomeAssistant, data: dict) -> None:
@@ -70,36 +68,36 @@ async def async_set_call_deadline(hass: HomeAssistant, data: dict) -> None:
     armed_sequence = context.sequence
 
     async def _wait() -> None:
-        try:
-            await asyncio.sleep(timeout)
-            current = registry.event_context(call_id)
-            if current is None:
-                return
-            if not deadline_is_current(
-                current.state,
-                current.sequence,
-                armed_state=armed_state,
-                armed_sequence=armed_sequence,
-            ):
-                return
-            _fire_call_event(
-                hass,
-                {
-                    "event_type": f"{phase}_timeout_requested",
-                    "state": current.state,
-                    "scope": "automation_deadline",
-                    "call_id": call_id,
-                    "phase": phase,
-                    "timeout": timeout,
-                    "armed_state": armed_state,
-                    "armed_sequence": armed_sequence,
-                },
-                "sip",
-            )
-        finally:
-            deadlines = call_runtime_artifacts(hass).deadlines
-            if deadlines.get(call_id) is asyncio.current_task():
-                deadlines.pop(call_id, None)
+        await asyncio.sleep(timeout)
+        current = registry.event_context(call_id)
+        if current is None:
+            return
+        if not deadline_is_current(
+            current.state,
+            current.sequence,
+            armed_state=armed_state,
+            armed_sequence=armed_sequence,
+        ):
+            return
+        _fire_call_event(
+            hass,
+            {
+                "event_type": f"{phase}_timeout_requested",
+                "state": current.state,
+                "scope": "automation_deadline",
+                "call_id": call_id,
+                "phase": phase,
+                "timeout": timeout,
+                "armed_state": armed_state,
+                "armed_sequence": armed_sequence,
+            },
+            "sip",
+        )
 
     task = create_runtime_task(hass, _wait())
-    call_runtime_artifacts(hass).deadlines[call_id] = task
+    if not call_runtime_artifacts(hass).replace_task(
+        call_id, task, name="deadline"
+    ):
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise ServiceValidationError(f"call_id {call_id} is no longer active")

@@ -181,11 +181,7 @@ class _FakeHass:
                 transcoder=None,
             ),
             call_artifacts=types.SimpleNamespace(
-                forward_tasks={},
-                forward_claims=set(),
-                deadlines={},
-                trunk_info_queues={},
-                trunk_closed_calls=set(),
+                named_task_count=lambda name: 0,
             ),
         )
         if activate_calls:

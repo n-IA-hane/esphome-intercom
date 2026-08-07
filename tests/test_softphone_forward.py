@@ -95,7 +95,10 @@ def _runtime(*, ring_group: bool = False):
     callback = AsyncMock()
     hass = SimpleNamespace(
         data={"voip_stack": {"async_forward_call": callback}},
-        artifacts=SimpleNamespace(forward_tasks={}, forward_call=callback),
+        artifacts=SimpleNamespace(
+            task_for=lambda call_id, name: None,
+            forward_call=callback,
+        ),
     )
     return hass, registry, route, callback
 

@@ -154,13 +154,7 @@ class SipEndpointRuntime(CallRuntimeApi):
         self._endpoint_registry: Any | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
         self.trunk_stop_task: asyncio.Task[Any] | None = None
-        self.forward_tasks: dict[str, asyncio.Task[Any]] = {}
-        self.forward_claims: set[str] = set()
-        self.answer_commits: set[str] = set()
         self.softphone_start_locks: dict[str, asyncio.Lock] = {}
-        self.deadlines: dict[str, asyncio.Task[Any]] = {}
-        self.trunk_info_queues: dict[str, asyncio.Queue[Any]] = {}
-        self.trunk_closed_calls: set[str] = set()
         self.forward_call: Any | None = None
         self.start_ring_group_from_ha: Any | None = None
         self.ring_conference_members_from_ha: Any | None = None
@@ -325,6 +319,60 @@ class SipEndpointRuntime(CallRuntimeApi):
         if session is None or session.phase is SessionPhase.TERMINATED:
             return None
         return session.artifacts.pop(name, None)
+
+    def artifact(self, call_id: str, name: str) -> Any | None:
+        """Return one live generation-owned artifact without detaching it."""
+
+        session = self.get_session(call_id)
+        return session.artifacts.get(name) if session is not None else None
+
+    def task_for(self, call_id: str, name: str) -> asyncio.Task[Any] | None:
+        """Return one task owned by the current call generation."""
+
+        session = self.get_session(call_id)
+        return session.named_tasks.get(name) if session is not None else None
+
+    def cancel_task(self, call_id: str, name: str) -> asyncio.Task[Any] | None:
+        """Cancel and detach one named task from the current generation."""
+
+        session = self.get_session(call_id)
+        task = session.named_tasks.get(name) if session is not None else None
+        if task is None:
+            return None
+        session.release_task(task)
+        if not task.done():
+            task.cancel()
+        return task
+
+    def replace_task(
+        self,
+        call_id: str,
+        task: asyncio.Task[Any],
+        *,
+        name: str,
+    ) -> bool:
+        """Replace one named call task without creating parallel ownership."""
+
+        session = self.get_session(call_id)
+        if session is None or not session.live:
+            return False
+        current = session.named_tasks.get(name)
+        if current is not None and current is not task:
+            session.release_task(current)
+            if not current.done():
+                current.cancel()
+        session.own_task(task, name=name)
+        return True
+
+    def named_task_count(self, name: str) -> int:
+        """Count unfinished tasks with one session-owned role."""
+
+        return sum(
+            1
+            for session in self.calls.values()
+            if (task := session.named_tasks.get(name)) is not None
+            and not task.done()
+        )
 
     def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> None:
         """Attach one destination dialog identity to its source session."""

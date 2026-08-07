@@ -109,6 +109,26 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "already active"):
             runtime.create_session("same")
 
+    async def test_named_call_task_replacement_has_one_authoritative_owner(
+        self,
+    ) -> None:
+        runtime = SipEndpointRuntime()
+        runtime.activate()
+        runtime.create_session("call-1")
+        first = asyncio.create_task(asyncio.sleep(10))
+        second = asyncio.create_task(asyncio.sleep(10))
+
+        self.assertTrue(runtime.replace_task("call-1", first, name="deadline"))
+        self.assertTrue(runtime.replace_task("call-1", second, name="deadline"))
+        await asyncio.sleep(0)
+
+        self.assertTrue(first.cancelled())
+        self.assertIs(runtime.task_for("call-1", "deadline"), second)
+        self.assertEqual(runtime.named_task_count("deadline"), 1)
+
+        await runtime.shutdown()
+        self.assertTrue(second.cancelled())
+
     async def test_stale_termination_cannot_remove_new_generation(self) -> None:
         runtime = SipEndpointRuntime()
         runtime.activate()

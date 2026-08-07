@@ -76,7 +76,9 @@ async def async_forward_browser_call(call: ServiceCall) -> None:
                 f"ring-group route for call_id {selected_call_id} "
                 "did not release ownership"
             ) from err
-        previous = call_runtime_artifacts(hass).forward_tasks.get(selected_call_id)
+        previous = call_runtime_artifacts(hass).task_for(
+            selected_call_id, "forward"
+        )
         if previous is not None and not previous.done():
             await asyncio.gather(previous, return_exceptions=True)
 

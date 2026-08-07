@@ -694,10 +694,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             )
         ]
         self.assertIn(
-            "invite.call_id in artifacts.trunk_closed_calls", bridge_path
-        )
-        self.assertIn(
-            "artifacts.trunk_closed_calls.discard(invite.call_id)", bridge_path
+            'artifacts.take_artifact(invite.call_id, "trunk_closed")',
+            bridge_path,
         )
         self.assertIn(
             "await async_close_client_and_release(client, bridge_ports, bye=True)",
@@ -1119,15 +1117,18 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("DtmfCollector(", self.trunk_dtmf)
         self.assertIn("asyncio.FIRST_COMPLETED", self.trunk_dtmf)
         after_collect = trunk_route.split(
-            "artifacts.trunk_info_queues.pop(invite.call_id, None)",
+            'artifacts.take_artifact(invite.call_id, "trunk_info_queue")',
             1,
         )[1]
-        self.assertIn("invite.call_id in artifacts.trunk_closed_calls", after_collect)
+        self.assertIn(
+            'artifacts.take_artifact(invite.call_id, "trunk_closed")',
+            after_collect,
+        )
         self.assertIn("bridge_ports.release()", after_collect)
         self.assertIn("remote_host=invite.remote_rtp_host", self.trunk_dtmf)
         preanswer = self.inbound_trunk
         self.assertIn(
-            "artifacts.trunk_closed_calls.discard(invite.call_id)",
+            'artifacts.take_artifact(invite.call_id, "trunk_closed")',
             preanswer,
         )
         task_prelude = trunk_route.split(
@@ -1183,7 +1184,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn('"answer",', forward)
         browser_answer = forward[
             forward.index('"answer",') : forward.index(
-                "answer_commits.discard(call_id)", forward.index('"answer",')
+                'artifacts.take_artifact(call_id, "answer_commit")',
+                forward.index('"answer",'),
             )
         ]
         self.assertIn('"device_id": winner.device_id', browser_answer)
@@ -1712,7 +1714,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_dtmf_cancellation_precedes_automation_window(self) -> None:
         runner = self.trunk_inbound_router
         cancellation = runner.index(
-            "if invite.call_id in artifacts.trunk_closed_calls:"
+            'if artifacts.take_artifact(invite.call_id, "trunk_closed"):'
         )
         automation = runner.index(
             "if not digits and configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED):"

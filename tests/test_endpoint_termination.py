@@ -69,6 +69,7 @@ class _Registry:
 
 
 def _hass(registry: _Registry):
+    stored = {}
     return SimpleNamespace(
         data={"voip_stack": {}},
         registry=registry,
@@ -78,9 +79,12 @@ def _hass(registry: _Registry):
         events=[],
         softphone_stores={},
         artifacts=SimpleNamespace(
-            forward_tasks={},
-            trunk_info_queues={},
-            trunk_closed_calls=set(),
+            artifact=lambda call_id, name: stored.get((call_id, name)),
+            task_for=lambda call_id, name: None,
+            set_artifact=lambda call_id, name, value: not stored.__setitem__(
+                (call_id, name), value
+            ),
+            take_artifact=lambda call_id, name: stored.pop((call_id, name), None),
         ),
     )
 

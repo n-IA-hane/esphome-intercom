@@ -124,9 +124,10 @@ async def test_forward_rejects_concurrent_owner_without_replacing_it(
 ) -> None:
     registry = _registry(invite=object(), state="ringing")
     owner = asyncio.create_task(asyncio.sleep(10))
+    stored = {"forward": owner}
     artifacts = SimpleNamespace(
-        forward_tasks={"call-1": owner},
-        forward_claims=set(),
+        task_for=lambda call_id, name: stored.get(name),
+        artifact=lambda call_id, name: None,
     )
     monkeypatch.setattr(call_forwarder, "_call_registry", lambda _hass: registry)
     monkeypatch.setattr(
@@ -141,7 +142,7 @@ async def test_forward_rejects_concurrent_owner_without_replacing_it(
                 _runtime(), call_id="call-1", destination="Test"
             )
         assert not owner.cancelled()
-        assert artifacts.forward_tasks["call-1"] is owner
+        assert stored["forward"] is owner
     finally:
         owner.cancel()
         await asyncio.gather(owner, return_exceptions=True)

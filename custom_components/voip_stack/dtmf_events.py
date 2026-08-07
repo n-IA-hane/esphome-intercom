@@ -34,7 +34,7 @@ async def handle_sip_info(
         )
         return
     call_id = request.header("Call-ID")
-    queue = call_runtime_artifacts(hass).trunk_info_queues.get(call_id)
+    queue = call_runtime_artifacts(hass).artifact(call_id, "trunk_info_queue")
     if queue is None:
         registry = call_registry(hass)
         relay = registry.relays.get(call_id)

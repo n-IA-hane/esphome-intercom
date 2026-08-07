@@ -144,7 +144,7 @@ async def async_hangup_browser_call(
             raise ServiceValidationError(str(err)) from err
         return
 
-    forward_task = call_runtime_artifacts(hass).forward_tasks.get(call_id)
+    forward_task = call_runtime_artifacts(hass).task_for(call_id, "forward")
     if forward_task is not None and not forward_task.done():
         forward_task.cancel()
         await asyncio.gather(forward_task, return_exceptions=True)
