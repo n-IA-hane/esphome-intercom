@@ -75,6 +75,9 @@ class MipiDsi final : public display::Display {
   void fill(Color color) override;
   int get_width() override;
   int get_height() override;
+  uint8_t *get_frame_buffer() const { return this->frame_buffer_; }
+  size_t get_frame_buffer_size() const { return this->frame_buffer_size_; }
+  bool present_frame_buffer_region(int x, int y, int width, int height);
 
   void dump_config() override;
 
@@ -108,6 +111,8 @@ class MipiDsi final : public display::Display {
   esp_lcd_panel_handle_t handle_{};
   esp_lcd_dsi_bus_handle_t bus_handle_{};
   esp_lcd_panel_io_handle_t io_handle_{};
+  uint8_t *frame_buffer_{nullptr};
+  size_t frame_buffer_size_{0};
   SemaphoreHandle_t io_lock_{};
   StaticSemaphore_t io_lock_storage_{};
   uint8_t *buffer_{nullptr};

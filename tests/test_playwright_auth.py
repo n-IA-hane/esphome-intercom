@@ -104,6 +104,19 @@ def test_probe_detects_oauth_redirect(url: str, expected: bool) -> None:
     assert probe._is_ha_auth_url(url) is expected
 
 
+def test_probe_can_use_a_deterministic_video_capture(tmp_path: Path) -> None:
+    video = tmp_path / "complex source.y4m"
+    video.touch()
+
+    assert probe._fake_media_args() == [
+        "--use-fake-ui-for-media-stream",
+        "--use-fake-device-for-media-stream",
+    ]
+    assert probe._fake_media_args(video)[-1] == (
+        f"--use-file-for-fake-video-capture={video.resolve()}"
+    )
+
+
 def test_revoked_refresh_falls_back_to_login_flow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

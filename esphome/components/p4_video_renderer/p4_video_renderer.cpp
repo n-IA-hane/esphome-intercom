@@ -1,4 +1,7 @@
 #include "p4_video_renderer.h"
+#ifdef USE_P4_VIDEO_RENDERER_H264
+#include "video_workload.h"
+#endif
 
 #if defined(USE_ESP_IDF) && defined(USE_ESPHOME_VOIP_STACK_VIDEO)
 
@@ -17,6 +20,7 @@ static const char *const TAG = "p4_video_renderer";
 
 namespace {
 
+#ifdef USE_P4_VIDEO_RENDERER_JPEG
 void *alloc_surface(size_t bytes, size_t reserve_after) {
   const size_t free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
   const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
@@ -25,6 +29,7 @@ void *alloc_surface(size_t bytes, size_t reserve_after) {
   return heap_caps_aligned_alloc(
       64, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
 }
+#endif
 
 #ifdef USE_P4_VIDEO_RENDERER_H264
 void *alloc_psram_dma(size_t bytes) {
@@ -246,7 +251,7 @@ void P4VideoRenderer::dump_config() {
   ESP_LOGCONFIG(TAG, "  Decode admission: <= %ux%u and <= %u macroblocks",
                 this->max_decode_width_, this->max_decode_height_,
                 static_cast<unsigned>(kH264Level30MaxMacroblocks));
-  const size_t surface_bytes = 2 * kH264SurfaceBytes;
+  const size_t surface_bytes = 0;
   const size_t access_unit_bytes =
       kH264AccessUnitQueueDepth * kMaxAccessUnitBytes;
   const size_t optimized_yuv_bytes = this->h264_optimized_yuv_bytes_();
@@ -496,11 +501,8 @@ bool P4VideoRenderer::present_surface_direct_(int index) {
     return false;
   }
   this->front_surface_.store(index, std::memory_order_release);
-  this->direct_display_->draw_pixels_at(
-      native_x, native_y, output_width, output_height,
-      this->surfaces_[index], display::COLOR_ORDER_RGB,
-      display::COLOR_BITNESS_565, false);
-  return true;
+  return this->direct_mipi_display_->present_frame_buffer_region(
+      native_x, native_y, output_width, output_height);
 #else
   if (index < 0 || index > 1 || this->direct_display_ == nullptr ||
       this->direct_display_ppa_ == nullptr ||
@@ -747,10 +749,8 @@ bool P4VideoRenderer::allocate_session_resources_() {
   }
 #endif
 
-  // Secure codec working memory before the two display surfaces. Once
-  // allocated, keep these inert buffers across calls: alternating them with
-  // esp_video's MMAP queues fragments the few large contiguous PSRAM extents
-  // even though no session exceeds the first-call peak.
+  // Secure codec working memory before display storage. Keep owned buffers
+  // across calls so they do not fragment esp_video's MMAP allocations.
 #ifdef USE_P4_VIDEO_RENDERER_JPEG
   // Decode directly into the non-front LVGL surface. A separate full-screen
   // PPA target made a 400x400 call invalidate 1280x720 pixels and throttled
@@ -774,10 +774,20 @@ bool P4VideoRenderer::allocate_session_resources_() {
     this->free_unpublished_surfaces_();
     return false;
   }
-  const size_t surface_bytes = kH264SurfaceBytes;
+  uint8_t *frame_buffer = this->direct_mipi_display_->get_frame_buffer();
+  const size_t surface_bytes =
+      this->direct_mipi_display_->get_frame_buffer_size();
+  if (frame_buffer == nullptr || surface_bytes == 0) {
+    this->free_codec_resources_();
+    return false;
+  }
+  this->surfaces_[0] = frame_buffer;
+  this->surfaces_[1] = frame_buffer;
+  this->surfaces_borrowed_ = true;
 #endif
 
   this->surface_capacity_bytes_ = surface_bytes;
+#ifndef USE_P4_VIDEO_RENDERER_H264
   for (size_t index = 0; index < 2; index++) {
     if (this->surfaces_[index] != nullptr)
       continue;
@@ -801,6 +811,7 @@ bool P4VideoRenderer::allocate_session_resources_() {
     this->surface_native_size_[index] = 0;
 #endif
   }
+#endif
   return true;
 }
 
@@ -1148,6 +1159,7 @@ bool P4VideoRenderer::decode_h264_access_unit_(const uint8_t *data, size_t size,
                                                bool key_frame,
                                                uint32_t session_generation,
                                                uint32_t loss_generation) {
+  p4_video_workload::Guard video_workload;
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   const uint32_t au_started_us = micros();
 #endif
@@ -1633,9 +1645,13 @@ bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
   config.in.yuv_range = PPA_COLOR_RANGE_LIMIT;
   config.in.yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601;
   config.out.buffer = this->surfaces_[output_index];
-  config.out.buffer_size = kH264SurfaceBytes;
-  config.out.pic_w = geometry.surface_width;
-  config.out.pic_h = geometry.surface_height;
+  config.out.buffer_size = this->surface_capacity_bytes_;
+  config.out.pic_w = static_cast<uint32_t>(
+      this->direct_mipi_display_->get_native_width());
+  config.out.pic_h = static_cast<uint32_t>(
+      this->direct_mipi_display_->get_native_height());
+  config.out.block_offset_x = geometry.native_x;
+  config.out.block_offset_y = geometry.native_y;
   config.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
   config.rotation_angle = rotation;
   const float scale =
@@ -1785,6 +1801,13 @@ void P4VideoRenderer::free_codec_resources_() {
 void P4VideoRenderer::free_unpublished_surfaces_() {
   if (this->surface_ever_presented_.load(std::memory_order_acquire))
     return;
+  if (this->surfaces_borrowed_) {
+    this->surfaces_[0] = nullptr;
+    this->surfaces_[1] = nullptr;
+    this->surfaces_borrowed_ = false;
+    this->surface_capacity_bytes_ = 0;
+    return;
+  }
   for (size_t index = 0; index < 2; index++) {
     if (this->surfaces_[index] != nullptr)
       heap_caps_free(this->surfaces_[index]);

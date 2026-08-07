@@ -21,6 +21,9 @@
 #include "esp_h264_dec_sw.h"
 #include "esp_imgfx_color_convert.h"
 #endif
+#ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
+#include "esphome/components/mipi_dsi/mipi_dsi.h"
+#endif
 #include "lvgl.h"
 
 #include <atomic>
@@ -63,8 +66,11 @@ public:
     this->max_decode_height_ = value;
   }
 #ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
-  void set_direct_display(display::Display *value) {
+  void set_direct_display(mipi_dsi::MipiDsi *value) {
     this->direct_display_ = value;
+#ifdef USE_P4_VIDEO_RENDERER_H264
+    this->direct_mipi_display_ = value;
+#endif
   }
   void set_display_rotation(uint16_t value) {
     this->display_rotation_ = value;
@@ -94,10 +100,6 @@ protected:
   // decoder. This remains below the former 1.5 MiB fixed-slot allocation and
   // keeps every allocation outside the hot path.
   static constexpr size_t kMaxAccessUnitBytes = 128 * 1024;
-  static constexpr uint16_t kH264SurfaceWidth = 1280;
-  static constexpr uint16_t kH264SurfaceHeight = 720;
-  static constexpr size_t kH264SurfaceBytes =
-      static_cast<size_t>(kH264SurfaceWidth) * kH264SurfaceHeight * 2;
   static constexpr size_t kH264AccessUnitQueueDepth = 8;
 #else
   // RFC 2435 frames are independent and can be substantially larger.
@@ -222,6 +224,7 @@ protected:
   display::Display *direct_display_{nullptr};
   uint16_t display_rotation_{0};
 #ifdef USE_P4_VIDEO_RENDERER_H264
+  mipi_dsi::MipiDsi *direct_mipi_display_{nullptr};
   std::atomic<uint64_t> direct_layout_area_{0};
   std::atomic<uint32_t> direct_layout_native_size_{0};
 #endif
@@ -248,6 +251,7 @@ protected:
 #endif
 #endif
   uint8_t *surfaces_[2]{nullptr, nullptr};
+  bool surfaces_borrowed_{false};
   size_t surface_capacity_bytes_{0};
   size_t surface_data_size_[2]{0, 0};
   uint16_t surface_stride_bytes_[2]{0, 0};

@@ -97,6 +97,18 @@ def _is_ha_auth_url(value: str) -> bool:
     path = urlsplit(value).path.rstrip("/")
     return path.startswith("/auth/") or path == "/auth"
 
+
+def _fake_media_args(video_file: Path | None = None) -> list[str]:
+    """Build deterministic Chromium media arguments for qualification."""
+
+    args = [
+        "--use-fake-ui-for-media-stream",
+        "--use-fake-device-for-media-stream",
+    ]
+    if video_file is not None:
+        args.append(f"--use-file-for-fake-video-capture={video_file.resolve()}")
+    return args
+
 DEEP_CARD = r"""
 () => {
   const deep = (selector, root = document) => {
@@ -629,6 +641,11 @@ def main() -> int:
         help="enable the card's Send Camera checkbox after the dialog connects",
     )
     parser.add_argument(
+        "--fake-video-file",
+        type=Path,
+        help="optional Y4M file used as Chromium's deterministic camera source",
+    )
+    parser.add_argument(
         "--deny-camera",
         action="store_true",
         help=(
@@ -715,6 +732,13 @@ def main() -> int:
         parser.error("--cancel-during-ring requires --outbound")
     if args.deny_camera:
         args.send_camera = True
+    if args.fake_video_file:
+        args.fake_video_file = args.fake_video_file.expanduser()
+        if not args.fake_video_file.is_file():
+            parser.error(f"fake video file does not exist: {args.fake_video_file}")
+        if args.fake_video_file.suffix.lower() != ".y4m":
+            parser.error("--fake-video-file requires a Y4M input")
+        args.send_camera = True
     storage_state = (
         Path(args.storage_state).expanduser() if args.storage_state else None
     )
@@ -779,8 +803,7 @@ def main() -> int:
         launch_options = {
             "headless": True,
             "args": [
-                "--use-fake-ui-for-media-stream",
-                "--use-fake-device-for-media-stream",
+                *_fake_media_args(args.fake_video_file),
                 "--autoplay-policy=no-user-gesture-required",
                 f"--unsafely-treat-insecure-origin-as-secure={origin}",
             ],

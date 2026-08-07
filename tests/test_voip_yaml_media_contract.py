@@ -822,14 +822,14 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         in renderer_cpp
     )
     assert "this->compute_h264_surface_geometry_(" in render_i420
-    assert "config.out.pic_w = geometry.surface_width;" in render_i420
-    assert "config.out.pic_h = geometry.surface_height;" in render_i420
+    assert "this->direct_mipi_display_->get_native_width()" in render_i420
+    assert "this->direct_mipi_display_->get_native_height()" in render_i420
     assert "geometry.scale_units" in render_i420
     assert "config.scale_x = scale;" in render_i420
     assert "config.scale_y = scale;" in render_i420
     assert "kH264SurfaceWidth) / width" not in render_i420
-    assert "config.out.block_offset_x =" not in render_i420
-    assert "config.out.block_offset_y =" not in render_i420
+    assert "config.out.block_offset_x = geometry.native_x;" in render_i420
+    assert "config.out.block_offset_y = geometry.native_y;" in render_i420
     assert "memset(this->surfaces_[output_index], 0, kSurfaceBytes)" not in (
         render_i420
     )
@@ -847,6 +847,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "expected_bytes > this->surface_capacity_bytes_" in direct_present
     assert "this->surface_content_width_[index]" in direct_present
     assert "this->surface_content_height_[index]" in direct_present
+    assert "present_frame_buffer_region(" in direct_present
     assert "const int content_width = kH264SurfaceWidth;" not in (
         direct_present
     )
@@ -921,6 +922,8 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         consume_start : source_cpp.index("\n}  // namespace", consume_start)
     ]
     assert "this->init_ppa_()" in source_consume
+    assert "p4_video_workload::Guard video_workload;" in source_consume
+    assert "p4_video_workload::Guard video_workload;" in renderer_cpp
     assert "Unable to register runtime H.264 PPA client" in source_consume
     assert "ppa_rotation_for_clockwise(frame.rotation_degrees)" in source_cpp
     assert "this->h264_optimized_yuv_bytes_()" in renderer_cpp

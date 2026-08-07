@@ -3,7 +3,8 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import automation
-from esphome.components import display, voip_stack
+from esphome.components import voip_stack
+from esphome.components.mipi_dsi import display as mipi_dsi_display
 from esphome.components.esp32 import (
     VARIANT_ESP32P4,
     add_idf_component,
@@ -111,7 +112,7 @@ CONFIG_SCHEMA = cv.All(
             ),
             # JPEG may use LVGL directly. H.264 requires this direct P4 path so
             # decoded surfaces never pass through a second LVGL scaling path.
-            cv.Optional(CONF_DISPLAY_ID): cv.use_id(display.Display),
+            cv.Optional(CONF_DISPLAY_ID): cv.use_id(mipi_dsi_display.MipiDsi),
             cv.Optional(CONF_DISPLAY_ROTATION, default=0): cv.one_of(
                 0, 90, 180, 270, int=True
             ),

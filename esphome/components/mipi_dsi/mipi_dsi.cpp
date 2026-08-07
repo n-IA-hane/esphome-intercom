@@ -98,6 +98,16 @@ void MipiDsi::setup() {
     this->smark_failed(LOG_STR("esp_lcd_new_panel_dpi failed"), err);
     return;
   }
+  void *frame_buffer = nullptr;
+  err = esp_lcd_dpi_panel_get_frame_buffer(this->handle_, 1, &frame_buffer);
+  if (err != ESP_OK || frame_buffer == nullptr) {
+    this->smark_failed(LOG_STR("esp_lcd_dpi_panel_get_frame_buffer failed"),
+                       err);
+    return;
+  }
+  this->frame_buffer_ = static_cast<uint8_t *>(frame_buffer);
+  this->frame_buffer_size_ =
+      this->width_ * this->height_ * (3 - this->color_depth_);
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
   err = esp_lcd_dpi_panel_enable_dma2d(this->handle_);
   if (err != ESP_OK) {
@@ -280,6 +290,14 @@ bool MipiDsi::submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
   // when the driver rejects the submit.
   xSemaphoreTake(this->io_lock_, portMAX_DELAY);
   return true;
+}
+
+bool MipiDsi::present_frame_buffer_region(int x, int y, int width,
+                                          int height) {
+  if (this->frame_buffer_ == nullptr || width <= 0 || height <= 0)
+    return false;
+  return this->submit_bitmap_(x, y, x + width, y + height,
+                              this->frame_buffer_);
 }
 
 void MipiDsi::write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,
