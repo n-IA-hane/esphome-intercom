@@ -46,6 +46,68 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
         raise AssertionError(f"SIP {method} was not sent")
 
+    def test_client_acks_and_terminates_each_losing_proxy_fork(self) -> None:
+        class Transport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+        client = sip_client.SipCallClient(
+            local_ip="192.0.2.10",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        transport = Transport()
+        client.transport = transport  # type: ignore[assignment]
+        client._pending_remote_host = "192.0.2.20"
+        client._pending_remote_sip_port = 5060
+        client._pending_local_uri = "sip:HA@192.0.2.10:5060"
+        client._pending_remote_uri = "sip:phone@192.0.2.20:5060"
+        client.dialog_ids.remote_tag = "winner"
+        client.dialog = types.SimpleNamespace(
+            remote_host="192.0.2.20",
+            remote_sip_port=5060,
+            remote_target_uri="sip:winner@192.0.2.21:5070",
+            remote_uri=client._pending_remote_uri,
+            local_uri=client._pending_local_uri,
+            route_set=(),
+        )  # type: ignore[assignment]
+        losing = sip.parse_message(
+            sip.build_response(
+                200,
+                "OK",
+                [
+                    (
+                        "Via",
+                        "SIP/2.0/UDP 192.0.2.10:5060;branch="
+                        f"{client.dialog_ids.branch}",
+                    ),
+                    (
+                        "From",
+                        f"<sip:HA@192.0.2.10>;tag={client.dialog_ids.local_tag}",
+                    ),
+                    ("To", "<sip:phone@192.0.2.20>;tag=loser"),
+                    ("Contact", "<sip:loser@192.0.2.22:5080>"),
+                    ("Call-ID", client.dialog_ids.call_id),
+                    ("CSeq", f"{client._invite_cseq} INVITE"),
+                ],
+            )
+        )
+
+        self.assertTrue(client._ack_retransmitted_invite_2xx(losing))
+        self.assertTrue(client._ack_retransmitted_invite_2xx(losing))
+
+        requests = [sip.parse_message(raw) for raw, _addr in transport.sent]
+        self.assertEqual([request.method for request in requests], ["ACK", "BYE", "ACK"])
+        self.assertEqual(
+            [sip.extract_tag(request.header("To")) for request in requests],
+            ["loser", "loser", "loser"],
+        )
+        self.assertEqual(client.dialog_ids.remote_tag, "winner")
+
     async def test_listener_retransmits_reliable_ringing_until_matching_prack(
         self,
     ) -> None:
@@ -362,6 +424,117 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await final_task, "in_call")
         self.assertIsNotNone(client.dialog)
         self.assertEqual(client.dialog.remote_rtp_port, 42000)
+        await client.close()
+
+    async def test_proxy_fork_commits_early_media_by_remote_dialog_tag(self) -> None:
+        sent: list[tuple[bytes, tuple[str, int]]] = []
+        fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        rtp_format = sdp.audio_format_to_rtp(fmt, 96)
+        client = sip_client.SipCallClient(
+            local_ip="192.0.2.10",
+            local_name="Casa",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            supported_formats=[fmt],
+        )
+        client.transport = types.SimpleNamespace(
+            sendto=lambda data, addr: sent.append((data, addr)),
+            close=lambda: None,
+        )
+        invite_task = asyncio.create_task(
+            client.invite(
+                target="group",
+                remote_host="192.0.2.20",
+                remote_sip_port=5060,
+                request_uri="sip:group@192.0.2.20:5060",
+            )
+        )
+        invite = await self._wait_for_sent_request(sent, "INVITE")
+
+        def progress(tag: str, rseq: int, rtp_port: int) -> bytes:
+            answer = sdp.build_answer_directional(
+                "192.0.2.20",
+                "192.0.2.20",
+                rtp_port,
+                rtp_format,
+                rtp_format,
+                remote_sdp=invite.body.decode(),
+            ).encode()
+            return sip.build_response(
+                183,
+                "Session Progress",
+                [
+                    *(('Via', value) for value in invite.header_values("Via")),
+                    ("From", invite.header("From")),
+                    ("To", f"{invite.header('To')};tag={tag}"),
+                    ("Contact", f"<sip:{tag}@192.0.2.20:5060>"),
+                    ("Call-ID", invite.header("Call-ID")),
+                    ("CSeq", invite.header("CSeq")),
+                    ("Require", "100rel"),
+                    ("RSeq", str(rseq)),
+                    ("Content-Type", "application/sdp"),
+                ],
+                answer,
+            )
+
+        async def acknowledge_latest_prack(expected_count: int) -> sip.SipMessage:
+            for _ in range(100):
+                pracks = [
+                    message
+                    for raw, _addr in sent
+                    if (message := sip.parse_message(raw)).method == "PRACK"
+                ]
+                if len(pracks) >= expected_count:
+                    prack = pracks[-1]
+                    client.queue.put_nowait(
+                        (
+                            sip.build_response(
+                                200,
+                                "OK",
+                                [
+                                    *(('Via', value) for value in prack.header_values("Via")),
+                                    ("From", prack.header("From")),
+                                    ("To", prack.header("To")),
+                                    ("Call-ID", prack.header("Call-ID")),
+                                    ("CSeq", prack.header("CSeq")),
+                                ],
+                            ),
+                            ("192.0.2.20", 5060),
+                        )
+                    )
+                    return prack
+                await asyncio.sleep(0)
+            raise AssertionError("expected PRACK was not sent")
+
+        client.queue.put_nowait((progress("branch-a", 101, 42000), ("192.0.2.20", 5060)))
+        await acknowledge_latest_prack(1)
+        self.assertEqual(await asyncio.wait_for(invite_task, timeout=0.2), "ringing")
+
+        final_task = asyncio.create_task(client.wait_for_final(timeout=0.2))
+        client.queue.put_nowait((progress("branch-b", 201, 43000), ("192.0.2.20", 5060)))
+        await acknowledge_latest_prack(2)
+        client.queue.put_nowait(
+            (
+                sip.build_response(
+                    200,
+                    "OK",
+                    [
+                        *(('Via', value) for value in invite.header_values("Via")),
+                        ("From", invite.header("From")),
+                        ("To", f"{invite.header('To')};tag=branch-b"),
+                        ("Contact", "<sip:branch-b@192.0.2.20:5060>"),
+                        ("Call-ID", invite.header("Call-ID")),
+                        ("CSeq", invite.header("CSeq")),
+                    ],
+                ),
+                ("192.0.2.20", 5060),
+            )
+        )
+
+        self.assertEqual(await final_task, "in_call")
+        self.assertEqual(client.dialog_ids.remote_tag, "branch-b")
+        self.assertEqual(client.dialog.remote_tag, "branch-b")
+        self.assertEqual(client.dialog.remote_rtp_port, 43000)
         await client.close()
 
     async def test_listener_rejects_too_short_session_interval_before_routing(
@@ -1735,7 +1908,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(close_task, timeout=1)
 
         self.assertIsNone(client.dialog)
-        self.assertIsNone(client.early_dialog)
+        self.assertFalse(client.early_dialogs)
         self.assertTrue(client._closed)
         self.assertTrue(transport.closed)
         self.assertEqual(

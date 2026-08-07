@@ -216,6 +216,7 @@ class SipDialog:
     remote_uri: str
     send_format: sdp.RtpPcmFormat
     recv_format: sdp.RtpPcmFormat
+    remote_tag: str = ""
     remote_target_uri: str = ""
     route_set: tuple[str, ...] = ()
     dtmf_payload_type: int | None = None
@@ -377,7 +378,8 @@ class SipCallClient:
         self._reliable_rseq: dict[tuple[str, int], int] = {}
         self.dialog_ids = sip.SipDialogIds(call_id=sip.make_call_id("ha"), local_tag=sip.make_tag())
         self.dialog: SipDialog | None = None
-        self.early_dialog: SipDialog | None = None
+        self.early_dialogs: dict[str, SipDialog] = {}
+        self._terminated_invite_branches: set[str] = set()
         self.on_info_dtmf: Callable[[str], None] | None = None
         self.on_media_update: DialogMediaUpdateHandler | None = None
         self.on_connected_identity: Callable[[str, str], None] | None = None
@@ -558,7 +560,8 @@ class SipCallClient:
             await asyncio.gather(*lingering_tasks, return_exceptions=True)
         self._invite_transaction_active = False
         self.dialog = None
-        self.early_dialog = None
+        self.early_dialogs.clear()
+        self._terminated_invite_branches.clear()
         self._reliable_rseq.clear()
         self._deferred_signaling.clear()
 
@@ -755,6 +758,11 @@ class SipCallClient:
             )
         ):
             return False
+        remote_tag = sip.extract_tag(message.header("To"))
+        if not remote_tag:
+            return False
+        if remote_tag != self.dialog_ids.remote_tag:
+            return self._settle_losing_invite_branch(message)
         self._send_ack(
             dialog.remote_host,
             dialog.remote_sip_port,
@@ -762,8 +770,49 @@ class SipCallClient:
             dialog.local_uri,
             dialog.remote_uri,
             route_set=dialog.route_set,
+            remote_tag=remote_tag,
         )
         return True
+
+    def _settle_losing_invite_branch(self, response: sip.SipMessage) -> bool:
+        """ACK one forked 2xx and terminate that non-winning dialog once."""
+
+        remote_tag = sip.extract_tag(response.header("To"))
+        if not remote_tag:
+            return False
+        try:
+            remote_target = (
+                sip.contact_target_uri(response) or self._pending_remote_uri
+            )
+            route_set = sip.record_route_set(response, reverse=True)
+        except (TypeError, ValueError, sip.SipError):
+            return False
+        host, port = self._dialog_next_hop(
+            remote_target,
+            self._pending_remote_host,
+            self._pending_remote_sip_port,
+        )
+        acknowledged = self._send_ack(
+            host,
+            port,
+            remote_target,
+            self._pending_local_uri,
+            self._pending_remote_uri,
+            route_set=route_set,
+            remote_tag=remote_tag,
+        )
+        if remote_tag not in self._terminated_invite_branches:
+            self._terminated_invite_branches.add(remote_tag)
+            self._send_bye_request(
+                host,
+                port,
+                remote_target,
+                self._pending_local_uri,
+                self._pending_remote_uri,
+                route_set=route_set,
+                remote_tag=remote_tag,
+            )
+        return acknowledged
 
     def _send_response_to_request(
         self,
@@ -1342,7 +1391,7 @@ class SipCallClient:
                     return True
                 if rseq != previous + 1:
                     return False
-            current = self.dialog
+            current = self.dialog or self.early_dialogs.get(remote_tag)
             local_uri = current.local_uri if current is not None else self._pending_local_uri
             remote_uri = current.remote_uri if current is not None else self._pending_remote_uri
             remote_target = (
@@ -2972,13 +3021,19 @@ class SipCallClient:
             _LOGGER.info(
                 "SIP 200 OK has invalid Record-Route; using direct dialog routing"
             )
-        if not provisional and not msg.body and self.early_dialog is not None:
-            candidate = self.early_dialog
+        remote_tag = sip.extract_tag(msg.header("To"))
+        if not remote_tag:
+            return False
+        if (
+            not provisional
+            and not msg.body
+            and (candidate := self.early_dialogs.get(remote_tag)) is not None
+        ):
             candidate.remote_target_uri = remote_target_uri
             candidate.route_set = route_set
-            self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
+            self.dialog_ids.remote_tag = remote_tag
             self.dialog = candidate
-            self.early_dialog = None
+            self.early_dialogs.clear()
             return self._send_ack(
                 remote_host,
                 int(remote_sip_port),
@@ -2992,7 +3047,7 @@ class SipCallClient:
             # won the race.  ACK it and immediately end the just-created remote
             # dialog, but never publish that dialog into a closing client.
             if not provisional:
-                self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
+                self.dialog_ids.remote_tag = remote_tag
                 self._send_ack(
                     remote_host,
                     int(remote_sip_port),
@@ -3050,7 +3105,7 @@ class SipCallClient:
                 negotiation_error or "none",
             )
             if not provisional:
-                self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
+                self.dialog_ids.remote_tag = remote_tag
                 self._send_ack(
                     remote_host,
                     int(remote_sip_port),
@@ -3105,7 +3160,7 @@ class SipCallClient:
                     raise sip.SipError("Session-Expires response lacks refresher")
             except sip.SipError:
                 if not provisional:
-                    self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
+                    self.dialog_ids.remote_tag = remote_tag
                     self._send_ack(
                         remote_host,
                         int(remote_sip_port),
@@ -3124,7 +3179,8 @@ class SipCallClient:
                     )
                 return False
         now = asyncio.get_running_loop().time() if session_timer else 0.0
-        self.dialog_ids.remote_tag = sip.extract_tag(msg.header("To"))
+        if not provisional:
+            self.dialog_ids.remote_tag = remote_tag
         candidate = SipDialog(
             target=target,
             remote_host=remote_host,
@@ -3133,6 +3189,7 @@ class SipCallClient:
             remote_rtp_port=int(parsed["media_port"]),
             local_rtp_port=self.local_rtp_port,
             call_id=self.dialog_ids.call_id,
+            remote_tag=remote_tag,
             local_uri=local_uri,
             remote_uri=remote_uri,
             send_format=selected.send,
@@ -3212,10 +3269,10 @@ class SipCallClient:
             ", ".join(sdp.offered_media_descriptions(msg.body)),
         )
         if provisional:
-            self.early_dialog = candidate
+            self.early_dialogs[remote_tag] = candidate
             return True
         self.dialog = candidate
-        self.early_dialog = None
+        self.early_dialogs.clear()
         self._send_ack(
             remote_host,
             int(remote_sip_port),
@@ -3338,6 +3395,7 @@ class SipCallClient:
         remote_uri: str,
         *,
         route_set: tuple[str, ...] = (),
+        remote_tag: str = "",
     ) -> bool:
         if not self._has_signaling_path() or not request_uri or not local_uri or not remote_uri:
             return False
@@ -3349,7 +3407,7 @@ class SipCallClient:
         bye_ids = sip.SipDialogIds(
             call_id=self.dialog_ids.call_id,
             local_tag=self.dialog_ids.local_tag,
-            remote_tag=self.dialog_ids.remote_tag,
+            remote_tag=remote_tag or self.dialog_ids.remote_tag,
             cseq=self._next_dialog_cseq(),
             branch=sip.make_branch(),
         )
