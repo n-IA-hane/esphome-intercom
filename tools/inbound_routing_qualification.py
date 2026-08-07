@@ -840,12 +840,12 @@ def main() -> int:
             sip = caller()
             with EventTrace(api) as trace:
                 started = sip.dial()
-                ringing = wait_call_state(api, "ringing", 10)
+                ringing = wait_call_state(api, "ringing", 15)
                 elapsed = time.monotonic() - started
                 time.sleep(0.15)
             types = trace_types(trace, str(ringing.get("call_id") or ""))
-            if not 1.7 <= elapsed <= 4.5:
-                raise RuntimeError(f"DTMF timeout was {elapsed:.3f}s")
+            if not 9.5 <= elapsed <= 12.5:
+                raise RuntimeError(f"DTMF first-digit timeout was {elapsed:.3f}s")
             if "route_requested" in types:
                 raise RuntimeError(
                     f"disabled automation emitted route request: {types}"
