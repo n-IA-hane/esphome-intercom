@@ -84,6 +84,31 @@ def test_softphone_runner_preserves_explicit_ha_origin() -> None:
     assert completed.stdout.strip() == "http://127.0.0.1:18123"
 
 
+def test_softphone_runner_accepts_an_isolated_inbound_peer() -> None:
+    env = os.environ.copy()
+    env["INBOUND_CALLER_CONFIG"] = "/tmp/isolated-peer"
+    env["INBOUND_TARGET"] = "sip:Casa@127.0.0.1:15060;transport=tcp"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.path.insert(0, 'tools'); import ha_softphone_matrix as m; "
+            "print(m.WILDIX_CONFIG); print(m.INBOUND_TARGET)",
+        ],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=3,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        "/tmp/isolated-peer",
+        "sip:Casa@127.0.0.1:15060;transport=tcp",
+    ]
+
+
 @pytest.mark.parametrize(
     ("module", "attribute", "expected"),
     [

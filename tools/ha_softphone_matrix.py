@@ -35,8 +35,12 @@ os.environ["HA_URL"] = HA_BASE
 AUTOMATION = "automation.voip_ha_non_risponde_inoltra_ad_assist"
 INBOUND_AUTOMATION = "automation.voip_inbound_trunk_to_rg_casa"
 WILDIX_CONFIG = Path(
-    os.environ.get("WILDIX_CONFIG", "/home/codex/.baresip-wildix-426")
+    os.environ.get(
+        "INBOUND_CALLER_CONFIG",
+        os.environ.get("WILDIX_CONFIG", "/home/codex/.baresip-wildix-426"),
+    )
 )
+INBOUND_TARGET = os.environ.get("INBOUND_TARGET", "427")
 LOCAL_CONFIG = Path(
     os.environ.get("LOCAL_BARESIP_CONFIG", "/home/codex/ha-voip-lab/baresip-source")
 )
@@ -82,6 +86,7 @@ async () => {
       video_direction: backend?.video_direction || "inactive",
       video_rtp_tx_packets: Number(backend?.video_rtp_tx_packets || 0),
       video_rtp_rx_packets: Number(backend?.video_rtp_rx_packets || 0),
+      runtime_resources: backend?.runtime_resources || backend?.media_debug?.runtime_resources || {},
       auto_answer: !!backend?.auto_answer,
       send_video: !!backend?.send_video,
     },
@@ -304,8 +309,7 @@ class BareSip:
                 return self.output
             time.sleep(0.05)
         raise RuntimeError(
-            f"bareSIP timeout waiting for {' or '.join(needles)}: "
-            f"{self.output[-2000:]}"
+            f"bareSIP timeout waiting for {' or '.join(needles)}: {self.output[-2000:]}"
         )
 
     def command(self, command: str) -> None:
@@ -434,8 +438,8 @@ def dial_trunk() -> BareSip:
         # collection requires an established dialog.  Both are valid trunk
         # entry paths and must be observed instead of assumed by the runner.
         caller.dial(
-            "427",
-            wait_for=("183 Session Progress", "Call established"),
+            INBOUND_TARGET,
+            wait_for=("180 Ringing", "183 Session Progress", "Call established"),
         )
     except BaseException:
         caller.close()
@@ -456,6 +460,7 @@ def main() -> int:
 
     results: list[dict[str, Any]] = []
     active: list[BareSip] = []
+    page: Any | None = None
     automation_states = {
         entity_id: state == "on"
         for entity_id in (AUTOMATION, INBOUND_AUTOMATION)
@@ -466,29 +471,48 @@ def main() -> int:
         if args.only and name not in args.only:
             return
         started = time.monotonic()
+        detail: dict[str, Any] = {}
+        failure: Exception | None = None
         try:
             detail = run()
-            results.append(
-                {
-                    "name": name,
-                    "status": "pass",
-                    "seconds": round(time.monotonic() - started, 3),
-                    **detail,
-                }
-            )
         except Exception as error:  # noqa: BLE001 - matrix must continue and report every row.
-            results.append(
-                {
-                    "name": name,
-                    "status": "fail",
-                    "seconds": round(time.monotonic() - started, 3),
-                    "error": str(error),
-                }
-            )
+            failure = error
         finally:
             while active:
                 active.pop().close()
-            time.sleep(0.5)
+            cleanup_error: Exception | None = None
+            if page is not None and not page.is_closed():
+                try:
+                    page.evaluate(SET_AUTO_ANSWER, False)
+                    wait_card(
+                        page,
+                        lambda item: (
+                            item["backend"]["state"] == "idle"
+                            and item["card"]["state"] == "idle"
+                            and item["backend"]["runtime_resources"].get(
+                                "call_scoped_quiescent"
+                            )
+                            is True
+                        ),
+                        8,
+                        "post-scenario quiescence",
+                    )
+                except Exception as error:  # noqa: BLE001 - preserve cleanup evidence.
+                    cleanup_error = error
+            record: dict[str, Any] = {
+                "name": name,
+                "status": "pass"
+                if failure is None and cleanup_error is None
+                else "fail",
+                "seconds": round(time.monotonic() - started, 3),
+            }
+            if failure is not None:
+                record["error"] = str(failure)
+            if cleanup_error is not None:
+                record["cleanup_error"] = str(cleanup_error)
+            if failure is None:
+                record.update(detail)
+            results.append(record)
 
     disabled_automations = [
         entity_id
@@ -757,10 +781,8 @@ def main() -> int:
                     page,
                     lambda item: (
                         item["backend"]["state"] in {"calling", "remote_ringing"}
-                        and item["card"]["state"]
-                        == item["backend"]["state"]
-                        and item["backend"]["call_id"]
-                        == item["card"]["call_id"]
+                        and item["card"]["state"] == item["backend"]["state"]
+                        and item["backend"]["call_id"] == item["card"]["call_id"]
                     ),
                     12,
                     "outbound registered SIP ringing",
@@ -851,7 +873,9 @@ def main() -> int:
                 )
                 released = matching(page, "idle")
                 if released["card"]["terminal_reason"] != "forwarded":
-                    raise RuntimeError(f"forward was not exposed as forwarded: {released}")
+                    raise RuntimeError(
+                        f"forward was not exposed as forwarded: {released}"
+                    )
                 deadline = time.monotonic() + 10
                 aggregate = event_state()
                 while time.monotonic() < deadline and not (
@@ -1015,9 +1039,7 @@ def main() -> int:
             restore_data: dict[str, Any] = {"entity_id": entity_id}
             if not was_on:
                 restore_data["stop_actions"] = True
-            service(
-                "automation", "turn_on" if was_on else "turn_off", restore_data
-            )
+            service("automation", "turn_on" if was_on else "turn_off", restore_data)
         for caller in active:
             caller.close()
         for path in TEST_CAPTURE_DIR.glob("dump-sip:*.wav"):
