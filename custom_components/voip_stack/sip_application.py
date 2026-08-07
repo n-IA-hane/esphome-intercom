@@ -322,8 +322,8 @@ class SipApplicationMethods:
 
         task.add_done_callback(_done)
 
-    @staticmethod
     def _cancel_timer(
+        self,
         store: dict[str, asyncio.Task[object]] | None, key: str
     ) -> None:
         if store is None:
@@ -331,6 +331,8 @@ class SipApplicationMethods:
         task = store.pop(key, None)
         if task is not None and task is not asyncio.current_task():
             task.cancel()
+            if self.tasks is not None:
+                self.tasks.discard(task)
 
     async def stop(self) -> None:
         """Cancel application transactions and discard expiring state."""
