@@ -13,8 +13,8 @@ substitutions:
   p4_video_max_decode_height: "800"
 
 packages:
-  base: github://n-IA-hane/esphome-intercom/yamls/voip-only/single-bus/waveshare-p4-touch-videophone-base.yaml@dev
-  video: github://n-IA-hane/esphome-intercom/packages/voip/p4_video_jpeg.yaml@dev
+  base: !include waveshare-p4-touch-videophone-base.yaml
+  video: !include ../../../packages/voip/p4_video_jpeg.yaml
 
 # Keep generated IDF components isolated from the H.264 profile. In
 # particular, the JPEG-only esp_h264 manifest shim must never survive a codec
