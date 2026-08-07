@@ -30,6 +30,16 @@ def _load_tool():
     return module
 
 
+def _load_softphone_tool():
+    spec = importlib.util.spec_from_file_location("ha_softphone_matrix", SOFTPHONE_TOOL)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load softphone qualification runner")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_help_is_side_effect_free_and_returns_immediately() -> None:
     completed = subprocess.run(
         [sys.executable, str(TOOL), "--help"],
@@ -106,6 +116,47 @@ def test_softphone_runner_accepts_an_isolated_inbound_peer() -> None:
     assert completed.stdout.splitlines() == [
         "/tmp/isolated-peer",
         "sip:Casa@127.0.0.1:15060;transport=tcp",
+    ]
+
+
+def test_softphone_runner_selects_dtmf_routed_trunk_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_softphone_tool()
+    events: list[tuple[str, object]] = []
+
+    class Peer:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def dial(self, target, *, wait_for):
+            events.append(("dial", (target, wait_for)))
+
+        def wait_for(self, value, timeout):
+            events.append(("wait", (value, timeout)))
+
+        def digits(self, value):
+            events.append(("digits", value))
+
+        def close(self):
+            events.append(("close", None))
+
+    monkeypatch.setattr(runner, "BareSip", Peer)
+    monkeypatch.setattr(runner, "INBOUND_TARGET", "427")
+    monkeypatch.setattr(runner, "INBOUND_DTMF_TARGET", "666")
+
+    runner.dial_trunk()
+
+    assert events == [
+        (
+            "dial",
+            (
+                "427",
+                ("180 Ringing", "183 Session Progress", "Call established"),
+            ),
+        ),
+        ("wait", ("Call established", 10)),
+        ("digits", "666"),
     ]
 
 

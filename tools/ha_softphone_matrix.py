@@ -41,6 +41,7 @@ WILDIX_CONFIG = Path(
     )
 )
 INBOUND_TARGET = os.environ.get("INBOUND_TARGET", "427")
+INBOUND_DTMF_TARGET = os.environ.get("INBOUND_DTMF_TARGET", "")
 LOCAL_CONFIG = Path(
     os.environ.get("LOCAL_BARESIP_CONFIG", "/home/codex/ha-voip-lab/baresip-source")
 )
@@ -441,6 +442,9 @@ def dial_trunk() -> BareSip:
             INBOUND_TARGET,
             wait_for=("180 Ringing", "183 Session Progress", "Call established"),
         )
+        if INBOUND_DTMF_TARGET:
+            caller.wait_for("Call established", 10)
+            caller.digits(INBOUND_DTMF_TARGET)
     except BaseException:
         caller.close()
         raise
