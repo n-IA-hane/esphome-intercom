@@ -70,6 +70,17 @@ def prepare_trunk_preanswer(
     hass = runtime.hass
     cfg = runtime.config
     local_ip = runtime.local_ip
+    callee = str(trunk_config.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "HA")
+    registry.upsert(
+        invite.call_id,
+        state=CallState.CONNECTING.value,
+        owner="router",
+        caller=invite.caller,
+        callee=callee,
+        route_kind="trunk",
+        ingress="trunk",
+        origin="trunk",
+    )
     artifacts = call_runtime_artifacts(hass).artifacts_for(invite.call_id)
     if artifacts is None:
         return SipInviteResult(487, "Request Terminated", to_tag="")
@@ -113,17 +124,6 @@ def prepare_trunk_preanswer(
         "video_rtcp_socket": video_rtcp_socket,
         "video_failure_reason": video_failure_reason,
     }
-    callee = str(trunk_config.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "HA")
-    registry.upsert(
-        invite.call_id,
-        state=CallState.CONNECTING.value,
-        owner="router",
-        caller=invite.caller,
-        callee=callee,
-        route_kind="trunk",
-        ingress="trunk",
-        origin="trunk",
-    )
     registry.set_pending_invite(invite.call_id, invite)
     registry.attach_media(
         invite.call_id,
