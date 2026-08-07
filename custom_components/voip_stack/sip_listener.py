@@ -195,6 +195,17 @@ class _DialogResponse:
     answer_sdp: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class _PendingDelayedOffer:
+    """Local offer awaiting its answer in the re-INVITE ACK."""
+
+    request: sip.SipMessage
+    addr: tuple[str, int]
+    offer_sdp: str
+    previous_invite: SipInvite
+    remote_target_uri: str
+
+
 @dataclass(slots=True)
 class _ActiveDialog:
     request: sip.SipMessage
@@ -232,6 +243,7 @@ class _ActiveDialog:
     session_timer: sip.SipSessionTimer = field(default_factory=sip.SipSessionTimer)
     session_timer_task: asyncio.Task[None] | None = None
     refer_task: asyncio.Task[None] | None = None
+    delayed_offer: _PendingDelayedOffer | None = None
 
 
 @dataclass(slots=True)
@@ -1194,6 +1206,85 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self._maintenance_tasks.add(task)
         task.add_done_callback(self._maintenance_tasks.discard)
 
+    async def _accept_delayed_offer_ack(
+        self,
+        call_id: str,
+        dialog: _ActiveDialog,
+        request: sip.SipMessage,
+        addr: tuple[str, int],
+    ) -> bool:
+        """Commit an offerless re-INVITE only after its ACK carries an answer."""
+
+        delayed = dialog.delayed_offer
+        if delayed is None:
+            return True
+        dialog.delayed_offer = None
+        dialog.update_in_progress = False
+        content_type = request.header("Content-Type").split(";", 1)[0].lower()
+        updated_invite = (
+            self._parse_invite(
+                request,
+                addr,
+                peer_profile=delayed.previous_invite.peer_profile,
+                local_offer_sdp=delayed.offer_sdp,
+            )
+            if request.body and content_type == "application/sdp"
+            else None
+        )
+        result = SipInviteResult(488, "Not Acceptable Here")
+        if updated_invite is not None and self.on_media_update is not None:
+            try:
+                result = await self.on_media_update(
+                    delayed.previous_invite,
+                    updated_invite,
+                    "INVITE",
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.exception(
+                    "SIP delayed offer commit failed call_id=%s", call_id
+                )
+                result = SipInviteResult(500, "Server Internal Error")
+        if not 200 <= int(result.status) < 300 or updated_invite is None:
+            if result.rollback is not None:
+                await result.rollback()
+            if not self.send_bye(call_id):
+                self.active_dialogs.pop(call_id, None)
+            if self.on_terminated is not None:
+                await self.on_terminated(call_id, "media_incompatible")
+            return False
+        if result.commit is not None:
+            try:
+                await result.commit()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.exception(
+                    "SIP delayed offer media commit failed call_id=%s", call_id
+                )
+                if result.rollback is not None:
+                    await result.rollback()
+                if not self.send_bye(call_id):
+                    self.active_dialogs.pop(call_id, None)
+                if self.on_terminated is not None:
+                    await self.on_terminated(call_id, "media_update_failed")
+                return False
+        dialog.addr = addr
+        if delayed.remote_target_uri:
+            dialog.remote_target_uri = delayed.remote_target_uri
+        dialog.invite = updated_invite
+        dialog.answer_sdp = delayed.offer_sdp
+        dialog.renegotiations += 1
+        if delayed.request.header("Session-Expires"):
+            self._arm_session_timer(
+                call_id,
+                dialog,
+                sip.negotiate_uas_session_timer(delayed.request),
+                local_role="uas",
+            )
+        return True
+
     def _arm_session_timer(
         self,
         call_id: str,
@@ -1870,6 +1961,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 initial_ack = bool(dialog.pending_ack_cseq)
                 dialog.pending_ack_cseq = 0
                 self._cancel_invite_2xx(dialog)
+                if not await self._accept_delayed_offer_ack(
+                    call_id, dialog, request, addr
+                ):
+                    return
                 if initial_ack:
                     self._arm_connected_identity(call_id, dialog)
             return
@@ -1930,47 +2025,107 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 return
 
             if not request.body:
-                # An offerless UPDATE is a valid session refresh.  An
-                # offerless re-INVITE instead requires a new offer in the 2xx
-                # and an answer in ACK; do not pretend the previous answer is
-                # a new offer when that delayed exchange is not implemented.
-                status = 200 if request.method == "UPDATE" else 488
-                reason = "OK" if status == 200 else "Not Acceptable Here"
-                sent = self._send_response(
-                    request,
-                    addr,
-                    status,
-                    reason,
-                    to_tag=existing_dialog.to_tag,
-                )
-                if sent:
-                    existing_dialog.last_request = request
-                    existing_dialog.last_status = status
-                    existing_dialog.last_reason = reason
-                    existing_dialog.last_response_sdp = ""
-                    existing_dialog.cseq = request_cseq.number + 1
-                    if status == 200:
-                        existing_dialog.addr = addr
-                        if refreshed_remote_target:
-                            existing_dialog.remote_target_uri = refreshed_remote_target
-                        self._accept_remote_connected_identity(
-                            existing_dialog,
+                if request.method == "INVITE":
+                    previous_invite = existing_dialog.invite or self._parse_invite(
+                        existing_dialog.request, existing_dialog.addr
+                    )
+                    if previous_invite is None or not existing_dialog.answer_sdp:
+                        self._send_response(
                             request,
+                            addr,
+                            488,
+                            "Not Acceptable Here",
+                            to_tag=existing_dialog.to_tag,
                         )
-                        existing_dialog.renegotiations += 1
-                        if request.header("Session-Expires"):
-                            self._arm_session_timer(
-                                call_id,
-                                existing_dialog,
-                                sip.negotiate_uas_session_timer(request),
-                                local_role="uas",
-                            )
+                        return
+                    self._send_response(
+                        request,
+                        addr,
+                        100,
+                        "Trying",
+                        to_tag=existing_dialog.to_tag,
+                    )
+                    next_sdp_version = existing_dialog.local_sdp_session_version + 1
+                    offer_sdp = sdp.rewrite_sdp_origin(
+                        existing_dialog.answer_sdp,
+                        existing_dialog.local_sdp_session_id,
+                        next_sdp_version,
+                    )
+                    sent = self._send_response(
+                        request,
+                        addr,
+                        200,
+                        "OK",
+                        body=offer_sdp.encode(),
+                        to_tag=existing_dialog.to_tag,
+                    )
+                    if not sent:
+                        return
+                    existing_dialog.update_in_progress = True
+                    existing_dialog.delayed_offer = _PendingDelayedOffer(
+                        request=request,
+                        addr=addr,
+                        offer_sdp=offer_sdp,
+                        previous_invite=previous_invite,
+                        remote_target_uri=refreshed_remote_target,
+                    )
+                    existing_dialog.last_request = request
+                    existing_dialog.last_status = 200
+                    existing_dialog.last_reason = "OK"
+                    existing_dialog.last_response_sdp = offer_sdp
+                    existing_dialog.cseq = request_cseq.number + 1
+                    existing_dialog.local_sdp_session_version = next_sdp_version
                     self._remember_dialog_response(
                         existing_dialog,
                         request,
                         addr,
-                        status,
-                        reason,
+                        200,
+                        "OK",
+                        offer_sdp,
+                    )
+                    self._arm_invite_2xx(
+                        existing_dialog,
+                        request,
+                        addr,
+                        200,
+                        "OK",
+                        offer_sdp,
+                    )
+                    return
+
+                # An offerless UPDATE is a session refresh and does not start
+                # a new offer/answer exchange.
+                sent = self._send_response(
+                    request,
+                    addr,
+                    200,
+                    "OK",
+                    to_tag=existing_dialog.to_tag,
+                )
+                if sent:
+                    existing_dialog.last_request = request
+                    existing_dialog.last_status = 200
+                    existing_dialog.last_reason = "OK"
+                    existing_dialog.last_response_sdp = ""
+                    existing_dialog.cseq = request_cseq.number + 1
+                    existing_dialog.addr = addr
+                    if refreshed_remote_target:
+                        existing_dialog.remote_target_uri = refreshed_remote_target
+                    self._accept_remote_connected_identity(existing_dialog, request)
+                    existing_dialog.renegotiations += 1
+                    if request.header("Session-Expires"):
+                        self._arm_session_timer(
+                            call_id,
+                            existing_dialog,
+                            sip.negotiate_uas_session_timer(request),
+                            local_role="uas",
+                        )
+                    self._remember_dialog_response(
+                        existing_dialog,
+                        request,
+                        addr,
+                        200,
+                        "OK",
                     )
                 return
 
@@ -2673,6 +2828,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         addr,
         *,
         peer_profile: str = "",
+        local_offer_sdp: str = "",
     ) -> SipInvite | None:
         try:
             request_uri = sip.parse_sip_uri(request.uri)
@@ -2682,11 +2838,21 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 request.header("User-Agent")
             ):
                 peer_profile = "dahua"
-            selected = sdp.negotiate_directional(
-                request.body,
-                self.supported_send_formats,
-                self.supported_recv_formats,
-                allow_dahua_pcm=peer_profile == "dahua",
+            selected = (
+                sdp.negotiate_answer_directional(
+                    request.body,
+                    self.supported_send_formats,
+                    self.supported_recv_formats,
+                    local_offer_sdp=local_offer_sdp,
+                    allow_dahua_pcm=peer_profile == "dahua",
+                )
+                if local_offer_sdp
+                else sdp.negotiate_directional(
+                    request.body,
+                    self.supported_send_formats,
+                    self.supported_recv_formats,
+                    allow_dahua_pcm=peer_profile == "dahua",
+                )
             )
             if selected is None:
                 call_id = request.header("Call-ID")
@@ -2715,20 +2881,27 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             )
             remote = sdp.parse_sdp(request.body)
             video_directional = (
-                sdp.negotiate_video_offer_directional(
-                    request.body,
-                    accepted_encodings=(
-                        "H264",
-                        "VP8",
-                        "JPEG",
-                        "H263",
-                        "H263P",
-                        "H265",
+                (
+                    sdp.negotiate_video_answer_directional(
+                        request.body,
+                        tuple(sdp.offered_video_formats(local_offer_sdp)),
                     )
-                    if self.enable_video_transcoding
-                    else ("H264", "VP8", "JPEG"),
-                    prefer_browser_send=self.prefer_browser_video_send,
-                    allow_passthrough_fallback=self.enable_video_transcoding,
+                    if local_offer_sdp
+                    else sdp.negotiate_video_offer_directional(
+                        request.body,
+                        accepted_encodings=(
+                            "H264",
+                            "VP8",
+                            "JPEG",
+                            "H263",
+                            "H263P",
+                            "H265",
+                        )
+                        if self.enable_video_transcoding
+                        else ("H264", "VP8", "JPEG"),
+                        prefer_browser_send=self.prefer_browser_video_send,
+                        allow_passthrough_fallback=self.enable_video_transcoding,
+                    )
                 )
                 if self.enable_video
                 else None

@@ -262,6 +262,14 @@ class SipDialog:
         return self.local_video_format or self.video_format
 
 
+@dataclass(frozen=True, slots=True)
+class _DelayedRemoteOffer:
+    request: sip.SipMessage
+    offer_sdp: str
+    remote_target_uri: str
+    local_sdp_session_version: int
+
+
 DialogMediaCommit = Callable[[], Awaitable[None]]
 DialogMediaUpdateHandler = Callable[
     [SipDialog, SipDialog, str],
@@ -448,6 +456,7 @@ class SipCallClient:
         self._uas_invite_2xx_cseq = 0
         self._uas_invite_2xx_retransmissions = 0
         self._uas_invite_ack_timeout = asyncio.Event()
+        self._uas_delayed_offer: _DelayedRemoteOffer | None = None
         self.last_sip_event = ""
         self.last_sip_status_code = 0
         self.last_sip_reason = ""
@@ -489,6 +498,7 @@ class SipCallClient:
 
     async def _close(self) -> None:
         self._cancel_uas_invite_2xx()
+        self._uas_delayed_offer = None
         if self._invite_transaction_active:
             with contextlib.suppress(Exception):
                 self.cancel()
@@ -961,6 +971,7 @@ class SipCallClient:
         )
         dialog = self.dialog
         self._cancel_uas_invite_2xx()
+        self._uas_delayed_offer = None
         if dialog is not None:
             self._send_bye_request(
                 dialog.remote_host,
@@ -989,6 +1000,71 @@ class SipCallClient:
         self._cancel_uas_invite_2xx()
         self._uas_invite_ack_timeout.clear()
         return True
+
+    async def _commit_delayed_offer_ack(
+        self, request: sip.SipMessage
+    ) -> str | None:
+        delayed = self._uas_delayed_offer
+        self._uas_delayed_offer = None
+        if delayed is None:
+            return None
+        content_type = request.header("Content-Type").split(";", 1)[0].lower()
+        prepared = (
+            self._answer_remote_offer(
+                request,
+                local_offer_sdp=delayed.offer_sdp,
+            )
+            if request.body and content_type == "application/sdp"
+            else None
+        )
+        if prepared is None or self.dialog is None:
+            self.bye()
+            return "media_incompatible"
+        current = self.dialog
+        updated, _offer = prepared
+        if delayed.remote_target_uri:
+            updated = replace(
+                updated,
+                remote_target_uri=delayed.remote_target_uri,
+            )
+        unchanged = self._same_dialog_media(current, updated)
+        commit = None
+        if self.on_media_update is not None:
+            try:
+                commit = await self.on_media_update(current, updated, "INVITE")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.exception(
+                    "SIP delayed offer preparation failed call_id=%s",
+                    self.dialog_ids.call_id,
+                )
+                self.bye()
+                return "media_update_failed"
+        if commit is None and not unchanged:
+            self.bye()
+            return "media_incompatible"
+        if commit is not None:
+            try:
+                await commit()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.exception(
+                    "SIP delayed offer commit failed call_id=%s",
+                    self.dialog_ids.call_id,
+                )
+                self.bye()
+                return "media_update_failed"
+        requested_timer = sip.negotiate_uas_session_timer(delayed.request)
+        if requested_timer is not None:
+            updated.session_timer.configure(
+                requested_timer,
+                local_role="uas",
+                now=asyncio.get_running_loop().time(),
+            )
+        self.dialog = updated
+        return None
 
     def _request_matches_dialog(self, request: sip.SipMessage, _host: str, method: str) -> bool:
         """Match an in-dialog request using the RFC 3261 dialog identifiers.
@@ -1081,29 +1157,52 @@ class SipCallClient:
             == updated.remote_video_connection_held
         )
 
-    def _answer_remote_offer(self, request: sip.SipMessage) -> tuple[SipDialog, str] | None:
-        """Build an answer and immutable replacement dialog for one remote offer."""
+    def _answer_remote_offer(
+        self,
+        request: sip.SipMessage,
+        *,
+        local_offer_sdp: str = "",
+    ) -> tuple[SipDialog, str] | None:
+        """Build the media replacement for a remote offer or delayed answer."""
 
         current = self.dialog
         if current is None:
             return None
         try:
-            selected = sdp.negotiate_directional(
-                request.body,
-                self.supported_send_formats,
-                self.supported_recv_formats,
-                allow_dahua_pcm=self.include_dahua_pcm,
+            selected = (
+                sdp.negotiate_answer_directional(
+                    request.body,
+                    self.supported_send_formats,
+                    self.supported_recv_formats,
+                    local_offer_sdp=local_offer_sdp,
+                    allow_dahua_pcm=self.include_dahua_pcm,
+                )
+                if local_offer_sdp
+                else sdp.negotiate_directional(
+                    request.body,
+                    self.supported_send_formats,
+                    self.supported_recv_formats,
+                    allow_dahua_pcm=self.include_dahua_pcm,
+                )
             )
             if selected is None:
                 return None
             parsed = sdp.parse_sdp(request.body)
             accepted_video = tuple(dict.fromkeys(fmt.encoding for fmt in self.video_formats))
             video_directional = (
-                sdp.negotiate_video_offer_directional(
-                    request.body,
-                    local_formats=self.video_formats,
-                    accepted_encodings=accepted_video,
-                    prefer_browser_send=self.video_direction in {"sendonly", "sendrecv"},
+                (
+                    sdp.negotiate_video_answer_directional(
+                        request.body,
+                        tuple(sdp.offered_video_formats(local_offer_sdp)),
+                    )
+                    if local_offer_sdp
+                    else sdp.negotiate_video_offer_directional(
+                        request.body,
+                        local_formats=self.video_formats,
+                        accepted_encodings=accepted_video,
+                        prefer_browser_send=self.video_direction
+                        in {"sendonly", "sendrecv"},
+                    )
                 )
                 if accepted_video and self.local_video_rtp_port
                 else None
@@ -1138,7 +1237,14 @@ class SipCallClient:
                 else "inactive"
             )
             dtmf_formats = sdp.offered_dtmf_formats(request.body)
-            answer = sdp.build_answer_directional(
+            dtmf_direction = (
+                sdp.negotiate_dtmf_answer_directional(
+                    request.body, local_offer_sdp
+                )
+                if local_offer_sdp
+                else None
+            )
+            answer = local_offer_sdp or sdp.build_answer_directional(
                 self.local_ip,
                 self.local_ip,
                 self.local_rtp_port,
@@ -1153,7 +1259,9 @@ class SipCallClient:
             session_id = int(current.local_sdp_session_id or self._sdp_session_id)
             session_version = int(current.local_sdp_session_version)
             answer = sdp.rewrite_sdp_origin(answer, session_id, session_version)
-            if sdp.sdp_description_changed(current.local_sdp_body, answer):
+            if not local_offer_sdp and sdp.sdp_description_changed(
+                current.local_sdp_body, answer
+            ):
                 session_version += 1
                 answer = sdp.rewrite_sdp_origin(
                     answer, session_id, session_version
@@ -1169,17 +1277,47 @@ class SipCallClient:
                 send_format=selected.send,
                 recv_format=selected.recv,
                 remote_target_uri=remote_target,
-                dtmf_payload_type=(dtmf_formats[0].payload_type if dtmf_formats else None),
-                dtmf_clock_rate=(dtmf_formats[0].sample_rate if dtmf_formats else 8000),
-                dtmf_events=(dtmf_formats[0].events if dtmf_formats else frozenset()),
+                dtmf_payload_type=(
+                    dtmf_direction.recv.payload_type
+                    if dtmf_direction is not None
+                    else dtmf_formats[0].payload_type
+                    if dtmf_formats
+                    else None
+                ),
+                dtmf_clock_rate=(
+                    dtmf_direction.recv.sample_rate
+                    if dtmf_direction is not None
+                    else dtmf_formats[0].sample_rate
+                    if dtmf_formats
+                    else 8000
+                ),
+                dtmf_events=(
+                    dtmf_direction.recv.events
+                    if dtmf_direction is not None
+                    else dtmf_formats[0].events
+                    if dtmf_formats
+                    else frozenset()
+                ),
                 send_dtmf_payload_type=(
-                    dtmf_formats[0].payload_type if dtmf_formats else None
+                    dtmf_direction.send.payload_type
+                    if dtmf_direction is not None
+                    else dtmf_formats[0].payload_type
+                    if dtmf_formats
+                    else None
                 ),
                 send_dtmf_clock_rate=(
-                    dtmf_formats[0].sample_rate if dtmf_formats else None
+                    dtmf_direction.send.sample_rate
+                    if dtmf_direction is not None
+                    else dtmf_formats[0].sample_rate
+                    if dtmf_formats
+                    else None
                 ),
                 send_dtmf_events=(
-                    dtmf_formats[0].events if dtmf_formats else None
+                    dtmf_direction.send.events
+                    if dtmf_direction is not None
+                    else dtmf_formats[0].events
+                    if dtmf_formats
+                    else None
                 ),
                 remote_audio_direction=str(parsed["direction"]),
                 local_audio_direction=sdp.local_direction_for_offer(
@@ -1964,8 +2102,29 @@ class SipCallClient:
         updated: SipDialog | None = None
         commit: DialogMediaCommit | None = None
         if not request.body:
-            status = 200 if method == "UPDATE" else 488
-            reason = "OK" if status == 200 else "Not Acceptable Here"
+            if method == "UPDATE":
+                status = 200
+                reason = "OK"
+            elif self.dialog is None or not self.dialog.local_sdp_body:
+                status = 488
+                reason = "Not Acceptable Here"
+            else:
+                self._send_response_to_request(request, host, port, 100, "Trying")
+                next_version = self.dialog.local_sdp_session_version + 1
+                offer = sdp.rewrite_sdp_origin(
+                    self.dialog.local_sdp_body,
+                    self.dialog.local_sdp_session_id,
+                    next_version,
+                )
+                self._uas_delayed_offer = _DelayedRemoteOffer(
+                    request=request,
+                    offer_sdp=offer,
+                    remote_target_uri=refreshed_remote_target,
+                    local_sdp_session_version=next_version,
+                )
+                status = 200
+                reason = "OK"
+                body = offer.encode()
         elif request.header("Content-Type").split(";", 1)[0].strip().lower() != "application/sdp":
             status = 415
             reason = "Unsupported Media Type"
@@ -2032,7 +2191,13 @@ class SipCallClient:
             body=body if 200 <= status < 300 else b"",
         )
         if not sent:
+            self._uas_delayed_offer = None
             return "transport_unreachable"
+        if self._uas_delayed_offer is not None and self.dialog is not None:
+            self.dialog.local_sdp_session_version = (
+                self._uas_delayed_offer.local_sdp_session_version
+            )
+            self.dialog.local_sdp_body = self._uas_delayed_offer.offer_sdp
         self._remember_in_dialog_response(
             request,
             status,
@@ -2075,12 +2240,18 @@ class SipCallClient:
             200 <= status < 300
             and refreshed_remote_target
             and self.dialog is not None
+            and self._uas_delayed_offer is None
         ):
             self.dialog = replace(
                 self.dialog,
                 remote_target_uri=refreshed_remote_target,
             )
-        if 200 <= status < 300 and requested_timer is not None and self.dialog is not None:
+        if (
+            200 <= status < 300
+            and requested_timer is not None
+            and self.dialog is not None
+            and self._uas_delayed_offer is None
+        ):
             self.dialog.session_timer.configure(
                 requested_timer,
                 local_role="uas",
@@ -2485,6 +2656,7 @@ class SipCallClient:
                 )
                 return None
             self._cancel_uas_invite_2xx()
+            self._uas_delayed_offer = None
             self._send_response_to_request(msg, addr[0], addr[1], 200, "OK")
             self._remote_cseq = bye_cseq.number
             self.dialog = None
@@ -2500,6 +2672,7 @@ class SipCallClient:
                     "SIP RX ACK remote re-INVITE call_id=%s",
                     self.dialog_ids.call_id,
                 )
+                return await self._commit_delayed_offer_ack(msg)
             return None
         if msg.method in {"INVITE", "UPDATE"}:
             if local_offer_pending:

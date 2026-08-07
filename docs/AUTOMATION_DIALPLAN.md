@@ -662,7 +662,8 @@ normal no-answer forward.
   authenticated text/plain MESSAGE, SIP INFO DTMF, RTP telephone-event,
   REFER/NOTIFY transfer, presence PUBLISH/SUBSCRIBE/NOTIFY, PRACK/100rel,
   session timers and peer-initiated UPDATE on HA-owned dialogs.
-- Offerless re-INVITE and delayed offer/answer are not implemented.
+- Offerless re-INVITE uses delayed offer/answer, with the local offer in the
+  `200 OK` and the peer answer in ACK.
 - Raw internal bus events are implementation plumbing for the Event Entities,
   not a second public automation API. Build new automations from the native
   entities and services above.

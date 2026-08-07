@@ -151,9 +151,10 @@ receive. Use network policy when an installation needs that restriction.
 HA never adds video without a peer offer. The paired outbound re-INVITE is the
 B2BUA continuation of the source offer, not an unsolicited media upgrade.
 
-An offerless UPDATE is accepted as a session refresh. An offerless re-INVITE is
-rejected because HA does not implement the delayed offer-in-2xx/answer-in-ACK
-exchange.
+An offerless UPDATE is accepted as a session refresh. For an offerless
+re-INVITE, HA sends the current compatible media contract as a new offer in the
+`200 OK` and commits the remote answer only after it arrives in the ACK. A
+missing or incompatible delayed answer terminates the dialog explicitly.
 
 ## Registered SIP endpoint to HA
 

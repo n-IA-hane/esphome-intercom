@@ -104,6 +104,11 @@ re-INVITE on the destination dialog and commits the direct or transcoded relay
 only after both offer/answer exchanges succeed. HA does not initiate an
 unsolicited media upgrade.
 
+HA-owned dialogs also accept an offerless re-INVITE. The `200 OK` contains a
+new local offer and ACK must carry the compatible SDP answer. Media ownership
+changes only after that ACK is validated; a missing or invalid answer closes
+the dialog instead of leaving a half-negotiated call alive.
+
 SIP signaling transports:
 
 - UDP on the configured SIP listen port
