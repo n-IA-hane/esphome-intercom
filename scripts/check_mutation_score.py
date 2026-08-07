@@ -21,9 +21,13 @@ def main() -> int:
     suspicious = int(report.get("suspicious", 0))
     interrupted = int(report.get("check_was_interrupted_by_user", 0))
     assessed = killed + survived + timeout + suspicious
-    score = 100.0 * killed / assessed if assessed else 0.0
+    # A bounded timeout is a detected behavioral regression, not a survivor.
+    # Mutmut uses it when a mutation removes cancellation or termination and
+    # the selected test cannot complete within the calibrated deadline.
+    detected = killed + timeout
+    score = 100.0 * detected / assessed if assessed else 0.0
     print(
-        f"mutation_score={score:.2f}% killed={killed} survived={survived} "
+        f"mutation_score={score:.2f}% detected={detected} killed={killed} survived={survived} "
         f"timeout={timeout} no_tests={int(report.get('no_tests', 0))}"
     )
     if interrupted or score < args.minimum:
