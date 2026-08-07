@@ -127,7 +127,7 @@ async def test_forward_rejects_concurrent_owner_without_replacing_it(
     stored = {"forward": owner}
     artifacts = SimpleNamespace(
         task_for=lambda call_id, name: stored.get(name),
-        artifact=lambda call_id, name: None,
+        artifacts_for=lambda call_id: SimpleNamespace(forward_claim=False),
     )
     monkeypatch.setattr(call_forwarder, "_call_registry", lambda _hass: registry)
     monkeypatch.setattr(

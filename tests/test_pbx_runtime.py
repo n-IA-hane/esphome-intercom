@@ -394,12 +394,12 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(registry.sip_clients["destination"], client)
         self.assertEqual(registry.bridge_clients, {"source": "destination"})
         self.assertIs(registry.pending_invites["source"], invite)
-        self.assertIs(authoritative.artifacts["pending_invite"], invite)
+        self.assertIs(authoritative.artifacts.pending_invite, invite)
         self.assertIs(registry.pending_routes["source"], route)
-        self.assertIs(authoritative.artifacts["pending_route"], route)
+        self.assertIs(authoritative.artifacts.pending_route, route)
         self.assertEqual(registry.video_parameter_sets["source"], parameter_sets)
         self.assertEqual(
-            authoritative.artifacts["video_parameter_sets"], parameter_sets
+            authoritative.artifacts.video_parameter_sets, parameter_sets
         )
         self.assertEqual(
             authoritative.metadata["bridge_dest_call_id"],

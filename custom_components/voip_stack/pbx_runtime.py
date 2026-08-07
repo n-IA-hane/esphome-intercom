@@ -13,6 +13,7 @@ from typing import Any
 
 from .call_registry import CallRuntimeApi
 from .endpoint_session import (
+    CallArtifacts,
     CallLeg,
     CallEventContext,
     CleanupStage,
@@ -294,37 +295,11 @@ class SipEndpointRuntime(CallRuntimeApi):
             if (dest_call_id := str(session.metadata.get("bridge_dest_call_id") or ""))
         }
 
-    def artifacts_snapshot(self, name: str) -> dict[str, Any]:
-        """Return one class of generation-owned call artifacts."""
-
-        return {
-            call_id: value
-            for call_id, session in self.calls.items()
-            if (value := session.artifacts.get(name)) is not None
-        }
-
-    def set_artifact(self, call_id: str, name: str, value: Any) -> bool:
-        """Attach an artifact to the current call generation."""
+    def artifacts_for(self, call_id: str) -> CallArtifacts | None:
+        """Return transient state owned by the current call generation."""
 
         session = self.get_session(call_id)
-        if session is None or not session.live:
-            return False
-        session.artifacts[name] = value
-        return True
-
-    def take_artifact(self, call_id: str, name: str) -> Any | None:
-        """Detach an artifact for explicit completion or cancellation."""
-
-        session = self.get_session(call_id)
-        if session is None or session.phase is SessionPhase.TERMINATED:
-            return None
-        return session.artifacts.pop(name, None)
-
-    def artifact(self, call_id: str, name: str) -> Any | None:
-        """Return one live generation-owned artifact without detaching it."""
-
-        session = self.get_session(call_id)
-        return session.artifacts.get(name) if session is not None else None
+        return session.artifacts if session is not None else None
 
     def task_for(self, call_id: str, name: str) -> asyncio.Task[Any] | None:
         """Return one task owned by the current call generation."""

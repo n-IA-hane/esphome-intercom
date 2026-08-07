@@ -183,6 +183,9 @@ async def async_forward_existing_call(
             f"call_id {call_id} is not a forwardable pending or ringing HA-owned call"
         )
     artifacts = call_runtime_artifacts(hass)
+    call_artifacts = artifacts.artifacts_for(call_id)
+    if call_artifacts is None:
+        raise ServiceValidationError(f"call_id {call_id} is no longer active")
     current_forward = artifacts.task_for(call_id, "forward")
     if current_forward is not None and not current_forward.done():
         current_context = registry.event_context(call_id)
@@ -195,12 +198,11 @@ async def async_forward_existing_call(
             )
         current_forward.cancel()
         await asyncio.gather(current_forward, return_exceptions=True)
-    if artifacts.artifact(call_id, "forward_claim"):
+    if call_artifacts.forward_claim:
         raise ServiceValidationError(
             f"call_id {call_id} is already being forwarded"
         )
-    if not artifacts.set_artifact(call_id, "forward_claim", True):
-        raise ServiceValidationError(f"call_id {call_id} is no longer active")
+    call_artifacts.forward_claim = True
     target_browser_endpoint = None
     try:
         peers = await _async_build_peer_snapshot(hass)
@@ -355,14 +357,12 @@ async def async_forward_existing_call(
                 last_sip_event="ROUTE_FORWARD",
             )
     except Exception:
-        artifacts.take_artifact(call_id, "forward_claim")
+        call_artifacts.forward_claim = False
         raise
 
     async def _restore_or_terminate(reason: str) -> None:
         preanswered = registry.preanswered.get(call_id)
-        if on_failure == "resume" and not artifacts.artifact(
-            call_id, "trunk_closed"
-        ):
+        if on_failure == "resume" and not call_artifacts.trunk_closed:
             if session is not None:
                 current = registry.sessions.get(
                     registry.resolve_session_id(call_id)
@@ -729,7 +729,7 @@ async def async_forward_existing_call(
                         session_device_id=winner.device_id,
                     )
                     registry.set_pending_invite(call_id, invite)
-                    artifacts.set_artifact(call_id, "answer_commit", True)
+                    call_artifacts.answer_commit = True
                     try:
                         await hass.services.async_call(
                             DOMAIN,
@@ -750,7 +750,7 @@ async def async_forward_existing_call(
                             context=registry.ha_context(call_id),
                         )
                     finally:
-                        artifacts.take_artifact(call_id, "answer_commit")
+                        call_artifacts.answer_commit = False
                     return
 
                 registry.take_pending_route(call_id)
@@ -1182,7 +1182,8 @@ async def async_forward_existing_call(
                 request_uri=str(bridge_uri),
                 timeout=SIP_TIMER_B if bridge_to_trunk else 8.0,
             )
-            if artifacts.take_artifact(call_id, "trunk_closed"):
+            if call_artifacts.trunk_closed:
+                call_artifacts.trunk_closed = False
                 raise RuntimeError(TerminalReason.CANCELLED.value)
             if result not in {"ringing", "in_call"}:
                 raise RuntimeError(result)
@@ -1388,11 +1389,11 @@ async def async_forward_existing_call(
                 )
             await _restore_or_terminate(reason)
         finally:
-            artifacts.take_artifact(call_id, "forward_claim")
+            call_artifacts.forward_claim = False
 
     task = create_runtime_task(hass, _run_forward())
     if not artifacts.own_task(call_id, task, name="forward"):
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        artifacts.take_artifact(call_id, "forward_claim")
+        call_artifacts.forward_claim = False
         raise ServiceValidationError(f"call_id {call_id} is no longer active")

@@ -400,8 +400,9 @@ async def route_sip_bridge(
             decline_reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
         )
 
-    artifacts = call_runtime_artifacts(hass)
-    if artifacts.take_artifact(invite.call_id, "trunk_closed"):
+    artifacts = call_runtime_artifacts(hass).artifacts_for(invite.call_id)
+    if artifacts is not None and artifacts.trunk_closed:
+        artifacts.trunk_closed = False
         _LOGGER.info(
             "SIP bridge invite completed after caller cancelled call_id=%s; closing outbound leg",
             invite.call_id,

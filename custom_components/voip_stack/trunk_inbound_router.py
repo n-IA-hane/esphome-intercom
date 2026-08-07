@@ -92,7 +92,10 @@ async def async_route_trunk_invite(
     hass = runtime.hass
     cfg = runtime.config
     source_relay_port, dest_relay_port = bridge_ports.ports
-    artifacts = call_runtime_artifacts(hass)
+    artifacts = call_runtime_artifacts(hass).artifacts_for(invite.call_id)
+    if artifacts is None:
+        bridge_ports.release()
+        return
     registry = call_registry(hass)
     configured_trunk = trunk_config(hass)
     dtmf_timeout_ms = max(
@@ -109,14 +112,10 @@ async def async_route_trunk_invite(
     if configured_trunk.get(CONF_TRUNK_DTMF_ENABLED) and dtmf_timeout_ms > 0:
         timeout = float(dtmf_timeout_ms) / 1000.0
         terminator = str(configured_trunk.get(CONF_TRUNK_DTMF_TERMINATOR) or "")
-        info_queue = artifacts.artifact(invite.call_id, "trunk_info_queue")
+        info_queue = artifacts.trunk_info_queue
         if info_queue is None:
             info_queue = asyncio.Queue(maxsize=MAX_TRUNK_INFO_DIGITS)
-            if not artifacts.set_artifact(
-                invite.call_id, "trunk_info_queue", info_queue
-            ):
-                bridge_ports.release()
-                return
+            artifacts.trunk_info_queue = info_queue
         selection = await collect_trunk_dtmf(
             invite,
             info_queue=info_queue,
@@ -130,8 +129,9 @@ async def async_route_trunk_invite(
     # A source BYE must win before any no-digits automation window is
     # opened. Otherwise a cancelled pre-answer call can emit one stale
     # route_requested occurrence when its DTMF timer expires.
-    if artifacts.take_artifact(invite.call_id, "trunk_closed"):
-        artifacts.take_artifact(invite.call_id, "trunk_info_queue")
+    if artifacts.trunk_closed:
+        artifacts.trunk_closed = False
+        artifacts.trunk_info_queue = None
         _LOGGER.info(
             "SIP trunk inbound call_id=%s closed during DTMF collection",
             invite.call_id,
@@ -148,9 +148,10 @@ async def async_route_trunk_invite(
             trunk_config=configured_trunk,
             timeout=SIP_ROUTE_DECISION_TIMEOUT,
         )
-    artifacts.take_artifact(invite.call_id, "trunk_info_queue")
+    artifacts.trunk_info_queue = None
 
-    if artifacts.take_artifact(invite.call_id, "trunk_closed"):
+    if artifacts.trunk_closed:
+        artifacts.trunk_closed = False
         _LOGGER.info(
             "SIP trunk inbound call_id=%s closed before routing", invite.call_id
         )

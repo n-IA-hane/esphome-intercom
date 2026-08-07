@@ -10,6 +10,7 @@ from .endpoint_session import (
     CallLeg,
     CleanupStage,
     EndpointCallSession,
+    SessionPhase,
 )
 from .automation_routing import CALL_EVENT_SCHEMA_VERSION
 from .media_reservation import release_media_reservation
@@ -54,14 +55,25 @@ class CallRuntimeApi:
         return accepted and session.apply_observation(state, phase)
 
     def _artifact_view(self, name: str) -> dict[str, Any]:
-        return self.artifacts_snapshot(name)
+        return {
+            call_id: value
+            for call_id, session in self.calls.items()
+            if (value := getattr(session.artifacts, name)) not in (None, False)
+        }
 
     def _set_artifact(self, call_id: str, name: str, value: Any) -> None:
-        if not self.set_artifact(call_id, name, value):
+        session = self.get_session(call_id)
+        if session is None or not session.live:
             raise RuntimeError(f"call session {call_id!r} is unavailable")
+        setattr(session.artifacts, name, value)
 
     def _take_artifact(self, call_id: str, name: str) -> Any | None:
-        return self.take_artifact(call_id, name)
+        session = self.get_session(call_id)
+        if session is None or session.phase is SessionPhase.TERMINATED:
+            return None
+        value = getattr(session.artifacts, name)
+        setattr(session.artifacts, name, False if isinstance(value, bool) else None)
+        return value
 
     def _resource_view(self, name: str) -> dict[str, Any]:
         return self.resources_snapshot(name)

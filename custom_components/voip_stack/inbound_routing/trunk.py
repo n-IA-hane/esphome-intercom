@@ -70,13 +70,11 @@ def prepare_trunk_preanswer(
     hass = runtime.hass
     cfg = runtime.config
     local_ip = runtime.local_ip
-    artifacts = call_runtime_artifacts(hass)
-    artifacts.take_artifact(invite.call_id, "trunk_closed")
-    artifacts.set_artifact(
-        invite.call_id,
-        "trunk_info_queue",
-        asyncio.Queue(maxsize=MAX_TRUNK_INFO_DIGITS),
-    )
+    artifacts = call_runtime_artifacts(hass).artifacts_for(invite.call_id)
+    if artifacts is None:
+        return SipInviteResult(487, "Request Terminated", to_tag="")
+    artifacts.trunk_closed = False
+    artifacts.trunk_info_queue = asyncio.Queue(maxsize=MAX_TRUNK_INFO_DIGITS)
     try:
         bridge_ports = RtpPortReservation.allocate(hass)
     except RuntimeError as err:

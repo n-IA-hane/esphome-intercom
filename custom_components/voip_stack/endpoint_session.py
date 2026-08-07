@@ -155,6 +155,19 @@ class CallEventContext:
     duration_seconds: int | None = None
 
 
+@dataclass(slots=True)
+class CallArtifacts:
+    """Transient coordination state owned by one call generation."""
+
+    pending_invite: Any | None = None
+    pending_route: dict[str, Any] | None = None
+    video_parameter_sets: tuple[bytes, ...] | None = None
+    forward_claim: bool = False
+    answer_commit: bool = False
+    trunk_info_queue: asyncio.Queue[Any] | None = None
+    trunk_closed: bool = False
+
+
 
 class EndpointCallSession:
     """Authoritative owner of one PBX call and all of its resources.
@@ -195,7 +208,7 @@ class EndpointCallSession:
         self.tasks: set[asyncio.Task[Any]] = set()
         self.named_tasks: dict[str, asyncio.Task[Any]] = {}
         self.endpoint_claims: dict[str, str] = {}
-        self.artifacts: dict[str, Any] = {}
+        self.artifacts = CallArtifacts()
         self.metadata: dict[str, Any] = {}
         self.termination_started = asyncio.Event()
         self.terminated = asyncio.Event()

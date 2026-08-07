@@ -201,7 +201,9 @@ def test_sip_info_prefers_the_live_relay_callback(monkeypatch) -> None:
     monkeypatch.setattr(dtmf_events, "call_registry", lambda _hass: registry)
     hass = SimpleNamespace(
         data={"voip_stack": {}},
-        artifacts=SimpleNamespace(artifact=lambda call_id, name: None),
+        artifacts=SimpleNamespace(
+            artifacts_for=lambda call_id: SimpleNamespace(trunk_info_queue=None)
+        ),
     )
 
     asyncio.run(
@@ -224,7 +226,9 @@ def test_sip_info_queues_trunk_digits_without_touching_the_relay(
     hass = SimpleNamespace(
         data={"voip_stack": {}},
         artifacts=SimpleNamespace(
-            artifact=lambda call_id, name: queue if call_id == "call-2" else None
+            artifacts_for=lambda call_id: SimpleNamespace(
+                trunk_info_queue=queue if call_id == "call-2" else None
+            )
         ),
     )
 

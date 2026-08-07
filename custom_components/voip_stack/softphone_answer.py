@@ -90,9 +90,10 @@ async def async_answer_browser_call(
         )
         return
     artifacts = call_runtime_artifacts(hass)
+    call_artifacts = artifacts.artifacts_for(call_id)
     forward_task = artifacts.task_for(call_id, "forward")
-    forward_claimed = bool(artifacts.artifact(call_id, "forward_claim"))
-    group_answer_commit = bool(artifacts.artifact(call_id, "answer_commit"))
+    forward_claimed = bool(call_artifacts and call_artifacts.forward_claim)
+    group_answer_commit = bool(call_artifacts and call_artifacts.answer_commit)
     if not group_answer_commit and (
         forward_claimed or (forward_task is not None and not forward_task.done())
     ):
