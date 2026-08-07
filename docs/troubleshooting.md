@@ -119,8 +119,11 @@ leg to a compatible PCM format.
 - If HA-to-VTO immediately returns `486 Busy Here`, give the originating HA
   phone its own extension/name instead of making it appear to call from the
   VTO's own account. Some firmware rejects an apparent self-call.
-- SIP `MESSAGE` door-control commands are not implemented. Use the VTO's
-  supported DTMF/relay mechanism or a Home Assistant automation instead.
+- UTF-8 `text/plain` SIP `MESSAGE` requests from an authenticated, actively
+  registered account are published as `voip_stack_sip_message` events. Use an
+  automation to validate the `sender`, `recipient` and `message` fields before
+  operating a relay. Other content types and unregistered signaling flows are
+  rejected.
 
 Current compatibility is capture- and simulator-qualified, not a claim that
 every Dahua firmware revision has been tested on physical hardware. When

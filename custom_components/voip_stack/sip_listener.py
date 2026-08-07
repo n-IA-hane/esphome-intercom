@@ -120,6 +120,15 @@ class SipInviteResult:
     rollback: Callable[[], Awaitable[None]] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class SipRequestResult:
+    """Application response for one non-call SIP request."""
+
+    status: int = 200
+    reason: str = "OK"
+    headers: tuple[tuple[str, str], ...] = ()
+
+
 @dataclass(slots=True)
 class _PendingInvite:
     request: sip.SipMessage
@@ -225,6 +234,9 @@ RegisterHandler = Callable[[sip.SipMessage, tuple[str, int], str], Awaitable[Any
 InfoHandler = Callable[[sip.SipMessage, tuple[str, int], str], Awaitable[None]]
 MediaUpdateHandler = Callable[[SipInvite, SipInvite, str], Awaitable[SipInviteResult]]
 ReferHandler = Callable[[str, sip_transfer.SipReferTarget], Awaitable[int]]
+RequestHandler = Callable[
+    [sip.SipMessage, tuple[str, int], str], Awaitable[SipRequestResult]
+]
 SendHandler = Callable[[bytes, tuple[str, int]], bool | None]
 TcpDialogSender = Callable[[bytes], bool | None]
 
@@ -478,6 +490,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         on_info: InfoHandler | None = None,
         on_media_update: MediaUpdateHandler | None = None,
         on_refer: ReferHandler | None = None,
+        on_request: RequestHandler | None = None,
         send_override: SendHandler | None = None,
         signaling_transport: str = "UDP",
         enable_video: bool = False,
@@ -499,6 +512,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self.on_info = on_info
         self.on_media_update = on_media_update
         self.on_refer = on_refer
+        self.on_request = on_request
         self.send_override = send_override
         self.signaling_transport = (signaling_transport or "UDP").upper()
         self.enable_video = bool(enable_video)
@@ -1395,6 +1409,24 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     _LOGGER.warning("SIP REGISTER response dropped for %s:%s", addr[0], addr[1])
                 return
             self._send_response(request, addr, 405, "Method Not Allowed")
+            return
+        if request.method == "MESSAGE":
+            if self.signaling_transport == "UDP" and len(data) > 1300:
+                self._send_response(request, addr, 513, "Message Too Large")
+                return
+            if self.on_request is None:
+                self._send_response(request, addr, 405, "Method Not Allowed")
+                return
+            result = await self.on_request(
+                request, addr, self.signaling_transport
+            )
+            self._send_response(
+                request,
+                addr,
+                result.status,
+                result.reason,
+                extra_headers=result.headers,
+            )
             return
         if request.method == "PRACK":
             call_id = request.header("Call-ID")
@@ -2640,6 +2672,7 @@ class SipUdpServer:
         on_info: InfoHandler | None = None,
         on_media_update: MediaUpdateHandler | None = None,
         on_refer: ReferHandler | None = None,
+        on_request: RequestHandler | None = None,
         enable_video: bool = False,
         enable_video_transcoding: bool = False,
         prefer_browser_video_send: bool = False,
@@ -2657,6 +2690,7 @@ class SipUdpServer:
         self.on_info = on_info
         self.on_media_update = on_media_update
         self.on_refer = on_refer
+        self.on_request = on_request
         self.enable_video = bool(enable_video)
         self.enable_video_transcoding = bool(enable_video_transcoding)
         self.prefer_browser_video_send = bool(prefer_browser_video_send)
@@ -2682,6 +2716,7 @@ class SipUdpServer:
                     on_info=self.on_info,
                     on_media_update=self.on_media_update,
                     on_refer=self.on_refer,
+                    on_request=self.on_request,
                     signaling_transport="UDP",
                     enable_video=self.enable_video,
                     enable_video_transcoding=self.enable_video_transcoding,
@@ -2750,6 +2785,7 @@ class SipTcpServer:
         on_info: InfoHandler | None = None,
         on_media_update: MediaUpdateHandler | None = None,
         on_refer: ReferHandler | None = None,
+        on_request: RequestHandler | None = None,
         enable_video: bool = False,
         enable_video_transcoding: bool = False,
         prefer_browser_video_send: bool = False,
@@ -2771,6 +2807,7 @@ class SipTcpServer:
         self.on_info = on_info
         self.on_media_update = on_media_update
         self.on_refer = on_refer
+        self.on_request = on_request
         self.enable_video = bool(enable_video)
         self.enable_video_transcoding = bool(enable_video_transcoding)
         self.prefer_browser_video_send = bool(prefer_browser_video_send)
@@ -2817,6 +2854,7 @@ class SipTcpServer:
             on_info=self.on_info,
             on_media_update=self.on_media_update,
             on_refer=self.on_refer,
+            on_request=self.on_request,
             send_override=_send,
             signaling_transport="TCP",
             enable_video=self.enable_video,

@@ -27,6 +27,7 @@ SUPPORTED_METHODS = frozenset(
         "BYE",
         "CANCEL",
         "INFO",
+        "MESSAGE",
         "OPTIONS",
         "PRACK",
         "REFER",
@@ -38,7 +39,6 @@ SUPPORTED_METHODS = frozenset(
 SUPPORTED_OPTION_TAGS = frozenset({"100rel", "from-change", "replaces", "timer"})
 KNOWN_UNSUPPORTED_METHODS = frozenset(
     {
-        "MESSAGE",
         "PUBLISH",
         "SUBSCRIBE",
     }

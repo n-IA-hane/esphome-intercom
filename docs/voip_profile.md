@@ -58,6 +58,9 @@ Required SIP methods:
 - `REGISTER` on the HA trunk client and HA local registrar only
 - `INFO` is acknowledged by HA, but its body is not used as a digit source;
   DTMF routing is based on RTP `telephone-event`
+- `MESSAGE` accepts UTF-8 `text/plain` messages from the authenticated signaling
+  flow of an active local registration and publishes `voip_stack_sip_message`
+  on the Home Assistant event bus
 
 Required responses:
 
@@ -74,6 +77,11 @@ Required responses:
 
 Unsupported methods are rejected explicitly. Unsupported media is rejected with
 `488 Not Acceptable Here`.
+
+Out-of-dialog `MESSAGE` is intentionally limited to registered local accounts.
+The event sender is the authenticated account, never the untrusted SIP `From`
+header. UDP requests larger than the RFC 3428 safe-path limit are rejected with
+`513 Message Too Large`; TCP messages are not subject to that UDP limit.
 
 ESP endpoints do not support session-modifying in-dialog INVITE. They answer
 hold or codec renegotiation with `488` while keeping the established dialog and

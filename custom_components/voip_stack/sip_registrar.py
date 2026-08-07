@@ -509,6 +509,31 @@ class SipRegistrar:
         self.nonce_uses[use_key] = (nonce_count, fingerprint)
         return _AuthorizationStatus.VALID
 
+    def account_for_source(
+        self,
+        addr: tuple[str, int],
+        transport: str,
+    ) -> SipAccount | None:
+        """Resolve an authenticated live registration by signaling flow."""
+
+        self.expire()
+        wanted_transport = str(transport or "").upper()
+        registration = next(
+            (
+                item
+                for item in self.registrations.values()
+                if item.source_host == str(addr[0])
+                and item.source_port == int(addr[1])
+                and item.transport.upper() == wanted_transport
+            ),
+            None,
+        )
+        return (
+            self.accounts.get(registration.username.lower())
+            if registration is not None
+            else None
+        )
+
     async def handle_register(self, request: sip.SipMessage, addr: tuple[str, int], transport: str) -> SipRegisterResult:
         self.last_sip_event = "REGISTER"
         if not self.enabled:

@@ -212,6 +212,9 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         return result
 
     _on_info = partial(handle_sip_info, hass)
+    from .sip_application import SipApplicationMethods
+
+    application_methods = SipApplicationMethods(hass, registrar)
 
     def _is_trunk_invite(invite: SipInvite) -> bool:
         trunk_cfg = _get_trunk_config(hass)
@@ -750,6 +753,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         on_info=_on_info,
         on_media_update=_on_media_update,
         on_refer=_on_refer,
+        on_request=application_methods.handle,
         udp_enabled=True,
         tcp_enabled=True,
         enable_video=bool(cfg.get(CONF_SIP_VIDEO, False)),

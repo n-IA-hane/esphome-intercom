@@ -659,10 +659,10 @@ normal no-answer forward.
   redirect media it does not own.
 - The current operation is an HA B2BUA redirect, not a SIP phone transfer.
 - Supported signaling includes INVITE, ACK, BYE, CANCEL, REGISTER, OPTIONS,
-  SIP INFO DTMF, RTP telephone-event and peer-initiated UPDATE on HA-owned
-  dialogs.
-- REFER/NOTIFY transfer, locally originated renegotiation, offerless re-INVITE
-  delayed offer/answer, PRACK/100rel and session timers are not implemented.
+  authenticated text/plain MESSAGE, SIP INFO DTMF, RTP telephone-event,
+  REFER/NOTIFY transfer, PRACK/100rel, session timers and peer-initiated UPDATE
+  on HA-owned dialogs.
+- Offerless re-INVITE and delayed offer/answer are not implemented.
 - Raw internal bus events are implementation plumbing for the Event Entities,
   not a second public automation API. Build new automations from the native
   entities and services above.

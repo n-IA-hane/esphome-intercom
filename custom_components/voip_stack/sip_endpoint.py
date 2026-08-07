@@ -12,6 +12,7 @@ from .sip_listener import (
     InfoHandler,
     InviteHandler,
     MediaUpdateHandler,
+    RequestHandler,
     ReferHandler,
     RegisterHandler,
     SipTcpServer,
@@ -64,6 +65,7 @@ class SipEndpointManager:
         on_info: InfoHandler | None = None,
         on_media_update: MediaUpdateHandler | None = None,
         on_refer: ReferHandler | None = None,
+        on_request: RequestHandler | None = None,
         udp_enabled: bool = True,
         tcp_enabled: bool = True,
         enable_video: bool = False,
@@ -83,6 +85,7 @@ class SipEndpointManager:
         self.on_info = on_info
         self.on_media_update = on_media_update
         self.on_refer = on_refer
+        self.on_request = on_request
         self.udp_enabled = bool(udp_enabled)
         self.tcp_enabled = bool(tcp_enabled)
         self.enable_video = bool(enable_video)
@@ -147,6 +150,7 @@ class SipEndpointManager:
                     on_info=self.on_info,
                     on_media_update=self.on_media_update,
                     on_refer=self.on_refer,
+                    on_request=self.on_request,
                     enable_video=self.enable_video,
                     enable_video_transcoding=self.enable_video_transcoding,
                     prefer_browser_video_send=self.prefer_browser_video_send,
@@ -169,6 +173,7 @@ class SipEndpointManager:
                     on_info=self.on_info,
                     on_media_update=self.on_media_update,
                     on_refer=self.on_refer,
+                    on_request=self.on_request,
                     enable_video=self.enable_video,
                     enable_video_transcoding=self.enable_video_transcoding,
                     prefer_browser_video_send=self.prefer_browser_video_send,

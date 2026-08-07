@@ -29,6 +29,10 @@ from .voip_phase1_support import (
 
 
 class SipProtocolBugFixTest(unittest.TestCase):
+    def test_message_is_advertised_as_supported_application_method(self) -> None:
+        self.assertIn("MESSAGE", sip.SUPPORTED_METHODS)
+        self.assertNotIn("MESSAGE", sip.KNOWN_UNSUPPORTED_METHODS)
+
     def test_refer_target_round_trip_preserves_attended_dialog(self) -> None:
         target = sip_transfer.SipReferTarget(
             "sip:desk@example.test",
@@ -3212,6 +3216,51 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             sip.parse_message(replacement_tx.sent[-1]).status_code,
             481,
         )
+
+    async def test_udp_message_dispatches_once_and_enforces_safe_size(self) -> None:
+        sent: list[bytes] = []
+        received: list[tuple[str, tuple[str, int], str]] = []
+
+        async def on_invite(_invite):
+            raise AssertionError("not used")
+
+        async def on_request(request, addr, transport):
+            received.append((request.body.decode(), addr, transport))
+            return sip_listener.SipRequestResult()
+
+        endpoint = sip_listener.SipUdpEndpoint(
+            local_ip="127.0.0.1",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
+            on_invite=on_invite,
+            on_request=on_request,
+            send_override=lambda raw, _addr: not sent.append(raw),
+        )
+        headers = [
+            ("Via", "SIP/2.0/UDP 127.0.0.2:5060;branch=z9hG4bKmessage"),
+            ("From", "<sip:alice@localhost>;tag=sender"),
+            ("To", "<sip:ha@localhost>"),
+            ("Call-ID", "message-call"),
+            ("CSeq", "1 MESSAGE"),
+            ("Content-Type", "text/plain"),
+        ]
+        request = sip.build_request("MESSAGE", "sip:ha@localhost", headers, b"hello")
+
+        await endpoint._handle_datagram(request, ("127.0.0.2", 5060))
+
+        self.assertEqual(received, [("hello", ("127.0.0.2", 5060), "UDP")])
+        self.assertEqual(sip.parse_message(sent[-1]).status_code, 200)
+
+        oversized = sip.build_request(
+            "MESSAGE",
+            "sip:ha@localhost",
+            headers,
+            b"x" * 1300,
+        )
+        await endpoint._handle_datagram(oversized, ("127.0.0.2", 5060))
+        self.assertEqual(sip.parse_message(sent[-1]).status_code, 513)
+        self.assertEqual(len(received), 1)
 
     async def test_udp_endpoint_caps_concurrent_handler_tasks(self) -> None:
         async def on_invite(_invite):
