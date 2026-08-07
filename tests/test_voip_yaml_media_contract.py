@@ -922,8 +922,8 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         consume_start : source_cpp.index("\n}  // namespace", consume_start)
     ]
     assert "this->init_ppa_()" in source_consume
-    assert "p4_video_workload::Guard video_workload;" in source_consume
-    assert "p4_video_workload::Guard video_workload;" in renderer_cpp
+    assert "p4_video_workload::Role::TX" in source_consume
+    assert "p4_video_workload::Role::RX" in renderer_cpp
     assert "Unable to register runtime H.264 PPA client" in source_consume
     assert "ppa_rotation_for_clockwise(frame.rotation_degrees)" in source_cpp
     assert "this->h264_optimized_yuv_bytes_()" in renderer_cpp

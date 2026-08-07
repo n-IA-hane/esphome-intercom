@@ -619,7 +619,7 @@ void EspH264VideoSource::consume_raw_video_frame(
 
   const uint32_t generation =
       this->tx_generation_.load(std::memory_order_acquire);
-  p4_video_workload::Guard video_workload;
+  p4_video_workload::Guard video_workload(p4_video_workload::Role::TX);
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   const int64_t conversion_started_us = esp_timer_get_time();
 #endif

@@ -1159,7 +1159,7 @@ bool P4VideoRenderer::decode_h264_access_unit_(const uint8_t *data, size_t size,
                                                bool key_frame,
                                                uint32_t session_generation,
                                                uint32_t loss_generation) {
-  p4_video_workload::Guard video_workload;
+  p4_video_workload::Guard video_workload(p4_video_workload::Role::RX);
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   const uint32_t au_started_us = micros();
 #endif
