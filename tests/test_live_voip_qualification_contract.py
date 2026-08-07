@@ -121,6 +121,10 @@ class LiveVoipQualificationContractTest(unittest.TestCase):
         self.assertTrue(any("dnd" in scenario.requires for scenario in scenarios.values()))
         self.assertTrue(any("trunk" in scenario.requires for scenario in scenarios.values()))
         self.assertTrue(any("busy" in scenario.requires for scenario in scenarios.values()))
+        self.assertIn(
+            "direct_media",
+            scenarios["esp_to_esp_bidirectional"].requires,
+        )
 
     def test_every_scenario_has_visible_terminal_or_state_assertions(self) -> None:
         for scenario in runner.SCENARIOS.values():
@@ -139,6 +143,84 @@ class LiveVoipQualificationContractTest(unittest.TestCase):
                     ),
                     scenario.assertions,
                 )
+
+
+class EspPairQualificationBehaviorTest(unittest.IsolatedAsyncioTestCase):
+    async def test_pair_scenario_covers_both_directions_and_hangup_owners(
+        self,
+    ) -> None:
+        events: list[tuple[str, str, object]] = []
+
+        class Device:
+            def __init__(self, key: str, name: str) -> None:
+                self.spec = SimpleNamespace(key=key, name=name)
+                self.values = {"voip_state": "idle", "auto_answer": False}
+                self.other: "Device | None" = None
+
+            async def service(self, name: str, data=None) -> None:
+                events.append((self.spec.key, name, data))
+                assert self.other is not None
+                if name == "start_call":
+                    self.values["voip_state"] = "in_call"
+                    self.other.values["voip_state"] = "in_call"
+                elif name == "hangup_call":
+                    self.values["voip_state"] = "idle"
+                    self.other.values["voip_state"] = "idle"
+
+            async def switch(self, object_id: str, value: bool) -> None:
+                self.values[object_id] = value
+
+            async def wait(self, object_id: str, wanted, **_kwargs) -> None:
+                self.assert_state(object_id, wanted)
+
+            def assert_state(self, object_id: str, wanted) -> None:
+                if self.values[object_id] not in wanted:
+                    raise AssertionError((object_id, wanted, self.values[object_id]))
+
+            def snapshot(self):
+                return {"device": self.spec.key, "state": self.values["voip_state"]}
+
+        primary = Device("p4", "Waveshare P4 Touch")
+        peer = Device("ws3", "Waveshare S3 Audio")
+        primary.other = peer
+        peer.other = primary
+
+        class PeerContext:
+            async def __aenter__(self):
+                return peer
+
+            async def __aexit__(self, *_args):
+                return None
+
+        ctx = SimpleNamespace(
+            esp=primary,
+            args=SimpleNamespace(
+                peer_esp="ws3",
+                peer_esp_host="",
+                peer_esp_api_port=None,
+            ),
+            artifacts=[],
+        )
+        with (
+            unittest.mock.patch.object(runner, "EspApi", return_value=PeerContext()),
+            unittest.mock.patch.object(runner.asyncio, "sleep", AsyncMock()),
+        ):
+            await runner.scenario_esp_to_esp_bidirectional(ctx)
+
+        self.assertEqual(
+            [event for event in events if event[1] == "start_call"],
+            [
+                ("p4", "start_call", {"dest": "Waveshare S3 Audio"}),
+                ("ws3", "start_call", {"dest": "Waveshare P4 Touch"}),
+            ],
+        )
+        self.assertEqual(
+            [event[0] for event in events if event[1] == "hangup_call"],
+            ["ws3", "ws3"],
+        )
+        self.assertEqual(primary.values["voip_state"], "idle")
+        self.assertEqual(peer.values["voip_state"], "idle")
+        self.assertEqual(len(ctx.artifacts), 2)
 
 
 if __name__ == "__main__":

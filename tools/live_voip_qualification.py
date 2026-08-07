@@ -998,6 +998,65 @@ async def scenario_esp_to_self_extension_busy(ctx: LiveContext) -> None:
     ctx.capture("esp_to_self_extension_busy")
 
 
+async def scenario_esp_to_esp_bidirectional(ctx: LiveContext) -> None:
+    """Prove direct ESP media in both directions beyond the media watchdog."""
+
+    peer_spec = DEFAULT_ESPS[ctx.args.peer_esp]
+    if peer_spec.key == ctx.esp.spec.key:
+        raise AssertionError("the ESP peer must be a different device")
+    if ctx.args.peer_esp_host or ctx.args.peer_esp_api_port:
+        peer_spec = replace(
+            peer_spec,
+            host=str(ctx.args.peer_esp_host or peer_spec.host).strip(),
+            port=int(ctx.args.peer_esp_api_port or peer_spec.port),
+        )
+
+    async with EspApi(peer_spec) as peer:
+        peer_auto_answer = norm(peer.values.get("auto_answer")) == "on"
+        primary_auto_answer = norm(ctx.esp.values.get("auto_answer")) == "on"
+
+        async def call(
+            caller: EspApi,
+            callee: EspApi,
+            *,
+            hangup: EspApi,
+        ) -> None:
+            await callee.switch("auto_answer", True)
+            await caller.service("start_call", {"dest": callee.spec.name})
+            await caller.wait("voip_state", {"in_call"}, timeout=15)
+            await callee.wait("voip_state", {"in_call"}, timeout=15)
+            await asyncio.sleep(16.5)
+            if any(
+                norm(device.values.get("voip_state")) != "in_call"
+                for device in (caller, callee)
+            ):
+                raise AssertionError(
+                    "ESP pair did not remain active beyond the 15 second media watchdog"
+                )
+            await hangup.service("hangup_call")
+            await caller.wait("voip_state", {"idle"}, timeout=12)
+            await callee.wait("voip_state", {"idle"}, timeout=12)
+            ctx.artifacts.append(
+                {
+                    "label": "esp_to_esp_call",
+                    "caller": caller.snapshot(),
+                    "callee": callee.snapshot(),
+                    "hangup": hangup.spec.key,
+                }
+            )
+
+        try:
+            await call(ctx.esp, peer, hangup=peer)
+            await call(peer, ctx.esp, hangup=peer)
+        finally:
+            for device in (ctx.esp, peer):
+                if norm(device.values.get("voip_state")) != "idle":
+                    with contextlib.suppress(Exception):
+                        await device.service("hangup_call")
+            await peer.switch("auto_answer", peer_auto_answer)
+            await ctx.esp.switch("auto_answer", primary_auto_answer)
+
+
 async def scenario_esp_to_trunk_cancel(ctx: LiveContext) -> None:
     if not ctx.args.allow_trunk:
         raise RuntimeError("trunk scenario requires --allow-trunk")
@@ -1134,6 +1193,20 @@ SCENARIOS: dict[str, Scenario] = {
         frozenset({"esp", "extension", "busy"}),
         frozenset({"self_call_rejected", "esp_idle", "terminal_reason"}),
         scenario_esp_to_self_extension_busy,
+    ),
+    "esp_to_esp_bidirectional": Scenario(
+        "esp_to_esp_bidirectional",
+        "Two ESP phones call in both directions beyond the media watchdog",
+        frozenset({"ha", "esp", "second_esp", "direct_media"}),
+        frozenset(
+            {
+                "both_directions_in_call",
+                "media_watchdog_satisfied",
+                "caller_and_callee_hangup",
+                "both_idle",
+            }
+        ),
+        scenario_esp_to_esp_bidirectional,
     ),
     "esp_to_trunk_cancel": Scenario(
         "esp_to_trunk_cancel",
@@ -1283,6 +1356,16 @@ def parse_args() -> argparse.Namespace:
         "--esp-api-port",
         type=int,
         help="override the selected ESP native API port",
+    )
+    parser.add_argument("--peer-esp", choices=sorted(DEFAULT_ESPS), default="ws3")
+    parser.add_argument(
+        "--peer-esp-host",
+        help="override the second ESP native API host",
+    )
+    parser.add_argument(
+        "--peer-esp-api-port",
+        type=int,
+        help="override the second ESP native API port",
     )
     parser.add_argument(
         "--out-dir",
