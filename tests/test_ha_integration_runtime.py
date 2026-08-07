@@ -124,6 +124,54 @@ async def test_default_browser_call_response_does_not_require_an_open_card(
     originate.assert_awaited_once()
 
 
+async def test_transfer_service_returns_the_refer_subscription_result(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepare_integration_dependencies(hass)
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+
+    from custom_components import voip_stack
+    from custom_components.voip_stack import call_transfer
+    from custom_components.voip_stack.sip_client import SipTransferResult
+
+    phones = SimpleNamespace(resolve_source=AsyncMock())
+    monkeypatch.setattr(
+        voip_stack,
+        "_runtime_data",
+        lambda _hass: SimpleNamespace(phones=phones),
+    )
+    transfer = AsyncMock(
+        return_value=SipTransferResult(True, 200, "completed")
+    )
+    monkeypatch.setattr(call_transfer, "async_transfer_call", transfer)
+
+    response = await hass.services.async_call(
+        DOMAIN,
+        "transfer",
+        {
+            "device_id": "phone-device",
+            "call_id": "active-call",
+            "destination": "427",
+        },
+        blocking=True,
+        return_response=True,
+    )
+
+    assert response == {
+        "schema_version": 1,
+        "success": True,
+        "call_id": "active-call",
+        "destination": "427",
+        "replaces_call_id": "",
+        "status": 200,
+        "state": "completed",
+    }
+    phones.resolve_source.assert_awaited_once()
+    transfer.assert_awaited_once()
+
+
 async def test_default_phone_call_state_keeps_its_historical_entity_id(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,

@@ -191,13 +191,6 @@ class EspHomePhoneAdapter:
         call: ServiceCall,
     ) -> PhoneActionResult:
         device = phone.transport_data
-        call_entity = str((device.get("entities") or {}).get("call") or "").strip()
-        await async_require_phone_service_control(
-            call.hass,
-            call,
-            device=device,
-            action_entity_ids=(call_entity,) if call_entity else (),
-        )
         await async_call_action(
             call.hass,
             device,
@@ -220,15 +213,6 @@ class EspHomePhoneAdapter:
         call: ServiceCall,
     ) -> PhoneActionResult:
         device = phone.transport_data
-        entities = device.get("entities") or {}
-        entity_key = "call" if operation is PhoneOperation.ANSWER else "decline"
-        entity_id = str(entities.get(entity_key) or "").strip()
-        await async_require_phone_service_control(
-            call.hass,
-            call,
-            device=device,
-            action_entity_ids=(entity_id,) if entity_id else (),
-        )
         action = {
             PhoneOperation.ANSWER: "answer_call",
             PhoneOperation.DECLINE: "decline_call",
@@ -297,9 +281,7 @@ class PhoneAdapterRegistry:
                 translation_domain=DOMAIN,
                 translation_key="destination_required",
             )
-        phone = await self._resolve_source(call)
-        if not phone.supports(PhoneOperation.ORIGINATE):
-            raise _unsupported(phone, PhoneOperation.ORIGINATE)
+        phone = await self.resolve_source(call, PhoneOperation.ORIGINATE)
         return await self._adapters[phone.kind].originate(
             phone,
             request,
@@ -314,15 +296,46 @@ class PhoneAdapterRegistry:
     ) -> PhoneActionResult:
         """Dispatch answer, decline or hangup through the selected phone."""
 
-        phone = await self._resolve_source(call)
-        if not phone.supports(operation):
-            raise _unsupported(phone, operation)
+        phone = await self.resolve_source(call, operation)
         return await self._adapters[phone.kind].control(
             phone,
             operation,
             request,
             call=call,
         )
+
+    async def resolve_source(
+        self,
+        call: ServiceCall,
+        operation: PhoneOperation | None = None,
+    ) -> PhoneHandle:
+        """Resolve and authorize one local phone through the common boundary."""
+
+        phone = await self._resolve_source(call)
+        if operation is not None and not phone.supports(operation):
+            raise _unsupported(phone, operation)
+        if phone.kind is EndpointKind.ESPHOME:
+            device = phone.transport_data
+            entities = device.get("entities") or {}
+            role = (
+                "call"
+                if operation in {None, PhoneOperation.ORIGINATE, PhoneOperation.ANSWER}
+                else "decline"
+            )
+            entity_id = str(entities.get(role) or "").strip()
+            await async_require_phone_service_control(
+                call.hass,
+                call,
+                device=device,
+                action_entity_ids=(entity_id,) if entity_id else (),
+            )
+        else:
+            await async_require_phone_service_control(
+                call.hass,
+                call,
+                endpoint=phone.transport_data,
+            )
+        return phone
 
     async def _resolve_source(self, call: ServiceCall) -> PhoneHandle:
         selector = str(call.data.get("device_id") or "").strip()

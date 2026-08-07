@@ -95,6 +95,15 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         },
         extra=vol.PREVENT_EXTRA,
     )
+    sip_transfer_schema = vol.Schema(
+        {
+            **phone_selector_fields,
+            vol.Required("call_id"): SHORT_TEXT,
+            vol.Optional("destination", default=""): URI_TEXT,
+            vol.Optional("replaces_call_id", default=""): SHORT_TEXT,
+        },
+        extra=vol.PREVENT_EXTRA,
+    )
     sip_deadline_schema = vol.Schema(
         {
             vol.Required("call_id"): SHORT_TEXT,
@@ -262,6 +271,13 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(DOMAIN, "forward", handler_for("forward"), schema=sip_forward_schema)
+    hass.services.async_register(
+        DOMAIN,
+        "transfer",
+        handler_for("transfer"),
+        schema=sip_transfer_schema,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
     hass.services.async_register(DOMAIN, "route", handler_for("route"), schema=sip_route_schema)
     hass.services.async_register(
         DOMAIN,

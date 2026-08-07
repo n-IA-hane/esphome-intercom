@@ -358,6 +358,47 @@ async def _handle_sip_forward_service(call: ServiceCall) -> None:
     await _forward_browser_call(call)
 
 
+async def _handle_sip_transfer_service(call: ServiceCall) -> dict[str, object]:
+    """Transfer one established call through its owned SIP dialog."""
+
+    from .call_transfer import CallTransferRequest, async_transfer_call
+
+    runtime = _runtime_data(call.hass)
+    if runtime is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="phone_unavailable",
+            translation_placeholders={"phone": "VoIP Stack"},
+        )
+    await runtime.phones.resolve_source(call)
+    request = CallTransferRequest(
+        call_id=str(call.data.get("call_id") or "").strip(),
+        destination=str(call.data.get("destination") or "").strip(),
+        replaces_call_id=str(call.data.get("replaces_call_id") or "").strip(),
+    )
+    if not request.destination and not request.replaces_call_id:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="transfer_destination_required",
+        )
+    try:
+        result = await async_transfer_call(runtime, request)
+    except (ValueError, RuntimeError) as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="transfer_target_invalid",
+        ) from err
+    return {
+        "schema_version": 1,
+        "success": result.accepted,
+        "call_id": request.call_id,
+        "destination": request.destination,
+        "replaces_call_id": request.replaces_call_id,
+        "status": result.status,
+        "state": result.state,
+    }
+
+
 async def _handle_sip_set_deadline_service(call: ServiceCall) -> None:
     from .call_deadlines import async_set_call_deadline
 
@@ -393,6 +434,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "set_ha_softphone_settings": _handle_set_ha_softphone_settings_service,
             "call": _handle_sip_call_target_service,
             "forward": _handle_sip_forward_service,
+            "transfer": _handle_sip_transfer_service,
             "route": _handle_sip_route_service,
             "select_inbound_destination": _handle_select_inbound_destination_service,
             "set_deadline": _handle_sip_set_deadline_service,

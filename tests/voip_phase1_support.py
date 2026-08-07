@@ -24,7 +24,7 @@ PKG_DIR = ROOT / "custom_components" / "voip_stack"
 CORE_MODULES = {
     "audio_format", "audio_pcm", "codec_capabilities", "g711",
     "g722_codec", "opus_codec", "rtp", "sdp", "sip", "sip_auth",
-    "sip_dialog", "sip_transaction", "video_rtcp", "video_rtp",
+    "sip_dialog", "sip_transaction", "sip_transfer", "video_rtcp", "video_rtp",
 }
 
 
@@ -96,6 +96,7 @@ sip_tcp_io = _load_intercom_module("sip_tcp_io")
 sip_listener = _load_intercom_module("sip_listener")
 sip_registrar = _load_intercom_module("sip_registrar")
 sip_auth = _load_intercom_module("sip_auth")
+sip_transfer = _load_intercom_module("sip_transfer")
 sip_runtime = _load_intercom_module("sip_runtime")
 sip_rtp_bridge = _load_intercom_module("sip_rtp_bridge")
 sip_bridge = _load_intercom_module("sip_bridge")

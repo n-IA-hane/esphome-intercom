@@ -17,7 +17,7 @@ from .core.codec_capabilities import supports_dahua_pcm
 from .core.g722_codec import G722Decoder, G722Encoder
 from .core.opus_codec import OpusDecoder, OpusEncoder
 from .session_cleanup import async_wait_for_cleanup
-from .core import sdp, sip
+from .core import sdp, sip, sip_transfer
 from .core.sip_auth import build_digest_authorization
 from .sip_tcp_io import SipTcpWriter, read_sip_stream_message as _read_sip_stream_message
 from .sip_udp_io import SipDatagramQueueProtocol
@@ -267,6 +267,16 @@ DialogMediaUpdateHandler = Callable[
     [SipDialog, SipDialog, str],
     Awaitable[DialogMediaCommit | None],
 ]
+ReferHandler = Callable[[sip_transfer.SipReferTarget], Awaitable[int]]
+
+
+@dataclass(frozen=True, slots=True)
+class SipTransferResult:
+    """Final outcome reported by the REFER subscription."""
+
+    accepted: bool
+    status: int
+    state: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -383,6 +393,7 @@ class SipCallClient:
         self.on_info_dtmf: Callable[[str], None] | None = None
         self.on_media_update: DialogMediaUpdateHandler | None = None
         self.on_connected_identity: Callable[[str, str], None] | None = None
+        self.on_refer: ReferHandler | None = None
         self._invite_cseq = self.dialog_ids.cseq
         self._pending_target = ""
         self._pending_target_display = ""
@@ -415,6 +426,8 @@ class SipCallClient:
         self._local_dialog_cseq = self._invite_cseq
         self._remote_cseq = 0
         self._in_dialog_responses: list[_InDialogResponse] = []
+        self._refer_notifications: asyncio.Queue[tuple[int, bool]] | None = None
+        self._incoming_refer_task: asyncio.Task[None] | None = None
         self._dialog_read_lock = asyncio.Lock()
         self._local_offer_lock = asyncio.Lock()
         self._local_offer_requested = asyncio.Event()
@@ -548,6 +561,7 @@ class SipCallClient:
                     owned_signaling_task,
                     self._final_response_task,
                     self._invite_task,
+                    self._incoming_refer_task,
                 )
                 if task is not None
                 and task is not current_task
@@ -564,6 +578,8 @@ class SipCallClient:
         self._terminated_invite_branches.clear()
         self._reliable_rseq.clear()
         self._deferred_signaling.clear()
+        self._refer_notifications = None
+        self._incoming_refer_task = None
 
         if self.transport is not None:
             self.transport.close()
@@ -2200,6 +2216,60 @@ class SipCallClient:
                     return response
         return None
 
+    async def refer(
+        self,
+        target: sip_transfer.SipReferTarget,
+        *,
+        timeout: float = 30.0,
+    ) -> SipTransferResult:
+        """Request a blind or attended transfer and await its NOTIFY outcome."""
+
+        if self.dialog is None or self._refer_notifications is not None:
+            return SipTransferResult(False, 0, "unavailable")
+        notifications: asyncio.Queue[tuple[int, bool]] = asyncio.Queue(maxsize=8)
+        self._refer_notifications = notifications
+        try:
+            response = await self._send_in_dialog_request(
+                "REFER",
+                extra_headers=(
+                    ("Refer-To", target.as_header()),
+                    ("Referred-By", sip.format_name_addr(self.dialog.local_uri)),
+                ),
+                timeout=min(float(timeout), 8.0),
+            )
+            status = int(response.status_code or 0) if response is not None else 0
+            if not 200 <= status < 300:
+                return SipTransferResult(False, status, "rejected")
+            deadline = asyncio.get_running_loop().time() + float(timeout)
+            while True:
+                while not notifications.empty():
+                    notify_status, terminated = notifications.get_nowait()
+                    if notify_status >= 200:
+                        return SipTransferResult(
+                            200 <= notify_status < 300,
+                            notify_status,
+                            "completed" if notify_status < 300 else "failed",
+                        )
+                    if terminated:
+                        return SipTransferResult(False, notify_status, "terminated")
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    return SipTransferResult(False, 0, "timeout")
+                async with self._dialog_read_lock:
+                    received = await self._read_response(remaining)
+                    if received is None:
+                        return SipTransferResult(False, 0, "timeout")
+                    message, addr = received
+                    if message.is_request:
+                        terminal = await self._dispatch_in_dialog_request(message, addr)
+                        if terminal is not None:
+                            return SipTransferResult(False, 0, terminal)
+                    elif self._ack_retransmitted_invite_2xx(message):
+                        continue
+        finally:
+            if self._refer_notifications is notifications:
+                self._refer_notifications = None
+
     async def _refresh_session(
         self,
         dialog: SipDialog,
@@ -2447,6 +2517,11 @@ class SipCallClient:
                 )
                 return None
             return await self._handle_dialog_media_request(msg, addr[0], addr[1])
+        if msg.method == "REFER":
+            self._handle_refer_request(msg, addr)
+            return None
+        if msg.method == "NOTIFY":
+            return self._handle_refer_notify(msg, addr)
         if msg.method in {"INFO", "OPTIONS"}:
             if not self._request_matches_dialog(msg, addr[0], msg.method):
                 self._send_response_to_request(
@@ -2498,6 +2573,179 @@ class SipCallClient:
         self._send_response_to_request(
             msg, addr[0], addr[1], 405, "Method Not Allowed"
         )
+        return None
+
+    def _handle_refer_request(
+        self,
+        request: sip.SipMessage,
+        addr: tuple[str, int],
+    ) -> None:
+        """Accept one in-dialog REFER and hand it to the session owner."""
+
+        host, port = addr
+        if not self._request_matches_dialog(request, host, "REFER"):
+            self._send_response_to_request(
+                request, host, port, 481, "Call/Transaction Does Not Exist"
+            )
+            return
+        cached = self._find_in_dialog_response(request)
+        if cached is not None:
+            self._send_response_to_request(
+                request,
+                host,
+                port,
+                cached.status,
+                cached.reason,
+                extra_headers=cached.extra_headers,
+                body=cached.body,
+            )
+            return
+        try:
+            request_cseq = sip.parse_cseq(request.header("CSeq"))
+            target = sip_transfer.parse_refer_to(request.header("Refer-To"))
+        except (TypeError, ValueError, sip.SipError):
+            self._send_response_to_request(request, host, port, 400, "Bad Request")
+            return
+        if request_cseq.number <= self._remote_cseq:
+            self._send_response_to_request(
+                request,
+                host,
+                port,
+                500,
+                "Server Internal Error",
+                extra_headers=(("Retry-After", "1"),),
+            )
+            return
+        if self.on_refer is None or (
+            self._incoming_refer_task is not None
+            and not self._incoming_refer_task.done()
+        ):
+            self._send_response_to_request(request, host, port, 603, "Decline")
+            self._remember_in_dialog_response(request, 603, "Decline")
+            return
+        self._send_response_to_request(request, host, port, 202, "Accepted")
+        self._remember_in_dialog_response(request, 202, "Accepted")
+        self._remote_cseq = request_cseq.number
+        task = asyncio.create_task(
+            self._run_incoming_refer(target, request_cseq.number),
+            name=f"voip-sip-refer-{self.dialog_ids.call_id}",
+        )
+        self._incoming_refer_task = task
+        task.add_done_callback(self._incoming_refer_done)
+
+    def _incoming_refer_done(self, task: asyncio.Task[None]) -> None:
+        if self._incoming_refer_task is task:
+            self._incoming_refer_task = None
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            _LOGGER.warning(
+                "SIP incoming REFER failed call_id=%s error=%s",
+                self.dialog_ids.call_id,
+                error,
+            )
+
+    async def _run_incoming_refer(
+        self,
+        target: sip_transfer.SipReferTarget,
+        refer_cseq: int,
+    ) -> None:
+        """Report progress and the final transfer outcome with NOTIFY."""
+
+        event_headers = (
+            ("Event", f"refer;id={refer_cseq}"),
+            ("Subscription-State", "active;expires=60"),
+        )
+        progress = await self._send_in_dialog_request(
+            "NOTIFY",
+            extra_headers=event_headers,
+            body=b"SIP/2.0 100 Trying\r\n",
+            content_type="message/sipfrag",
+        )
+        if progress is None or not 200 <= int(progress.status_code or 0) < 300:
+            return
+        try:
+            status = int(await self.on_refer(target)) if self.on_refer else 603
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "SIP REFER handler failed call_id=%s",
+                self.dialog_ids.call_id,
+            )
+            status = 500
+        status = status if 200 <= status <= 699 else 500
+        reason = "OK" if status < 300 else "Transfer Failed"
+        await self._send_in_dialog_request(
+            "NOTIFY",
+            extra_headers=(
+                ("Event", f"refer;id={refer_cseq}"),
+                ("Subscription-State", "terminated;reason=noresource"),
+            ),
+            body=f"SIP/2.0 {status} {reason}\r\n".encode(),
+            content_type="message/sipfrag",
+        )
+
+    def _handle_refer_notify(
+        self,
+        request: sip.SipMessage,
+        addr: tuple[str, int],
+    ) -> None:
+        """Acknowledge one RFC 3515 transfer progress notification."""
+
+        host, port = addr
+        if not self._request_matches_dialog(request, host, "NOTIFY"):
+            self._send_response_to_request(
+                request, host, port, 481, "Subscription Does Not Exist"
+            )
+            return None
+        cached = self._find_in_dialog_response(request)
+        if cached is not None:
+            self._send_response_to_request(
+                request,
+                host,
+                port,
+                cached.status,
+                cached.reason,
+                extra_headers=cached.extra_headers,
+                body=cached.body,
+            )
+            return None
+        event = request.header("Event").split(";", 1)[0].strip().casefold()
+        content_type = request.header("Content-Type").split(";", 1)[0].strip().casefold()
+        if self._refer_notifications is None or event != "refer":
+            self._send_response_to_request(request, host, port, 489, "Bad Event")
+            return None
+        if content_type != "message/sipfrag":
+            self._send_response_to_request(request, host, port, 415, "Unsupported Media Type")
+            return None
+        try:
+            request_cseq = sip.parse_cseq(request.header("CSeq"))
+            status = sip_transfer.parse_sipfrag_status(request.body)
+        except (TypeError, ValueError, sip.SipError):
+            self._send_response_to_request(request, host, port, 400, "Bad Request")
+            return None
+        if request_cseq.number <= self._remote_cseq:
+            self._send_response_to_request(
+                request,
+                host,
+                port,
+                500,
+                "Server Internal Error",
+                extra_headers=(("Retry-After", "1"),),
+            )
+            return None
+        self._send_response_to_request(request, host, port, 200, "OK")
+        self._remember_in_dialog_response(request, 200, "OK")
+        self._remote_cseq = request_cseq.number
+        subscription = request.header("Subscription-State").split(";", 1)[0].strip().casefold()
+        item = (status, subscription == "terminated")
+        try:
+            self._refer_notifications.put_nowait(item)
+        except asyncio.QueueFull:
+            self._refer_notifications.get_nowait()
+            self._refer_notifications.put_nowait(item)
         return None
 
     def _dialog_candidate_from_answer(

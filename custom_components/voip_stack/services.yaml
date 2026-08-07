@@ -199,6 +199,36 @@ forward:
               step: 1
               mode: box
 
+transfer:
+  name: Transfer call
+  description: Transfer an established call using SIP REFER, optionally replacing another established consultation call.
+  fields:
+    device_id:
+      name: Phone
+      description: Local phone that owns the call.
+      required: false
+      selector:
+        device:
+          filter:
+            - integration: voip_stack
+    call_id:
+      name: Call ID
+      required: true
+      selector:
+        text:
+    destination:
+      name: Destination
+      description: SIP URI, address, extension or configured phone for a blind transfer.
+      required: false
+      selector:
+        text:
+    replaces_call_id:
+      name: Consultation call ID
+      description: Established consultation call to replace for an attended transfer.
+      required: false
+      selector:
+        text:
+
 set_deadline:
   name: "Advanced: Set call deadline"
   description: Arm an explicit calling or ringing deadline. Expiry emits an automation event but never changes routing by itself.

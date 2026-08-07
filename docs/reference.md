@@ -213,6 +213,7 @@ permission are independent.
 - `voip_stack.decline`
 - `voip_stack.hangup`
 - `voip_stack.forward`
+- `voip_stack.transfer`
 - `voip_stack.route`
 - `voip_stack.select_inbound_destination`
 - `voip_stack.set_deadline`

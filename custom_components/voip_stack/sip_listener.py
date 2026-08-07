@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
 from .core.codec_capabilities import supports_dahua_pcm
 from .const import VOIP_STACK_RTP_PORT
-from .core import sdp, sip
+from .core import sdp, sip, sip_transfer
 from .core.sip_dialog import uas_request_matches_dialog
 from .sip_tcp_io import SipTcpWriter, read_sip_stream_message as _read_sip_stream_message
 from .core.sip_transaction import (
@@ -208,6 +208,7 @@ class _ActiveDialog:
     update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     session_timer: sip.SipSessionTimer = field(default_factory=sip.SipSessionTimer)
     session_timer_task: asyncio.Task[None] | None = None
+    refer_task: asyncio.Task[None] | None = None
 
 
 @dataclass(slots=True)
@@ -223,6 +224,7 @@ TerminateHandler = Callable[[str, str], Awaitable[None]]
 RegisterHandler = Callable[[sip.SipMessage, tuple[str, int], str], Awaitable[Any]]
 InfoHandler = Callable[[sip.SipMessage, tuple[str, int], str], Awaitable[None]]
 MediaUpdateHandler = Callable[[SipInvite, SipInvite, str], Awaitable[SipInviteResult]]
+ReferHandler = Callable[[str, sip_transfer.SipReferTarget], Awaitable[int]]
 SendHandler = Callable[[bytes, tuple[str, int]], bool | None]
 TcpDialogSender = Callable[[bytes], bool | None]
 
@@ -475,6 +477,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         on_register: RegisterHandler | None = None,
         on_info: InfoHandler | None = None,
         on_media_update: MediaUpdateHandler | None = None,
+        on_refer: ReferHandler | None = None,
         send_override: SendHandler | None = None,
         signaling_transport: str = "UDP",
         enable_video: bool = False,
@@ -495,6 +498,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self.on_register = on_register
         self.on_info = on_info
         self.on_media_update = on_media_update
+        self.on_refer = on_refer
         self.send_override = send_override
         self.signaling_transport = (signaling_transport or "UDP").upper()
         self.enable_video = bool(enable_video)
@@ -792,6 +796,13 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         if task is not None and task is not asyncio.current_task():
             task.cancel()
 
+    @staticmethod
+    def _cancel_refer(dialog: _ActiveDialog) -> None:
+        task = dialog.refer_task
+        dialog.refer_task = None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
     def _activate_dialog(
         self,
         call_id: str,
@@ -857,9 +868,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         )
         async def _run() -> None:
             try:
-                response = await self._send_dialog_update(
+                response = await self._send_dialog_request(
                     call_id,
                     dialog,
+                    "UPDATE",
                     local_uri=identity_uri,
                     local_display_name=dialog.connected_identity_name,
                 )
@@ -878,16 +890,19 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self._maintenance_tasks.add(task)
         task.add_done_callback(self._maintenance_tasks.discard)
 
-    async def _send_dialog_update(
+    async def _send_dialog_request(
         self,
         call_id: str,
         dialog: _ActiveDialog,
+        method: str,
         *,
         local_uri: str = "",
         local_display_name: str = "",
         extra_headers: tuple[tuple[str, str], ...] = (),
+        body: bytes = b"",
+        content_type: str = "",
     ) -> sip.SipMessage | None:
-        """Send one serialized offerless UPDATE on an owned dialog."""
+        """Send one serialized non-INVITE request on an owned dialog."""
 
         async with dialog.update_lock:
             if self.active_dialogs.get(call_id) is not dialog:
@@ -914,26 +929,27 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     local_uri=local_uri,
                     remote_uri=remote_uri,
                     dialog=ids,
-                    method="UPDATE",
+                    method=method,
                     contact_uri=_response_contact_uri(
                         dialog.request,
                         local_ip=self.local_ip,
                         local_sip_port=self.local_sip_port,
                         transport=dialog.transport,
                     ),
+                    content_type=content_type,
                     transport=dialog.transport,
                     local_display_name=local_display_name,
                     remote_display_name=dialog.remote_display_name,
                 )
                 headers.extend(("Route", value) for value in routing.route_headers)
                 headers.extend(extra_headers)
-                raw = sip.build_request("UPDATE", routing.request_uri, headers, b"")
+                raw = sip.build_request(method, routing.request_uri, headers, body)
                 target_addr = dialog.addr
                 if dialog.transport == "UDP":
                     target = sip.parse_sip_uri(routing.next_hop_uri)
                     target_addr = (target.host, int(target.port or 5060))
             except (TypeError, ValueError, sip.SipError) as err:
-                _LOGGER.warning("SIP UPDATE routing rejected call_id=%s: %s", call_id, err)
+                _LOGGER.warning("SIP %s routing rejected call_id=%s: %s", method, call_id, err)
                 return None
 
             responses: asyncio.Queue[tuple[sip.SipMessage, tuple[str, int]]] = (
@@ -958,7 +974,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             try:
                 if not self._send(raw, target_addr):
                     return None
-                sip.mark_sip_event(self, "UPDATE")
+                sip.mark_sip_event(self, method)
                 while self.active_dialogs.get(call_id) is dialog:
                     received = await transaction.receive(_read, _retransmit)
                     if received is None:
@@ -968,7 +984,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                         sip.response_matches_dialog_transaction(
                             response,
                             ids,
-                            "UPDATE",
+                            method,
                         )
                         and int(response.status_code or 0) >= 200
                     ):
@@ -976,6 +992,76 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             finally:
                 self._client_transaction_responses.pop(ids.branch, None)
         return None
+
+    async def _handle_dialog_refer(
+        self,
+        call_id: str,
+        dialog: _ActiveDialog,
+        request: sip.SipMessage,
+        addr: tuple[str, int],
+    ) -> None:
+        """Accept one REFER and report its owner-provided result with NOTIFY."""
+
+        try:
+            refer_cseq = sip.parse_cseq(request.header("CSeq"))
+            target = sip_transfer.parse_refer_to(request.header("Refer-To"))
+        except (TypeError, ValueError, sip.SipError):
+            self._send_response(
+                request, addr, 400, "Bad Request", to_tag=dialog.to_tag
+            )
+            return
+        if self.on_refer is None or (
+            dialog.refer_task is not None and not dialog.refer_task.done()
+        ):
+            self._send_response(request, addr, 603, "Decline", to_tag=dialog.to_tag)
+            self._remember_dialog_response(dialog, request, addr, 603, "Decline")
+            return
+        self._send_response(request, addr, 202, "Accepted", to_tag=dialog.to_tag)
+        self._remember_dialog_response(dialog, request, addr, 202, "Accepted")
+
+        async def run() -> None:
+            try:
+                response = await self._send_dialog_request(
+                    call_id,
+                    dialog,
+                    "NOTIFY",
+                    extra_headers=(
+                        ("Event", f"refer;id={refer_cseq.number}"),
+                        ("Subscription-State", "active;expires=60"),
+                    ),
+                    body=b"SIP/2.0 100 Trying\r\n",
+                    content_type="message/sipfrag",
+                )
+                if response is None or not 200 <= int(response.status_code or 0) < 300:
+                    return
+                try:
+                    status = int(await self.on_refer(call_id, target))
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    _LOGGER.exception("SIP REFER handler failed call_id=%s", call_id)
+                    status = 500
+                status = status if 200 <= status <= 699 else 500
+                reason = "OK" if status < 300 else "Transfer Failed"
+                await self._send_dialog_request(
+                    call_id,
+                    dialog,
+                    "NOTIFY",
+                    extra_headers=(
+                        ("Event", f"refer;id={refer_cseq.number}"),
+                        ("Subscription-State", "terminated;reason=noresource"),
+                    ),
+                    body=f"SIP/2.0 {status} {reason}\r\n".encode(),
+                    content_type="message/sipfrag",
+                )
+            finally:
+                if dialog.refer_task is asyncio.current_task():
+                    dialog.refer_task = None
+
+        task = asyncio.create_task(run(), name=f"voip-sip-refer-{call_id}")
+        dialog.refer_task = task
+        self._maintenance_tasks.add(task)
+        task.add_done_callback(self._maintenance_tasks.discard)
 
     def _arm_session_timer(
         self,
@@ -1004,9 +1090,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     if not dialog.session_timer.local_refresher:
                         break
                     for attempt in range(2):
-                        response = await self._send_dialog_update(
+                        response = await self._send_dialog_request(
                             call_id,
                             dialog,
+                            "UPDATE",
                             extra_headers=(
                                 ("Supported", "timer"),
                                 (
@@ -1557,6 +1644,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             self._cancel_invite_2xx(dialog)
             self._cancel_connected_identity(dialog)
             self._cancel_session_timer(dialog)
+            self._cancel_refer(dialog)
             self._remember_terminated_invite(dialog)
             self.active_dialogs.pop(call_id, None)
             self._remember_completed(
@@ -1608,6 +1696,11 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 return
             if not _same_dialog_request(request, existing_dialog, addr):
                 self._send_response(request, addr, 481, "Call/Transaction Does Not Exist", to_tag=existing_dialog.to_tag)
+                return
+            if request.method == "REFER":
+                await self._handle_dialog_refer(
+                    call_id, existing_dialog, request, addr
+                )
                 return
             if request.method not in {"INVITE", "UPDATE"}:
                 self._send_response(request, addr, 405, "Method Not Allowed", to_tag=existing_dialog.to_tag)
@@ -2334,6 +2427,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self._cancel_invite_2xx(dialog)
         self._cancel_connected_identity(dialog)
         self._cancel_session_timer(dialog)
+        self._cancel_refer(dialog)
         self._remember_terminated_invite(dialog)
         self.active_dialogs.pop(call_id, None)
         _LOGGER.info("SIP TX BYE call_id=%s to %s:%s", call_id, target_addr[0], target_addr[1])
@@ -2545,6 +2639,7 @@ class SipUdpServer:
         on_register: RegisterHandler | None = None,
         on_info: InfoHandler | None = None,
         on_media_update: MediaUpdateHandler | None = None,
+        on_refer: ReferHandler | None = None,
         enable_video: bool = False,
         enable_video_transcoding: bool = False,
         prefer_browser_video_send: bool = False,
@@ -2561,6 +2656,7 @@ class SipUdpServer:
         self.on_register = on_register
         self.on_info = on_info
         self.on_media_update = on_media_update
+        self.on_refer = on_refer
         self.enable_video = bool(enable_video)
         self.enable_video_transcoding = bool(enable_video_transcoding)
         self.prefer_browser_video_send = bool(prefer_browser_video_send)
@@ -2585,6 +2681,7 @@ class SipUdpServer:
                     on_register=self.on_register,
                     on_info=self.on_info,
                     on_media_update=self.on_media_update,
+                    on_refer=self.on_refer,
                     signaling_transport="UDP",
                     enable_video=self.enable_video,
                     enable_video_transcoding=self.enable_video_transcoding,
@@ -2652,6 +2749,7 @@ class SipTcpServer:
         on_register: RegisterHandler | None = None,
         on_info: InfoHandler | None = None,
         on_media_update: MediaUpdateHandler | None = None,
+        on_refer: ReferHandler | None = None,
         enable_video: bool = False,
         enable_video_transcoding: bool = False,
         prefer_browser_video_send: bool = False,
@@ -2672,6 +2770,7 @@ class SipTcpServer:
         self.on_register = on_register
         self.on_info = on_info
         self.on_media_update = on_media_update
+        self.on_refer = on_refer
         self.enable_video = bool(enable_video)
         self.enable_video_transcoding = bool(enable_video_transcoding)
         self.prefer_browser_video_send = bool(prefer_browser_video_send)
@@ -2717,6 +2816,7 @@ class SipTcpServer:
             on_register=self.on_register,
             on_info=self.on_info,
             on_media_update=self.on_media_update,
+            on_refer=self.on_refer,
             send_override=_send,
             signaling_transport="TCP",
             enable_video=self.enable_video,

@@ -721,6 +721,14 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             method,
         )
 
+    async def _on_refer(call_id, target) -> int:
+        from .call_transfer import async_transfer_target
+
+        result = await async_transfer_target(runtime, call_id, target)
+        if result.status:
+            return result.status
+        return 503 if result.state == "call_not_found" else 500
+
     endpoint_termination = EndpointTerminationHandler(
         hass=hass,
         ha_peer_name=_ha_peer_name,
@@ -741,6 +749,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         on_register=_on_register,
         on_info=_on_info,
         on_media_update=_on_media_update,
+        on_refer=_on_refer,
         udp_enabled=True,
         tcp_enabled=True,
         enable_video=bool(cfg.get(CONF_SIP_VIDEO, False)),

@@ -232,6 +232,12 @@
     },
     "purge_devices_disabled": {
       "message": "Questa azione è disabilitata perché VoIP Stack non possiede i dispositivi ESPHome e non può rimuoverli in sicurezza."
+    },
+    "transfer_destination_required": {
+      "message": "È richiesta una destinazione o una chiamata sostitutiva per il trasferimento."
+    },
+    "transfer_target_invalid": {
+      "message": "La destinazione del trasferimento non è valida oppure è ambigua."
     }
   },
   "entity": {

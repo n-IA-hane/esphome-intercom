@@ -22,6 +22,7 @@ from .voip_phase1_support import (
     sip_client,
     sip_endpoint,
     sip_listener,
+    sip_transfer,
     sip_trunk,
     socket,
     tempfile,
@@ -199,6 +200,99 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("reliable-ringing", endpoint._reliable_provisionals)
         finally:
             endpoint.cancel_request_tasks()
+
+    async def test_listener_relays_in_dialog_refer_with_notify_outcome(self) -> None:
+        sent: list[bytes] = []
+        handled: list[tuple[str, sip_transfer.SipReferTarget]] = []
+
+        async def on_refer(call_id, target):
+            handled.append((call_id, target))
+            return 200
+
+        endpoint = sip_listener.SipUdpEndpoint(
+            local_ip="192.0.2.20",
+            local_sip_port=5060,
+            local_rtp_port=42000,
+            supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
+            on_invite=lambda _invite: None,  # type: ignore[arg-type]
+            on_refer=on_refer,
+            send_override=lambda data, _addr: sent.append(data),
+        )
+        call_id = "listener-refer"
+        addr = ("192.0.2.10", 5060)
+        invite = sip.parse_message(
+            sip.build_request(
+                "INVITE",
+                "sip:Casa@192.0.2.20:5060",
+                [
+                    ("Via", "SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bKinvite"),
+                    ("From", "<sip:desk@192.0.2.10>;tag=remote"),
+                    ("To", "<sip:Casa@192.0.2.20>"),
+                    ("Contact", "<sip:desk@192.0.2.10:5060>"),
+                    ("Call-ID", call_id),
+                    ("CSeq", "1 INVITE"),
+                ],
+            )
+        )
+        endpoint.active_dialogs[call_id] = sip_listener._ActiveDialog(
+            request=invite,
+            addr=addr,
+            to_tag="local",
+            cseq=1,
+            transport="UDP",
+            remote_target_uri="sip:desk@192.0.2.10:5060",
+            remote_uri="sip:desk@192.0.2.10:5060",
+        )
+        refer = sip.build_request(
+            "REFER",
+            "sip:Casa@192.0.2.20:5060",
+            [
+                ("Via", "SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bKrefer"),
+                ("From", "<sip:desk@192.0.2.10>;tag=remote"),
+                ("To", "<sip:Casa@192.0.2.20>;tag=local"),
+                ("Call-ID", call_id),
+                ("CSeq", "2 REFER"),
+                ("Refer-To", "<sip:427@example.test>"),
+            ],
+        )
+
+        await endpoint._handle_datagram(refer, addr)
+        self.assertEqual(sip.parse_message(sent[0]).status_code, 202)
+        for notify_count, expected in enumerate((100, 200), start=1):
+            for _ in range(100):
+                notifications = [
+                    message
+                    for raw in sent
+                    if (message := sip.parse_message(raw)).method == "NOTIFY"
+                ]
+                if len(notifications) >= notify_count:
+                    notify = notifications[-1]
+                    break
+                await asyncio.sleep(0)
+            else:
+                raise AssertionError("expected listener NOTIFY was not sent")
+            self.assertEqual(sip_transfer.parse_sipfrag_status(notify.body), expected)
+            response = sip.build_response(
+                200,
+                "OK",
+                [
+                    *(('Via', value) for value in notify.header_values("Via")),
+                    ("From", notify.header("From")),
+                    ("To", notify.header("To")),
+                    ("Call-ID", notify.header("Call-ID")),
+                    ("CSeq", notify.header("CSeq")),
+                ],
+            )
+            await endpoint._handle_datagram(response, addr)
+        dialog = endpoint.active_dialogs[call_id]
+        assert dialog.refer_task is not None
+        await dialog.refer_task
+
+        self.assertEqual(
+            handled,
+            [(call_id, sip_transfer.SipReferTarget("sip:427@example.test"))],
+        )
+        endpoint.cancel_request_tasks()
 
     async def test_listener_delays_final_after_reliable_early_answer(self) -> None:
         sent: list[bytes] = []
@@ -4115,6 +4209,188 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             "sip:ESP@127.0.0.2:5090;transport=udp",
         )
         self.assertEqual(target, ("127.0.0.2", 5090))
+
+    async def test_call_client_refer_waits_for_final_notify(self) -> None:
+        sent: list[tuple[bytes, tuple[str, int]]] = []
+        pcm = sdp.RtpPcmFormat(96, "L16", 16000, 1, 32)
+        client = sip_client.SipCallClient(
+            local_ip="127.0.0.1",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        client.transport = types.SimpleNamespace(
+            sendto=lambda data, addr: sent.append((data, addr)),
+            close=lambda: None,
+        )
+        client.dialog_ids.remote_tag = "remote"
+        client.dialog = sip_client.SipDialog(
+            target="ESP",
+            remote_host="127.0.0.2",
+            remote_sip_port=5060,
+            remote_rtp_host="127.0.0.2",
+            remote_rtp_port=42000,
+            local_rtp_port=41000,
+            call_id=client.dialog_ids.call_id,
+            remote_tag="remote",
+            local_uri="sip:HA@127.0.0.1:5060",
+            remote_uri="sip:ESP@127.0.0.2:5060",
+            send_format=pcm,
+            recv_format=pcm,
+            remote_target_uri="sip:ESP@127.0.0.2:5060",
+        )
+        replaces = sip_transfer.SipReplaces(
+            "consult@example.test",
+            to_tag="consult-remote",
+            from_tag="consult-local",
+        )
+        owner = asyncio.create_task(
+            client.refer(
+                sip_transfer.SipReferTarget(
+                    "sip:desk@example.test",
+                    replaces,
+                ),
+                timeout=0.5,
+            )
+        )
+        refer = await self._wait_for_sent_request(sent, "REFER")
+        client.queue.put_nowait(
+            (
+                sip.build_response(
+                    202,
+                    "Accepted",
+                    [
+                        *(('Via', value) for value in refer.header_values("Via")),
+                        ("From", refer.header("From")),
+                        ("To", refer.header("To")),
+                        ("Call-ID", refer.header("Call-ID")),
+                        ("CSeq", refer.header("CSeq")),
+                    ],
+                ),
+                ("127.0.0.2", 5060),
+            )
+        )
+        notify = sip.build_request(
+            "NOTIFY",
+            client.dialog.local_uri,
+            [
+                ("Via", "SIP/2.0/UDP 127.0.0.2:5060;branch=z9hG4bKnotify"),
+                ("From", "<sip:ESP@127.0.0.2>;tag=remote"),
+                ("To", f"<sip:HA@127.0.0.1>;tag={client.dialog_ids.local_tag}"),
+                ("Call-ID", client.dialog_ids.call_id),
+                ("CSeq", "2 NOTIFY"),
+                ("Event", "refer"),
+                ("Subscription-State", "terminated;reason=noresource"),
+                ("Content-Type", "message/sipfrag"),
+            ],
+            b"SIP/2.0 200 OK\r\n",
+        )
+        client.queue.put_nowait((notify, ("127.0.0.2", 5060)))
+
+        result = await owner
+
+        self.assertEqual(result, sip_client.SipTransferResult(True, 200, "completed"))
+        self.assertEqual(
+            sip_transfer.parse_refer_to(refer.header("Refer-To")),
+            sip_transfer.SipReferTarget("sip:desk@example.test", replaces),
+        )
+        self.assertEqual(sip.parse_message(sent[-1][0]).status_code, 200)
+        await client.close()
+
+    async def test_call_client_reports_incoming_refer_result_with_notify(self) -> None:
+        sent: list[tuple[bytes, tuple[str, int]]] = []
+        pcm = sdp.RtpPcmFormat(96, "L16", 16000, 1, 32)
+        client = sip_client.SipCallClient(
+            local_ip="127.0.0.1",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        client.transport = types.SimpleNamespace(
+            sendto=lambda data, addr: sent.append((data, addr)),
+            close=lambda: None,
+        )
+        client.dialog_ids.remote_tag = "remote"
+        client.dialog = sip_client.SipDialog(
+            target="ESP",
+            remote_host="127.0.0.2",
+            remote_sip_port=5060,
+            remote_rtp_host="127.0.0.2",
+            remote_rtp_port=42000,
+            local_rtp_port=41000,
+            call_id=client.dialog_ids.call_id,
+            remote_tag="remote",
+            local_uri="sip:HA@127.0.0.1:5060",
+            remote_uri="sip:ESP@127.0.0.2:5060",
+            send_format=pcm,
+            recv_format=pcm,
+            remote_target_uri="sip:ESP@127.0.0.2:5060",
+        )
+        handled: list[sip_transfer.SipReferTarget] = []
+
+        async def handle(target: sip_transfer.SipReferTarget) -> int:
+            handled.append(target)
+            return 200
+
+        client.on_refer = handle
+        request = sip.parse_message(
+            sip.build_request(
+                "REFER",
+                client.dialog.local_uri,
+                [
+                    ("Via", "SIP/2.0/UDP 127.0.0.2:5060;branch=z9hG4bKrefer"),
+                    ("From", "<sip:ESP@127.0.0.2>;tag=remote"),
+                    ("To", f"<sip:HA@127.0.0.1>;tag={client.dialog_ids.local_tag}"),
+                    ("Call-ID", client.dialog_ids.call_id),
+                    ("CSeq", "2 REFER"),
+                    ("Refer-To", "<sip:desk@example.test>"),
+                ],
+            )
+        )
+
+        self.assertIsNone(
+            await client._dispatch_in_dialog_request(request, ("127.0.0.2", 5060))
+        )
+        self.assertEqual(sip.parse_message(sent[0][0]).status_code, 202)
+        for notify_count, expected in enumerate((100, 200), start=1):
+            for _ in range(100):
+                notifications = [
+                    message
+                    for raw, _addr in sent
+                    if (message := sip.parse_message(raw)).method == "NOTIFY"
+                ]
+                if len(notifications) >= notify_count:
+                    notify = notifications[-1]
+                    break
+                await asyncio.sleep(0)
+            else:
+                raise AssertionError("expected NOTIFY was not sent")
+            status = sip_transfer.parse_sipfrag_status(notify.body)
+            self.assertEqual(status, expected)
+            client.queue.put_nowait(
+                (
+                    sip.build_response(
+                        200,
+                        "OK",
+                        [
+                            *(('Via', value) for value in notify.header_values("Via")),
+                            ("From", notify.header("From")),
+                            ("To", notify.header("To")),
+                            ("Call-ID", notify.header("Call-ID")),
+                            ("CSeq", notify.header("CSeq")),
+                        ],
+                    ),
+                    ("127.0.0.2", 5060),
+                )
+            )
+            if expected == 100:
+                while not handled:
+                    await asyncio.sleep(0)
+        assert client._incoming_refer_task is not None
+        await client._incoming_refer_task
+
+        self.assertEqual(handled, [sip_transfer.SipReferTarget("sip:desk@example.test")])
+        await client.close()
 
     def test_decline_reason_header_overrides_generic_status(self) -> None:
         msg = sip.SipMessage(

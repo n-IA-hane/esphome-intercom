@@ -60,6 +60,19 @@ Optional stale-decision guards:
 
 See [Automation Dial Plan](AUTOMATION_DIALPLAN.md) for complete examples.
 
+### `voip_stack.transfer`
+
+Transfer an established call with the standard SIP REFER subscription.
+`call_id` identifies the active call. For a blind transfer, set `destination`
+to a configured phone, extension, `user@host` or `sip:user@host`. For an
+attended transfer, set `replaces_call_id` to the established consultation call;
+VoIP Stack derives the RFC 3891 dialog tags and sends them in `Refer-To`.
+
+The optional action response reports the REFER acceptance status and the final
+`message/sipfrag` status delivered by NOTIFY. This is distinct from
+`voip_stack.forward`, which moves a pending or ringing HA-owned route before
+the call is established.
+
 ### `voip_stack.answer`
 
 Answer the pending call on the selected phone. The Device picker supports

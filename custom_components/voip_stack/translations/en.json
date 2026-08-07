@@ -239,6 +239,12 @@
     "purge_devices_disabled": {
       "message": "This action is disabled because VoIP Stack does not own ESPHome devices and cannot safely remove them."
     },
+    "transfer_destination_required": {
+      "message": "A transfer destination or replacement call is required."
+    },
+    "transfer_target_invalid": {
+      "message": "The transfer target is invalid or ambiguous."
+    },
     "unknown_phone_device": {
       "message": "The selected Home Assistant phone device is unknown."
     }

@@ -17,6 +17,7 @@ from .voip_phase1_support import (
     sip_auth,
     sip_client,
     sip_listener,
+    sip_transfer,
     sip_rtp_bridge,
     sip_tcp_io,
     sip_trunk,
@@ -28,6 +29,29 @@ from .voip_phase1_support import (
 
 
 class SipProtocolBugFixTest(unittest.TestCase):
+    def test_refer_target_round_trip_preserves_attended_dialog(self) -> None:
+        target = sip_transfer.SipReferTarget(
+            "sip:desk@example.test",
+            sip_transfer.SipReplaces(
+                "call@example.test",
+                to_tag="remote",
+                from_tag="local",
+                early_only=True,
+            ),
+        )
+
+        self.assertEqual(sip_transfer.parse_refer_to(target.as_header()), target)
+        self.assertEqual(
+            sip_transfer.parse_sipfrag_status(b"SIP/2.0 200 OK\r\n"),
+            200,
+        )
+
+    def test_refer_target_rejects_incomplete_replaces(self) -> None:
+        with self.assertRaises(sip.SipError):
+            sip_transfer.parse_refer_to(
+                "<sip:desk@example.test?Replaces=call%3Bto-tag%3Dremote>"
+            )
+
     def test_session_timer_headers_are_strict_and_typed(self) -> None:
         self.assertEqual(
             sip.parse_session_expires("1800;refresher=uas"),
@@ -132,7 +156,7 @@ class SipProtocolBugFixTest(unittest.TestCase):
         self.assertTrue(sip.supports_option(message, "from-change"))
         self.assertEqual(
             sip.option_tags(message),
-            frozenset({"100rel", "from-change", "timer"}),
+            frozenset({"100rel", "from-change", "replaces", "timer"}),
         )
 
     def test_dtmf_collector_emits_one_digit_per_event(self) -> None:

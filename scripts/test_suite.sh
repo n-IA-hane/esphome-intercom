@@ -71,6 +71,7 @@ path_mode=$(
 pytest_args=(tests -q --tb=short)
 ha_tests=(
   tests/test_ha_integration_runtime.py
+  tests/test_ha_call_transfer.py
   tests/test_phone_control_ha.py
   tests/test_call_forwarder_behavior.py
   tests/test_invite_router_behavior.py
