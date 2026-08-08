@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import secrets
 import shutil
+import signal
 import socket
 import sys
 import time
@@ -515,10 +516,17 @@ async def _start_audio_sender(
     )
 
 
-async def _stop_process(process: asyncio.subprocess.Process | None) -> None:
+async def _stop_process(
+    process: asyncio.subprocess.Process | None,
+    *,
+    finalize_output: bool = False,
+) -> None:
     if process is None or process.returncode is not None:
         return
-    process.terminate()
+    if finalize_output:
+        process.send_signal(signal.SIGINT)
+    else:
+        process.terminate()
     try:
         await asyncio.wait_for(process.wait(), _PROCESS_STOP_TIMEOUT)
     except TimeoutError:
@@ -900,7 +908,7 @@ async def async_main(args: argparse.Namespace) -> int:
         if sender is not None:
             result["video_sender_returncode"] = sender.returncode
         video_process = None
-        await _stop_process(receiver)
+        await _stop_process(receiver, finalize_output=True)
         if receiver is not None:
             result["video_receiver_returncode"] = receiver.returncode
             result["video_rx_file"] = args.video_rx_file

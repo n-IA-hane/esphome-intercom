@@ -6,6 +6,7 @@ import asyncio
 import importlib.util
 import json
 from pathlib import Path
+import signal
 import socket
 import subprocess
 import sys
@@ -412,3 +413,28 @@ def test_jpeg_capture_path_does_not_start_ffmpeg_receiver() -> None:
 
     assert 'if args.codec == "jpeg":' in source
     assert 'result["video_rx_capture_backend"] = "rfc2435"' in source
+
+
+def test_video_recorder_gets_interrupt_to_finalize_container() -> None:
+    peer = _load_tool()
+
+    class Process:
+        returncode = None
+
+        def __init__(self) -> None:
+            self.signals: list[int] = []
+
+        def send_signal(self, value: int) -> None:
+            self.signals.append(value)
+
+        async def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+        def kill(self) -> None:
+            raise AssertionError("graceful recorder shutdown timed out")
+
+    process = Process()
+    asyncio.run(peer._stop_process(process, finalize_output=True))
+
+    assert process.signals == [signal.SIGINT]
