@@ -168,6 +168,12 @@ class SipUriTest(unittest.TestCase):
             "[2001:db8::30]:5060",
         )
 
+    def test_secure_uri_preserves_sips_scheme(self) -> None:
+        uri = sip.parse_sip_uri("sips:phone@[2001:db8::10]")
+
+        self.assertEqual(uri.scheme, "sips")
+        self.assertEqual(str(uri), "sips:phone@[2001:db8::10]")
+
     def test_extract_tag_ignores_quoted_display_name_parameters(self) -> None:
         self.assertEqual(sip.extract_tag("<sip:a@b>;tag=abc;x=y"), "abc")
         self.assertEqual(sip.extract_tag("<sip:a@b>;TAG=ABC;x=y"), "ABC")

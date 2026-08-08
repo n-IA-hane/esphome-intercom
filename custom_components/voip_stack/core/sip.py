@@ -142,6 +142,7 @@ class SipUri:
     host: str
     port: int | None = None
     params: tuple[tuple[str, str | None], ...] = ()
+    scheme: str = "sip"
 
     def __str__(self) -> str:
         user = self.user.strip()
@@ -152,7 +153,10 @@ class SipUri:
             raise SipError("SIP URI contains an invalid host")
         safe_user = quote(user, safe="!$&'()*+,-./:;=?_~")
         authority = format_host_port(host, self.port)
-        uri = f"sip:{safe_user}@{authority}" if safe_user else f"sip:{authority}"
+        scheme = self.scheme.strip().lower()
+        if scheme not in {"sip", "sips"}:
+            raise SipError(f"unsupported SIP URI scheme: {self.scheme!r}")
+        uri = f"{scheme}:{safe_user}@{authority}" if safe_user else f"{scheme}:{authority}"
         for key, value in self.params:
             if not key:
                 continue
@@ -299,9 +303,10 @@ def parse_sip_uri(value: str) -> SipUri:
     right = raw.find(">", left + 1) if left >= 0 else -1
     if left >= 0 and right > left + 1:
         raw = raw[left + 1:right].strip()
-    if not raw.lower().startswith("sip:"):
+    scheme, separator, rest = raw.partition(":")
+    scheme = scheme.lower()
+    if not separator or scheme not in {"sip", "sips"}:
         raise SipError(f"not a sip URI: {value!r}")
-    rest = raw[4:]
     if "@" in rest:
         user, host_params = rest.split("@", 1)
     else:
@@ -324,7 +329,13 @@ def parse_sip_uri(value: str) -> SipUri:
         user = unquote(user.strip(), errors="strict")
     except UnicodeDecodeError as err:
         raise SipError("SIP URI user has invalid percent encoding") from err
-    uri = SipUri(user=user, host=host.strip(), port=port, params=tuple(params))
+    uri = SipUri(
+        user=user,
+        host=host.strip(),
+        port=port,
+        params=tuple(params),
+        scheme=scheme,
+    )
     str(uri)
     return uri
 
