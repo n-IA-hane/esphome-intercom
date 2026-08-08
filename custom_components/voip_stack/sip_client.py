@@ -3175,35 +3175,27 @@ class SipCallClient:
                     offer = sdp.rewrite_sdp_origin(
                         offer, session_id, session_version
                     )
-                routing = sip.dialog_request_routing(
-                    current.remote_target_uri or current.remote_uri,
-                    current.route_set,
-                )
-                invite_ids = sip.SipDialogIds(
+                request = build_dialog_request(
+                    "INVITE",
                     call_id=self.dialog_ids.call_id,
                     local_tag=self.dialog_ids.local_tag,
                     remote_tag=self.dialog_ids.remote_tag,
                     cseq=self._next_dialog_cseq(),
-                    branch=sip.make_branch(),
-                )
-                headers = sip.dialog_headers(
-                    request_uri=routing.request_uri,
                     local_uri=current.local_uri,
                     remote_uri=current.remote_uri,
-                    dialog=invite_ids,
-                    method="INVITE",
+                    remote_target_uri=(
+                        current.remote_target_uri or current.remote_uri
+                    ),
+                    route_set=current.route_set,
                     contact_uri=current.local_uri,
-                    content_type="application/sdp",
                     transport=self.signaling_transport,
                     local_display_name=self.local_name,
                     remote_display_name=self._dialog_remote_display_name,
-                )
-                headers.extend(("Route", value) for value in routing.route_headers)
-                raw = sip.build_request(
-                    "INVITE", routing.request_uri, headers, offer.encode()
+                    content_type="application/sdp",
+                    body=offer.encode(),
                 )
                 next_host, next_port = self._dialog_next_hop(
-                    routing.next_hop_uri,
+                    request.routing.next_hop_uri,
                     current.remote_host,
                     current.remote_sip_port,
                 )
@@ -3222,7 +3214,7 @@ class SipCallClient:
                 raise
             try:
                 if self.dialog is not current or not self._send_dialog_request(
-                    raw, next_host, next_port
+                    request.raw, next_host, next_port
                 ):
                     return None
                 _LOGGER.info(
@@ -3240,7 +3232,9 @@ class SipCallClient:
                 )
 
                 async def retransmit() -> None:
-                    if not self._send_dialog_request(raw, next_host, next_port):
+                    if not self._send_dialog_request(
+                        request.raw, next_host, next_port
+                    ):
                         raise ConnectionError("SIP signaling path is unavailable")
 
                 async def read_response(
@@ -3293,8 +3287,8 @@ class SipCallClient:
                         or not self._response_matches_transaction(
                             message,
                             method="INVITE",
-                            cseq=invite_ids.cseq,
-                            branch=invite_ids.branch,
+                            cseq=request.ids.cseq,
+                            branch=request.ids.branch,
                         )
                     ):
                         continue
@@ -3353,7 +3347,7 @@ class SipCallClient:
                             current.local_uri,
                             current.remote_uri,
                             route_set=current.route_set,
-                            cseq=invite_ids.cseq,
+                            cseq=request.ids.cseq,
                             remote_tag=remote_tag,
                         )
                         if candidate is None or not acked:
@@ -3382,12 +3376,12 @@ class SipCallClient:
                         message,
                         addr[0],
                         addr[1],
-                        request_uri=routing.request_uri,
+                        request_uri=request.routing.request_uri,
                         local_uri=current.local_uri,
                         remote_uri=current.remote_uri,
                         route_set=current.route_set,
-                        cseq=invite_ids.cseq,
-                        branch=invite_ids.branch,
+                        cseq=request.ids.cseq,
+                        branch=request.ids.branch,
                     )
                     if status in {408, 481}:
                         self.dialog = None
