@@ -124,7 +124,6 @@ class CallRegistryEventContextTest(unittest.TestCase):
             session = await registry.terminate_call_wait(
                 "source",
                 reason="temporarily_unavailable",
-                state="error",
             )
 
             self.assertIsNotNone(session)
@@ -249,7 +248,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
                 "source", pbx_runtime.TerminationIntent("terminated")
             )
         )
-        registry.terminate_call("source", reason="cancelled", state="cancelled")
+        registry.terminate_call("source", reason="cancelled")
 
         attached = registry.register_bridge(
             source_call_id="source",

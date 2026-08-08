@@ -115,7 +115,6 @@ async def async_track_outbound_sip_client(
         await registry.terminate_call_wait(
             client.dialog_ids.call_id,
             reason=sip_terminal_reason(result, public_result),
-            state=public_result,
         )
         return
 
@@ -252,7 +251,6 @@ async def async_track_outbound_sip_client(
             await registry.terminate_call_wait(
                 client.dialog_ids.call_id,
                 reason=terminal_reason,
-                state=public_final,
             )
             _set_ha_softphone_call_state(
                 hass,

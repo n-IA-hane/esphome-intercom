@@ -82,7 +82,6 @@ def start_local_softphone_call(
         registry.terminate_call(
             call_id,
             reason="local_bridge_start_failed",
-            state="error",
         )
         raise
 
@@ -314,7 +313,6 @@ def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
                 if snapshot.end_reason is not None
                 else "local_call_ended"
             ),
-            state="idle",
         )
 
 

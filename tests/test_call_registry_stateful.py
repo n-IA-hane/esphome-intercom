@@ -106,7 +106,6 @@ def test_generated_lifecycle_sequences_preserve_registry_invariants(
             registry.terminate_call(
                 call_id,
                 reason="generated_terminal",
-                state="idle",
             )
         elif operation.action == "late_bridge" and call_id in generations:
             generation = generations[call_id]
@@ -155,7 +154,6 @@ def test_terminal_faults_cannot_resurrect_or_duplicate_calls(fault: str) -> None
     registry.terminate_call(
         "physical:esp",
         reason="remote_hangup",
-        state="idle",
     )
 
     if fault == "duplicate_terminal":

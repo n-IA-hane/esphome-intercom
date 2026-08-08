@@ -260,9 +260,7 @@ def test_bridge_termination_projects_before_session_owned_cleanup(
 
     assert hass.released == []
     assert hass.cleanups == []
-    assert registry.finished == [
-        ("call-1", {"reason": "remote_hangup", "state": "idle"})
-    ]
+    assert registry.finished == [("call-1", {"reason": "remote_hangup"})]
     assert hass.events == [
         (
             "bridge",
@@ -327,9 +325,7 @@ def test_pending_softphone_termination_uses_owning_endpoint(
             },
         )
     ]
-    assert registry.finished == [
-        ("call-2", {"reason": "cancelled", "state": "cancelled"})
-    ]
+    assert registry.finished == [("call-2", {"reason": "cancelled"})]
 
 
 def test_early_router_cancel_publishes_one_terminal_event(
@@ -371,9 +367,7 @@ def test_early_router_cancel_publishes_one_terminal_event(
             },
         )
     ]
-    assert registry.finished == [
-        ("call-3", {"reason": "cancelled", "state": "cancelled"})
-    ]
+    assert registry.finished == [("call-3", {"reason": "cancelled"})]
 
 
 def test_preanswer_cancel_without_phone_owner_projects_bridge_terminal(
@@ -413,6 +407,4 @@ def test_preanswer_cancel_without_phone_owner_projects_bridge_terminal(
             },
         )
     ]
-    assert registry.finished == [
-        ("call-4", {"reason": "remote_hangup", "state": "idle"})
-    ]
+    assert registry.finished == [("call-4", {"reason": "remote_hangup"})]

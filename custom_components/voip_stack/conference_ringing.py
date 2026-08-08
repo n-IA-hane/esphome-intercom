@@ -176,7 +176,6 @@ async def async_ring_conference_members(
             registry.terminate_call(
                 leg_call_id,
                 reason=TerminalReason.BUSY.value,
-                state=CallState.BUSY.value,
             )
             await async_close_outbound_leg(leg)
             continue
@@ -233,7 +232,6 @@ async def async_ring_conference_members(
             registry.terminate_call(
                 client.dialog_ids.call_id,
                 reason=terminal_reason,
-                state=CallState.IDLE.value,
             )
         except asyncio.CancelledError:
             cleanup_reason = TerminalReason.CANCELLED.value
@@ -254,7 +252,6 @@ async def async_ring_conference_members(
                 registry.terminate_call(
                     client.dialog_ids.call_id,
                     reason=cleanup_reason,
-                    state=CallState.IDLE.value,
                 )
             else:
                 with contextlib.suppress(Exception):
@@ -265,7 +262,6 @@ async def async_ring_conference_members(
                 registry.terminate_call(
                     attempt.client.dialog_ids.call_id,
                     reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-                    state=CallState.TRANSPORT_UNREACHABLE.value,
                 )
 
     await asyncio.gather(

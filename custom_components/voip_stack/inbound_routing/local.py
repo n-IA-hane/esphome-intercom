@@ -11,7 +11,7 @@ from ..call_registry import TERMINAL_STATES
 from ..conference import conference_manager
 from ..endpoint_lifecycle import create_runtime_task
 from ..endpoint_registry import EndpointBusyError
-from ..fsm import CallState, TerminalReason, sip_public_state
+from ..fsm import CallState, TerminalReason
 from ..groups import GROUP_TYPE_CONFERENCE, GROUP_TYPE_RING
 from ..media_ports import RtpPortReservation
 from ..phone_endpoint import EndpointKind
@@ -79,7 +79,6 @@ def _claim_source(
         registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.BUSY.value,
-            state=CallState.BUSY.value,
         )
         return _busy_result()
     return None
@@ -119,7 +118,6 @@ async def route_local_assist(
         registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-            state=CallState.TRANSPORT_UNREACHABLE.value,
         )
         return SipInviteResult(503, "Service Unavailable", to_tag="")
     assist_rtp_port = assist_ports.ports[0]
@@ -138,7 +136,6 @@ async def route_local_assist(
         registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.PROTOCOL_ERROR.value,
-            state=CallState.TRANSPORT_UNREACHABLE.value,
         )
         return SipInviteResult(
             500,
@@ -247,7 +244,6 @@ async def route_local_group(
             registry.terminate_call(
                 invite.call_id,
                 reason=terminal_reason,
-                state=sip_public_state(terminal_reason),
             )
         return result
     if group_type == GROUP_TYPE_RING and decision.entry is not None:
@@ -279,6 +275,5 @@ async def route_local_group(
     registry.terminate_call(
         invite.call_id,
         reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-        state=CallState.TRANSPORT_UNREACHABLE.value,
     )
     return SipInviteResult(480, "Temporarily Unavailable", to_tag="")

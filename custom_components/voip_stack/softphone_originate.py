@@ -682,7 +682,6 @@ async def async_originate_browser_call(
         registry.terminate_call(
             client.dialog_ids.call_id,
             reason=TerminalReason.BUSY.value,
-            state=CallState.BUSY.value,
         )
         await client.close()
         raise ServiceValidationError(str(err)) from err
@@ -732,7 +731,6 @@ async def async_originate_browser_call(
         await registry.terminate_call_wait(
             client.dialog_ids.call_id,
             reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-            state=CallState.TRANSPORT_UNREACHABLE.value,
         )
         _set_ha_softphone_call_state(
             hass,

@@ -377,7 +377,6 @@ async def async_answer_browser_call(
         registry.terminate_call(
             call_id,
             reason=answer_result.reason or TerminalReason.PROTOCOL_ERROR.value,
-            state=CallState.CANCELLED.value,
         )
         raise ServiceValidationError(
             f"SIP answer transaction failed for call_id {call_id}: "

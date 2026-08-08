@@ -671,7 +671,6 @@ class ConferenceRoom:
             registry.terminate_call(
                 softphone_call_id,
                 reason=reason,
-                state=CallState.IDLE.value,
             )
             self._ha_softphone_announced.pop(softphone_call_id, None)
             if isinstance(manager, ConferenceManager):
@@ -748,7 +747,6 @@ class ConferenceManager:
             registry.terminate_call(
                 candidate,
                 reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-                state=CallState.TRANSPORT_UNREACHABLE.value,
             )
             raise
         self.ha_calls[candidate] = (room_name, endpoint_id)
@@ -781,7 +779,7 @@ class ConferenceManager:
                 )
             finally:
                 registry.take_media(call_id)
-                registry.terminate_call(call_id, reason=reason, state=state)
+                registry.terminate_call(call_id, reason=reason)
                 self.forget_ha_call(call_id)
                 if room is not None:
                     room._ha_softphone_announced.pop(call_id, None)
@@ -1020,7 +1018,6 @@ class ConferenceManager:
             registry.terminate_call(
                 call_id,
                 reason=reason,
-                state=CallState.IDLE.value,
             )
             self.forget_ha_call(call_id)
 
@@ -1041,7 +1038,6 @@ class ConferenceManager:
             call_registry(self.hass).terminate_call(
                 call_id,
                 reason=reason,
-                state="declined",
             )
             self.forget_ha_call(call_id)
         return True

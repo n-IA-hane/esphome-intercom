@@ -42,6 +42,20 @@ endpoint_session = _load_module("endpoint_session")
 
 
 class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_termination_intent_derives_one_public_state_policy(self) -> None:
+        self.assertEqual(
+            endpoint_session.TerminationIntent("remote_hangup").public_state,
+            "idle",
+        )
+        self.assertEqual(
+            endpoint_session.TerminationIntent("busy").public_state,
+            "busy",
+        )
+        self.assertEqual(
+            endpoint_session.TerminationIntent("protocol_error").public_state,
+            "transport_unreachable",
+        )
+
     async def test_termination_claim_precedes_legacy_handoff_and_cleanup(self) -> None:
         events: list[str] = []
         session = endpoint_session.EndpointCallSession("call-1", 1)

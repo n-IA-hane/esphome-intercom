@@ -246,7 +246,7 @@ class OutboundLifecycleRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.closed, 1)
         self.assertNotIn("call-busy", self.registry.sip_clients)
         finish = [item for item in self.registry.calls if item[0] == "finish"]
-        self.assertEqual(finish[0][2]["state"], "busy")
+        self.assertEqual(finish[0][2]["reason"], "busy")
 
     async def test_ringing_call_reaches_media_then_remote_bye_cleanup(self) -> None:
         client = _Client("call-1")

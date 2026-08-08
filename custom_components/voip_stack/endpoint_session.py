@@ -10,6 +10,7 @@ import inspect
 import logging
 from typing import Any, TypeAlias
 
+from .fsm import sip_public_state
 from .session_cleanup import async_wait_for_cleanup
 
 
@@ -80,17 +81,14 @@ class TerminationIntent:
 
     reason: str
     initiator: TerminationInitiator = TerminationInitiator.INTERNAL
-    public_state: str = "idle"
+    public_state: str = ""
     sip_disposition: SipTerminationDisposition = SipTerminationDisposition.AUTO
     response_status: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "reason", str(self.reason or "terminated").strip())
-        object.__setattr__(
-            self,
-            "public_state",
-            str(self.public_state or "idle").strip(),
-        )
+        state = str(self.public_state or "").strip()
+        object.__setattr__(self, "public_state", state or sip_public_state(self.reason))
 
 
 class CleanupStage(IntEnum):

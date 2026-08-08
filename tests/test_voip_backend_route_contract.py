@@ -1601,7 +1601,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("send_bye(hass, invite.call_id)", rejected)
         self.assertIn("bridge_ports.release()", rejected)
         self.assertIn("registry.terminate_call(", rejected)
-        self.assertIn("state=CallState.TRANSPORT_UNREACHABLE.value", rejected)
+        self.assertNotIn("state=", rejected)
         self.assertLess(
             rejected.index("bridge_ports.release()"),
             rejected.index("registry.terminate_call("),

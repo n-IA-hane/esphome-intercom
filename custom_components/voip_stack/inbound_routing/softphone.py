@@ -108,7 +108,6 @@ def defer_browser_softphone_invite(
         registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.BUSY.value,
-            state=CallState.BUSY.value,
         )
         return SipInviteResult(
             486,
@@ -200,7 +199,6 @@ def answer_inbound_ha_softphone(
         registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.BUSY.value,
-            state=CallState.BUSY.value,
         )
         return SipInviteResult(
             486,

@@ -158,7 +158,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         registry.terminate_call(
             call_id,
             reason=reason,
-            state=CallState.IDLE.value,
         )
 
     def _on_registration_change(username: str, registered: bool) -> None:
@@ -464,7 +463,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             registry.terminate_call(
                 invite.call_id,
                 reason=RouteReason.TARGET_UNREACHABLE.value,
-                state=CallState.TRANSPORT_UNREACHABLE.value,
             )
 
     async def _run_ring_group_call(
@@ -616,7 +614,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             registry.terminate_call(
                 call_id,
                 reason=TerminalReason.BUSY.value,
-                state=CallState.BUSY.value,
             )
             raise
         registry.bind_controller(
@@ -664,7 +661,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             registry.terminate_call(
                 call_id,
                 reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-                state=CallState.TRANSPORT_UNREACHABLE.value,
             )
             raise
         create_runtime_task(

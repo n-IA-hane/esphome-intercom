@@ -129,7 +129,6 @@ class EndpointTerminationHandler:
             await registry.terminate_call_wait(
                 call_id,
                 reason=terminal_reason,
-                state=terminal_state,
             )
             return
         if relay is not None or client is not None:
@@ -198,7 +197,6 @@ class EndpointTerminationHandler:
         await registry.terminate_call_wait(
             call_id,
             reason=terminal_reason,
-            state=terminal_state,
         )
         if relay is not None or client is not None:
             _LOGGER.info(

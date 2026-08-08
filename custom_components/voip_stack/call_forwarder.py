@@ -435,7 +435,7 @@ async def async_forward_existing_call(
                 "BYE" if _source_dialog_is_answered(preanswered) else "SIP_RESPONSE"
             ),
         )
-        registry.terminate_call(call_id, reason=reason, state=terminal_state)
+        registry.terminate_call(call_id, reason=reason)
 
     async def _run_forward() -> None:
         client = None

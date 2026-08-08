@@ -146,7 +146,6 @@ async def run_ring_group_call(
         registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.PROTOCOL_ERROR.value,
-            state=CallState.TRANSPORT_UNREACHABLE.value,
         )
         return
     candidates = RingGroupCandidates()
@@ -219,7 +218,7 @@ async def run_ring_group_call(
                 sip_reason,
                 decline_reason=reason,
             )
-        registry.terminate_call(invite.call_id, reason=reason, state=state)
+        registry.terminate_call(invite.call_id, reason=reason)
 
     try:
         await async_prepare_ring_group_candidates(
@@ -384,11 +383,6 @@ async def run_ring_group_call(
             await registry.terminate_call_wait(
                 invite.call_id,
                 reason=reason,
-                state=(
-                    CallState.CANCELLED.value
-                    if reason == TerminalReason.CANCELLED.value
-                    else CallState.TRANSPORT_UNREACHABLE.value
-                ),
             )
         finally:
             await _cleanup_outbound_attempts(tasks, remaining_attempts)
@@ -534,7 +528,6 @@ async def run_ring_group_call(
             registry.terminate_call(
                 invite.call_id,
                 reason=terminal_reason,
-                state=public_state,
             )
             return
         if browser_winner and isinstance(winner, BrowserLeg):
@@ -557,7 +550,6 @@ async def run_ring_group_call(
                 await registry.terminate_call_wait(
                     invite.call_id,
                     reason="local_group_selected",
-                    state=CallState.IDLE.value,
                 )
                 snapshot = start_local_softphone_call(
                     hass,
@@ -702,7 +694,6 @@ async def run_ring_group_call(
             registry.terminate_call(
                 invite.call_id,
                 reason=TerminalReason.PROTOCOL_ERROR.value,
-                state=CallState.TRANSPORT_UNREACHABLE.value,
             )
             return
         client = winner.client
@@ -822,7 +813,6 @@ async def run_ring_group_call(
                 await registry.terminate_call_wait(
                     invite.call_id,
                     reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-                    state=CallState.MEDIA_INCOMPATIBLE.value,
                 )
             return
         if not _call_is_current():

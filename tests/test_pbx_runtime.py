@@ -74,7 +74,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registry.bridge_clients, {})
         self.assertEqual(registry.sip_clients, {})
         self.assertNotIn("destination", registry.leg_index)
-        registry.terminate_call("source", reason="cancelled", state="cancelled")
+        registry.terminate_call("source", reason="cancelled")
         await runtime.shutdown()
 
     async def test_runtime_owns_generations_and_retires_derived_indexes(self) -> None:
@@ -230,7 +230,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             endpoint_session.LegKind.ESPHOME,
         )
 
-        registry.terminate_call("call-1", reason="cancelled", state="cancelled")
+        registry.terminate_call("call-1", reason="cancelled")
         await authoritative.terminated.wait()
 
         self.assertNotIn("call-1", registry.sessions)
@@ -419,7 +419,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ["relay:source", "softphone_media:source"],
         )
 
-        registry.terminate_call("source", reason="cancelled", state="cancelled")
+        registry.terminate_call("source", reason="cancelled")
         await authoritative.terminated.wait()
         await asyncio.sleep(0)
 
@@ -472,7 +472,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             registry.endpoint_claims, {"call-1": authoritative.endpoint_claims}
         )
 
-        registry.terminate_call("call-1", reason="remote_hangup", state="idle")
+        registry.terminate_call("call-1", reason="remote_hangup")
         await authoritative.terminated.wait()
 
         self.assertEqual(endpoints.active, {})
@@ -488,7 +488,6 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             registry.terminate_call(
                 "call-1",
                 reason="remote_hangup",
-                state="idle",
             )
             await asyncio.sleep(0)
             completed.set()

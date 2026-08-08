@@ -360,7 +360,6 @@ async def route_sip_bridge(
             registry.terminate_call(
                 invite.call_id,
                 reason=TerminalReason.BUSY.value,
-                state=CallState.BUSY.value,
             )
             return SipInviteResult(
                 486,
@@ -391,7 +390,6 @@ async def route_sip_bridge(
         registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-            state=CallState.TRANSPORT_UNREACHABLE.value,
         )
         return SipInviteResult(
             503,
@@ -413,7 +411,6 @@ async def route_sip_bridge(
         registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.CANCELLED.value,
-            state=CallState.CANCELLED.value,
         )
         return SipInviteResult(
             487,
@@ -431,7 +428,6 @@ async def route_sip_bridge(
         registry.terminate_call(
             invite.call_id,
             reason=terminal_reason,
-            state=public_state,
         )
         _set_sip_bridge_call_state(
             hass,
@@ -484,7 +480,6 @@ async def route_sip_bridge(
             await registry.terminate_call_wait(
                 invite.call_id,
                 reason=terminal_reason,
-                state=public_state,
             )
             _set_sip_bridge_call_state(
                 hass,
@@ -578,7 +573,6 @@ async def route_sip_bridge(
             await registry.terminate_call_wait(
                 invite.call_id,
                 reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-                state=CallState.MEDIA_INCOMPATIBLE.value,
             )
             return
 

@@ -259,9 +259,7 @@ def test_deferred_browser_answer_releases_busy_call() -> None:
 
     assert result.status == 486
     assert result.decline_reason == "busy"
-    assert registry.finished == [
-        ("call-1", {"reason": "busy", "state": "busy"})
-    ]
+    assert registry.finished == [("call-1", {"reason": "busy"})]
 
 
 def test_immediate_answer_rejects_unavailable_browser() -> None:

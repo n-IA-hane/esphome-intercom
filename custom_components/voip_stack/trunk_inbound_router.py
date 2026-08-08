@@ -285,7 +285,6 @@ async def async_route_trunk_invite(
         registry.terminate_call(
             invite.call_id,
             reason=terminal_reason,
-            state=CallState.TRANSPORT_UNREACHABLE.value,
         )
         return
     else:

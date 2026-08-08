@@ -833,7 +833,7 @@ class CallRuntimeApi:
         return "", ""
 
     def terminate_call(
-        self, call_id: str, *, reason: str = "", state: str = "idle"
+        self, call_id: str, *, reason: str = ""
     ) -> EndpointCallSession | None:
         session_id = self.resolve_session_id(str(call_id or "").strip())
         if session_id:
@@ -846,7 +846,7 @@ class CallRuntimeApi:
         if not self.active:
             return self._discard_dark_session(
                 call_id,
-                TerminationIntent(reason or "removed", public_state=state),
+                TerminationIntent(reason or "removed"),
             )
         session = self.sessions.get(session_id)
         if session is None:
@@ -855,7 +855,7 @@ class CallRuntimeApi:
         session.revision += 1
         self.request_termination(
             session_id,
-            TerminationIntent(reason or "removed", public_state=state),
+            TerminationIntent(reason or "removed"),
             generation=session.generation,
         )
         return session
@@ -865,7 +865,6 @@ class CallRuntimeApi:
         call_id: str,
         *,
         reason: str = "",
-        state: str = "idle",
     ) -> EndpointCallSession | None:
         """Remove one call and wait for its authoritative cleanup barrier."""
 
@@ -877,7 +876,6 @@ class CallRuntimeApi:
                 session_id,
                 TerminationIntent(
                     reason or session.terminal_reason or session.outcome or "removed",
-                    public_state=state,
                 ),
                 generation=session.generation,
             )
