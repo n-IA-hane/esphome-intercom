@@ -93,6 +93,13 @@ def softphone_originate(monkeypatch):
             "call_registry": Mock(),
             "create_runtime_task": Mock(),
         },
+        "endpoint_termination": {"EndpointTerminationHandler": Mock()},
+        "endpoint_session": {
+            "TerminationInitiator": SimpleNamespace(
+                LOCAL_USER="local_user",
+                RUNTIME="runtime",
+            )
+        },
         "endpoint_registry": {
             "EndpointBusyError": type("EndpointBusyError", (Exception,), {})
         },
