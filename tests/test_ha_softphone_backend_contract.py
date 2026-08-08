@@ -74,33 +74,10 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         cls.softphone_answer = SOFTPHONE_ANSWER.read_text()
         cls.softphone_originate = SOFTPHONE_ORIGINATE.read_text()
 
-    def test_hangup_publishes_authoritative_idle_state(self) -> None:
-        body = _function_body(self.softphone_termination, "async_hangup_browser_call")
-        self.assertIn("_ha_softphone_store(hass, endpoint_id)", body)
-        self.assertIn("_set_ha_softphone_call_state(", body)
-        state_update = body.split("_set_ha_softphone_call_state(", 1)[1]
-        self.assertIn("CallState.IDLE.value", state_update)
-        self.assertIn("TerminalReason.LOCAL_HANGUP.value", state_update)
-        self.assertIn("last_sip_event=", state_update)
-
     def test_hangup_does_not_depend_on_card_side_inference(self) -> None:
         body = _function_body(self.softphone_termination, "async_hangup_browser_call")
         self.assertNotIn("card", body.lower())
         self.assertNotIn("frontend", body.lower())
-
-    def test_hangup_preserves_canonical_outbound_direction(self) -> None:
-        body = _function_body(self.softphone_termination, "async_hangup_browser_call")
-        direction = body.split("direction = str(", 1)[1].split("\n    )", 1)[0]
-        self.assertLess(
-            direction.index('softphone_store.get("direction")'),
-            direction.index('("incoming" if active_session is not None else "")'),
-        )
-
-    def test_bridge_hangup_uses_central_terminal_projection(self) -> None:
-        body = _function_body(self.softphone_termination, "async_hangup_browser_call")
-        bridge_branch = body.split("if bridge_handled:", 1)[1].split("return", 1)[0]
-        self.assertNotIn("_set_sip_bridge_call_state(", bridge_branch)
-        self.assertNotIn("_set_ha_softphone_call_state(", bridge_branch)
 
     def test_inbound_bridge_completion_does_not_mutate_ha_softphone(self) -> None:
         bridge_path = _function_body(
@@ -911,10 +888,6 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertNotIn("registry.softphone_media.pop", conference_audio)
         self.assertNotIn("registry.terminate_call", conference_audio)
         self.assertIn("conference_media_handoff", conference_audio)
-        hangup = _function_body(self.softphone_termination, "async_hangup_browser_call")
-        self.assertIn("await manager.leave_ha_softphone(", hangup)
-        self.assertIn("conference_room,", hangup)
-        self.assertIn("call_id=call_id", hangup)
 
 
 if __name__ == "__main__":

@@ -39,6 +39,12 @@ def termination(monkeypatch):
         LOCAL_HANGUP=SimpleNamespace(value="local_hangup"),
         REMOTE_HANGUP=SimpleNamespace(value="remote_hangup"),
     )
+    terminate = AsyncMock(return_value=True)
+
+    class EndpointTerminationHandler:
+        def __init__(self, _hass) -> None:
+            self.terminate = terminate
+
     dependencies = {
         "bridge_manager": {"async_terminate_sip_bridge": AsyncMock()},
         "call_scope": {
@@ -76,6 +82,9 @@ def termination(monkeypatch):
             ),
         },
         "endpoint_lifecycle": {"call_registry": Mock()},
+        "endpoint_termination": {
+            "EndpointTerminationHandler": EndpointTerminationHandler,
+        },
         "fsm": {
             "CallState": call_state,
             "TerminalReason": terminal_reason,
@@ -118,6 +127,7 @@ def termination(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, module_name, module)
     spec.loader.exec_module(module)
+    module.terminate = terminate
     return module
 
 
@@ -151,19 +161,11 @@ def test_pending_ring_group_hangup_cancels_only_its_leg(termination) -> None:
     )
 
 
-def test_outbound_hangup_waits_for_session_cleanup_owner(termination) -> None:
+def test_outbound_hangup_delegates_to_session_cleanup_owner(termination) -> None:
     hass = SimpleNamespace(
         data={}, artifacts=SimpleNamespace(task_for=lambda call_id, name: None)
     )
     client = SimpleNamespace(terminate=AsyncMock(), close=AsyncMock())
-    cleaned = False
-
-    async def terminate_call_wait(call_id: str, **kwargs) -> None:
-        nonlocal cleaned
-        assert call_id == "call-1"
-        assert kwargs["intent"].reason == "local_hangup"
-        cleaned = True
-
     registry = SimpleNamespace(
         sip_clients={"call-1": client},
         pending_invites={},
@@ -173,7 +175,6 @@ def test_outbound_hangup_waits_for_session_cleanup_owner(termination) -> None:
         bridge_clients={},
         sessions={},
         resolve_session_id=lambda call_id: call_id,
-        terminate_call_wait=terminate_call_wait,
     )
     command = SimpleNamespace(
         endpoint_id="kitchen",
@@ -184,20 +185,14 @@ def test_outbound_hangup_waits_for_session_cleanup_owner(termination) -> None:
     termination._ha_softphone_store = Mock(
         return_value={"call_id": "call-1", "direction": "outgoing"}
     )
-    termination.async_terminate_sip_bridge_session = AsyncMock(
-        return_value=(False, "", "", False, False)
-    )
-
-    def publish(*_args, **_kwargs) -> None:
-        assert cleaned
-
-    termination._set_ha_softphone_call_state = Mock(side_effect=publish)
-
     asyncio.run(termination.async_hangup_browser_call(hass, command))
 
     client.terminate.assert_not_awaited()
     client.close.assert_not_awaited()
-    termination._set_ha_softphone_call_state.assert_called_once()
+    termination.terminate.assert_awaited_once()
+    call_id, intent = termination.terminate.await_args.args
+    assert call_id == "call-1"
+    assert intent.reason == "local_hangup"
 
 
 def test_bridge_termination_delegates_projection_to_session_owner(termination) -> None:

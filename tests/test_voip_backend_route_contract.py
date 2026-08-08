@@ -951,7 +951,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         originate = SOFTPHONE_ORIGINATE.read_text()
         answer = SOFTPHONE_ANSWER.read_text()
         audio_ws = AUDIO_WS.read_text()
-        termination = SOFTPHONE_TERMINATION.read_text()
+        termination = ENDPOINT_TERMINATION.read_text()
 
         self.assertIn('call_id.startswith("conference:")', answer)
         self.assertIn("manager.join_ha_softphone(", answer)
@@ -964,7 +964,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("_run_conference_audio_session", audio_ws)
         self.assertIn("manager.push_ha_audio(session.call_id, pcm)", audio_ws)
         self.assertIn("await manager.leave_ha_softphone(", termination)
-        self.assertIn("conference_room,", termination)
+        self.assertIn("resolved[0],", termination)
         self.assertIn("call_id=call_id", termination)
         card = CARD_JS.read_text()
         self.assertNotIn("conference_manager", card)

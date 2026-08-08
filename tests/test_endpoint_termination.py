@@ -294,7 +294,8 @@ def test_bridge_termination_projects_before_session_owned_cleanup(
 
     assert hass.released == []
     assert hass.cleanups == []
-    assert registry.finished == [("call-1", {"reason": "remote_hangup"})]
+    assert registry.finished[0][0] == "call-1"
+    assert registry.finished[0][1]["intent"].reason == "remote_hangup"
     kind, state, event = hass.events[0]
     assert (kind, state, event["call_id"], event["reason"]) == (
         "bridge", "idle", "call-1", "remote_hangup"
@@ -329,7 +330,8 @@ def test_pending_softphone_termination_uses_owning_endpoint(
     assert (kind, state, event["endpoint_id"], event["call_id"]) == (
         "softphone", "cancelled", "wall-tablet", "call-2"
     )
-    assert registry.finished == [("call-2", {"reason": "cancelled"})]
+    assert registry.finished[0][0] == "call-2"
+    assert registry.finished[0][1]["intent"].reason == "cancelled"
 
 
 def test_early_router_cancel_publishes_one_terminal_event(
@@ -354,7 +356,8 @@ def test_early_router_cancel_publishes_one_terminal_event(
     assert (kind, state, event["route_kind"], event["last_sip_event"]) == (
         "bridge", "cancelled", "group", "CANCEL"
     )
-    assert registry.finished == [("call-3", {"reason": "cancelled"})]
+    assert registry.finished[0][0] == "call-3"
+    assert registry.finished[0][1]["intent"].reason == "cancelled"
 
 
 def test_preanswer_cancel_without_phone_owner_projects_bridge_terminal(
@@ -383,4 +386,5 @@ def test_preanswer_cancel_without_phone_owner_projects_bridge_terminal(
     assert (kind, state, event["route_kind"], event["last_sip_event"]) == (
         "bridge", "idle", "trunk", "BYE"
     )
-    assert registry.finished == [("call-4", {"reason": "remote_hangup"})]
+    assert registry.finished[0][0] == "call-4"
+    assert registry.finished[0][1]["intent"].reason == "remote_hangup"

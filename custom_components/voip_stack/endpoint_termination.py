@@ -15,7 +15,6 @@ from .endpoint_session import (
     TerminationInitiator,
     TerminationIntent,
 )
-from .fsm import TerminalReason
 from .runtime_data import (
     call_runtime_artifacts,
     conference_component,
@@ -27,7 +26,7 @@ __all__ = ["EndpointTerminationHandler", "project_session_termination"]
 
 @dataclass(slots=True)
 class EndpointTerminationHandler:
-    """Terminate a transport-reported call exactly once."""
+    """Terminate one call generation through its sole cleanup owner."""
 
     hass: HomeAssistant
 
@@ -36,27 +35,38 @@ class EndpointTerminationHandler:
         call_id: str,
         reason: str = "remote_hangup",
     ) -> None:
-        """Release call media and publish its final state."""
+        """Translate transport termination into the shared terminal path."""
 
-        artifacts = call_runtime_artifacts(self.hass)
-        registry = call_registry(self.hass)
-        call_artifacts = artifacts.artifacts_for(call_id)
-        if call_artifacts is not None and call_artifacts.trunk_info_queue is not None:
-            call_artifacts.trunk_closed = True
-        if not registry.begin_termination(
+        await self.terminate(
             call_id,
             TerminationIntent(
                 reason,
                 initiator=TerminationInitiator.REMOTE_PEER,
                 sip_disposition=SipTerminationDisposition.NONE,
             ),
-        ):
+        )
+
+    async def terminate(
+        self,
+        call_id: str,
+        intent: TerminationIntent,
+    ) -> bool:
+        """Claim, signal, drain and project one call exactly once."""
+
+        artifacts = call_runtime_artifacts(self.hass)
+        registry = call_registry(self.hass)
+        source_call_id, _ = registry.bridge_for(call_id)
+        call_id = source_call_id or registry.resolve_session_id(call_id) or call_id
+        call_artifacts = artifacts.artifacts_for(call_id)
+        if call_artifacts is not None and call_artifacts.trunk_info_queue is not None:
+            call_artifacts.trunk_closed = True
+        if not registry.begin_termination(call_id, intent):
             _LOGGER.debug(
                 "Ignoring duplicate SIP termination call_id=%s reason=%s",
                 call_id,
-                reason,
+                intent.reason,
             )
-            return
+            return False
         forward_task = artifacts.task_for(call_id, "forward")
         if forward_task is not None and forward_task is not asyncio.current_task():
             forward_task.cancel()
@@ -71,23 +81,19 @@ class EndpointTerminationHandler:
                     {
                         "action": "cancel",
                         "reason": "Request Terminated",
-                        "decline_reason": (reason or TerminalReason.CANCELLED.value),
+                        "decline_reason": intent.reason,
                     }
                 )
-        terminal_reason = reason or "remote_hangup"
-        source_call_id, _ = registry.bridge_for(call_id)
-        call_id = source_call_id or registry.resolve_session_id(call_id) or call_id
         manager = conference_component(self.hass)
-        if manager is not None and await manager.leave_call(
-            call_id,
-            reason=terminal_reason,
-        ):
-            await registry.terminate_call_wait(
-                call_id,
-                reason=terminal_reason,
-            )
-            return
-        await registry.terminate_call_wait(
-            call_id,
-            reason=terminal_reason,
-        )
+        if manager is not None:
+            resolved = manager.resolve_ha_call(call_id)
+            if resolved is not None:
+                await manager.leave_ha_softphone(
+                    resolved[0],
+                    call_id=call_id,
+                    reason=intent.reason,
+                )
+            else:
+                await manager.leave_call(call_id, reason=intent.reason)
+        await registry.terminate_call_wait(call_id, intent=intent)
+        return True
