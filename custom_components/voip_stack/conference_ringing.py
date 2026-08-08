@@ -12,6 +12,8 @@ from homeassistant.core import HomeAssistant
 
 from .conference import MAX_CONFERENCE_LEGS, conference_manager
 from .endpoint_lifecycle import call_registry
+from .endpoint_termination import EndpointTerminationHandler
+from .endpoint_session import TerminationInitiator
 from .endpoint_registry import EndpointBusyError
 from .fsm import (
     CallState,
@@ -65,13 +67,14 @@ async def async_ring_conference_members(
 ) -> None:
     """Invite bounded browser and SIP legs into one conference room."""
 
+    hass = runtime.hass
     manager = conference_manager(
-        runtime.hass,
+        hass,
         local_ip=runtime.local_ip,
         on_inbound_timeout=runtime.on_inbound_timeout,
     )
-    registry = call_registry(runtime.hass)
-    endpoints = endpoint_directory(runtime.hass)
+    registry = call_registry(hass)
+    endpoints = endpoint_directory(hass)
     owner_session = registry.sessions.get(
         registry.resolve_session_id(str(owner_call_id or "").strip())
     )
@@ -173,9 +176,10 @@ async def async_ring_conference_members(
                     ),
                 )
         except EndpointBusyError:
-            registry.terminate_call(
+            await EndpointTerminationHandler(hass).terminate_reason(
                 leg_call_id,
-                reason=TerminalReason.BUSY.value,
+                TerminalReason.BUSY.value,
+                TerminationInitiator.ROUTING,
             )
             await async_close_outbound_leg(leg)
             continue
@@ -229,9 +233,10 @@ async def async_ring_conference_members(
                 client.dialog_ids.call_id,
                 reason=terminal_reason,
             )
-            registry.terminate_call(
+            await EndpointTerminationHandler(hass).terminate_reason(
                 client.dialog_ids.call_id,
-                reason=terminal_reason,
+                terminal_reason,
+                TerminationInitiator.ROUTING,
             )
         except asyncio.CancelledError:
             cleanup_reason = TerminalReason.CANCELLED.value
@@ -249,9 +254,10 @@ async def async_ring_conference_members(
                         client.dialog_ids.call_id,
                         reason=cleanup_reason,
                     )
-                registry.terminate_call(
+                await EndpointTerminationHandler(hass).terminate_reason(
                     client.dialog_ids.call_id,
-                    reason=cleanup_reason,
+                    cleanup_reason,
+                    TerminationInitiator.ROUTING,
                 )
             else:
                 with contextlib.suppress(Exception):
@@ -259,9 +265,10 @@ async def async_ring_conference_members(
                         attempt,
                         bye_or_cancel=True,
                     )
-                registry.terminate_call(
+                await EndpointTerminationHandler(hass).terminate_reason(
                     attempt.client.dialog_ids.call_id,
-                    reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
+                    TerminalReason.TRANSPORT_UNREACHABLE.value,
+                    TerminationInitiator.ROUTING,
                 )
 
     await asyncio.gather(

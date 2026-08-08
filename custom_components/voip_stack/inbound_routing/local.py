@@ -11,6 +11,8 @@ from ..call_registry import TERMINAL_STATES
 from ..conference import conference_manager
 from ..endpoint_lifecycle import create_runtime_task
 from ..endpoint_registry import EndpointBusyError
+from ..endpoint_termination import EndpointTerminationHandler
+from ..endpoint_session import TerminationInitiator
 from ..fsm import CallState, TerminalReason
 from ..groups import GROUP_TYPE_CONFERENCE, GROUP_TYPE_RING
 from ..media_ports import RtpPortReservation, take_delayed_offer_ports
@@ -49,8 +51,9 @@ def _busy_result() -> SipInviteResult:
     )
 
 
-def _claim_source(
+async def _claim_source(
     *,
+    hass: HomeAssistant,
     registry: SipEndpointRuntime,
     invite: SipInvite,
     source_endpoint: PhoneEndpoint | None,
@@ -76,9 +79,10 @@ def _claim_source(
             adopt_transport=True,
         )
     except EndpointBusyError:
-        registry.terminate_call(
+        await EndpointTerminationHandler(hass).terminate_reason(
             invite.call_id,
-            reason=TerminalReason.BUSY.value,
+            TerminalReason.BUSY.value,
+            TerminationInitiator.ROUTING,
         )
         return _busy_result()
     return None
@@ -103,7 +107,8 @@ async def route_local_assist(
         for session in registry.sessions.values()
     ):
         return _busy_result()
-    if busy := _claim_source(
+    if busy := await _claim_source(
+        hass=runtime.hass,
         registry=registry,
         invite=invite,
         source_endpoint=source_endpoint,
@@ -117,9 +122,10 @@ async def route_local_assist(
         ) or RtpPortReservation.allocate(runtime.hass)
     except RuntimeError as err:
         _LOGGER.warning("Assist RTP port allocation failed: %s", err)
-        registry.terminate_call(
+        await EndpointTerminationHandler(runtime.hass).terminate_reason(
             invite.call_id,
-            reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
+            TerminalReason.TRANSPORT_UNREACHABLE.value,
+            TerminationInitiator.MEDIA,
         )
         return SipInviteResult(503, "Service Unavailable", to_tag="")
     assist_rtp_port = assist_ports.ports[0]
@@ -135,9 +141,10 @@ async def route_local_assist(
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Assist bridge failed call_id=%s", invite.call_id)
         assist_ports.release()
-        registry.terminate_call(
+        await EndpointTerminationHandler(runtime.hass).terminate_reason(
             invite.call_id,
-            reason=TerminalReason.PROTOCOL_ERROR.value,
+            TerminalReason.PROTOCOL_ERROR.value,
+            TerminationInitiator.INTERNAL,
         )
         return SipInviteResult(
             500,
@@ -169,7 +176,8 @@ async def route_local_group(
 ) -> SipInviteResult:
     """Dispatch one inbound call to its ring group or conference owner."""
 
-    if busy := _claim_source(
+    if busy := await _claim_source(
+        hass=runtime.hass,
         registry=registry,
         invite=invite,
         source_endpoint=source_endpoint,
@@ -243,9 +251,10 @@ async def route_local_group(
             terminal_reason = (
                 result.decline_reason or TerminalReason.TRANSPORT_UNREACHABLE.value
             )
-            registry.terminate_call(
+            await EndpointTerminationHandler(runtime.hass).terminate_reason(
                 invite.call_id,
-                reason=terminal_reason,
+                terminal_reason,
+                TerminationInitiator.ROUTING,
             )
         return result
     if group_type == GROUP_TYPE_RING and decision.entry is not None:
@@ -274,8 +283,9 @@ async def route_local_group(
             ),
         )
         return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)
-    registry.terminate_call(
+    await EndpointTerminationHandler(runtime.hass).terminate_reason(
         invite.call_id,
-        reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
+        TerminalReason.TRANSPORT_UNREACHABLE.value,
+        TerminationInitiator.ROUTING,
     )
     return SipInviteResult(480, "Temporarily Unavailable", to_tag="")
