@@ -390,6 +390,8 @@ async def _run_peer_cycle(
         args.p4_extension,
         "--local-ip",
         args.local_ip,
+        "--audio-codec",
+        "l16-16k",
         "--codec",
         "h264",
         "--direction",
