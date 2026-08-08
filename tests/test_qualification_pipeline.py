@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import yaml
 
@@ -288,6 +290,68 @@ def test_summary_rejects_result_identity_mismatch(tmp_path: Path) -> None:
     )
 
     assert "qualification results do not match plan" in errors
+
+
+def test_workflow_wires_fail_closed_qualification_chain() -> None:
+    workflow = (
+        Path(__file__).parents[1] / ".github/workflows/qualification.yml"
+    ).read_text(encoding="utf-8")
+
+    for command in (
+        "scripts/qualification_plan.py",
+        "scripts/candidate_lock.py",
+        "scripts/run_qualification_command.py",
+        "scripts/merge_qualification_results.py",
+        "scripts/verify_qualification.py",
+    ):
+        assert command in workflow
+    assert "qualification-summary:" in workflow
+    assert "if: always()" in workflow
+    assert "if-no-files-found: error" in workflow
+    assert "yaml_paths.sh --local" in workflow
+    assert 'build_root="$RUNNER_TEMP/candidate"' in workflow
+    assert (
+        "working-directory: workspace/esphome-intercom\n        run: |\n          ./scripts/yaml_paths.sh --local"
+        not in workflow
+    )
+
+
+def test_qualification_command_runs_as_script(tmp_path: Path) -> None:
+    plan = build_plan(
+        ["docs/qualification.md"],
+        base="base",
+        head="head",
+        full=False,
+        event="pull-request",
+    )
+    plan_path = tmp_path / "plan.json"
+    candidate_path = tmp_path / "candidate.json"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    candidate_path.write_text(json.dumps(_candidate("head")), encoding="utf-8")
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_qualification_command.py",
+            "--job",
+            "static",
+            "--plan",
+            str(plan_path),
+            "--candidate",
+            str(candidate_path),
+            "--evidence-root",
+            str(tmp_path),
+            "--",
+            sys.executable,
+            "-c",
+            "print('qualified')",
+        ],
+        cwd=Path(__file__).parents[1],
+        check=True,
+    )
+
+    result = json.loads((tmp_path / "result-static.json").read_text())
+    assert result["jobs"]["static"]["status"] == "success"
 
 
 def test_real_ha_automation_package_covers_route_decisions() -> None:
