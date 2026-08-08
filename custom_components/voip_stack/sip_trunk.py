@@ -18,7 +18,10 @@ import time
 from typing import Any, Awaitable, Callable
 
 from .core import sip
-from .core.sip_auth import build_digest_authorization
+from .core.sip_auth import (
+    DigestChallengeTracker,
+    build_digest_authorization,
+)
 from .core.sip_transaction import SIP_T1, SIP_T2, SIP_TIMER_F, SipClientTransaction
 from .sip_udp_io import SipDatagramQueueProtocol
 from .sip_tcp_io import SipTcpWriter, read_sip_stream_message as _read_sip_stream_message
@@ -694,12 +697,12 @@ class SipTrunkClient:
         timeout: float = SIP_TIMER_F,
     ) -> str:
         expires_value = int(self.config.expires if expires is None else expires)
-        auth_value = ""
-        retried = False
+        auth_values: dict[str, str] = {}
+        auth_challenges = DigestChallengeTracker()
         while True:
             self.cseq += 1
             request_uri = self.registration_uri
-            headers = self._register_headers(expires_value, auth_value=auth_value)
+            headers = self._register_headers(expires_value, auth_values=auth_values)
             via_values = [value for key, value in headers if key.lower() == "via"]
             expected_branch = sip.parse_via(via_values[0] if via_values else "").branch
             raw = sip.build_request("REGISTER", request_uri, headers, b"")
@@ -767,21 +770,36 @@ class SipTrunkClient:
             self.status_reason = msg.reason
             self.last_sip_event = "SIP_RESPONSE"
             _LOGGER.info("SIP trunk RX %s %s", msg.status_code, msg.reason)
-            if msg.status_code in {401, 407} and not retried:
-                retried = True
-                challenge = msg.header("Proxy-Authenticate" if msg.status_code == 407 else "WWW-Authenticate")
-                auth_value = build_digest_authorization(
-                    challenge_header=challenge,
-                    username=self.config.username,
-                    auth_username=self.config.auth_username,
-                    password=self.config.password,
-                    method="REGISTER",
-                    uri=request_uri,
+            if msg.status_code in {401, 407}:
+                auth_header = (
+                    "Proxy-Authorization"
+                    if msg.status_code == 407
+                    else "Authorization"
                 )
-                if msg.status_code == 407:
-                    auth_value = "Proxy-Authorization: " + auth_value
-                else:
-                    auth_value = "Authorization: " + auth_value
+                challenge_header = (
+                    "Proxy-Authenticate"
+                    if msg.status_code == 407
+                    else "WWW-Authenticate"
+                )
+                try:
+                    challenge = auth_challenges.claim(
+                        auth_header,
+                        msg.header_values(challenge_header),
+                    )
+                    auth_value = build_digest_authorization(
+                        challenge_header=challenge,
+                        username=self.config.username,
+                        auth_username=self.config.auth_username,
+                        password=self.config.password,
+                        method="REGISTER",
+                        uri=request_uri,
+                    )
+                except ValueError as err:
+                    self.registered = False
+                    self.status_reason = str(err)
+                    _LOGGER.warning("SIP trunk digest challenge rejected: %s", err)
+                    return sip.sip_failure_reason(msg.status_code)
+                auth_values[auth_header] = auth_value
                 continue
             if 200 <= msg.status_code < 300:
                 granted_expires = _registration_expires(msg, expires_value)
@@ -827,7 +845,12 @@ class SipTrunkClient:
             )
             return result
 
-    def _register_headers(self, expires: int, *, auth_value: str = "") -> list[tuple[str, str]]:
+    def _register_headers(
+        self,
+        expires: int,
+        *,
+        auth_values: dict[str, str] | None = None,
+    ) -> list[tuple[str, str]]:
         local_uri = self.address_uri
         dialog = sip.SipDialogIds(
             call_id=self.call_id,
@@ -845,9 +868,7 @@ class SipTrunkClient:
             transport=self.transport_name,
         )
         headers.append(("Expires", str(int(expires))))
-        if auth_value:
-            key, value = auth_value.split(":", 1)
-            headers.append((key.strip(), value.strip()))
+        headers.extend((key, value) for key, value in (auth_values or {}).items())
         return headers
 
     def snapshot(self) -> dict[str, Any]:

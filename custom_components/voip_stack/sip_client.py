@@ -18,7 +18,10 @@ from .core.g722_codec import G722Decoder, G722Encoder
 from .core.opus_codec import OpusDecoder, OpusEncoder
 from .session_cleanup import async_wait_for_cleanup
 from .core import sdp, sip, sip_transfer
-from .core.sip_auth import build_digest_authorization
+from .core.sip_auth import (
+    DigestChallengeTracker,
+    build_digest_authorization,
+)
 from .sip_tcp_io import SipTcpWriter, read_sip_stream_message as _read_sip_stream_message
 from .sip_udp_io import SipDatagramQueueProtocol
 from .core.sip_transaction import (
@@ -412,10 +415,7 @@ class SipCallClient:
         self._pending_local_uri = ""
         self._pending_remote_uri = ""
         self._pending_invite_body = b""
-        self._pending_invite_auth_header: tuple[str, str] | None = None
-        self._pending_invite_auth_challenge = ""
-        self._pending_invite_auth_header_name = ""
-        self._digest_nonce_count = 0
+        self._pending_invite_auth: dict[str, tuple[str, str, int]] = {}
         self._retry_after_used = False
         self._invite_abort_event = asyncio.Event()
         self._invite_transaction_active = False
@@ -1396,8 +1396,10 @@ class SipCallClient:
             headers.append(("X-Voip-Stack-Dest-Name", dest_name))
         if dest_route:
             headers.append(("X-Voip-Stack-Dest-Route", dest_route))
-        if self._pending_invite_auth_header is not None:
-            headers.append(self._pending_invite_auth_header)
+        headers.extend(
+            (header, value)
+            for header, (_challenge, value, _count) in self._pending_invite_auth.items()
+        )
         return sip.build_request(
             "INVITE",
             self._pending_request_uri,
@@ -1408,26 +1410,24 @@ class SipCallClient:
     def _refresh_pending_invite_authorization(self) -> None:
         """Regenerate qop state when an authenticated INVITE gets a new CSeq."""
 
-        if (
-            not self._pending_invite_auth_challenge
-            or not self._pending_invite_auth_header_name
+        for header, (challenge, _value, count) in tuple(
+            self._pending_invite_auth.items()
         ):
-            return
-        self._digest_nonce_count += 1
-        auth_value = build_digest_authorization(
-            challenge_header=self._pending_invite_auth_challenge,
-            username=self.username,
-            auth_username=self.auth_username,
-            password=self.password,
-            method="INVITE",
-            uri=self._pending_request_uri,
-            nonce_count=self._digest_nonce_count,
-            body=self._pending_invite_body,
-        )
-        self._pending_invite_auth_header = (
-            self._pending_invite_auth_header_name,
-            auth_value,
-        )
+            count += 1
+            self._pending_invite_auth[header] = (
+                challenge,
+                build_digest_authorization(
+                    challenge_header=challenge,
+                    username=self.username,
+                    auth_username=self.auth_username,
+                    password=self.password,
+                    method="INVITE",
+                    uri=self._pending_request_uri,
+                    nonce_count=count,
+                    body=self._pending_invite_body,
+                ),
+                count,
+            )
 
     async def _retry_invite_after(
         self,
@@ -1711,10 +1711,7 @@ class SipCallClient:
         self._pending_request_uri = request_uri
         self._pending_local_uri = local_uri
         self._pending_remote_uri = remote_uri
-        self._pending_invite_auth_header = None
-        self._pending_invite_auth_challenge = ""
-        self._pending_invite_auth_header_name = ""
-        self._digest_nonce_count = 0
+        self._pending_invite_auth.clear()
         self._retry_after_used = False
         self._invite_abort_event.clear()
         self._invite_transaction_active = True
@@ -1763,7 +1760,7 @@ class SipCallClient:
             t1=SIP_T1,
             t2=SIP_T2,
         )
-        auth_retried = False
+        auth_challenges = DigestChallengeTracker()
         received_provisional = False
 
         async def _retransmit_invite() -> None:
@@ -1829,16 +1826,22 @@ class SipCallClient:
                     self.bye()
                     return "cancelled"
                 return "in_call"
-            if msg.status_code in {401, 407} and self.password and not auth_retried:
+            if msg.status_code in {401, 407} and self.password:
                 self._send_invite_error_ack(msg, addr[0], addr[1])
                 if self._cancel_requested:
                     self._invite_transaction_active = False
                     return "cancelled"
-                auth_retried = True
                 auth_header = "Proxy-Authorization" if msg.status_code == 407 else "Authorization"
-                challenge = msg.header("Proxy-Authenticate" if msg.status_code == 407 else "WWW-Authenticate")
+                challenge_header = (
+                    "Proxy-Authenticate"
+                    if msg.status_code == 407
+                    else "WWW-Authenticate"
+                )
                 try:
-                    self._digest_nonce_count = 1
+                    challenge = auth_challenges.claim(
+                        auth_header,
+                        msg.header_values(challenge_header)
+                    )
                     auth_value = build_digest_authorization(
                         challenge_header=challenge,
                         username=self.username,
@@ -1846,7 +1849,7 @@ class SipCallClient:
                         password=self.password,
                         method="INVITE",
                         uri=request_uri,
-                        nonce_count=self._digest_nonce_count,
+                        nonce_count=1,
                         body=self._pending_invite_body,
                     )
                 except Exception as err:
@@ -1855,9 +1858,11 @@ class SipCallClient:
                 self.dialog_ids.cseq += 1
                 self.dialog_ids.branch = sip.make_branch()
                 self._invite_cseq = self.dialog_ids.cseq
-                self._pending_invite_auth_challenge = challenge
-                self._pending_invite_auth_header_name = auth_header
-                self._pending_invite_auth_header = (auth_header, auth_value)
+                self._pending_invite_auth[auth_header] = (
+                    challenge,
+                    auth_value,
+                    1,
+                )
                 raw = self._build_pending_invite()
                 sip.mark_sip_event(self, "INVITE")
                 try:

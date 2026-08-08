@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from .voip_phase1_support import (
-    PKG_DIR,
     Path,
     _load_intercom_module,
     asyncio,
@@ -1631,11 +1630,18 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                     self.complete.set()
                 else:
                     status, reason = 401, "Unauthorized"
-                    headers.append(
+                    headers.extend(
                         (
-                            "WWW-Authenticate",
-                            'Digest realm="fritz.box", nonce="fritz-nonce", '
-                            'algorithm=MD5, qop="auth"',
+                            (
+                                "WWW-Authenticate",
+                                'Digest realm="fritz.box", nonce="fritz-md5", '
+                                'algorithm=MD5, qop="auth"',
+                            ),
+                            (
+                                "WWW-Authenticate",
+                                'Digest realm="fritz.box", nonce="fritz-sha", '
+                                'algorithm=SHA-256, qop="auth"',
+                            ),
                         )
                     )
                 assert self.transport is not None
@@ -1685,6 +1691,12 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(first[1], second[1])
             self.assertFalse(first[0].header("Authorization"))
             self.assertTrue(second[0].header("Authorization").startswith("Digest "))
+            self.assertEqual(
+                sip_auth.parse_digest_challenge(
+                    second[0].header("Authorization")
+                )["algorithm"],
+                "SHA-256",
+            )
             self.assertNotEqual(first[0].header("CSeq"), second[0].header("CSeq"))
             first_via = sip.parse_via(first[0].header("Via"))
             second_via = sip.parse_via(second[0].header("Via"))
@@ -3722,21 +3734,6 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await client.wait_for_final(timeout=1), "timeout")
         self.assertEqual(reads, 2)
 
-    def test_invite_auth_retry_rebuilds_transaction_headers(self) -> None:
-        source = (PKG_DIR / "sip_client.py").read_text()
-        auth_branch = source[
-            source.index("if msg.status_code in {401, 407}")
-            : source.index("if msg.status_code and msg.status_code >= 300")
-        ]
-
-        self.assertIn("self.dialog_ids.branch = sip.make_branch()", auth_branch)
-        self.assertIn(
-            "self._pending_invite_auth_header = (auth_header, auth_value)",
-            auth_branch,
-        )
-        self.assertIn("raw = self._build_pending_invite()", auth_branch)
-        self.assertIn("transaction.restart_retransmissions()", auth_branch)
-
     async def test_invite_honors_retry_after_once_as_a_new_transaction(self) -> None:
         class FakeTransport:
             def __init__(self) -> None:
@@ -4140,7 +4137,13 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         async def read_response(_timeout: float):
             nonlocal response_count
             response_count += 1
-            status, reason = (407, "Proxy Authentication Required") if response_count == 1 else (180, "Ringing")
+            status, reason = (
+                (401, "Unauthorized")
+                if response_count == 1
+                else (407, "Proxy Authentication Required")
+                if response_count == 2
+                else (180, "Ringing")
+            )
             headers = [
                 ("Via", f"SIP/2.0/UDP 192.168.1.10:5060;branch={client.dialog_ids.branch}"),
                 ("From", f"<sip:17770000000@192.168.1.10:5060>;tag={client.dialog_ids.local_tag}"),
@@ -4148,8 +4151,29 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 ("Call-ID", client.dialog_ids.call_id),
                 ("CSeq", f"{client._invite_cseq} INVITE"),
             ]
+            if status == 401:
+                headers.extend(
+                    (
+                        (
+                            "WWW-Authenticate",
+                            'Digest realm="sip.example", nonce="md5", '
+                            'algorithm=MD5, qop="auth"',
+                        ),
+                        (
+                            "WWW-Authenticate",
+                            'Digest realm="sip.example", nonce="sha", '
+                            'algorithm=SHA-256, qop="auth"',
+                        ),
+                    )
+                )
             if status == 407:
-                headers.append(("Proxy-Authenticate", 'Digest realm="sip.example", nonce="nonce", qop="auth"'))
+                headers.append(
+                    (
+                        "Proxy-Authenticate",
+                        'Digest realm="sip.example", nonce="proxy", '
+                        'algorithm=SHA-512-256, qop="auth"',
+                    )
+                )
             return sip.parse_message(sip.build_response(status, reason, headers)), ("192.0.2.10", 5060)
 
         client._read_response = read_response  # type: ignore[method-assign]
@@ -4163,8 +4187,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "ringing")
         messages = [sip.parse_message(raw) for raw, _addr in transport.sent]
         invites = [message for message in messages if message.method == "INVITE"]
-        self.assertEqual(len(invites), 2)
-        self.assertEqual(invites[0].header("From"), invites[1].header("From"))
+        self.assertEqual(len(invites), 3)
+        self.assertEqual(invites[0].header("From"), invites[2].header("From"))
         self.assertTrue(
             invites[0]
             .header("From")
@@ -4174,8 +4198,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(invites[0].header("Contact").startswith("<sip:17770000000@192.168.1.10:5060"))
         self.assertEqual(invites[0].header("X-Voip-Stack-Caller-Name"), "17770000000")
-        self.assertEqual(invites[1].header("X-Voip-Stack-Caller-Name"), "17770000000")
-        self.assertEqual(invites[0].body, invites[1].body)
+        self.assertEqual(invites[2].header("X-Voip-Stack-Caller-Name"), "17770000000")
+        self.assertEqual(invites[0].body, invites[2].body)
         video_payload = sdp.DEFAULT_H264_FORMAT.payload_type
         self.assertIn(
             f"m=video 41002 RTP/AVP {video_payload}".encode(),
@@ -4187,10 +4211,26 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn(b"a=sendrecv", invites[0].body)
         self.assertFalse(invites[0].header("Proxy-Authorization"))
-        self.assertIn('username="17770000000"', invites[1].header("Proxy-Authorization"))
-        self.assertIn('uri="sip:+15551234567@sip.example:5060;transport=udp"', invites[1].header("Proxy-Authorization"))
-        self.assertNotEqual(invites[0].header("Via"), invites[1].header("Via"))
-        self.assertEqual(sip.parse_cseq(invites[1].header("CSeq")).number, sip.parse_cseq(invites[0].header("CSeq")).number + 1)
+        self.assertEqual(
+            sip_auth.parse_digest_challenge(invites[1].header("Authorization"))[
+                "algorithm"
+            ],
+            "SHA-256",
+        )
+        self.assertTrue(invites[2].header("Authorization"))
+        self.assertIn(
+            'username="17770000000"',
+            invites[2].header("Proxy-Authorization"),
+        )
+        self.assertIn(
+            'uri="sip:+15551234567@sip.example:5060;transport=udp"',
+            invites[2].header("Proxy-Authorization"),
+        )
+        self.assertNotEqual(invites[0].header("Via"), invites[2].header("Via"))
+        self.assertEqual(
+            sip.parse_cseq(invites[2].header("CSeq")).number,
+            sip.parse_cseq(invites[0].header("CSeq")).number + 2,
+        )
 
     async def test_pending_cancel_waits_for_provisional_then_terminates_invite(self) -> None:
         class FakeTransport:

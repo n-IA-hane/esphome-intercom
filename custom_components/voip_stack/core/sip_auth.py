@@ -16,6 +16,31 @@ _HASH_NAMES = {
     "SHA-256": "sha256",
     "SHA-512-256": "sha512_256",
 }
+_ALGORITHM_PREFERENCE = {
+    "MD5": 1,
+    "SHA-256": 2,
+    "SHA-512-256": 3,
+}
+
+
+class DigestChallengeTracker:
+    """Bound authentication retries independently per credential scope."""
+
+    __slots__ = ("attempts",)
+
+    def __init__(self) -> None:
+        self.attempts: dict[str, int] = {}
+
+    def claim(self, scope: str, values: list[str] | tuple[str, ...]) -> str:
+        challenge = select_digest_challenge(values)
+        stale = parse_digest_challenge(challenge).get(
+            "stale", "false"
+        ).lower() == "true"
+        attempts = self.attempts.get(scope, 0)
+        if attempts and (attempts >= 2 or not stale):
+            raise ValueError("SIP digest credentials were rejected")
+        self.attempts[scope] = attempts + 1
+        return challenge
 
 
 def _digest(value: str | bytes, algorithm: str) -> str:
@@ -42,6 +67,41 @@ def parse_digest_challenge(value: str) -> dict[str, str]:
         val = match.group(3) if match.group(3) is not None else match.group(2)
         out[key] = val.replace('\\"', '"') if val is not None else ""
     return out
+
+
+def select_digest_challenge(
+    values: list[str] | tuple[str, ...],
+    *,
+    realm: str = "",
+) -> str:
+    """Select the strongest compatible Digest challenge deterministically."""
+
+    selected = ""
+    selected_rank = -1
+    for value in values:
+        raw = str(value or "").strip()
+        if not raw.lower().startswith("digest "):
+            continue
+        params = parse_digest_challenge(raw)
+        if not params.get("realm") or not params.get("nonce"):
+            continue
+        if realm and params["realm"] != realm:
+            continue
+        algorithm = (params.get("algorithm") or "MD5").upper()
+        rank = _ALGORITHM_PREFERENCE.get(algorithm.removesuffix("-SESS"), -1)
+        qops = {
+            part.strip().lower()
+            for part in params.get("qop", "").split(",")
+            if part.strip()
+        }
+        if rank < 0 or (qops and qops.isdisjoint({"auth", "auth-int"})):
+            continue
+        if rank > selected_rank:
+            selected = raw
+            selected_rank = rank
+    if not selected:
+        raise ValueError("no compatible SIP digest challenge")
+    return selected
 
 
 def build_digest_authorization(
@@ -81,6 +141,8 @@ def build_digest_authorization(
         "response": "",
         "algorithm": algorithm,
     }
+    if opaque := challenge.get("opaque", ""):
+        params["opaque"] = opaque
     if qop:
         if int(nonce_count) < 1:
             raise ValueError("SIP digest nonce_count must be positive")

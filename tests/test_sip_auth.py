@@ -18,6 +18,8 @@ sip_auth = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(sip_auth)
 build_digest_authorization = sip_auth.build_digest_authorization
 parse_digest_challenge = sip_auth.parse_digest_challenge
+select_digest_challenge = sip_auth.select_digest_challenge
+DigestChallengeTracker = sip_auth.DigestChallengeTracker
 
 
 def _hash(value: str | bytes, algorithm: str) -> str:
@@ -88,3 +90,50 @@ def test_unknown_digest_algorithm_fails_explicitly() -> None:
             method="REGISTER",
             uri="sip:pbx.local",
         )
+
+
+def test_strongest_compatible_digest_challenge_wins_independent_of_order() -> None:
+    challenges = [
+        'Digest realm="pbx", nonce="md5", algorithm=MD5, qop="auth"',
+        'Digest realm="other", nonce="other", algorithm=SHA-512-256, qop="auth"',
+        'Digest realm="pbx", nonce="sha", algorithm=SHA-256, qop="auth"',
+        'Digest realm="pbx", nonce="bad", algorithm=SHA-1, qop="auth"',
+    ]
+
+    selected = select_digest_challenge(challenges, realm="pbx")
+
+    assert parse_digest_challenge(selected)["nonce"] == "sha"
+
+
+def test_digest_authorization_echoes_opaque() -> None:
+    authorization = build_digest_authorization(
+        challenge_header=(
+            'Digest realm="pbx", nonce="nonce", algorithm=SHA-256, '
+            'qop="auth", opaque="routing-token"'
+        ),
+        username="alice",
+        password="secret",
+        method="REGISTER",
+        uri="sip:pbx.local",
+    )
+
+    assert parse_digest_challenge(authorization)["opaque"] == "routing-token"
+
+
+def test_digest_retry_requires_one_fresh_stale_challenge() -> None:
+    tracker = DigestChallengeTracker()
+    first = 'Digest realm="pbx", nonce="one", algorithm=SHA-256, qop="auth"'
+    stale = (
+        'Digest realm="pbx", nonce="two", algorithm=SHA-256, '
+        'qop="auth", stale=true'
+    )
+
+    assert tracker.claim("Authorization", [first]) == first
+    with pytest.raises(ValueError, match="credentials were rejected"):
+        tracker.claim("Authorization", [first])
+
+    tracker = DigestChallengeTracker()
+    tracker.claim("Authorization", [first])
+    assert tracker.claim("Authorization", [stale]) == stale
+    with pytest.raises(ValueError, match="credentials were rejected"):
+        tracker.claim("Authorization", [stale])
