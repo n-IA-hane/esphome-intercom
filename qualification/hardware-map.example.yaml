@@ -35,8 +35,12 @@ devices:
       p4-audio-to-bidirectional-video-reinvite:
         command:
           - .venv/bin/python
-          - tools/live_voip_qualification.py
-          - --esp
-          - p4
-          - --out-dir
-          - "${HIL_ARTIFACT_DIR}/p4-reinvite"
+          - scripts/run_p4_video_hil.py
+          - --sip-host
+          - "${HA_HOME_HOST}"
+          - --local-ip
+          - "${HIL_RUNNER_HOST}"
+          - --esp-host
+          - "${P4_HOST}"
+          - --output
+          - "${HIL_ARTIFACT_DIR}/p4-reinvite/result.json"
