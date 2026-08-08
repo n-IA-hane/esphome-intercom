@@ -60,7 +60,6 @@ from .groups import GROUP_TYPE_RING
 from .inbound_answer import (
     AnswerCommitResult,
     async_commit_runtime_answer,
-    bind_final_response,
 )
 from .media_ports import (
     RtpPortReservation,
@@ -443,9 +442,8 @@ async def async_forward_existing_call(
             registry,
             call_id,
             answer_sdp,
-            send_final_response=bind_final_response(
-                _sip_send_final_response, hass, call_id
-            ),
+            send_final_response=_sip_send_final_response,
+            response_context=hass,
             owner=owner,
             caller=invite.caller,
             callee=callee,

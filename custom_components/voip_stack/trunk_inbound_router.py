@@ -34,7 +34,7 @@ from .fsm import (
     sip_public_state,
     sip_terminal_reason,
 )
-from .inbound_answer import async_commit_runtime_answer, bind_final_response
+from .inbound_answer import async_commit_runtime_answer
 from .media_ports import (
     RtpPortReservation,
     release_media_reservation,
@@ -286,11 +286,8 @@ async def async_route_trunk_invite(
                 registry,
                 invite.call_id,
                 str((preanswered or {}).get("early_answer_sdp") or ""),
-                send_final_response=bind_final_response(
-                    send_final_response,
-                    hass,
-                    invite.call_id,
-                ),
+                send_final_response=send_final_response,
+                response_context=hass,
                 owner="assist",
                 callee=destination,
                 route_kind=decision.action.value,

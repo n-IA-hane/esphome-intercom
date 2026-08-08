@@ -32,12 +32,19 @@ ClaimAnswer: TypeAlias = Callable[[], bool]
 def bind_final_response(
     send: Callable[..., bool],
     context: object,
-    call_id: str,
+    token: CallToken,
 ) -> SendFinalResponse:
     """Bind the common HA final-response adapter once."""
 
     return lambda status, reason, sdp: bool(
-        send(context, call_id, status, reason, answer_sdp=sdp)
+        send(
+            context,
+            token.call_id,
+            status,
+            reason,
+            answer_sdp=sdp,
+            expected_generation=token.generation,
+        )
     )
 
 
@@ -208,7 +215,8 @@ async def async_commit_runtime_answer(
     call_id: str,
     answer_sdp: str,
     *,
-    send_final_response: SendFinalResponse,
+    send_final_response: Callable[..., bool],
+    response_context: object,
     owner: str,
     caller: str = "",
     callee: str = "",
@@ -241,6 +249,10 @@ async def async_commit_runtime_answer(
             media_client_id=media_client_id,
         )
         is not None,
-        send_final_response=send_final_response,
+        send_final_response=bind_final_response(
+            send_final_response,
+            response_context,
+            session.token,
+        ),
         response_already_sent=response_already_sent,
     )

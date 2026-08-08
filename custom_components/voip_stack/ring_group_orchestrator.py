@@ -37,7 +37,6 @@ from .fsm import (
 from .groups import GROUP_TYPE_RING
 from .inbound_answer import (
     async_commit_runtime_answer,
-    bind_final_response,
 )
 from .media_ports import (
     allocate_sip_rtp_port as _allocate_sip_rtp_port,
@@ -600,9 +599,8 @@ async def run_ring_group_call(
                     registry,
                     invite.call_id,
                     answer,
-                    send_final_response=bind_final_response(
-                        _sip_send_final_response, hass, invite.call_id
-                    ),
+                    send_final_response=_sip_send_final_response,
+                    response_context=hass,
                     owner="ha_softphone",
                     caller=invite.caller,
                     callee=entry.display_name,
@@ -891,9 +889,8 @@ async def run_ring_group_call(
                     registry,
                     invite.call_id,
                     answer,
-                    send_final_response=bind_final_response(
-                        _sip_send_final_response, hass, invite.call_id
-                    ),
+                    send_final_response=_sip_send_final_response,
+                    response_context=hass,
                     owner="ha_softphone",
                     caller=invite.caller,
                     callee=dialed_target,

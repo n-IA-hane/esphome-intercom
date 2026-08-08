@@ -150,7 +150,20 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
     def test_final_response_and_bye_stop_at_dialog_owner(self) -> None:
         owner = _Server(owns="call-1")
-        hass = SimpleNamespace(data={DOMAIN: {"sip_endpoint": owner}})
+        registry = SimpleNamespace(
+            resolve_session_id=lambda call_id: call_id,
+            sessions={
+                "call-1": SimpleNamespace(
+                    generation=1,
+                    answer_committed=True,
+                    metadata={},
+                    callee="",
+                )
+            },
+        )
+        hass = SimpleNamespace(
+            data={DOMAIN: {"sip_endpoint": owner, "call_registry": registry}}
+        )
 
         self.assertTrue(
             send_final_response(
@@ -159,17 +172,46 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 200,
                 "OK",
                 answer_sdp="v=0",
+                expected_generation=1,
             )
         )
         self.assertTrue(send_bye(hass, "call-1"))
         self.assertEqual(len(owner.final_calls), 1)
         self.assertEqual(len(owner.bye_calls), 1)
 
+    def test_success_response_requires_current_answer_commit(self) -> None:
+        owner = _Server(owns="call-1")
+        registry = SimpleNamespace(
+            resolve_session_id=lambda call_id: call_id,
+            sessions={
+                "call-1": SimpleNamespace(
+                    generation=2,
+                    answer_committed=False,
+                )
+            },
+        )
+        hass = SimpleNamespace(
+            data={DOMAIN: {"sip_endpoint": owner, "call_registry": registry}}
+        )
+
+        self.assertFalse(
+            send_final_response(
+                hass,
+                "call-1",
+                200,
+                "OK",
+                expected_generation=1,
+            )
+        )
+        self.assertEqual(owner.final_calls, [])
+
     def test_success_response_resolves_answering_endpoint_identity(self) -> None:
         owner = _Server(owns="call-identity")
         session = SimpleNamespace(
             metadata={"dest_endpoint_id": "kitchen"},
             callee="427",
+            generation=2,
+            answer_committed=True,
         )
         call_registry = SimpleNamespace(
             resolve_session_id=lambda call_id: call_id,
@@ -196,6 +238,7 @@ class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 200,
                 "OK",
                 answer_sdp="v=0",
+                expected_generation=2,
             )
         )
         kwargs = owner.final_calls[-1][3]

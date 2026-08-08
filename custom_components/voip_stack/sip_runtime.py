@@ -78,8 +78,25 @@ def send_final_response(
     decline_reason: str = "",
     connected_identity_name: str = "",
     connected_identity_user: str = "",
+    expected_generation: int | None = None,
 ) -> bool:
     """Send a final response through the endpoint owning ``call_id``."""
+    if 200 <= int(status) < 300:
+        calls = call_projection(hass)
+        session_id = calls.resolve_session_id(call_id) if calls is not None else ""
+        session = calls.sessions.get(session_id) if calls is not None else None
+        if (
+            session is None
+            or expected_generation is None
+            or session.generation != expected_generation
+            or not session.answer_committed
+        ):
+            _LOGGER.error(
+                "Rejected unowned SIP answer call_id=%s generation=%s",
+                call_id,
+                expected_generation,
+            )
+            return False
     if 200 <= int(status) < 300 and not (
         connected_identity_name and connected_identity_user
     ):

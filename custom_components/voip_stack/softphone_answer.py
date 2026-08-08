@@ -343,6 +343,7 @@ async def async_answer_browser_call(
                 status,
                 reason,
                 answer_sdp=sdp,
+                expected_generation=authoritative_session.generation,
             )
         ),
     )

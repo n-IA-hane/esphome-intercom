@@ -554,7 +554,7 @@ async def route_sip_bridge(
             bind_final_response(
                 runtime.send_final_response,
                 hass,
-                invite.call_id,
+                session.token,
             ),
         )
         transaction.add_resource(
