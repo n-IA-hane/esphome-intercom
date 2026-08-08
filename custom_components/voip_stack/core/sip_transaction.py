@@ -7,6 +7,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
+from . import sip
+
 
 SIP_T1 = 0.5
 SIP_T2 = 4.0
@@ -17,6 +19,78 @@ SIP_TIMER_H = 64 * SIP_T1
 _T = TypeVar("_T")
 ResponseReader = Callable[[float], Awaitable[_T | None]]
 AsyncSend = Callable[[], Awaitable[None]]
+
+
+type SipTransactionKey = tuple[str, int, str]
+
+
+def transaction_key(message: sip.SipMessage) -> SipTransactionKey | None:
+    """Return a message transaction key, or none for malformed input."""
+    try:
+        cseq = sip.parse_cseq(message.header("CSeq"))
+        vias = message.header_values("Via")
+        branch = sip.parse_via(vias[0] if vias else "").branch
+    except (TypeError, ValueError, sip.SipError):
+        return None
+    return cseq.method, cseq.number, branch
+
+
+def matches_response(
+    message: sip.SipMessage,
+    *,
+    method: str,
+    cseq: int,
+    branch: str,
+) -> bool:
+    key = transaction_key(message) if message.is_response else None
+    return bool(
+        key is not None
+        and key == (method.upper(), int(cseq), branch)
+        and branch
+    )
+
+
+def same_request_transaction(
+    current: sip.SipMessage,
+    previous: sip.SipMessage | None,
+) -> bool:
+    if previous is None or current.method != previous.method:
+        return False
+    key = transaction_key(current)
+    previous_key = transaction_key(previous)
+    return bool(
+        key is not None
+        and previous_key is not None
+        and key[0] == current.method
+        and previous_key[0] == previous.method
+        and key[2]
+        and key == previous_key
+    )
+
+
+def matches_invite_error_ack(
+    ack: sip.SipMessage,
+    invite: sip.SipMessage,
+) -> bool:
+    ack_key = transaction_key(ack)
+    invite_key = transaction_key(invite)
+    if (
+        ack.method != "ACK"
+        or ack.header("Call-ID") != invite.header("Call-ID")
+        or ack_key is None
+        or invite_key is None
+        or not ack_key[2]
+        or ack_key[1] != invite_key[1]
+        or invite_key[0] != "INVITE"
+        or ack_key[2] != invite_key[2]
+    ):
+        return False
+    try:
+        ack_via = sip.parse_via(ack.header_values("Via")[0])
+        invite_via = sip.parse_via(invite.header_values("Via")[0])
+    except (IndexError, TypeError, ValueError, sip.SipError):
+        return False
+    return ack_via.host == invite_via.host and ack_via.port == invite_via.port
 
 
 class SipClientTransaction(Generic[_T]):

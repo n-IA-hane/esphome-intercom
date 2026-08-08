@@ -26,7 +26,7 @@ from .core.sip_auth import (
     build_digest_authorization,
 )
 from .core.sip_resolution import SipServerResolver, SipServerTarget
-from .core.sip_transaction import SIP_T1, SIP_T2, SIP_TIMER_F, SipClientTransaction
+from .core.sip_transaction import SIP_T1, SIP_T2, SIP_TIMER_F, SipClientTransaction, transaction_key
 from .sip_udp_io import SipDatagramQueueProtocol
 from .sip_tcp_io import SipTcpWriter, read_sip_stream_message as _read_sip_stream_message
 from .queue_utils import put_drop_oldest
@@ -550,20 +550,14 @@ class SipTrunkClient:
             if remaining <= 0:
                 raise asyncio.TimeoutError
             message = await asyncio.wait_for(self.responses.get(), timeout=remaining)
-            try:
-                cseq = sip.parse_cseq(message.header("CSeq"))
-                vias = message.header_values("Via")
-                branch = sip.parse_via(vias[0] if vias else "").branch
-                matches = (
-                    message.header("Call-ID") == self.call_id
-                    and cseq.number == expected_cseq
-                    and cseq.method == "REGISTER"
-                    and (not expected_branch or branch == expected_branch)
-                    and message.status_code is not None
-                    and message.status_code >= 200
-                )
-            except (TypeError, ValueError, sip.SipError):
-                matches = False
+            key = transaction_key(message)
+            matches = bool(
+                key is not None
+                and message.header("Call-ID") == self.call_id
+                and key[:2] == ("REGISTER", expected_cseq)
+                and (not expected_branch or key[2] == expected_branch)
+                and (message.status_code or 0) >= 200
+            )
             if matches:
                 return message
             _LOGGER.debug("Ignoring stale/non-REGISTER SIP trunk response")

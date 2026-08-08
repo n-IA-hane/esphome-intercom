@@ -33,6 +33,8 @@ from .core.sip_transaction import (
     SIP_TIMER_B,
     SipClientTransaction,
     async_run_server_transaction,
+    matches_response,
+    same_request_transaction,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -808,29 +810,7 @@ class SipCallClient:
             return fallback_host, int(fallback_port)
         return target.host, int(target.port or 5060)
 
-    @staticmethod
-    def _response_matches_transaction(
-        message: sip.SipMessage,
-        *,
-        method: str,
-        cseq: int,
-        branch: str,
-    ) -> bool:
-        """Match an initial transaction before a remote dialog tag exists."""
-
-        if not message.is_response:
-            return False
-        try:
-            response_cseq = sip.parse_cseq(message.header("CSeq"))
-            vias = message.header_values("Via")
-            response_branch = sip.parse_via(vias[0] if vias else "").branch
-        except (TypeError, ValueError, sip.SipError):
-            return False
-        return (
-            response_cseq == sip.SipCSeq(int(cseq), method.upper())
-            and bool(branch)
-            and response_branch == branch
-        )
+    _response_matches_transaction = staticmethod(matches_response)
 
     def _next_dialog_cseq(self) -> int:
         self._local_dialog_cseq = max(
@@ -1161,25 +1141,7 @@ class SipCallClient:
             and sip.extract_tag(request.header("To")) == self.dialog_ids.local_tag
         )
 
-    @staticmethod
-    def _same_in_dialog_transaction(current: sip.SipMessage, previous: sip.SipMessage | None) -> bool:
-        if previous is None:
-            return False
-        try:
-            current_cseq = sip.parse_cseq(current.header("CSeq"))
-            previous_cseq = sip.parse_cseq(previous.header("CSeq"))
-            current_via = current.header_values("Via")
-            previous_via = previous.header_values("Via")
-            current_branch = sip.parse_via(current_via[0] if current_via else "").branch
-            previous_branch = sip.parse_via(previous_via[0] if previous_via else "").branch
-        except (TypeError, ValueError, sip.SipError):
-            return False
-        return bool(
-            current.method == previous.method
-            and current_cseq == previous_cseq
-            and current_branch
-            and current_branch == previous_branch
-        )
+    _same_in_dialog_transaction = staticmethod(same_request_transaction)
 
     def _find_in_dialog_response(self, request: sip.SipMessage) -> _InDialogResponse | None:
         for cached in reversed(self._in_dialog_responses):

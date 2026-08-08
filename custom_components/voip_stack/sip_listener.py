@@ -22,6 +22,8 @@ from .core.sip_transaction import (
     SIP_TIMER_H as _INVITE_NON2XX_TIMEOUT,
     SipClientTransaction,
     async_run_server_transaction,
+    matches_invite_error_ack,
+    same_request_transaction,
 )
 from .queue_utils import put_drop_oldest
 
@@ -360,23 +362,7 @@ def _same_request_transaction(
 
     if addr[0] != original_addr[0]:
         return False
-    try:
-        current_cseq = sip.parse_cseq(request.header("CSeq"))
-        original_cseq = sip.parse_cseq(original.header("CSeq"))
-        request_vias = request.header_values("Via")
-        original_vias = original.header_values("Via")
-        current_branch = sip.parse_via(request_vias[0] if request_vias else "").branch
-        original_branch = sip.parse_via(original_vias[0] if original_vias else "").branch
-    except (TypeError, ValueError, sip.SipError):
-        return False
-    return (
-        current_cseq.method == original_cseq.method
-        and current_cseq.method == request.method
-        and original_cseq.method == original.method
-        and current_cseq.number == original_cseq.number
-        and bool(current_branch)
-        and current_branch == original_branch
-    )
+    return same_request_transaction(request, original)
 
 
 def _same_dialog_request(request: sip.SipMessage, dialog: _ActiveDialog, _addr: tuple[str, int]) -> bool:
@@ -417,31 +403,6 @@ def _same_dialog_ack(
         and from_tag == remote_tag
         and to_tag
         and to_tag == dialog.to_tag
-    )
-
-
-def _same_invite_error_ack(request: sip.SipMessage, completed: _PendingInvite) -> bool:
-    """Match the hop-by-hop ACK for an INVITE final response outside 2xx."""
-
-    try:
-        ack_cseq = sip.parse_cseq(request.header("CSeq"))
-        invite_cseq = sip.parse_cseq(completed.request.header("CSeq"))
-        ack_vias = request.header_values("Via")
-        invite_vias = completed.request.header_values("Via")
-        ack_via = sip.parse_via(ack_vias[0] if ack_vias else "")
-        invite_via = sip.parse_via(invite_vias[0] if invite_vias else "")
-    except (TypeError, ValueError, sip.SipError):
-        return False
-    return bool(
-        request.method == "ACK"
-        and request.header("Call-ID") == completed.request.header("Call-ID")
-        and ack_cseq.method == "ACK"
-        and invite_cseq.method == "INVITE"
-        and ack_cseq.number == invite_cseq.number
-        and ack_via.branch
-        and ack_via.branch == invite_via.branch
-        and ack_via.host == invite_via.host
-        and ack_via.port == invite_via.port
     )
 
 
@@ -2058,7 +2019,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             if (
                 completed is not None
                 and completed.status >= 300
-                and _same_invite_error_ack(request, completed)
+                and matches_invite_error_ack(request, completed.request)
             ):
                 self._cancel_invite_non2xx(completed)
                 self.completed_invites.pop(call_id, None)
