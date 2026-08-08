@@ -26,10 +26,16 @@ async def async_terminate_sip_bridge_session(
     """Terminate one B2BUA bridge through the authoritative session owner."""
 
     del endpoint_id, session_device_id
-    return await call_registry(hass).terminate_bridge_wait(
-        call_id,
+    registry = call_registry(hass)
+    source_call_id, dest_call_id = registry.bridge_for(call_id)
+    if not source_call_id:
+        return False, "", "", False, False
+    client_present = bool(dest_call_id and registry.sip_clients.get(dest_call_id))
+    terminated = await EndpointTerminationHandler(hass).terminate(
+        source_call_id,
         TerminationIntent.bye(terminal_reason),
     )
+    return True, source_call_id, dest_call_id, client_present, terminated
 
 
 async def async_hangup_browser_call(

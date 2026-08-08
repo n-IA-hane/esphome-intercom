@@ -199,11 +199,11 @@ def test_bridge_termination_delegates_projection_to_session_owner(termination) -
     hass = SimpleNamespace(
         data={}, artifacts=SimpleNamespace(task_for=lambda call_id, name: None)
     )
-    terminate = AsyncMock(
-        return_value=(True, "source-call", "dest-call", True, True)
-    )
     termination.call_registry = Mock(
-        return_value=SimpleNamespace(terminate_bridge_wait=terminate)
+        return_value=SimpleNamespace(
+            bridge_for=Mock(return_value=("source-call", "dest-call")),
+            sip_clients={"dest-call": object()},
+        )
     )
 
     result = asyncio.run(
@@ -216,7 +216,8 @@ def test_bridge_termination_delegates_projection_to_session_owner(termination) -
     )
 
     assert result[:3] == (True, "source-call", "dest-call")
-    terminate.assert_awaited_once()
-    call_id, intent = terminate.await_args.args
+    assert result[3:] == (True, True)
+    termination.terminate.assert_awaited_once()
+    call_id, intent = termination.terminate.await_args.args
     assert call_id == "source-call"
     assert intent.reason == "local_hangup"

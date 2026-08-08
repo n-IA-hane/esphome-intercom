@@ -71,7 +71,7 @@ class _EndpointRegistryStub:
 
 
 class CallRegistryEventContextTest(unittest.TestCase):
-    def test_bridge_termination_resolves_either_leg_through_session_owner(self) -> None:
+    def test_bridge_index_resolves_either_leg(self) -> None:
         registry = _registry()
         registry.upsert("source", state="in_call")
         registry.register_bridge(
@@ -81,15 +81,10 @@ class CallRegistryEventContextTest(unittest.TestCase):
             state="in_call",
         )
 
-        result = asyncio.run(
-            registry.terminate_bridge_wait(
-                "destination",
-                pbx_runtime.TerminationIntent("remote_hangup"),
-            )
+        self.assertEqual(registry.bridge_for("source"), ("source", "destination"))
+        self.assertEqual(
+            registry.bridge_for("destination"), ("source", "destination")
         )
-
-        self.assertEqual(result, (True, "source", "destination", True, True))
-        self.assertNotIn("source", registry.sessions)
 
     def test_close_leg_settles_watcher_and_client_without_ending_source(self) -> None:
         async def exercise() -> None:
