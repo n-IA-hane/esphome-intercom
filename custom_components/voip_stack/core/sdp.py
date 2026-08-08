@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import ipaddress
 from dataclasses import dataclass, replace
 from fractions import Fraction
 
@@ -12,6 +13,37 @@ from .codec_capabilities import common_sip_codecs
 
 class SdpError(ValueError):
     """Malformed or unsupported SDP."""
+
+
+def _address_type(address: str) -> str:
+    """Return the SDP address type for one literal or local hostname."""
+
+    try:
+        return "IP6" if ipaddress.ip_address(address).version == 6 else "IP4"
+    except ValueError:
+        return "IP4"
+
+
+def _connection_line(address: str) -> str:
+    return f"c=IN {_address_type(address)} {address}"
+
+
+def _origin_line(address: str, session_id: int = 0, version: int = 0) -> str:
+    return f"o=- {session_id} {version} IN {_address_type(address)} {address}"
+
+
+def _parse_connection_line(line: str) -> str:
+    parts = line.split()
+    if len(parts) != 3 or parts[0] != "c=IN" or parts[1] not in {"IP4", "IP6"}:
+        raise SdpError(f"unsupported SDP connection: {line}")
+    address = parts[2]
+    try:
+        literal = ipaddress.ip_address(address)
+    except ValueError:
+        return address
+    if (literal.version == 6) != (parts[1] == "IP6"):
+        raise SdpError(f"SDP connection address family mismatch: {line}")
+    return address
 
 
 MAX_RTP_OFFER_FORMATS = 11
@@ -1374,9 +1406,9 @@ def build_offer_directional(
     )
     lines = [
         "v=0",
-        f"o=- 0 0 IN IP4 {origin_ip}",
+        _origin_line(origin_ip),
         "s=VoIP Stack",
-        f"c=IN IP4 {media_ip}",
+        _connection_line(media_ip),
         "t=0 0",
         f"m=audio {int(media_port)} RTP/AVP {payloads}",
     ]
@@ -1503,13 +1535,9 @@ def parse_sdp(sdp: str | bytes) -> dict:
             continue
         if line.startswith("c="):
             if not saw_media:
-                if not line.startswith("c=IN IP4 "):
-                    raise SdpError(f"unsupported SDP connection: {line}")
-                session_conn = line.removeprefix("c=IN IP4 ").strip()
+                session_conn = _parse_connection_line(line)
             elif in_selected_audio:
-                if not line.startswith("c=IN IP4 "):
-                    raise SdpError(f"unsupported SDP audio connection: {line}")
-                media_conn = line.removeprefix("c=IN IP4 ").strip()
+                media_conn = _parse_connection_line(line)
             continue
         if line in {"a=sendrecv", "a=sendonly", "a=recvonly", "a=inactive"}:
             direction = line[2:]
@@ -1610,21 +1638,15 @@ def _parse_media_sections(sdp_body: str | bytes) -> tuple[str, str, list[dict]]:
             continue
         if line.startswith("c="):
             if current is None:
-                if not line.startswith("c=IN IP4 "):
-                    raise SdpError(f"unsupported SDP connection: {line}")
-                address = line.removeprefix("c=IN IP4 ").strip()
-                session_connection = address
+                session_connection = _parse_connection_line(line)
             else:
                 current["connection_seen"] = True
-                if line.startswith("c=IN IP4 "):
-                    current["connection_ip"] = line.removeprefix("c=IN IP4 ").strip()
-                else:
+                try:
+                    current["connection_ip"] = _parse_connection_line(line)
+                except SdpError:
                     # A media-level connection applies only to that media
-                    # section.  Preserve a usable IPv4 audio section even if
-                    # an additional video/data section advertises IP6 or an
-                    # address family this deliberately small SIP profile does
-                    # not implement.  The unsupported section is rejected in
-                    # the answer instead of poisoning the entire audio call.
+                    # section. Preserve a usable audio section when another
+                    # media section advertises an unsupported address family.
                     current["connection_ip"] = ""
                     current["connection_supported"] = False
             continue
@@ -2608,9 +2630,9 @@ def _answer_with_offered_media_order(
     )
     lines = [
         "v=0",
-        f"o=- 0 0 IN IP4 {origin_ip}",
+        _origin_line(origin_ip),
         "s=VoIP Stack",
-        f"c=IN IP4 {media_ip}",
+        _connection_line(media_ip),
         *_offered_time_lines(remote_sdp),
     ]
     used_audio = False
@@ -3000,9 +3022,9 @@ def build_answer_directional(
             )
     lines = [
         "v=0",
-        f"o=- 0 0 IN IP4 {origin_ip}",
+        _origin_line(origin_ip),
         "s=VoIP Stack",
-        f"c=IN IP4 {media_ip}",
+        _connection_line(media_ip),
         *(_offered_time_lines(remote_sdp) if remote_sdp else ["t=0 0"]),
         *audio_lines,
     ]

@@ -17,6 +17,33 @@ from .voip_phase1_support import (
 
 
 class SdpPcmProfileTest(unittest.TestCase):
+    def test_ipv6_offer_and_answer_preserve_address_family(self) -> None:
+        local = [audio_format.AudioFormat(16000, "s16le", 1, 20)]
+        offer = sdp.build_offer_directional(
+            "2001:db8::10",
+            "2001:db8::10",
+            40000,
+            local,
+            local,
+        )
+        selected = sdp.negotiate_directional(offer, local, local)
+
+        self.assertIn("o=- 0 0 IN IP6 2001:db8::10", offer)
+        self.assertIn("c=IN IP6 2001:db8::10", offer)
+        self.assertEqual(sdp.parse_sdp(offer)["connection_ip"], "2001:db8::10")
+        self.assertIsNotNone(selected)
+        assert selected is not None
+        answer = sdp.build_answer_directional(
+            "2001:db8::20",
+            "2001:db8::20",
+            41000,
+            selected.send,
+            selected.recv,
+            remote_sdp=offer,
+        )
+        self.assertIn("o=- 0 0 IN IP6 2001:db8::20", answer)
+        self.assertIn("c=IN IP6 2001:db8::20", answer)
+
     def test_dahua_pcm_is_profile_gated_and_preserves_little_endian_samples(
         self,
     ) -> None:
