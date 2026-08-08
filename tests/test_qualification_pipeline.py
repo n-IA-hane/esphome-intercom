@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 from qualification.registry import FIRMWARE_PROFILES
-from scripts.candidate_lock import build_lock
+from scripts.candidate_lock import build_lock, candidate_id
 from scripts.install_ha_qualification_package import install
 from scripts.qualification_plan import build_plan
 from scripts.merge_qualification_results import merge_results
@@ -16,7 +16,7 @@ from scripts.verify_qualification import verify
 
 
 def _candidate(head: str) -> dict[str, object]:
-    return {
+    payload = {
         "schema_version": 1,
         "repositories": {
             "esphome-intercom": {"commit": head, "dirty": False},
@@ -25,6 +25,18 @@ def _candidate(head: str) -> dict[str, object]:
             "esphome-runtime-controller": {"commit": "runtime", "dirty": False},
         },
         "toolchain": {},
+    }
+    payload["candidate_id"] = candidate_id(payload)
+    return payload
+
+
+def _results(plan: dict[str, object], jobs: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "plan_id": plan["plan_id"],
+        "candidate_id": _candidate(str(plan["head"]))["candidate_id"],
+        "head": plan["head"],
+        "jobs": jobs,
     }
 
 
@@ -100,7 +112,12 @@ def test_summary_rejects_missing_required_job(tmp_path: Path) -> None:
         event="pull-request",
     )
 
-    errors, manifest = verify(plan, _candidate("head"), {"jobs": {}}, artifact_root=tmp_path)
+    errors, manifest = verify(
+        plan,
+        _candidate("head"),
+        _results(plan, {}),
+        artifact_root=tmp_path,
+    )
 
     assert errors == ["required job is missing: static"]
     assert manifest["qualified"] is False
@@ -116,18 +133,25 @@ def test_summary_rejects_wrong_candidate_and_artifact(tmp_path: Path) -> None:
     )
     evidence = tmp_path / "static.json"
     evidence.write_text("{}\n", encoding="utf-8")
-    results = {
-        "jobs": {
+    results = _results(
+        plan,
+        {
             "static": {
                 "status": "success",
                 "artifacts": [
-                    {"path": "static.json", "sha256": hashlib.sha256(b"wrong").hexdigest()}
+                    {
+                        "path": "static.json",
+                        "sha256": hashlib.sha256(b"wrong").hexdigest(),
+                        "bytes": evidence.stat().st_size,
+                    }
                 ],
             }
-        }
-    }
+        },
+    )
 
-    errors, manifest = verify(plan, _candidate("other"), results, artifact_root=tmp_path)
+    errors, manifest = verify(
+        plan, _candidate("other"), results, artifact_root=tmp_path
+    )
 
     assert "candidate intercom commit does not match plan head" in errors
     assert "job artifact hash mismatch: static/static.json" in errors
@@ -144,19 +168,21 @@ def test_summary_accepts_exact_candidate_and_evidence(tmp_path: Path) -> None:
     )
     evidence = tmp_path / "static.json"
     evidence.write_text(json.dumps({"passed": True}) + "\n", encoding="utf-8")
-    results = {
-        "jobs": {
+    results = _results(
+        plan,
+        {
             "static": {
                 "status": "success",
                 "artifacts": [
                     {
                         "path": "static.json",
                         "sha256": hashlib.sha256(evidence.read_bytes()).hexdigest(),
+                        "bytes": evidence.stat().st_size,
                     }
                 ],
             }
-        }
-    }
+        },
+    )
 
     errors, manifest = verify(plan, _candidate("head"), results, artifact_root=tmp_path)
 
@@ -169,7 +195,15 @@ def test_job_result_hashes_only_artifacts_below_root(tmp_path: Path) -> None:
     evidence.parent.mkdir()
     evidence.write_text("{}\n", encoding="utf-8")
 
-    result = build_result("static", "success", [evidence], tmp_path)
+    result = build_result(
+        "static",
+        "success",
+        [evidence],
+        tmp_path,
+        plan_id="plan",
+        candidate_id="candidate",
+        head="head",
+    )
 
     artifact = result["jobs"]["static"]["artifacts"][0]
     assert artifact["path"] == "nested/result.json"
@@ -183,8 +217,12 @@ def test_candidate_lock_has_stable_identity(monkeypatch, tmp_path: Path) -> None
         "scripts.candidate_lock._repository",
         lambda path: {"commit": f"sha-{path.name}", "dirty": False},
     )
-    monkeypatch.setattr("scripts.candidate_lock._package_version", lambda name: f"version-{name}")
-    monkeypatch.setattr("scripts.candidate_lock._run", lambda *command, cwd=None: "v24.0.0")
+    monkeypatch.setattr(
+        "scripts.candidate_lock._package_version", lambda name: f"version-{name}"
+    )
+    monkeypatch.setattr(
+        "scripts.candidate_lock._run", lambda *command, cwd=None: "v24.0.0"
+    )
     config = {"repositories": {"repo": {"path": str(repository)}}}
 
     first = build_lock(config, allow_dirty=False)
@@ -197,7 +235,12 @@ def test_candidate_lock_has_stable_identity(monkeypatch, tmp_path: Path) -> None
 def test_result_merge_rejects_duplicate_job(tmp_path: Path) -> None:
     first = tmp_path / "first.json"
     second = tmp_path / "second.json"
-    payload = {"jobs": {"static": {"status": "success", "artifacts": []}}}
+    payload = {
+        "plan_id": "plan",
+        "candidate_id": "candidate",
+        "head": "head",
+        "jobs": {"static": {"status": "success", "artifacts": []}},
+    }
     first.write_text(json.dumps(payload), encoding="utf-8")
     second.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -207,6 +250,44 @@ def test_result_merge_rejects_duplicate_job(tmp_path: Path) -> None:
         assert str(error) == "duplicate qualification jobs: static"
     else:
         raise AssertionError("duplicate qualification job was accepted")
+
+
+def test_successful_result_requires_evidence(tmp_path: Path) -> None:
+    try:
+        build_result(
+            "static",
+            "success",
+            [],
+            tmp_path,
+            plan_id="plan",
+            candidate_id="candidate",
+            head="head",
+        )
+    except RuntimeError as error:
+        assert str(error) == "successful qualification job has no evidence: static"
+    else:
+        raise AssertionError("successful job without evidence was accepted")
+
+
+def test_summary_rejects_result_identity_mismatch(tmp_path: Path) -> None:
+    plan = build_plan(
+        ["docs/qualification.md"],
+        base="base",
+        head="head",
+        full=False,
+        event="pull-request",
+    )
+    results = _results(plan, {})
+    results["plan_id"] = "wrong"
+
+    errors, _manifest = verify(
+        plan,
+        _candidate("head"),
+        results,
+        artifact_root=tmp_path,
+    )
+
+    assert "qualification results do not match plan" in errors
 
 
 def test_real_ha_automation_package_covers_route_decisions() -> None:
@@ -248,9 +329,12 @@ def test_ha_package_installer_preserves_one_canonical_source(tmp_path: Path) -> 
 
     target, digest = install(tmp_path, check=False)
 
-    assert target.read_bytes() == (
-        Path(__file__).parents[1]
-        / "qualification/home_assistant/voip_qualification.yaml"
-    ).read_bytes()
+    assert (
+        target.read_bytes()
+        == (
+            Path(__file__).parents[1]
+            / "qualification/home_assistant/voip_qualification.yaml"
+        ).read_bytes()
+    )
     assert len(digest) == 64
     assert install(tmp_path, check=True) == (target, digest)

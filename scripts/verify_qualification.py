@@ -8,6 +8,9 @@ import hashlib
 import json
 from pathlib import Path
 
+from scripts.candidate_lock import candidate_id as compute_candidate_id
+from scripts.qualification_plan import plan_id as compute_plan_id
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -26,14 +29,34 @@ def verify(
 ) -> tuple[list[str], dict[str, object]]:
     errors: list[str] = []
     head = str(plan.get("head") or "")
+    plan_id = str(plan.get("plan_id") or "")
+    candidate_id = str(candidate.get("candidate_id") or "")
+    if plan_id != compute_plan_id(plan):
+        errors.append("qualification plan identity is invalid")
+    if candidate_id != compute_candidate_id(candidate):
+        errors.append("candidate identity is invalid")
+    if results.get("plan_id") != plan_id:
+        errors.append("qualification results do not match plan")
+    if results.get("candidate_id") != candidate_id:
+        errors.append("qualification results do not match candidate")
+    if results.get("head") != head:
+        errors.append("qualification results do not match head")
     repositories = candidate.get("repositories")
-    intercom = repositories.get("esphome-intercom", {}) if isinstance(repositories, dict) else {}
+    intercom = (
+        repositories.get("esphome-intercom", {})
+        if isinstance(repositories, dict)
+        else {}
+    )
     if intercom.get("commit") != head:
         errors.append("candidate intercom commit does not match plan head")
-    if any(
-        isinstance(value, dict) and value.get("dirty")
-        for value in repositories.values()
-    ) if isinstance(repositories, dict) else True:
+    if (
+        any(
+            isinstance(value, dict) and value.get("dirty")
+            for value in repositories.values()
+        )
+        if isinstance(repositories, dict)
+        else True
+    ):
         errors.append("candidate contains a dirty or invalid repository")
 
     job_results = results.get("jobs")
@@ -55,6 +78,8 @@ def verify(
         if not isinstance(artifacts, list):
             errors.append(f"job artifacts are invalid: {job}")
             artifacts = []
+        if not artifacts:
+            errors.append(f"required job has no evidence: {job}")
         for artifact in artifacts:
             if not isinstance(artifact, dict):
                 errors.append(f"job artifact entry is invalid: {job}")
@@ -63,7 +88,11 @@ def verify(
             if relative.is_absolute() or ".." in relative.parts:
                 errors.append(f"job artifact path escapes evidence root: {job}")
                 continue
-            path = artifact_root / relative
+            root = artifact_root.resolve()
+            path = (root / relative).resolve()
+            if path != root and root not in path.parents:
+                errors.append(f"job artifact path escapes evidence root: {job}")
+                continue
             if not path.is_file():
                 errors.append(f"job artifact is missing: {job}/{relative}")
                 continue
@@ -71,13 +100,16 @@ def verify(
             expected = str(artifact.get("sha256") or "")
             if actual != expected:
                 errors.append(f"job artifact hash mismatch: {job}/{relative}")
+            if artifact.get("bytes") != path.stat().st_size:
+                errors.append(f"job artifact size mismatch: {job}/{relative}")
             checked_artifacts.append({"path": str(relative), "sha256": actual})
         verified_jobs[job] = {"status": status, "artifacts": checked_artifacts}
 
     manifest = {
         "schema_version": 1,
         "candidate": candidate,
-        "plan_id": plan.get("plan_id"),
+        "plan_id": plan_id,
+        "candidate_id": candidate_id,
         "head": head,
         "jobs": verified_jobs,
         "qualified": not errors,
@@ -92,7 +124,9 @@ def main() -> int:
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--artifact-root", type=Path, default=Path("."))
-    parser.add_argument("--output", type=Path, default=Path("qualification-manifest.json"))
+    parser.add_argument(
+        "--output", type=Path, default=Path("qualification-manifest.json")
+    )
     args = parser.parse_args()
 
     errors, manifest = verify(
@@ -101,7 +135,9 @@ def main() -> int:
         json.loads(args.results.read_text(encoding="utf-8")),
         artifact_root=args.artifact_root,
     )
-    args.output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    args.output.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     for error in errors:
         print(f"qualification_error={error}")
     print(f"qualification_manifest={args.output}")

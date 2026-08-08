@@ -28,6 +28,16 @@ from qualification.registry import (  # noqa: E402
 RISK_ORDER = {risk: index for index, risk in enumerate(Risk)}
 
 
+def plan_id(payload: dict[str, object]) -> str:
+    """Return the content identity without trusting a stored digest."""
+
+    canonical_payload = {
+        key: value for key, value in payload.items() if key != "plan_id"
+    }
+    canonical = json.dumps(canonical_payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def _json_record(value: object) -> dict[str, object]:
     record = asdict(value)
     return {
@@ -62,7 +72,9 @@ def build_plan(
     matched = {
         area.id: area
         for area in AREAS
-        if any(_matches(path, pattern) for path in changed_files for pattern in area.paths)
+        if any(
+            _matches(path, pattern) for path in changed_files for pattern in area.paths
+        )
     }
     unknown = [
         path
@@ -91,7 +103,9 @@ def build_plan(
         for scenario in SCENARIOS
         if run_all or scenario.areas.intersection(area_ids)
     ]
-    risk = max((area.risk for area in matched.values()), key=RISK_ORDER.get, default=Risk.LOW)
+    risk = max(
+        (area.risk for area in matched.values()), key=RISK_ORDER.get, default=Risk.LOW
+    )
     skipped = {
         job: "not required by changed areas"
         for job in sorted(ALL_JOBS.difference(jobs))
@@ -111,8 +125,7 @@ def build_plan(
         "firmware_profiles": [_json_record(profile) for profile in profiles],
         "scenarios": [_json_record(scenario) for scenario in scenarios],
     }
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    payload["plan_id"] = hashlib.sha256(canonical.encode()).hexdigest()
+    payload["plan_id"] = plan_id(payload)
     return payload
 
 
@@ -120,15 +133,23 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", required=True)
-    parser.add_argument("--event", choices=("pull-request", "push-dev", "schedule", "manual"), default="manual")
+    parser.add_argument(
+        "--event",
+        choices=("pull-request", "push-dev", "schedule", "manual"),
+        default="manual",
+    )
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--changed-file", action="append", default=[])
     parser.add_argument("--output", type=Path, default=Path("qualification-plan.json"))
     args = parser.parse_args()
 
     changed_files = sorted(set(args.changed_file or _git_diff(args.base, args.head)))
-    plan = build_plan(changed_files, base=args.base, head=args.head, full=args.full, event=args.event)
-    args.output.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    plan = build_plan(
+        changed_files, base=args.base, head=args.head, full=args.full, event=args.event
+    )
+    args.output.write_text(
+        json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(args.output)
     return 0
 

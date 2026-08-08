@@ -16,6 +16,16 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCES = ROOT / "qualification/sources.json"
 
 
+def candidate_id(payload: dict[str, object]) -> str:
+    """Return the content identity without trusting a stored digest."""
+
+    canonical_payload = {
+        key: value for key, value in payload.items() if key != "candidate_id"
+    }
+    canonical = json.dumps(canonical_payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def _run(*command: str, cwd: Path | None = None) -> str:
     return subprocess.run(
         command,
@@ -82,8 +92,7 @@ def build_lock(
             "home_assistant": home_assistant,
         },
     }
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    payload["candidate_id"] = hashlib.sha256(canonical.encode()).hexdigest()
+    payload["candidate_id"] = candidate_id(payload)
     return payload
 
 
