@@ -284,19 +284,31 @@ class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
                     selected,
                     remote_sdp=invite.body,
                 ).encode()
-                headers = sip_listener._response_headers(
+                contact_uri = f"sip:100@{local}:{source_addr[1]};transport=tcp"
+                top_via = sip_listener._response_via_header(
                     invite,
-                    addr=source_addr,
-                    to_tag="dahua-call",
+                    source_addr,
                 )
-                headers.extend(
-                    (
-                        ("Contact", f"<sip:100@{local}:{source_addr[1]};transport=tcp>"),
-                        ("Content-Type", "application/sdp"),
+                writer.write(
+                    sip.build_uas_response(
+                        invite,
+                        180,
+                        "Ringing",
+                        to_tag="dahua-call",
+                        top_via=top_via,
                     )
                 )
-                writer.write(sip.build_response(180, "Ringing", headers))
-                writer.write(sip.build_response(200, "OK", headers, answer))
+                writer.write(
+                    sip.build_uas_response(
+                        invite,
+                        200,
+                        "OK",
+                        contact_uri=contact_uri,
+                        to_tag="dahua-call",
+                        top_via=top_via,
+                        body=answer,
+                    )
+                )
                 await writer.drain()
 
             answer_task = asyncio.create_task(dahua_answer())

@@ -471,30 +471,6 @@ def _response_via_header(request: sip.SipMessage, addr) -> str:
     return rendered
 
 
-def _response_headers(request: sip.SipMessage, *, addr=None, to_tag: str = "") -> list[tuple[str, str]]:
-    headers: list[tuple[str, str]] = []
-    via_values = request.header_values("Via")
-    if via_values:
-        top_via = _response_via_header(request, addr) if addr is not None else via_values[0]
-        headers.append(("Via", top_via))
-        headers.extend(("Via", value) for value in via_values[1:])
-    for name in ("From", "Call-ID", "CSeq"):
-        value = request.header(name)
-        if value:
-            headers.append((name, value))
-    to_value = request.header("To")
-    if to_value and to_tag and not sip.extract_tag(to_value):
-        to_value = f"{to_value};tag={to_tag}"
-    if to_value:
-        headers.insert(2, ("To", to_value))
-    if request.method == "INVITE":
-        headers.extend(
-            ("Record-Route", value)
-            for value in request.header_values("Record-Route")
-        )
-    return headers
-
-
 def _response_contact_uri(request: sip.SipMessage, *, local_ip: str, local_sip_port: int, transport: str) -> str:
     try:
         request_uri = sip.parse_sip_uri(request.uri)
@@ -1541,28 +1517,23 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         decline_reason: str = "",
         extra_headers: tuple[tuple[str, str], ...] = (),
     ) -> bool:
-        headers = _response_headers(request, addr=addr, to_tag=to_tag)
-        if request.method in {"INVITE", "UPDATE"} and 200 <= int(status) < 300:
-            headers.append((
-                "Contact",
-                f"<{_response_contact_uri(request, local_ip=self.local_ip, local_sip_port=self.local_sip_port, transport=self.signaling_transport)}>",
-            ))
-            headers.extend(sip.session_timer_response_headers(request))
-        if request.method == "INVITE" and 101 <= int(status) < 300:
-            headers.append(
-                ("Supported", ", ".join(sorted(sip.SUPPORTED_OPTION_TAGS)))
-            )
-        if body:
-            headers.append(("Content-Type", "application/sdp"))
-        if int(status) == 405:
-            headers.append(("Allow", ", ".join(sorted(sip.SUPPORTED_METHODS))))
-        headers.extend(extra_headers)
         clean_reason = _identity_header(decline_reason)
-        if clean_reason and int(status) >= 300:
-            quoted = clean_reason.replace("\\", "\\\\").replace('"', '\\"')
-            headers.append(("Reason", f'X-Voip-Stack;cause={int(status)};text="{quoted}"'))
-            headers.append(("X-Voip-Stack-Decline-Reason", clean_reason))
-        raw = sip.build_response(status, reason, headers, body)
+        raw = sip.build_uas_response(
+            request,
+            status,
+            reason,
+            contact_uri=_response_contact_uri(
+                request,
+                local_ip=self.local_ip,
+                local_sip_port=self.local_sip_port,
+                transport=self.signaling_transport,
+            ),
+            to_tag=to_tag,
+            top_via=_response_via_header(request, addr),
+            body=body,
+            extra_headers=extra_headers,
+            decline_reason=clean_reason,
+        )
         if not self._send(raw, addr):
             _LOGGER.warning("SIP TX %s %s dropped for %s:%s", status, reason, addr[0], addr[1])
             return False
@@ -1634,9 +1605,13 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         if request.method == "REGISTER":
             if self.on_register is not None:
                 result = await self.on_register(request, addr, self.signaling_transport)
-                headers = _response_headers(request, addr=addr, to_tag="")
-                headers.extend(tuple(getattr(result, "headers", ()) or ()))
-                raw = sip.build_response(int(result.status), str(result.reason), headers, b"")
+                raw = sip.build_uas_response(
+                    request,
+                    int(result.status),
+                    str(result.reason),
+                    top_via=_response_via_header(request, addr),
+                    extra_headers=tuple(getattr(result, "headers", ()) or ()),
+                )
                 if self._send(raw, addr):
                     _LOGGER.info("SIP TX %s %s to %s:%s", result.status, result.reason, addr[0], addr[1])
                     sip.mark_sip_event(self, "SIP_RESPONSE", int(result.status), str(result.reason))

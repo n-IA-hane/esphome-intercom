@@ -931,6 +931,57 @@ def build_response(status_code: int, reason: str, headers: Iterable[tuple[str, s
     return head.encode("utf-8") + b"\r\n\r\n" + body
 
 
+def build_uas_response(
+    request: SipMessage,
+    status_code: int,
+    reason: str,
+    *,
+    contact_uri: str = "",
+    to_tag: str = "",
+    top_via: str = "",
+    body: bytes = b"",
+    extra_headers: Iterable[tuple[str, str]] = (),
+    decline_reason: str = "",
+) -> bytes:
+    """Build one standards-shaped response shared by every UAS role."""
+
+    vias = request.header_values("Via")
+    headers = [("Via", top_via or vias[0])] if vias else []
+    headers.extend(("Via", value) for value in vias[1:])
+    for name in ("From", "To", "Call-ID", "CSeq"):
+        value = request.header(name)
+        if name == "To" and value and to_tag and not extract_tag(value):
+            value = f"{value};tag={to_tag}"
+        if value:
+            headers.append((name, value))
+    if request.method == "INVITE":
+        headers.extend(
+            ("Record-Route", value)
+            for value in request.header_values("Record-Route")
+        )
+    if 200 <= int(status_code) < 300 and request.method in {"INVITE", "UPDATE"}:
+        if contact_uri:
+            headers.append(("Contact", f"<{contact_uri}>"))
+        headers.extend(session_timer_response_headers(request))
+    if request.method == "INVITE" and 101 <= int(status_code) < 300:
+        headers.append(("Supported", ", ".join(sorted(SUPPORTED_OPTION_TAGS))))
+    if body:
+        headers.append(("Content-Type", "application/sdp"))
+    if int(status_code) == 405:
+        headers.append(("Allow", ", ".join(sorted(SUPPORTED_METHODS))))
+    headers.extend(extra_headers)
+    clean_reason = str(decline_reason or "").strip()
+    if clean_reason and int(status_code) >= 300:
+        quoted = clean_reason.replace("\\", "\\\\").replace('"', '\\"')
+        headers.extend(
+            (
+                ("Reason", f'X-Voip-Stack;cause={int(status_code)};text="{quoted}"'),
+                ("X-Voip-Stack-Decline-Reason", clean_reason),
+            )
+        )
+    return build_response(status_code, reason, headers, body)
+
+
 def dialog_headers(
     *,
     request_uri: str,

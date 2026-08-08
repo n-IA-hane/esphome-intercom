@@ -892,24 +892,16 @@ class SipCallClient:
         extra_headers: tuple[tuple[str, str], ...] = (),
         body: bytes = b"",
     ) -> bool:
-        headers = [
-            *(("Via", value) for value in request.header_values("Via")),
-            ("From", request.header("From")),
-            ("To", request.header("To")),
-            ("Call-ID", request.header("Call-ID")),
-            ("CSeq", request.header("CSeq")),
-        ]
-        if 200 <= int(status) < 300 and request.method in {"INVITE", "UPDATE"}:
-            headers.append(("Contact", f"<{self.dialog.local_uri}>" if self.dialog else f"<{self._pending_local_uri}>"))
-            headers.extend(sip.session_timer_response_headers(request))
-        if request.method == "INVITE" and 101 <= int(status) < 300:
-            headers.append(
-                ("Supported", ", ".join(sorted(sip.SUPPORTED_OPTION_TAGS)))
-            )
-        if body:
-            headers.append(("Content-Type", "application/sdp"))
-        headers.extend(extra_headers)
-        raw = sip.build_response(status, reason, headers, body)
+        raw = sip.build_uas_response(
+            request,
+            status,
+            reason,
+            contact_uri=(
+                getattr(self.dialog, "local_uri", "") or self._pending_local_uri
+            ),
+            body=body,
+            extra_headers=extra_headers,
+        )
         if not self._send_dialog_request(raw, host, int(port)):
             _LOGGER.warning("SIP TX %s %s dropped: signaling path unavailable", status, reason)
             return False
