@@ -144,7 +144,11 @@ class SipTrunkClient:
         if not proxy:
             return self.config.server, int(self.config.port)
         try:
-            uri = sip.parse_sip_uri(proxy if proxy.lower().startswith("sip:") else f"sip:{proxy}")
+            uri = sip.parse_sip_uri(
+                proxy
+                if proxy.lower().startswith(("sip:", "sips:"))
+                else f"sip:{proxy}"
+            )
             return uri.host, int(uri.port or self.config.port)
         except (TypeError, ValueError, sip.SipError):
             return proxy, int(self.config.port)

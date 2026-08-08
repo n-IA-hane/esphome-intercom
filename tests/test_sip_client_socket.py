@@ -2711,6 +2711,20 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observed["server_hostname"], "service.example")
         await client.close()
 
+    def test_sips_outbound_proxy_selects_signaling_target(self) -> None:
+        client = sip_client.SipCallClient(
+            local_ip="192.0.2.10",
+            local_name="HA",
+            local_sip_port=5061,
+            local_rtp_port=41000,
+            outbound_proxy="sips:proxy.example:5061;transport=tls",
+        )
+
+        self.assertEqual(
+            client._signaling_target("service.example", 5060),
+            ("proxy.example", 5061),
+        )
+
     async def test_outbound_client_advertises_bound_socket_port(self) -> None:
         client = sip_client.SipCallClient(
             local_ip="127.0.0.1",

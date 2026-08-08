@@ -743,8 +743,8 @@ class SipCallClient:
         proxy = str(self.outbound_proxy or "").strip()
         if not proxy:
             return remote_host, int(remote_sip_port)
-        if proxy.startswith("sip:"):
-            proxy = proxy[4:]
+        if proxy.lower().startswith(("sip:", "sips:")):
+            proxy = proxy.split(":", 1)[1]
         proxy = proxy.split(";", 1)[0].strip()
         if "@" in proxy:
             proxy = proxy.rsplit("@", 1)[1]

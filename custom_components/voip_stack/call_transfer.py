@@ -51,7 +51,7 @@ def _blind_target(
     destination: str,
 ) -> sip_transfer.SipReferTarget:
     raw = str(destination or "").strip()
-    if raw.lower().startswith("sip:"):
+    if raw.lower().startswith(("sip:", "sips:")):
         return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(raw)))
     if "@" in raw:
         return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(f"sip:{raw}")))

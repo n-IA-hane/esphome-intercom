@@ -85,3 +85,16 @@ async def test_attended_transfer_uses_the_consultation_dialog_identity() -> None
             ),
         )
     ]
+
+
+def test_blind_transfer_preserves_secure_sip_uri() -> None:
+    source = _established("source", "source-remote", "source")
+    runtime = SimpleNamespace(endpoints=SimpleNamespace(resolve=lambda _value: None))
+
+    assert call_transfer._blind_target(
+        runtime,
+        source,
+        "sips:desk@pbx.example:5061;transport=tls",
+    ) == sip_transfer.SipReferTarget(
+        "sips:desk@pbx.example:5061;transport=tls"
+    )

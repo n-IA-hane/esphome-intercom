@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from .voip_phase1_support import (
     Path,
     _load_intercom_module,
@@ -1909,6 +1911,16 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         trunk = sip_trunk.SipTrunkClient(config=config, local_ip="127.0.0.1", local_sip_port=5060)
 
         self.assertEqual(trunk.registrar_target, ("proxy.example", 5070))
+
+        secure = sip_trunk.SipTrunkClient(
+            config=replace(
+                config,
+                outbound_proxy="sips:secure.example:5061;transport=tls",
+            ),
+            local_ip="127.0.0.1",
+            local_sip_port=5060,
+        )
+        self.assertEqual(secure.registrar_target, ("secure.example", 5061))
 
     async def test_udp_trunk_drops_packets_outside_resolved_proxy_hosts(self) -> None:
         config = sip_trunk.SipTrunkConfig(
