@@ -59,11 +59,11 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
         if endpoint_id
         else preferred_browser_phone(hass)
     )
-    if action in {"answer_ha", "default", "decline", "busy", "cancel"} and not endpoint_id:
+    if action in {"answer_ha", "decline", "busy", "cancel"} and not endpoint_id:
         if selected_endpoint is None:
             raise ServiceValidationError("Select a Home Assistant phone")
         endpoint_id = selected_endpoint.endpoint_id
-    if ring_endpoint_ids and action in {"answer_ha", "default"}:
+    if ring_endpoint_ids and action == "answer_ha":
         if endpoint_id not in ring_endpoint_ids:
             raise ServiceValidationError(
                 "ring-group answer requires one of its ringing phone endpoints"
@@ -178,7 +178,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             sip_status_code=status,
             last_sip_event="SIP_RESPONSE",
         )
-    elif action in {"answer_ha", "default"} and invite is not None:
+    elif action == "answer_ha" and invite is not None:
         _set_ha_softphone_call_state(
             hass,
             CallState.CONNECTING.value,

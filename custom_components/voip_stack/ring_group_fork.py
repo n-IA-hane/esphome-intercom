@@ -80,7 +80,7 @@ def build_ring_group_fork(
             ),
             None,
         )
-        if action in {"answer_ha", "default"}:
+        if action == "answer_ha":
             if selected is None:
                 return "declined", {
                     "member": "__browser__",

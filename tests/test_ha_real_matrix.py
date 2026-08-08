@@ -62,3 +62,24 @@ def test_matrix_declares_required_route_and_answer_cases() -> None:
         "registered_sip_auto_answer_on_caller_bye",
         "registered_sip_auto_answer_off_callee_bye",
     )
+
+
+def test_runner_rejects_a_stale_installed_automation_package(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = load_runner()
+    installed = tmp_path / "voip_qualification.yaml"
+    installed.write_text("stale: true\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_ha_real_matrix.py", "--installed-package", str(installed)],
+    )
+
+    try:
+        runner.main()
+    except RuntimeError as error:
+        assert "not running the checked-in qualification package" in str(error)
+    else:
+        raise AssertionError("stale Home Assistant package was accepted")

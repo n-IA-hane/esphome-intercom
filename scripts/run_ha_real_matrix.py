@@ -377,18 +377,35 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=ROOT / "test_captures/ha-real-matrix",
     )
+    parser.add_argument(
+        "--installed-package",
+        type=Path,
+        default=Path(
+            "/home/codex/ha-voip-lab/config/packages/voip_qualification.yaml"
+        ),
+    )
     parser.add_argument("--only", action="append", default=[])
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if not args.installed_package.is_file():
+        raise RuntimeError(
+            f"Home Assistant qualification package is missing: {args.installed_package}"
+        )
+    package_bytes = PACKAGE.read_bytes()
+    if args.installed_package.read_bytes() != package_bytes:
+        raise RuntimeError(
+            "Home Assistant is not running the checked-in qualification package"
+        )
     run_dir = args.out_dir / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir.mkdir(parents=True, exist_ok=False)
     token = lab_token(args.ha_url, args.credentials)
     api = HomeAssistantApi(base_url=args.ha_url, token=token)
+    api.service("automation", "reload")
     snapshot = FlowSnapshot.capture(api)
-    package_hash = hashlib.sha256(PACKAGE.read_bytes()).hexdigest()
+    package_hash = hashlib.sha256(package_bytes).hexdigest()
     results: list[dict[str, object]] = []
     selected = set(args.only)
     trunk_source_port = 19999

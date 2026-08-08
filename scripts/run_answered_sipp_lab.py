@@ -98,7 +98,18 @@ async def runtime_quiescence(base_url: str, token: str) -> dict[str, object]:
                 break
             await asyncio.sleep(0.1)
         else:
-            raise RuntimeError("Home Assistant call resources did not quiesce")
+            raise RuntimeError(
+                "Home Assistant call resources did not quiesce: "
+                + json.dumps(
+                    {
+                        "state": snapshot.get("state"),
+                        "active_dialogs": snapshot.get("active_dialogs"),
+                        "pending_call_ids": snapshot.get("pending_call_ids"),
+                        "runtime_resources": resources,
+                    },
+                    sort_keys=True,
+                )
+            )
     return {
         "state": snapshot.get("state"),
         "active_dialogs": int(snapshot.get("active_dialogs") or 0),

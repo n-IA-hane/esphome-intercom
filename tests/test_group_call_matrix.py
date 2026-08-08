@@ -191,6 +191,40 @@ websocket_api.runtime_data = _test_runtime
 
 
 class GroupCallMatrixTest(unittest.TestCase):
+    def test_default_route_continues_without_claiming_a_browser_phone(self) -> None:
+        hass = _FakeHass()
+        registry = websocket_api.call_registry(hass)
+        registry.upsert(
+            "default-route",
+            state="connecting",
+            owner="router",
+            caller="Door",
+            callee="Fallback",
+        )
+        future = asyncio.new_event_loop().create_future()
+        registry.set_pending_route(
+            "default-route",
+            {
+                "future": future,
+                "invite": types.SimpleNamespace(
+                    caller="Door",
+                    target="Fallback",
+                ),
+            },
+        )
+
+        with (
+            patch.object(route_decisions, "preferred_browser_phone", return_value=None),
+            patch.object(route_decisions, "_set_ha_softphone_call_state") as publish,
+        ):
+            route_decisions.set_pending_route_decision(
+                hass,
+                {"call_id": "default-route", "action": "default"},
+            )
+
+        self.assertEqual(future.result()["action"], "default")
+        publish.assert_not_called()
+
     def test_debug_snapshot_exposes_cleanup_ownership_only_when_enabled(self) -> None:
         hass = _FakeHass()
         hass.runtime.media.owners["audio"] = {"audio-call": object()}
