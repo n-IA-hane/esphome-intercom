@@ -285,7 +285,9 @@ class CallRegistryEventContextTest(unittest.TestCase):
                 "source", pbx_runtime.TerminationIntent("terminated")
             )
         )
-        registry.terminate_call("source", reason="remote_hangup")
+        asyncio.run(
+            registry.terminate_call_wait("source", reason="remote_hangup")
+        )
         self.assertFalse(
             registry.begin_termination(
                 "destination", pbx_runtime.TerminationIntent("terminated")
@@ -315,7 +317,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
                 "source", pbx_runtime.TerminationIntent("terminated")
             )
         )
-        registry.terminate_call("source", reason="cancelled")
+        asyncio.run(registry.terminate_call_wait("source", reason="cancelled"))
 
         attached = registry.register_bridge(
             source_call_id="source",
@@ -697,7 +699,9 @@ class CallRegistryEventContextTest(unittest.TestCase):
             )
         )
         generation = session.generation
-        registry.terminate_call("call-1", reason="remote_hangup")
+        asyncio.run(
+            registry.terminate_call_wait("call-1", reason="remote_hangup")
+        )
 
         self.assertTrue(registry.is_terminated("call-1", generation=generation))
         self.assertFalse(registry.is_current("call-1", revision=session.revision))
@@ -709,7 +713,9 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry.set_pending_invite("call-1", object())
         registry.set_pending_route("call-1", {"future": object()})
 
-        registry.terminate_call("call-1", reason="remote_hangup")
+        asyncio.run(
+            registry.terminate_call_wait("call-1", reason="remote_hangup")
+        )
 
         self.assertNotIn("call-1", registry.event_contexts)
         self.assertNotIn("call-1", registry.pending_invites)
@@ -740,7 +746,12 @@ class CallRegistryEventContextTest(unittest.TestCase):
             state="ringing",
         )
 
-        registry.terminate_call("destination-leg", reason="remote_hangup")
+        asyncio.run(
+            registry.terminate_call_wait(
+                "destination-leg",
+                reason="remote_hangup",
+            )
+        )
 
         self.assertEqual(endpoints.active, {})
         self.assertCountEqual(
@@ -789,7 +800,9 @@ class CallRegistryEventContextTest(unittest.TestCase):
         )
 
         self.assertEqual(endpoints.active["kiosk"], "sip-call")
-        registry.terminate_call("sip-call", reason="remote_hangup")
+        asyncio.run(
+            registry.terminate_call_wait("sip-call", reason="remote_hangup")
+        )
         self.assertEqual(endpoints.active, {})
 
     def test_controller_identity_is_sticky_and_preserves_first_ha_context(self) -> None:

@@ -69,6 +69,14 @@ def _load_runtime_module():
     )
     endpoint_lifecycle.call_registry = lambda _hass: None
     sys.modules[endpoint_lifecycle.__name__] = endpoint_lifecycle
+    endpoint_session = types.ModuleType(f"{package_name}.endpoint_session")
+    endpoint_session.TerminationInitiator = types.SimpleNamespace(RUNTIME="runtime")
+    sys.modules[endpoint_session.__name__] = endpoint_session
+    endpoint_termination = types.ModuleType(f"{package_name}.endpoint_termination")
+    endpoint_termination.EndpointTerminationHandler = lambda _hass: types.SimpleNamespace(
+        request_reason=lambda *_args, **_values: True
+    )
+    sys.modules[endpoint_termination.__name__] = endpoint_termination
     runtime_data = types.ModuleType(f"{package_name}.runtime_data")
     runtime_data.endpoint_directory = lambda hass: hass.runtime.endpoints
     runtime_data.runtime_data = lambda hass: getattr(hass, "runtime", None)

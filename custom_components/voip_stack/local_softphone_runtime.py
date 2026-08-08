@@ -10,6 +10,8 @@ from homeassistant.core import HomeAssistant, callback
 
 from .core.audio_format import HA_SIP_PCM_FORMATS
 from .endpoint_lifecycle import call_registry
+from .endpoint_termination import EndpointTerminationHandler
+from .endpoint_session import TerminationInitiator
 from .local_softphone_bridge import (
     LocalBridgeEvent,
     LocalBridgeEventType,
@@ -79,9 +81,10 @@ def start_local_softphone_call(
             caller_owner_id=caller_owner_id,
         )
     except BaseException:
-        registry.terminate_call(
+        EndpointTerminationHandler(hass).request_reason(
             call_id,
-            reason="local_bridge_start_failed",
+            "local_bridge_start_failed",
+            TerminationInitiator.RUNTIME,
         )
         raise
 
@@ -306,13 +309,14 @@ def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
             terminal=True,
         )
         registry.take_media(snapshot.call_id)
-        registry.terminate_call(
+        EndpointTerminationHandler(hass).request_reason(
             snapshot.call_id,
-            reason=(
+            (
                 snapshot.end_reason.value
                 if snapshot.end_reason is not None
                 else "local_call_ended"
             ),
+            TerminationInitiator.RUNTIME,
         )
 
 

@@ -40,21 +40,15 @@ ENDPOINT_TERMINATION = (
 )
 SERVICE_ENDPOINTS = ROOT / "custom_components" / "voip_stack" / "service_endpoints.py"
 ESPHOME_ACTIONS = ROOT / "custom_components" / "voip_stack" / "esphome_actions.py"
-SOFTPHONE_COMMANDS = (
-    ROOT / "custom_components" / "voip_stack" / "softphone_commands.py"
-)
+SOFTPHONE_COMMANDS = ROOT / "custom_components" / "voip_stack" / "softphone_commands.py"
 SOFTPHONE_TERMINATION = (
     ROOT / "custom_components" / "voip_stack" / "softphone_termination.py"
 )
-SOFTPHONE_ANSWER = (
-    ROOT / "custom_components" / "voip_stack" / "softphone_answer.py"
-)
+SOFTPHONE_ANSWER = ROOT / "custom_components" / "voip_stack" / "softphone_answer.py"
 SOFTPHONE_ORIGINATE = (
     ROOT / "custom_components" / "voip_stack" / "softphone_originate.py"
 )
-OUTBOUND_ATTEMPTS = (
-    ROOT / "custom_components" / "voip_stack" / "outbound_attempts.py"
-)
+OUTBOUND_ATTEMPTS = ROOT / "custom_components" / "voip_stack" / "outbound_attempts.py"
 DTMF_EVENTS = ROOT / "custom_components" / "voip_stack" / "dtmf_events.py"
 CONFIG_ENTRY_RUNTIME = (
     ROOT / "custom_components" / "voip_stack" / "config_entry_runtime.py"
@@ -67,10 +61,7 @@ TRUNK_INBOUND_ROUTER = (
 )
 CALL_FORWARDER = ROOT / "custom_components" / "voip_stack" / "call_forwarder.py"
 FORWARD_GROUP_CANDIDATES = (
-    ROOT
-    / "custom_components"
-    / "voip_stack"
-    / "forward_group_candidates.py"
+    ROOT / "custom_components" / "voip_stack" / "forward_group_candidates.py"
 )
 RING_GROUP_ORCHESTRATOR = (
     ROOT / "custom_components" / "voip_stack" / "ring_group_orchestrator.py"
@@ -78,54 +69,26 @@ RING_GROUP_ORCHESTRATOR = (
 RING_GROUP_CANDIDATES = (
     ROOT / "custom_components" / "voip_stack" / "ring_group_candidates.py"
 )
-RING_GROUP_FORK = (
-    ROOT / "custom_components" / "voip_stack" / "ring_group_fork.py"
-)
-CONFERENCE_RINGING = (
-    ROOT / "custom_components" / "voip_stack" / "conference_ringing.py"
-)
+RING_GROUP_FORK = ROOT / "custom_components" / "voip_stack" / "ring_group_fork.py"
+CONFERENCE_RINGING = ROOT / "custom_components" / "voip_stack" / "conference_ringing.py"
 INVITE_ROUTER = ROOT / "custom_components" / "voip_stack" / "invite_router.py"
 INBOUND_SOFTPHONE = (
-    ROOT
-    / "custom_components"
-    / "voip_stack"
-    / "inbound_routing"
-    / "softphone.py"
+    ROOT / "custom_components" / "voip_stack" / "inbound_routing" / "softphone.py"
 )
 INBOUND_BRIDGE = (
-    ROOT
-    / "custom_components"
-    / "voip_stack"
-    / "inbound_routing"
-    / "bridge.py"
+    ROOT / "custom_components" / "voip_stack" / "inbound_routing" / "bridge.py"
 )
 INBOUND_LOCAL = (
-    ROOT
-    / "custom_components"
-    / "voip_stack"
-    / "inbound_routing"
-    / "local.py"
+    ROOT / "custom_components" / "voip_stack" / "inbound_routing" / "local.py"
 )
 INBOUND_TRUNK = (
-    ROOT
-    / "custom_components"
-    / "voip_stack"
-    / "inbound_routing"
-    / "trunk.py"
+    ROOT / "custom_components" / "voip_stack" / "inbound_routing" / "trunk.py"
 )
 INBOUND_AUTOMATION = (
-    ROOT
-    / "custom_components"
-    / "voip_stack"
-    / "inbound_routing"
-    / "automation.py"
+    ROOT / "custom_components" / "voip_stack" / "inbound_routing" / "automation.py"
 )
 INBOUND_TARGETS = (
-    ROOT
-    / "custom_components"
-    / "voip_stack"
-    / "inbound_routing"
-    / "targets.py"
+    ROOT / "custom_components" / "voip_stack" / "inbound_routing" / "targets.py"
 )
 
 
@@ -195,30 +158,32 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         self.assertNotIn('return SipInviteResult(200, "OK"', answer_ha_branch)
         self.assertIn("def _defer_invite_to_ha_softphone(", self.source)
-        self.assertIn("registry.set_pending_invite(invite.call_id, invite)", self.source)
+        self.assertIn(
+            "registry.set_pending_invite(invite.call_id, invite)", self.source
+        )
         self.assertIn("_set_ha_softphone_call_state(", self.source)
         self.assertIn("CallState.RINGING.value", self.source)
 
     def test_browser_presence_never_owns_the_logical_call_lifetime(self) -> None:
         self.assertNotIn("def _schedule_ha_softphone_offline_wait(", self.source)
         defer = self.source[
-            self.source.index("def _defer_invite_to_ha_softphone(") :
-            self.source.index("def _inbound_route_decision(")
+            self.source.index("def _defer_invite_to_ha_softphone(") : self.source.index(
+                "def _inbound_route_decision("
+            )
         ]
         self.assertNotIn("offline_wait_seconds", defer)
         self.assertNotIn("ha_softphone_presence_events", defer)
 
     def test_ha_phone_forward_hands_off_the_existing_sip_dialog(self) -> None:
         forward = self.call_forwarder
-        run = forward[
-            forward.index("async def _run_forward()") :
-        ]
+        run = forward[forward.index("async def _run_forward()") :]
         reservation_start = run.index(
             'reservation = (preanswered or {}).get("rtp_reservation")'
         )
         browser_branch = run[
-            run.index("if decision.action is RouteAction.ANSWER_HA:") :
-            reservation_start
+            run.index(
+                "if decision.action is RouteAction.ANSWER_HA:"
+            ) : reservation_start
         ]
 
         self.assertIn("if decision.action is RouteAction.ANSWER_HA:", forward)
@@ -238,8 +203,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self,
     ) -> None:
         publish = self.source[
-            self.source.index("def _publish_pending_ha_softphone_ringing(") :
-            self.source.index("def _defer_invite_to_ha_softphone(")
+            self.source.index(
+                "def _publish_pending_ha_softphone_ringing("
+            ) : self.source.index("def _defer_invite_to_ha_softphone(")
         ]
         for field in (
             'endpoint.supports("video")',
@@ -261,8 +227,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         forward = self.call_forwarder
         video_start = forward.index("forward_video_enabled = bool(")
         video = forward[
-            video_start :
-            forward.index("relay = build_invite_client_relay(", video_start)
+            video_start : forward.index(
+                "relay = build_invite_client_relay(", video_start
+            )
         ]
 
         self.assertIn("cfg.get(CONF_SIP_VIDEO, False)", video)
@@ -293,9 +260,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         local_start = call_service.index("start_local_softphone_call(")
         local_return = call_service.index("return", local_start)
-        advertise_host = call_service.index(
-            "local_ip = await _ha_advertise_host(hass)"
-        )
+        advertise_host = call_service.index("local_ip = await _ha_advertise_host(hass)")
 
         self.assertLess(resolve_destination, local_start)
         self.assertLess(local_start, local_return)
@@ -304,7 +269,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("caller_owner_id=str(", local_branch)
         self.assertIn('call.data.get("media_client_id")', local_branch)
         self.assertIn("request_video=bool(", local_branch)
-        self.assertIn("browser_endpoint.supports(\"video\")", local_branch)
+        self.assertIn('browser_endpoint.supports("video")', local_branch)
         self.assertIn("enable_caller_video_send=bool(", local_branch)
         self.assertIn('call.data.get("send_video", False)', local_branch)
 
@@ -329,16 +294,19 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self,
     ) -> None:
         press = self.esphome_actions[
-            self.esphome_actions.index("async def async_press_device_button(") :
-            self.esphome_actions.index("async def async_call_action(")
+            self.esphome_actions.index(
+                "async def async_press_device_button("
+            ) : self.esphome_actions.index("async def async_call_action(")
         ]
         action = self.esphome_actions[
-            self.esphome_actions.index("async def async_call_action(") :
-            self.esphome_actions.index("def has_action(")
+            self.esphome_actions.index(
+                "async def async_call_action("
+            ) : self.esphome_actions.index("def has_action(")
         ]
         set_dnd = self.init_source[
-            self.init_source.index("async def _handle_set_dnd_service(") :
             self.init_source.index(
+                "async def _handle_set_dnd_service("
+            ) : self.init_source.index(
                 "async def _handle_set_ha_softphone_settings_service("
             )
         ]
@@ -352,16 +320,16 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_ring_group_answer_resolves_route_before_forward_guard(self) -> None:
         answer = self.softphone_answer
         pending_route = answer.index("if call_id and call_id in pending_routes(hass):")
-        forward_guard = answer.index('raise ServiceValidationError(f"call_id {call_id} is being forwarded")')
+        forward_guard = answer.index(
+            'raise ServiceValidationError(f"call_id {call_id} is being forwarded")'
+        )
         self.assertLess(pending_route, forward_guard)
 
     def test_ring_group_decline_resolves_leg_before_forward_cancellation(self) -> None:
         decline = self.softphone_commands[
             self.softphone_commands.index("async def async_decline_browser_call(") :
         ]
-        pending_route = decline.index(
-            "if call_id and call_id in pending_routes(hass):"
-        )
+        pending_route = decline.index("if call_id and call_id in pending_routes(hass):")
         forward_cancel = decline.index("forward_task.cancel()")
         self.assertLess(pending_route, forward_cancel)
 
@@ -420,14 +388,15 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("adopt_transport=True", sip_route)
         self.assertIn('role="destination"', sip_route)
         self.assertIn("except EndpointBusyError:", sip_route)
-        self.assertGreaterEqual(sip_route.count("registry.terminate_call("), 3)
+        self.assertGreaterEqual(
+            sip_route.count("EndpointTerminationHandler(hass).terminate"),
+            3,
+        )
 
     def test_ha_softphone_dnd_declines_with_dnd_reason(self) -> None:
         start = self.inbound_targets.index("if endpoint.dnd:")
         dnd_branch = self.inbound_targets[
-            start : self.inbound_targets.index(
-                "if endpoint.active_call_id", start
-            )
+            start : self.inbound_targets.index("if endpoint.active_call_id", start)
         ]
         self.assertIn('decline_reason="dnd"', dnd_branch)
         self.assertIn("486,", dnd_branch)
@@ -542,8 +511,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_forward_to_registered_account_keeps_contact_uri(self) -> None:
         call_service = self.softphone_originate
         force_bridge = call_service[
-            call_service.index('force_ha_bridge or bool(call.data.get("ha_bridge", False))') :
-            call_service.index("use_trunk = route.action is RouteAction.TRUNK", 1)
+            call_service.index(
+                'force_ha_bridge or bool(call.data.get("ha_bridge", False))'
+            ) : call_service.index("use_trunk = route.action is RouteAction.TRUNK", 1)
         ]
         self.assertIn(
             'if route.entry is not None and route.entry.metadata.get("registered"):',
@@ -579,8 +549,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             answer_service,
         )
         local_answer = answer_service[
-            answer_service.index("camera_send_requested = bool(") :
-            answer_service.index("# A browser ring-group")
+            answer_service.index(
+                "camera_send_requested = bool("
+            ) : answer_service.index("# A browser ring-group")
         ]
         self.assertIn("CONF_VIDEO_CAMERA_SEND", local_answer)
         self.assertIn('call.data.get("send_video", False)', local_answer)
@@ -599,9 +570,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             ROOT / "custom_components" / "voip_stack" / "video_ws_view.py"
         ).read_text()
         self.assertIn('control.get("type") == "request_key_frame"', video_ws)
-        self.assertIn('request_key_frame(loop.time())', video_ws)
+        self.assertIn("request_key_frame(loop.time())", video_ws)
         self.assertIn('counters["video_browser_keyframe_requests"] += 1', video_ws)
-        self.assertIn("while True:\n                try:\n                    access_units.get_nowait()", video_ws)
+        self.assertIn(
+            "while True:\n                try:\n                    access_units.get_nowait()",
+            video_ws,
+        )
         self.assertIn("if not access_unit.key_frame:", video_ws)
         self.assertIn("needs_key_frame = True", video_ws)
 
@@ -855,9 +829,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("manager.start_ha_softphone(", call_service)
         self.assertIn("endpoint_id=endpoint_id", call_service)
         self.assertIn(".ring_conference_members_from_ha", call_service)
-        self.assertIn(
-            "ring_members(route.entry, owner_call_id=call_id)", call_service
-        )
+        self.assertIn("ring_members(route.entry, owner_call_id=call_id)", call_service)
         self.assertIn('last_sip_event="LOCAL_CONFERENCE_JOIN"', call_service)
         self.assertIn(
             "RouteAction.GROUP",
@@ -884,16 +856,15 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         self.assertIn('last_sip_event="LOCAL_RING_GROUP"', runtime)
         self.assertIn("fmt.nominal_frame_bytes <= 1200", runtime)
-        self.assertIn(
-            "browser_endpoint = browser_phone(hass, endpoint_id)", runtime
-        )
+        self.assertIn("browser_endpoint = browser_phone(hass, endpoint_id)", runtime)
         self.assertIn("origin_endpoint_id=endpoint_id", runtime)
 
     def test_ha_softphone_routes_assist_through_local_pbx_listener(self) -> None:
         call_service = SOFTPHONE_ORIGINATE.read_text()
         assist = call_service[
-            call_service.index("elif route.action is RouteAction.ASSIST:") :
-            call_service.index("if use_trunk:")
+            call_service.index(
+                "elif route.action is RouteAction.ASSIST:"
+            ) : call_service.index("if use_trunk:")
         ]
         self.assertIn("ha_uri_for(route.target or target, contacts)", assist)
         self.assertIn("action=RouteAction.BRIDGE", assist)
@@ -902,7 +873,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_ad_hoc_sip_uri_requires_admin_before_network_resolution(self) -> None:
         call_service = SOFTPHONE_ORIGINATE.read_text()
         route_guard = call_service.index("if route.reason is RouteReason.DIRECT_URI:")
-        admin_check = call_service.index("await async_require_service_admin(hass, call)")
+        admin_check = call_service.index(
+            "await async_require_service_admin(hass, call)"
+        )
         parse_uri = call_service.index("uri = parse_sip_uri(route_uri)")
 
         self.assertLess(route_guard, admin_check)
@@ -1131,17 +1104,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "artifacts.trunk_closed = False",
             preanswer,
         )
-        task_prelude = trunk_route.split(
-            "configured_trunk = trunk_config(hass)", 1
-        )[0]
+        task_prelude = trunk_route.split("configured_trunk = trunk_config(hass)", 1)[0]
         self.assertNotIn("discard(invite.call_id)", task_prelude)
 
     def test_ring_group_treats_ha_member_as_parallel_contender(self) -> None:
-        ring_group = (
-            self.ring_group
-            + self.ring_group_candidates
-            + self.ring_group_fork
-        )
+        ring_group = self.ring_group + self.ring_group_candidates + self.ring_group_fork
         self.assertIn(
             "await async_prepare_ring_group_candidates(",
             self.ring_group,
@@ -1241,9 +1208,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
                 "if browser_winner and isinstance(winner, BrowserLeg):"
             ) : ring_group.index("if not isinstance(winner, OutboundLeg):")
         ]
-        self.assertIn(
-            "_take_pending_route(hass, invite.call_id)", browser_winner
-        )
+        self.assertIn("_take_pending_route(hass, invite.call_id)", browser_winner)
         bridge_index = ring_group.index("registry.register_bridge(")
         self.assertNotEqual(
             ring_group.rfind(
@@ -1259,7 +1224,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("if future is not None and future.done():", hangup)
         self.assertIn("take_pending_route(hass, call_id)", hangup)
 
-    def test_ring_group_ha_winner_publishes_connected_party_to_esp_mirrors(self) -> None:
+    def test_ring_group_ha_winner_publishes_connected_party_to_esp_mirrors(
+        self,
+    ) -> None:
         ring_group = self.ring_group
         ha_winner = ring_group[
             ring_group.index(
@@ -1323,14 +1290,13 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("invite.source_host,", self.inbound_bridge)
         self.assertIn("invite.source_port,", self.inbound_bridge)
         self.assertIn('"Busy Here"', self.inbound_bridge)
-        self.assertIn(
-            "decline_reason=TerminalReason.BUSY.value", self.inbound_bridge
-        )
+        self.assertIn("decline_reason=TerminalReason.BUSY.value", self.inbound_bridge)
 
     def test_local_loop_detection_uses_host_and_listener_port(self) -> None:
         helper = self.endpoint_routing[
-            self.endpoint_routing.index("def is_local_listener_uri(") :
-            self.endpoint_routing.index("def logical_endpoint_for_member(")
+            self.endpoint_routing.index(
+                "def is_local_listener_uri("
+            ) : self.endpoint_routing.index("def logical_endpoint_for_member(")
         ]
         self.assertIn("uri.host == local_ip", helper)
         self.assertIn(
@@ -1398,7 +1364,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("if terminal and state != CallState.IDLE.value:", terminal)
         self.assertIn('store["state"] = CallState.IDLE.value', terminal)
         self.assertLess(
-            terminal.index("_fire_call_event(hass, payload, \"session\")"),
+            terminal.index('_fire_call_event(hass, payload, "session")'),
             terminal.index("if terminal and state != CallState.IDLE.value:"),
         )
         self.assertLess(
@@ -1432,8 +1398,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_phone_subentry_live_sync_has_no_default_endpoint_sensor(self) -> None:
         update_listener = self.config_entry_runtime[
-            self.config_entry_runtime.index("async def async_config_entry_updated(") :
             self.config_entry_runtime.index(
+                "async def async_config_entry_updated("
+            ) : self.config_entry_runtime.index(
                 "def register_phonebook_service_event_sync("
             )
         ]
@@ -1443,8 +1410,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         on_invite = self.invite_router
         trunk_branch = self.inbound_trunk
         no_dtmf_branch = trunk_branch[
-            trunk_branch.index("if not dtmf_preanswer:") :
-            trunk_branch.index("hass = runtime.hass")
+            trunk_branch.index("if not dtmf_preanswer:") : trunk_branch.index(
+                "hass = runtime.hass"
+            )
         ]
         dtmf_branch = trunk_branch[trunk_branch.index("hass = runtime.hass") :]
         self.assertIn("return None", no_dtmf_branch)
@@ -1479,8 +1447,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         on_invite = self.invite_router
         override = on_invite[on_invite.index("fallback_destination =") :]
         group_dispatch = override[
-            override.index("if decision.action is RouteAction.GROUP:") :
-            override.index('    _LOGGER.info(\n        "Inbound route selected')
+            override.index("if decision.action is RouteAction.GROUP:") : override.index(
+                '    _LOGGER.info(\n        "Inbound route selected'
+            )
         ]
         self.assertIn("return await route_local_group(", group_dispatch)
         self.assertIn("runtime.run_ring_group_call(", self.inbound_local)
@@ -1490,14 +1459,17 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_ha_origin_ring_group_uses_local_media_without_sip_answer(self) -> None:
         ring_group = self.ring_group
         winner_bridge = ring_group[
-            ring_group.index("if ha_origin:\n                relay =") :
             ring_group.index(
+                "if ha_origin:\n                relay ="
+            ) : ring_group.index(
                 "_set_sip_bridge_call_state(",
                 ring_group.index("if ha_origin:\n                relay ="),
             )
         ]
         self.assertIn("build_local_client_relay(", winner_bridge)
-        self.assertIn("else:\n                relay = build_invite_client_relay(", winner_bridge)
+        self.assertIn(
+            "else:\n                relay = build_invite_client_relay(", winner_bridge
+        )
         self.assertIn(
             "if not ha_origin:\n            answer = build_answer_directional(",
             winner_bridge,
@@ -1532,7 +1504,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_dtmf_browser_route_assigns_the_initial_phone_owner(self) -> None:
         runner = self.trunk_inbound_router
-        same_endpoint = runner[runner.index("if decision.action is RouteAction.ANSWER_HA:") :]
+        same_endpoint = runner[
+            runner.index("if decision.action is RouteAction.ANSWER_HA:") :
+        ]
         self.assertIn("runtime.defer_invite_to_softphone(", same_endpoint)
         self.assertIn('last_sip_event="DTMF_ROUTE"', same_endpoint)
         self.assertIn(
@@ -1604,8 +1578,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         forward = self.call_forwarder
         self.assertIn("or call_id in registry.preanswered", forward)
         restore = forward[
-            forward.index("async def _restore_or_terminate(") :
-            forward.index("async def _run_forward(")
+            forward.index("async def _restore_or_terminate(") : forward.index(
+                "async def _run_forward("
+            )
         ]
         self.assertIn("if ha_claimed:", restore)
         self.assertIn("CallState.RINGING.value", restore)
@@ -1662,8 +1637,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_direct_ha_alias_resolves_through_phonebook_name(self) -> None:
         router = self.source[
-            self.source.index("def _inbound_route_decision(") :
-            self.source.index("async def _async_forward_existing_call(")
+            self.source.index("def _inbound_route_decision(") : self.source.index(
+                "async def _async_forward_existing_call("
+            )
         ]
         self.assertIn("route_target = invite.routing_target", router)
         self.assertIn(
@@ -1673,9 +1649,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_dtmf_cancellation_precedes_automation_window(self) -> None:
         runner = self.trunk_inbound_router
-        cancellation = runner.index(
-            "if artifacts.trunk_closed:"
-        )
+        cancellation = runner.index("if artifacts.trunk_closed:")
         automation = runner.index(
             "if not digits and configured_trunk.get(CONF_AUTOMATION_ROUTING_ENABLED):"
         )
@@ -1685,9 +1659,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self,
     ) -> None:
         invite = self.inbound_trunk[
-            self.inbound_trunk.index(
-                "dtmf_formats = sip_sdp.offered_dtmf_formats("
-            ) :
+            self.inbound_trunk.index("dtmf_formats = sip_sdp.offered_dtmf_formats(") :
         ]
         self.assertIn("confirm_for_sip_info = dtmf_format is None", invite)
         self.assertIn(
@@ -1704,9 +1676,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("origin=call_ingress", self.assist_endpoint)
 
     def test_route_override_publishes_resolved_callee(self) -> None:
-        route = self.invite_router[
-            self.invite_router.index("resolved_callee = str(") :
-        ]
+        route = self.invite_router[self.invite_router.index("resolved_callee = str(") :]
         self.assertIn("callee=resolved_callee", route)
         self.assertIn("peer_name=resolved_callee", self.inbound_bridge)
 
@@ -1754,7 +1724,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ]
         self.assertIn("registry.clear_video_parameter_sets(call_id)", commit)
         self.assertIn("commit_video_session_update(", commit)
-        self.assertIn("[*parameter_sets, *_sdp_parameter_sets(browser_format)]", video_ws)
+        self.assertIn(
+            "[*parameter_sets, *_sdp_parameter_sets(browser_format)]", video_ws
+        )
         self.assertIn("outbound_clock.reset_browser()", video_ws)
         self.assertIn("observed_generation = -1", video_ws)
 

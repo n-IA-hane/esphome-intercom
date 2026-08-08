@@ -670,9 +670,10 @@ class ConferenceRoom:
                 last_sip_event="BYE",
             )
             registry.take_media(softphone_call_id)
-            registry.terminate_call(
+            EndpointTerminationHandler(self.hass).request_reason(
                 softphone_call_id,
-                reason=reason,
+                reason,
+                TerminationInitiator.RUNTIME,
             )
             self._ha_softphone_announced.pop(softphone_call_id, None)
             if isinstance(manager, ConferenceManager):
@@ -746,9 +747,10 @@ class ConferenceManager:
         try:
             registry.claim_endpoint(candidate, endpoint_id, role="ha_softphone")
         except BaseException:
-            registry.terminate_call(
+            EndpointTerminationHandler(self.hass).request_reason(
                 candidate,
-                reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
+                TerminalReason.TRANSPORT_UNREACHABLE.value,
+                TerminationInitiator.RUNTIME,
             )
             raise
         self.ha_calls[candidate] = (room_name, endpoint_id)
@@ -781,7 +783,11 @@ class ConferenceManager:
                 )
             finally:
                 registry.take_media(call_id)
-                registry.terminate_call(call_id, reason=reason)
+                EndpointTerminationHandler(self.hass).request_reason(
+                    call_id,
+                    reason,
+                    TerminationInitiator.RUNTIME,
+                )
                 self.forget_ha_call(call_id)
                 if room is not None:
                     room._ha_softphone_announced.pop(call_id, None)

@@ -9,7 +9,11 @@ import logging
 from homeassistant.core import HomeAssistant
 
 from .call_scope import take_pending_route
-from .endpoint_lifecycle import call_registry, project_session_termination
+from .endpoint_lifecycle import (
+    call_registry,
+    create_runtime_task,
+    project_session_termination,
+)
 from .endpoint_session import (
     SipTerminationDisposition,
     TerminationInitiator,
@@ -53,6 +57,35 @@ class EndpointTerminationHandler:
     ) -> bool:
         """Claim, signal, drain and project one call exactly once."""
 
+        claimed = self._claim(call_id, intent)
+        if claimed is None:
+            return False
+        await self._drain(*claimed, intent)
+        return True
+
+    def request(self, call_id: str, intent: TerminationIntent) -> bool:
+        """Claim immediately and let the runtime drain from a sync callback."""
+
+        claimed = self._claim(call_id, intent)
+        if claimed is None:
+            return False
+        create_runtime_task(self.hass, self._drain(*claimed, intent))
+        return True
+
+    def request_reason(
+        self,
+        call_id: str,
+        reason: str,
+        initiator: TerminationInitiator = TerminationInitiator.INTERNAL,
+    ) -> bool:
+        """Request termination without exposing intent construction to callers."""
+
+        return self.request(
+            call_id,
+            TerminationIntent(reason, initiator=initiator),
+        )
+
+    def _claim(self, call_id: str, intent: TerminationIntent):
         artifacts = call_runtime_artifacts(self.hass)
         registry = call_registry(self.hass)
         source_call_id, _ = registry.bridge_for(call_id)
@@ -66,7 +99,17 @@ class EndpointTerminationHandler:
                 call_id,
                 intent.reason,
             )
-            return False
+            return None
+        return call_id, artifacts, registry, call_artifacts
+
+    async def _drain(
+        self,
+        call_id,
+        artifacts,
+        registry,
+        call_artifacts,
+        intent: TerminationIntent,
+    ) -> None:
         forward_task = artifacts.task_for(call_id, "forward")
         if forward_task is not None and forward_task is not asyncio.current_task():
             forward_task.cancel()
@@ -96,7 +139,6 @@ class EndpointTerminationHandler:
             else:
                 await manager.leave_call(call_id, reason=intent.reason)
         await registry.terminate_call_wait(call_id, intent=intent)
-        return True
 
     async def terminate_reason(
         self,

@@ -163,10 +163,13 @@ def endpoint_termination(monkeypatch):
             "DOMAIN": "voip_stack",
             "HA_SOFTPHONE_DEVICE_ID": "ha-device",
         },
-            "endpoint_lifecycle": {
-                "call_registry": lambda hass: hass.registry,
-                "project_session_termination": project_session_termination,
-            },
+                "endpoint_lifecycle": {
+                    "call_registry": lambda hass: hass.registry,
+                    "create_runtime_task": lambda _hass, coroutine: asyncio.create_task(
+                        coroutine
+                    ),
+                    "project_session_termination": project_session_termination,
+                },
                 "endpoint_session": {
                     "EndpointCallSession": object,
                     "SipTerminationDisposition": SimpleNamespace(NONE="none"),
@@ -254,6 +257,28 @@ def test_duplicate_transport_termination_has_no_side_effects(
     assert not registry.finished
     assert not hass.released
     assert not hass.events
+
+
+@pytest.mark.asyncio
+async def test_sync_request_claims_once_then_drains_in_runtime_task(
+    endpoint_termination,
+) -> None:
+    registry = _Registry()
+    hass = _hass(registry, endpoint_termination.project_session_termination)
+    endpoint_termination.hass_holder["hass"] = hass
+    handler = endpoint_termination.EndpointTerminationHandler(hass)
+
+    assert handler.request_reason("call-1", "local_hangup") is True
+    assert len(registry.begin_calls) == 1
+
+    for _ in range(10):
+        if registry.finished:
+            break
+        await asyncio.sleep(0)
+
+    assert registry.finished
+    registry.begin_result = False
+    assert handler.request_reason("call-1", "local_hangup") is False
 
 
 def test_bridge_termination_projects_before_session_owned_cleanup(

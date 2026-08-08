@@ -74,7 +74,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registry.bridge_clients, {})
         self.assertEqual(registry.sip_clients, {})
         self.assertNotIn("destination", registry.leg_index)
-        registry.terminate_call("source", reason="cancelled")
+        await registry.terminate_call_wait("source", reason="cancelled")
         await runtime.shutdown()
 
     async def test_runtime_owns_generations_and_retires_derived_indexes(self) -> None:
@@ -230,7 +230,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             endpoint_session.LegKind.ESPHOME,
         )
 
-        registry.terminate_call("call-1", reason="cancelled")
+        await registry.terminate_call_wait("call-1", reason="cancelled")
         await authoritative.terminated.wait()
 
         self.assertNotIn("call-1", registry.sessions)
@@ -266,7 +266,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(projected, authoritative)
         self.assertEqual(events, [])
 
-        registry.terminate_call("call-1", reason="remote_hangup")
+        await registry.terminate_call_wait("call-1", reason="remote_hangup")
         await authoritative.terminated.wait()
 
         self.assertEqual(events, ["relay:remote_hangup"])
@@ -419,7 +419,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ["relay:source", "softphone_media:source"],
         )
 
-        registry.terminate_call("source", reason="cancelled")
+        await registry.terminate_call_wait("source", reason="cancelled")
         await authoritative.terminated.wait()
         await asyncio.sleep(0)
 
@@ -472,7 +472,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             registry.endpoint_claims, {"call-1": authoritative.endpoint_claims}
         )
 
-        registry.terminate_call("call-1", reason="remote_hangup")
+        await registry.terminate_call_wait("call-1", reason="remote_hangup")
         await authoritative.terminated.wait()
 
         self.assertEqual(endpoints.active, {})
@@ -485,10 +485,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         completed = asyncio.Event()
 
         async def watcher_body() -> None:
-            registry.terminate_call(
-                "call-1",
-                reason="remote_hangup",
-            )
+            await registry.terminate_call_wait("call-1", reason="remote_hangup")
             await asyncio.sleep(0)
             completed.set()
 

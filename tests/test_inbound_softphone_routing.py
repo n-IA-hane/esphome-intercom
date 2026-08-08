@@ -143,6 +143,24 @@ def _load_module():
 
     _module("const", HA_SOFTPHONE_DEVICE_ID="ha-device")
     _module("endpoint_registry", EndpointBusyError=_BusyError)
+    _module(
+        "endpoint_session",
+        TerminationInitiator=SimpleNamespace(ROUTING="routing"),
+        TerminationIntent=lambda reason, **values: SimpleNamespace(
+            reason=reason,
+            **values,
+        ),
+    )
+
+    class _TerminationHandler:
+        def __init__(self, hass) -> None:
+            self.registry = hass.registry
+
+        def request_reason(self, call_id: str, reason: str, _initiator) -> bool:
+            self.registry.finished.append((call_id, {"reason": reason}))
+            return True
+
+    _module("endpoint_termination", EndpointTerminationHandler=_TerminationHandler)
     _module("fsm", CallState=CallState, TerminalReason=TerminalReason)
     _module(
         "media_ports",
@@ -224,6 +242,7 @@ def test_deferred_browser_answer_rings_and_claims_source() -> None:
     deferred: list[tuple[object, dict]] = []
 
     result = module.defer_browser_softphone_invite(
+        hass=SimpleNamespace(registry=registry),
         registry=registry,
         invite=_invite(),
         decision=_decision(),
@@ -249,6 +268,7 @@ def test_deferred_browser_answer_releases_busy_call() -> None:
     browser = _Endpoint("browser", _EndpointKind.BROWSER, device_id="browser-device")
 
     result = module.defer_browser_softphone_invite(
+        hass=SimpleNamespace(registry=registry),
         registry=registry,
         invite=_invite(),
         decision=_decision(),

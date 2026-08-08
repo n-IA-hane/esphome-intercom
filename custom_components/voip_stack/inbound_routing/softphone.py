@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any, Callable
 from homeassistant.core import HomeAssistant
 
 from ..endpoint_registry import EndpointBusyError
+from ..endpoint_termination import EndpointTerminationHandler
+from ..endpoint_session import TerminationInitiator
 from ..fsm import CallState, TerminalReason
 from ..media_ports import (
     allocate_sip_rtp_port,
@@ -59,6 +61,7 @@ def _resolve_browser_target(
 
 def defer_browser_softphone_invite(
     *,
+    hass: HomeAssistant,
     registry: SipEndpointRuntime,
     invite: SipInvite,
     decision: RouteDecision,
@@ -109,9 +112,10 @@ def defer_browser_softphone_invite(
             sip_uri=decision.sip_uri,
         )
     except EndpointBusyError:
-        registry.terminate_call(
+        EndpointTerminationHandler(hass).request_reason(
             invite.call_id,
-            reason=TerminalReason.BUSY.value,
+            TerminalReason.BUSY.value,
+            TerminationInitiator.ROUTING,
         )
         return SipInviteResult(
             486,
@@ -200,9 +204,10 @@ def answer_inbound_ha_softphone(
             role="destination",
         )
     except EndpointBusyError:
-        registry.terminate_call(
+        EndpointTerminationHandler(hass).request_reason(
             invite.call_id,
-            reason=TerminalReason.BUSY.value,
+            TerminalReason.BUSY.value,
+            TerminationInitiator.ROUTING,
         )
         return SipInviteResult(
             486,

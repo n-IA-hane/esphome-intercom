@@ -858,39 +858,6 @@ class CallRuntimeApi:
                 return source, dest
         return "", ""
 
-    def terminate_call(
-        self,
-        call_id: str,
-        *,
-        reason: str = "",
-        intent: TerminationIntent | None = None,
-    ) -> EndpointCallSession | None:
-        terminal_intent = intent or TerminationIntent(reason or "removed")
-        session_id = self.resolve_session_id(str(call_id or "").strip())
-        if session_id:
-            session = self.sessions.get(session_id)
-            self._remember_terminated(
-                str(call_id or "").strip(),
-                session_id,
-                generation=session.generation if session is not None else 0,
-            )
-        if not self.active:
-            return self._discard_dark_session(
-                call_id,
-                terminal_intent,
-            )
-        session = self.sessions.get(session_id)
-        if session is None:
-            return None
-        session.owner = "terminal"
-        session.revision += 1
-        self.request_termination(
-            session_id,
-            terminal_intent,
-            generation=session.generation,
-        )
-        return session
-
     async def terminate_call_wait(
         self,
         call_id: str,

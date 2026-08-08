@@ -103,9 +103,8 @@ def test_generated_lifecycle_sequences_preserve_registry_invariants(
                 call_id, pbx_runtime.TerminationIntent("terminated")
             )
         elif operation.action == "finish":
-            registry.terminate_call(
-                call_id,
-                reason="generated_terminal",
+            asyncio.run(
+                registry.terminate_call_wait(call_id, reason="generated_terminal")
             )
         elif operation.action == "late_bridge" and call_id in generations:
             generation = generations[call_id]
@@ -151,10 +150,7 @@ def test_terminal_faults_cannot_resurrect_or_duplicate_calls(fault: str) -> None
     assert registry.begin_termination(
         "physical:esp", pbx_runtime.TerminationIntent("terminated")
     )
-    registry.terminate_call(
-        "physical:esp",
-        reason="remote_hangup",
-    )
+    asyncio.run(registry.terminate_call_wait("physical:esp", reason="remote_hangup"))
 
     if fault == "duplicate_terminal":
         assert not registry.begin_termination(

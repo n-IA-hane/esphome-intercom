@@ -434,6 +434,7 @@ async def route_invite(
             return bridge_result
     if not force_ha_softphone and decision.action is RouteAction.ANSWER_HA:
         return defer_browser_softphone_invite(
+            hass=hass,
             registry=registry,
             invite=invite,
             decision=decision,
