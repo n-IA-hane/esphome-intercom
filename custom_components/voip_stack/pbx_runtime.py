@@ -385,23 +385,6 @@ class SipEndpointRuntime(CallRuntimeApi):
         ):
             raise RuntimeError(f"call session {call_id!r} is unavailable")
 
-    def take_relay(self, call_id: str) -> Any | None:
-        """Transfer one relay out of the authoritative cleanup barrier."""
-
-        clean_call_id = str(call_id or "").strip()
-        session = self.get_session(clean_call_id)
-        if session is None or session.phase is SessionPhase.TERMINATED:
-            return None
-        resource_name = f"relay:{clean_call_id}"
-        resource = next(
-            (item for item in session.resources if item.name == resource_name),
-            None,
-        )
-        if resource is None:
-            return None
-        session.release_resource(resource_name, value=resource.value)
-        return resource.value
-
     def claim_endpoint(
         self,
         call_id: str,

@@ -36,7 +36,6 @@ from .fsm import (
 from .groups import GROUP_TYPE_RING
 from .media_ports import (
     allocate_sip_rtp_port as _allocate_sip_rtp_port,
-    release_media_reservation as _release_media_reservation,
     release_sip_rtp_port_pair as _release_sip_rtp_port_pair,
 )
 from .outbound_attempts import (
@@ -59,7 +58,6 @@ from .ring_group_candidates import (
 )
 from .ring_group_fork import build_ring_group_fork
 from .core.sdp import build_answer_directional, first_offered_dtmf_format
-from .session_cleanup import async_cleanup_sip_runtime, async_wait_for_cleanup
 from .sip_bridge import (
     build_invite_client_relay,
     build_local_client_relay,
@@ -357,35 +355,13 @@ async def run_ring_group_call(
     async def _cleanup_ring_resources(reason: str) -> None:
         """Tear down every ownership layer after an aborted group call."""
         _take_pending_route(hass, invite.call_id)
-        (
-            _source_call_id,
-            _dest_call_id,
-            relay,
-            bridge_client,
-            watcher,
-            _called_by_dest,
-        ) = registry.detach_bridge(invite.call_id)
-        if relay is not None or bridge_client is not None:
-            current = asyncio.current_task()
-            cleanup = asyncio.create_task(
-                async_cleanup_sip_runtime(
-                    relay=relay,
-                    client=bridge_client,
-                    watcher=(watcher if watcher is not current else None),
-                    terminate_client=True,
-                    relay_first=True,
-                ),
-                name=f"voip-ring-group-bridge-cleanup-{invite.call_id}",
-            )
-            await async_wait_for_cleanup(cleanup)
+        _source_call_id, dest_call_id = registry.bridge_for(invite.call_id)
+        bridge_client = registry.sip_clients.get(dest_call_id)
         remaining_attempts = [
             attempt
             for attempt in attempts
             if attempt.client is not bridge_client
         ]
-        await _cleanup_outbound_attempts(tasks, remaining_attempts)
-        active_media = registry.take_media(invite.call_id)
-        _release_media_reservation(active_media)
 
         # HA-to-HA ring groups switch to the transport-neutral local bridge
         # after selection.  If answer publication then fails, terminate
@@ -404,15 +380,18 @@ async def run_ring_group_call(
                     invite.call_id,
                     local_call.caller_endpoint_id,
                 )
-        registry.terminate_call(
-            invite.call_id,
-            reason=reason,
-            state=(
-                CallState.CANCELLED.value
-                if reason == TerminalReason.CANCELLED.value
-                else CallState.TRANSPORT_UNREACHABLE.value
-            ),
-        )
+        try:
+            await registry.terminate_call_wait(
+                invite.call_id,
+                reason=reason,
+                state=(
+                    CallState.CANCELLED.value
+                    if reason == TerminalReason.CANCELLED.value
+                    else CallState.TRANSPORT_UNREACHABLE.value
+                ),
+            )
+        finally:
+            await _cleanup_outbound_attempts(tasks, remaining_attempts)
 
     async def _abort_stale_ring_group() -> bool:
         """Close every fork if the source generation lost ownership."""
@@ -765,6 +744,7 @@ async def run_ring_group_call(
         if bridge_session is None:
             await _close_outbound_leg(winner, bye_or_cancel=True)
             return
+        relay = None
         try:
             if ha_origin:
                 relay = build_local_client_relay(
@@ -828,13 +808,22 @@ async def run_ring_group_call(
                 last_sip_event="SIP_RESPONSE",
                 sip_status_code=488,
             )
-            registry.discard_bridge_session(
-                invite.call_id,
-                client.dialog_ids.call_id,
-                reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-                state=CallState.MEDIA_INCOMPATIBLE.value,
-            )
-            await _close_outbound_leg(winner)
+            try:
+                if relay is not None:
+                    await relay.stop()
+                    winner.ports.detach()
+                    winner.video_relay = None
+                else:
+                    if winner.video_relay is not None:
+                        await winner.video_relay.stop()
+                        winner.video_relay = None
+                    winner.ports.release()
+            finally:
+                await registry.terminate_call_wait(
+                    invite.call_id,
+                    reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
+                    state=CallState.MEDIA_INCOMPATIBLE.value,
+                )
             return
         if not _call_is_current():
             await relay.stop()
@@ -880,8 +869,16 @@ async def run_ring_group_call(
             expected_generation=call_generation,
         )
         if committed is None:
-            await relay.stop()
-            await _close_outbound_leg(winner, bye_or_cancel=True)
+            try:
+                await relay.stop()
+            finally:
+                winner.ports.detach()
+                winner.video_relay = None
+                await registry.close_leg(
+                    invite.call_id,
+                    client.dialog_ids.call_id,
+                    reason=TerminalReason.CANCELLED.value,
+                )
             return
         registry.attach_relay(invite.call_id, relay)
         if softphone_media is not None:

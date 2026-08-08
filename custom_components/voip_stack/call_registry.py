@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, Literal
 
@@ -597,6 +598,31 @@ class CallRuntimeApi:
             return leg
         return None
 
+    async def close_leg(
+        self,
+        call_id: str,
+        leg_id: str,
+        *,
+        reason: str,
+    ) -> bool:
+        """Close one failed fork leg without escaping session ownership."""
+
+        session_id = self.resolve_session_id(call_id)
+        session = self.sessions.get(session_id)
+        if session is None or not session.live:
+            return False
+        watcher = session.named_tasks.get(f"client_watcher:{leg_id}")
+        if watcher is not None:
+            session.release_task(watcher)
+            if watcher is not asyncio.current_task() and not watcher.done():
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
+        leg = self.remove_leg(session_id, leg_id)
+        if leg is None:
+            return False
+        await leg.close(reason)
+        return True
+
     def attach_sip_client(
         self,
         source_call_id: str,
@@ -625,19 +651,6 @@ class CallRuntimeApi:
             generation=session.generation,
         )
 
-    def take_sip_client(self, call_id: str) -> Any | None:
-        session_id = self.resolve_session_id(str(call_id or "").strip())
-        session = self.sessions.get(session_id)
-        client = self.sip_clients.get(call_id)
-        if client is not None and session is not None:
-            self.release_leg(
-                session_id,
-                call_id,
-                dialog=client,
-                generation=session.generation,
-            )
-        return client
-
     def attach_client_watcher(self, call_id: str, task: Any) -> None:
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
@@ -649,18 +662,6 @@ class CallRuntimeApi:
             name=f"client_watcher:{call_id}",
             generation=session.generation,
         )
-
-    def take_client_watcher(self, call_id: str) -> Any | None:
-        session_id = self.resolve_session_id(str(call_id or "").strip())
-        session = self.sessions.get(session_id)
-        task = self.client_watchers.get(call_id)
-        if task is not None and session is not None:
-            self.release_task(
-                session_id,
-                task,
-                generation=session.generation,
-            )
-        return task
 
     def attach_media(
         self,
@@ -831,19 +832,6 @@ class CallRuntimeApi:
                 return source, dest
         return "", ""
 
-    def detach_bridge(
-        self, call_id: str
-    ) -> tuple[str, str, Any | None, Any | None, Any | None, bool]:
-        source_call_id, dest_call_id = self.bridge_for(call_id)
-        if not source_call_id:
-            return "", "", None, None, None, False
-        called_by_dest = call_id == dest_call_id
-        self.forget_bridge_link(source_call_id)
-        relay = self.take_relay(source_call_id)
-        client = self.take_sip_client(dest_call_id) if dest_call_id else None
-        watcher = self.take_client_watcher(dest_call_id) if dest_call_id else None
-        return source_call_id, dest_call_id, relay, client, watcher, called_by_dest
-
     def terminate_call(
         self, call_id: str, *, reason: str = "", state: str = "idle"
     ) -> EndpointCallSession | None:
@@ -897,25 +885,6 @@ class CallRuntimeApi:
         if barrier is not None:
             await barrier
         return removed
-
-    def discard_bridge_session(
-        self,
-        source_call_id: str,
-        dest_call_id: str = "",
-        *,
-        reason: str = "",
-        state: str = "idle",
-    ) -> Any | None:
-        dest = dest_call_id or self.bridge_clients.get(source_call_id, "")
-        self.forget_bridge_link(source_call_id)
-        client = self.take_sip_client(dest) if dest else None
-        self.terminate_call(source_call_id, reason=reason, state=state)
-        return client
-
-    def detach_client(self, call_id: str) -> tuple[Any | None, Any | None]:
-        client = self.take_sip_client(call_id)
-        watcher = self.take_client_watcher(call_id)
-        return client, watcher
 
     def register_bridge(
         self,

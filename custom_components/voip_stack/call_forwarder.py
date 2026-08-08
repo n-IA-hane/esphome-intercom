@@ -11,7 +11,10 @@ from homeassistant.core import HomeAssistant
 
 from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .bridge_manager import async_watch_sip_bridge_destination
-from .config import media_capture_enabled as _media_capture_enabled, trunk_config as _get_trunk_config
+from .config import (
+    media_capture_enabled as _media_capture_enabled,
+    trunk_config as _get_trunk_config,
+)
 from .const import (
     CONF_SIP_VIDEO,
     CONF_VIDEO_TRANSCODING,
@@ -64,7 +67,6 @@ from .outbound_attempts import (
     BrowserLeg,
     async_apply_outbound_video_answer,
     async_cleanup_outbound_attempts as _cleanup_outbound_attempts,
-    async_close_outbound_leg as _close_outbound_leg,
 )
 from .pbx_routing import unique_group_members as _unique_group_members
 from .phone_endpoint import EndpointAvailability, EndpointKind
@@ -155,9 +157,7 @@ async def async_forward_existing_call(
     if not call_id or not destination:
         raise ServiceValidationError("call_id and destination are required")
     if on_failure not in {"resume", "terminate", "busy"}:
-        raise ServiceValidationError(
-            "on_failure must be resume, terminate, or busy"
-        )
+        raise ServiceValidationError("on_failure must be resume, terminate, or busy")
 
     registry = _call_registry(hass)
     context = registry.event_context(call_id)
@@ -199,9 +199,7 @@ async def async_forward_existing_call(
         current_forward.cancel()
         await asyncio.gather(current_forward, return_exceptions=True)
     if call_artifacts.forward_claim:
-        raise ServiceValidationError(
-            f"call_id {call_id} is already being forwarded"
-        )
+        raise ServiceValidationError(f"call_id {call_id} is already being forwarded")
     call_artifacts.forward_claim = True
     target_browser_endpoint = None
     try:
@@ -364,9 +362,7 @@ async def async_forward_existing_call(
         preanswered = registry.preanswered.get(call_id)
         if on_failure == "resume" and not call_artifacts.trunk_closed:
             if session is not None:
-                current = registry.sessions.get(
-                    registry.resolve_session_id(call_id)
-                )
+                current = registry.sessions.get(registry.resolve_session_id(call_id))
                 if current is None or current.owner not in {
                     "router",
                     "bridge",
@@ -408,8 +404,8 @@ async def async_forward_existing_call(
                 call_id,
                 status,
                 "Busy Here" if status == 486 else "Temporarily Unavailable",
-            decline_reason=reason,
-        )
+                decline_reason=reason,
+            )
 
         terminal_state = (
             CallState.BUSY.value
@@ -436,9 +432,7 @@ async def async_forward_existing_call(
             terminal_reason=reason,
             origin="self",
             last_sip_event=(
-                "BYE"
-                if _source_dialog_is_answered(preanswered)
-                else "SIP_RESPONSE"
+                "BYE" if _source_dialog_is_answered(preanswered) else "SIP_RESPONSE"
             ),
         )
         registry.terminate_call(call_id, reason=reason, state=terminal_state)
@@ -475,10 +469,13 @@ async def async_forward_existing_call(
                     )
                     target_claimed = not target_was_claimed
                     if session_endpoint_id != endpoint.endpoint_id:
-                        old_released = registry.release_endpoint_claim(
-                            call_id,
-                            session_endpoint_id,
-                        ) or old_was_claimed
+                        old_released = (
+                            registry.release_endpoint_claim(
+                                call_id,
+                                session_endpoint_id,
+                            )
+                            or old_was_claimed
+                        )
                     runtime.defer_invite_to_softphone(
                         invite,
                         route_kind=decision.action.value,
@@ -568,9 +565,7 @@ async def async_forward_existing_call(
                     registry.resolve_session_id(call_id)
                 )
                 call_generation = (
-                    current_session.generation
-                    if current_session is not None
-                    else 0
+                    current_session.generation if current_session is not None else 0
                 )
                 pbx_runtime = sip_endpoint_runtime(hass)
                 authoritative_session = (
@@ -589,9 +584,7 @@ async def async_forward_existing_call(
                     await _cleanup_outbound_attempts([], attempts)
                     raise RuntimeError("forward source call is no longer current")
 
-                browser_route_future = (
-                    asyncio.get_running_loop().create_future()
-                )
+                browser_route_future = asyncio.get_running_loop().create_future()
                 if browser_legs:
                     registry.upsert(
                         call_id,
@@ -604,14 +597,17 @@ async def async_forward_existing_call(
                             leg.endpoint_id for leg in browser_legs
                         ),
                     )
-                    registry.set_pending_route(call_id, {
-                        "invite": invite,
-                        "future": browser_route_future,
-                        "ring_group_endpoint_ids": tuple(
-                            leg.endpoint_id for leg in browser_legs
-                        ),
-                        "declined_endpoint_ids": set(),
-                    })
+                    registry.set_pending_route(
+                        call_id,
+                        {
+                            "invite": invite,
+                            "future": browser_route_future,
+                            "ring_group_endpoint_ids": tuple(
+                                leg.endpoint_id for leg in browser_legs
+                            ),
+                            "declined_endpoint_ids": set(),
+                        },
+                    )
                     for browser_leg in browser_legs:
                         runtime.publish_pending_ringing(
                             invite,
@@ -653,11 +649,9 @@ async def async_forward_existing_call(
                         authoritative_session,
                         fork_candidates,
                     ).run(
-                        lambda _candidate, _outcome: (
-                            registry.is_generation_current(
-                                call_id,
-                                call_generation,
-                            )
+                        lambda _candidate, _outcome: registry.is_generation_current(
+                            call_id,
+                            call_generation,
                         )
                     )
                 except asyncio.CancelledError:
@@ -677,16 +671,13 @@ async def async_forward_existing_call(
                     raise
 
                 winner = (
-                    candidate_payloads.get(
-                        fork_result.winner.candidate_id
-                    )
+                    candidate_payloads.get(fork_result.winner.candidate_id)
                     if fork_result.winner is not None
                     else None
                 )
                 reroute_decision = (
                     dict(browser_decision)
-                    if fork_result.outcome.disposition
-                    is DialDisposition.REROUTE
+                    if fork_result.outcome.disposition is DialDisposition.REROUTE
                     else None
                 )
                 if reroute_decision is not None:
@@ -769,9 +760,7 @@ async def async_forward_existing_call(
                         client.dialog,
                         winner.video_relay,
                         hass=hass,
-                        enable_transcoding=bool(
-                            cfg.get(CONF_VIDEO_TRANSCODING, False)
-                        ),
+                        enable_transcoding=bool(cfg.get(CONF_VIDEO_TRANSCODING, False)),
                     )
                     await async_apply_outbound_video_answer(
                         winner,
@@ -825,10 +814,15 @@ async def async_forward_existing_call(
                     await relay.start()
                 except Exception:
                     registry.forget_bridge_link(call_id)
-                    registry.take_sip_client(dest_call_id)
-                    registry.take_client_watcher(dest_call_id)
-                    registry.remove_leg(call_id, dest_call_id)
-                    await _close_outbound_leg(winner, bye_or_cancel=True)
+                    await registry.close_leg(
+                        call_id,
+                        dest_call_id,
+                        reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
+                    )
+                    if winner.video_relay is not None:
+                        await winner.video_relay.stop()
+                        winner.video_relay = None
+                    winner.ports.release()
                     raise
                 reservation.detach()
                 winner.ports.detach()
@@ -842,9 +836,7 @@ async def async_forward_existing_call(
                 )
                 registry.attach_relay(call_id, relay)
                 registry.take_pending_invite(call_id)
-                consumed_preanswer = registry.take_media(
-                    call_id, provisional=True
-                )
+                consumed_preanswer = registry.take_media(call_id, provisional=True)
                 # The audio reservation moved to Assist ownership above;
                 # any pre-answer video sockets did not and must be released.
                 _release_video_media_reservation(consumed_preanswer)
@@ -922,9 +914,7 @@ async def async_forward_existing_call(
                 return
 
             if decision.action is RouteAction.ASSIST:
-                current = registry.sessions.get(
-                    registry.resolve_session_id(call_id)
-                )
+                current = registry.sessions.get(registry.resolve_session_id(call_id))
                 if current is not None:
                     claimed_assist = registry.transition(
                         call_id,
@@ -943,11 +933,7 @@ async def async_forward_existing_call(
                     roster_entries=roster_entries,
                     source="trunk" if preanswered is not None else "sip",
                     called_extension=str(
-                        (
-                            decision.entry.extension
-                            if decision.entry is not None
-                            else ""
-                        )
+                        (decision.entry.extension if decision.entry is not None else "")
                         or destination
                     ),
                     release_reservation_on_failure=preanswered is None,
@@ -972,9 +958,7 @@ async def async_forward_existing_call(
                     )
                 registry.take_pending_invite(call_id)
                 registry.take_media(call_id, provisional=True)
-                current = registry.sessions.get(
-                    registry.resolve_session_id(call_id)
-                )
+                current = registry.sessions.get(registry.resolve_session_id(call_id))
                 if current is not None:
                     registry.transition(
                         call_id,
@@ -1043,9 +1027,10 @@ async def async_forward_existing_call(
                 or ""
             ).strip()
             target_route_endpoint_id = str(
-                ((decision.entry.metadata if decision.entry is not None else {}) or {}).get(
-                    "endpoint_id"
-                )
+                (
+                    (decision.entry.metadata if decision.entry is not None else {})
+                    or {}
+                ).get("endpoint_id")
                 or ""
             ).strip()
             source_route_endpoint = (
@@ -1101,9 +1086,7 @@ async def async_forward_existing_call(
                         video_reservation.release()
                     video_relay = None
                     video_dest_port = 0
-                    video_failure_reason = (
-                        "local_video_resources_unavailable"
-                    )
+                    video_failure_reason = "local_video_resources_unavailable"
                     _LOGGER.warning(
                         "SIP forward video relay unavailable; continuing audio-only: %s",
                         err,
@@ -1135,10 +1118,7 @@ async def async_forward_existing_call(
                 else "",
                 include_common_codecs=bridge_to_trunk or bridge_to_registered,
                 peer_user_agent=(
-                    str(
-                        ((decision.entry.metadata or {}).get("user_agent"))
-                        or ""
-                    )
+                    str(((decision.entry.metadata or {}).get("user_agent")) or "")
                     if bridge_to_registered and decision.entry is not None
                     else ""
                 ),
@@ -1293,9 +1273,7 @@ async def async_forward_existing_call(
                     video_format=selected_video,
                     video_direction=selected_video_direction,
                 )
-                _sip_send_final_response(
-                    hass, call_id, 200, "OK", answer_sdp=answer
-                )
+                _sip_send_final_response(hass, call_id, 200, "OK", answer_sdp=answer)
             registry.upsert(
                 call_id,
                 state=CallState.IN_CALL.value,
@@ -1328,8 +1306,7 @@ async def async_forward_existing_call(
                 video_negotiated=bool(video_relay is not None),
                 video_status=(
                     "degraded"
-                    if video_failure_reason
-                    == "local_video_resources_unavailable"
+                    if video_failure_reason == "local_video_resources_unavailable"
                     else "rejected"
                     if video_failure_reason
                     else "active"
@@ -1337,9 +1314,7 @@ async def async_forward_existing_call(
                     else "inactive"
                 ),
                 video_failure_reason=video_failure_reason,
-                video_format=(
-                    selected_video.wire_token() if selected_video else ""
-                ),
+                video_format=(selected_video.wire_token() if selected_video else ""),
             )
             await async_watch_sip_bridge_destination(
                 hass,
@@ -1348,17 +1323,20 @@ async def async_forward_existing_call(
                 terminate_sip_bridge=_terminate_sip_bridge,
             )
         except asyncio.CancelledError:
+            attached_client = False
             if dest_call_id:
                 registry.forget_bridge_link(call_id)
-                registry.take_sip_client(dest_call_id)
-                registry.take_client_watcher(dest_call_id)
-                registry.remove_leg(call_id, dest_call_id)
+                attached_client = await registry.close_leg(
+                    call_id,
+                    dest_call_id,
+                    reason=TerminalReason.CANCELLED.value,
+                )
             if reservation is not None and not reservation_from_preanswer:
                 reservation.release()
             if video_relay is not None:
                 await video_relay.stop()
                 video_relay = None
-            if client is not None:
+            if client is not None and not attached_client:
                 await async_cleanup_sip_runtime(
                     client=client,
                     terminate_client=True,
@@ -1372,17 +1350,20 @@ async def async_forward_existing_call(
                 destination,
                 reason,
             )
+            attached_client = False
             if dest_call_id:
                 registry.forget_bridge_link(call_id)
-                registry.take_sip_client(dest_call_id)
-                registry.take_client_watcher(dest_call_id)
-                registry.remove_leg(call_id, dest_call_id)
+                attached_client = await registry.close_leg(
+                    call_id,
+                    dest_call_id,
+                    reason=reason,
+                )
             if reservation is not None and not reservation_from_preanswer:
                 reservation.release()
             if video_relay is not None:
                 await video_relay.stop()
                 video_relay = None
-            if client is not None:
+            if client is not None and not attached_client:
                 await async_cleanup_sip_runtime(
                     client=client,
                     terminate_client=True,

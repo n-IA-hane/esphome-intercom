@@ -473,15 +473,19 @@ async def route_sip_bridge(
                 sip_reason,
                 decline_reason=terminal_reason,
             )
-            registry.discard_bridge_session(
+            await registry.close_leg(
                 invite.call_id,
                 client.dialog_ids.call_id,
                 reason=terminal_reason,
-                state=public_state,
             )
-            await async_close_client_and_release(client, bridge_ports)
+            bridge_ports.release()
             if video_relay is not None:
                 await video_relay.stop()
+            await registry.terminate_call_wait(
+                invite.call_id,
+                reason=terminal_reason,
+                state=public_state,
+            )
             _set_sip_bridge_call_state(
                 hass,
                 public_state,
@@ -562,16 +566,20 @@ async def route_sip_bridge(
                 "Not Acceptable Here",
                 decline_reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
             )
-            registry.discard_bridge_session(
+            await registry.close_leg(
                 invite.call_id,
                 client.dialog_ids.call_id,
                 reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-                state=CallState.MEDIA_INCOMPATIBLE.value,
             )
-            await async_close_client_and_release(client, bridge_ports)
+            bridge_ports.release()
             if video_relay is not None:
                 await video_relay.stop()
                 video_relay = None
+            await registry.terminate_call_wait(
+                invite.call_id,
+                reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
+                state=CallState.MEDIA_INCOMPATIBLE.value,
+            )
             return
 
         bridge_ports.detach()

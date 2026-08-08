@@ -71,6 +71,40 @@ class _EndpointRegistryStub:
 
 
 class CallRegistryEventContextTest(unittest.TestCase):
+    def test_close_leg_settles_watcher_and_client_without_ending_source(self) -> None:
+        async def exercise() -> None:
+            registry = _registry()
+            registry.activate()
+            registry.upsert("source", state="ringing", owner="router")
+            client = types.SimpleNamespace(
+                terminate=mock.AsyncMock(),
+                close=mock.AsyncMock(),
+            )
+            registry.add_leg(
+                "source",
+                "destination",
+                role="callee",
+                state="ringing",
+            )
+            registry.attach_sip_client("source", "destination", client)
+            watcher = asyncio.create_task(asyncio.Event().wait())
+            registry.attach_client_watcher("destination", watcher)
+
+            closed = await registry.close_leg(
+                "source",
+                "destination",
+                reason="cancelled",
+            )
+
+            self.assertTrue(closed)
+            self.assertTrue(watcher.cancelled())
+            client.terminate.assert_awaited_once()
+            client.close.assert_awaited_once()
+            self.assertIn("source", registry.sessions)
+            self.assertNotIn("destination", registry.sip_clients)
+
+        asyncio.run(exercise())
+
     def test_terminal_bridge_cleanup_recognizes_its_current_watcher(self) -> None:
         async def exercise() -> None:
             registry = _registry()
@@ -87,19 +121,16 @@ class CallRegistryEventContextTest(unittest.TestCase):
             self.assertIsNotNone(watcher)
             registry.attach_client_watcher("destination", watcher)
 
-            session = registry.discard_bridge_session(
+            session = await registry.terminate_call_wait(
                 "source",
-                "destination",
                 reason="temporarily_unavailable",
                 state="error",
             )
 
-            self.assertIsNone(session)
-            owner = registry.sessions.get("source")
-            self.assertIsNotNone(owner)
-            self.assertTrue(owner.termination_started.is_set())
-            self.assertNotIn(watcher, owner.tasks)
-            await asyncio.sleep(0)
+            self.assertIsNotNone(session)
+            self.assertTrue(session.termination_started.is_set())
+            self.assertNotIn(watcher, session.tasks)
+            self.assertNotIn("source", registry.sessions)
 
         asyncio.run(exercise())
 
