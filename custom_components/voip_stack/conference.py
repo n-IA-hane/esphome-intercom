@@ -19,6 +19,8 @@ from homeassistant.core import HomeAssistant
 from .core.audio_format import AudioFormat, PcmFormat
 from .core.audio_pcm import PcmFrameConverter
 from .endpoint_lifecycle import call_registry
+from .endpoint_termination import EndpointTerminationHandler
+from .endpoint_session import TerminationInitiator
 from .endpoint_registry import EndpointBusyError
 from .fsm import CallState, TerminalReason
 from .groups import GROUP_TYPE_CONFERENCE
@@ -1015,9 +1017,10 @@ class ConferenceManager:
         else:
             registry = call_registry(self.hass)
             registry.take_media(call_id)
-            registry.terminate_call(
+            await EndpointTerminationHandler(self.hass).terminate_reason(
                 call_id,
-                reason=reason,
+                reason,
+                TerminationInitiator.LOCAL_USER,
             )
             self.forget_ha_call(call_id)
 
@@ -1035,9 +1038,10 @@ class ConferenceManager:
         if room is not None:
             room._set_softphone_idle(reason, call_id=call_id)
         else:
-            call_registry(self.hass).terminate_call(
+            await EndpointTerminationHandler(self.hass).terminate_reason(
                 call_id,
-                reason=reason,
+                reason,
+                TerminationInitiator.LOCAL_USER,
             )
             self.forget_ha_call(call_id)
         return True
