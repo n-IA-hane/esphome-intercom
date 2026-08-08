@@ -46,7 +46,7 @@ def _post_json(url: str, data: dict[str, object], *, form: bool = False) -> dict
         return json.load(response)
 
 
-def _lab_token(base_url: str, credentials_path: Path) -> str:
+def lab_token(base_url: str, credentials_path: Path) -> str:
     credentials = _credentials(credentials_path)
     client_id = "https://home-assistant.io/iOS"
     flow = _post_json(
@@ -77,7 +77,7 @@ def _lab_token(base_url: str, credentials_path: Path) -> str:
     return str(token["access_token"])
 
 
-async def _runtime_quiescence(base_url: str, token: str) -> dict[str, object]:
+async def runtime_quiescence(base_url: str, token: str) -> dict[str, object]:
     deadline = time.monotonic() + 5
     snapshot: dict = {}
     resources: dict = {}
@@ -107,7 +107,7 @@ async def _runtime_quiescence(base_url: str, token: str) -> dict[str, object]:
     }
 
 
-def _run_case(
+def run_answered_case(
     name: str,
     scenario: Path,
     *,
@@ -159,12 +159,14 @@ def _run_case(
             callee.hangup()
         output, _ = process.communicate(timeout=12)
         if process.returncode != 0:
-            raise RuntimeError(f"SIPp failed with {process.returncode}: {output[-2000:]}")
+            raise RuntimeError(
+                f"SIPp failed with {process.returncode}: {output[-2000:]}"
+            )
         if name == "callee_bye":
             callee.wait_for("terminate call", 5)
         else:
             callee.wait_for_any(("call closed", "session closed"), 5)
-        cleanup = asyncio.run(_runtime_quiescence(ha_url, token))
+        cleanup = asyncio.run(runtime_quiescence(ha_url, token))
         return {
             "scenario": name,
             "status": "passed",
@@ -210,9 +212,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    token = _lab_token(args.ha_url, args.credentials)
+    token = lab_token(args.ha_url, args.credentials)
     if args.quiescence_only:
-        print(json.dumps(asyncio.run(_runtime_quiescence(args.ha_url, token))))
+        print(json.dumps(asyncio.run(runtime_quiescence(args.ha_url, token))))
         return 0
     cases = (
         ("caller_bye", ROOT / "tests/sipp/answered-local-bye.xml", 16062),
@@ -221,7 +223,7 @@ def main() -> int:
     results: list[dict[str, object]] = []
     for name, scenario, local_port in cases:
         try:
-            result = _run_case(
+            result = run_answered_case(
                 name,
                 scenario,
                 target_host=args.host,

@@ -51,10 +51,18 @@ ASSIST_EXTENSION = "1666"
 class HomeAssistantApi:
     """Small strict wrapper around the public HA REST API."""
 
-    def __init__(self) -> None:
-        from ha_playwright_auth import ha_token
+    def __init__(
+        self,
+        *,
+        base_url: str = HA_BASE,
+        token: str | None = None,
+    ) -> None:
+        if token is None:
+            from ha_playwright_auth import ha_token
 
-        self._token = ha_token()
+            token = ha_token()
+        self.base_url = base_url.rstrip("/")
+        self._token = token
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -73,7 +81,7 @@ class HomeAssistantApi:
     ) -> Any:
         response = self.session.request(
             method,
-            f"{HA_BASE}{path}",
+            f"{self.base_url}{path}",
             json=data,
             timeout=20,
         )
@@ -81,7 +89,12 @@ class HomeAssistantApi:
         # asked to delete an automation ID that is not present.
         if allow_missing and response.status_code in {400, 404}:
             return None
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as error:
+            raise RuntimeError(
+                f"Home Assistant API {method} {path} failed: {response.text[:2000]}"
+            ) from error
         return response.json() if response.content else None
 
     def get(self, path: str) -> Any:
@@ -158,8 +171,7 @@ class BareSip:
                 break
             time.sleep(0.03)
         raise RuntimeError(
-            f"bareSIP timeout waiting for {' or '.join(needles)}: "
-            f"{self.output[-2500:]}"
+            f"bareSIP timeout waiting for {' or '.join(needles)}: {self.output[-2500:]}"
         )
 
     def wait_for_dtmf_media(self, timeout: float = 10) -> str:
@@ -235,7 +247,7 @@ class EventTrace:
     async def _listen(self) -> None:
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(
-                f"{HA_BASE.replace('http', 'ws', 1)}/api/websocket",
+                f"{self.api.base_url.replace('http', 'ws', 1)}/api/websocket",
                 heartbeat=20,
             ) as websocket:
                 hello = await websocket.receive_json(timeout=5)
@@ -331,6 +343,14 @@ class FlowSnapshot:
         if result.get("step_id") == "assist":
             assist = schema_defaults(result)
             result = api.post(f"/api/config/config_entries/flow/{flow_id}", assist)
+        if result.get("type") == "abort":
+            return cls(
+                entry_id=entry_id,
+                base=base,
+                video=video,
+                assist=assist,
+                trunk=None,
+            )
         if result.get("step_id") != "trunk":
             raise RuntimeError(f"unexpected flow while capturing trunk: {result}")
         trunk = schema_defaults(result)
@@ -352,6 +372,7 @@ class FlowSnapshot:
         default_target: str | None = None,
         timeout_seconds: int | None = None,
         terminator: str | None = None,
+        trunk_override: dict[str, Any] | None = None,
     ) -> None:
         result = api.post(
             "/api/config/config_entries/flow",
@@ -362,7 +383,10 @@ class FlowSnapshot:
             },
         )
         flow_id = str(result["flow_id"])
-        result = api.post(f"/api/config/config_entries/flow/{flow_id}", dict(self.base))
+        base = dict(self.base)
+        if trunk_override is not None:
+            base["trunk_enabled"] = True
+        result = api.post(f"/api/config/config_entries/flow/{flow_id}", base)
         if result.get("step_id") == "video":
             result = api.post(
                 f"/api/config/config_entries/flow/{flow_id}",
@@ -373,20 +397,30 @@ class FlowSnapshot:
                 f"/api/config/config_entries/flow/{flow_id}",
                 dict(self.assist or {}),
             )
-        if result.get("step_id") != "trunk" or self.trunk is None:
-            raise RuntimeError(f"unexpected flow while applying trunk: {result}")
-        trunk = dict(self.trunk)
-        if mode is not None:
-            trunk["trunk_inbound_mode"] = mode
-        if automation is not None:
-            trunk["automation_routing_enabled"] = automation
-        if default_target is not None:
-            trunk["trunk_inbound_default_target"] = default_target
-        if timeout_seconds is not None:
-            trunk["trunk_dtmf_timeout_ms"] = timeout_seconds
-        if terminator is not None:
-            trunk["trunk_dtmf_terminator"] = terminator
-        result = api.post(f"/api/config/config_entries/flow/{flow_id}", trunk)
+        if result.get("step_id") == "trunk":
+            trunk = schema_defaults(result)
+            allowed = set(trunk)
+            trunk.update(
+                (key, value)
+                for key, value in (self.trunk or {}).items()
+                if key in allowed
+            )
+            trunk.update(
+                (key, value)
+                for key, value in (trunk_override or {}).items()
+                if key in allowed
+            )
+            if mode is not None:
+                trunk["trunk_inbound_mode"] = mode
+            if automation is not None:
+                trunk["automation_routing_enabled"] = automation
+            if default_target is not None:
+                trunk["trunk_inbound_default_target"] = default_target
+            if timeout_seconds is not None:
+                trunk["trunk_dtmf_timeout_ms"] = timeout_seconds
+            if terminator is not None:
+                trunk["trunk_dtmf_terminator"] = terminator
+            result = api.post(f"/api/config/config_entries/flow/{flow_id}", trunk)
         if (
             result.get("type") != "abort"
             or result.get("reason") != "reconfigure_successful"
@@ -762,9 +796,7 @@ def main() -> int:
                 sip = caller()
                 with EventTrace(api) as trace:
                     sip.dial()
-                    ringing = wait_event_state(
-                        api, "ringing", 10, callee="RG Casa"
-                    )
+                    ringing = wait_event_state(api, "ringing", 10, callee="RG Casa")
                     # Reproduce issue #74 exactly: an immediate-mode trunk
                     # route must remain provisional until a group member
                     # explicitly answers.
