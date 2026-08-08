@@ -3892,6 +3892,80 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(retry_auth["nc"], "00000002")
         self.assertNotEqual(first_auth["cnonce"], retry_auth["cnonce"])
 
+    async def test_initial_delayed_offer_is_answered_in_ack(self) -> None:
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+        client = sip_client.SipCallClient(
+            local_ip="192.168.1.10",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        transport = FakeTransport()
+        client.transport = transport  # type: ignore[assignment]
+        remote_offer = sdp.build_offer_directional(
+            "192.0.2.10",
+            "192.0.2.10",
+            42000,
+            client.supported_recv_formats,
+            client.supported_send_formats,
+        ).encode()
+
+        async def read_response(_timeout: float):
+            return (
+                sip.parse_message(
+                    sip.build_response(
+                        200,
+                        "OK",
+                        [
+                            (
+                                "Via",
+                                "SIP/2.0/UDP 192.168.1.10:5060;"
+                                f"branch={client.dialog_ids.branch}",
+                            ),
+                            (
+                                "From",
+                                "<sip:HA@192.168.1.10:5060>;"
+                                f"tag={client.dialog_ids.local_tag}",
+                            ),
+                            ("To", "<sip:P4@192.0.2.10>;tag=remote"),
+                            ("Contact", "<sip:P4@192.0.2.10:5060>"),
+                            ("Call-ID", client.dialog_ids.call_id),
+                            ("CSeq", f"{client._invite_cseq} INVITE"),
+                            ("Content-Type", "application/sdp"),
+                        ],
+                        remote_offer,
+                    )
+                ),
+                ("192.0.2.10", 5060),
+            )
+
+        client._read_response = read_response  # type: ignore[method-assign]
+        result = await client.invite(
+            target="P4",
+            remote_host="192.0.2.10",
+            remote_sip_port=5060,
+            request_uri="sip:P4@192.0.2.10:5060;transport=udp",
+            delayed_offer=True,
+        )
+
+        self.assertEqual(result, "in_call")
+        messages = [sip.parse_message(raw) for raw, _addr in transport.sent]
+        self.assertEqual([message.method for message in messages], ["INVITE", "ACK"])
+        invite, ack = messages
+        self.assertFalse(invite.body)
+        self.assertFalse(invite.header("Content-Type"))
+        self.assertEqual(ack.header("Content-Type"), "application/sdp")
+        sdp.validate_sdp_answer(remote_offer, ack.body)
+        self.assertIsNotNone(client.dialog)
+        assert client.dialog is not None
+        self.assertEqual(client.dialog.remote_rtp_port, 42000)
+
     async def test_invite_retry_after_is_limited_to_one_retry(self) -> None:
         class FakeTransport:
             def __init__(self) -> None:

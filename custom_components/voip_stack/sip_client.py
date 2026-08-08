@@ -416,6 +416,7 @@ class SipCallClient:
         self._pending_remote_uri = ""
         self._pending_invite_body = b""
         self._pending_invite_auth: dict[str, tuple[str, str, int]] = {}
+        self._initial_delayed_offer = False
         self._retry_after_used = False
         self._invite_abort_event = asyncio.Event()
         self._invite_transaction_active = False
@@ -1162,10 +1163,11 @@ class SipCallClient:
         request: sip.SipMessage,
         *,
         local_offer_sdp: str = "",
+        current: SipDialog | None = None,
     ) -> tuple[SipDialog, str] | None:
         """Build the media replacement for a remote offer or delayed answer."""
 
-        current = self.dialog
+        current = current or self.dialog
         if current is None:
             return None
         try:
@@ -1375,7 +1377,7 @@ class SipCallClient:
             dialog=self.dialog_ids,
             method="INVITE",
             contact_uri=self._pending_local_uri,
-            content_type="application/sdp",
+            content_type=("application/sdp" if self._pending_invite_body else None),
             transport=self.signaling_transport,
             local_display_name=self.local_name,
             remote_display_name=self._pending_target_display,
@@ -1651,6 +1653,7 @@ class SipCallClient:
         request_uri: str = "",
         target_display_name: str = "",
         timeout: float = 8.0,
+        delayed_offer: bool = False,
     ) -> str:
         """Run one owned INVITE transaction that survives caller-task cancellation."""
         if self._closing or self._closed:
@@ -1665,6 +1668,7 @@ class SipCallClient:
                 request_uri=request_uri,
                 target_display_name=target_display_name,
                 timeout=timeout,
+                delayed_offer=delayed_offer,
             ),
             name=f"voip-sip-client-invite-{self.dialog_ids.call_id}",
         )
@@ -1684,6 +1688,7 @@ class SipCallClient:
         request_uri: str = "",
         target_display_name: str = "",
         timeout: float = 8.0,
+        delayed_offer: bool = False,
     ) -> str:
         try:
             if self.signaling_transport == "TCP" and self._tcp_reuse_send is None:
@@ -1720,20 +1725,23 @@ class SipCallClient:
         self._received_provisional = False
         self._reliable_rseq.clear()
         self._deferred_signaling.clear()
-        offer = sdp.build_offer_directional(
-            self.local_ip,
-            self.local_ip,
-            self.local_rtp_port,
-            self.supported_send_formats,
-            self.supported_recv_formats,
-            include_common_codecs=self.include_common_codecs,
-            include_dahua_pcm=self.include_dahua_pcm,
-            video_port=self.local_video_rtp_port,
-            video_format=self.video_format,
-            video_formats=self.video_formats,
-            video_direction=self.video_direction,
-        )
-        offer = sdp.rewrite_sdp_origin(offer, self._sdp_session_id, 0)
+        offer = ""
+        if not delayed_offer:
+            offer = sdp.build_offer_directional(
+                self.local_ip,
+                self.local_ip,
+                self.local_rtp_port,
+                self.supported_send_formats,
+                self.supported_recv_formats,
+                include_common_codecs=self.include_common_codecs,
+                include_dahua_pcm=self.include_dahua_pcm,
+                video_port=self.local_video_rtp_port,
+                video_format=self.video_format,
+                video_formats=self.video_formats,
+                video_direction=self.video_direction,
+            )
+            offer = sdp.rewrite_sdp_origin(offer, self._sdp_session_id, 0)
+        self._initial_delayed_offer = bool(delayed_offer)
         self._local_sdp_body = offer
         body = offer.encode()
         self._pending_invite_body = body
@@ -1750,7 +1758,11 @@ class SipCallClient:
             target,
             remote_host,
             remote_sip_port,
-            ", ".join(sdp.offered_media_descriptions(body)),
+            (
+                ", ".join(sdp.offered_media_descriptions(body))
+                if body
+                else "delayed"
+            ),
         )
         transaction = SipClientTransaction[
             tuple[sip.SipMessage, tuple[str, int]]
@@ -3473,24 +3485,79 @@ class SipCallClient:
             # won the race.  ACK it and immediately end the just-created remote
             # dialog, but never publish that dialog into a closing client.
             if not provisional:
-                self.dialog_ids.remote_tag = remote_tag
-                self._send_ack(
-                    remote_host,
-                    int(remote_sip_port),
-                    remote_target_uri,
-                    local_uri,
-                    remote_uri,
-                    route_set=route_set,
-                )
-                self._send_bye_request(
-                    remote_host,
-                    int(remote_sip_port),
-                    remote_target_uri,
-                    local_uri,
-                    remote_uri,
+                self._reject_confirmed_dialog(
+                    remote_tag=remote_tag,
+                    remote_host=remote_host,
+                    remote_sip_port=remote_sip_port,
+                    remote_target_uri=remote_target_uri,
+                    local_uri=local_uri,
+                    remote_uri=remote_uri,
                     route_set=route_set,
                 )
             return False
+        if self._initial_delayed_offer and not provisional:
+            if (
+                not msg.body
+                or msg.header("Content-Type").split(";", 1)[0].strip().lower()
+                != "application/sdp"
+            ):
+                self._reject_confirmed_dialog(
+                    remote_tag=remote_tag,
+                    remote_host=remote_host,
+                    remote_sip_port=remote_sip_port,
+                    remote_target_uri=remote_target_uri,
+                    local_uri=local_uri,
+                    remote_uri=remote_uri,
+                    route_set=route_set,
+                )
+                return False
+            seed_format = self.supported_send_formats[0]
+            seed = SipDialog(
+                target=target,
+                remote_host=remote_host,
+                remote_sip_port=int(remote_sip_port),
+                remote_rtp_host="",
+                remote_rtp_port=0,
+                local_rtp_port=self.local_rtp_port,
+                call_id=self.dialog_ids.call_id,
+                remote_tag=remote_tag,
+                local_uri=local_uri,
+                remote_uri=remote_uri,
+                send_format=seed_format,
+                recv_format=self.supported_recv_formats[0],
+                remote_target_uri=remote_target_uri,
+                route_set=route_set,
+                local_sdp_session_id=self._sdp_session_id,
+            )
+            prepared = self._answer_remote_offer(msg, current=seed)
+            if prepared is None:
+                self._reject_confirmed_dialog(
+                    remote_tag=remote_tag,
+                    remote_host=remote_host,
+                    remote_sip_port=remote_sip_port,
+                    remote_target_uri=remote_target_uri,
+                    local_uri=local_uri,
+                    remote_uri=remote_uri,
+                    route_set=route_set,
+                )
+                return False
+            candidate, answer = prepared
+            candidate.peer_supports_from_change = sip.supports_option(
+                msg, "from-change"
+            )
+            self.dialog_ids.remote_tag = remote_tag
+            self.dialog = candidate
+            self.early_dialogs.clear()
+            self._local_sdp_body = answer
+            return self._send_ack(
+                remote_host,
+                int(remote_sip_port),
+                remote_target_uri,
+                local_uri,
+                remote_uri,
+                route_set=route_set,
+                body=answer.encode(),
+            )
         negotiation_error: Exception | None = None
         try:
             if (
@@ -3531,21 +3598,13 @@ class SipCallClient:
                 negotiation_error or "none",
             )
             if not provisional:
-                self.dialog_ids.remote_tag = remote_tag
-                self._send_ack(
-                    remote_host,
-                    int(remote_sip_port),
-                    remote_target_uri,
-                    local_uri,
-                    remote_uri,
-                    route_set=route_set,
-                )
-                self._send_bye_request(
-                    remote_host,
-                    int(remote_sip_port),
-                    remote_target_uri,
-                    local_uri,
-                    remote_uri,
+                self._reject_confirmed_dialog(
+                    remote_tag=remote_tag,
+                    remote_host=remote_host,
+                    remote_sip_port=remote_sip_port,
+                    remote_target_uri=remote_target_uri,
+                    local_uri=local_uri,
+                    remote_uri=remote_uri,
                     route_set=route_set,
                 )
             return False
@@ -3586,21 +3645,13 @@ class SipCallClient:
                     raise sip.SipError("Session-Expires response lacks refresher")
             except sip.SipError:
                 if not provisional:
-                    self.dialog_ids.remote_tag = remote_tag
-                    self._send_ack(
-                        remote_host,
-                        int(remote_sip_port),
-                        remote_target_uri,
-                        local_uri,
-                        remote_uri,
-                        route_set=route_set,
-                    )
-                    self._send_bye_request(
-                        remote_host,
-                        int(remote_sip_port),
-                        remote_target_uri,
-                        local_uri,
-                        remote_uri,
+                    self._reject_confirmed_dialog(
+                        remote_tag=remote_tag,
+                        remote_host=remote_host,
+                        remote_sip_port=remote_sip_port,
+                        remote_target_uri=remote_target_uri,
+                        local_uri=local_uri,
+                        remote_uri=remote_uri,
                         route_set=route_set,
                     )
                 return False
@@ -3709,6 +3760,37 @@ class SipCallClient:
         )
         return True
 
+    def _reject_confirmed_dialog(
+        self,
+        *,
+        remote_tag: str,
+        remote_host: str,
+        remote_sip_port: int,
+        remote_target_uri: str,
+        local_uri: str,
+        remote_uri: str,
+        route_set: tuple[str, ...],
+    ) -> None:
+        """ACK a successful INVITE response, then terminate its unusable dialog."""
+
+        self.dialog_ids.remote_tag = remote_tag
+        self._send_ack(
+            remote_host,
+            int(remote_sip_port),
+            remote_target_uri,
+            local_uri,
+            remote_uri,
+            route_set=route_set,
+        )
+        self._send_bye_request(
+            remote_host,
+            int(remote_sip_port),
+            remote_target_uri,
+            local_uri,
+            remote_uri,
+            route_set=route_set,
+        )
+
     def _send_ack(
         self,
         host: str,
@@ -3720,6 +3802,7 @@ class SipCallClient:
         route_set: tuple[str, ...] = (),
         cseq: int | None = None,
         remote_tag: str = "",
+        body: bytes = b"",
     ) -> bool:
         if not self._has_signaling_path():
             return False
@@ -3742,6 +3825,7 @@ class SipCallClient:
             dialog=ack_ids,
             method="ACK",
             contact_uri=local_uri,
+            content_type=("application/sdp" if body else None),
             transport=self.signaling_transport,
             local_display_name=self.local_name,
             remote_display_name=(
@@ -3749,7 +3833,7 @@ class SipCallClient:
             ),
         )
         headers.extend(("Route", value) for value in routing.route_headers)
-        raw = sip.build_request("ACK", routing.request_uri, headers, b"")
+        raw = sip.build_request("ACK", routing.request_uri, headers, body)
         next_host, next_port = self._dialog_next_hop(
             routing.next_hop_uri,
             host,
