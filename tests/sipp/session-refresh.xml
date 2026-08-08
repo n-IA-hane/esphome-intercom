@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<scenario name="VoIP Stack RFC4028 UAC refresh">
+  <recv request="INVITE" rrs="true" />
+  <send><![CDATA[
+    SIP/2.0 200 OK
+    [last_Via:]
+    [last_From:]
+    [last_To:];tag=timer-refresh
+    [last_Call-ID:]
+    [last_CSeq:]
+    Contact: <sip:timer@[local_ip]:[local_port]>
+    Require: timer
+    Session-Expires: 4;refresher=uac
+    Content-Type: application/sdp
+    Content-Length: [len]
+
+    v=0
+    o=sipp 2 2 IN IP4 [local_ip]
+    s=Session refresh
+    c=IN IP4 [local_ip]
+    t=0 0
+    m=audio 6002 RTP/AVP 8
+    a=rtpmap:8 PCMA/8000
+    a=sendrecv
+  ]]></send>
+  <recv request="ACK" timeout="5000" />
+  <recv request="UPDATE" timeout="4000" />
+  <send><![CDATA[
+    SIP/2.0 200 OK
+    [last_Via:]
+    [last_From:]
+    [last_To:]
+    [last_Call-ID:]
+    [last_CSeq:]
+    Session-Expires: 4;refresher=uac
+    Content-Length: 0
+
+  ]]></send>
+  <recv request="BYE" timeout="5000" />
+  <send><![CDATA[
+    SIP/2.0 200 OK
+    [last_Via:]
+    [last_From:]
+    [last_To:]
+    [last_Call-ID:]
+    [last_CSeq:]
+    Content-Length: 0
+
+  ]]></send>
+</scenario>

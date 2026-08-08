@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<scenario name="VoIP Stack RFC3262 reliable provisional">
+  <recv request="INVITE" rrs="true">
+    <action>
+      <ereg regexp=".*" search_in="hdr" header="Via:" check_it="true" assign_to="1" />
+      <ereg regexp=".*" search_in="hdr" header="From:" check_it="true" assign_to="2" />
+      <ereg regexp=".*" search_in="hdr" header="To:" check_it="true" assign_to="3" />
+      <ereg regexp=".*" search_in="hdr" header="Call-ID:" check_it="true" assign_to="4" />
+    </action>
+  </recv>
+  <send><![CDATA[
+    SIP/2.0 183 Session Progress
+    Via:[$1]
+    From:[$2]
+    To:[$3];tag=rel100
+    Call-ID:[$4]
+    CSeq: 1 INVITE
+    Contact: <sip:reliable@[local_ip]:[local_port]>
+    Require: 100rel
+    RSeq: 41
+    Content-Type: application/sdp
+    Content-Length: [len]
+
+    v=0
+    o=sipp 1 1 IN IP4 [local_ip]
+    s=Reliable provisional
+    c=IN IP4 [local_ip]
+    t=0 0
+    m=audio 6000 RTP/AVP 8
+    a=rtpmap:8 PCMA/8000
+    a=sendrecv
+  ]]></send>
+  <recv request="PRACK" timeout="5000" />
+  <send><![CDATA[
+    SIP/2.0 200 OK
+    [last_Via:]
+    [last_From:]
+    [last_To:]
+    [last_Call-ID:]
+    [last_CSeq:]
+    Content-Length: 0
+
+  ]]></send>
+  <send><![CDATA[
+    SIP/2.0 200 OK
+    Via:[$1]
+    From:[$2]
+    To:[$3];tag=rel100
+    Call-ID:[$4]
+    CSeq: 1 INVITE
+    Contact: <sip:reliable@[local_ip]:[local_port]>
+    Content-Type: application/sdp
+    Content-Length: [len]
+
+    v=0
+    o=sipp 1 2 IN IP4 [local_ip]
+    s=Reliable provisional
+    c=IN IP4 [local_ip]
+    t=0 0
+    m=audio 6000 RTP/AVP 8
+    a=rtpmap:8 PCMA/8000
+    a=sendrecv
+  ]]></send>
+  <recv request="ACK" timeout="5000" />
+  <recv request="BYE" timeout="5000" />
+  <send><![CDATA[
+    SIP/2.0 200 OK
+    [last_Via:]
+    [last_From:]
+    [last_To:]
+    [last_Call-ID:]
+    [last_CSeq:]
+    Content-Length: 0
+
+  ]]></send>
+</scenario>
