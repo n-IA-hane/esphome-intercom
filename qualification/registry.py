@@ -82,7 +82,13 @@ AREAS = (
     QualificationArea(
         "qualification",
         Risk.HIGH,
-        ("qualification/**", "scripts/qualification_*.py", "scripts/candidate_lock.py", ".github/workflows/qualification.yml"),
+        (
+            "qualification/**",
+            "scripts/qualification_*.py",
+            "scripts/candidate_lock.py",
+            "tests/test_qualification_pipeline.py",
+            ".github/workflows/qualification.yml",
+        ),
         frozenset({"static", "qualification-selftest"}),
     ),
     QualificationArea(
@@ -114,19 +120,32 @@ AREAS = (
     QualificationArea(
         "sip_core",
         Risk.CRITICAL,
-        ("custom_components/voip_stack/core/sip*.py", "custom_components/voip_stack/sip_*.py"),
-        frozenset({"static", "software-full", "host-core", "peer-live", "firmware", "hil-s3"}),
+        (
+            "custom_components/voip_stack/core/sip*.py",
+            "custom_components/voip_stack/sip_*.py",
+        ),
+        frozenset(
+            {"static", "software-full", "host-core", "peer-live", "firmware", "hil-s3"}
+        ),
     ),
     QualificationArea(
         "browser_media",
         Risk.HIGH,
-        ("custom_components/voip_stack/frontend/**", "custom_components/voip_stack/*ws*.py"),
+        (
+            "custom_components/voip_stack/frontend/**",
+            "custom_components/voip_stack/*ws*.py",
+        ),
         frozenset({"static", "software-full", "ha-runtime", "browser-real"}),
     ),
     QualificationArea(
         "video",
         Risk.CRITICAL,
-        ("custom_components/voip_stack/*video*.py", "esphome/components/**/video*", "packages/**/video*", "yamls/**/*p4*"),
+        (
+            "custom_components/voip_stack/*video*.py",
+            "esphome/components/**/video*",
+            "packages/**/video*",
+            "yamls/**/*p4*",
+        ),
         frozenset({"static", "software-full", "browser-real", "firmware", "hil-p4"}),
     ),
     QualificationArea(
@@ -149,8 +168,17 @@ SCENARIOS = (
         "esp-to-ha-answer-hangup",
         frozenset({"ha_lifecycle", "sip_core", "browser_media", "esp_control"}),
         frozenset({"ha-lab", "sipp", "playwright", "ws3"}),
-        frozenset({"sip-trace", "ha-state", "browser-state", "esp-state", "rtp-duplex"}),
-        frozenset({"single-terminal", "cleanup-barrier", "resources-at-baseline", "immediate-redial"}),
+        frozenset(
+            {"sip-trace", "ha-state", "browser-state", "esp-state", "rtp-duplex"}
+        ),
+        frozenset(
+            {
+                "single-terminal",
+                "cleanup-barrier",
+                "resources-at-baseline",
+                "immediate-redial",
+            }
+        ),
         ("issue-93",),
     ),
     ScenarioContract(
@@ -158,23 +186,56 @@ SCENARIOS = (
         frozenset({"ha_lifecycle", "sip_core", "esp_control"}),
         frozenset({"ha-lab", "baresip", "ws3"}),
         frozenset({"both-peer-dialogs", "sip-trace", "esp-state", "rtp-duplex"}),
-        frozenset({"single-terminal", "cleanup-barrier", "resources-at-baseline", "immediate-redial"}),
+        frozenset(
+            {
+                "single-terminal",
+                "cleanup-barrier",
+                "resources-at-baseline",
+                "immediate-redial",
+            }
+        ),
         ("registered-sip-auto-hangup-regression",),
     ),
     ScenarioContract(
         "trunk-dtmf-routing-and-established-dtmf",
         frozenset({"ha_lifecycle", "sip_core"}),
         frozenset({"home-ha", "wildix", "sipp"}),
-        frozenset({"both-peer-dialogs", "sip-trace", "dtmf-events", "selected-destination"}),
-        frozenset({"digits-consumed-once", "no-in-call-reroute", "cleanup-barrier", "resources-at-baseline"}),
+        frozenset(
+            {"both-peer-dialogs", "sip-trace", "dtmf-events", "selected-destination"}
+        ),
+        frozenset(
+            {
+                "digits-consumed-once",
+                "no-in-call-reroute",
+                "cleanup-barrier",
+                "resources-at-baseline",
+            }
+        ),
         ("issue-95", "trunk-dtmf-reroute-regression"),
     ),
     ScenarioContract(
         "p4-audio-to-bidirectional-video-reinvite",
-        frozenset({"ha_lifecycle", "sip_core", "browser_media", "esp_control", "video"}),
+        frozenset(
+            {"ha_lifecycle", "sip_core", "browser_media", "esp_control", "video"}
+        ),
         frozenset({"ha-lab", "playwright", "p4"}),
-        frozenset({"sip-trace", "rtp-duplex", "decoded-video", "rendered-video", "esp-runtime"}),
-        frozenset({"single-terminal", "cleanup-barrier", "resources-at-baseline", "immediate-redial"}),
+        frozenset(
+            {
+                "sip-trace",
+                "rtp-duplex",
+                "decoded-video",
+                "rendered-video",
+                "esp-runtime",
+            }
+        ),
+        frozenset(
+            {
+                "single-terminal",
+                "cleanup-barrier",
+                "resources-at-baseline",
+                "immediate-redial",
+            }
+        ),
     ),
 )
 
