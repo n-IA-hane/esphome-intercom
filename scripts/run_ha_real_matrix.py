@@ -404,7 +404,21 @@ def main() -> int:
     run_dir.mkdir(parents=True, exist_ok=False)
     token = lab_token(args.ha_url, args.credentials)
     api = HomeAssistantApi(base_url=args.ha_url, token=token)
-    api.service("automation", "reload")
+
+    def qualification_automation_ready() -> bool:
+        try:
+            return (
+                api.state("automation.voip_qualification_route_decision")["state"]
+                == "on"
+            )
+        except RuntimeError:
+            return False
+
+    wait_for(
+        qualification_automation_ready,
+        15,
+        "qualification automation readiness",
+    )
     snapshot = FlowSnapshot.capture(api)
     package_hash = hashlib.sha256(package_bytes).hexdigest()
     results: list[dict[str, object]] = []

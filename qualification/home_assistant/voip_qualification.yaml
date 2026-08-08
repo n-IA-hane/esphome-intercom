@@ -42,16 +42,16 @@ automation:
     mode: parallel
     max: 16
     triggers:
-      - trigger: event.received
-        target:
-          entity_id: event.voip_stack_call
-        options:
-          event_type:
-            - route_requested
+      - trigger: state
+        entity_id: event.voip_stack_call
     conditions:
       - condition: state
         entity_id: input_boolean.voip_qualification_enabled
         state: "on"
+      - condition: template
+        value_template: >-
+          {{ trigger.to_state is not none
+             and trigger.to_state.attributes.get('event_type') == 'route_requested' }}
       - condition: template
         value_template: >-
           {{ states('input_select.voip_qualification_route_action') != 'no_action' }}

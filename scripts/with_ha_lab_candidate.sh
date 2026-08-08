@@ -8,7 +8,7 @@ component_link="$config_dir/custom_components/voip_stack"
 package_file="$config_dir/packages/voip_qualification.yaml"
 candidate_component="$repo_root/custom_components/voip_stack"
 candidate_package="$repo_root/qualification/home_assistant/voip_qualification.yaml"
-lock_file=${HA_LAB_LOCK_FILE:-${XDG_RUNTIME_DIR:-/tmp}/voip-ha-lab.lock}
+lock_file=${HA_LAB_LOCK_FILE:-${XDG_RUNTIME_DIR:-/tmp}/voip-ha-lab-v2.lock}
 session_name=${HA_LAB_TMUX_SESSION:-ha-voip-lab}
 ha_url=${HA_LAB_URL:-http://127.0.0.1:18123}
 
@@ -49,7 +49,8 @@ restart_ha() {
   fi
   tmux kill-session -t "$session_name" 2>/dev/null || true
   tmux new-session -d -s "$session_name" \
-    "$lab_root/.venv/bin/hass -c $config_dir 2>&1 | tee -a $config_dir/home-assistant.log"
+    "$lab_root/.venv/bin/hass -c $config_dir 2>&1 | tee -a $config_dir/home-assistant.log" \
+    9>&-
   for _ in $(seq 1 120); do
     curl -fsS "$ha_url/" >/dev/null 2>&1 && return 0
     sleep 0.5

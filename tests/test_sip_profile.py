@@ -744,6 +744,7 @@ class SipProfileTest(unittest.TestCase):
         self.assertEqual(sip_transport.sip_terminal_status("timeout"), ("error", 408, "timeout"))
         self.assertEqual(sip_transport.sip_terminal_status("sip_500"), ("error", 500, "sip_500"))
         self.assertEqual(sip_transport.sip_public_state("sip_500"), "transport_unreachable")
+        self.assertEqual(sip_transport.sip_public_state("route_requested"), "route_requested")
         self.assertEqual(sip_transport.sip_terminal_reason("sip_500"), "sip_500")
         self.assertEqual(
             sip_transport.sip_failure_response("sip_500"),

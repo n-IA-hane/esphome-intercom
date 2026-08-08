@@ -84,6 +84,7 @@ def sip_public_state(state: str) -> str:
         "ringing": CallState.RINGING.value,
         "remote_ringing": CallState.REMOTE_RINGING.value,
         "connecting": CallState.CONNECTING.value,
+        "route_requested": "route_requested",
         "terminating": CallState.TERMINATING.value,
         "busy": CallState.BUSY.value,
         "declined": CallState.DECLINED.value,
