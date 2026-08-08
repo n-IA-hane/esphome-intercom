@@ -314,7 +314,10 @@ class SerialCapture:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             text = self.since(mark)
-            if all(label in text for label in STAT_LABELS.values()):
+            if all(
+                any(label in text for label in labels)
+                for labels in STAT_LABELS.values()
+            ):
                 time.sleep(0.1)
                 return self.since(mark)
             time.sleep(0.05)

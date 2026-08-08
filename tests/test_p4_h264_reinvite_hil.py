@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.run_p4_h264_reinvite_hil import (
+    SerialCapture,
     cleanup_evidence,
     parse_ffprobe,
     parse_serial_metrics,
@@ -74,6 +75,13 @@ def test_serial_parser_accepts_release_evidence_without_debug_logging() -> None:
     assert metrics["rx"]["presented"] == 16
     assert metrics["tx"]["encoded"] == 18
     assert metrics["session"]["completed_au"] == 18
+
+
+def test_serial_capture_recognizes_compact_release_evidence(tmp_path) -> None:
+    capture = SerialCapture("unused", tmp_path / "serial.log")
+    capture._lines.extend(COMPACT_SERIAL.splitlines(keepends=True))
+
+    assert capture.wait_cycle(0, timeout=0.01) == COMPACT_SERIAL
 
 
 def test_serial_parser_rejects_missing_owner_evidence() -> None:
