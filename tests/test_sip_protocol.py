@@ -16,6 +16,7 @@ from .voip_phase1_support import (
     sip_auth,
     sip_client,
     sip_listener,
+    sip_transaction,
     sip_transfer,
     sip_rtp_bridge,
     sip_resolution,
@@ -531,10 +532,22 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
         raise AssertionError(f"SIP {method} was not sent")
 
+    @staticmethod
+    async def _refresh_session(client, dialog) -> str:
+        try:
+            return await sip_transaction.async_refresh_session(
+                dialog.session_timer,
+                client._send_in_dialog_request,
+                local_role="uac",
+                now=asyncio.get_running_loop().time,
+            )
+        except ConnectionAbortedError as err:
+            return str(err) or "remote_hangup"
+
     async def test_outbound_session_refresh_uses_owned_update_transaction(self) -> None:
         client, dialog, sent, _negotiated = self._confirmed_audio_client()
         dialog.session_timer.interval = 1800
-        refresh = asyncio.create_task(client._refresh_session(dialog))
+        refresh = asyncio.create_task(self._refresh_session(client, dialog))
         request = await self._wait_for_sent_request(sent, "UPDATE")
         self.assertEqual(request.header("Session-Expires"), "1800;refresher=uac")
         response_headers = [
@@ -566,7 +579,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
     async def test_remote_bye_wins_over_local_session_refresh(self) -> None:
         client, dialog, sent, _negotiated = self._confirmed_audio_client()
         dialog.session_timer.interval = 1800
-        refresh = asyncio.create_task(client._refresh_session(dialog))
+        refresh = asyncio.create_task(self._refresh_session(client, dialog))
         await self._wait_for_sent_request(sent, "UPDATE")
         client.queue.put_nowait(
             (
@@ -590,7 +603,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
     async def test_successful_refresh_can_disable_session_timer(self) -> None:
         client, dialog, sent, _negotiated = self._confirmed_audio_client()
         dialog.session_timer.interval = 1800
-        refresh = asyncio.create_task(client._refresh_session(dialog))
+        refresh = asyncio.create_task(self._refresh_session(client, dialog))
         request = await self._wait_for_sent_request(sent, "UPDATE")
         client.queue.put_nowait(
             (
@@ -606,7 +619,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
     async def test_session_refresh_retries_422_with_minimum_immediately(self) -> None:
         client, dialog, sent, _negotiated = self._confirmed_audio_client()
         dialog.session_timer.interval = 900
-        refresh = asyncio.create_task(client._refresh_session(dialog))
+        refresh = asyncio.create_task(self._refresh_session(client, dialog))
         first = await self._wait_for_sent_request(sent, "UPDATE")
         client.queue.put_nowait(
             (

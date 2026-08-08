@@ -48,6 +48,119 @@ sip_dialog = _load_module("sip_dialog")
 
 
 class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_session_refresh_commits_successful_response(self) -> None:
+        state = sip_transaction.sip.SipSessionTimer(interval=1800)
+        calls = []
+
+        async def send(method, *, extra_headers):
+            calls.append((method, extra_headers))
+            return sip_transaction.sip.parse_message(
+                sip_transaction.sip.build_response(
+                    200,
+                    "OK",
+                    [("Session-Expires", "900;refresher=uas")],
+                )
+            )
+
+        result = await sip_transaction.async_refresh_session(
+            state,
+            send,
+            local_role="uac",
+            now=lambda: 10.0,
+        )
+
+        self.assertEqual(result, "refreshed")
+        self.assertEqual(state.interval, 900)
+        self.assertFalse(state.local_refresher)
+        self.assertEqual(state.deadline, 910.0)
+        self.assertEqual(calls[0][0], "UPDATE")
+        self.assertIn(("Supported", "timer"), calls[0][1])
+
+    async def test_session_refresh_retries_422_once_with_new_interval(self) -> None:
+        state = sip_transaction.sip.SipSessionTimer(interval=90)
+        responses = iter(
+            (
+                sip_transaction.sip.build_response(
+                    422,
+                    "Session Interval Too Small",
+                    [("Min-SE", "180")],
+                ),
+                sip_transaction.sip.build_response(
+                    200,
+                    "OK",
+                    [("Session-Expires", "180;refresher=uac")],
+                ),
+            )
+        )
+        intervals = []
+
+        async def send(_method, *, extra_headers):
+            intervals.append(dict(extra_headers)["Session-Expires"])
+            return sip_transaction.sip.parse_message(next(responses))
+
+        result = await sip_transaction.async_refresh_session(
+            state,
+            send,
+            local_role="uac",
+            now=lambda: 20.0,
+        )
+
+        self.assertEqual(result, "refreshed")
+        self.assertEqual(intervals, ["90;refresher=uac", "180;refresher=uac"])
+        self.assertEqual(state.refresh_at, 110.0)
+
+    async def test_session_refresh_stops_after_bounded_failure(self) -> None:
+        state = sip_transaction.sip.SipSessionTimer(interval=90)
+        calls = 0
+
+        async def send(_method, *, extra_headers):
+            nonlocal calls
+            calls += 1
+            self.assertEqual(
+                dict(extra_headers)["Session-Expires"],
+                "90;refresher=uac",
+            )
+            return None
+
+        result = await sip_transaction.async_refresh_session(
+            state,
+            send,
+            local_role="uac",
+            now=lambda: 0.0,
+        )
+
+        self.assertEqual(result, "failed")
+        self.assertEqual(calls, 1)
+
+    async def test_session_refresh_allows_at_most_one_422_retry(self) -> None:
+        state = sip_transaction.sip.SipSessionTimer(interval=90)
+        calls = 0
+
+        async def send(_method, *, extra_headers):
+            nonlocal calls
+            calls += 1
+            self.assertEqual(
+                dict(extra_headers)["Session-Expires"],
+                f"{90 if calls == 1 else 180};refresher=uac",
+            )
+            return sip_transaction.sip.parse_message(
+                sip_transaction.sip.build_response(
+                    422,
+                    "Session Interval Too Small",
+                    [("Min-SE", "180")],
+                )
+            )
+
+        result = await sip_transaction.async_refresh_session(
+            state,
+            send,
+            local_role="uac",
+            now=lambda: 0.0,
+        )
+
+        self.assertEqual(result, "failed")
+        self.assertEqual(calls, 2)
+
     def test_dialog_request_uses_remote_target_without_route_set(self) -> None:
         request = sip_dialog.build_dialog_request(
             "UPDATE",

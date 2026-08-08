@@ -37,6 +37,7 @@ from .core.sip_transaction import (
     SIP_TIMER_B,
     SipClientTransaction,
     SipInvite2xxTransaction,
+    async_refresh_session,
     matches_response,
     same_request_transaction,
 )
@@ -2524,38 +2525,6 @@ class SipCallClient:
             if self._refer_notifications is notifications:
                 self._refer_notifications = None
 
-    async def _refresh_session(
-        self,
-        dialog: SipDialog,
-    ) -> str:
-        """Refresh one RFC 4028 session and commit its next deadline."""
-
-        for _attempt in range(2):
-            try:
-                response = await self._send_in_dialog_request(
-                    "UPDATE",
-                    extra_headers=(
-                        ("Supported", "timer"),
-                        (
-                            "Session-Expires",
-                            f"{dialog.session_timer.interval};refresher=uac",
-                        ),
-                    ),
-                )
-            except ConnectionAbortedError as err:
-                return str(err) or "remote_hangup"
-            if self.dialog is not dialog:
-                return "failed"
-            result = sip.apply_session_refresh_response(
-                dialog.session_timer,
-                response,
-                local_role="uac",
-                now=asyncio.get_running_loop().time(),
-            )
-            if result != "retry":
-                return result
-        return "failed"
-
     async def wait_for_dialog_termination(self, timeout: float | None = None) -> str:
         """Wait for a remote BYE on a confirmed outbound dialog.
 
@@ -2579,7 +2548,15 @@ class SipCallClient:
             if session_local_refresher and (
                 session_refresh_at and now >= session_refresh_at
             ):
-                refresh_result = await self._refresh_session(dialog)
+                try:
+                    refresh_result = await async_refresh_session(
+                        timer,
+                        self._send_in_dialog_request,
+                        local_role="uac",
+                        now=asyncio.get_running_loop().time,
+                    )
+                except ConnectionAbortedError as err:
+                    return str(err) or "remote_hangup"
                 if refresh_result == "refreshed":
                     continue
                 if refresh_result != "failed":

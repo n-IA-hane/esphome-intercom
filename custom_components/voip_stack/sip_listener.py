@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from dataclasses import dataclass, field, replace
+from functools import partial
 import logging
 import secrets
 from typing import Any, Awaitable, Callable
@@ -25,6 +26,7 @@ from .core.sip_transaction import (
     SIP_TIMER_H as _INVITE_NON2XX_TIMEOUT,
     SipClientTransaction,
     SipInvite2xxTransaction,
+    async_refresh_session,
     async_run_server_transaction,
     matches_invite_error_ack,
     same_request_transaction,
@@ -1361,27 +1363,12 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                         return
                     if not dialog.session_timer.local_refresher:
                         break
-                    refresh = "failed"
-                    for _attempt in range(2):
-                        response = await self._send_dialog_request(
-                            call_id,
-                            dialog,
-                            "UPDATE",
-                            extra_headers=(
-                                ("Supported", "timer"),
-                                (
-                                    "Session-Expires",
-                                    f"{dialog.session_timer.interval};refresher=uac",
-                                ),
-                            ),
-                        )
-                        refresh = sip.apply_session_refresh_response(
-                            dialog.session_timer,
-                            response,
-                            local_role="uac",
-                        )
-                        if refresh != "retry":
-                            break
+                    refresh = await async_refresh_session(
+                        dialog.session_timer,
+                        partial(self._send_dialog_request, call_id, dialog),
+                        local_role="uac",
+                        now=asyncio.get_running_loop().time,
+                    )
                     if refresh != "refreshed":
                         break
                 if self.active_dialogs.get(call_id) is dialog:

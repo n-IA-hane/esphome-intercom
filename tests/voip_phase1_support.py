@@ -85,6 +85,7 @@ def _load_intercom_module(name: str):
 audio_format = _load_intercom_module("audio_format")
 audio_pcm = _load_intercom_module("audio_pcm")
 sip = _load_intercom_module("sip")
+sip_transaction = _load_intercom_module("sip_transaction")
 sip_resolution = _load_intercom_module("sip_resolution")
 sdp = _load_intercom_module("sdp")
 codec_capabilities = _load_intercom_module("codec_capabilities")

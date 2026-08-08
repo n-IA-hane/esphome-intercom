@@ -20,9 +20,41 @@ _T = TypeVar("_T")
 ResponseReader = Callable[[float], Awaitable[_T | None]]
 AsyncSend = Callable[[], Awaitable[None]]
 SyncSend = Callable[[], bool | None]
+SessionRefreshSend = Callable[
+    ...,
+    Awaitable[sip.SipMessage | None],
+]
 
 
 type SipTransactionKey = tuple[str, int, str]
+
+
+async def async_refresh_session(
+    state: sip.SipSessionTimer,
+    send: SessionRefreshSend,
+    *,
+    local_role: str,
+    now: Callable[[], float],
+) -> str:
+    """Run the single bounded RFC 4028 refresh policy for every SIP role."""
+
+    for _attempt in range(2):
+        response = await send(
+            "UPDATE",
+            extra_headers=(
+                ("Supported", "timer"),
+                ("Session-Expires", f"{state.interval};refresher={local_role}"),
+            ),
+        )
+        result = sip.apply_session_refresh_response(
+            state,
+            response,
+            local_role=local_role,
+            now=now(),
+        )
+        if result != "retry":
+            return result
+    return "failed"
 
 
 def transaction_key(message: sip.SipMessage) -> SipTransactionKey | None:
