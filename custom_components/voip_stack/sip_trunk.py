@@ -22,6 +22,7 @@ from .core.sip_auth import (
     DigestChallengeTracker,
     build_digest_authorization,
 )
+from .core.sip_resolution import SipServerResolver, SipServerTarget
 from .core.sip_transaction import SIP_T1, SIP_T2, SIP_TIMER_F, SipClientTransaction
 from .sip_udp_io import SipDatagramQueueProtocol
 from .sip_tcp_io import SipTcpWriter, read_sip_stream_message as _read_sip_stream_message
@@ -74,7 +75,14 @@ class SipTrunkConfig:
 
 
 class SipTrunkClient:
-    def __init__(self, *, config: SipTrunkConfig, local_ip: str, local_sip_port: int) -> None:
+    def __init__(
+        self,
+        *,
+        config: SipTrunkConfig,
+        local_ip: str,
+        local_sip_port: int,
+        target_resolver: SipServerResolver | None = None,
+    ) -> None:
         self.config = config
         self.local_ip = local_ip
         self.local_sip_port = int(local_sip_port)
@@ -108,6 +116,8 @@ class SipTrunkClient:
         self.request_handler: TrunkRequestHandler | None = None
         self.inbound_endpoint: Any | None = None
         self._trusted_udp_hosts: frozenset[str] = frozenset()
+        self.target_resolver = target_resolver or SipServerResolver()
+        self._registrar_candidate: SipServerTarget | None = None
 
     def _ensure_receive_task(self) -> None:
         if not self._stopped and (
@@ -128,6 +138,25 @@ class SipTrunkClient:
             return uri.host, int(uri.port or self.config.port)
         except (TypeError, ValueError, sip.SipError):
             return proxy, int(self.config.port)
+
+    @property
+    def active_registrar_target(self) -> tuple[str, int]:
+        candidate = self._registrar_candidate
+        if candidate is None or not candidate.addresses:
+            return self.registrar_target
+        return candidate.addresses[0], candidate.port
+
+    async def _resolve_registrar(self) -> SipServerTarget:
+        host, port = self.registrar_target
+        uri = sip.SipUri("", host, port)
+        candidates = await self.target_resolver.resolve(
+            uri,
+            transport=self.transport_name,
+        )
+        if not candidates or not candidates[0].addresses:
+            raise OSError(f"SIP registrar {host!r} has no reachable address")
+        self._registrar_candidate = candidates[0]
+        return candidates[0]
 
     @property
     def registrar_host(self) -> str:
@@ -332,8 +361,10 @@ class SipTrunkClient:
             while not self.responses.empty():
                 with contextlib.suppress(asyncio.QueueEmpty):
                     self.responses.get_nowait()
+            candidate = self._registrar_candidate or await self._resolve_registrar()
+            host, port = candidate.addresses[0], candidate.port
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(self.registrar_host, self.registrar_port),
+                asyncio.open_connection(host, port),
                 timeout=2.0,
             )
             if self._stopped:
@@ -343,7 +374,7 @@ class SipTrunkClient:
                 raise RuntimeError("SIP trunk stopped while connecting")
             self.reader = reader
             self.writer = writer
-            self._tcp_writer = SipTcpWriter(self.writer, label=f"trunk {self.registrar_host}:{self.registrar_port}")
+            self._tcp_writer = SipTcpWriter(self.writer, label=f"trunk {host}:{port}")
             self._reader_ready.set()
 
     async def _connect_udp(self) -> None:
@@ -354,10 +385,13 @@ class SipTrunkClient:
             return
         loop = asyncio.get_running_loop()
         self.protocol = SipDatagramQueueProtocol(self.queue)
+        candidate = self._registrar_candidate
+        assert candidate is not None
+        family = socket.AF_INET6 if ":" in candidate.addresses[0] else socket.AF_INET
         transport, _ = await loop.create_datagram_endpoint(
             lambda: self.protocol,
-            local_addr=("0.0.0.0", 0),
-            family=socket.AF_INET,
+            local_addr=("::" if family == socket.AF_INET6 else "0.0.0.0", 0),
+            family=family,
         )
         if self._stopped:
             transport.close()
@@ -369,26 +403,19 @@ class SipTrunkClient:
 
         if self.transport_name == "TCP":
             return
-        loop = asyncio.get_running_loop()
-        host, port = self.registrar_target
         try:
-            addresses = await loop.getaddrinfo(
-                host,
-                port,
-                family=socket.AF_INET,
-                type=socket.SOCK_DGRAM,
-            )
+            candidate = await self._resolve_registrar()
         except OSError:
             if self._trusted_udp_hosts:
                 _LOGGER.warning(
                     "SIP trunk UDP proxy DNS refresh failed for %s; retaining prior source allowlist",
-                    host,
+                    self.registrar_host,
                 )
                 return
             raise
-        resolved = frozenset(str(item[4][0]) for item in addresses if item[4])
+        resolved = frozenset(candidate.addresses)
         if not resolved:
-            raise OSError(f"SIP trunk UDP proxy {host!r} has no IPv4 address")
+            raise OSError(f"SIP trunk UDP proxy {self.registrar_host!r} has no address")
         self._trusted_udp_hosts = resolved
 
     def _udp_source_is_trusted(self, addr: tuple[str, int]) -> bool:
@@ -404,7 +431,7 @@ class SipTrunkClient:
             return
         if self.transport is None:
             raise ConnectionError("SIP trunk UDP transport is not available")
-        self.transport.sendto(raw, self.registrar_target)
+        self.transport.sendto(raw, self.active_registrar_target)
 
     async def _read_response(
         self,
@@ -576,7 +603,7 @@ class SipTrunkClient:
             peer = self.writer.get_extra_info("peername")
             if peer:
                 return (str(peer[0]), int(peer[1]))
-        return self.registrar_target
+        return self.active_registrar_target
 
     async def _handle_request(self, raw: bytes, addr: tuple[str, int], method: str) -> None:
         try:
