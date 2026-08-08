@@ -482,6 +482,15 @@ class EndpointCallSession:
                 self.named_tasks.pop(name, None)
         return True
 
+    def cleanup_waits_for(self, task: asyncio.Task[Any] | None) -> bool:
+        """Return whether the terminal barrier is currently draining ``task``."""
+
+        return bool(
+            task is not None
+            and self._termination_task is not None
+            and task in self.tasks
+        )
+
     def create_task(
         self,
         coroutine: Awaitable[Any],

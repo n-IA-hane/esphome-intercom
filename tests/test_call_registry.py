@@ -153,6 +153,41 @@ class CallRegistryEventContextTest(unittest.TestCase):
 
         asyncio.run(exercise())
 
+    def test_owned_lifecycle_cancellation_cannot_wait_on_its_cleanup(self) -> None:
+        async def exercise() -> None:
+            registry = _registry()
+            registry.activate()
+            registry.upsert("source", state="in_call", owner="bridge")
+            started = asyncio.Event()
+            cancellation_settled = asyncio.Event()
+
+            async def lifecycle() -> None:
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    await registry.terminate_call_wait(
+                        "source",
+                        reason="cancelled",
+                    )
+                    cancellation_settled.set()
+                    raise
+
+            task = asyncio.create_task(lifecycle())
+            registry.own_task("source", task, name="bridge-lifecycle")
+            await started.wait()
+
+            await asyncio.wait_for(
+                registry.terminate_call_wait("source", reason="local_hangup"),
+                timeout=1,
+            )
+
+            self.assertTrue(cancellation_settled.is_set())
+            self.assertTrue(task.cancelled())
+            self.assertNotIn("source", registry.sessions)
+
+        asyncio.run(exercise())
+
     def test_active_count_filters_terminal_and_ha_softphone_sessions(self) -> None:
         registry = _registry()
 

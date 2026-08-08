@@ -902,6 +902,15 @@ class CallRuntimeApi:
             )
         removed = session
         if barrier is not None:
+            if session is not None and session.cleanup_waits_for(
+                asyncio.current_task()
+            ):
+                # An owned lifecycle task may handle its cancellation by
+                # requesting the same terminal outcome. Waiting here would
+                # form a cycle: the barrier waits for this task while this
+                # task waits for the barrier. The authoritative cleanup is
+                # already running and remains the sole resource owner.
+                return removed
             await barrier
         return removed
 
