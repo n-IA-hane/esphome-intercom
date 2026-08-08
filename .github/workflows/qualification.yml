@@ -315,7 +315,7 @@ jobs:
           HA_PYTHON: /home/codex/ha-voip-lab/.venv/bin/python
         run: |
           case "$JOB" in
-            peer-live) command=(.venv/bin/python scripts/run_ha_real_matrix.py --summary-output evidence/results/peer-live.json) ;;
+            peer-live) command=(./scripts/run_peer_live_qualification.sh evidence/results) ;;
             browser-real) command=(./scripts/run_lab_regression_gate.sh) ;;
             *) exit 2 ;;
           esac
