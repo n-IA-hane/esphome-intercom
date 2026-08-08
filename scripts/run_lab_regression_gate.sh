@@ -35,10 +35,20 @@ printf 'candidate=%s\n' "$(git rev-parse HEAD)"
 
 SIPP_CAPTURE_DIR="$CAPTURE_DIR/cancel" ./scripts/run_sipp_lab.sh >/dev/null
 
+(
+  cd "$CAPTURE_DIR"
+  exec baresip -f "$LAB_ROOT/baresip-sink"
+) >"$CAPTURE_DIR/baresip-sink.log" 2>&1 &
+SINK_PID=$!
+sleep 1
+kill -0 "$SINK_PID"
+
 PLAYWRIGHT_STORAGE_STATE="$STORAGE_STATE" \
 HA_PLAYWRIGHT_REFRESH_CREDENTIALS="$CREDENTIALS" \
 LOCAL_SIP_TARGET="sip:Casa@$LAB_HOST:15060;transport=tcp" \
 BROWSER_INBOUND_MODE=registered \
+FORWARD_SUCCESS_TARGET=video_sink \
+FORWARD_SUCCESS_CALLEE="Video Sink" \
   .venv/bin/python tools/ha_softphone_matrix.py \
     --out "$CAPTURE_DIR/browser-matrix.json" \
     --only trunk_live_ringing_remote_hangup \
@@ -57,14 +67,6 @@ BROWSER_INBOUND_MODE=registered \
     --only outbound_sip_info_dtmf_event \
     --only outbound_rfc4733_dtmf_event \
     --only outbound_rfc4733_dtmf_keypad >/dev/null
-
-(
-  cd "$CAPTURE_DIR"
-  exec baresip -f "$LAB_ROOT/baresip-sink"
-) >"$CAPTURE_DIR/baresip-sink.log" 2>&1 &
-SINK_PID=$!
-sleep 1
-kill -0 "$SINK_PID"
 
 .venv/bin/python tools/sip_video_peer.py \
   --host "$LAB_HOST" \

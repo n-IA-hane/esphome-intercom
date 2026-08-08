@@ -54,6 +54,8 @@ LOCAL_REGISTERED_TARGET = os.environ.get(
     "LOCAL_REGISTERED_TARGET",
     "video_source",
 )
+FORWARD_SUCCESS_TARGET = os.environ.get("FORWARD_SUCCESS_TARGET", "1666")
+FORWARD_SUCCESS_CALLEE = os.environ.get("FORWARD_SUCCESS_CALLEE", "Troiaio")
 
 CARD_STATE = r"""
 async () => {
@@ -887,7 +889,7 @@ def main() -> int:
                     "voip_stack",
                     "forward",
                     {
-                        "destination": "1666",
+                        "destination": FORWARD_SUCCESS_TARGET,
                         "on_failure": "resume",
                     },
                 )
@@ -900,13 +902,13 @@ def main() -> int:
                 aggregate = event_state()
                 while time.monotonic() < deadline and not (
                     aggregate.get("state") == "in_call"
-                    and aggregate.get("callee") == "Troiaio"
+                    and aggregate.get("callee") == FORWARD_SUCCESS_CALLEE
                 ):
                     time.sleep(0.1)
                     aggregate = event_state()
                 if (
                     aggregate.get("state") != "in_call"
-                    or aggregate.get("callee") != "Troiaio"
+                    or aggregate.get("callee") != FORWARD_SUCCESS_CALLEE
                 ):
                     raise RuntimeError(f"Assist did not answer: {aggregate}")
                 if aggregate.get("call_id") != ringing["card"]["call_id"]:
