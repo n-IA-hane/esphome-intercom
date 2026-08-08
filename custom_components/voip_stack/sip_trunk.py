@@ -590,6 +590,7 @@ class SipTrunkClient:
             supported_send_formats=manager.supported_send_formats,
             supported_recv_formats=manager.supported_recv_formats,
             on_invite=manager.on_invite,
+            on_offerless_invite=getattr(manager, "on_offerless_invite", None),
             on_terminated=manager.on_terminated,
             on_register=getattr(manager, "on_register", None),
             on_info=getattr(manager, "on_info", None),

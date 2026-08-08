@@ -2002,6 +2002,10 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             local_sip_port=5060,
         )
         audio = audio_format.AudioFormat(16000, "s16le", 1, 20)
+
+        async def offerless(_invite):
+            return None
+
         manager = types.SimpleNamespace(
             local_ip="127.0.0.1",
             port=5060,
@@ -2010,6 +2014,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             supported_send_formats=[audio],
             supported_recv_formats=[audio],
             on_invite=lambda _invite: None,
+            on_offerless_invite=offerless,
             on_terminated=None,
             on_media_update=lambda _old, _new, _method: None,
             enable_video=True,
@@ -2026,6 +2031,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(endpoint.enable_video_transcoding)
         self.assertTrue(endpoint.prefer_browser_video_send)
         self.assertIs(endpoint.on_media_update, manager.on_media_update)
+        self.assertIs(endpoint.on_offerless_invite, offerless)
         self.assertEqual(endpoint.signaling_transport, "TCP")
         self.assertTrue(endpoint.trusted_trunk)
         request = sip.parse_message(
