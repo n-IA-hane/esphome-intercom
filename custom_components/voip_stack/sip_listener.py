@@ -2803,39 +2803,29 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             return False
         remote_tag = sip.extract_tag(dialog.request.header("From"))
         try:
-            routing = sip.dialog_request_routing(
-                remote_target_uri,
-                dialog.route_set,
+            request = build_dialog_request(
+                "BYE",
+                call_id=call_id,
+                local_tag=dialog.to_tag,
+                remote_tag=remote_tag,
+                cseq=dialog.local_cseq,
+                local_uri=local_uri,
+                remote_uri=remote_uri,
+                remote_target_uri=remote_target_uri,
+                route_set=dialog.route_set,
+                transport=dialog.transport,
             )
         except (TypeError, ValueError, sip.SipError) as err:
             _LOGGER.warning("SIP BYE routing rejected call_id=%s: %s", call_id, err)
             return False
-        ids = sip.SipDialogIds(
-            call_id=call_id,
-            local_tag=dialog.to_tag,
-            remote_tag=remote_tag,
-            cseq=dialog.local_cseq,
-            branch=sip.make_branch(),
-        )
-        headers = sip.dialog_headers(
-            request_uri=routing.request_uri,
-            local_uri=local_uri,
-            remote_uri=remote_uri,
-            dialog=ids,
-            method="BYE",
-            contact_uri=local_uri,
-            transport=dialog.transport,
-        )
-        headers.extend(("Route", value) for value in routing.route_headers)
-        raw = sip.build_request("BYE", routing.request_uri, headers, b"")
         target_addr = dialog.addr
         if dialog.transport == "UDP":
             try:
-                target = sip.parse_sip_uri(routing.next_hop_uri)
+                target = sip.parse_sip_uri(request.routing.next_hop_uri)
                 target_addr = (target.host, int(target.port or 5060))
             except (TypeError, ValueError, sip.SipError):
                 pass
-        if not self._send(raw, target_addr):
+        if not self._send(request.raw, target_addr):
             _LOGGER.warning("SIP TX BYE dropped call_id=%s", call_id)
             return False
         dialog.local_cseq += 1

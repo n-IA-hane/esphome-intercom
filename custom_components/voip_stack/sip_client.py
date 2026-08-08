@@ -3957,42 +3957,33 @@ class SipCallClient:
         if not self._has_signaling_path() or not request_uri or not local_uri or not remote_uri:
             return False
         try:
-            routing = sip.dialog_request_routing(request_uri, route_set)
+            request = build_dialog_request(
+                "BYE",
+                call_id=self.dialog_ids.call_id,
+                local_tag=self.dialog_ids.local_tag,
+                remote_tag=remote_tag or self.dialog_ids.remote_tag,
+                cseq=self._next_dialog_cseq(),
+                local_uri=local_uri,
+                remote_uri=remote_uri,
+                remote_target_uri=request_uri,
+                route_set=route_set,
+                transport=self.signaling_transport,
+                local_display_name=self.local_name,
+                remote_display_name=self._dialog_remote_display_name,
+            )
         except (TypeError, ValueError, sip.SipError) as err:
             _LOGGER.warning("SIP BYE routing rejected: %s", err)
             return False
-        bye_ids = sip.SipDialogIds(
-            call_id=self.dialog_ids.call_id,
-            local_tag=self.dialog_ids.local_tag,
-            remote_tag=remote_tag or self.dialog_ids.remote_tag,
-            cseq=self._next_dialog_cseq(),
-            branch=sip.make_branch(),
-        )
-        headers = sip.dialog_headers(
-            request_uri=routing.request_uri,
-            local_uri=local_uri,
-            remote_uri=remote_uri,
-            dialog=bye_ids,
-            method="BYE",
-            contact_uri=local_uri,
-            transport=self.signaling_transport,
-            local_display_name=self.local_name,
-            remote_display_name=(
-                self._dialog_remote_display_name
-            ),
-        )
-        headers.extend(("Route", value) for value in routing.route_headers)
-        raw = sip.build_request("BYE", routing.request_uri, headers, b"")
         next_host, next_port = self._dialog_next_hop(
-            routing.next_hop_uri,
+            request.routing.next_hop_uri,
             host,
             int(port),
         )
-        if not self._send_dialog_request(raw, next_host, next_port):
+        if not self._send_dialog_request(request.raw, next_host, next_port):
             _LOGGER.warning("SIP TX BYE dropped: signaling path unavailable")
             return False
-        self._bye_cseq = bye_ids.cseq
-        self._bye_branch = bye_ids.branch
+        self._bye_cseq = request.ids.cseq
+        self._bye_branch = request.ids.branch
         sip.mark_sip_event(self, "BYE")
         _LOGGER.info("SIP TX BYE %s:%s", next_host, next_port)
         return True
