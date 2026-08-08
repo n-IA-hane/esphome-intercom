@@ -2600,53 +2600,34 @@ class SipCallClient:
     async def _refresh_session(
         self,
         dialog: SipDialog,
-        *,
-        retry_422: bool = True,
     ) -> str:
         """Refresh one RFC 4028 session and commit its next deadline."""
 
-        try:
-            response = await self._send_in_dialog_request(
-                "UPDATE",
-                extra_headers=(
-                    ("Supported", "timer"),
-                    (
-                        "Session-Expires",
-                        f"{dialog.session_timer.interval};refresher=uac",
-                    ),
-                ),
-            )
-        except ConnectionAbortedError as err:
-            return str(err) or "remote_hangup"
-        if response is None or self.dialog is not dialog:
-            return "failed"
-        if response.status_code == 422:
-            if not retry_422:
-                return "failed"
+        for _attempt in range(2):
             try:
-                minimum = sip.parse_session_expires(response.header("Min-SE")).seconds
-            except sip.SipError:
+                response = await self._send_in_dialog_request(
+                    "UPDATE",
+                    extra_headers=(
+                        ("Supported", "timer"),
+                        (
+                            "Session-Expires",
+                            f"{dialog.session_timer.interval};refresher=uac",
+                        ),
+                    ),
+                )
+            except ConnectionAbortedError as err:
+                return str(err) or "remote_hangup"
+            if self.dialog is not dialog:
                 return "failed"
-            dialog.session_timer.interval = max(
-                dialog.session_timer.interval,
-                minimum,
+            result = sip.apply_session_refresh_response(
+                dialog.session_timer,
+                response,
+                local_role="uac",
+                now=asyncio.get_running_loop().time(),
             )
-            return await self._refresh_session(dialog, retry_422=False)
-        if not 200 <= int(response.status_code or 0) < 300:
-            return "failed"
-        if not response.header("Session-Expires"):
-            dialog.session_timer.configure(None, local_role="uac")
-            return "refreshed"
-        try:
-            timer = sip.parse_session_expires(response.header("Session-Expires"))
-        except sip.SipError:
-            return "failed"
-        dialog.session_timer.configure(
-            timer,
-            local_role="uac",
-            now=asyncio.get_running_loop().time(),
-        )
-        return "refreshed"
+            if result != "retry":
+                return result
+        return "failed"
 
     async def wait_for_dialog_termination(self, timeout: float | None = None) -> str:
         """Wait for a remote BYE on a confirmed outbound dialog.

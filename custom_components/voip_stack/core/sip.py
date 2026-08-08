@@ -267,6 +267,36 @@ class SipSessionTimer:
         return self.deadline - min(32.0, self.interval / 3)
 
 
+def apply_session_refresh_response(
+    state: SipSessionTimer,
+    response: SipMessage | None,
+    *,
+    local_role: str,
+    now: float = 0.0,
+) -> str:
+    """Apply one RFC 4028 refresh response to dialog timer state."""
+    if response is None:
+        return "failed"
+    if response.status_code == 422:
+        try:
+            minimum = parse_session_expires(response.header("Min-SE")).seconds
+        except SipError:
+            return "failed"
+        state.interval = max(state.interval, minimum)
+        return "retry"
+    if not 200 <= int(response.status_code or 0) < 300:
+        return "failed"
+    value = response.header("Session-Expires")
+    if not value:
+        state.configure(None, local_role=local_role)
+        return "refreshed"
+    try:
+        state.configure(parse_session_expires(value), local_role=local_role, now=now)
+    except SipError:
+        return "failed"
+    return "refreshed"
+
+
 @dataclass(frozen=True, slots=True)
 class SipRAck:
     response_number: int

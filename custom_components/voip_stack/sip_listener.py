@@ -1371,7 +1371,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                         return
                     if not dialog.session_timer.local_refresher:
                         break
-                    for attempt in range(2):
+                    refresh = "failed"
+                    for _attempt in range(2):
                         response = await self._send_dialog_request(
                             call_id,
                             dialog,
@@ -1384,31 +1385,15 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                                 ),
                             ),
                         )
-                        if response is None:
-                            break
-                        if response.status_code != 422:
-                            break
-                        try:
-                            minimum = sip.parse_session_expires(
-                                response.header("Min-SE")
-                            ).seconds
-                        except sip.SipError:
-                            response = None
-                            break
-                        dialog.session_timer.interval = max(
-                            dialog.session_timer.interval,
-                            minimum,
+                        refresh = sip.apply_session_refresh_response(
+                            dialog.session_timer,
+                            response,
+                            local_role="uac",
                         )
-                    if response is None or not 200 <= int(response.status_code or 0) < 300:
+                        if refresh != "retry":
+                            break
+                    if refresh != "refreshed":
                         break
-                    try:
-                        negotiated = sip.parse_session_expires(response.header("Session-Expires"))
-                    except sip.SipError:
-                        break
-                    dialog.session_timer.configure(
-                        negotiated,
-                        local_role="uac",
-                    )
                 if self.active_dialogs.get(call_id) is dialog:
                     if not self.send_bye(call_id):
                         self.active_dialogs.pop(call_id, None)
