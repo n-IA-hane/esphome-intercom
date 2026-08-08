@@ -151,11 +151,8 @@ class SipUri:
         if any(ord(ch) < 0x21 or ch in '<>"/@,;?\\' for ch in host):
             raise SipError("SIP URI contains an invalid host")
         safe_user = quote(user, safe="!$&'()*+,-./:;=?_~")
-        uri = f"sip:{safe_user}@{host}" if safe_user else f"sip:{host}"
-        if self.port is not None:
-            if not 1 <= int(self.port) <= 65535:
-                raise SipError(f"SIP URI port out of range: {self.port}")
-            uri += f":{int(self.port)}"
+        authority = format_host_port(host, self.port)
+        uri = f"sip:{safe_user}@{authority}" if safe_user else f"sip:{authority}"
         for key, value in self.params:
             if not key:
                 continue
@@ -315,12 +312,7 @@ def parse_sip_uri(value: str) -> SipUri:
         params_raw = [p for p in params_part.split(";") if p]
     else:
         host_part = host_params
-    port: int | None = None
-    host = host_part
-    if host_part.count(":") == 1 and not host_part.startswith("["):
-        host, port_raw = host_part.rsplit(":", 1)
-        if port_raw:
-            port = int(port_raw)
+    host, port = parse_host_port(host_part, default_port=None)
     params: list[tuple[str, str | None]] = []
     for param in params_raw:
         if "=" in param:
@@ -335,6 +327,49 @@ def parse_sip_uri(value: str) -> SipUri:
     uri = SipUri(user=user, host=host.strip(), port=port, params=tuple(params))
     str(uri)
     return uri
+
+
+def format_host_port(host: str, port: int | None = None) -> str:
+    """Render one SIP host and optional port without IPv6 ambiguity."""
+
+    clean = str(host or "").strip()
+    if clean.startswith("[") and clean.endswith("]"):
+        clean = clean[1:-1]
+    if not clean:
+        raise SipError("SIP address requires non-empty host")
+    rendered = f"[{clean}]" if ":" in clean else clean
+    if port is None:
+        return rendered
+    if not 1 <= int(port) <= 65535:
+        raise SipError(f"SIP port out of range: {port}")
+    return f"{rendered}:{int(port)}"
+
+
+def parse_host_port(
+    value: str,
+    *,
+    default_port: int | None = 5060,
+) -> tuple[str, int | None]:
+    """Parse a hostname, IPv4 or bracketed IPv6 SIP authority."""
+
+    authority = str(value or "").strip()
+    if authority.startswith("["):
+        closing = authority.find("]")
+        if closing <= 1:
+            raise SipError(f"bad SIP address: {value!r}")
+        host = authority[1:closing]
+        suffix = authority[closing + 1 :]
+        if suffix and not suffix.startswith(":"):
+            raise SipError(f"bad SIP address: {value!r}")
+        port = int(suffix[1:]) if suffix else default_port
+    elif authority.count(":") == 1:
+        host, raw_port = authority.rsplit(":", 1)
+        port = int(raw_port) if raw_port else default_port
+    else:
+        host, port = authority, default_port
+    if not host or (port is not None and not 1 <= int(port) <= 65535):
+        raise SipError(f"bad SIP address: {value!r}")
+    return host, port
 
 
 def contact_target_uri(message: SipMessage) -> str:
@@ -570,13 +605,9 @@ def parse_via(value: str) -> SipVia:
     if transport not in {"UDP", "TCP"}:
         raise SipError(f"unsupported Via transport {transport!r}")
     sent_by = bits[1]
-    host = sent_by
-    port = 5060
-    if sent_by.count(":") == 1 and not sent_by.startswith("["):
-        host, raw_port = sent_by.rsplit(":", 1)
-        port = int(raw_port)
-    if not host or not 1 <= port <= 65535:
-        raise SipError(f"bad Via sent-by: {sent_by!r}")
+    host, parsed_port = parse_host_port(sent_by)
+    assert parsed_port is not None
+    port = parsed_port
     param_map = {key: val for key, val in params}
     rport_raw = param_map.get("rport")
     rport = None
@@ -876,9 +907,7 @@ def dialog_headers(
 ) -> list[tuple[str, str]]:
     """Build the common headers used by the ESP/HA phase-1 profile."""
     contact = parse_sip_uri(contact_uri)
-    sent_by = contact.host
-    if contact.port:
-        sent_by = f"{sent_by}:{contact.port}"
+    sent_by = format_host_port(contact.host, contact.port)
     via_transport = (transport or "UDP").strip().upper()
     if via_transport not in {"UDP", "TCP"}:
         raise SipError(f"unsupported SIP transport {transport!r}")

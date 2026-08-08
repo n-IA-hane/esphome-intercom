@@ -150,6 +150,24 @@ class SipUriTest(unittest.TestCase):
         self.assertEqual(uri.params, (("transport", "tcp"),))
         self.assertEqual(str(uri), "sip:192.168.1.10;transport=tcp")
 
+    def test_ipv6_uri_and_via_round_trip_without_address_ambiguity(self) -> None:
+        uri = sip.parse_sip_uri("sip:phone@[2001:db8::10]:5070;transport=tcp")
+        via = sip.parse_via(
+            "SIP/2.0/TCP [2001:db8::20]:5080;branch=z9hG4bKipv6;rport"
+        )
+
+        self.assertEqual(uri.host, "2001:db8::10")
+        self.assertEqual(uri.port, 5070)
+        self.assertEqual(
+            str(uri),
+            "sip:phone@[2001:db8::10]:5070;transport=tcp",
+        )
+        self.assertEqual((via.host, via.port), ("2001:db8::20", 5080))
+        self.assertEqual(
+            sip.format_host_port("2001:db8::30", 5060),
+            "[2001:db8::30]:5060",
+        )
+
     def test_extract_tag_ignores_quoted_display_name_parameters(self) -> None:
         self.assertEqual(sip.extract_tag("<sip:a@b>;tag=abc;x=y"), "abc")
         self.assertEqual(sip.extract_tag("<sip:a@b>;TAG=ABC;x=y"), "ABC")
