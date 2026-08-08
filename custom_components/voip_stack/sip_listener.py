@@ -70,6 +70,7 @@ class SipInvite:
     peer_profile: str = ""
     caller_route: str = ""
     target_route: str = ""
+    initial_response_sent: bool = False
 
     @property
     def selected_format(self) -> sdp.RtpPcmFormat:
@@ -1309,6 +1310,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 peer_profile=initial.peer_profile,
                 caller_route=initial.caller_route,
                 target_route=initial.target_route,
+                initial_response_sent=True,
             )
         result = SipInviteResult(488, "Not Acceptable Here")
         accept_answer = delayed.accept_answer

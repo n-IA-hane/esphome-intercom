@@ -755,7 +755,10 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
 
             reservation = take_delayed_offer_ports(hass, invite.call_id)
             if reservation is None:
-                return SipInviteResult(500, "Server Internal Error")
+                # A deferred bridge or fork already transferred the advertised
+                # pair into its asynchronous route owner. Its final answer is
+                # now signaling-only on the source dialog.
+                return SipInviteResult(200, "OK")
             registry.attach_media(
                 invite.call_id,
                 {

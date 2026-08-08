@@ -552,14 +552,16 @@ async def route_sip_bridge(
             video_format=selected_video,
             video_direction=selected_video_direction,
         )
-        transaction = AnswerTransaction(
-            session,
-            bind_final_response(
+        send_answer = (
+            (lambda _status, _reason, _sdp: True)
+            if invite.initial_response_sent
+            else bind_final_response(
                 runtime.send_final_response,
                 hass,
                 session.token,
-            ),
+            )
         )
+        transaction = AnswerTransaction(session, send_answer)
         transaction.add_resource(
             f"relay:{invite.call_id}",
             relay,
