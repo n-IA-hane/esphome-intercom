@@ -48,7 +48,7 @@ HA_PLAYWRIGHT_REFRESH_CREDENTIALS="$CREDENTIALS" \
 LOCAL_SIP_TARGET="sip:Casa@$LAB_HOST:15060;transport=tcp" \
 BROWSER_INBOUND_MODE=registered \
 FORWARD_SUCCESS_TARGET=video_sink \
-FORWARD_SUCCESS_CALLEE="Video Sink" \
+FORWARD_SUCCESS_CALLEE=video_sink \
   .venv/bin/python tools/ha_softphone_matrix.py \
     --out "$CAPTURE_DIR/browser-matrix.json" \
     --only trunk_live_ringing_remote_hangup \
