@@ -46,6 +46,8 @@ WS3_AUTO_ANSWER = "switch.cucina_waveshare_s3_audio_auto_answer"
 TRUNK_NUMBER = "427"
 ROUTE_DESTINATION = "Waveshare S3 Audio"
 ASSIST_EXTENSION = "1666"
+SECONDARY_EXTENSION = os.environ.get("VOIP_SECONDARY_EXTENSION", "667")
+SECONDARY_CALLEE = os.environ.get("VOIP_SECONDARY_CALLEE", "Test")
 
 
 class HomeAssistantApi:
@@ -915,37 +917,52 @@ def main() -> int:
 
         case("dtmf_no_digits_then_native_override", dtmf_no_digits_override)
 
-        def dtmf_valid_digits() -> dict[str, Any]:
-            snapshot.apply(
-                api,
-                mode="dtmf",
-                automation=True,
-                default_target="HA",
-                timeout_seconds=5,
-            )
-            set_automation(api, ROUTE_AUTOMATION, True)
-            previous = automation_last_triggered(api, ROUTE_AUTOMATION)
-            sip = caller()
-            with EventTrace(api) as trace:
-                started = sip.dial()
-                sip.wait_for_dtmf_media()
-                sip.digits(ASSIST_EXTENSION)
-                connected = wait_event_state(api, "in_call", 12, callee="Troiaio")
-                elapsed = time.monotonic() - started
-                time.sleep(0.15)
-            triggered = automation_last_triggered(api, ROUTE_AUTOMATION)
-            if triggered != previous:
-                raise RuntimeError("explicit DTMF incorrectly triggered automation")
-            types = trace_types(trace, str(connected.get("call_id") or ""))
-            if "route_requested" in types:
-                raise RuntimeError(f"explicit DTMF emitted route_requested: {types}")
-            if elapsed >= 4.5:
-                raise RuntimeError(
-                    f"exact extension did not terminate collection: {elapsed:.3f}s"
+        def exact_dtmf_route(extension: str, callee: str) -> Callable[[], dict[str, Any]]:
+            def run() -> dict[str, Any]:
+                snapshot.apply(
+                    api,
+                    mode="dtmf",
+                    automation=True,
+                    default_target="HA",
+                    timeout_seconds=5,
                 )
-            return {"elapsed": round(elapsed, 3), "events": types, "call": connected}
+                set_automation(api, ROUTE_AUTOMATION, True)
+                previous = automation_last_triggered(api, ROUTE_AUTOMATION)
+                sip = caller()
+                with EventTrace(api) as trace:
+                    started = sip.dial()
+                    sip.wait_for_dtmf_media()
+                    sip.digits(extension)
+                    connected = wait_event_state(api, "in_call", 12, callee=callee)
+                    elapsed = time.monotonic() - started
+                    time.sleep(0.15)
+                triggered = automation_last_triggered(api, ROUTE_AUTOMATION)
+                if triggered != previous:
+                    raise RuntimeError("explicit DTMF incorrectly triggered automation")
+                types = trace_types(trace, str(connected.get("call_id") or ""))
+                if "route_requested" in types:
+                    raise RuntimeError(f"explicit DTMF emitted route_requested: {types}")
+                if elapsed >= 4.5:
+                    raise RuntimeError(
+                        f"exact extension did not terminate collection: {elapsed:.3f}s"
+                    )
+                return {
+                    "extension": extension,
+                    "elapsed": round(elapsed, 3),
+                    "events": types,
+                    "call": connected,
+                }
 
-        case("dtmf_valid_extension_bypasses_automation", dtmf_valid_digits)
+            return run
+
+        case(
+            "dtmf_assist_extension_bypasses_automation",
+            exact_dtmf_route(ASSIST_EXTENSION, "Troiaio"),
+        )
+        case(
+            "dtmf_secondary_extension_bypasses_automation",
+            exact_dtmf_route(SECONDARY_EXTENSION, SECONDARY_CALLEE),
+        )
 
         def dtmf_invalid_digits() -> dict[str, Any]:
             snapshot.apply(
