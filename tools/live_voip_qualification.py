@@ -89,12 +89,12 @@ def qualification_token(args: argparse.Namespace) -> str:
     """Load a live-test token without persisting a refreshed credential."""
     if args.token:
         return str(args.token).strip()
+    if args.auth_file.is_file():
+        return _refresh_ha_token(args.auth_file)
     helper_path = (
         Path(__file__).resolve().parents[1] / "test_runs/ha_playwright_auth.py"
     )
     if not helper_path.is_file():
-        if args.auth_file.is_file():
-            return _refresh_ha_token(args.auth_file)
         return args.token_file.read_text(encoding="utf-8").strip()
     spec = importlib.util.spec_from_file_location(
         "_voip_live_ha_auth",

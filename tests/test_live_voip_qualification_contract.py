@@ -30,6 +30,21 @@ runner = _load_tool()
 
 
 class LiveVoipQualificationContractTest(unittest.TestCase):
+    def test_explicit_refresh_credential_precedes_cached_browser_helper(self) -> None:
+        args = SimpleNamespace(
+            token="",
+            auth_file=Path("/tmp/qualification-auth"),
+            token_file=Path("/tmp/stale-token"),
+        )
+        with (
+            unittest.mock.patch.object(Path, "is_file", return_value=True),
+            unittest.mock.patch.object(
+                runner, "_refresh_ha_token", return_value="fresh-token"
+            ) as refresh,
+        ):
+            self.assertEqual(runner.qualification_token(args), "fresh-token")
+        refresh.assert_called_once_with(args.auth_file)
+
     def test_default_group_names_are_unique_to_the_selected_run(self) -> None:
         args = SimpleNamespace(
             esp="p4",
