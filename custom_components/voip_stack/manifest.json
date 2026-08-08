@@ -10,7 +10,7 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/n-IA-hane/esphome-intercom/issues",
   "loggers": ["custom_components.voip_stack"],
-  "requirements": [],
+  "requirements": ["dnspython==2.8.0"],
   "single_config_entry": true,
   "version": "2026.8.1-dev"
 }

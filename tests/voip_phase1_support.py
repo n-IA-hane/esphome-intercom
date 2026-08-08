@@ -24,7 +24,8 @@ PKG_DIR = ROOT / "custom_components" / "voip_stack"
 CORE_MODULES = {
     "audio_format", "audio_pcm", "codec_capabilities", "g711",
     "g722_codec", "opus_codec", "rtp", "sdp", "sip", "sip_auth",
-    "sip_dialog", "sip_transaction", "sip_transfer", "video_rtcp", "video_rtp",
+    "sip_dialog", "sip_resolution", "sip_transaction", "sip_transfer",
+    "video_rtcp", "video_rtp",
 }
 
 
@@ -84,6 +85,7 @@ def _load_intercom_module(name: str):
 audio_format = _load_intercom_module("audio_format")
 audio_pcm = _load_intercom_module("audio_pcm")
 sip = _load_intercom_module("sip")
+sip_resolution = _load_intercom_module("sip_resolution")
 sdp = _load_intercom_module("sdp")
 codec_capabilities = _load_intercom_module("codec_capabilities")
 g722_codec = _load_intercom_module("g722_codec")

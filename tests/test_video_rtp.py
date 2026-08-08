@@ -1993,14 +1993,14 @@ class H264SdpTest(unittest.TestCase):
             )
         )
 
-    def test_unsupported_media_level_connection_does_not_break_audio(self) -> None:
+    def test_unknown_media_level_address_family_does_not_break_audio(self) -> None:
         offer = (
             "v=0\r\no=- 1 2 IN IP4 192.168.1.48\r\ns=-\r\n"
             "c=IN IP4 192.168.1.48\r\nt=0 0\r\n"
             "m=audio 44652 RTP/AVP 96\r\n"
             "a=rtpmap:96 L16/16000/1\r\na=ptime:20\r\na=sendrecv\r\n"
             "m=video 19728 RTP/AVP 102\r\n"
-            "c=IN IP6 2001:db8::1\r\n"
+            "c=IN IP7 unknown.example\r\n"
             "a=rtpmap:102 H264/90000\r\n"
             "a=fmtp:102 packetization-mode=1;profile-level-id=42e01f\r\n"
         )
@@ -2019,9 +2019,9 @@ class H264SdpTest(unittest.TestCase):
         self.assertIn("m=audio 40000 RTP/AVP 96", answer)
         self.assertIn("m=video 0 RTP/AVP 102", answer)
 
-    def test_unsupported_session_connection_still_rejects_call(self) -> None:
+    def test_unknown_session_address_family_still_rejects_call(self) -> None:
         offer = (
-            "v=0\r\nc=IN IP6 2001:db8::1\r\nt=0 0\r\n"
+            "v=0\r\nc=IN IP7 unknown.example\r\nt=0 0\r\n"
             "m=audio 44652 RTP/AVP 96\r\n"
             "a=rtpmap:96 L16/16000/1\r\na=ptime:20\r\n"
         )
