@@ -631,11 +631,8 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         immediate_failure = tracker.split(
             'if result not in {"ringing", "in_call"}:', 1
         )[1].split("registry.sip_clients[client.dialog_ids.call_id]", 1)[0]
-        self.assertIn("registry.terminate_call(", immediate_failure)
-        self.assertLess(
-            immediate_failure.index("registry.terminate_call("),
-            immediate_failure.index("await client.close()"),
-        )
+        self.assertIn("await registry.terminate_call_wait(", immediate_failure)
+        self.assertNotIn("await client.close()", immediate_failure)
 
         outbound = _function_body(
             self.softphone_originate, "async_originate_browser_call"
@@ -644,9 +641,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             "except Exception as err:  # noqa: BLE001 - isolate one outbound SIP leg.",
             1,
         )[1].split("if registry.sip_clients.get", 1)[0]
-        self.assertIn("registry.detach_client", invite_error)
+        self.assertNotIn("registry.detach_client", invite_error)
         self.assertIn("_set_ha_softphone_call_state(", invite_error)
-        self.assertIn("registry.terminate_call(", invite_error)
+        self.assertIn("await registry.terminate_call_wait(", invite_error)
 
     def test_esp_state_mirrors_physical_busy_ownership_into_logical_endpoint(
         self,

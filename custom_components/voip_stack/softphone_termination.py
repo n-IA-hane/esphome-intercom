@@ -11,10 +11,8 @@ from homeassistant.exceptions import ServiceValidationError
 from .bridge_manager import async_terminate_sip_bridge
 from .call_scope import endpoint_call_ids, pending_routes, take_pending_route
 from .fsm import CallState, TerminalReason, sip_public_state
-from .media_ports import release_media_reservation
 from .route_decisions import set_pending_route_decision
 from .runtime_data import call_runtime_artifacts, conference_component
-from .session_cleanup import async_cleanup_sip_runtime
 from .sip_runtime import send_bye, send_final_response, sip_servers
 from .softphone_commands import BrowserCallCommand
 from .websocket_api import (
@@ -239,15 +237,9 @@ async def async_hangup_browser_call(
         )
         return
 
-    client, watcher = registry.detach_client(call_id) if call_id else (None, None)
-    if client is not None and watcher is None and client.dialog is None:
-        # The initial INVITE coroutine is the only reader for its transaction.
-        # Ask it to emit CANCEL when RFC 3261 permits instead of racing it.
-        client.request_cancel()
-        client = None
-    relay = registry.take_relay(call_id) if call_id else None
-    media_session = media_sessions.pop(call_id, None) if call_id else None
-    release_media_reservation(media_session)
+    client = clients.get(call_id) if call_id else None
+    relay = registry.relays.get(call_id) if call_id else None
+    media_session = media_sessions.get(call_id) if call_id else None
     conference_room = str((media_session or {}).get("conference_room") or "")
     if conference_room:
         manager = conference_component(hass)
@@ -265,20 +257,13 @@ async def async_hangup_browser_call(
     )
     server_bye = False
     pending_closed = 0
-    await async_cleanup_sip_runtime(
-        relay=relay,
-        client=client,
-        watcher=watcher,
-        terminate_client=True,
-        relay_first=False,
-    )
+    terminated_ids: set[str] = set()
     for pending_call_id in pending_ids:
-        invite = registry.take_pending_invite(pending_call_id)
+        invite = pending.get(pending_call_id)
         if invite is None:
             continue
-        preanswered_item = registry.take_media(pending_call_id, provisional=True)
+        preanswered_item = registry.preanswered.get(pending_call_id)
         if preanswered_item is not None:
-            release_media_reservation(preanswered_item)
             if send_bye(hass, pending_call_id):
                 pending_closed += 1
         elif send_final_response(
@@ -304,10 +289,11 @@ async def async_hangup_browser_call(
             sip_status_code=487,
             last_sip_event="SIP_RESPONSE",
         )
-        registry.terminate_call(
+        await registry.terminate_call_wait(
             pending_call_id,
             reason=TerminalReason.LOCAL_HANGUP.value,
         )
+        terminated_ids.add(pending_call_id)
     if client is None and relay is None:
         for server in sip_servers(hass):
             server_send_bye = getattr(server, "send_bye", None)
@@ -317,6 +303,11 @@ async def async_hangup_browser_call(
                     call_id = "(active)"
                 break
 
+    if call_id and call_id not in terminated_ids:
+        await registry.terminate_call_wait(
+            call_id,
+            reason=TerminalReason.LOCAL_HANGUP.value,
+        )
     _set_ha_softphone_call_state(
         hass,
         CallState.IDLE.value,
@@ -336,11 +327,6 @@ async def async_hangup_browser_call(
         ),
         pending_closed=pending_closed,
     )
-    if call_id:
-        registry.terminate_call(
-            call_id,
-            reason=TerminalReason.LOCAL_HANGUP.value,
-        )
     _LOGGER.info(
         "SIP hangup call_id=%s client=%s relay=%s pending_closed=%d server_bye=%s",
         call_id,

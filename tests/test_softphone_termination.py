@@ -29,9 +29,7 @@ def termination(monkeypatch):
     core = types.ModuleType("homeassistant.core")
     core.HomeAssistant = type("HomeAssistant", (), {})
     exceptions = types.ModuleType("homeassistant.exceptions")
-    exceptions.ServiceValidationError = type(
-        "ServiceValidationError", (Exception,), {}
-    )
+    exceptions.ServiceValidationError = type("ServiceValidationError", (Exception,), {})
     monkeypatch.setitem(sys.modules, "homeassistant", homeassistant)
     monkeypatch.setitem(sys.modules, "homeassistant.core", core)
     monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions)
@@ -43,22 +41,22 @@ def termination(monkeypatch):
     )
     dependencies = {
         "bridge_manager": {"async_terminate_sip_bridge": AsyncMock()},
-            "call_scope": {
-                "endpoint_call_ids": Mock(return_value=[]),
-                "pending_routes": Mock(return_value={}),
-                "take_pending_route": Mock(),
-            },
-            "const": {
-                "DOMAIN": "voip_stack",
-                "HA_SOFTPHONE_DEVICE_ID": "ha-device",
-            },
+        "call_scope": {
+            "endpoint_call_ids": Mock(return_value=[]),
+            "pending_routes": Mock(return_value={}),
+            "take_pending_route": Mock(),
+        },
+        "const": {
+            "DOMAIN": "voip_stack",
+            "HA_SOFTPHONE_DEVICE_ID": "ha-device",
+        },
         "fsm": {
             "CallState": call_state,
             "TerminalReason": terminal_reason,
             "sip_public_state": Mock(return_value="idle"),
         },
-            "media_ports": {"release_media_reservation": Mock()},
-            "phone_endpoint": {"DEFAULT_ENDPOINT_ID": "default"},
+        "media_ports": {"release_media_reservation": Mock()},
+        "phone_endpoint": {"DEFAULT_ENDPOINT_ID": "default"},
         "runtime_data": {
             "call_runtime_artifacts": lambda hass: hass.artifacts,
             "conference_component": Mock(return_value=None),
@@ -80,9 +78,7 @@ def termination(monkeypatch):
         "local_softphone_bridge": {
             "LocalBridgeError": type("LocalBridgeError", (Exception,), {})
         },
-        "local_softphone_runtime": {
-            "local_softphone_bridge": Mock(return_value=None)
-        },
+        "local_softphone_runtime": {"local_softphone_bridge": Mock(return_value=None)},
     }
     for name, values in dependencies.items():
         dependency = types.ModuleType(f"{package_name}.{name}")
@@ -127,6 +123,55 @@ def test_pending_ring_group_hangup_cancels_only_its_leg(termination) -> None:
             "endpoint_id": "kitchen",
         },
     )
+
+
+def test_outbound_hangup_waits_for_session_cleanup_owner(termination) -> None:
+    hass = SimpleNamespace(
+        data={}, artifacts=SimpleNamespace(task_for=lambda call_id, name: None)
+    )
+    client = SimpleNamespace(terminate=AsyncMock(), close=AsyncMock())
+    cleaned = False
+
+    async def terminate_call_wait(call_id: str, **kwargs) -> None:
+        nonlocal cleaned
+        assert call_id == "call-1"
+        assert kwargs["reason"] == "local_hangup"
+        cleaned = True
+
+    registry = SimpleNamespace(
+        sip_clients={"call-1": client},
+        pending_invites={},
+        softphone_media={},
+        preanswered={},
+        relays={},
+        bridge_clients={},
+        sessions={},
+        resolve_session_id=lambda call_id: call_id,
+        terminate_call_wait=terminate_call_wait,
+    )
+    command = SimpleNamespace(
+        endpoint_id="kitchen",
+        device_id="device-kitchen",
+        call_id="call-1",
+        registry=registry,
+    )
+    termination._ha_softphone_store = Mock(
+        return_value={"call_id": "call-1", "direction": "outgoing"}
+    )
+    termination.async_terminate_sip_bridge_session = AsyncMock(
+        return_value=(False, "", "", False, False)
+    )
+
+    def publish(*_args, **_kwargs) -> None:
+        assert cleaned
+
+    termination._set_ha_softphone_call_state = Mock(side_effect=publish)
+
+    asyncio.run(termination.async_hangup_browser_call(hass, command))
+
+    client.terminate.assert_not_awaited()
+    client.close.assert_not_awaited()
+    termination._set_ha_softphone_call_state.assert_called_once()
 
 
 def test_bridge_projection_is_scoped_to_matching_softphone(termination) -> None:

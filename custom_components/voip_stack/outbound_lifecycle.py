@@ -17,7 +17,6 @@ from .fsm import (
     sip_terminal_reason,
 )
 from .runtime_data import call_runtime_artifacts
-from .session_cleanup import async_cleanup_sip_runtime
 from .websocket_api import _ha_softphone_store, _set_ha_softphone_call_state
 
 _LOGGER = logging.getLogger(__name__)
@@ -112,15 +111,12 @@ async def async_track_outbound_sip_client(
     )
     local_name = local_name or _ha_peer_name(hass)
     if result not in {"ringing", "in_call"}:
-        if registry.sip_clients.get(client.dialog_ids.call_id) is client:
-            registry.detach_client(client.dialog_ids.call_id)
         public_result = sip_public_state(result)
-        registry.terminate_call(
+        await registry.terminate_call_wait(
             client.dialog_ids.call_id,
             reason=sip_terminal_reason(result, public_result),
             state=public_result,
         )
-        await client.close()
         return
 
     registry.upsert(
@@ -253,6 +249,11 @@ async def async_track_outbound_sip_client(
             CallState.IN_CALL.value,
         }:
             terminal_reason = sip_terminal_reason(final, public_final)
+            await registry.terminate_call_wait(
+                client.dialog_ids.call_id,
+                reason=terminal_reason,
+                state=public_final,
+            )
             _set_ha_softphone_call_state(
                 hass,
                 public_final,
@@ -271,14 +272,6 @@ async def async_track_outbound_sip_client(
                 last_sip_event=client.last_sip_event or "SIP_RESPONSE",
                 sip_uri=sip_uri,
             )
-        if final not in {"ringing", "in_call"}:
-            registry.detach_client(client.dialog_ids.call_id)
-            registry.terminate_call(
-                client.dialog_ids.call_id,
-                reason=terminal_reason,
-                state=public_final,
-            )
-            await client.close()
             return
         if final == "in_call":
             try:
@@ -293,12 +286,14 @@ async def async_track_outbound_sip_client(
                     err,
                 )
                 terminal = "error"
-            registry.detach_client(client.dialog_ids.call_id)
-            await client.close()
             terminal_reason = (
                 TerminalReason.REMOTE_HANGUP.value
                 if terminal == "remote_hangup"
                 else sip_terminal_reason(terminal, sip_public_state(terminal))
+            )
+            await registry.terminate_call_wait(
+                client.dialog_ids.call_id,
+                reason=terminal_reason,
             )
             _set_ha_softphone_call_state(
                 hass,
@@ -318,10 +313,6 @@ async def async_track_outbound_sip_client(
                 sip_status_code=client.last_sip_status_code,
                 last_sip_event=client.last_sip_event or "BYE",
                 sip_uri=sip_uri,
-            )
-            registry.terminate_call(
-                client.dialog_ids.call_id,
-                reason=terminal_reason,
             )
 
     task = hass.async_create_task(_watch_sip_lifecycle())
@@ -343,7 +334,7 @@ async def async_prepare_ha_outbound_call(
         if str(store.get("state") or "").strip().lower() in HA_SOFTPHONE_ACTIVE_STATES:
             raise ServiceValidationError("HA softphone already has an active SIP call")
 
-        for call_id, client in list(registry.sip_clients.items()):
+        for call_id, _client in list(registry.sip_clients.items()):
             session = registry.sessions.get(registry.resolve_session_id(call_id))
             session_endpoint_id = str(
                 (session.metadata if session is not None else {}).get("endpoint_id")
@@ -351,19 +342,13 @@ async def async_prepare_ha_outbound_call(
             )
             if session_endpoint_id != endpoint_id:
                 continue
-            _client, watcher = registry.detach_client(call_id)
             try:
-                await async_cleanup_sip_runtime(
-                    client=client,
-                    watcher=watcher,
-                    terminate_client=True,
+                await registry.terminate_call_wait(
+                    call_id,
+                    reason=TerminalReason.LOCAL_HANGUP.value,
                 )
             except Exception:
                 _LOGGER.debug(
                     "Ignoring stale HA SIP client cleanup error",
                     exc_info=True,
                 )
-            registry.terminate_call(
-                call_id,
-                reason=TerminalReason.LOCAL_HANGUP.value,
-            )

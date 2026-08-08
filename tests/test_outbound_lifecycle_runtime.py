@@ -96,14 +96,17 @@ class _Registry:
     def resolve_session_id(call_id: str) -> str:
         return call_id
 
-    def detach_client(self, call_id: str):
-        self.calls.append(("detach", call_id))
-        client = self.sip_clients.pop(call_id, None)
-        return client, self.watchers.pop(call_id, None)
-
     def terminate_call(self, call_id: str, **kwargs) -> None:
         self.calls.append(("finish", call_id, kwargs))
         self.sessions.pop(call_id, None)
+
+    async def terminate_call_wait(self, call_id: str, **kwargs) -> None:
+        self.calls.append(("finish", call_id, kwargs))
+        client = self.sip_clients.pop(call_id, None)
+        self.sessions.pop(call_id, None)
+        self.watchers.pop(call_id, None)
+        if client is not None and hasattr(client, "close"):
+            await client.close()
 
     def upsert(self, call_id: str, **kwargs) -> None:
         self.calls.append(("upsert", call_id, kwargs))
@@ -336,11 +339,8 @@ class OutboundLifecycleRuntimeTest(unittest.IsolatedAsyncioTestCase):
             endpoint_id="default",
         )
 
-        self.cleanup.assert_awaited_once()
-        self.assertIs(
-            self.cleanup.await_args.kwargs["client"],
-            selected,
-        )
+        self.cleanup.assert_not_awaited()
+        self.assertEqual(selected.closed, 1)
         self.assertNotIn("call-selected", self.registry.sip_clients)
         self.assertIs(self.registry.sip_clients["call-other"], other)
 

@@ -729,8 +729,11 @@ async def async_originate_browser_call(
             timeout=SIP_TIMER_B if use_trunk else 8.0,
         )
     except Exception as err:  # noqa: BLE001 - isolate one outbound SIP leg.
-        registry.detach_client(client.dialog_ids.call_id)
-        await client.close()
+        await registry.terminate_call_wait(
+            client.dialog_ids.call_id,
+            reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
+            state=CallState.TRANSPORT_UNREACHABLE.value,
+        )
         _set_ha_softphone_call_state(
             hass,
             CallState.TRANSPORT_UNREACHABLE.value,
@@ -747,16 +750,14 @@ async def async_originate_browser_call(
             last_sip_event="INVITE_ERROR",
             sip_uri=route_uri,
         )
-        registry.terminate_call(
-            client.dialog_ids.call_id,
-            reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-            state=CallState.TRANSPORT_UNREACHABLE.value,
-        )
         raise ServiceValidationError(
             f"could not start SIP call to {display_target}"
         ) from err
     if registry.sip_clients.get(client.dialog_ids.call_id) is not client:
-        await client.close()
+        await registry.terminate_call_wait(
+            client.dialog_ids.call_id,
+            reason=TerminalReason.LOCAL_HANGUP.value,
+        )
         return
     if (
         result == TerminalReason.TRANSPORT_UNREACHABLE.value
