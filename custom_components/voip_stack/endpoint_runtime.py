@@ -109,10 +109,10 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     )
     from .sip_runtime import (
         enable_reused_tcp_connection as _enable_reused_sip_tcp_connection,
-        send_bye as _sip_send_bye,
         send_final_response as _sip_send_final_response,
         uri_transport as _sip_uri_transport,
     )
+    from .endpoint_session import TerminationInitiator, TerminationIntent
     from .core.sip import parse_sip_uri
     from .sip_endpoint import SipEndpointManager
     from .sip_listener import SipInvite, SipInviteResult
@@ -121,7 +121,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         ConferenceRingRuntime,
         async_ring_conference_members,
     )
-    from .groups import GROUP_TYPE_CONFERENCE, GROUP_TYPE_RING
+    from .groups import GROUP_TYPE_RING
 
     if sip_endpoint_manager(hass) is not None:
         _LOGGER.debug("Stopping existing SIP endpoint before rebinding listeners")
@@ -135,29 +135,10 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
 
     async def _on_conference_inbound_timeout(call_id: str, reason: str) -> None:
         """End a timed-out inbound UAS dialog and release its logical claim."""
-        if not _sip_send_bye(hass, call_id):
-            _LOGGER.warning(
-                "Conference media timeout could not send SIP BYE call_id=%s",
-                call_id,
-            )
         registry = _call_registry(hass)
-        session = registry.sessions.get(registry.resolve_session_id(call_id))
-        _set_sip_bridge_call_state(
-            hass,
-            CallState.IDLE.value,
-            caller=(session.caller if session is not None else ""),
-            callee=(session.callee if session is not None else ""),
-            peer_name=(session.caller if session is not None else ""),
-            call_id=call_id,
-            reason=reason,
-            terminal_reason=reason,
-            origin="self",
-            last_sip_event="BYE",
-            route_kind=GROUP_TYPE_CONFERENCE,
-        )
         registry.terminate_call(
             call_id,
-            reason=reason,
+            intent=TerminationIntent.bye(reason, TerminationInitiator.TIMEOUT),
         )
 
     def _on_registration_change(username: str, registered: bool) -> None:
@@ -445,7 +426,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             preanswered = registry.take_media(invite.call_id, provisional=True)
             _release_media_reservation(preanswered)
             bridge_ports.release()
-            _sip_send_bye(hass, invite.call_id)
             _set_sip_bridge_call_state(
                 hass,
                 CallState.TRANSPORT_UNREACHABLE.value,
@@ -462,7 +442,10 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             )
             registry.terminate_call(
                 invite.call_id,
-                reason=RouteReason.TARGET_UNREACHABLE.value,
+                intent=TerminationIntent.bye(
+                    RouteReason.TARGET_UNREACHABLE.value,
+                    TerminationInitiator.ROUTING,
+                ),
             )
 
     async def _run_ring_group_call(
@@ -733,10 +716,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             return result.status
         return 503 if result.state == "call_not_found" else 500
 
-    endpoint_termination = EndpointTerminationHandler(
-        hass=hass,
-        ha_peer_name=_ha_peer_name,
-    )
+    endpoint_termination = EndpointTerminationHandler(hass)
     _on_terminated = endpoint_termination.handle
 
     supported_formats = list(HA_SIP_PCM_FORMATS)

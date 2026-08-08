@@ -27,6 +27,7 @@ from .dial_fork import (
 from .dial_plan import RingPolicy
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry
+from .endpoint_session import TerminationIntent
 from .runtime_data import endpoint_directory, sip_endpoint_runtime
 from .fsm import (
     CallState,
@@ -136,16 +137,11 @@ async def run_ring_group_call(
             entry.display_name,
             err,
         )
-        _sip_send_final_response(
-            hass,
-            invite.call_id,
-            500,
-            "Server Internal Error",
-            decline_reason=TerminalReason.PROTOCOL_ERROR.value,
-        )
         registry.terminate_call(
             invite.call_id,
-            reason=TerminalReason.PROTOCOL_ERROR.value,
+            intent=TerminationIntent.final_response(
+                TerminalReason.PROTOCOL_ERROR.value, 500
+            ),
         )
         return
     candidates = RingGroupCandidates()
@@ -210,15 +206,14 @@ async def run_ring_group_call(
         _take_pending_route(hass, invite.call_id)
         _settle_browser_candidates(state, reason)
         await _cleanup_outbound_attempts([], attempts)
-        if sip_status:
-            _sip_send_final_response(
-                hass,
-                invite.call_id,
-                sip_status,
-                sip_reason,
-                decline_reason=reason,
-            )
-        registry.terminate_call(invite.call_id, reason=reason)
+        registry.terminate_call(
+            invite.call_id,
+            intent=(
+                TerminationIntent.final_response(reason, sip_status)
+                if sip_status
+                else TerminationIntent(reason)
+            ),
+        )
 
     try:
         await async_prepare_ring_group_candidates(
@@ -351,7 +346,7 @@ async def run_ring_group_call(
     # fails but must never own the fork tasks themselves.
     tasks: list[asyncio.Task] = []
 
-    async def _cleanup_ring_resources(reason: str) -> None:
+    async def _cleanup_ring_resources(reason: str, *, sip_status: int = 0) -> None:
         """Tear down every ownership layer after an aborted group call."""
         _take_pending_route(hass, invite.call_id)
         _source_call_id, dest_call_id = registry.bridge_for(invite.call_id)
@@ -382,7 +377,11 @@ async def run_ring_group_call(
         try:
             await registry.terminate_call_wait(
                 invite.call_id,
-                reason=reason,
+                intent=(
+                    TerminationIntent.final_response(reason, sip_status)
+                    if sip_status
+                    else TerminationIntent(reason)
+                ),
             )
         finally:
             await _cleanup_outbound_attempts(tasks, remaining_attempts)
@@ -504,13 +503,6 @@ async def run_ring_group_call(
                 last_sip_event="SIP_RESPONSE",
                 sip_status_code=status_code,
             )
-            _sip_send_final_response(
-                hass,
-                invite.call_id,
-                status_code,
-                sip_reason,
-                decline_reason=terminal_reason,
-            )
             _set_sip_bridge_call_state(
                 hass,
                 public_state,
@@ -527,7 +519,9 @@ async def run_ring_group_call(
             )
             registry.terminate_call(
                 invite.call_id,
-                reason=terminal_reason,
+                intent=TerminationIntent.final_response(
+                    terminal_reason, status_code
+                ),
             )
             return
         if browser_winner and isinstance(winner, BrowserLeg):
@@ -668,13 +662,6 @@ async def run_ring_group_call(
                 "SIP ring group selected an invalid winner for call_id=%s",
                 invite.call_id,
             )
-            _sip_send_final_response(
-                hass,
-                invite.call_id,
-                500,
-                "Server Internal Error",
-                decline_reason=TerminalReason.PROTOCOL_ERROR.value,
-            )
             _publish_ring_group_origin_state(
                 hass,
                 enabled=ha_origin,
@@ -693,7 +680,9 @@ async def run_ring_group_call(
             )
             registry.terminate_call(
                 invite.call_id,
-                reason=TerminalReason.PROTOCOL_ERROR.value,
+                intent=TerminationIntent.final_response(
+                    TerminalReason.PROTOCOL_ERROR.value, 500
+                ),
             )
             return
         client = winner.client
@@ -776,13 +765,6 @@ async def run_ring_group_call(
             await relay.start()
         except Exception as err:
             _LOGGER.warning("SIP ring group media bridge unavailable: %s", err)
-            _sip_send_final_response(
-                hass,
-                invite.call_id,
-                488,
-                "Not Acceptable Here",
-                decline_reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-            )
             _publish_ring_group_origin_state(
                 hass,
                 enabled=ha_origin,
@@ -812,7 +794,9 @@ async def run_ring_group_call(
             finally:
                 await registry.terminate_call_wait(
                     invite.call_id,
-                    reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
+                    intent=TerminationIntent.final_response(
+                        TerminalReason.MEDIA_INCOMPATIBLE.value, 488
+                    ),
                 )
             return
         if not _call_is_current():
@@ -1016,11 +1000,7 @@ async def run_ring_group_call(
                 last_sip_event="SIP_RESPONSE",
                 sip_status_code=500,
             )
-        _sip_send_final_response(
-            hass,
-            invite.call_id,
-            500,
-            "Server Internal Error",
-            decline_reason=TerminalReason.PROTOCOL_ERROR.value,
+        await _cleanup_ring_resources(
+            TerminalReason.PROTOCOL_ERROR.value,
+            sip_status=500,
         )
-        await _cleanup_ring_resources(TerminalReason.PROTOCOL_ERROR.value)

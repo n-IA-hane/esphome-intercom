@@ -24,6 +24,8 @@ from .endpoint_session import (
     SessionTerminationResult,
     TerminationInitiator,
     TerminationIntent,
+    TerminationObserver,
+    TerminationSignaler,
 )
 from .session_cleanup import async_wait_for_cleanup
 
@@ -155,6 +157,8 @@ class SipEndpointRuntime(CallRuntimeApi):
         self._allow_dark_sessions = allow_dark_sessions
         self._components: dict[str, _OwnedComponent] = {}
         self._endpoint_registry: Any | None = None
+        self._termination_signaler: TerminationSignaler | None = None
+        self._termination_observer: TerminationObserver | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
         self.trunk_stop_task: asyncio.Task[Any] | None = None
         self.softphone_start_locks: dict[str, asyncio.Lock] = {}
@@ -240,6 +244,31 @@ class SipEndpointRuntime(CallRuntimeApi):
     @property
     def endpoint_registry(self) -> Any | None:
         return self._endpoint_registry
+
+    def bind_termination_signaler(self, signaler: TerminationSignaler) -> None:
+        """Bind the single adapter that performs terminal SIP signaling."""
+
+        if (
+            self._termination_signaler is not None
+            and self._termination_signaler is not signaler
+        ):
+            raise RuntimeError("PBX termination signaler is already bound")
+        self._termination_signaler = signaler
+
+    @property
+    def has_termination_signaler(self) -> bool:
+        return self._termination_signaler is not None
+
+    def bind_termination_observer(self, observer: TerminationObserver) -> None:
+        """Bind the single HA projection observer for terminal sessions."""
+
+        if self._termination_observer is not None:
+            raise RuntimeError("PBX termination observer is already bound")
+        self._termination_observer = observer
+
+    @property
+    def has_termination_observer(self) -> bool:
+        return self._termination_observer is not None
 
     def endpoint_claims_snapshot(self) -> dict[str, dict[str, str]]:
         """Return a detached compatibility projection of session claims."""
@@ -512,6 +541,8 @@ class SipEndpointRuntime(CallRuntimeApi):
             clean_call_id,
             self._generation,
             phase=phase,
+            termination_signaler=self._termination_signaler,
+            termination_observer=self._termination_observer,
             on_terminated=self._on_terminated,
         )
         session.metadata.update(metadata)
@@ -761,6 +792,7 @@ class SipEndpointRuntime(CallRuntimeApi):
                         TerminationIntent(
                             "runtime_shutdown",
                             initiator=TerminationInitiator.RUNTIME,
+                            response_status=503,
                         )
                     )
                     for session in sessions

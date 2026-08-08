@@ -48,6 +48,25 @@ def softphone_commands(monkeypatch):
         },
         "const": {"DOMAIN": "voip_stack", "HA_SOFTPHONE_DEVICE_ID": "ha-device"},
         "endpoint_lifecycle": {"call_registry": Mock()},
+        "endpoint_session": {
+            "SipTerminationDisposition": SimpleNamespace(
+                BYE="bye",
+                FINAL_RESPONSE="final_response",
+            ),
+            "TerminationInitiator": SimpleNamespace(LOCAL_USER="local_user"),
+            "TerminationIntent": type(
+                "TerminationIntent",
+                (),
+                {
+                    name: classmethod(
+                        lambda cls, reason, *_args, **values: SimpleNamespace(
+                            reason=reason, **values
+                        )
+                    )
+                    for name in ("bye", "final_response")
+                },
+            ),
+        },
         "esphome_actions": {
             "async_call_action": AsyncMock(),
             "async_press_device_button": AsyncMock(return_value=True),

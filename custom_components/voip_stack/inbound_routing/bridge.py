@@ -23,6 +23,7 @@ from ..const import (
 )
 from ..dtmf_events import attach_dtmf_event_bridge
 from ..endpoint_registry import EndpointBusyError
+from ..endpoint_session import SipTerminationDisposition, TerminationIntent
 from ..endpoint_routing import (
     peer_audio_formats,
     peer_for_target,
@@ -53,7 +54,10 @@ from ..sip_bridge import (
 )
 from ..sip_client import SIP_TIMER_B, SipCallClient
 from ..sip_listener import SipInviteResult
-from ..websocket_api import _set_sip_bridge_call_state
+from ..websocket_api import (
+    _set_sip_bridge_call_state,
+    _set_sip_bridge_terminal_state,
+)
 
 if TYPE_CHECKING:
     from ..pbx_runtime import SipEndpointRuntime
@@ -163,15 +167,14 @@ async def route_sip_bridge(
         invite.source_port,
         default_port=int(cfg["sip_port"]),
     ):
-        _set_sip_bridge_call_state(
+        _set_sip_bridge_terminal_state(
             hass,
-            CallState.BUSY.value,
+            TerminalReason.BUSY.value,
             caller=invite.caller,
             callee=invite.target,
             peer_name=invite.caller,
             call_id=invite.call_id,
             direction="incoming",
-            reason=TerminalReason.BUSY.value,
             origin="self",
             sip_status_code=486,
             last_sip_event="SIP_RESPONSE",
@@ -427,24 +430,11 @@ async def route_sip_bridge(
             await video_relay.stop()
         registry.terminate_call(
             invite.call_id,
-            reason=terminal_reason,
-        )
-        _set_sip_bridge_call_state(
-            hass,
-            public_state,
-            caller=invite.caller,
-            callee=resolved_callee,
-            peer_name=resolved_callee,
-            call_id=invite.call_id,
-            dest_call_id=client.dialog_ids.call_id,
-            direction="incoming",
-            reason=terminal_reason,
-            terminal_reason=terminal_reason,
-            origin="remote",
-            sip_status_code=status_code,
-            last_sip_event=client.last_sip_event or "SIP_RESPONSE",
-            route_kind=decision.action.value,
-            sip_uri=str(decision_uri),
+            intent=TerminationIntent(
+                terminal_reason,
+                sip_disposition=SipTerminationDisposition.NONE,
+                response_status=status_code,
+            ),
         )
         return SipInviteResult(
             status_code,
@@ -462,13 +452,6 @@ async def route_sip_bridge(
             status_code, sip_reason, terminal_reason, public_state = (
                 sip_failure_response(final)
             )
-            runtime.send_final_response(
-                hass,
-                invite.call_id,
-                status_code,
-                sip_reason,
-                decline_reason=terminal_reason,
-            )
             await registry.close_leg(
                 invite.call_id,
                 client.dialog_ids.call_id,
@@ -479,24 +462,9 @@ async def route_sip_bridge(
                 await video_relay.stop()
             await registry.terminate_call_wait(
                 invite.call_id,
-                reason=terminal_reason,
-            )
-            _set_sip_bridge_call_state(
-                hass,
-                public_state,
-                caller=invite.caller,
-                callee=resolved_callee,
-                peer_name=resolved_callee,
-                call_id=invite.call_id,
-                dest_call_id=client.dialog_ids.call_id,
-                direction="incoming",
-                reason=terminal_reason,
-                terminal_reason=terminal_reason,
-                origin="remote",
-                sip_status_code=status_code,
-                last_sip_event="SIP_RESPONSE",
-                route_kind=decision.action.value,
-                sip_uri=str(decision_uri),
+                intent=TerminationIntent.final_response(
+                    terminal_reason, status_code
+                ),
             )
             return
 
@@ -554,13 +522,6 @@ async def route_sip_bridge(
             await relay.start()
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("SIP RTP bridge media conversion unavailable: %s", err)
-            runtime.send_final_response(
-                hass,
-                invite.call_id,
-                488,
-                "Not Acceptable Here",
-                decline_reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-            )
             await registry.close_leg(
                 invite.call_id,
                 client.dialog_ids.call_id,
@@ -572,7 +533,9 @@ async def route_sip_bridge(
                 video_relay = None
             await registry.terminate_call_wait(
                 invite.call_id,
-                reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
+                intent=TerminationIntent.final_response(
+                    TerminalReason.MEDIA_INCOMPATIBLE.value, 488
+                ),
             )
             return
 

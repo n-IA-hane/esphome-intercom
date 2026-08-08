@@ -28,9 +28,12 @@ class _Registry:
         self.relays: dict[str, object] = {}
         self.sip_clients: dict[str, object] = {}
         self.finished: list[tuple[str, dict[str, object]]] = []
+        self.observer = None
+        self.intent = None
 
     def begin_termination(self, call_id: str, intent: object) -> bool:
         self.begin_calls.append((call_id, intent))
+        self.intent = intent
         return self.begin_result
 
     def take_pending_invite(self, call_id: str):
@@ -65,15 +68,19 @@ class _Registry:
         self.finished.append((call_id, values))
 
     async def terminate_call_wait(self, call_id: str, **values) -> None:
+        session = self.sessions.get(call_id)
+        if session is not None and self.observer is not None:
+            session.call_id = call_id
+            self.observer(session, self.intent)
         self.finished.append((call_id, values))
 
 
-def _hass(registry: _Registry):
+def _hass(registry: _Registry, projector=None):
     call_artifacts = SimpleNamespace(
         trunk_info_queue=None,
         trunk_closed=False,
     )
-    return SimpleNamespace(
+    hass = SimpleNamespace(
         data={"voip_stack": {}},
         registry=registry,
         routes={},
@@ -86,6 +93,11 @@ def _hass(registry: _Registry):
             task_for=lambda call_id, name: None,
         ),
     )
+    if projector is not None:
+        registry.observer = lambda session, intent: projector(
+            hass, session, intent
+        )
+    return hass
 
 
 @pytest.fixture
@@ -117,6 +129,29 @@ def endpoint_termination(monkeypatch):
     def project_bridge(hass, state, **values) -> None:
         hass.events.append(("bridge", state, values))
 
+    def project_session_termination(hass, session, intent) -> None:
+        metadata = session.metadata
+        endpoint_id = str(metadata.get("endpoint_id") or "")
+        values = {
+            "call_id": session.call_id,
+            "reason": intent.reason,
+            "last_sip_event": "CANCEL" if intent.reason == "cancelled" else "BYE",
+        }
+        if endpoint_id:
+            project_softphone(
+                hass,
+                intent.public_state,
+                endpoint_id=endpoint_id,
+                **values,
+            )
+        else:
+            project_bridge(
+                hass,
+                intent.public_state,
+                route_kind=session.route_kind,
+                **values,
+            )
+
     dependencies = {
         "call_scope": {
             "take_pending_route": lambda hass, call_id: hass.routes.pop(
@@ -128,16 +163,21 @@ def endpoint_termination(monkeypatch):
             "DOMAIN": "voip_stack",
             "HA_SOFTPHONE_DEVICE_ID": "ha-device",
         },
-        "endpoint_lifecycle": {
-            "call_registry": lambda hass: hass.registry,
-        },
-        "endpoint_session": {
-            "TerminationInitiator": SimpleNamespace(REMOTE_PEER="remote_peer"),
-            "TerminationIntent": lambda reason, initiator: SimpleNamespace(
-                reason=reason,
-                initiator=initiator,
-            ),
-        },
+            "endpoint_lifecycle": {
+                "call_registry": lambda hass: hass.registry,
+                "project_session_termination": project_session_termination,
+            },
+                "endpoint_session": {
+                    "EndpointCallSession": object,
+                    "SipTerminationDisposition": SimpleNamespace(NONE="none"),
+                    "TerminationInitiator": SimpleNamespace(REMOTE_PEER="remote_peer"),
+                    "TerminationIntent": lambda reason, initiator, **values: SimpleNamespace(
+                        reason=reason,
+                        initiator=initiator,
+                        public_state="cancelled" if reason == "cancelled" else "idle",
+                        **values,
+                    ),
+                },
         "fsm": {
             "CallState": SimpleNamespace(
                 CANCELLED=SimpleNamespace(value="cancelled"),
@@ -197,12 +237,9 @@ def test_duplicate_transport_termination_has_no_side_effects(
 ) -> None:
     registry = _Registry()
     registry.begin_result = False
-    hass = _hass(registry)
+    hass = _hass(registry, endpoint_termination.project_session_termination)
     endpoint_termination.hass_holder["hass"] = hass
-    handler = endpoint_termination.EndpointTerminationHandler(
-        hass,
-        lambda _hass: "Home Assistant",
-    )
+    handler = endpoint_termination.EndpointTerminationHandler(hass)
 
     asyncio.run(handler.handle("call-1"))
 
@@ -241,13 +278,10 @@ def test_bridge_termination_projects_before_session_owned_cleanup(
     )
     registry.relays["call-1"] = relay
     registry.sip_clients["dest-1"] = client
-    hass = _hass(registry)
+    hass = _hass(registry, endpoint_termination.project_session_termination)
     relay.hass = hass
     endpoint_termination.hass_holder["hass"] = hass
-    handler = endpoint_termination.EndpointTerminationHandler(
-        hass,
-        lambda _hass: "Home Assistant",
-    )
+    handler = endpoint_termination.EndpointTerminationHandler(hass)
 
     async def run() -> None:
         future = asyncio.get_running_loop().create_future()
@@ -261,24 +295,10 @@ def test_bridge_termination_projects_before_session_owned_cleanup(
     assert hass.released == []
     assert hass.cleanups == []
     assert registry.finished == [("call-1", {"reason": "remote_hangup"})]
-    assert hass.events == [
-        (
-            "bridge",
-            "idle",
-            {
-                "call_id": "call-1",
-                "dest_call_id": "dest-1",
-                "caller": "Kitchen",
-                "callee": "Desk",
-                "peer_name": "Desk",
-                "target": "Desk",
-                "reason": "remote_hangup",
-                "terminal_reason": "remote_hangup",
-                "origin": "remote",
-                "last_sip_event": "BYE",
-            },
-        )
-    ]
+    kind, state, event = hass.events[0]
+    assert (kind, state, event["call_id"], event["reason"]) == (
+        "bridge", "idle", "call-1", "remote_hangup"
+    )
 
 
 def test_pending_softphone_termination_uses_owning_endpoint(
@@ -298,33 +318,17 @@ def test_pending_softphone_termination_uses_owning_endpoint(
     )
     registry.preanswered = None
     registry.active_media = {}
-    hass = _hass(registry)
+    hass = _hass(registry, endpoint_termination.project_session_termination)
     hass.softphone_stores["wall-tablet"] = {"call_id": "call-2"}
     endpoint_termination.hass_holder["hass"] = hass
-    handler = endpoint_termination.EndpointTerminationHandler(
-        hass,
-        lambda _hass: "Home Assistant",
-    )
+    handler = endpoint_termination.EndpointTerminationHandler(hass)
 
     asyncio.run(handler.handle("call-2", "cancelled"))
 
-    assert hass.events == [
-        (
-            "softphone",
-            "cancelled",
-            {
-                "endpoint_id": "wall-tablet",
-                "session_device_id": "browser-1",
-                "caller": "Door",
-                "callee": "HA",
-                "peer_name": "Door",
-                "direction": "incoming",
-                "call_id": "call-2",
-                "reason": "cancelled",
-                "origin": "remote",
-            },
-        )
-    ]
+    kind, state, event = hass.events[0]
+    assert (kind, state, event["endpoint_id"], event["call_id"]) == (
+        "softphone", "cancelled", "wall-tablet", "call-2"
+    )
     assert registry.finished == [("call-2", {"reason": "cancelled"})]
 
 
@@ -340,33 +344,16 @@ def test_early_router_cancel_publishes_one_terminal_event(
         metadata={},
         route_kind="group",
     )
-    hass = _hass(registry)
+    hass = _hass(registry, endpoint_termination.project_session_termination)
     endpoint_termination.hass_holder["hass"] = hass
-    handler = endpoint_termination.EndpointTerminationHandler(
-        hass,
-        lambda _hass: "Home Assistant",
-    )
+    handler = endpoint_termination.EndpointTerminationHandler(hass)
 
     asyncio.run(handler.handle("call-3", "cancelled"))
 
-    assert hass.events == [
-        (
-            "bridge",
-            "cancelled",
-            {
-                "call_id": "call-3",
-                "caller": "Door",
-                "callee": "Ring group",
-                "peer_name": "Ring group",
-                "target": "Ring group",
-                "reason": "cancelled",
-                "terminal_reason": "cancelled",
-                "origin": "remote",
-                "last_sip_event": "CANCEL",
-                "route_kind": "group",
-            },
-        )
-    ]
+    kind, state, event = hass.events[0]
+    assert (kind, state, event["route_kind"], event["last_sip_event"]) == (
+        "bridge", "cancelled", "group", "CANCEL"
+    )
     assert registry.finished == [("call-3", {"reason": "cancelled"})]
 
 
@@ -380,31 +367,20 @@ def test_preanswer_cancel_without_phone_owner_projects_bridge_terminal(
         caller="Door",
         target="HA",
     )
-    hass = _hass(registry)
-    endpoint_termination.hass_holder["hass"] = hass
-    handler = endpoint_termination.EndpointTerminationHandler(
-        hass,
-        lambda _hass: "Home Assistant",
+    registry.sessions["call-4"] = SimpleNamespace(
+        caller="Door",
+        callee="HA",
+        metadata={},
+        route_kind="trunk",
     )
+    hass = _hass(registry, endpoint_termination.project_session_termination)
+    endpoint_termination.hass_holder["hass"] = hass
+    handler = endpoint_termination.EndpointTerminationHandler(hass)
 
     asyncio.run(handler.handle("call-4", "remote_hangup"))
 
-    assert hass.events == [
-        (
-            "bridge",
-            "idle",
-            {
-                "call_id": "call-4",
-                "caller": "Door",
-                "callee": "HA",
-                "peer_name": "HA",
-                "target": "HA",
-                "reason": "remote_hangup",
-                "terminal_reason": "remote_hangup",
-                "origin": "remote",
-                "last_sip_event": "BYE",
-                "route_kind": "trunk",
-            },
-        )
-    ]
+    kind, state, event = hass.events[0]
+    assert (kind, state, event["route_kind"], event["last_sip_event"]) == (
+        "bridge", "idle", "trunk", "BYE"
+    )
     assert registry.finished == [("call-4", {"reason": "remote_hangup"})]

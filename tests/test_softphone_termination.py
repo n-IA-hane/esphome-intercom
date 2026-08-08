@@ -50,6 +50,32 @@ def termination(monkeypatch):
             "DOMAIN": "voip_stack",
             "HA_SOFTPHONE_DEVICE_ID": "ha-device",
         },
+        "endpoint_session": {
+            "SipTerminationDisposition": SimpleNamespace(
+                BYE="bye",
+                FINAL_RESPONSE="final_response",
+            ),
+            "TerminationInitiator": SimpleNamespace(LOCAL_USER="local_user"),
+            "TerminationIntent": type(
+                "TerminationIntent",
+                (),
+                {
+                    "__init__": lambda self, reason, **values: (
+                        setattr(self, "reason", reason),
+                        self.__dict__.update(values),
+                    )[-1],
+                    **{
+                        name: classmethod(
+                            lambda cls, reason, *_args, **values: SimpleNamespace(
+                                reason=reason, **values
+                            )
+                        )
+                        for name in ("bye", "final_response")
+                    },
+                },
+            ),
+        },
+        "endpoint_lifecycle": {"call_registry": Mock()},
         "fsm": {
             "CallState": call_state,
             "TerminalReason": terminal_reason,
@@ -135,7 +161,7 @@ def test_outbound_hangup_waits_for_session_cleanup_owner(termination) -> None:
     async def terminate_call_wait(call_id: str, **kwargs) -> None:
         nonlocal cleaned
         assert call_id == "call-1"
-        assert kwargs["reason"] == "local_hangup"
+        assert kwargs["intent"].reason == "local_hangup"
         cleaned = True
 
     registry = SimpleNamespace(
@@ -174,36 +200,16 @@ def test_outbound_hangup_waits_for_session_cleanup_owner(termination) -> None:
     termination._set_ha_softphone_call_state.assert_called_once()
 
 
-def test_bridge_projection_is_scoped_to_matching_softphone(termination) -> None:
+def test_bridge_termination_delegates_projection_to_session_owner(termination) -> None:
     hass = SimpleNamespace(
         data={}, artifacts=SimpleNamespace(task_for=lambda call_id, name: None)
     )
-    termination._ha_softphone_store = Mock(
-        return_value={
-            "call_id": "source-call",
-            "caller": "Alice",
-            "callee": "Casa",
-            "peer_name": "Alice",
-            "direction": "incoming",
-        }
-    )
-    termination._sip_bridge_store = Mock(
-        return_value={
-            "state": "in_call",
-            "call_id": "source-call",
-            "dest_call_id": "dest-call",
-            "caller": "Alice",
-            "callee": "Casa",
-            "peer_name": "Alice",
-            "direction": "incoming",
-            "route_kind": "sip",
-        }
-    )
-    termination.async_terminate_sip_bridge = AsyncMock(
+    terminate = AsyncMock(
         return_value=(True, "source-call", "dest-call", True, True)
     )
-    termination._set_ha_softphone_call_state = Mock()
-    termination._set_sip_bridge_call_state = Mock()
+    termination.call_registry = Mock(
+        return_value=SimpleNamespace(terminate_bridge_wait=terminate)
+    )
 
     result = asyncio.run(
         termination.async_terminate_sip_bridge_session(
@@ -215,74 +221,7 @@ def test_bridge_projection_is_scoped_to_matching_softphone(termination) -> None:
     )
 
     assert result[:3] == (True, "source-call", "dest-call")
-    termination._set_ha_softphone_call_state.assert_called_once()
-    assert termination._set_ha_softphone_call_state.call_args.kwargs["call_id"] == (
-        "source-call"
-    )
-    termination._set_sip_bridge_call_state.assert_called_once()
-    bridge = termination._set_sip_bridge_call_state.call_args
-    assert bridge.args[1] == "idle"
-    assert bridge.kwargs["call_id"] == "source-call"
-    assert bridge.kwargs["dest_call_id"] == "dest-call"
-    assert bridge.kwargs["terminal_reason"] == "local_hangup"
-    assert bridge.kwargs["route_kind"] == "sip"
-
-
-def test_bridge_projection_does_not_overwrite_another_active_call(termination) -> None:
-    hass = SimpleNamespace(
-        data={}, artifacts=SimpleNamespace(task_for=lambda call_id, name: None)
-    )
-    termination._ha_softphone_store = Mock(return_value={})
-    termination._sip_bridge_store = Mock(
-        return_value={
-            "state": "in_call",
-            "call_id": "other-source",
-            "dest_call_id": "other-dest",
-        }
-    )
-    termination.async_terminate_sip_bridge = AsyncMock(
-        return_value=(True, "source-call", "dest-call", True, True)
-    )
-    termination._set_sip_bridge_call_state = Mock()
-
-    asyncio.run(
-        termination.async_terminate_sip_bridge_session(
-            hass,
-            "source-call",
-        )
-    )
-
-    termination._set_sip_bridge_call_state.assert_not_called()
-
-
-def test_remote_bridge_bye_publishes_remote_terminal_reason(termination) -> None:
-    hass = SimpleNamespace(
-        data={}, artifacts=SimpleNamespace(task_for=lambda call_id, name: None)
-    )
-    termination._ha_softphone_store = Mock(return_value={})
-    termination._sip_bridge_store = Mock(
-        return_value={
-            "state": "in_call",
-            "call_id": "source-call",
-            "dest_call_id": "dest-call",
-            "caller": "Alice",
-            "callee": "Kitchen",
-        }
-    )
-    termination.async_terminate_sip_bridge = AsyncMock(
-        return_value=(True, "source-call", "dest-call", True, True)
-    )
-    termination._set_sip_bridge_call_state = Mock()
-
-    asyncio.run(
-        termination.async_terminate_sip_bridge_session(
-            hass,
-            "dest-call",
-            terminal_reason="remote_hangup",
-        )
-    )
-
-    bridge = termination._set_sip_bridge_call_state.call_args
-    assert bridge.kwargs["terminal_reason"] == "remote_hangup"
-    assert bridge.kwargs["origin"] == "remote"
-    assert bridge.kwargs["last_sip_event"] == "SIP_BYE"
+    terminate.assert_awaited_once()
+    call_id, intent = terminate.await_args.args
+    assert call_id == "source-call"
+    assert intent.reason == "local_hangup"

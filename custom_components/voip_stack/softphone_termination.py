@@ -8,18 +8,16 @@ import logging
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
-from .bridge_manager import async_terminate_sip_bridge
 from .call_scope import endpoint_call_ids, pending_routes, take_pending_route
-from .fsm import CallState, TerminalReason, sip_public_state
+from .endpoint_lifecycle import call_registry
+from .endpoint_session import TerminationInitiator, TerminationIntent
+from .fsm import CallState, TerminalReason
 from .route_decisions import set_pending_route_decision
 from .runtime_data import call_runtime_artifacts, conference_component
-from .sip_runtime import send_bye, send_final_response, sip_servers
 from .softphone_commands import BrowserCallCommand
 from .websocket_api import (
     _ha_softphone_store,
     _set_ha_softphone_call_state,
-    _set_sip_bridge_call_state,
-    _sip_bridge_store,
 )
 
 
@@ -34,90 +32,13 @@ async def async_terminate_sip_bridge_session(
     session_device_id: str = "",
     terminal_reason: str = TerminalReason.LOCAL_HANGUP.value,
 ) -> tuple[bool, str, str, bool, bool]:
-    """Terminate one B2BUA bridge and publish its terminal projections."""
+    """Terminate one B2BUA bridge through the authoritative session owner."""
 
-    softphone = _ha_softphone_store(hass, endpoint_id) if endpoint_id else {}
-    softphone_call_id = str(softphone.get("call_id") or "")
-    bridge = dict(_sip_bridge_store(hass))
-    result = await async_terminate_sip_bridge(
-        hass,
+    del endpoint_id, session_device_id
+    return await call_registry(hass).terminate_bridge_wait(
         call_id,
-        terminal_reason=terminal_reason,
-        send_bye=lambda source_call_id: send_bye(hass, source_call_id),
+        TerminationIntent.bye(terminal_reason),
     )
-    handled, source_call_id, dest_call_id, _client_closed, _source_bye = result
-    projected_call_ids = {
-        str(bridge.get("call_id") or ""),
-        str(bridge.get("dest_call_id") or ""),
-    }
-    if handled and projected_call_ids.intersection({source_call_id, dest_call_id}):
-        reason = terminal_reason or TerminalReason.LOCAL_HANGUP.value
-        reserved = {
-            "state",
-            "sip_state",
-            "call_id",
-            "dest_call_id",
-            "caller",
-            "callee",
-            "peer_name",
-            "target",
-            "reason",
-            "terminal_reason",
-            "origin",
-            "last_sip_event",
-            "last_terminal_call_id",
-            "last_terminal_dest_call_id",
-        }
-        extra = {
-            key: value
-            for key, value in bridge.items()
-            if key not in reserved and value not in (None, "")
-        }
-        _set_sip_bridge_call_state(
-            hass,
-            sip_public_state(reason),
-            call_id=source_call_id,
-            dest_call_id=dest_call_id,
-            caller=str(bridge.get("caller") or ""),
-            callee=str(bridge.get("callee") or ""),
-            peer_name=str(bridge.get("peer_name") or ""),
-            target=str(bridge.get("target") or ""),
-            reason=reason,
-            terminal_reason=reason,
-            origin=(
-                "self"
-                if reason == TerminalReason.LOCAL_HANGUP.value
-                else "remote"
-            ),
-            last_sip_event=(
-                "SIP_BYE"
-                if reason
-                in {
-                    TerminalReason.LOCAL_HANGUP.value,
-                    TerminalReason.REMOTE_HANGUP.value,
-                }
-                else str(bridge.get("last_sip_event") or "SIP_TERMINATED")
-            ),
-            **extra,
-        )
-    if handled and source_call_id == softphone_call_id:
-        reason = terminal_reason or TerminalReason.LOCAL_HANGUP.value
-        _set_ha_softphone_call_state(
-            hass,
-            CallState.IDLE.value,
-            endpoint_id=endpoint_id,
-            session_device_id=session_device_id,
-            caller=str(softphone.get("caller") or ""),
-            callee=str(softphone.get("callee") or ""),
-            peer_name=str(softphone.get("peer_name") or ""),
-            direction=str(softphone.get("direction") or ""),
-            call_id=source_call_id,
-            reason=reason,
-            terminal_reason=reason,
-            origin="self" if reason == TerminalReason.LOCAL_HANGUP.value else "remote",
-            last_sip_event="SIP_BYE",
-        )
-    return result
 
 
 async def async_hangup_browser_call(
@@ -263,17 +184,7 @@ async def async_hangup_browser_call(
         if invite is None:
             continue
         preanswered_item = registry.preanswered.get(pending_call_id)
-        if preanswered_item is not None:
-            if send_bye(hass, pending_call_id):
-                pending_closed += 1
-        elif send_final_response(
-            hass,
-            pending_call_id,
-            487,
-            "Request Terminated",
-            decline_reason=TerminalReason.LOCAL_HANGUP.value,
-        ):
-            pending_closed += 1
+        pending_closed += 1
         _set_ha_softphone_call_state(
             hass,
             CallState.IDLE.value,
@@ -291,22 +202,26 @@ async def async_hangup_browser_call(
         )
         await registry.terminate_call_wait(
             pending_call_id,
-            reason=TerminalReason.LOCAL_HANGUP.value,
+            intent=(
+                TerminationIntent.bye(TerminalReason.LOCAL_HANGUP.value)
+                if preanswered_item is not None
+                else TerminationIntent.final_response(
+                    TerminalReason.LOCAL_HANGUP.value,
+                    487,
+                    TerminationInitiator.LOCAL_USER,
+                )
+            ),
         )
         terminated_ids.add(pending_call_id)
-    if client is None and relay is None:
-        for server in sip_servers(hass):
-            server_send_bye = getattr(server, "send_bye", None)
-            if callable(server_send_bye) and server_send_bye(call_id):
-                server_bye = True
-                if not call_id:
-                    call_id = "(active)"
-                break
 
     if call_id and call_id not in terminated_ids:
+        server_bye = client is None and relay is None
         await registry.terminate_call_wait(
             call_id,
-            reason=TerminalReason.LOCAL_HANGUP.value,
+            intent=TerminationIntent(
+                TerminalReason.LOCAL_HANGUP.value,
+                initiator=TerminationInitiator.LOCAL_USER,
+            ),
         )
     _set_ha_softphone_call_state(
         hass,

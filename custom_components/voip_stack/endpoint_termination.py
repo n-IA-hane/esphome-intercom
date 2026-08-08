@@ -3,29 +3,26 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from dataclasses import dataclass
 import logging
 
 from homeassistant.core import HomeAssistant
 
 from .call_scope import take_pending_route
-from .endpoint_lifecycle import call_registry
-from .endpoint_session import TerminationInitiator, TerminationIntent
-from .fsm import CallState, TerminalReason
+from .endpoint_lifecycle import call_registry, project_session_termination
+from .endpoint_session import (
+    SipTerminationDisposition,
+    TerminationInitiator,
+    TerminationIntent,
+)
+from .fsm import TerminalReason
 from .runtime_data import (
     call_runtime_artifacts,
     conference_component,
-    endpoint_directory,
 )
-from .websocket_api import (
-    _ha_softphone_store,
-    _set_ha_softphone_call_state,
-    _set_sip_bridge_call_state,
-)
-
-
 _LOGGER = logging.getLogger(__name__)
+
+__all__ = ["EndpointTerminationHandler", "project_session_termination"]
 
 
 @dataclass(slots=True)
@@ -33,7 +30,6 @@ class EndpointTerminationHandler:
     """Terminate a transport-reported call exactly once."""
 
     hass: HomeAssistant
-    ha_peer_name: Callable[[HomeAssistant], str]
 
     async def handle(
         self,
@@ -52,6 +48,7 @@ class EndpointTerminationHandler:
             TerminationIntent(
                 reason,
                 initiator=TerminationInitiator.REMOTE_PEER,
+                sip_disposition=SipTerminationDisposition.NONE,
             ),
         ):
             _LOGGER.debug(
@@ -77,50 +74,9 @@ class EndpointTerminationHandler:
                         "decline_reason": (reason or TerminalReason.CANCELLED.value),
                     }
                 )
-        invite = registry.take_pending_invite(call_id)
-        active_media = registry.softphone_media.get(call_id, {})
-        active_media_invite = active_media.get("invite")
-        if invite is None:
-            invite = active_media_invite
-        session = registry.sessions.get(registry.resolve_session_id(call_id))
-        source_call_id, dest_call_id = registry.bridge_for(call_id)
-        relay = registry.relays.get(source_call_id) if source_call_id else None
-        client = registry.sip_clients.get(dest_call_id) if dest_call_id else None
-        if source_call_id:
-            call_id = source_call_id
-        event_caller = (
-            invite.caller
-            if invite is not None
-            else (session.caller if session is not None else "")
-        )
-        event_callee = (
-            session.callee
-            if session is not None and session.callee
-            else invite.target
-            if invite is not None
-            else ""
-        )
-        session_metadata = session.metadata if session is not None else {}
-        session_endpoint_id = str(session_metadata.get("endpoint_id") or "").strip()
-        session_endpoint = endpoint_directory(self.hass).get(session_endpoint_id)
-        session_device_id = str(
-            session_metadata.get("session_device_id")
-            or getattr(session_endpoint, "device_id", "")
-            or ""
-        )
-        softphone_call_id = (
-            str(
-                _ha_softphone_store(self.hass, session_endpoint_id).get("call_id") or ""
-            )
-            if session_endpoint_id
-            else ""
-        )
         terminal_reason = reason or "remote_hangup"
-        terminal_state = (
-            CallState.CANCELLED.value
-            if terminal_reason == TerminalReason.CANCELLED.value
-            else CallState.IDLE.value
-        )
+        source_call_id, _ = registry.bridge_for(call_id)
+        call_id = source_call_id or registry.resolve_session_id(call_id) or call_id
         manager = conference_component(self.hass)
         if manager is not None and await manager.leave_call(
             call_id,
@@ -131,78 +87,7 @@ class EndpointTerminationHandler:
                 reason=terminal_reason,
             )
             return
-        if relay is not None or client is not None:
-            _set_sip_bridge_call_state(
-                self.hass,
-                terminal_state,
-                call_id=call_id,
-                dest_call_id=dest_call_id,
-                caller=event_caller,
-                callee=event_callee,
-                peer_name=event_callee,
-                target=event_callee,
-                reason=terminal_reason,
-                terminal_reason=terminal_reason,
-                origin="remote",
-                last_sip_event="BYE",
-            )
-        elif (
-            session_endpoint_id
-            and relay is None
-            and client is None
-            and (invite is not None or (call_id and softphone_call_id == call_id))
-        ):
-            _set_ha_softphone_call_state(
-                self.hass,
-                terminal_state,
-                endpoint_id=session_endpoint_id,
-                session_device_id=session_device_id,
-                caller=(invite.caller if invite is not None else ""),
-                callee=(
-                    invite.target
-                    if invite is not None
-                    else self.ha_peer_name(self.hass)
-                ),
-                peer_name=(invite.caller if invite is not None else ""),
-                direction="incoming",
-                call_id=call_id,
-                reason=terminal_reason,
-                origin="remote",
-            )
-        elif session is not None or invite is not None:
-            # A caller can cancel while a router-owned fork has only early
-            # outbound legs. There is then no bridge or browser media object,
-            # but the logical session still owes observers one terminal event.
-            _set_sip_bridge_call_state(
-                self.hass,
-                terminal_state,
-                call_id=call_id,
-                caller=event_caller,
-                callee=event_callee,
-                peer_name=event_callee,
-                target=event_callee,
-                reason=terminal_reason,
-                terminal_reason=terminal_reason,
-                origin="remote",
-                last_sip_event=(
-                    "CANCEL"
-                    if terminal_reason == TerminalReason.CANCELLED.value
-                    else "BYE"
-                ),
-                route_kind=session.route_kind if session is not None else "trunk",
-            )
-        # begin_termination makes this callback the sole teardown owner.
-        # Finalize exactly once even when transport reports a call without a
-        # relay, client, pending INVITE or matching browser store.
         await registry.terminate_call_wait(
             call_id,
             reason=terminal_reason,
         )
-        if relay is not None or client is not None:
-            _LOGGER.info(
-                "SIP bridge terminated call_id=%s reason=%s relay=%s dest_client=%s",
-                call_id,
-                terminal_reason,
-                relay is not None,
-                client is not None,
-            )

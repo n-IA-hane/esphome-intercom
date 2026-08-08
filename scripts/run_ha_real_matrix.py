@@ -272,6 +272,11 @@ def _registered_local_trunk(out_dir: Path, port: int):
             and (match := re.search(r"\s(?:0\.0\.0\.0|127\.0\.0\.1):(\d+)\s", line))
         }
 
+    ephemeral_floor = int(
+        Path("/proc/sys/net/ipv4/ip_local_port_range")
+        .read_text(encoding="utf-8")
+        .split()[0]
+    )
     baseline_ports = hass_udp_ports()
     scenario = out_dir / "local-trunk-register.xml"
     scenario.write_text(
@@ -336,8 +341,11 @@ def _registered_local_trunk(out_dir: Path, port: int):
         )
         if not contacts:
             raise RuntimeError("HA trunk REGISTER did not contain a local Contact port")
-        new_ports = hass_udp_ports() - baseline_ports
-        new_ports.discard(int(contacts[0][1]))
+        new_ports = {
+            candidate
+            for candidate in hass_udp_ports() - baseline_ports
+            if candidate >= ephemeral_floor
+        }
         if len(new_ports) != 1:
             raise RuntimeError(
                 f"expected one HA trunk UDP socket, found {sorted(new_ports)}"
@@ -404,6 +412,12 @@ def main() -> int:
     run_dir.mkdir(parents=True, exist_ok=False)
     token = lab_token(args.ha_url, args.credentials)
     api = HomeAssistantApi(base_url=args.ha_url, token=token)
+
+    wait_for(
+        lambda: api.request("GET", "/api/config").get("state") == "RUNNING",
+        30,
+        "Home Assistant runtime readiness",
+    )
 
     def qualification_automation_ready() -> bool:
         try:

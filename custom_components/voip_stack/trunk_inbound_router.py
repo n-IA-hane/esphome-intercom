@@ -19,6 +19,7 @@ from .const import (
     CONF_TRUNK_INBOUND_DEFAULT_TARGET,
 )
 from .endpoint_lifecycle import call_registry
+from .endpoint_session import TerminationInitiator, TerminationIntent
 from .endpoint_routing import (
     EndpointRouteResolver,
     peer_audio_formats,
@@ -51,7 +52,6 @@ from .sip_bridge import build_invite_client_relay
 from .sip_client import SipCallClient
 from .sip_runtime import (
     enable_reused_tcp_connection,
-    send_bye,
     send_final_response,
     uri_transport,
 )
@@ -97,6 +97,19 @@ async def async_route_trunk_invite(
         bridge_ports.release()
         return
     registry = call_registry(hass)
+
+    async def terminate_source(reason: str, *, status: int, answered: bool) -> None:
+        intent = (
+            TerminationIntent.bye(
+                reason,
+                TerminationInitiator.ROUTING,
+                response_status=status,
+            )
+            if answered
+            else TerminationIntent.final_response(reason, status)
+        )
+        await registry.terminate_call_wait(invite.call_id, intent=intent)
+
     configured_trunk = trunk_config(hass)
     dtmf_timeout_ms = max(
         0, int(configured_trunk.get(CONF_TRUNK_DTMF_TIMEOUT_MS) or 0)
@@ -198,33 +211,9 @@ async def async_route_trunk_invite(
             if automation_action == "cancel"
             else TerminalReason.DECLINED.value
         )
-        if bool((preanswered or {}).get("final_response_sent", True)):
-            send_bye(hass, invite.call_id)
-        else:
-            send_final_response(
-                hass,
-                invite.call_id,
-                status,
-                "Busy Here" if status == 486 else "Decline",
-            )
+        answered = bool((preanswered or {}).get("final_response_sent", True))
         bridge_ports.release()
-        _set_sip_bridge_call_state(
-            hass,
-            CallState.BUSY.value
-            if automation_action == "busy"
-            else CallState.DECLINED.value,
-            caller=invite.caller,
-            callee=invite.target,
-            peer_name=invite.caller,
-            call_id=invite.call_id,
-            direction="incoming",
-            reason=reason,
-            terminal_reason=reason,
-            origin="automation",
-            sip_status_code=status,
-            last_sip_event="BYE",
-        )
-        registry.terminate_call(invite.call_id, reason=reason)
+        await terminate_source(reason, status=status, answered=answered)
         return
 
     default_target = trunk_default_target(configured_trunk)
@@ -263,29 +252,9 @@ async def async_route_trunk_invite(
             digits or "-",
             route_hint or "-",
         )
-        if bool((preanswered or {}).get("final_response_sent", True)):
-            send_bye(hass, invite.call_id)
-        else:
-            send_final_response(hass, invite.call_id, 404, "Not Found")
-        _set_sip_bridge_call_state(
-            hass,
-            CallState.TRANSPORT_UNREACHABLE.value,
-            caller=invite.caller,
-            callee=route_hint or default_target,
-            peer_name=invite.caller,
-            call_id=invite.call_id,
-            direction="incoming",
-            reason=terminal_reason,
-            terminal_reason=terminal_reason,
-            origin="self",
-            sip_status_code=404,
-            last_sip_event="BYE",
-        )
+        answered = bool((preanswered or {}).get("final_response_sent", True))
         bridge_ports.release()
-        registry.terminate_call(
-            invite.call_id,
-            reason=terminal_reason,
-        )
+        await terminate_source(terminal_reason, status=404, answered=answered)
         return
     else:
         destination = decision.target or route_hint or default_target
@@ -320,28 +289,15 @@ async def async_route_trunk_invite(
                     "OK",
                     answer_sdp=str((preanswered or {}).get("early_answer_sdp") or ""),
                 )
-        except Exception as err:
+        except Exception:
             _LOGGER.exception(
                 "SIP trunk Assist bridge failed call_id=%s", invite.call_id
             )
-            if bool((preanswered or {}).get("final_response_sent", True)):
-                send_bye(hass, invite.call_id)
-            else:
-                send_final_response(
-                    hass, invite.call_id, 488, "Not Acceptable Here"
-                )
-            _set_sip_bridge_call_state(
-                hass,
-                CallState.MEDIA_INCOMPATIBLE.value,
-                caller=invite.caller,
-                callee=destination,
-                call_id=invite.call_id,
-                direction="incoming",
-                reason=str(err),
-                terminal_reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-                origin="self",
-                sip_status_code=488,
-                last_sip_event="BYE",
+            answered = bool((preanswered or {}).get("final_response_sent", True))
+            await terminate_source(
+                TerminalReason.MEDIA_INCOMPATIBLE.value,
+                status=488,
+                answered=answered,
             )
         return
 
@@ -351,7 +307,11 @@ async def async_route_trunk_invite(
             registry.take_pending_invite(invite.call_id)
             preanswered = registry.take_media(invite.call_id, provisional=True)
             release_media_reservation(preanswered)
-            send_final_response(hass, invite.call_id, 480, "Temporarily Unavailable")
+            await terminate_source(
+                TerminalReason.TRANSPORT_UNREACHABLE.value,
+                status=480,
+                answered=bool((preanswered or {}).get("final_response_sent", True)),
+            )
             return
         runtime.defer_invite_to_softphone(
             invite,
@@ -386,7 +346,11 @@ async def async_route_trunk_invite(
                 last_sip_event="DTMF_ROUTE",
             )
             return
-        send_final_response(hass, invite.call_id, 480, "Temporarily Unavailable")
+        await terminate_source(
+            TerminalReason.TRANSPORT_UNREACHABLE.value,
+            status=480,
+            answered=True,
+        )
         bridge_ports.release()
         return
     registry.take_pending_invite(invite.call_id)
@@ -438,21 +402,12 @@ async def async_route_trunk_invite(
             destination,
             decision.action.value,
         )
-        send_bye(hass, invite.call_id)
-        _set_sip_bridge_call_state(
-            hass,
-            CallState.TRANSPORT_UNREACHABLE.value,
-            caller=invite.caller,
-            callee=destination,
-            peer_name=invite.caller,
-            call_id=invite.call_id,
-            reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-            terminal_reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-            origin="self",
-            sip_status_code=404,
-            last_sip_event="BYE",
-        )
         bridge_ports.release()
+        await terminate_source(
+            TerminalReason.TRANSPORT_UNREACHABLE.value,
+            status=404,
+            answered=True,
+        )
         return
 
     peer_target = peer_for_target(destination, peers)
@@ -512,22 +467,12 @@ async def async_route_trunk_invite(
             result,
         )
         await async_close_client_and_release(client, bridge_ports)
-        send_bye(hass, invite.call_id)
         public_result = sip_public_state(result)
         terminal_reason = sip_terminal_reason(result, public_result)
-        _set_sip_bridge_call_state(
-            hass,
-            public_result,
-            caller=invite.caller,
-            callee=destination,
-            peer_name=invite.caller,
-            call_id=invite.call_id,
-            dest_call_id=client.dialog_ids.call_id,
-            reason=terminal_reason,
-            terminal_reason=terminal_reason,
-            origin="remote",
-            sip_status_code=client.last_sip_status_code,
-            last_sip_event=client.last_sip_event or "BYE",
+        await terminate_source(
+            terminal_reason,
+            status=client.last_sip_status_code or 480,
+            answered=True,
         )
         return
     _LOGGER.info(
@@ -564,20 +509,10 @@ async def async_route_trunk_invite(
         await async_close_client_and_release(
             client, bridge_ports, bye=True
         )
-        send_bye(hass, invite.call_id)
-        _set_sip_bridge_call_state(
-            hass,
-            CallState.MEDIA_INCOMPATIBLE.value,
-            caller=invite.caller,
-            callee=destination,
-            peer_name=invite.caller,
-            call_id=invite.call_id,
-            dest_call_id=client.dialog_ids.call_id,
-            reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-            terminal_reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-            origin="self",
-            sip_status_code=488,
-            last_sip_event="BYE",
+        await terminate_source(
+            TerminalReason.MEDIA_INCOMPATIBLE.value,
+            status=488,
+            answered=True,
         )
         return
 

@@ -30,6 +30,7 @@ from .const import (
 from .dial_fork import DialDisposition, DialForkController, terminal_reason
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
+from .endpoint_session import TerminationInitiator, TerminationIntent
 from .runtime_data import (
     call_runtime_artifacts,
     browser_phone,
@@ -88,7 +89,6 @@ from .sip_bridge import (
 from .sip_client import SIP_TIMER_B, SipCallClient
 from .sip_runtime import (
     enable_reused_tcp_connection as _enable_reused_sip_tcp_connection,
-    send_bye as _sip_send_bye,
     send_final_response as _sip_send_final_response,
     uri_transport as _sip_uri_transport,
 )
@@ -395,17 +395,8 @@ async def async_forward_existing_call(
         preanswered = registry.take_media(call_id, provisional=True)
         if preanswered is not None:
             _release_media_reservation(preanswered)
-        if _source_dialog_is_answered(preanswered):
-            _sip_send_bye(hass, call_id)
-        else:
-            status = 486 if on_failure == "busy" else 480
-            _sip_send_final_response(
-                hass,
-                call_id,
-                status,
-                "Busy Here" if status == 486 else "Temporarily Unavailable",
-                decline_reason=reason,
-            )
+        answered = _source_dialog_is_answered(preanswered)
+        status = 486 if on_failure == "busy" else 480
 
         terminal_state = (
             CallState.BUSY.value
@@ -422,20 +413,18 @@ async def async_forward_existing_call(
                 expected_revision=current.revision,
                 expected_owner=current.owner,
             )
-        _set_sip_bridge_call_state(
-            hass,
-            terminal_state,
-            caller=invite.caller,
-            callee=destination,
-            call_id=call_id,
-            reason=reason,
-            terminal_reason=reason,
-            origin="self",
-            last_sip_event=(
-                "BYE" if _source_dialog_is_answered(preanswered) else "SIP_RESPONSE"
+        registry.terminate_call(
+            call_id,
+            intent=(
+                TerminationIntent.bye(
+                    reason,
+                    TerminationInitiator.ROUTING,
+                    response_status=status,
+                )
+                if answered
+                else TerminationIntent.final_response(reason, status)
             ),
         )
-        registry.terminate_call(call_id, reason=reason)
 
     async def _run_forward() -> None:
         client = None

@@ -12,6 +12,7 @@ from .call_scope import endpoint_call_ids, pending_routes
 from .config import transport_config
 from .const import CONF_VIDEO_CAMERA_SEND
 from .fsm import CallState, TerminalReason
+from .endpoint_session import TerminationIntent
 from .inbound_answer import AnswerTransaction
 from .media_ports import (
     allocate_sip_rtp_port,
@@ -25,7 +26,7 @@ from .runtime_data import (
     sip_endpoint_runtime,
 )
 from .route_decisions import set_pending_route_decision
-from .sip_runtime import send_bye, send_final_response
+from .sip_runtime import send_final_response
 from .softphone_commands import BrowserCallCommand, bind_service_call_controller
 from .core.video_rtp import RtpSenderState
 from .websocket_api import _set_ha_softphone_call_state
@@ -372,11 +373,14 @@ async def async_answer_browser_call(
 
     answer_result = await transaction.commit(answer_sdp, claim=_claim_answer)
     if not answer_result.committed:
-        if response_already_sent:
-            send_bye(hass, call_id)
+        failure_reason = answer_result.reason or TerminalReason.PROTOCOL_ERROR.value
         registry.terminate_call(
             call_id,
-            reason=answer_result.reason or TerminalReason.PROTOCOL_ERROR.value,
+            intent=(
+                TerminationIntent.bye(failure_reason)
+                if response_already_sent
+                else TerminationIntent(failure_reason)
+            ),
         )
         raise ServiceValidationError(
             f"SIP answer transaction failed for call_id {call_id}: "

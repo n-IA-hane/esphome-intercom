@@ -14,6 +14,8 @@ from .runtime_data import (
     sip_endpoint_manager,
     sip_trunk,
 )
+from .endpoint_session import SipTerminationDisposition, TerminationIntent
+from .fsm import sip_failure_response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -106,6 +108,36 @@ def send_bye(hass: HomeAssistant, call_id: str = "") -> bool:
         if callable(send_bye_for_dialog) and send_bye_for_dialog(call_id):
             return True
     return False
+
+
+async def async_signal_termination(
+    hass: HomeAssistant,
+    call_id: str,
+    intent: TerminationIntent,
+) -> None:
+    """Perform the one SIP terminal action selected by the call owner."""
+
+    disposition = intent.sip_disposition
+    if disposition is SipTerminationDisposition.NONE:
+        return
+    if disposition in {SipTerminationDisposition.AUTO, SipTerminationDisposition.BYE}:
+        if send_bye(hass, call_id):
+            return
+        if disposition is SipTerminationDisposition.BYE:
+            return
+    if disposition is SipTerminationDisposition.CANCEL:
+        # Outbound client legs own CANCEL and are closed by their leg closer.
+        return
+    status, reason, _, _ = sip_failure_response(intent.reason)
+    if intent.response_status:
+        status = intent.response_status
+    send_final_response(
+        hass,
+        call_id,
+        status,
+        reason,
+        decline_reason=intent.reason,
+    )
 
 
 def uri_transport(uri) -> str:

@@ -92,6 +92,76 @@ async def test_source_bye_before_routing_releases_only_reserved_media(
     registry.take_pending_invite.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_unknown_route_terminates_answered_source_through_session_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.voip_stack.router import RouteAction
+
+    call_artifacts = SimpleNamespace(
+        trunk_closed=False,
+        trunk_info_queue=None,
+    )
+    artifacts = SimpleNamespace(artifacts_for=lambda _call_id: call_artifacts)
+    registry = Mock()
+    registry.take_media.return_value = {"final_response_sent": True}
+    registry.terminate_call_wait = AsyncMock()
+    ports = SimpleNamespace(ports=(40000, 40002), release=Mock())
+    invite = SimpleNamespace(
+        call_id="call-reject",
+        caller="Wildix caller",
+        target="Casa",
+        source_host="192.0.2.10",
+    )
+    decision = SimpleNamespace(action=RouteAction.REJECT, target="")
+    monkeypatch.setattr(
+        trunk_inbound_router,
+        "call_runtime_artifacts",
+        lambda _hass: artifacts,
+    )
+    monkeypatch.setattr(trunk_inbound_router, "call_registry", lambda _hass: registry)
+    monkeypatch.setattr(trunk_inbound_router, "trunk_config", lambda _hass: {})
+    monkeypatch.setattr(
+        trunk_inbound_router,
+        "async_build_peer_snapshot",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        trunk_inbound_router,
+        "registered_roster_entries",
+        Mock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        trunk_inbound_router,
+        "roster_from_peers",
+        Mock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        trunk_inbound_router,
+        "dtmf_extension_routes",
+        Mock(return_value={}),
+    )
+    monkeypatch.setattr(
+        trunk_inbound_router,
+        "route_inbound_trunk",
+        Mock(return_value=decision),
+    )
+    monkeypatch.setattr(trunk_inbound_router, "trunk_default_target", lambda _cfg: "Casa")
+    monkeypatch.setattr(trunk_inbound_router, "release_media_reservation", Mock())
+    await trunk_inbound_router.async_route_trunk_invite(
+        _runtime(), invite, bridge_ports=ports
+    )
+
+    registry.take_pending_invite.assert_called_once_with(invite.call_id)
+    ports.release.assert_called_once_with()
+    registry.terminate_call_wait.assert_awaited_once()
+    call_id = registry.terminate_call_wait.await_args.args[0]
+    intent = registry.terminate_call_wait.await_args.kwargs["intent"]
+    assert call_id == invite.call_id
+    assert intent.sip_disposition.value == "bye"
+    assert intent.reason == "route_not_found"
+
+
 def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

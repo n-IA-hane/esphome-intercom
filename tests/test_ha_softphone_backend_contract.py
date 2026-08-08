@@ -102,21 +102,6 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertNotIn("_set_sip_bridge_call_state(", bridge_branch)
         self.assertNotIn("_set_ha_softphone_call_state(", bridge_branch)
 
-    def test_bridge_teardown_clears_only_its_matching_softphone_session(self) -> None:
-        body = _function_body(
-            self.softphone_termination, "async_terminate_sip_bridge_session"
-        )
-        self.assertIn('softphone_call_id = str(softphone.get("call_id") or "")', body)
-        self.assertIn("if handled and source_call_id == softphone_call_id:", body)
-        matching_branch = body.split(
-            "if handled and source_call_id == softphone_call_id:", 1
-        )[1]
-        self.assertIn("_set_ha_softphone_call_state(", matching_branch)
-        self.assertIn("CallState.IDLE.value", matching_branch)
-        self.assertIn('last_sip_event="SIP_BYE"', matching_branch)
-        self.assertIn("projected_call_ids.intersection", body)
-        self.assertIn("_set_sip_bridge_call_state(", body)
-
     def test_inbound_bridge_completion_does_not_mutate_ha_softphone(self) -> None:
         bridge_path = _function_body(
             INBOUND_BRIDGE.read_text(),

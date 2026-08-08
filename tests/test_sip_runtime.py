@@ -96,7 +96,40 @@ class _TcpServer:
         self.closed.append((addr, call_id))
 
 
-class SipRuntimeTest(unittest.TestCase):
+class SipRuntimeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_terminal_signaling_selects_exactly_one_sip_action(self) -> None:
+        owner = _Server(owns="call-1")
+        hass = SimpleNamespace(data={DOMAIN: {"sip_endpoint": owner}})
+        intent = sip_runtime.TerminationIntent("local_hangup")
+
+        await sip_runtime.async_signal_termination(hass, "call-1", intent)
+
+        self.assertEqual(owner.bye_calls, ["call-1"])
+        self.assertEqual(owner.final_calls, [])
+
+    async def test_terminal_signaling_falls_back_to_final_response(self) -> None:
+        owner = _Server(owns="call-1")
+        owner.send_bye = lambda call_id: False
+        hass = SimpleNamespace(data={DOMAIN: {"sip_endpoint": owner}})
+        intent = sip_runtime.TerminationIntent("busy")
+
+        await sip_runtime.async_signal_termination(hass, "call-1", intent)
+
+        self.assertEqual(owner.final_calls[0][:3], ("call-1", 486, "Busy Here"))
+
+    async def test_remote_termination_does_not_echo_signaling(self) -> None:
+        owner = _Server(owns="call-1")
+        hass = SimpleNamespace(data={DOMAIN: {"sip_endpoint": owner}})
+        intent = sip_runtime.TerminationIntent(
+            "remote_hangup",
+            sip_disposition=sip_runtime.SipTerminationDisposition.NONE,
+        )
+
+        await sip_runtime.async_signal_termination(hass, "call-1", intent)
+
+        self.assertEqual(owner.bye_calls, [])
+        self.assertEqual(owner.final_calls, [])
+
     def test_server_discovery_prefers_manager_and_includes_trunk(self) -> None:
         manager = object()
         legacy_udp = object()

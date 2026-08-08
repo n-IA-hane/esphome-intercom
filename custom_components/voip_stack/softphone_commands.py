@@ -17,6 +17,7 @@ from .call_scope import (
     single_pending_route_call_id,
 )
 from .endpoint_lifecycle import call_registry
+from .endpoint_session import TerminationInitiator, TerminationIntent
 from .service_endpoints import (
     async_require_phone_service_control,
     browser_endpoint_name,
@@ -26,7 +27,6 @@ from .fsm import TerminalReason
 from .media_ports import release_media_reservation
 from .route_decisions import set_pending_route_decision
 from .runtime_data import call_runtime_artifacts, conference_component
-from .sip_runtime import send_bye, send_final_response
 from .websocket_api import (
     _ha_softphone_store,
     _set_ha_softphone_call_state,
@@ -180,19 +180,6 @@ async def async_decline_browser_call(
     if preanswered_item is not None:
         release_media_reservation(preanswered_item)
         final_response_sent = bool(preanswered_item.get("final_response_sent", True))
-        if final_response_sent:
-            send_bye(hass, call_id)
-        elif not send_final_response(
-            hass,
-            call_id,
-            status,
-            reason,
-            decline_reason=app_reason,
-        ):
-            _LOGGER.warning(
-                "sip_decline: early SIP transaction no longer exists for %s",
-                call_id,
-            )
         _LOGGER.info(
             "SIP declined %s trunk call_id=%s reason=%s",
             "answered" if final_response_sent else "early-media",
@@ -209,15 +196,16 @@ async def async_decline_browser_call(
             sip_status_code=status,
             last_sip_event="BYE" if final_response_sent else "SIP_RESPONSE",
         )
-        registry.terminate_call(call_id, reason=app_reason)
+        registry.terminate_call(
+            call_id,
+            intent=TerminationIntent.bye(app_reason)
+            if final_response_sent
+            else TerminationIntent.final_response(
+                app_reason, status, TerminationInitiator.LOCAL_USER
+            ),
+        )
         return
-    if not call_id or not send_final_response(
-        hass,
-        call_id,
-        status,
-        reason,
-        decline_reason=app_reason,
-    ):
+    if not call_id or registry.sessions.get(registry.resolve_session_id(call_id)) is None:
         _LOGGER.warning("sip_decline: no pending SIP call %s", call_id or "(current)")
         return
 
@@ -238,4 +226,9 @@ async def async_decline_browser_call(
         sip_status_code=status,
         last_sip_event="SIP_RESPONSE",
     )
-    registry.terminate_call(call_id, reason=app_reason)
+    registry.terminate_call(
+        call_id,
+        intent=TerminationIntent.final_response(
+            app_reason, status, TerminationInitiator.LOCAL_USER
+        ),
+    )

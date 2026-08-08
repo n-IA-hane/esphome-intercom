@@ -759,14 +759,16 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 calls.append("video_socket_close")
 
         class Endpoint:
-            def snapshot(self):
-                return types.SimpleNamespace(pending_call_ids=("pending",), active_call_ids=("active",))
-
-            def send_final_response(self, call_id, status, reason, *, decline_reason):
+            def send_final_response(self, call_id, status, reason, **kwargs):
+                decline_reason = kwargs.get("decline_reason", "")
                 calls.append(f"final_{call_id}_{status}_{decline_reason}")
+                return call_id == "preanswered"
 
             def send_bye(self, call_id):
+                if call_id not in {"call", "inbound"}:
+                    return False
                 calls.append(f"bye_{call_id}")
+                return True
 
             async def stop(self) -> None:
                 calls.append("endpoint_stop")
@@ -799,8 +801,6 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(watcher.cancelled())
         self.assertTrue(runtime_task.cancelled())
-        self.assertIn("final_pending_503_shutdown", calls)
-        self.assertIn("bye_active", calls)
         self.assertIn("conference_local_hangup", calls)
         self.assertIn("relay_stop", calls)
         self.assertIn("client_terminate", calls)

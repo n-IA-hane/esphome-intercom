@@ -55,6 +55,16 @@ def softphone_answer(monkeypatch):
                 PROTOCOL_ERROR=SimpleNamespace(value="protocol_error")
             ),
         },
+        "endpoint_session": {
+            "TerminationIntent": type(
+                "TerminationIntent",
+                (),
+                {
+                    "__init__": lambda self, reason: setattr(self, "reason", reason),
+                    "bye": classmethod(lambda cls, reason: cls(reason)),
+                },
+            ),
+        },
         "inbound_answer": {"AnswerTransaction": object},
         "media_ports": {
             "allocate_sip_rtp_port": Mock(return_value=40000),

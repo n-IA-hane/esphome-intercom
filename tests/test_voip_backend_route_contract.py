@@ -1567,46 +1567,6 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertGreaterEqual(registrations, 5)
         self.assertEqual(missing, [])
 
-    def test_detached_dtmf_route_failure_releases_call_and_sends_bye(self) -> None:
-        guarded = self.source[
-            self.source.index("async def _run_trunk_inbound_route_guarded(") :
-            self.source.index(
-                "async def _run_ring_group_call(",
-                self.source.index("async def _run_trunk_inbound_route_guarded("),
-            )
-        ]
-        self.assertIn("except asyncio.CancelledError:", guarded)
-        self.assertIn("registry.take_pending_invite(invite.call_id)", guarded)
-        self.assertIn(
-            "registry.take_media(invite.call_id, provisional=True)", guarded
-        )
-        self.assertIn("_release_media_reservation(preanswered)", guarded)
-        self.assertIn("_sip_send_bye(hass, invite.call_id)", guarded)
-        self.assertIn("registry.terminate_call(", guarded)
-        creator = self.inbound_trunk[
-            self.inbound_trunk.index("create_runtime_task(") :
-            self.inbound_trunk.index("return SipInviteResult(200")
-        ]
-        self.assertIn("runtime.run_trunk_inbound_route_guarded(", creator)
-
-    def test_unknown_dtmf_route_finishes_the_preanswered_session(self) -> None:
-        runner = self.trunk_inbound_router
-        rejected = runner[
-            runner.index("elif decision.action is RouteAction.REJECT:") :
-            runner.index(
-                "else:\n        destination =",
-                runner.index("elif decision.action is RouteAction.REJECT:"),
-            )
-        ]
-        self.assertIn("send_bye(hass, invite.call_id)", rejected)
-        self.assertIn("bridge_ports.release()", rejected)
-        self.assertIn("registry.terminate_call(", rejected)
-        self.assertNotIn("state=", rejected)
-        self.assertLess(
-            rejected.index("bridge_ports.release()"),
-            rejected.index("registry.terminate_call("),
-        )
-
     def test_answer_ha_keeps_an_explicit_dtmf_extension(self) -> None:
         runner = self.trunk_inbound_router
         self.assertIn(

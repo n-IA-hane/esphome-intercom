@@ -17,6 +17,12 @@ from .session_cleanup import async_wait_for_cleanup
 _LOGGER = logging.getLogger(__name__)
 
 AsyncCloser: TypeAlias = Callable[[str], Awaitable[None] | None]
+TerminationSignaler: TypeAlias = Callable[
+    [str, "TerminationIntent"], Awaitable[None] | None
+]
+TerminationObserver: TypeAlias = Callable[
+    ["EndpointCallSession", "TerminationIntent"], Awaitable[None] | None
+]
 
 
 class SessionPhase(StrEnum):
@@ -89,6 +95,35 @@ class TerminationIntent:
         object.__setattr__(self, "reason", str(self.reason or "terminated").strip())
         state = str(self.public_state or "").strip()
         object.__setattr__(self, "public_state", state or sip_public_state(self.reason))
+
+    @classmethod
+    def bye(
+        cls,
+        reason: str,
+        initiator: TerminationInitiator = TerminationInitiator.LOCAL_USER,
+        *,
+        response_status: int = 0,
+    ) -> "TerminationIntent":
+        return cls(
+            reason,
+            initiator=initiator,
+            sip_disposition=SipTerminationDisposition.BYE,
+            response_status=response_status,
+        )
+
+    @classmethod
+    def final_response(
+        cls,
+        reason: str,
+        status: int,
+        initiator: TerminationInitiator = TerminationInitiator.ROUTING,
+    ) -> "TerminationIntent":
+        return cls(
+            reason,
+            initiator=initiator,
+            sip_disposition=SipTerminationDisposition.FINAL_RESPONSE,
+            response_status=status,
+        )
 
 
 class CleanupStage(IntEnum):
@@ -238,6 +273,8 @@ class EndpointCallSession:
         generation: int,
         *,
         phase: SessionPhase = SessionPhase.NEW,
+        termination_signaler: TerminationSignaler | None = None,
+        termination_observer: TerminationObserver | None = None,
         on_terminated: Callable[["EndpointCallSession", SessionTerminationResult], None]
         | None = None,
     ) -> None:
@@ -269,6 +306,8 @@ class EndpointCallSession:
         self.terminated = asyncio.Event()
         self._termination_task: asyncio.Task[SessionTerminationResult] | None = None
         self._termination_initiator: asyncio.Task[Any] | None = None
+        self._termination_signaler = termination_signaler
+        self._termination_observer = termination_observer
         self._on_terminated = on_terminated
 
     @property
@@ -462,6 +501,30 @@ class EndpointCallSession:
         errors: list[str] = []
         closed_legs: list[str] = []
         closed_resources: list[str] = []
+        try:
+            if self._termination_signaler is not None:
+                result = self._termination_signaler(self.call_id, intent)
+                if inspect.isawaitable(result):
+                    await result
+        except BaseException as err:  # signaling failure must not block cleanup
+            errors.append(f"signaling:{type(err).__name__}")
+            _LOGGER.debug(
+                "PBX session terminal signaling failed call_id=%s",
+                self.call_id,
+                exc_info=True,
+            )
+        try:
+            if self._termination_observer is not None:
+                result = self._termination_observer(self, intent)
+                if inspect.isawaitable(result):
+                    await result
+        except BaseException as err:  # projection failure must not block cleanup
+            errors.append(f"observer:{type(err).__name__}")
+            _LOGGER.debug(
+                "PBX session terminal projection failed call_id=%s",
+                self.call_id,
+                exc_info=True,
+            )
         self.artifacts.settle()
 
         current = asyncio.current_task()

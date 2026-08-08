@@ -832,9 +832,28 @@ class CallRuntimeApi:
                 return source, dest
         return "", ""
 
+    async def terminate_bridge_wait(
+        self,
+        call_id: str,
+        intent: TerminationIntent,
+    ) -> tuple[bool, str, str, bool, bool]:
+        """Resolve either bridge leg and drain its authoritative session."""
+
+        source_call_id, dest_call_id = self.bridge_for(call_id)
+        if not source_call_id:
+            return False, "", "", False, False
+        client_present = bool(dest_call_id and self.sip_clients.get(dest_call_id))
+        await self.terminate_call_wait(source_call_id, intent=intent)
+        return True, source_call_id, dest_call_id, client_present, True
+
     def terminate_call(
-        self, call_id: str, *, reason: str = ""
+        self,
+        call_id: str,
+        *,
+        reason: str = "",
+        intent: TerminationIntent | None = None,
     ) -> EndpointCallSession | None:
+        terminal_intent = intent or TerminationIntent(reason or "removed")
         session_id = self.resolve_session_id(str(call_id or "").strip())
         if session_id:
             session = self.sessions.get(session_id)
@@ -846,7 +865,7 @@ class CallRuntimeApi:
         if not self.active:
             return self._discard_dark_session(
                 call_id,
-                TerminationIntent(reason or "removed"),
+                terminal_intent,
             )
         session = self.sessions.get(session_id)
         if session is None:
@@ -855,7 +874,7 @@ class CallRuntimeApi:
         session.revision += 1
         self.request_termination(
             session_id,
-            TerminationIntent(reason or "removed"),
+            terminal_intent,
             generation=session.generation,
         )
         return session
@@ -865,6 +884,7 @@ class CallRuntimeApi:
         call_id: str,
         *,
         reason: str = "",
+        intent: TerminationIntent | None = None,
     ) -> EndpointCallSession | None:
         """Remove one call and wait for its authoritative cleanup barrier."""
 
@@ -872,11 +892,12 @@ class CallRuntimeApi:
         session = self.sessions.get(session_id)
         barrier = None
         if session is not None:
+            terminal_intent = intent or TerminationIntent(
+                reason or session.terminal_reason or session.outcome or "removed",
+            )
             barrier = self.request_termination(
                 session_id,
-                TerminationIntent(
-                    reason or session.terminal_reason or session.outcome or "removed",
-                ),
+                terminal_intent,
                 generation=session.generation,
             )
         removed = session

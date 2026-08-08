@@ -42,6 +42,37 @@ endpoint_session = _load_module("endpoint_session")
 
 
 class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_terminal_signaling_precedes_resource_cleanup_once(self) -> None:
+        events: list[str] = []
+
+        async def signal(call_id, intent) -> None:
+            events.append(f"signal:{call_id}:{intent.reason}")
+
+        session = endpoint_session.EndpointCallSession(
+            "call-1",
+            1,
+            termination_signaler=signal,
+        )
+        session.add_resource(
+            "relay",
+            object(),
+            lambda reason: events.append(f"relay:{reason}"),
+        )
+
+        first = session.start_termination(
+            endpoint_session.TerminationIntent("local_hangup")
+        )
+        second = session.start_termination(
+            endpoint_session.TerminationIntent("duplicate")
+        )
+        self.assertIs(first, second)
+        await first
+
+        self.assertEqual(
+            events,
+            ["signal:call-1:local_hangup", "relay:local_hangup"],
+        )
+
     async def test_termination_intent_derives_one_public_state_policy(self) -> None:
         self.assertEqual(
             endpoint_session.TerminationIntent("remote_hangup").public_state,
