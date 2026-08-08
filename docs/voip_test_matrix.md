@@ -178,6 +178,9 @@ snapshots.
 - Established HA-owned calls receive compatible UPDATE and re-INVITE offers:
   hold/resume, direction, RTP endpoint and supported audio-format changes
   commit once; rejected or retransmitted offers do not duplicate the commit.
+- An initial INVITE without SDP receives a local offer in `200 OK`, answers in
+  ACK, reaches a real registered SIP peer through the normal route, survives
+  source and destination hangup, and returns all call resources to baseline.
 - HA video hold/resume retains the directional H.264/VP8/JPEG contract and
   camera authorization. Adding/removing video or changing its codec receives
   `488` without damaging the current call.

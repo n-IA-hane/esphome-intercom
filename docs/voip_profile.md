@@ -116,6 +116,12 @@ new local offer and ACK must carry the compatible SDP answer. Media ownership
 changes only after that ACK is validated; a missing or invalid answer closes
 the dialog instead of leaving a half-negotiated call alive.
 
+The HA listener and persistent trunk flow also accept an initial INVITE without
+SDP. HA sends a locally reserved audio offer in `200 OK`; ACK supplies the
+answer before routing and media ownership are committed. This delayed initial
+offer uses the ordinary dial plan and the same source RTP reservation as the
+winning browser, Assist or SIP bridge route.
+
 HA-owned dialogs negotiate RFC 4028 session timers through `Session-Expires`
 and `Min-SE`. The negotiated refresher sends UPDATE or re-INVITE before expiry;
 an expired dialog is terminated through the same authoritative cleanup path as

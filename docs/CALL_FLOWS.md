@@ -156,6 +156,13 @@ re-INVITE, HA sends the current compatible media contract as a new offer in the
 `200 OK` and commits the remote answer only after it arrives in the ACK. A
 missing or incompatible delayed answer terminates the dialog explicitly.
 
+An initial INVITE without SDP follows the same RFC 3261 delayed-offer contract.
+HA reserves the source RTP port before signaling, sends its offer in the first
+`200 OK`, validates the answer carried by ACK, then continues through the same
+browser, Assist, registered-phone or trunk router used by an ordinary INVITE.
+The reservation is transferred to that route owner, never allocated a second
+time, and invalid or missing ACK media closes the confirmed dialog with BYE.
+
 ## Registered SIP endpoint to HA
 
 1. Registered endpoint calls `Casa` or HA's extension.
