@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import subprocess
 import sys
 from types import ModuleType
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,3 +87,47 @@ def test_runner_rejects_a_stale_installed_automation_package(
         assert "not running the checked-in qualification package" in str(error)
     else:
         raise AssertionError("stale Home Assistant package was accepted")
+
+
+def test_local_trunk_uses_absolute_sipp_scenario_with_relative_output(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = load_runner()
+    relative_output = Path("test-output")
+    workdir = tmp_path / relative_output
+    workdir.mkdir()
+    commands: list[list[str]] = []
+
+    class Process:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = 0
+
+        def wait(self, timeout):
+            return self.returncode
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: type("Result", (), {"stdout": ""})(),
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda command, **kwargs: commands.append(command) or Process(),
+    )
+    monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(RuntimeError, match="scenario inspected"):
+        with runner._registered_local_trunk(relative_output, 19999):
+            raise RuntimeError("scenario inspected")
+
+    scenario = Path(commands[0][commands[0].index("-sf") + 1])
+    assert scenario.is_absolute()
+    assert scenario == workdir / "local-trunk-register.xml"

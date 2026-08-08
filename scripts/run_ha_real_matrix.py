@@ -279,7 +279,7 @@ def _registered_local_trunk(out_dir: Path, port: int):
         .split()[0]
     )
     baseline_ports = hass_udp_ports()
-    scenario = out_dir / "local-trunk-register.xml"
+    scenario = (out_dir / "local-trunk-register.xml").resolve()
     scenario.write_text(
         """<?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
