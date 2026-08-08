@@ -160,6 +160,35 @@ def test_softphone_runner_selects_dtmf_routed_trunk_destination(
     ]
 
 
+def test_softphone_runner_uses_registered_peer_for_isolated_browser_lab(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_softphone_tool()
+    events: list[tuple[str, object]] = []
+
+    class Peer:
+        def __init__(self, config, **_kwargs) -> None:
+            events.append(("config", config))
+
+        def dial(self, target, *, wait_for):
+            events.append(("dial", (target, wait_for)))
+
+        def close(self):
+            events.append(("close", None))
+
+    monkeypatch.setattr(runner, "BareSip", Peer)
+    monkeypatch.setattr(runner, "BROWSER_INBOUND_MODE", "registered")
+    monkeypatch.setattr(runner, "LOCAL_CONFIG", Path("/tmp/local-peer"))
+    monkeypatch.setattr(runner, "LOCAL_SIP_TARGET", "sip:Casa@lab.invalid")
+
+    runner.dial_browser_inbound()
+
+    assert events == [
+        ("config", Path("/tmp/local-peer")),
+        ("dial", ("sip:Casa@lab.invalid", "180 Ringing")),
+    ]
+
+
 @pytest.mark.parametrize(
     ("module", "attribute", "expected"),
     [

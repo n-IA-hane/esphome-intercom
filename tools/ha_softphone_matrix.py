@@ -42,6 +42,7 @@ WILDIX_CONFIG = Path(
 )
 INBOUND_TARGET = os.environ.get("INBOUND_TARGET", "427")
 INBOUND_DTMF_TARGET = os.environ.get("INBOUND_DTMF_TARGET", "")
+BROWSER_INBOUND_MODE = os.environ.get("BROWSER_INBOUND_MODE", "trunk")
 LOCAL_CONFIG = Path(
     os.environ.get("LOCAL_BARESIP_CONFIG", "/home/codex/ha-voip-lab/baresip-source")
 )
@@ -451,6 +452,21 @@ def dial_trunk() -> BareSip:
     return caller
 
 
+def dial_browser_inbound() -> BareSip:
+    """Call the observed browser phone from the selected real peer."""
+    if BROWSER_INBOUND_MODE == "trunk":
+        return dial_trunk()
+    if BROWSER_INBOUND_MODE == "registered":
+        caller = BareSip(LOCAL_CONFIG)
+        try:
+            caller.dial(LOCAL_SIP_TARGET, wait_for="180 Ringing")
+        except BaseException:
+            caller.close()
+            raise
+        return caller
+    raise ValueError(f"unsupported browser inbound mode: {BROWSER_INBOUND_MODE}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -581,7 +597,7 @@ def main() -> int:
                     raise RuntimeError("failed to enable Send Camera")
 
             def remote_hangup() -> dict[str, Any]:
-                caller = dial_trunk()
+                caller = dial_browser_inbound()
                 active.append(caller)
                 ringing = matching(page, "ringing")
                 caller.hangup()
@@ -599,7 +615,7 @@ def main() -> int:
             case("trunk_live_ringing_remote_hangup", remote_hangup)
 
             def refresh_ringing() -> dict[str, Any]:
-                caller = dial_trunk()
+                caller = dial_browser_inbound()
                 active.append(caller)
                 ringing = matching(page, "ringing")
                 page.reload(wait_until="domcontentloaded")
@@ -614,7 +630,7 @@ def main() -> int:
             case("refresh_during_ringing", refresh_ringing)
 
             def answer_from_card() -> dict[str, Any]:
-                caller = dial_trunk()
+                caller = dial_browser_inbound()
                 active.append(caller)
                 ringing = matching(page, "ringing")
                 if not page.evaluate(CLICK, "Answer"):
@@ -836,7 +852,7 @@ def main() -> int:
             )
 
             def decline_from_card() -> dict[str, Any]:
-                caller = dial_trunk()
+                caller = dial_browser_inbound()
                 active.append(caller)
                 ringing = matching(page, "ringing")
                 if not page.evaluate(CLICK, "Decline"):
@@ -853,7 +869,7 @@ def main() -> int:
                 if not page.evaluate(SET_AUTO_ANSWER, True):
                     raise RuntimeError("failed to enable Auto Answer")
                 page.wait_for_timeout(500)
-                caller = dial_trunk()
+                caller = dial_browser_inbound()
                 active.append(caller)
                 answered = matching(page, "in_call")
                 caller.hangup()
@@ -864,7 +880,7 @@ def main() -> int:
             case("auto_answer", auto_answer)
 
             def forward_assist() -> dict[str, Any]:
-                caller = dial_trunk()
+                caller = dial_browser_inbound()
                 active.append(caller)
                 ringing = matching(page, "ringing")
                 service(
@@ -906,7 +922,7 @@ def main() -> int:
             case("forward_releases_ha_and_keeps_call_alive", forward_assist)
 
             def failed_forward_resume() -> dict[str, Any]:
-                caller = dial_trunk()
+                caller = dial_browser_inbound()
                 active.append(caller)
                 ringing = matching(page, "ringing")
                 attrs = event_state()
@@ -934,7 +950,7 @@ def main() -> int:
                 second = context.new_page()
                 second.goto(HA_URL, wait_until="domcontentloaded")
                 second.wait_for_timeout(4_000)
-                caller = dial_trunk()
+                caller = dial_browser_inbound()
                 active.append(caller)
                 first_state = matching(page, "ringing")
                 second_state = matching(second, "ringing")
@@ -1002,7 +1018,7 @@ def main() -> int:
             service("automation", "turn_on", {"entity_id": AUTOMATION})
 
             def automation_fallback() -> dict[str, Any]:
-                caller = dial_trunk()
+                caller = dial_browser_inbound()
                 active.append(caller)
                 ringing = matching(page, "ringing")
                 released = wait_card(

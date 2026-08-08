@@ -38,6 +38,7 @@ SIPP_CAPTURE_DIR="$CAPTURE_DIR/cancel" ./scripts/run_sipp_lab.sh >/dev/null
 PLAYWRIGHT_STORAGE_STATE="$STORAGE_STATE" \
 HA_PLAYWRIGHT_REFRESH_CREDENTIALS="$CREDENTIALS" \
 LOCAL_SIP_TARGET="sip:Casa@$LAB_HOST:15060;transport=tcp" \
+BROWSER_INBOUND_MODE=registered \
   .venv/bin/python tools/ha_softphone_matrix.py \
     --out "$CAPTURE_DIR/browser-matrix.json" \
     --only trunk_live_ringing_remote_hangup \
