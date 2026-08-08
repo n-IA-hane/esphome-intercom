@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import json
 from pathlib import Path
@@ -71,7 +72,7 @@ def build_lock(
         if ha_python
         else _package_version("homeassistant")
     )
-    return {
+    payload: dict[str, object] = {
         "schema_version": 1,
         "repositories": repositories,
         "toolchain": {
@@ -81,6 +82,9 @@ def build_lock(
             "home_assistant": home_assistant,
         },
     }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    payload["candidate_id"] = hashlib.sha256(canonical.encode()).hexdigest()
+    return payload
 
 
 def main() -> int:
