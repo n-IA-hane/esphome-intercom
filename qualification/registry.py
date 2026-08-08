@@ -86,6 +86,17 @@ AREAS = (
         frozenset({"static", "qualification-selftest"}),
     ),
     QualificationArea(
+        "ha_surface",
+        Risk.HIGH,
+        (
+            "custom_components/voip_stack/services.yaml",
+            "custom_components/voip_stack/manifest.json",
+            "custom_components/voip_stack/strings.json",
+            "custom_components/voip_stack/translations/**",
+        ),
+        frozenset({"static", "software-full", "ha-runtime"}),
+    ),
+    QualificationArea(
         "ha_lifecycle",
         Risk.CRITICAL,
         (
@@ -169,4 +180,3 @@ SCENARIOS = (
 
 
 ALL_JOBS = frozenset(job for area in AREAS for job in area.jobs)
-

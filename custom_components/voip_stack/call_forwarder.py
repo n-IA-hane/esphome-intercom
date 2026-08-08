@@ -147,7 +147,7 @@ async def async_forward_existing_call(
     ``initial_selection`` is used only by the bounded ``route_requested``
     decision point. Unlike a later forward, it must not exclude browser
     phones from a ring group merely because the pre-answered trunk dialog
-    is temporarily anchored on the selected HA phone.
+    is temporarily anchored on the default HA phone.
     """
 
     hass = runtime.hass

@@ -56,6 +56,21 @@ def test_docs_only_plan_selects_economic_gate() -> None:
     assert plan["firmware_profiles"] == []
 
 
+def test_ha_service_surface_requires_real_ha_without_hardware() -> None:
+    plan = build_plan(
+        ["custom_components/voip_stack/services.yaml"],
+        base="base",
+        head="head",
+        full=False,
+        event="pull-request",
+    )
+
+    assert plan["unknown_files"] == []
+    assert plan["areas"] == ["ha_surface"]
+    assert plan["required_jobs"] == ["ha-runtime", "software-full", "static"]
+    assert plan["firmware_profiles"] == []
+
+
 def test_lifecycle_change_requires_real_qualification() -> None:
     plan = build_plan(
         ["custom_components/voip_stack/endpoint_termination.py"],
