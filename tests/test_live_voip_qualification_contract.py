@@ -286,6 +286,35 @@ class EspPairQualificationBehaviorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(peer.values["voip_state"], "idle")
         self.assertEqual(len(ctx.artifacts), 2)
 
+    async def test_trunk_scenario_uses_explicit_trunk_dial_prefix(self) -> None:
+        esp = SimpleNamespace(
+            service=AsyncMock(),
+            snapshot=unittest.mock.Mock(
+                return_value={"destination": "**3519968203"}
+            ),
+        )
+        ctx = SimpleNamespace(
+            esp=esp,
+            args=SimpleNamespace(
+                allow_trunk=True,
+                trunk_number="3519968203",
+            ),
+            cleanup=AsyncMock(),
+            capture=unittest.mock.Mock(),
+        )
+        with unittest.mock.patch.object(
+            runner, "wait_esp_voip_state", AsyncMock()
+        ):
+            await runner.scenario_esp_to_trunk_cancel(ctx)
+
+        self.assertEqual(
+            esp.service.await_args_list,
+            [
+                call("start_call", {"dest": "**3519968203"}),
+                call("decline_call", {"reason": "qualification_cancel"}),
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

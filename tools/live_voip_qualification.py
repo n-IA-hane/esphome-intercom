@@ -1089,12 +1089,15 @@ async def scenario_esp_to_trunk_cancel(ctx: LiveContext) -> None:
     if not ctx.args.allow_trunk:
         raise RuntimeError("trunk scenario requires --allow-trunk")
     await ctx.cleanup()
-    await ctx.esp.service("start_call", {"dest": ctx.args.trunk_number})
+    dial_string = str(ctx.args.trunk_number).strip()
+    if not dial_string.startswith("**"):
+        dial_string = f"**{dial_string}"
+    await ctx.esp.service("start_call", {"dest": dial_string})
     await wait_esp_voip_state(ctx, {"calling", "remote_ringing"}, timeout=18)
     await ctx.esp.service("decline_call", {"reason": "qualification_cancel"})
     await wait_esp_voip_state(ctx, {"idle"}, timeout=18)
     snap = ctx.esp.snapshot()
-    if str(snap.get("destination") or "") not in {ctx.args.trunk_number, ""}:
+    if str(snap.get("destination") or "") not in {dial_string, ""}:
         raise AssertionError(
             f"ESP trunk terminal target was rewritten unexpectedly: {snap}"
         )
