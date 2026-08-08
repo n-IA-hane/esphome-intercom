@@ -1,0 +1,43 @@
+schema_version: 1
+lock_file: "${XDG_RUNTIME_DIR}/voip-hardware-lab.lock"
+snapshot:
+  command:
+    - .venv/bin/python
+    - scripts/run_answered_sipp_lab.py
+    - --quiescence-only
+  interval_seconds: 0.25
+  timeout_seconds: 8
+
+devices:
+  ws3:
+    enabled: true
+    capabilities: [hil-s3, ws3, audio]
+    volume_percent: 1
+    doctor: [nc, -z, "${WS3_HOST}", "${WS3_API_PORT}"]
+    scenarios:
+      esp-to-ha-answer-hangup:
+        command:
+          - .venv/bin/python
+          - tools/live_voip_qualification.py
+          - --esp
+          - ws3
+          - --scenario
+          - ha_to_esp_api_answer_hangup
+          - --out-dir
+          - "${HIL_ARTIFACT_DIR}/ws3-answer-hangup"
+
+  p4:
+    enabled: true
+    capabilities: [hil-p4, p4, audio, video]
+    volume_percent: 1
+    doctor: [nc, -z, "${P4_HOST}", "${P4_API_PORT}"]
+    scenarios:
+      p4-audio-to-bidirectional-video-reinvite:
+        command:
+          - .venv/bin/python
+          - tools/live_voip_qualification.py
+          - --esp
+          - p4
+          - --out-dir
+          - "${HIL_ARTIFACT_DIR}/p4-reinvite"
+
