@@ -56,6 +56,16 @@ def test_manifest_records_toolchain_config_and_binary_hash(tmp_path: Path) -> No
             "esphome_version": "2026.8.0",
             "esp_idf_version": "v5.5.5",
             "config_hash": 123,
+            "memory": {
+                "dram_data_bytes": 0,
+                "dram_bss_bytes": 0,
+                "iram_text_bytes": 0,
+                "flash_text_bytes": 0,
+                "flash_rodata_bytes": 0,
+                "application_bytes": 0,
+                "application_partition_bytes": 0,
+                "application_partition_headroom_bytes": 0,
+            },
             "artifacts": [
                 {
                     "path": str(firmware.relative_to(tmp_path)),
