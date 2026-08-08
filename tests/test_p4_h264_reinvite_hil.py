@@ -21,6 +21,13 @@ SERIAL = """
 [I][voip_stack.video]: Video session totals: tx=50 rx=70 completed_au=18 dropped_au=0 backpressure=0 send_fail=0 slow_send=0
 """
 
+COMPACT_SERIAL = """
+[I][p4_video_renderer]: H.264 first AU: bytes=7900 key=YES
+[I][esp_h264_video_source]: H.264 TX evidence: raw=20 encoded=18
+[I][p4_video_renderer]: H.264 RX evidence: admitted=19 rendered=17 presented=16 refresh_done=16
+[I][voip_stack.video]: Video session evidence: tx=50 rx=70 completed_au=18 dropped_au=0
+"""
+
 
 def _peer(*, remote_bye: bool = False) -> dict[str, object]:
     return {
@@ -58,6 +65,15 @@ def test_serial_parser_extracts_presentation_and_transport_counters() -> None:
     assert metrics["tx"]["encoded"] == 18
     assert metrics["session"]["completed_au"] == 18
     assert metrics["fatal_errors"] == []
+
+
+def test_serial_parser_accepts_release_evidence_without_debug_logging() -> None:
+    metrics = parse_serial_metrics(COMPACT_SERIAL)
+
+    assert metrics["first_keyframe"] is True
+    assert metrics["rx"]["presented"] == 16
+    assert metrics["tx"]["encoded"] == 18
+    assert metrics["session"]["completed_au"] == 18
 
 
 def test_serial_parser_rejects_missing_owner_evidence() -> None:

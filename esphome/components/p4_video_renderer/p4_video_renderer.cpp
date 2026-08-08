@@ -181,9 +181,9 @@ void P4VideoRenderer::loop() {
           page_active && this->present_surface_direct_(pending);
       if (presented) {
         this->surface_ever_presented_.store(true, std::memory_order_release);
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
         this->rx_presented_frames_.fetch_add(1, std::memory_order_relaxed);
         this->rx_refresh_completed_.fetch_add(1, std::memory_order_relaxed);
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
         update_max(this->rx_refresh_max_ms_,
                    millis() - presentation_started_ms);
 #endif
@@ -225,8 +225,8 @@ void P4VideoRenderer::loop() {
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
       this->presentation_started_ms_.store(millis(),
                                            std::memory_order_release);
-      this->rx_presented_frames_.fetch_add(1, std::memory_order_relaxed);
 #endif
+      this->rx_presented_frames_.fetch_add(1, std::memory_order_relaxed);
       lv_obj_invalidate(this->video_image_);
       this->surface_ever_presented_.store(true, std::memory_order_release);
       first_frame = !this->remote_frame_visible_.exchange(
@@ -345,8 +345,8 @@ void P4VideoRenderer::on_display_refresh_ready_() {
   // LV_EVENT_REFR_READY is emitted after rendering and after the display flush
   // callback returns. The front surface remains immutable; if the decoder
   // filled the other surface meanwhile, schedule its descriptor swap now.
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   this->rx_refresh_completed_.fetch_add(1, std::memory_order_relaxed);
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   const uint32_t elapsed =
       millis() - this->presentation_started_ms_.load(std::memory_order_acquire);
   uint32_t maximum = this->rx_refresh_max_ms_.load(std::memory_order_relaxed);
@@ -911,11 +911,14 @@ bool P4VideoRenderer::start_video(
     xTaskNotifyGive(this->rx_task_handle_);
   this->rx_timestamp_seen_.store(false, std::memory_order_release);
   this->last_admitted_timestamp_.store(0, std::memory_order_release);
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   this->rx_admitted_frames_.store(0, std::memory_order_release);
   this->rx_rendered_frames_.store(0, std::memory_order_release);
   this->rx_presented_frames_.store(0, std::memory_order_release);
   this->rx_refresh_completed_.store(0, std::memory_order_release);
+#ifdef USE_P4_VIDEO_RENDERER_H264
+  this->h264_first_au_logged_ = false;
+#endif
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   this->rx_refresh_max_ms_.store(0, std::memory_order_release);
   this->rx_present_ppa_max_us_.store(0, std::memory_order_release);
   this->presentation_started_ms_.store(0, std::memory_order_release);
@@ -927,7 +930,6 @@ bool P4VideoRenderer::start_video(
   this->rx_au_work_max_us_.store(0, std::memory_order_release);
 #endif
 #ifdef USE_P4_VIDEO_RENDERER_H264
-  this->h264_first_au_logged_ = false;
   this->h264_decode_failure_logged_ = false;
   this->rx_h264_decode_max_us_.store(0, std::memory_order_release);
   this->rx_i420_convert_max_us_.store(0, std::memory_order_release);
@@ -1071,8 +1073,8 @@ bool P4VideoRenderer::consume_video_access_unit(
   }
   if (access_unit.key_frame)
     this->waiting_for_key_frame_.store(false, std::memory_order_release);
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   this->rx_admitted_frames_.fetch_add(1, std::memory_order_relaxed);
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   update_max(this->rx_queue_high_watermark_,
              uxQueueMessagesWaiting(this->h264_au_queue_));
 #endif
@@ -1125,9 +1127,7 @@ bool P4VideoRenderer::consume_video_access_unit(
   this->last_admitted_timestamp_.store(access_unit.timestamp_90khz,
                                        std::memory_order_relaxed);
   this->rx_timestamp_seen_.store(true, std::memory_order_release);
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   this->rx_admitted_frames_.fetch_add(1, std::memory_order_relaxed);
-#endif
   this->rx_slot_state_.store(1, std::memory_order_release);
   if (this->rx_task_handle_ != nullptr)
     xTaskNotifyGive(this->rx_task_handle_);
@@ -1170,9 +1170,9 @@ bool P4VideoRenderer::decode_h264_access_unit_(const uint8_t *data, size_t size,
     this->rx_running_.store(false, std::memory_order_release);
     return false;
   }
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   if (!this->h264_first_au_logged_) {
     this->h264_first_au_logged_ = true;
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
     ESP_LOGI(TAG,
              "H.264 first AU: bytes=%u key=%s; PSRAM free=%u largest=%u; "
              "internal free=%u largest=%u",
@@ -1185,8 +1185,11 @@ bool P4VideoRenderer::decode_h264_access_unit_(const uint8_t *data, size_t size,
                                                            MALLOC_CAP_8BIT)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(
                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
-  }
+#else
+    ESP_LOGI(TAG, "H.264 first AU: bytes=%u key=%s",
+             static_cast<unsigned>(size), YESNO(key_frame));
 #endif
+  }
 
   bool rendered = false;
   bool decode_failed = false;
@@ -1308,14 +1311,14 @@ void P4VideoRenderer::rx_task_() {
             slot.data, slot.size, slot.timestamp, slot.key_frame,
             slot.session_generation, slot.loss_generation);
       }
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
       if (current) {
         if (rendered)
           this->rx_rendered_frames_.fetch_add(1, std::memory_order_relaxed);
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
         else
           this->rx_decode_drops_.fetch_add(1, std::memory_order_relaxed);
-      }
 #endif
+      }
       slot.state.store(0, std::memory_order_release);
     }
 #else
@@ -1403,9 +1406,9 @@ void P4VideoRenderer::rx_task_() {
         rendered = true;
       }
     }
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
     if (rendered)
       this->rx_rendered_frames_.fetch_add(1, std::memory_order_relaxed);
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
     else
       this->rx_decode_drops_.fetch_add(1, std::memory_order_relaxed);
     update_max(this->rx_au_work_max_us_, micros() - au_started_us);
@@ -1837,6 +1840,14 @@ void P4VideoRenderer::stop_video() {
   // worker discards stale generation-tagged AUs and returns to its blocking
   // notification; SIP teardown never joins it.
   this->rx_session_prepared_.store(false, std::memory_order_release);
+#ifdef USE_P4_VIDEO_RENDERER_H264
+  ESP_LOGI(TAG, "H.264 RX evidence: admitted=%u rendered=%u presented=%u "
+                "refresh_done=%u",
+           (unsigned)this->rx_admitted_frames_.load(std::memory_order_relaxed),
+           (unsigned)this->rx_rendered_frames_.load(std::memory_order_relaxed),
+           (unsigned)this->rx_presented_frames_.load(std::memory_order_relaxed),
+           (unsigned)this->rx_refresh_completed_.load(std::memory_order_relaxed));
+#endif
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
 #ifdef USE_P4_VIDEO_RENDERER_H264
   ESP_LOGI(

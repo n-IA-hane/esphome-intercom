@@ -241,8 +241,8 @@ protected:
   bool i420_converter_failure_logged_{false};
   uint8_t *optimized_yuv420_{nullptr};
   size_t optimized_yuv420_capacity_{0};
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   bool h264_first_au_logged_{false};
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   bool h264_decode_failure_logged_{false};
   std::atomic<uint32_t> rx_h264_decode_max_us_{0};
   std::atomic<uint32_t> rx_i420_convert_max_us_{0};
@@ -314,11 +314,11 @@ protected:
   std::atomic<bool> surface_ever_presented_{false};
   std::atomic<bool> remote_frame_visible_{false};
   std::atomic<bool> video_ended_pending_{false};
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   std::atomic<uint32_t> rx_admitted_frames_{0};
   std::atomic<uint32_t> rx_rendered_frames_{0};
   std::atomic<uint32_t> rx_presented_frames_{0};
   std::atomic<uint32_t> rx_refresh_completed_{0};
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   std::atomic<uint32_t> rx_refresh_max_ms_{0};
   std::atomic<uint32_t> rx_present_ppa_max_us_{0};
   std::atomic<uint32_t> presentation_started_ms_{0};

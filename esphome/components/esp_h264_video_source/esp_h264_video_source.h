@@ -113,11 +113,11 @@ class EspH264VideoSource
   std::atomic<uint32_t> requested_bitrate_{400000};
   std::atomic<bool> timestamp_seen_{false};
   std::atomic<uint32_t> next_admit_timestamp_{0};
+  std::atomic<uint32_t> raw_frames_{0};
+  std::atomic<uint32_t> encoded_frames_{0};
 
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
-  std::atomic<uint32_t> raw_frames_{0};
   std::atomic<uint32_t> converted_frames_{0};
-  std::atomic<uint32_t> encoded_frames_{0};
   std::atomic<uint32_t> conversion_max_us_{0};
   std::atomic<uint32_t> conversion_total_us_{0};
   std::atomic<uint32_t> encode_max_us_{0};

@@ -192,10 +192,10 @@ bool EspH264VideoSource::start_video(
   this->next_admit_timestamp_.store(0, std::memory_order_release);
   this->force_idr_generation_.store(
       generation, std::memory_order_release);
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   this->raw_frames_.store(0, std::memory_order_release);
-  this->converted_frames_.store(0, std::memory_order_release);
   this->encoded_frames_.store(0, std::memory_order_release);
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
+  this->converted_frames_.store(0, std::memory_order_release);
   this->conversion_max_us_.store(0, std::memory_order_release);
   this->conversion_total_us_.store(0, std::memory_order_release);
   this->encode_max_us_.store(0, std::memory_order_release);
@@ -233,6 +233,11 @@ void EspH264VideoSource::stop_video() {
   this->callback_ctx_ = nullptr;
   this->force_idr_generation_.store(0, std::memory_order_release);
   xSemaphoreGive(this->control_mutex_);
+  if (was_active) {
+    ESP_LOGI(TAG, "H.264 TX evidence: raw=%u encoded=%u",
+             (unsigned) this->raw_frames_.load(std::memory_order_relaxed),
+             (unsigned) this->encoded_frames_.load(std::memory_order_relaxed));
+  }
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   if (was_active) {
     const uint32_t converted =
@@ -582,9 +587,7 @@ void EspH264VideoSource::consume_raw_video_frame(
     xSemaphoreGive(this->control_mutex_);
     return;
   }
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   this->raw_frames_.fetch_add(1, std::memory_order_relaxed);
-#endif
   const uint32_t fps = std::max<uint32_t>(
       1, std::min<uint32_t>(
              this->framerate_,
@@ -658,9 +661,7 @@ void EspH264VideoSource::consume_raw_video_frame(
     ESP_LOGE(TAG, "Unable to request H.264 IDR");
   if (this->encode_frame_(
           this->tx_yuv_, frame.timestamp_90khz, true, generation)) {
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
     this->encoded_frames_.fetch_add(1, std::memory_order_relaxed);
-#endif
   }
   if (force_idr && !this->set_encoder_gop_(this->gop_))
     ESP_LOGE(TAG, "Unable to restore H.264 GOP");

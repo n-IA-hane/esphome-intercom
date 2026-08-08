@@ -43,18 +43,23 @@ FATAL_SERIAL_PATTERNS = (
     "retaining sockets",
 )
 STAT_LABELS = {
-    "rx": "H.264 RX stats:",
-    "tx": "H.264 TX stats:",
-    "session": "Video session totals:",
+    "rx": ("H.264 RX stats:", "H.264 RX evidence:"),
+    "tx": ("H.264 TX stats:", "H.264 TX evidence:"),
+    "session": ("Video session totals:", "Video session evidence:"),
 }
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 ACTIVE_VIDEO = re.compile(r"(?m)^m=video\s+(?!0(?:\s|$))\d+")
 
 
-def _stats_line(text: str, label: str) -> dict[str, int]:
-    matches = [line.split(label, 1)[1] for line in text.splitlines() if label in line]
+def _stats_line(text: str, labels: tuple[str, ...]) -> dict[str, int]:
+    matches = [
+        line.split(label, 1)[1]
+        for line in text.splitlines()
+        for label in labels
+        if label in line
+    ]
     if not matches:
-        raise AssertionError(f"P4 serial evidence is missing {label}")
+        raise AssertionError(f"P4 serial evidence is missing {' or '.join(labels)}")
     return {key: int(value) for key, value in re.findall(r"(\w+)=(\d+)", matches[-1])}
 
 
@@ -66,7 +71,7 @@ def parse_serial_metrics(text: str) -> dict[str, object]:
         pattern for pattern in FATAL_SERIAL_PATTERNS if pattern.lower() in clean.lower()
     ]
     metrics: dict[str, object] = {
-        key: _stats_line(clean, label) for key, label in STAT_LABELS.items()
+        key: _stats_line(clean, labels) for key, labels in STAT_LABELS.items()
     }
     metrics["first_keyframe"] = any(
         "H.264 first AU:" in line and "key=YES" in line for line in clean.splitlines()
@@ -146,6 +151,7 @@ def validate_cycle(
             "p4_video_session": int(session.get("tx", 0)) > 0
             and int(session.get("rx", 0)) > 0
             and int(session.get("completed_au", 0)) > 0
+            and int(session.get("dropped_au", 0)) == 0
             and int(session.get("send_fail", 0)) == 0,
             "serial_clean": not serial_metrics.get("fatal_errors"),
             "returned_h264": returned_video.get("frames", 0) >= 3,
