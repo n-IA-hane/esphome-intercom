@@ -42,6 +42,9 @@ def project_session_termination(
         "origin": "remote" if remote else "self",
         "last_sip_event": event,
     }
+    for key in ("connected_party", "target_device_id", "sip_uri"):
+        if value := str(metadata.get(key) or ""):
+            common[key] = value
     if intent.response_status:
         common["sip_status_code"] = intent.response_status
     if endpoint_id:

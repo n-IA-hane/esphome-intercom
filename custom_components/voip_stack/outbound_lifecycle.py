@@ -10,6 +10,8 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .const import HA_PEER_FALLBACK_NAME
 from .endpoint_lifecycle import call_registry
+from .endpoint_termination import EndpointTerminationHandler
+from .endpoint_session import TerminationInitiator, TerminationIntent
 from .fsm import (
     CallState,
     TerminalReason,
@@ -104,6 +106,7 @@ async def async_track_outbound_sip_client(
 ) -> None:
     """Keep an outbound SIP client alive and complete early-dialog INVITEs."""
     registry = call_registry(hass)
+    terminator = EndpointTerminationHandler(hass)
     attach_outbound_connected_identity_state(
         hass,
         client,
@@ -112,9 +115,9 @@ async def async_track_outbound_sip_client(
     local_name = local_name or _ha_peer_name(hass)
     if result not in {"ringing", "in_call"}:
         public_result = sip_public_state(result)
-        await registry.terminate_call_wait(
+        await terminator.terminate(
             client.dialog_ids.call_id,
-            reason=sip_terminal_reason(result, public_result),
+            TerminationIntent(sip_terminal_reason(result, public_result)),
         )
         return
 
@@ -128,6 +131,9 @@ async def async_track_outbound_sip_client(
         callee=target,
         route_kind="direct",
         endpoint_id=endpoint_id,
+        session_device_id=session_device_id,
+        target_device_id=target_device_id,
+        sip_uri=sip_uri,
     )
     registry.add_leg(
         client.dialog_ids.call_id,
@@ -248,27 +254,12 @@ async def async_track_outbound_sip_client(
             CallState.IN_CALL.value,
         }:
             terminal_reason = sip_terminal_reason(final, public_final)
-            await registry.terminate_call_wait(
+            await terminator.terminate(
                 client.dialog_ids.call_id,
-                reason=terminal_reason,
-            )
-            _set_ha_softphone_call_state(
-                hass,
-                public_final,
-                endpoint_id=endpoint_id,
-                session_device_id=session_device_id,
-                caller=local_name,
-                callee=target,
-                peer_name=connected_party,
-                connected_party=connected_party,
-                direction="outgoing",
-                call_id=client.dialog_ids.call_id,
-                target_device_id=target_device_id,
-                reason=terminal_reason,
-                terminal_reason=terminal_reason,
-                sip_status_code=client.last_sip_status_code,
-                last_sip_event=client.last_sip_event or "SIP_RESPONSE",
-                sip_uri=sip_uri,
+                TerminationIntent(
+                    terminal_reason,
+                    response_status=client.last_sip_status_code,
+                ),
             )
             return
         if final == "in_call":
@@ -289,28 +280,17 @@ async def async_track_outbound_sip_client(
                 if terminal == "remote_hangup"
                 else sip_terminal_reason(terminal, sip_public_state(terminal))
             )
-            await registry.terminate_call_wait(
+            await terminator.terminate(
                 client.dialog_ids.call_id,
-                reason=terminal_reason,
-            )
-            _set_ha_softphone_call_state(
-                hass,
-                CallState.IDLE.value,
-                endpoint_id=endpoint_id,
-                session_device_id=session_device_id,
-                caller=local_name,
-                callee=target,
-                peer_name=connected_party,
-                connected_party=connected_party,
-                direction="outgoing",
-                call_id=client.dialog_ids.call_id,
-                target_device_id=target_device_id,
-                reason=terminal_reason,
-                terminal_reason=terminal_reason,
-                origin="remote" if terminal == "remote_hangup" else "self",
-                sip_status_code=client.last_sip_status_code,
-                last_sip_event=client.last_sip_event or "BYE",
-                sip_uri=sip_uri,
+                TerminationIntent(
+                    terminal_reason,
+                    initiator=(
+                        TerminationInitiator.REMOTE_PEER
+                        if terminal == "remote_hangup"
+                        else TerminationInitiator.INTERNAL
+                    ),
+                    response_status=client.last_sip_status_code,
+                ),
             )
 
     task = hass.async_create_task(_watch_sip_lifecycle())

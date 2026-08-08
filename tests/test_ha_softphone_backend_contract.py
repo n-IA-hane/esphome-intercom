@@ -538,7 +538,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
         self.assertGreaterEqual(
             tracker.count("target_device_id=target_device_id"),
-            3,
+            2,
         )
 
     def test_final_200_commits_registry_before_publishing_in_call(self) -> None:
@@ -593,7 +593,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         immediate_failure = tracker.split(
             'if result not in {"ringing", "in_call"}:', 1
         )[1].split("registry.sip_clients[client.dialog_ids.call_id]", 1)[0]
-        self.assertIn("await registry.terminate_call_wait(", immediate_failure)
+        self.assertIn("await terminator.terminate(", immediate_failure)
         self.assertNotIn("await client.close()", immediate_failure)
 
         outbound = _function_body(

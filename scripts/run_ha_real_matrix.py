@@ -207,7 +207,7 @@ def _run_final_response(
         "sipp",
         f"{host}:{port}",
         "-sf",
-        str(scenario),
+        str(scenario.resolve()),
         "-s",
         "9999",
         "-i",

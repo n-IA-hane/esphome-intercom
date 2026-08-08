@@ -170,6 +170,49 @@ def _load_outbound_lifecycle(
     const.HA_SOFTPHONE_DEVICE_ID = "ha-softphone"
     endpoint_lifecycle = types.ModuleType(f"{PKG_NAME}.endpoint_lifecycle")
     endpoint_lifecycle.call_registry = lambda _hass: registry
+    endpoint_session = types.ModuleType(f"{PKG_NAME}.endpoint_session")
+    endpoint_session.TerminationInitiator = types.SimpleNamespace(
+        INTERNAL="internal",
+        REMOTE_PEER="remote_peer",
+    )
+
+    class TerminationIntent:
+        def __init__(
+            self,
+            reason: str,
+            *,
+            initiator: str = "internal",
+            response_status: int = 0,
+        ) -> None:
+            self.reason = reason
+            self.initiator = initiator
+            self.response_status = response_status
+            self.public_state = "idle" if reason == "remote_hangup" else reason
+
+    endpoint_session.TerminationIntent = TerminationIntent
+    endpoint_termination = types.ModuleType(f"{PKG_NAME}.endpoint_termination")
+
+    class EndpointTerminationHandler:
+        def __init__(self, _hass) -> None:
+            pass
+
+        async def terminate(self, call_id: str, intent: TerminationIntent) -> None:
+            await registry.terminate_call_wait(call_id, intent=intent)
+            states.append(
+                (
+                    intent.public_state,
+                    {
+                        "terminal_reason": intent.reason,
+                        "origin": (
+                            "remote"
+                            if intent.initiator == "remote_peer"
+                            else "self"
+                        ),
+                    },
+                )
+            )
+
+    endpoint_termination.EndpointTerminationHandler = EndpointTerminationHandler
     fsm = types.ModuleType(f"{PKG_NAME}.fsm")
     fsm.CallState = CallState
     fsm.TerminalReason = TerminalReason
@@ -205,6 +248,8 @@ def _load_outbound_lifecycle(
         "homeassistant.exceptions": exceptions,
         const.__name__: const,
         endpoint_lifecycle.__name__: endpoint_lifecycle,
+        endpoint_session.__name__: endpoint_session,
+        endpoint_termination.__name__: endpoint_termination,
         fsm.__name__: fsm,
         phone_endpoint.__name__: phone_endpoint,
         session_cleanup.__name__: session_cleanup,
@@ -246,7 +291,7 @@ class OutboundLifecycleRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.closed, 1)
         self.assertNotIn("call-busy", self.registry.sip_clients)
         finish = [item for item in self.registry.calls if item[0] == "finish"]
-        self.assertEqual(finish[0][2]["reason"], "busy")
+        self.assertEqual(finish[0][2]["intent"].reason, "busy")
 
     async def test_ringing_call_reaches_media_then_remote_bye_cleanup(self) -> None:
         client = _Client("call-1")
@@ -273,7 +318,7 @@ class OutboundLifecycleRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             any(
                 item[0] == "finish"
-                and item[2].get("reason") == "remote_hangup"
+                and item[2]["intent"].reason == "remote_hangup"
                 for item in self.registry.calls
             )
         )
