@@ -105,7 +105,7 @@ async def test_unknown_route_terminates_answered_source_through_session_owner(
     artifacts = SimpleNamespace(artifacts_for=lambda _call_id: call_artifacts)
     registry = Mock()
     registry.take_media.return_value = {"final_response_sent": True}
-    registry.terminate_call_wait = AsyncMock()
+    terminate = AsyncMock(return_value=True)
     ports = SimpleNamespace(ports=(40000, 40002), release=Mock())
     invite = SimpleNamespace(
         call_id="call-reject",
@@ -120,6 +120,11 @@ async def test_unknown_route_terminates_answered_source_through_session_owner(
         lambda _hass: artifacts,
     )
     monkeypatch.setattr(trunk_inbound_router, "call_registry", lambda _hass: registry)
+    monkeypatch.setattr(
+        trunk_inbound_router,
+        "EndpointTerminationHandler",
+        lambda _hass: SimpleNamespace(terminate=terminate),
+    )
     monkeypatch.setattr(trunk_inbound_router, "trunk_config", lambda _hass: {})
     monkeypatch.setattr(
         trunk_inbound_router,
@@ -154,9 +159,8 @@ async def test_unknown_route_terminates_answered_source_through_session_owner(
 
     registry.take_pending_invite.assert_called_once_with(invite.call_id)
     ports.release.assert_called_once_with()
-    registry.terminate_call_wait.assert_awaited_once()
-    call_id = registry.terminate_call_wait.await_args.args[0]
-    intent = registry.terminate_call_wait.await_args.kwargs["intent"]
+    terminate.assert_awaited_once()
+    call_id, intent = terminate.await_args.args
     assert call_id == invite.call_id
     assert intent.sip_disposition.value == "bye"
     assert intent.reason == "route_not_found"

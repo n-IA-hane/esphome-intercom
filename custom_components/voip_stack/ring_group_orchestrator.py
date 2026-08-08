@@ -27,7 +27,8 @@ from .dial_fork import (
 from .dial_plan import RingPolicy
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry
-from .endpoint_session import TerminationIntent
+from .endpoint_termination import EndpointTerminationHandler
+from .endpoint_session import TerminationInitiator, TerminationIntent
 from .runtime_data import endpoint_directory, sip_endpoint_runtime
 from .fsm import (
     CallState,
@@ -378,9 +379,9 @@ async def run_ring_group_call(
                     local_call.caller_endpoint_id,
                 )
         try:
-            await registry.terminate_call_wait(
+            await EndpointTerminationHandler(hass).terminate(
                 invite.call_id,
-                intent=(
+                (
                     TerminationIntent.final_response(reason, sip_status)
                     if sip_status
                     else TerminationIntent(reason)
@@ -544,9 +545,10 @@ async def run_ring_group_call(
                 original_context = registry.ha_context(invite.call_id)
                 if await _abort_stale_ring_group():
                     return
-                await registry.terminate_call_wait(
+                await EndpointTerminationHandler(hass).terminate_reason(
                     invite.call_id,
-                    reason="local_group_selected",
+                    "local_group_selected",
+                    TerminationInitiator.ROUTING,
                 )
                 snapshot = start_local_softphone_call(
                     hass,
@@ -789,9 +791,9 @@ async def run_ring_group_call(
                         winner.video_relay = None
                     winner.ports.release()
             finally:
-                await registry.terminate_call_wait(
+                await EndpointTerminationHandler(hass).terminate(
                     invite.call_id,
-                    intent=TerminationIntent.final_response(
+                    TerminationIntent.final_response(
                         TerminalReason.MEDIA_INCOMPATIBLE.value, 488
                     ),
                 )

@@ -97,3 +97,16 @@ class EndpointTerminationHandler:
                 await manager.leave_call(call_id, reason=intent.reason)
         await registry.terminate_call_wait(call_id, intent=intent)
         return True
+
+    async def terminate_reason(
+        self,
+        call_id: str,
+        reason: str,
+        initiator: TerminationInitiator = TerminationInitiator.INTERNAL,
+    ) -> bool:
+        """Terminate from a reason when no special SIP disposition is needed."""
+
+        return await self.terminate(
+            call_id,
+            TerminationIntent(reason, initiator=initiator),
+        )

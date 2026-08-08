@@ -28,6 +28,8 @@ from .const import (
     HA_PEER_FALLBACK_NAME,
 )
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
+from .endpoint_termination import EndpointTerminationHandler
+from .endpoint_session import TerminationInitiator
 from .endpoint_registry import EndpointBusyError
 from .endpoint_routing import (
     device_formats as _device_formats,
@@ -728,9 +730,10 @@ async def async_originate_browser_call(
             timeout=SIP_TIMER_B if use_trunk else 8.0,
         )
     except Exception as err:  # noqa: BLE001 - isolate one outbound SIP leg.
-        await registry.terminate_call_wait(
+        await EndpointTerminationHandler(hass).terminate_reason(
             client.dialog_ids.call_id,
-            reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
+            TerminalReason.TRANSPORT_UNREACHABLE.value,
+            TerminationInitiator.RUNTIME,
         )
         _set_ha_softphone_call_state(
             hass,
@@ -752,9 +755,10 @@ async def async_originate_browser_call(
             f"could not start SIP call to {display_target}"
         ) from err
     if registry.sip_clients.get(client.dialog_ids.call_id) is not client:
-        await registry.terminate_call_wait(
+        await EndpointTerminationHandler(hass).terminate_reason(
             client.dialog_ids.call_id,
-            reason=TerminalReason.LOCAL_HANGUP.value,
+            TerminalReason.LOCAL_HANGUP.value,
+            TerminationInitiator.LOCAL_USER,
         )
         return
     if (

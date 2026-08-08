@@ -19,6 +19,7 @@ from .const import (
     CONF_TRUNK_INBOUND_DEFAULT_TARGET,
 )
 from .endpoint_lifecycle import call_registry
+from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationInitiator, TerminationIntent
 from .endpoint_routing import (
     EndpointRouteResolver,
@@ -109,7 +110,7 @@ async def async_route_trunk_invite(
             if answered
             else TerminationIntent.final_response(reason, status)
         )
-        await registry.terminate_call_wait(invite.call_id, intent=intent)
+        await EndpointTerminationHandler(hass).terminate(invite.call_id, intent)
 
     configured_trunk = trunk_config(hass)
     dtmf_timeout_ms = max(

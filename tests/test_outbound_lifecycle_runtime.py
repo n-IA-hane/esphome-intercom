@@ -173,7 +173,9 @@ def _load_outbound_lifecycle(
     endpoint_session = types.ModuleType(f"{PKG_NAME}.endpoint_session")
     endpoint_session.TerminationInitiator = types.SimpleNamespace(
         INTERNAL="internal",
+        LOCAL_USER="local_user",
         REMOTE_PEER="remote_peer",
+        RUNTIME="runtime",
     )
 
     class TerminationIntent:
@@ -210,6 +212,17 @@ def _load_outbound_lifecycle(
                         ),
                     },
                 )
+            )
+
+        async def terminate_reason(
+            self,
+            call_id: str,
+            reason: str,
+            initiator: str = "internal",
+        ) -> None:
+            await self.terminate(
+                call_id,
+                TerminationIntent(reason, initiator=initiator),
             )
 
     endpoint_termination.EndpointTerminationHandler = EndpointTerminationHandler

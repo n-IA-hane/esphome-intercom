@@ -23,6 +23,7 @@ from ..const import (
 )
 from ..dtmf_events import attach_dtmf_event_bridge
 from ..endpoint_registry import EndpointBusyError
+from ..endpoint_termination import EndpointTerminationHandler
 from ..endpoint_session import CleanupStage, SipTerminationDisposition, TerminationIntent
 from ..endpoint_routing import (
     peer_audio_formats,
@@ -451,9 +452,9 @@ async def route_sip_bridge(
             bridge_ports.release()
             if video_relay is not None:
                 await video_relay.stop()
-            await registry.terminate_call_wait(
+            await EndpointTerminationHandler(hass).terminate(
                 invite.call_id,
-                intent=TerminationIntent.final_response(
+                TerminationIntent.final_response(
                     terminal_reason, status_code
                 ),
             )
@@ -522,9 +523,9 @@ async def route_sip_bridge(
             if video_relay is not None:
                 await video_relay.stop()
                 video_relay = None
-            await registry.terminate_call_wait(
+            await EndpointTerminationHandler(hass).terminate(
                 invite.call_id,
-                intent=TerminationIntent.final_response(
+                TerminationIntent.final_response(
                     TerminalReason.MEDIA_INCOMPATIBLE.value, 488
                 ),
             )

@@ -170,7 +170,10 @@ def endpoint_termination(monkeypatch):
                 "endpoint_session": {
                     "EndpointCallSession": object,
                     "SipTerminationDisposition": SimpleNamespace(NONE="none"),
-                    "TerminationInitiator": SimpleNamespace(REMOTE_PEER="remote_peer"),
+                    "TerminationInitiator": SimpleNamespace(
+                        INTERNAL="internal",
+                        REMOTE_PEER="remote_peer",
+                    ),
                     "TerminationIntent": lambda reason, initiator, **values: SimpleNamespace(
                         reason=reason,
                         initiator=initiator,

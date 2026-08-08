@@ -720,9 +720,10 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         try:
             ports = reserve_delayed_offer_ports(hass, registry, initial.call_id)
         except RuntimeError:
-            await registry.terminate_call_wait(
+            await EndpointTerminationHandler(hass).terminate_reason(
                 initial.call_id,
-                reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
+                TerminalReason.TRANSPORT_UNREACHABLE.value,
+                TerminationInitiator.MEDIA,
             )
             return None
         offer_sdp = sip_sdp.build_offer_directional(
@@ -739,9 +740,10 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 initial.call_id, session.generation
             ):
                 return
-            await registry.terminate_call_wait(
+            await EndpointTerminationHandler(hass).terminate_reason(
                 initial.call_id,
-                reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
+                TerminalReason.MEDIA_INCOMPATIBLE.value,
+                TerminationInitiator.MEDIA,
             )
 
         async def accept_answer(invite: SipInvite) -> SipInviteResult:

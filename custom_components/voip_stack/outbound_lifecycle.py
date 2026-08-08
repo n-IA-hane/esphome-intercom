@@ -321,9 +321,10 @@ async def async_prepare_ha_outbound_call(
             if session_endpoint_id != endpoint_id:
                 continue
             try:
-                await registry.terminate_call_wait(
+                await EndpointTerminationHandler(hass).terminate_reason(
                     call_id,
-                    reason=TerminalReason.LOCAL_HANGUP.value,
+                    TerminalReason.LOCAL_HANGUP.value,
+                    TerminationInitiator.RUNTIME,
                 )
             except Exception:
                 _LOGGER.debug(

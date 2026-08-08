@@ -605,7 +605,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )[1].split("if registry.sip_clients.get", 1)[0]
         self.assertNotIn("registry.detach_client", invite_error)
         self.assertIn("_set_ha_softphone_call_state(", invite_error)
-        self.assertIn("await registry.terminate_call_wait(", invite_error)
+        self.assertIn("EndpointTerminationHandler(hass).terminate_reason(", invite_error)
 
     def test_esp_state_mirrors_physical_busy_ownership_into_logical_endpoint(
         self,
