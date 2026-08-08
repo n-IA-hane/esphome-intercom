@@ -68,7 +68,7 @@ def device_is_phonebook_available(hass: HomeAssistant, device: dict) -> bool:
 def device_transport(device: dict) -> str:
     """Read the endpoint-declared SIP signaling transport."""
     value = str(device.get("sip_transport") or "").lower()
-    return value if value in ("udp", "tcp") else ""
+    return value if value in ("udp", "tcp", "tls") else ""
 
 
 async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:

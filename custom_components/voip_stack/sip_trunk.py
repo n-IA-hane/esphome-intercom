@@ -14,6 +14,7 @@ import contextlib
 from dataclasses import dataclass, replace
 import logging
 import socket
+import ssl
 import time
 from typing import Any, Awaitable, Callable
 
@@ -82,6 +83,7 @@ class SipTrunkClient:
         local_ip: str,
         local_sip_port: int,
         target_resolver: SipServerResolver | None = None,
+        tls_context: ssl.SSLContext | None = None,
     ) -> None:
         self.config = config
         self.local_ip = local_ip
@@ -117,6 +119,7 @@ class SipTrunkClient:
         self.inbound_endpoint: Any | None = None
         self._trusted_udp_hosts: frozenset[str] = frozenset()
         self.target_resolver = target_resolver or SipServerResolver()
+        self.tls_context = tls_context
         self._registrar_candidate: SipServerTarget | None = None
         self._registrar_candidates: tuple[SipServerTarget, ...] = ()
         self._registrar_candidate_index = -1
@@ -225,7 +228,7 @@ class SipTrunkClient:
 
     async def _start(self) -> None:
         try:
-            if self.transport_name == "TCP":
+            if self.transport_name in {"TCP", "TLS"}:
                 await self._connect_tcp()
             else:
                 await self._connect_udp()
@@ -339,9 +342,9 @@ class SipTrunkClient:
             if self._stopped:
                 return
             try:
-                if self.transport_name == "TCP" and (self.writer is None or self.writer.is_closing()):
+                if self.transport_name in {"TCP", "TLS"} and (self.writer is None or self.writer.is_closing()):
                     await self._connect_tcp()
-                elif self.transport_name != "TCP":
+                elif self.transport_name not in {"TCP", "TLS"}:
                     await self._connect_udp()
                 self._ensure_receive_task()
                 result = await self.register()
@@ -385,8 +388,18 @@ class SipTrunkClient:
             while True:
                 host, port = candidate.addresses[0], candidate.port
                 try:
+                    tls = self.transport_name == "TLS"
                     reader, writer = await asyncio.wait_for(
-                        asyncio.open_connection(host, port),
+                        (
+                            asyncio.open_connection(
+                                host,
+                                port,
+                                ssl=self.tls_context or ssl.create_default_context(),
+                                server_hostname=self.registrar_host,
+                            )
+                            if tls
+                            else asyncio.open_connection(host, port)
+                        ),
                         timeout=2.0,
                     )
                     break
@@ -435,7 +448,7 @@ class SipTrunkClient:
         while not self.responses.empty():
             with contextlib.suppress(asyncio.QueueEmpty):
                 self.responses.get_nowait()
-        if self.transport_name == "TCP":
+        if self.transport_name in {"TCP", "TLS"}:
             reader = self.reader
             if reader is not None:
                 await self._detach_tcp_flow(reader, reason="registrar_failover")
@@ -458,7 +471,7 @@ class SipTrunkClient:
     async def _refresh_udp_trusted_hosts(self) -> None:
         """Resolve the configured UDP proxy to a fail-closed source allowlist."""
 
-        if self.transport_name == "TCP":
+        if self.transport_name in {"TCP", "TLS"}:
             return
         try:
             candidate = await self._resolve_registrar()
@@ -479,7 +492,7 @@ class SipTrunkClient:
         return bool(self._trusted_udp_hosts) and str(addr[0]) in self._trusted_udp_hosts
 
     async def _send_raw(self, raw: bytes) -> None:
-        if self.transport_name == "TCP":
+        if self.transport_name in {"TCP", "TLS"}:
             await self._connect_tcp()
             if self._tcp_writer is None:
                 raise ConnectionError("SIP trunk TCP writer is not available")
@@ -575,7 +588,7 @@ class SipTrunkClient:
 
     def send_response(self, raw: bytes, addr: tuple[str, int]) -> bool:
         try:
-            if self.transport_name == "TCP":
+            if self.transport_name in {"TCP", "TLS"}:
                 if self._tcp_writer is not None:
                     return self._tcp_writer.send_nowait(raw)
                 return False
@@ -703,7 +716,7 @@ class SipTrunkClient:
     async def _receive_loop(self) -> None:
         try:
             while True:
-                if self.transport_name == "TCP":
+                if self.transport_name in {"TCP", "TLS"}:
                     if self.reader is None:
                         await self._reader_ready.wait()
                         continue

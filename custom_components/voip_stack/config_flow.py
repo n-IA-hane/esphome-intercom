@@ -498,7 +498,9 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
             {
                 vol.Required(
                     CONF_TRUNK_TRANSPORT, default=defaults[CONF_TRUNK_TRANSPORT]
-                ): SelectSelector(SelectSelectorConfig(options=["udp", "tcp"])),
+                ): SelectSelector(
+                    SelectSelectorConfig(options=["udp", "tcp", "tls"])
+                ),
                 vol.Required(
                     CONF_TRUNK_SERVER, default=defaults[CONF_TRUNK_SERVER]
                 ): TextSelector(),

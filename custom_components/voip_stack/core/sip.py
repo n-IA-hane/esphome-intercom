@@ -613,7 +613,7 @@ def parse_via(value: str) -> SipVia:
     if len(bits) != 2 or not bits[0].upper().startswith("SIP/2.0/"):
         raise SipError(f"bad Via header: {value!r}")
     transport = bits[0].rsplit("/", 1)[1].upper()
-    if transport not in {"UDP", "TCP"}:
+    if transport not in {"UDP", "TCP", "TLS"}:
         raise SipError(f"unsupported Via transport {transport!r}")
     sent_by = bits[1]
     host, parsed_port = parse_host_port(sent_by)
@@ -920,7 +920,7 @@ def dialog_headers(
     contact = parse_sip_uri(contact_uri)
     sent_by = format_host_port(contact.host, contact.port)
     via_transport = (transport or "UDP").strip().upper()
-    if via_transport not in {"UDP", "TCP"}:
+    if via_transport not in {"UDP", "TCP", "TLS"}:
         raise SipError(f"unsupported SIP transport {transport!r}")
     headers = [
         ("Via", f"SIP/2.0/{via_transport} {sent_by};branch={dialog.branch};rport"),

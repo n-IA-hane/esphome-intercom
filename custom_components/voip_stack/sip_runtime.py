@@ -162,10 +162,11 @@ def uri_transport(uri) -> str:
     for key, value in getattr(uri, "params", ()) or ():
         if str(key).lower() == "transport" and str(value or "").lower() in {
             "tcp",
+            "tls",
             "udp",
         }:
             return str(value).upper()
-    return "UDP"
+    return "TLS" if str(getattr(uri, "scheme", "sip")).lower() == "sips" else "UDP"
 
 
 def enable_reused_tcp_connection(

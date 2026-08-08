@@ -2659,6 +2659,57 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(sent_branches), 2)
         self.assertNotEqual(sent_branches[0], sent_branches[1])
 
+    async def test_tls_client_verifies_logical_route_name(self) -> None:
+        context = object()
+        observed: dict[str, object] = {}
+
+        class Writer:
+            def is_closing(self) -> bool:
+                return False
+
+            def close(self) -> None:
+                return None
+
+            async def wait_closed(self) -> None:
+                return None
+
+            def get_extra_info(self, _name: str):
+                return None
+
+            def write(self, _data: bytes) -> None:
+                return None
+
+            async def drain(self) -> None:
+                return None
+
+        async def open_connection(host: str, port: int, **kwargs):
+            observed.update(host=host, port=port, **kwargs)
+            return asyncio.StreamReader(), Writer()
+
+        client = sip_client.SipCallClient(
+            local_ip="192.0.2.10",
+            local_name="HA",
+            local_sip_port=5061,
+            local_rtp_port=41000,
+            signaling_transport="TLS",
+            tls_context=context,  # type: ignore[arg-type]
+        )
+        client._signaling_nominal = ("service.example", 5061)
+        client._resolved_signaling_target = ("192.0.2.40", 5061)
+        client._tls_server_name = "service.example"
+        with patch.object(
+            sip_client.asyncio,
+            "open_connection",
+            new=open_connection,
+        ):
+            await client._connect_tcp("service.example", 5061)
+
+        self.assertEqual(observed["host"], "192.0.2.40")
+        self.assertEqual(observed["port"], 5061)
+        self.assertIs(observed["ssl"], context)
+        self.assertEqual(observed["server_hostname"], "service.example")
+        await client.close()
+
     async def test_outbound_client_advertises_bound_socket_port(self) -> None:
         client = sip_client.SipCallClient(
             local_ip="127.0.0.1",

@@ -9,6 +9,7 @@ import logging
 import re
 import secrets
 import socket
+import ssl
 from typing import Any, Awaitable, Callable
 
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS, PcmFormat
@@ -339,6 +340,7 @@ class SipCallClient:
         video_rtp_socket: socket.socket | None = None,
         video_rtcp_socket: socket.socket | None = None,
         target_resolver: SipServerResolver | None = None,
+        tls_context: ssl.SSLContext | None = None,
     ) -> None:
         self.local_ip = local_ip
         self.local_name = local_name
@@ -382,6 +384,8 @@ class SipCallClient:
         self.video_rtp_socket = video_rtp_socket
         self.video_rtcp_socket = video_rtcp_socket
         self.target_resolver = target_resolver or SipServerResolver()
+        self.tls_context = tls_context
+        self._tls_server_name = ""
         # RTP source identity belongs to this SIP call and survives a
         # dashboard media-owner handoff. The WebSocket views initialize the
         # codec-specific state lazily to avoid coupling SIP signaling to them.
@@ -470,7 +474,7 @@ class SipCallClient:
         self.connected_party = ""
 
     async def start(self) -> None:
-        if self.signaling_transport == "TCP":
+        if self.signaling_transport in {"TCP", "TLS"}:
             return
         async with self._start_lock:
             if self.transport is not None:
@@ -664,7 +668,16 @@ class SipCallClient:
             if self._closing or self._closed:
                 raise RuntimeError("SIP client closed while connecting")
             host, port = self._signaling_target(remote_host, int(remote_sip_port))
-            reader, writer = await asyncio.open_connection(host, port)
+            tls = self.signaling_transport == "TLS"
+            if tls:
+                reader, writer = await asyncio.open_connection(
+                    host,
+                    port,
+                    ssl=self.tls_context or ssl.create_default_context(),
+                    server_hostname=self._tls_server_name,
+                )
+            else:
+                reader, writer = await asyncio.open_connection(host, port)
             if self._closing or self._closed:
                 writer.close()
                 with contextlib.suppress(Exception):
@@ -714,7 +727,7 @@ class SipCallClient:
                     self.queue.get_nowait()
         self._resolved_signaling_target = selected
         self._udp_family_host = host
-        if self.signaling_transport == "TCP":
+        if self.signaling_transport in {"TCP", "TLS"}:
             assert self._signaling_nominal is not None
             await self._connect_tcp(*self._signaling_nominal)
         else:
@@ -743,7 +756,7 @@ class SipCallClient:
         return proxy, int(remote_sip_port)
 
     async def _send_raw(self, raw: bytes, remote_host: str, remote_sip_port: int) -> None:
-        if self.signaling_transport == "TCP":
+        if self.signaling_transport in {"TCP", "TLS"}:
             if self._tcp_reuse_send is not None:
                 if self._tcp_reuse_send(raw) is False:
                     raise ConnectionError("reused SIP TCP connection is not writable")
@@ -760,13 +773,13 @@ class SipCallClient:
         self.transport.sendto(raw, (host, port))
 
     def _has_signaling_path(self) -> bool:
-        if self.signaling_transport == "TCP":
+        if self.signaling_transport in {"TCP", "TLS"}:
             return self.writer is not None or self._tcp_reuse_send is not None
         return self.transport is not None
 
     def _send_dialog_request(self, raw: bytes, host: str, port: int) -> bool:
         try:
-            if self.signaling_transport == "TCP":
+            if self.signaling_transport in {"TCP", "TLS"}:
                 if self._tcp_reuse_send is not None:
                     return self._tcp_reuse_send(raw) is not False
                 if self.writer is None:
@@ -1547,7 +1560,7 @@ class SipCallClient:
             if remaining <= 0:
                 return None
             try:
-                if self.signaling_transport == "TCP":
+                if self.signaling_transport in {"TCP", "TLS"}:
                     if self._tcp_reuse_responses is not None:
                         raw = await asyncio.wait_for(self._tcp_reuse_responses.get(), timeout=remaining)
                     else:
@@ -1758,6 +1771,7 @@ class SipCallClient:
             # The caller supplied an already selected next hop while keeping
             # the logical Request-URI intact, as required for trunks/proxies.
             route_uri = sip.SipUri("", remote_host, int(remote_sip_port))
+        self._tls_server_name = route_uri.host
         self._signaling_nominal = (remote_host, int(remote_sip_port))
         try:
             endpoints = (

@@ -29,6 +29,23 @@ from .voip_phase1_support import (
 
 
 class SipProtocolBugFixTest(unittest.TestCase):
+    def test_tls_via_round_trip(self) -> None:
+        ids = sip.SipDialogIds("call", "local", branch="z9hG4bKtls")
+        headers = sip.dialog_headers(
+            request_uri="sips:peer@example.test",
+            local_uri="sips:ha@192.0.2.10:5061;transport=tls",
+            remote_uri="sips:peer@example.test",
+            dialog=ids,
+            method="INVITE",
+            contact_uri="sips:ha@192.0.2.10:5061;transport=tls",
+            transport="TLS",
+        )
+
+        via = sip.parse_via(dict(headers)["Via"])
+
+        self.assertEqual(via.transport, "TLS")
+        self.assertEqual(via.branch, "z9hG4bKtls")
+
     def test_message_is_advertised_as_supported_application_method(self) -> None:
         self.assertIn("MESSAGE", sip.SUPPORTED_METHODS)
         self.assertNotIn("MESSAGE", sip.KNOWN_UNSUPPORTED_METHODS)
@@ -1785,6 +1802,75 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             [("192.0.2.10", 5060), ("192.0.2.11", 5060)],
         )
         self.assertEqual(trunk.active_registrar_target, ("192.0.2.11", 5060))
+        await trunk.stop()
+
+    async def test_tls_trunk_verifies_logical_registrar_name(self) -> None:
+        context = object()
+        observed: dict[str, object] = {}
+
+        class Resolver:
+            async def resolve(self, *_args, **_kwargs):
+                return (
+                    sip_resolution.SipServerTarget(
+                        "edge.example",
+                        5061,
+                        "TLS",
+                        ("192.0.2.30",),
+                    ),
+                )
+
+        class Writer:
+            def is_closing(self) -> bool:
+                return False
+
+            def close(self) -> None:
+                return None
+
+            async def wait_closed(self) -> None:
+                return None
+
+            def get_extra_info(self, _name: str):
+                return None
+
+            def write(self, _data: bytes) -> None:
+                return None
+
+            async def drain(self) -> None:
+                return None
+
+        async def open_connection(host: str, port: int, **kwargs):
+            observed.update(host=host, port=port, **kwargs)
+            return asyncio.StreamReader(), Writer()
+
+        config = sip_trunk.SipTrunkConfig(
+            enabled=True,
+            transport="tls",
+            server="registrar.example",
+            port=5061,
+            domain="registrar.example",
+            username="ha",
+            auth_username="ha",
+            password="",
+            expires=300,
+        )
+        trunk = sip_trunk.SipTrunkClient(
+            config=config,
+            local_ip="127.0.0.1",
+            local_sip_port=5061,
+            target_resolver=Resolver(),
+            tls_context=context,  # type: ignore[arg-type]
+        )
+        with patch.object(
+            sip_trunk.asyncio,
+            "open_connection",
+            new=open_connection,
+        ):
+            await trunk._connect_tcp()
+
+        self.assertEqual(observed["host"], "192.0.2.30")
+        self.assertEqual(observed["port"], 5061)
+        self.assertIs(observed["ssl"], context)
+        self.assertEqual(observed["server_hostname"], "registrar.example")
         await trunk.stop()
 
     def test_trunk_outbound_proxy_uri_selects_host_and_port(self) -> None:

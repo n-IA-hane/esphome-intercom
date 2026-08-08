@@ -452,6 +452,7 @@ add_contact:
         select:
           options:
             - tcp
+            - tls
             - udp
     port:
       name: Optional SIP Port

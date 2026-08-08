@@ -93,7 +93,7 @@ def looks_public_number(target: str) -> bool:
 
 def to_sip_uri(target: str) -> str:
     raw = (target or "").strip()
-    if raw.lower().startswith("sip:"):
+    if raw.lower().startswith(("sip:", "sips:")):
         return raw
     if "@" in raw:
         return f"sip:{raw}"
@@ -103,7 +103,7 @@ def to_sip_uri(target: str) -> str:
 def _entry_transport(entry: RosterEntry | None) -> str:
     metadata = entry.metadata if entry is not None else {}
     value = str(metadata.get("transport") or metadata.get("sip_transport") or "").strip().lower()
-    return value if value in {"tcp", "udp"} else ""
+    return value if value in {"tcp", "tls", "udp"} else ""
 
 
 def _entry_port(entry: RosterEntry | None) -> int:

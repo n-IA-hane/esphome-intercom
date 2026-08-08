@@ -85,16 +85,16 @@ def _contact_rows(entry: RosterEntry) -> list[tuple[str, str, float, str]]:
                 raise ValueError(f"invalid SIP Contact for {entry.id!r}")
             user_agent = str(raw.get("user_agent") or "").strip()
             parsed = parse_sip_uri(uri)
-            if transport not in {"udp", "tcp"}:
+            if transport not in {"udp", "tcp", "tls"}:
                 transport = next(
                     (
                         str(value).lower()
                         for key, value in parsed.params
                         if key.lower() == "transport"
                     ),
-                    "udp",
+                    "tls" if parsed.scheme == "sips" else "udp",
                 )
-            if transport not in {"udp", "tcp"}:
+            if transport not in {"udp", "tcp", "tls"}:
                 raise ValueError(f"unsupported SIP transport for {entry.id!r}")
             rows.append((str(parsed), transport, q, user_agent))
     elif entry.sip_uri:
@@ -105,7 +105,7 @@ def _contact_rows(entry: RosterEntry) -> list[tuple[str, str, float, str]]:
                 for key, value in parsed.params
                 if key.lower() == "transport"
             ),
-            "udp",
+            "tls" if parsed.scheme == "sips" else "udp",
         )
         rows.append(
             (

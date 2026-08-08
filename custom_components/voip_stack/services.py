@@ -153,7 +153,9 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             vol.Optional("extension", default=""): IDENTIFIER_TEXT,
             vol.Optional("number", default=""): IDENTIFIER_TEXT,
             vol.Optional("ha_bridge", default=False): cv.boolean,
-            vol.Optional("transport", default=""): vol.Any("", vol.In(["tcp", "udp"])),
+            vol.Optional("transport", default=""): vol.Any(
+                "", vol.In(["tcp", "tls", "udp"])
+            ),
             vol.Optional("port"): PORT,
             vol.Optional("rtp_port"): PORT,
             vol.Optional("tx_rate"): vol.Any("auto", SAMPLE_RATE),
