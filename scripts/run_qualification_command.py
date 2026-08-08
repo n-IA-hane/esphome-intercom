@@ -22,6 +22,7 @@ def main() -> int:
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--evidence-root", type=Path, required=True)
+    parser.add_argument("--artifact", type=Path, action="append", default=[])
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -44,7 +45,7 @@ def main() -> int:
     result = build_result(
         args.job,
         "success" if completed.returncode == 0 else "failure",
-        [log],
+        [log, *args.artifact],
         evidence_root,
         plan_id=str(plan["plan_id"]),
         candidate_id=str(candidate["candidate_id"]),

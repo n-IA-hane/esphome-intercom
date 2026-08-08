@@ -375,7 +375,11 @@ def test_real_ha_automation_package_covers_route_decisions() -> None:
     }
     automation = package["automation"][0]
     assert automation["triggers"] == [
-        {"trigger": "state", "entity_id": "event.voip_stack_call"}
+        {
+            "trigger": "event.received",
+            "target": {"entity_id": "event.voip_stack_call"},
+            "options": {"event_type": ["route_requested"]},
+        }
     ]
     route_action = next(
         action

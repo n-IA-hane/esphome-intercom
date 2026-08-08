@@ -261,12 +261,17 @@ def run_hil(
     hardware: dict[str, object],
     *,
     environment: dict[str, str],
+    selected_job: str | None = None,
 ) -> dict[str, object]:
     if hardware.get("schema_version") != 1:
         raise HilError("hardware map schema is unsupported")
     required_jobs = [
         job for job in plan.get("required_jobs", []) if job in HIL_CAPABILITIES
     ]
+    if selected_job is not None:
+        if selected_job not in HIL_CAPABILITIES:
+            raise HilError(f"unsupported HIL job: {selected_job}")
+        required_jobs = [job for job in required_jobs if job == selected_job]
     artifact: dict[str, object] = {
         "schema_version": 1,
         "plan_id": plan.get("plan_id"),
@@ -368,6 +373,7 @@ def main() -> int:
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--hardware-map", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--job", choices=sorted(HIL_CAPABILITIES))
     args = parser.parse_args()
     artifact: dict[str, Any]
     plan: dict[str, Any] = {}
@@ -377,6 +383,7 @@ def main() -> int:
             plan,
             yaml.safe_load(args.hardware_map.read_text(encoding="utf-8")),
             environment=dict(os.environ),
+            selected_job=args.job,
         )
         status = 0 if artifact["status"] in {"passed", "skipped"} else 2
     except (HilError, OSError, subprocess.SubprocessError, ValueError) as error:

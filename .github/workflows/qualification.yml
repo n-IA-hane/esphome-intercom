@@ -284,9 +284,116 @@ jobs:
             ${{ runner.temp }}/candidate/esphome-intercom/**/.esphome/**/firmware*.bin
           if-no-files-found: error
 
+  live:
+    needs: plan
+    if: contains(needs.plan.outputs.required_jobs, '"peer-live"') || contains(needs.plan.outputs.required_jobs, '"browser-real"')
+    runs-on: [self-hosted, voip-lab]
+    strategy:
+      fail-fast: false
+      matrix:
+        job: [peer-live, browser-real]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
+        with:
+          name: qualification-input-${{ github.sha }}
+          path: evidence/input
+      - name: Prepare qualification environment
+        if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements-test.txt
+      - name: Execute ${{ matrix.job }}
+        if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
+        env:
+          JOB: ${{ matrix.job }}
+          HA_PYTHON: /home/codex/ha-voip-lab/.venv/bin/python
+        run: |
+          case "$JOB" in
+            peer-live) command=(.venv/bin/python scripts/run_ha_real_matrix.py --summary-output evidence/results/peer-live.json) ;;
+            browser-real) command=(./scripts/run_lab_regression_gate.sh) ;;
+            *) exit 2 ;;
+          esac
+          artifacts=()
+          if [ "$JOB" = peer-live ]; then
+            artifacts=(--artifact evidence/results/peer-live.json)
+          fi
+          .venv/bin/python scripts/run_qualification_command.py \
+            --job "$JOB" \
+            --plan evidence/input/qualification-plan.json \
+            --candidate evidence/input/candidate-lock.json \
+            --evidence-root evidence/results \
+            "${artifacts[@]}" \
+            -- ./scripts/with_ha_lab_candidate.sh -- "${command[@]}"
+      - name: Upload ${{ matrix.job }} evidence
+        if: always() && contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: qualification-result-${{ matrix.job }}-${{ github.sha }}
+          path: evidence/results/
+          if-no-files-found: error
+
+  hil:
+    needs: plan
+    if: contains(needs.plan.outputs.required_jobs, '"hil-s3"') || contains(needs.plan.outputs.required_jobs, '"hil-p4"')
+    runs-on: [self-hosted, voip-lab]
+    strategy:
+      fail-fast: false
+      matrix:
+        job: [hil-s3, hil-p4]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
+        with:
+          name: qualification-input-${{ github.sha }}
+          path: evidence/input
+      - name: Prepare qualification environment
+        if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements-test.txt
+      - name: Execute ${{ matrix.job }}
+        if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
+        env:
+          JOB: ${{ matrix.job }}
+          HA_PYTHON: /home/codex/ha-voip-lab/.venv/bin/python
+        run: |
+          hardware_map=${VOIP_HARDWARE_MAP:-/home/codex/.config/voip-qualification/hardware-map.yaml}
+          test -f "$hardware_map"
+          mkdir -p evidence/results
+          .venv/bin/python scripts/run_qualification_command.py \
+            --job "$JOB" \
+            --plan evidence/input/qualification-plan.json \
+            --candidate evidence/input/candidate-lock.json \
+            --evidence-root evidence/results \
+            --artifact "evidence/results/$JOB.json" \
+            -- ./scripts/with_ha_lab_candidate.sh -- \
+              .venv/bin/python scripts/run_hil_qualification.py \
+                --job "$JOB" \
+                --plan evidence/input/qualification-plan.json \
+                --hardware-map "$hardware_map" \
+                --output "evidence/results/$JOB.json"
+      - name: Upload ${{ matrix.job }} evidence
+        if: always() && contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: qualification-result-${{ matrix.job }}-${{ github.sha }}
+          path: evidence/results/
+          if-no-files-found: error
+
   qualification-summary:
     if: always()
-    needs: [plan, software, firmware]
+    needs: [plan, software, firmware, live, hil]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

@@ -385,6 +385,7 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--only", action="append", default=[])
+    parser.add_argument("--summary-output", type=Path)
     return parser.parse_args()
 
 
@@ -571,12 +572,15 @@ def main() -> int:
         "home_assistant": api.get("/api/config").get("version"),
         "results": results,
     }
-    (run_dir / "summary.json").write_text(
-        json.dumps(artifact, indent=2), encoding="utf-8"
-    )
+    summary = run_dir / "summary.json"
+    summary_text = json.dumps(artifact, indent=2)
+    summary.write_text(summary_text, encoding="utf-8")
+    if args.summary_output is not None:
+        args.summary_output.parent.mkdir(parents=True, exist_ok=True)
+        args.summary_output.write_text(summary_text + "\n", encoding="utf-8")
     print(
         json.dumps(
-            {"artifact": str(run_dir / "summary.json"), "results": results}, indent=2
+            {"artifact": str(summary), "results": results}, indent=2
         )
     )
     return 1 if any(item["status"] != "passed" for item in results) else 0

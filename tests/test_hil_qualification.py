@@ -112,6 +112,23 @@ def test_required_scenario_collects_pre_peak_post_evidence(tmp_path: Path) -> No
     assert "private output" not in json.dumps(artifact)
 
 
+def test_selected_hardware_job_does_not_execute_other_required_jobs(
+    tmp_path: Path,
+) -> None:
+    scenario = tmp_path / "scenario.py"
+    scenario.write_text("pass\n", encoding="utf-8")
+
+    artifact = run_hil(
+        _plan("hil-s3", "hil-p4"),
+        _hardware(tmp_path, scenario),
+        environment=dict(os.environ),
+        selected_job="hil-s3",
+    )
+
+    assert artifact["status"] == "passed"
+    assert set(artifact["jobs"]) == {"hil-s3"}
+
+
 def test_non_hardware_scenario_has_explicit_skip_reason(tmp_path: Path) -> None:
     scenario = tmp_path / "scenario.py"
     scenario.write_text("pass\n", encoding="utf-8")
