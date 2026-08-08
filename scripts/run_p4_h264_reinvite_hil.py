@@ -419,9 +419,12 @@ async def _run_peer_cycle(
         asyncio.create_task(_drain(process.stderr, paths["stderr"], asyncio.Event())),
     )
     try:
-        await p4.wait("voip_state", {"ringing", "incoming"}, timeout=30)
-        await p4.service("answer_call")
-        await p4.wait("voip_state", {"in_call"}, timeout=15)
+        await p4.wait(
+            "voip_state", {"ringing", "incoming", "in_call"}, timeout=30
+        )
+        if p4.values.get("voip_state") != "in_call":
+            await p4.service("answer_call")
+            await p4.wait("voip_state", {"in_call"}, timeout=15)
         await asyncio.wait_for(reinvite.wait(), timeout=20)
         if owner == "p4":
             await asyncio.sleep(args.video_hold_seconds)
