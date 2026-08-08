@@ -21,6 +21,7 @@ from .core.sip_transaction import (
     SIP_TIMER_B as _INVITE_2XX_TIMEOUT,
     SIP_TIMER_H as _INVITE_NON2XX_TIMEOUT,
     SipClientTransaction,
+    SipInvite2xxTransaction,
     async_run_server_transaction,
     matches_invite_error_ack,
     same_request_transaction,
@@ -277,9 +278,9 @@ class _ActiveDialog:
     renegotiations: int = 0
     update_in_progress: bool = False
     local_cseq: int = 1
-    pending_ack_cseq: int = 0
-    invite_2xx_task: asyncio.Task[None] | None = None
-    invite_2xx_retransmissions: int = 0
+    invite_2xx: SipInvite2xxTransaction = field(
+        default_factory=SipInvite2xxTransaction
+    )
     response_cache: list[_DialogResponse] = field(default_factory=list)
     local_sdp_session_id: int = 0
     local_sdp_session_version: int = 0
@@ -398,7 +399,6 @@ def _same_dialog_ack(
     return bool(
         request.header("Call-ID") == dialog.request.header("Call-ID")
         and cseq.method == "ACK"
-        and cseq.number == dialog.pending_ack_cseq
         and from_tag
         and from_tag == remote_tag
         and to_tag
@@ -840,10 +840,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
 
     @staticmethod
     def _cancel_invite_2xx(dialog: _ActiveDialog) -> None:
-        task = dialog.invite_2xx_task
-        dialog.invite_2xx_task = None
-        if task is not None and task is not asyncio.current_task():
-            task.cancel()
+        dialog.invite_2xx.cancel()
 
     @staticmethod
     def _cancel_connected_identity(dialog: _ActiveDialog) -> None:
@@ -1477,57 +1474,38 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
 
         if request.method != "INVITE" or not 200 <= int(status) < 300:
             return
-        try:
-            dialog.pending_ack_cseq = sip.parse_cseq(request.header("CSeq")).number
-        except (TypeError, ValueError, sip.SipError):
-            dialog.pending_ack_cseq = 0
-            return
-        self._cancel_invite_2xx(dialog)
         call_id = request.header("Call-ID")
         body = answer_sdp.encode("utf-8") if answer_sdp else b""
 
-        async def _retransmit() -> None:
-            def _retransmit_final() -> bool:
-                sent = self._send_response(
-                    request,
-                    addr,
-                    status,
-                    reason,
-                    body=body,
-                    to_tag=dialog.to_tag,
-                )
-                if sent:
-                    dialog.invite_2xx_retransmissions += 1
-                return sent
+        async def ack_timeout() -> None:
+            dialog.invite_2xx.cancel()
+            delayed = dialog.delayed_offer
+            dialog.delayed_offer = None
+            if delayed is not None:
+                await self._rollback_delayed_offer(delayed)
+            if not self.send_bye(call_id):
+                self.active_dialogs.pop(call_id, None)
+            if self.on_terminated is not None:
+                await self.on_terminated(call_id, "ack_timeout")
 
-            try:
-                result = await async_run_server_transaction(
-                    send=_retransmit_final,
-                    active=lambda: bool(
-                        dialog.pending_ack_cseq
-                        and self.active_dialogs.get(call_id) is dialog
-                    ),
-                    transport=dialog.transport,
-                    timeout=_INVITE_2XX_TIMEOUT,
-                    t1=_SIP_T1,
-                    t2=_SIP_T2,
-                    retransmit_reliable=True,
-                )
-                if result.timed_out and dialog.pending_ack_cseq:
-                    dialog.pending_ack_cseq = 0
-                    delayed = dialog.delayed_offer
-                    dialog.delayed_offer = None
-                    if delayed is not None:
-                        await self._rollback_delayed_offer(delayed)
-                    if not self.send_bye(call_id):
-                        self.active_dialogs.pop(call_id, None)
-                    if self.on_terminated is not None:
-                        await self.on_terminated(call_id, "ack_timeout")
-            finally:
-                if dialog.invite_2xx_task is asyncio.current_task():
-                    dialog.invite_2xx_task = None
-
-        dialog.invite_2xx_task = asyncio.create_task(_retransmit())
+        dialog.invite_2xx.start(
+            request,
+            transport=dialog.transport,
+            send=lambda: self._send_response(
+                request,
+                addr,
+                status,
+                reason,
+                body=body,
+                to_tag=dialog.to_tag,
+            ),
+            on_timeout=ack_timeout,
+            still_owned=lambda: self.active_dialogs.get(call_id) is dialog,
+            timeout=_INVITE_2XX_TIMEOUT,
+            t1=_SIP_T1,
+            t2=_SIP_T2,
+            task_name=f"voip-sip-invite-2xx-{call_id}",
+        )
 
     async def _handle_datagram_guarded(self, data: bytes, addr) -> None:
         try:
@@ -2010,16 +1988,15 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 self.completed_invites.pop(call_id, None)
                 return
             dialog = self.active_dialogs.get(call_id)
-            if dialog is not None and _same_dialog_ack(request, dialog, addr):
-                initial_ack = bool(dialog.pending_ack_cseq)
-                dialog.pending_ack_cseq = 0
-                self._cancel_invite_2xx(dialog)
+            if dialog is not None and dialog.invite_2xx.acknowledge(
+                request,
+                lambda ack: _same_dialog_ack(ack, dialog, addr),
+            ):
                 if not await self._accept_delayed_offer_ack(
                     call_id, dialog, request, addr
                 ):
                     return
-                if initial_ack:
-                    self._arm_connected_identity(call_id, dialog)
+                self._arm_connected_identity(call_id, dialog)
             return
         call_id = request.header("Call-ID")
         existing_dialog = self.active_dialogs.get(call_id)
@@ -2905,10 +2882,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
     def snapshot(self) -> dict[str, Any]:
         renegotiations = sum(dialog.renegotiations for dialog in self.active_dialogs.values())
         pending_invite_acks = sum(
-            1 for dialog in self.active_dialogs.values() if dialog.pending_ack_cseq
+            1 for dialog in self.active_dialogs.values() if dialog.invite_2xx.active
         )
         invite_2xx_retransmissions = sum(
-            dialog.invite_2xx_retransmissions for dialog in self.active_dialogs.values()
+            dialog.invite_2xx.retransmissions for dialog in self.active_dialogs.values()
         )
         pending_invite_error_acks = sum(
             1

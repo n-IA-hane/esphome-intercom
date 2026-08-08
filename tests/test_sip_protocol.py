@@ -3493,7 +3493,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 )
             for _ in range(100):
                 dialog = endpoint.active_dialogs.get(call_id)
-                if dialog is not None and dialog.pending_ack_cseq == 0:
+                if dialog is not None and not dialog.invite_2xx.active:
                     break
                 await asyncio.sleep(0)
             return None

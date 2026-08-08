@@ -699,8 +699,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             connected_identity_name="Cucina",
             connected_identity_user="428",
             peer_supports_from_change=True,
-            pending_ack_cseq=7,
         )
+        dialog.invite_2xx.request = request
+        dialog.invite_2xx.cseq = 7
         endpoint.active_dialogs["connected-identity"] = dialog
         ack = sip.build_request(
             "ACK",
@@ -2892,8 +2893,8 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 await endpoint._handle_datagram(invite, addr)
                 await asyncio.wait_for(second_2xx.wait(), timeout=0.2)
                 dialog = endpoint.active_dialogs["udp-2xx-call"]
-                self.assertEqual(dialog.pending_ack_cseq, 7)
-                self.assertGreaterEqual(dialog.invite_2xx_retransmissions, 1)
+                self.assertEqual(dialog.invite_2xx.cseq, 7)
+                self.assertGreaterEqual(dialog.invite_2xx.retransmissions, 1)
                 self.assertEqual(endpoint.snapshot()["pending_invite_acks"], 1)
 
                 ack = sip.build_request(
@@ -2912,8 +2913,8 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.025)
 
                 self.assertEqual(len(sent), count_after_ack)
-                self.assertEqual(dialog.pending_ack_cseq, 0)
-                self.assertIsNone(dialog.invite_2xx_task)
+                self.assertEqual(dialog.invite_2xx.cseq, 0)
+                self.assertIsNone(dialog.invite_2xx.task)
                 self.assertEqual(endpoint.snapshot()["pending_invite_acks"], 0)
         finally:
             endpoint.cancel_request_tasks()
@@ -2991,8 +2992,8 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.025)
 
                 self.assertEqual(len(sent), count_after_ack)
-                self.assertEqual(dialog.pending_ack_cseq, 0)
-                self.assertIsNone(dialog.invite_2xx_task)
+                self.assertEqual(dialog.invite_2xx.cseq, 0)
+                self.assertIsNone(dialog.invite_2xx.task)
         finally:
             endpoint.cancel_request_tasks()
 
@@ -3054,7 +3055,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(terminated.wait(), timeout=0.2)
 
         self.assertEqual(reasons, [("ack-timeout-call", "ack_timeout")])
-        self.assertEqual(dialog.pending_ack_cseq, 0)
+        self.assertEqual(dialog.invite_2xx.cseq, 0)
         self.assertNotIn("ack-timeout-call", endpoint.active_dialogs)
         self.assertIn("BYE", [sip.parse_message(raw).method for raw in sent])
 

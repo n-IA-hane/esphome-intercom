@@ -32,7 +32,7 @@ from .core.sip_transaction import (
     SIP_T2,
     SIP_TIMER_B,
     SipClientTransaction,
-    async_run_server_transaction,
+    SipInvite2xxTransaction,
     matches_response,
     same_request_transaction,
 )
@@ -459,16 +459,7 @@ class SipCallClient:
             tuple[sdp.RtpVideoFormat, ...],
             str,
         ] | None = None
-        self._uas_invite_2xx_task: asyncio.Task[None] | None = None
-        self._uas_invite_2xx_request: sip.SipMessage | None = None
-        self._uas_invite_2xx_host = ""
-        self._uas_invite_2xx_port = 0
-        self._uas_invite_2xx_status = 0
-        self._uas_invite_2xx_reason = ""
-        self._uas_invite_2xx_extra_headers: tuple[tuple[str, str], ...] = ()
-        self._uas_invite_2xx_body = b""
-        self._uas_invite_2xx_cseq = 0
-        self._uas_invite_2xx_retransmissions = 0
+        self._uas_invite_2xx = SipInvite2xxTransaction()
         self._uas_invite_ack_timeout = asyncio.Event()
         self._uas_delayed_offer: _DelayedRemoteOffer | None = None
         self.last_sip_event = ""
@@ -512,7 +503,7 @@ class SipCallClient:
         await async_wait_for_cleanup(self._close_task)
 
     async def _close(self) -> None:
-        self._cancel_uas_invite_2xx()
+        self._uas_invite_2xx.cancel()
         self._uas_delayed_offer = None
         if self._invite_transaction_active:
             with contextlib.suppress(Exception):
@@ -926,20 +917,6 @@ class SipCallClient:
         _LOGGER.info("SIP TX %s %s to %s:%s", status, reason, host, port)
         return True
 
-    def _cancel_uas_invite_2xx(self) -> None:
-        task = self._uas_invite_2xx_task
-        self._uas_invite_2xx_task = None
-        self._uas_invite_2xx_request = None
-        self._uas_invite_2xx_host = ""
-        self._uas_invite_2xx_port = 0
-        self._uas_invite_2xx_status = 0
-        self._uas_invite_2xx_reason = ""
-        self._uas_invite_2xx_extra_headers = ()
-        self._uas_invite_2xx_body = b""
-        self._uas_invite_2xx_cseq = 0
-        if task is not None and task is not asyncio.current_task():
-            task.cancel()
-
     def _arm_uas_invite_2xx(
         self,
         request: sip.SipMessage,
@@ -956,100 +933,57 @@ class SipCallClient:
         RFC 3261 makes this UAS-core responsibility independent of the
         underlying transport, so the timer intentionally also runs over TCP.
         """
-        try:
-            cseq = sip.parse_cseq(request.header("CSeq"))
-        except (TypeError, ValueError, sip.SipError):
+        if not 200 <= status < 300:
             return
-        if request.method != "INVITE" or cseq.method != "INVITE" or not 200 <= status < 300:
-            return
-        self._cancel_uas_invite_2xx()
         self._uas_invite_ack_timeout.clear()
-        self._uas_invite_2xx_request = request
-        self._uas_invite_2xx_host = host
-        self._uas_invite_2xx_port = int(port)
-        self._uas_invite_2xx_status = int(status)
-        self._uas_invite_2xx_reason = reason
-        self._uas_invite_2xx_extra_headers = extra_headers
-        self._uas_invite_2xx_body = body
-        self._uas_invite_2xx_cseq = cseq.number
-        self._uas_invite_2xx_retransmissions = 0
-        self._uas_invite_2xx_task = asyncio.create_task(
-            self._run_uas_invite_2xx(),
-            name=f"voip-sip-client-2xx-{self.dialog_ids.call_id}",
-        )
-
-    async def _run_uas_invite_2xx(self) -> None:
-        try:
-            def _retransmit_final() -> bool:
-                request = self._uas_invite_2xx_request
-                if request is None:
-                    return False
-                sent = self._send_response_to_request(
-                    request,
-                    self._uas_invite_2xx_host,
-                    self._uas_invite_2xx_port,
-                    self._uas_invite_2xx_status,
-                    self._uas_invite_2xx_reason,
-                    extra_headers=self._uas_invite_2xx_extra_headers,
-                    body=self._uas_invite_2xx_body,
+        async def ack_timeout() -> None:
+            _LOGGER.warning(
+                "SIP remote re-INVITE ACK timed out call_id=%s cseq=%s; terminating dialog",
+                self.dialog_ids.call_id,
+                self._uas_invite_2xx.cseq,
+            )
+            dialog = self.dialog
+            self._uas_invite_2xx.cancel()
+            self._uas_delayed_offer = None
+            if dialog is not None:
+                self._send_bye_request(
+                    dialog.remote_host,
+                    dialog.remote_sip_port,
+                    dialog.remote_target_uri or dialog.remote_uri,
+                    dialog.local_uri,
+                    dialog.remote_uri,
+                    route_set=dialog.route_set,
                 )
-                if sent:
-                    self._uas_invite_2xx_retransmissions += 1
-                return sent
+            self.dialog = None
+            self._uas_invite_ack_timeout.set()
 
-            result = await async_run_server_transaction(
-                send=_retransmit_final,
-                active=lambda: self._uas_invite_2xx_request is not None,
-                transport=self.signaling_transport,
-                timeout=SIP_TIMER_B,
-                t1=SIP_T1,
-                t2=SIP_T2,
-                retransmit_reliable=True,
-            )
-        except asyncio.CancelledError:
-            return
-        finally:
-            if self._uas_invite_2xx_task is asyncio.current_task():
-                self._uas_invite_2xx_task = None
-
-        if self._uas_invite_2xx_request is None or not result.timed_out:
-            return
-        _LOGGER.warning(
-            "SIP remote re-INVITE ACK timed out call_id=%s cseq=%s; terminating dialog",
-            self.dialog_ids.call_id,
-            self._uas_invite_2xx_cseq,
+        self._uas_invite_2xx.start(
+            request,
+            transport=self.signaling_transport,
+            send=lambda: self._send_response_to_request(
+                request,
+                host,
+                port,
+                status,
+                reason,
+                extra_headers=extra_headers,
+                body=body,
+            ),
+            on_timeout=ack_timeout,
+            timeout=SIP_TIMER_B,
+            t1=SIP_T1,
+            t2=SIP_T2,
+            task_name=f"voip-sip-client-2xx-{self.dialog_ids.call_id}",
         )
-        dialog = self.dialog
-        self._cancel_uas_invite_2xx()
-        self._uas_delayed_offer = None
-        if dialog is not None:
-            self._send_bye_request(
-                dialog.remote_host,
-                dialog.remote_sip_port,
-                dialog.remote_target_uri or dialog.remote_uri,
-                dialog.local_uri,
-                dialog.remote_uri,
-                route_set=dialog.route_set,
-            )
-        self.dialog = None
-        self._uas_invite_ack_timeout.set()
 
     def _acknowledges_uas_invite_2xx(self, request: sip.SipMessage, host: str) -> bool:
-        if self._uas_invite_2xx_request is None or request.method != "ACK":
-            return False
-        try:
-            cseq = sip.parse_cseq(request.header("CSeq"))
-        except (TypeError, ValueError, sip.SipError):
-            return False
-        if (
-            cseq.method != "ACK"
-            or cseq.number != self._uas_invite_2xx_cseq
-            or not self._request_matches_dialog(request, host, "ACK")
-        ):
-            return False
-        self._cancel_uas_invite_2xx()
-        self._uas_invite_ack_timeout.clear()
-        return True
+        acknowledged = self._uas_invite_2xx.acknowledge(
+            request,
+            lambda ack: self._request_matches_dialog(ack, host, "ACK"),
+        )
+        if acknowledged:
+            self._uas_invite_ack_timeout.clear()
+        return acknowledged
 
     async def _commit_delayed_offer_ack(
         self, request: sip.SipMessage
@@ -2386,7 +2320,7 @@ class SipCallClient:
                         self.dialog_ids.call_id,
                         method,
                     )
-                    self._cancel_uas_invite_2xx()
+                    self._uas_invite_2xx.cancel()
                     self.bye()
                     return "media_update_failed"
             if self._uas_invite_ack_timeout.is_set() or self.dialog is None:
@@ -2792,7 +2726,7 @@ class SipCallClient:
                     extra_headers=(("Retry-After", "1"),),
                 )
                 return None
-            self._cancel_uas_invite_2xx()
+            self._uas_invite_2xx.cancel()
             self._uas_delayed_offer = None
             self._send_response_to_request(msg, addr[0], addr[1], 200, "OK")
             self._remote_cseq = bye_cseq.number
@@ -4073,7 +4007,7 @@ class SipCallClient:
     def bye(self) -> bool:
         if self.dialog is None:
             return False
-        self._cancel_uas_invite_2xx()
+        self._uas_invite_2xx.cancel()
         return self._send_bye_request(
             self.dialog.remote_host,
             self.dialog.remote_sip_port,
@@ -4349,8 +4283,8 @@ class SipCallClient:
             "selected_rx_rtp_format": dialog.recv_format.wire_token() if dialog is not None else "",
             "dialog_active": dialog is not None,
             "pending_invite": bool(self._invite_transaction_active and dialog is None),
-            "pending_remote_invite_ack": self._uas_invite_2xx_cseq,
-            "remote_invite_2xx_retransmissions": self._uas_invite_2xx_retransmissions,
+            "pending_remote_invite_ack": self._uas_invite_2xx.cseq,
+            "remote_invite_2xx_retransmissions": self._uas_invite_2xx.retransmissions,
             "sip_transport": self.signaling_transport.lower(),
             "last_sip_event": self.last_sip_event,
             "last_sip_status_code": self.last_sip_status_code,

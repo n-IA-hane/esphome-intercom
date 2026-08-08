@@ -19,6 +19,7 @@ SIP_TIMER_H = 64 * SIP_T1
 _T = TypeVar("_T")
 ResponseReader = Callable[[float], Awaitable[_T | None]]
 AsyncSend = Callable[[], Awaitable[None]]
+SyncSend = Callable[[], bool | None]
 
 
 type SipTransactionKey = tuple[str, int, str]
@@ -203,3 +204,93 @@ async def async_run_server_transaction(
                 retransmissions += 1
             interval = min(interval * 2.0, float(t2))
     return ServerTransactionResult(retransmissions, False)
+
+
+class SipInvite2xxTransaction:
+    """Own one INVITE 2xx retransmission timer and its matching ACK."""
+
+    def __init__(self) -> None:
+        self.request: sip.SipMessage | None = None
+        self.cseq = 0
+        self.retransmissions = 0
+        self.task: asyncio.Task[None] | None = None
+
+    @property
+    def active(self) -> bool:
+        return self.request is not None
+
+    def cancel(self) -> None:
+        task = self.task
+        self.task = None
+        self.request = None
+        self.cseq = 0
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
+    def acknowledge(
+        self,
+        request: sip.SipMessage,
+        matches_dialog: Callable[[sip.SipMessage], bool],
+    ) -> bool:
+        if self.request is None or request.method != "ACK":
+            return False
+        try:
+            cseq = sip.parse_cseq(request.header("CSeq"))
+        except (TypeError, ValueError, sip.SipError):
+            return False
+        if cseq.method != "ACK" or cseq.number != self.cseq or not matches_dialog(request):
+            return False
+        self.cancel()
+        return True
+
+    def start(
+        self,
+        request: sip.SipMessage,
+        *,
+        transport: str,
+        send: SyncSend,
+        on_timeout: Callable[[], Awaitable[None]],
+        still_owned: Callable[[], bool] = lambda: True,
+        timeout: float = SIP_TIMER_B,
+        t1: float = SIP_T1,
+        t2: float = SIP_T2,
+        task_name: str | None = None,
+    ) -> bool:
+        try:
+            cseq = sip.parse_cseq(request.header("CSeq"))
+        except (TypeError, ValueError, sip.SipError):
+            return False
+        if request.method != "INVITE" or cseq.method != "INVITE":
+            return False
+        self.cancel()
+        self.request = request
+        self.cseq = cseq.number
+        self.retransmissions = 0
+
+        async def run() -> None:
+            def retransmit() -> bool | None:
+                sent = send()
+                if sent is not False:
+                    self.retransmissions += 1
+                return sent
+
+            try:
+                result = await async_run_server_transaction(
+                    send=retransmit,
+                    active=lambda: self.active and still_owned(),
+                    transport=transport,
+                    timeout=timeout,
+                    t1=t1,
+                    t2=t2,
+                    retransmit_reliable=True,
+                )
+                if result.timed_out and self.active:
+                    await on_timeout()
+            except asyncio.CancelledError:
+                return
+            finally:
+                if self.task is asyncio.current_task():
+                    self.task = None
+
+        self.task = asyncio.create_task(run(), name=task_name)
+        return True
