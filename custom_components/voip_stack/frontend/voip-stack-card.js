@@ -869,7 +869,7 @@ class VoipStackCard extends HTMLElement {
       const endpointId = String(params.get("voip_endpoint") || "").trim();
       const callId = String(params.get("voip_call_id") || "").trim();
       const currentEndpoint = this._getSoftphoneEndpointId();
-      // Legacy links are deliberately scoped to the original master phone.
+      // Links without a selector are scoped to the historical initial phone.
       // Additional phones require an explicit endpoint so two ringing kiosk
       // cards cannot race to consume one global URL parameter.
       if (!endpointId && currentEndpoint !== "default") return false;

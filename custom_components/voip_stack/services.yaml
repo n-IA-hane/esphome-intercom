@@ -31,7 +31,7 @@ purge_devices:
 
 answer:
   name: Answer call
-  description: Answer the ringing call on the selected phone. Omit the phone to use the default Home Assistant softphone.
+  description: Answer the ringing call on the selected phone. Omit the phone to use the preferred or sole compatible phone.
   fields:
     device_id:
       name: Phone
@@ -63,7 +63,7 @@ answer:
 
 decline:
   name: Decline call
-  description: Decline the ringing call on the selected phone. Omit the phone to use the default Home Assistant softphone.
+  description: Decline the ringing call on the selected phone. Omit the phone to use the preferred or sole compatible phone.
   fields:
     device_id:
       name: Phone
@@ -113,7 +113,7 @@ call:
   fields:
     device_id:
       name: Calling phone
-      description: Optional phone that starts the call. Omit it to use the default Home Assistant softphone.
+      description: Optional phone that starts the call. Omit it to use the preferred or sole compatible phone.
       required: false
       selector:
         device:
@@ -375,7 +375,7 @@ select_inbound_destination:
 
 hangup:
   name: Hang up
-  description: End the call on the selected phone. Omit the phone to use the default Home Assistant softphone.
+  description: End the call on the selected phone. Omit the phone to use the preferred or sole compatible phone.
   fields:
     device_id:
       name: Phone
@@ -571,7 +571,7 @@ set_dnd:
   fields:
     device_id:
       name: Phone
-      description: Optional Home Assistant phone. Omit it to use the default phone.
+      description: Optional Home Assistant phone. Omit it to use the preferred or sole compatible phone.
       required: false
       selector:
         device:
@@ -589,7 +589,7 @@ set_auto_answer:
   fields:
     device_id:
       name: Phone
-      description: Optional Home Assistant phone. Omit it to use the default phone.
+      description: Optional Home Assistant phone. Omit it to use the preferred or sole compatible phone.
       required: false
       selector:
         device:
@@ -607,7 +607,7 @@ set_send_video:
   fields:
     device_id:
       name: Phone
-      description: Optional Home Assistant phone. Omit it to use the default phone.
+      description: Optional Home Assistant phone. Omit it to use the preferred or sole compatible phone.
       required: false
       selector:
         device:
@@ -630,7 +630,7 @@ set_ha_softphone_settings:
   fields:
     device_id:
       name: Phone
-      description: Optional Home Assistant phone. Omit it to use the default phone.
+      description: Optional Home Assistant phone. Omit it to use the preferred or sole compatible phone.
       required: false
       selector:
         device:

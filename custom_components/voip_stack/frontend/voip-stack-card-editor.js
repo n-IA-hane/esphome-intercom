@@ -220,7 +220,7 @@ class VoipStackCardEditor extends HTMLElement {
     els.modeInfo.textContent = phonebookMode
       ? "Scrollable view of the shared VoIP phonebook."
       : softphoneMode
-        ? "Home Assistant phone: bind this card to one logical phone, or leave it unselected for the default phone."
+        ? "Home Assistant phone: bind this card to one logical phone, or leave it unselected for the preferred phone."
         : "ESP mirror card: mirrors one ESP endpoint and presses that ESP's own call, answer and hangup controls.";
     els.deviceGroup.classList.toggle("hidden", phonebookMode);
     els.deviceLabel.textContent = softphoneMode
@@ -265,11 +265,11 @@ class VoipStackCardEditor extends HTMLElement {
       els.deviceInfo.textContent = "Loading...";
     } else if (selectableDevices.length === 0) {
       els.deviceInfo.textContent = softphoneMode
-        ? "No additional HA softphones found; the default phone will be used."
+        ? "No additional HA softphones found; the preferred or sole phone will be used."
         : "No devices found";
     } else if (configuredMissingPhone) {
       els.deviceInfo.textContent =
-        "The configured Home Assistant phone no longer exists. Select another phone or the default.";
+        "The configured Home Assistant phone no longer exists. Select another phone or use the preferred phone.";
     } else if (selectedDevice) {
       els.deviceInfo.textContent = softphoneMode
         ? `Phone: ${selectedDevice.name || selectedDevice.device_id}`
