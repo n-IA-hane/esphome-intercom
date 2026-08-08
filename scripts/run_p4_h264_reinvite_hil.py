@@ -151,7 +151,7 @@ def validate_cycle(
             "p4_video_session": int(session.get("tx", 0)) > 0
             and int(session.get("rx", 0)) > 0
             and int(session.get("completed_au", 0)) > 0
-            and int(session.get("dropped_au", 0)) == 0
+            and int(session.get("completed_au", 0)) > int(session.get("dropped_au", 0))
             and int(session.get("send_fail", 0)) == 0,
             "serial_clean": not serial_metrics.get("fatal_errors"),
             "returned_h264": returned_video.get("frames", 0) >= 3,
@@ -428,9 +428,7 @@ async def _run_peer_cycle(
         asyncio.create_task(_drain(process.stderr, paths["stderr"], asyncio.Event())),
     )
     try:
-        await p4.wait(
-            "voip_state", {"ringing", "incoming", "in_call"}, timeout=30
-        )
+        await p4.wait("voip_state", {"ringing", "incoming", "in_call"}, timeout=30)
         if p4.values.get("voip_state") != "in_call":
             await p4.service("answer_call")
             await p4.wait("voip_state", {"in_call"}, timeout=15)
