@@ -1,0 +1,95 @@
+# Real Home Assistant automation package used only by the isolated VoIP lab.
+# The test runner selects one policy before placing a real SIP call.
+input_boolean:
+  voip_qualification_enabled:
+    name: VoIP qualification enabled
+    initial: false
+
+input_select:
+  voip_qualification_route_action:
+    name: VoIP qualification route action
+    options:
+      - no_action
+      - default
+      - answer_ha
+      - decline
+      - busy
+      - cancel
+      - forward
+      - bridge
+    initial: no_action
+
+input_text:
+  voip_qualification_expected_origin:
+    name: VoIP qualification expected origin
+    initial: ""
+  voip_qualification_expected_caller:
+    name: VoIP qualification expected caller
+    initial: ""
+  voip_qualification_expected_target:
+    name: VoIP qualification expected target
+    initial: ""
+  voip_qualification_destination:
+    name: VoIP qualification decision destination
+    initial: ""
+  voip_qualification_last_decision:
+    name: VoIP qualification last decision
+    initial: ""
+
+automation:
+  - id: voip_qualification_route_decision
+    alias: VoIP qualification route decision
+    mode: parallel
+    max: 16
+    triggers:
+      - trigger: state
+        entity_id: event.voip_stack_call
+    conditions:
+      - condition: state
+        entity_id: input_boolean.voip_qualification_enabled
+        state: "on"
+      - condition: template
+        value_template: >-
+          {{ trigger.to_state is not none
+             and trigger.to_state.attributes.get('event_type') == 'route_requested' }}
+      - condition: template
+        value_template: >-
+          {% set expected = states('input_text.voip_qualification_expected_origin') | trim %}
+          {{ not expected or trigger.to_state.attributes.get('origin', '') == expected }}
+      - condition: template
+        value_template: >-
+          {% set expected = states('input_text.voip_qualification_expected_caller') | trim %}
+          {{ not expected or expected in trigger.to_state.attributes.get('caller', '') }}
+      - condition: template
+        value_template: >-
+          {% set expected = states('input_text.voip_qualification_expected_target') | trim %}
+          {{ not expected or trigger.to_state.attributes.get('callee', '') == expected }}
+      - condition: template
+        value_template: >-
+          {{ states('input_select.voip_qualification_route_action') != 'no_action' }}
+    actions:
+      - variables:
+          selected_action: >-
+            {{ states('input_select.voip_qualification_route_action') }}
+          selected_destination: >-
+            {{ states('input_text.voip_qualification_destination') | trim }}
+          selected_call_id: >-
+            {{ trigger.to_state.attributes.get('call_id', '') }}
+          selected_state: >-
+            {{ trigger.to_state.attributes.get('state', '') }}
+          selected_sequence: >-
+            {{ trigger.to_state.attributes.get('sequence', 0) | int }}
+      - action: voip_stack.route
+        continue_on_error: true
+        data:
+          call_id: "{{ selected_call_id }}"
+          action: "{{ selected_action }}"
+          destination: "{{ selected_destination }}"
+          expected_state: "{{ selected_state }}"
+          expected_sequence: "{{ selected_sequence }}"
+      - action: input_text.set_value
+        data:
+          entity_id: input_text.voip_qualification_last_decision
+          value: >-
+            {{ selected_call_id }}|{{ selected_action }}|{{ selected_destination }}
+

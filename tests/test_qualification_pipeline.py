@@ -4,9 +4,13 @@ import hashlib
 import json
 from pathlib import Path
 
+import yaml
+
 from qualification.registry import FIRMWARE_PROFILES
 from scripts.candidate_lock import build_lock
+from scripts.install_ha_qualification_package import install
 from scripts.qualification_plan import build_plan
+from scripts.merge_qualification_results import merge_results
 from scripts.record_qualification_result import build_result
 from scripts.verify_qualification import verify
 
@@ -188,3 +192,65 @@ def test_candidate_lock_has_stable_identity(monkeypatch, tmp_path: Path) -> None
 
     assert first == second
     assert len(first["candidate_id"]) == 64
+
+
+def test_result_merge_rejects_duplicate_job(tmp_path: Path) -> None:
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    payload = {"jobs": {"static": {"status": "success", "artifacts": []}}}
+    first.write_text(json.dumps(payload), encoding="utf-8")
+    second.write_text(json.dumps(payload), encoding="utf-8")
+
+    try:
+        merge_results([first, second])
+    except RuntimeError as error:
+        assert str(error) == "duplicate qualification jobs: static"
+    else:
+        raise AssertionError("duplicate qualification job was accepted")
+
+
+def test_real_ha_automation_package_covers_route_decisions() -> None:
+    package_path = (
+        Path(__file__).parents[1]
+        / "qualification/home_assistant/voip_qualification.yaml"
+    )
+    package = yaml.safe_load(package_path.read_text(encoding="utf-8"))
+
+    options = package["input_select"]["voip_qualification_route_action"]["options"]
+    assert set(options) == {
+        "no_action",
+        "default",
+        "answer_ha",
+        "decline",
+        "busy",
+        "cancel",
+        "forward",
+        "bridge",
+    }
+    automation = package["automation"][0]
+    assert automation["triggers"] == [
+        {"trigger": "state", "entity_id": "event.voip_stack_call"}
+    ]
+    route_action = next(
+        action
+        for action in automation["actions"]
+        if action.get("action") == "voip_stack.route"
+    )
+    assert route_action["data"]["expected_sequence"] == "{{ selected_sequence }}"
+
+
+def test_ha_package_installer_preserves_one_canonical_source(tmp_path: Path) -> None:
+    config = tmp_path / "configuration.yaml"
+    config.write_text(
+        "homeassistant:\n  packages: !include_dir_named packages\n",
+        encoding="utf-8",
+    )
+
+    target, digest = install(tmp_path, check=False)
+
+    assert target.read_bytes() == (
+        Path(__file__).parents[1]
+        / "qualification/home_assistant/voip_qualification.yaml"
+    ).read_bytes()
+    assert len(digest) == 64
+    assert install(tmp_path, check=True) == (target, digest)
