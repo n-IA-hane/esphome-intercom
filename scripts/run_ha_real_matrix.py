@@ -43,6 +43,7 @@ ROUTE_ACTIONS = ("default", "decline", "busy", "cancel", "forward", "bridge")
 ANSWER_CASES = (
     "registered_sip_auto_answer_on_caller_bye",
     "registered_sip_auto_answer_off_callee_bye",
+    "initial_delayed_offer_caller_bye",
 )
 
 
@@ -564,6 +565,23 @@ def main() -> int:
                 )
 
             execute(MatrixCase(ANSWER_CASES[0], auto_answer_on))
+
+            def initial_delayed_offer() -> dict[str, object]:
+                package.select("forward", destination="video_sink")
+                return run_answered_case(
+                    "caller_bye",
+                    ROOT / "tests/sipp/initial-delayed-offer-local-bye.xml",
+                    target_host=target_host,
+                    target_port=target_port,
+                    extension="9999",
+                    local_port=trunk_source_port,
+                    callee_config=args.callee_config,
+                    capture_dir=run_dir,
+                    ha_url=args.ha_url,
+                    token=token,
+                )
+
+            execute(MatrixCase(ANSWER_CASES[2], initial_delayed_offer))
 
             with tempfile.TemporaryDirectory(prefix="voip-manual-answer-") as temp:
                 manual = _manual_baresip_config(
