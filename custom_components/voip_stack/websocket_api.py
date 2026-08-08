@@ -1397,25 +1397,6 @@ def _set_sip_bridge_call_state(
     _fire_call_event(hass, payload, "sip_bridge")
 
 
-def _set_sip_bridge_terminal_state(
-    hass: HomeAssistant,
-    reason: str,
-    *,
-    sip_status_code: int = 0,
-    **fields: Any,
-) -> None:
-    """Publish one canonical terminal bridge projection."""
-
-    _set_sip_bridge_call_state(
-        hass,
-        _sip_public_state(reason),
-        reason=reason,
-        terminal_reason=reason,
-        sip_status_code=sip_status_code,
-        **fields,
-    )
-
-
 def _ha_softphone_device(
     hass: HomeAssistant,
     endpoint_id: str,

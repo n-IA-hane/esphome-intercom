@@ -56,7 +56,6 @@ from ..sip_client import SIP_TIMER_B, SipCallClient
 from ..sip_listener import SipInviteResult
 from ..websocket_api import (
     _set_sip_bridge_call_state,
-    _set_sip_bridge_terminal_state,
 )
 
 if TYPE_CHECKING:
@@ -167,18 +166,6 @@ async def route_sip_bridge(
         invite.source_port,
         default_port=int(cfg["sip_port"]),
     ):
-        _set_sip_bridge_terminal_state(
-            hass,
-            TerminalReason.BUSY.value,
-            caller=invite.caller,
-            callee=invite.target,
-            peer_name=invite.caller,
-            call_id=invite.call_id,
-            direction="incoming",
-            origin="self",
-            sip_status_code=486,
-            last_sip_event="SIP_RESPONSE",
-        )
         return SipInviteResult(
             486,
             "Busy Here",
