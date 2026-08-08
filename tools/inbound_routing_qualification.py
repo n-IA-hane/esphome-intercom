@@ -111,6 +111,11 @@ class HomeAssistantApi:
     def state(self, entity_id: str) -> dict[str, Any]:
         return self.get(f"/api/states/{entity_id}")
 
+    def optional_state(self, entity_id: str) -> dict[str, Any] | None:
+        return self.request(
+            "GET", f"/api/states/{entity_id}", allow_missing=True
+        )
+
     def service(
         self, domain: str, name: str, data: dict[str, Any] | None = None
     ) -> Any:
@@ -720,8 +725,12 @@ def main() -> int:
     args = parser.parse_args()
     api = HomeAssistantApi()
     snapshot = FlowSnapshot.capture(api)
-    old_automation_was_on = api.state(OLD_AUTOMATION)["state"] == "on"
-    inbound_automation_was_on = api.state(INBOUND_AUTOMATION)["state"] == "on"
+    def optional_automation_state(entity_id: str) -> bool | None:
+        state = api.optional_state(entity_id)
+        return None if state is None else state["state"] == "on"
+
+    old_automation_was_on = optional_automation_state(OLD_AUTOMATION)
+    inbound_automation_was_on = optional_automation_state(INBOUND_AUTOMATION)
     results: list[dict[str, Any]] = []
     active: list[BareSip] = []
 
@@ -761,8 +770,10 @@ def main() -> int:
         return item
 
     create_automations(api)
-    set_automation(api, OLD_AUTOMATION, False)
-    set_automation(api, INBOUND_AUTOMATION, False)
+    if old_automation_was_on is not None:
+        set_automation(api, OLD_AUTOMATION, False)
+    if inbound_automation_was_on is not None:
+        set_automation(api, INBOUND_AUTOMATION, False)
     set_automation(api, ROUTE_AUTOMATION, False)
     set_automation(api, TIMEOUT_AUTOMATION, False)
     try:
@@ -1080,10 +1091,12 @@ def main() -> int:
         cleanup_automations(api)
         with suppress(Exception):
             snapshot.apply(api)
-        with suppress(Exception):
-            set_automation(api, OLD_AUTOMATION, old_automation_was_on)
-        with suppress(Exception):
-            set_automation(api, INBOUND_AUTOMATION, inbound_automation_was_on)
+        if old_automation_was_on is not None:
+            with suppress(Exception):
+                set_automation(api, OLD_AUTOMATION, old_automation_was_on)
+        if inbound_automation_was_on is not None:
+            with suppress(Exception):
+                set_automation(api, INBOUND_AUTOMATION, inbound_automation_was_on)
         for path in TEST_CAPTURE_DIR.glob("dump-sip:*.wav"):
             path.unlink(missing_ok=True)
 
