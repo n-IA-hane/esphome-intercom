@@ -19,6 +19,7 @@ from .core.g722_codec import G722Decoder, G722Encoder
 from .core.opus_codec import OpusDecoder, OpusEncoder
 from .session_cleanup import async_wait_for_cleanup
 from .core import sdp, sip, sip_transfer
+from .core.sip_transport import default_tls_context
 from .core.sip_auth import (
     DigestChallengeTracker,
     build_digest_authorization,
@@ -670,10 +671,12 @@ class SipCallClient:
             host, port = self._signaling_target(remote_host, int(remote_sip_port))
             tls = self.signaling_transport == "TLS"
             if tls:
+                if self.tls_context is None:
+                    self.tls_context = await default_tls_context()
                 reader, writer = await asyncio.open_connection(
                     host,
                     port,
-                    ssl=self.tls_context or ssl.create_default_context(),
+                    ssl=self.tls_context,
                     server_hostname=self._tls_server_name,
                 )
             else:

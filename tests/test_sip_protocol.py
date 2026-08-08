@@ -1946,6 +1946,29 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
+    async def test_trunk_routes_in_dialog_responses_to_endpoint_owner(self) -> None:
+        config = sip_trunk.SipTrunkConfig(enabled=True, transport="udp", server="pbx.example", port=5060, domain="pbx.example", username="ha", auth_username="ha", password="", expires=300)
+        trunk = sip_trunk.SipTrunkClient(config=config, local_ip="127.0.0.1", local_sip_port=5060)
+        trunk._trusted_udp_hosts = frozenset({"192.0.2.10"})
+        handled = []
+        received = asyncio.Event()
+
+        async def handler(raw, _addr):
+            handled.append(raw)
+            received.set()
+
+        trunk.set_request_handler(handler)
+        raw = sip.build_response(200, "OK", [("Via", "SIP/2.0/UDP ha.local;branch=z9hG4bKnotify"), ("From", "<sip:ha@local>;tag=local"), ("To", "<sip:pbx@pbx.example>;tag=remote"), ("Call-ID", "established-dialog"), ("CSeq", "2 NOTIFY")], b"")
+        task = asyncio.create_task(trunk._receive_loop())
+        try:
+            trunk.queue.put_nowait((raw, ("192.0.2.10", 5060)))
+            await asyncio.wait_for(received.wait(), timeout=1)
+            self.assertEqual(handled, [raw])
+            self.assertTrue(trunk.responses.empty())
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     def test_video_trunk_endpoint_rejects_missing_media_update_handler(self) -> None:
         config = sip_trunk.SipTrunkConfig(
             enabled=True,
@@ -2006,6 +2029,12 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         async def offerless(_invite):
             return None
 
+        async def refer(_call_id, _target):
+            return 200
+
+        async def request(_call_id, _request):
+            return None
+
         manager = types.SimpleNamespace(
             local_ip="127.0.0.1",
             port=5060,
@@ -2017,6 +2046,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             on_offerless_invite=offerless,
             on_terminated=None,
             on_media_update=lambda _old, _new, _method: None,
+            on_refer=refer,
+            on_request=request,
             enable_video=True,
             enable_video_transcoding=True,
             prefer_browser_video_send=True,
@@ -2032,6 +2063,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(endpoint.prefer_browser_video_send)
         self.assertIs(endpoint.on_media_update, manager.on_media_update)
         self.assertIs(endpoint.on_offerless_invite, offerless)
+        self.assertIs(endpoint.on_refer, refer)
+        self.assertIs(endpoint.on_request, request)
         self.assertEqual(endpoint.signaling_transport, "TCP")
         self.assertTrue(endpoint.trusted_trunk)
         request = sip.parse_message(

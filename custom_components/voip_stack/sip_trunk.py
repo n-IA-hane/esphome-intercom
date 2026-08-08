@@ -20,6 +20,7 @@ import uuid
 from typing import Any, Awaitable, Callable
 
 from .core import sip
+from .core.sip_transport import default_tls_context
 from .core.sip_auth import (
     DigestChallengeTracker,
     build_digest_authorization,
@@ -416,12 +417,17 @@ class SipTrunkClient:
                 host, port = candidate.addresses[0], candidate.port
                 try:
                     tls = self.transport_name == "TLS"
+                    tls_context = None
+                    if tls:
+                        if self.tls_context is None:
+                            self.tls_context = await default_tls_context()
+                        tls_context = self.tls_context
                     reader, writer = await asyncio.wait_for(
                         (
                             asyncio.open_connection(
                                 host,
                                 port,
-                                ssl=self.tls_context or ssl.create_default_context(),
+                                ssl=tls_context,
                                 server_hostname=self.registrar_host,
                             )
                             if tls
@@ -594,6 +600,8 @@ class SipTrunkClient:
             on_terminated=manager.on_terminated,
             on_register=getattr(manager, "on_register", None),
             on_info=getattr(manager, "on_info", None),
+            on_refer=getattr(manager, "on_refer", None),
+            on_request=getattr(manager, "on_request", None),
             # Inbound requests received on the persistent trunk connection
             # use this endpoint rather than the UDP/TCP listening servers.
             # Keep its in-dialog media policy identical or an audio call can
@@ -797,8 +805,17 @@ class SipTrunkClient:
                     continue
                 if msg.is_response:
                     cseq = msg.header("CSeq").split()
-                    if msg.header("Call-ID") != self.call_id or len(cseq) != 2 or cseq[1].upper() != "REGISTER":
-                        _LOGGER.debug("SIP trunk ignored non-registration response")
+                    is_registration = (
+                        msg.header("Call-ID") == self.call_id
+                        and len(cseq) == 2
+                        and cseq[1].upper() == "REGISTER"
+                    )
+                    if not is_registration:
+                        handler = self.request_handler
+                        if handler is not None:
+                            await handler(raw, addr)
+                        else:
+                            _LOGGER.debug("SIP trunk ignored response without an endpoint owner")
                         continue
                     if put_drop_oldest(self.responses, msg):
                         _LOGGER.debug("SIP trunk response queue full; dropped oldest response")

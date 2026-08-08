@@ -12,6 +12,20 @@ from .voip_phase1_support import (
 
 
 class RouterContractTest(unittest.TestCase):
+    def test_secure_sip_uri_stays_on_the_direct_tls_route(self) -> None:
+        target = "sips:door@pbx.example:5061"
+        decision = router.resolve_ha_router(target, [], trunk_ready=True)
+        self.assertEqual(decision.action, router.RouteAction.DIRECT)
+        self.assertEqual(decision.sip_uri, target)
+        self.assertEqual(decision.reason, router.RouteReason.DIRECT_URI)
+
+    def test_trusted_inbound_automation_can_select_a_direct_sip_uri(self) -> None:
+        target = "sip:callee@127.0.0.1:20020"
+        context = router.CallContext(call_id="direct-automation", direction="inbound", origin="trunk", route_hint=target)
+        decision = router.route_inbound_trunk(context, [])
+        self.assertEqual(decision.action, router.RouteAction.DIRECT)
+        self.assertEqual(decision.sip_uri, target)
+
     def test_sip_video_offer_is_not_gated_by_target_roster_capabilities(self) -> None:
         source = (PKG_DIR / "softphone_originate.py").read_text()
         self.assertIn(

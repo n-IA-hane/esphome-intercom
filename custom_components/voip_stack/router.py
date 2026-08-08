@@ -76,7 +76,7 @@ _TRUNK_SERVICE_CODE_RE = re.compile(r"^[*#][0-9*#]+$")
 def classify_target(target: str) -> TargetClass:
     raw = (target or "").strip()
     lower = raw.lower()
-    if lower.startswith("sip:") and "@" in raw:
+    if lower.startswith(("sip:", "sips:")) and "@" in raw:
         return TargetClass.SIP_URI
     if "@" in raw and raw.split("@", 1)[0].strip() and raw.split("@", 1)[1].strip():
         return TargetClass.NAME_AT_HOST
@@ -120,13 +120,15 @@ def _uri_transport(uri: str) -> str:
     if marker not in lower:
         return ""
     value = lower.split(marker, 1)[1].split(";", 1)[0].strip()
-    return value if value in {"tcp", "udp"} else ""
+    if value in {"tcp", "tls", "udp"}:
+        return value
+    return "tls" if lower.startswith("sips:") else ""
 
 
 def _uri_port(uri: str) -> int:
     raw = (uri or "").strip()
     try:
-        user_host = raw[4:] if raw.lower().startswith("sip:") else raw
+        user_host = raw.split(":", 1)[1] if raw.lower().startswith(("sip:", "sips:")) else raw
         host = user_host.split("@", 1)[1] if "@" in user_host else user_host
         host = host.split(";", 1)[0]
         if ":" not in host:
@@ -251,6 +253,8 @@ def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: b
 def route_inbound_trunk(ctx: CallContext, entries: list[RosterEntry], *, trunk_ready: bool = False) -> RouteDecision:
     if not ctx.has_explicit_route_hint:
         return RouteDecision(RouteAction.ANSWER_HA, reason=RouteReason.DEFAULT_HA)
+    if classify_target(ctx.route_hint) in {TargetClass.SIP_URI, TargetClass.NAME_AT_HOST}:
+        return resolve_ha_router(ctx.route_hint, entries, trunk_ready=trunk_ready)
     internal_entry = find_entry(entries, ctx.route_hint, include_number=False)
     if internal_entry is None:
         return RouteDecision(RouteAction.REJECT, target=ctx.route_hint, status=404, reason=RouteReason.ROUTE_NOT_FOUND)

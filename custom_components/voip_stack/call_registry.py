@@ -637,6 +637,32 @@ class CallRuntimeApi:
         if session is None:
             raise RuntimeError(f"call session {source_call_id!r} is unavailable")
 
+        async def _relay_refer(target: Any) -> int:
+            current = self.get_session(session_id)
+            if current is None or not current.live:
+                return 503
+            candidates = {
+                id(leg.dialog): leg.dialog
+                for leg in current.legs.values()
+                if leg.dialog is not None
+                and leg.dialog is not client
+                and getattr(leg.dialog, "dialog", None) is not None
+                and callable(getattr(leg.dialog, "refer", None))
+            }
+            if len(candidates) != 1:
+                return 603
+            try:
+                result = await next(iter(candidates.values())).refer(target)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return 500
+            status = int(getattr(result, "status", 0) or 0)
+            return status if 200 <= status <= 699 else 500
+
+        if hasattr(client, "on_refer") and client.on_refer is None:
+            client.on_refer = _relay_refer
+
         async def _close_client(_reason: str) -> None:
             await async_cleanup_sip_runtime(client=client, terminate_client=True)
 

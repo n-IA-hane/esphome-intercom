@@ -125,6 +125,23 @@ class CallRegistryEventContextTest(unittest.TestCase):
 
         asyncio.run(exercise())
 
+    def test_attached_sip_clients_relay_refer_to_the_opposite_leg(self) -> None:
+        async def exercise() -> None:
+            registry = _registry()
+            registry.upsert("source", state="in_call", owner="bridge")
+            source = types.SimpleNamespace(dialog=object(), on_refer=None, refer=mock.AsyncMock(), terminate=mock.AsyncMock(), close=mock.AsyncMock())
+            destination = types.SimpleNamespace(dialog=object(), on_refer=None, refer=mock.AsyncMock(return_value=types.SimpleNamespace(status=200)), terminate=mock.AsyncMock(), close=mock.AsyncMock())
+            registry.attach_sip_client("source", "source", source, role="caller")
+            registry.attach_sip_client("source", "destination", destination, role="callee")
+
+            status = await source.on_refer(object())
+
+            self.assertEqual(status, 200)
+            destination.refer.assert_awaited_once()
+            source.refer.assert_not_awaited()
+
+        asyncio.run(exercise())
+
     def test_terminal_bridge_cleanup_recognizes_its_current_watcher(self) -> None:
         async def exercise() -> None:
             registry = _registry()
