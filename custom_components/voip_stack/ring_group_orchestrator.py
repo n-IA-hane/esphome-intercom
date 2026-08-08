@@ -141,9 +141,9 @@ async def run_ring_group_call(
             entry.display_name,
             err,
         )
-        registry.terminate_call(
+        await EndpointTerminationHandler(hass).terminate(
             invite.call_id,
-            intent=TerminationIntent.final_response(
+            TerminationIntent.final_response(
                 TerminalReason.PROTOCOL_ERROR.value, 500
             ),
         )
@@ -210,9 +210,9 @@ async def run_ring_group_call(
         _take_pending_route(hass, invite.call_id)
         _settle_browser_candidates(state, reason)
         await _cleanup_outbound_attempts([], attempts)
-        registry.terminate_call(
+        await EndpointTerminationHandler(hass).terminate(
             invite.call_id,
-            intent=(
+            (
                 TerminationIntent.final_response(reason, sip_status)
                 if sip_status
                 else TerminationIntent(reason)
@@ -521,9 +521,9 @@ async def run_ring_group_call(
                 last_sip_event="SIP_RESPONSE",
                 route_kind=GROUP_TYPE_RING,
             )
-            registry.terminate_call(
+            await EndpointTerminationHandler(hass).terminate(
                 invite.call_id,
-                intent=TerminationIntent.final_response(
+                TerminationIntent.final_response(
                     terminal_reason, status_code
                 ),
             )
@@ -677,9 +677,9 @@ async def run_ring_group_call(
                 last_sip_event="SIP_RESPONSE",
                 sip_status_code=500,
             )
-            registry.terminate_call(
+            await EndpointTerminationHandler(hass).terminate(
                 invite.call_id,
-                intent=TerminationIntent.final_response(
+                TerminationIntent.final_response(
                     TerminalReason.PROTOCOL_ERROR.value, 500
                 ),
             )

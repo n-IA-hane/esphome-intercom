@@ -24,7 +24,12 @@ from ..const import (
 from ..dtmf_events import attach_dtmf_event_bridge
 from ..endpoint_registry import EndpointBusyError
 from ..endpoint_termination import EndpointTerminationHandler
-from ..endpoint_session import CleanupStage, SipTerminationDisposition, TerminationIntent
+from ..endpoint_session import (
+    CleanupStage,
+    SipTerminationDisposition,
+    TerminationInitiator,
+    TerminationIntent,
+)
 from ..endpoint_routing import (
     peer_audio_formats,
     peer_for_target,
@@ -352,9 +357,10 @@ async def route_sip_bridge(
             await async_close_client_and_release(client, bridge_ports)
             if video_relay is not None:
                 await video_relay.stop()
-            registry.terminate_call(
+            await EndpointTerminationHandler(hass).terminate_reason(
                 invite.call_id,
-                reason=TerminalReason.BUSY.value,
+                TerminalReason.BUSY.value,
+                TerminationInitiator.ROUTING,
             )
             return SipInviteResult(
                 486,
@@ -382,9 +388,10 @@ async def route_sip_bridge(
         await async_close_client_and_release(client, bridge_ports)
         if video_relay is not None:
             await video_relay.stop()
-        registry.terminate_call(
+        await EndpointTerminationHandler(hass).terminate_reason(
             invite.call_id,
-            reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
+            TerminalReason.TRANSPORT_UNREACHABLE.value,
+            TerminationInitiator.ROUTING,
         )
         return SipInviteResult(
             503,
@@ -403,9 +410,10 @@ async def route_sip_bridge(
         await async_close_client_and_release(client, bridge_ports, bye=True)
         if video_relay is not None:
             await video_relay.stop()
-        registry.terminate_call(
+        await EndpointTerminationHandler(hass).terminate_reason(
             invite.call_id,
-            reason=TerminalReason.CANCELLED.value,
+            TerminalReason.CANCELLED.value,
+            TerminationInitiator.ROUTING,
         )
         return SipInviteResult(
             487,
@@ -420,9 +428,9 @@ async def route_sip_bridge(
         await async_close_client_and_release(client, bridge_ports)
         if video_relay is not None:
             await video_relay.stop()
-        registry.terminate_call(
+        await EndpointTerminationHandler(hass).terminate(
             invite.call_id,
-            intent=TerminationIntent(
+            TerminationIntent(
                 terminal_reason,
                 sip_disposition=SipTerminationDisposition.NONE,
                 response_status=status_code,

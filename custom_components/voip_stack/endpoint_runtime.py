@@ -142,10 +142,9 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
 
     async def _on_conference_inbound_timeout(call_id: str, reason: str) -> None:
         """End a timed-out inbound UAS dialog and release its logical claim."""
-        registry = _call_registry(hass)
-        registry.terminate_call(
+        await EndpointTerminationHandler(hass).terminate(
             call_id,
-            intent=TerminationIntent.bye(reason, TerminationInitiator.TIMEOUT),
+            TerminationIntent.bye(reason, TerminationInitiator.TIMEOUT),
         )
 
     def _on_registration_change(username: str, registered: bool) -> None:
@@ -447,9 +446,9 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 sip_status_code=500,
                 last_sip_event="BYE",
             )
-            registry.terminate_call(
+            await EndpointTerminationHandler(hass).terminate(
                 invite.call_id,
-                intent=TerminationIntent.bye(
+                TerminationIntent.bye(
                     RouteReason.TARGET_UNREACHABLE.value,
                     TerminationInitiator.ROUTING,
                 ),
@@ -601,9 +600,10 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         try:
             registry.claim_endpoint(call_id, endpoint_id, role="source")
         except EndpointBusyError:
-            registry.terminate_call(
+            await EndpointTerminationHandler(hass).terminate_reason(
                 call_id,
-                reason=TerminalReason.BUSY.value,
+                TerminalReason.BUSY.value,
+                TerminationInitiator.ROUTING,
             )
             raise
         registry.bind_controller(
@@ -648,9 +648,10 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 route_kind=GROUP_TYPE_RING,
                 last_sip_event="PEER_SNAPSHOT_FAILED",
             )
-            registry.terminate_call(
+            await EndpointTerminationHandler(hass).terminate_reason(
                 call_id,
-                reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
+                TerminalReason.TRANSPORT_UNREACHABLE.value,
+                TerminationInitiator.RUNTIME,
             )
             raise
         create_runtime_task(

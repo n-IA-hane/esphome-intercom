@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -55,7 +55,8 @@ def _runtime() -> ring_group_orchestrator.RingGroupRuntime:
 async def test_invalid_ring_policy_terminates_source_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    registry = SimpleNamespace(terminate_call=Mock())
+    registry = SimpleNamespace()
+    terminate = AsyncMock(return_value=True)
     monkeypatch.setattr(
         ring_group_orchestrator,
         "_call_registry",
@@ -65,6 +66,11 @@ async def test_invalid_ring_policy_terminates_source_once(
         ring_group_orchestrator,
         "endpoint_directory",
         lambda _hass: SimpleNamespace(get=Mock(return_value=None)),
+    )
+    monkeypatch.setattr(
+        ring_group_orchestrator,
+        "EndpointTerminationHandler",
+        lambda _hass: SimpleNamespace(terminate=terminate),
     )
     entry = RosterEntry(
         id="group",
@@ -76,8 +82,8 @@ async def test_invalid_ring_policy_terminates_source_once(
         _runtime(), _invite(), entry, [], []
     )
 
-    registry.terminate_call.assert_called_once()
-    intent = registry.terminate_call.call_args.kwargs["intent"]
+    terminate.assert_awaited_once()
+    _call_id, intent = terminate.await_args.args
     assert intent.reason == TerminalReason.PROTOCOL_ERROR.value
     assert intent.response_status == 500
 
