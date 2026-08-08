@@ -375,7 +375,7 @@ async def _run_peer_cycle(
     prefix = args.out_dir / f"cycle-{cycle}"
     paths = {
         "peer": prefix.with_name(prefix.name + "-peer.json"),
-        "video": prefix.with_name(prefix.name + "-p4-return.mkv"),
+        "video": prefix.with_name(prefix.name + "-p4-return.h264"),
         "stdout": prefix.with_name(prefix.name + "-peer.stdout.log"),
         "stderr": prefix.with_name(prefix.name + "-peer.stderr.log"),
     }
