@@ -44,9 +44,60 @@ def _load_module(name: str):
 
 
 sip_transaction = _load_module("sip_transaction")
+sip_dialog = _load_module("sip_dialog")
 
 
 class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
+    def test_dialog_request_uses_remote_target_without_route_set(self) -> None:
+        request = sip_dialog.build_dialog_request(
+            "UPDATE",
+            call_id="call-1",
+            local_tag="local",
+            remote_tag="remote",
+            cseq=4,
+            local_uri="sip:local@example.test",
+            remote_uri="sip:remote@example.test",
+            remote_target_uri="sip:remote@192.0.2.20:5070",
+            contact_uri="sip:local@192.0.2.10:5060",
+            transport="TCP",
+            extra_headers=(("Session-Expires", "90;refresher=uac"),),
+        )
+
+        parsed = sip_dialog.sip.parse_message(request.raw)
+        self.assertEqual(parsed.uri, "sip:remote@192.0.2.20:5070")
+        self.assertEqual(parsed.header("CSeq"), "4 UPDATE")
+        self.assertEqual(parsed.header("Session-Expires"), "90;refresher=uac")
+        self.assertEqual(parsed.header_values("Route"), [])
+        self.assertEqual(request.routing.next_hop_uri, parsed.uri)
+
+    def test_dialog_request_applies_strict_route_once(self) -> None:
+        request = sip_dialog.build_dialog_request(
+            "PRACK",
+            call_id="call-2",
+            local_tag="local",
+            remote_tag="remote",
+            cseq=8,
+            local_uri="sip:local@example.test",
+            remote_uri="sip:remote@example.test",
+            remote_target_uri="sip:remote@192.0.2.20:5070",
+            route_set=(
+                "<sip:strict.example.test:5080>",
+                "<sip:loose.example.test:5090;lr>",
+            ),
+            extra_headers=(("RAck", "1 7 INVITE"),),
+        )
+
+        parsed = sip_dialog.sip.parse_message(request.raw)
+        self.assertEqual(parsed.uri, "sip:strict.example.test:5080")
+        self.assertEqual(
+            parsed.header_values("Route"),
+            [
+                "<sip:loose.example.test:5090;lr>",
+                "<sip:remote@192.0.2.20:5070>",
+            ],
+        )
+        self.assertEqual(parsed.header("RAck"), "1 7 INVITE")
+
     def test_rfc_client_transaction_deadlines(self) -> None:
         self.assertEqual(sip_transaction.SIP_TIMER_B, 32.0)
         self.assertEqual(sip_transaction.SIP_TIMER_F, 32.0)

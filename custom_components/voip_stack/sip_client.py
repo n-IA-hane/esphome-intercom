@@ -25,7 +25,11 @@ from .core.sip_auth import (
     build_digest_authorization,
 )
 from .core.sip_resolution import SipServerResolver
-from .sip_tcp_io import SipTcpWriter, read_sip_stream_message as _read_sip_stream_message
+from .core.sip_dialog import build_dialog_request
+from .sip_tcp_io import (
+    SipTcpWriter,
+    read_sip_stream_message as _read_sip_stream_message,
+)
 from .sip_udp_io import SipDatagramQueueProtocol
 from .core.sip_transaction import (
     SIP_T1,
@@ -1507,42 +1511,39 @@ class SipCallClient:
                 if rseq != previous + 1:
                     return False
             current = self.dialog or self.early_dialogs.get(remote_tag)
-            local_uri = current.local_uri if current is not None else self._pending_local_uri
-            remote_uri = current.remote_uri if current is not None else self._pending_remote_uri
-            remote_target = (
-                sip.contact_target_uri(response)
-                or (current.remote_target_uri if current is not None else remote_uri)
+            local_uri = (
+                current.local_uri if current is not None else self._pending_local_uri
+            )
+            remote_uri = (
+                current.remote_uri if current is not None else self._pending_remote_uri
+            )
+            remote_target = sip.contact_target_uri(response) or (
+                current.remote_target_uri if current is not None else remote_uri
             )
             route_set = sip.record_route_set(response, reverse=True)
-            routing = sip.dialog_request_routing(remote_target, route_set)
-            ids = sip.SipDialogIds(
+            request = build_dialog_request(
+                "PRACK",
                 call_id=self.dialog_ids.call_id,
                 local_tag=self.dialog_ids.local_tag,
                 remote_tag=remote_tag,
                 cseq=self._next_dialog_cseq(),
-                branch=sip.make_branch(),
-            )
-            headers = sip.dialog_headers(
-                request_uri=routing.request_uri,
                 local_uri=local_uri,
                 remote_uri=remote_uri,
-                dialog=ids,
-                method="PRACK",
+                remote_target_uri=remote_target,
+                route_set=route_set,
                 contact_uri=local_uri,
                 transport=self.signaling_transport,
                 local_display_name=self.local_name,
                 remote_display_name=self._pending_target_display,
+                extra_headers=(
+                    (
+                        "RAck",
+                        f"{rseq} {invite_cseq.number} {invite_cseq.method}",
+                    ),
+                ),
             )
-            headers.extend(("Route", value) for value in routing.route_headers)
-            headers.append(
-                (
-                    "RAck",
-                    f"{rseq} {invite_cseq.number} {invite_cseq.method}",
-                )
-            )
-            raw = sip.build_request("PRACK", routing.request_uri, headers)
             next_host, next_port = self._dialog_next_hop(
-                routing.next_hop_uri,
+                request.routing.next_hop_uri,
                 addr[0],
                 addr[1],
             )
@@ -1569,7 +1570,7 @@ class SipCallClient:
         )
 
         async def send() -> None:
-            if not self._send_dialog_request(raw, next_host, next_port):
+            if not self._send_dialog_request(request.raw, next_host, next_port):
                 raise ConnectionError("SIP signaling path is unavailable")
 
         async def read(timeout: float):
@@ -1582,7 +1583,11 @@ class SipCallClient:
                 if received is None:
                     return None
                 message, _source = received
-                if sip.response_matches_dialog_transaction(message, ids, "PRACK"):
+                if sip.response_matches_dialog_transaction(
+                    message,
+                    request.ids,
+                    "PRACK",
+                ):
                     return received
                 self._deferred_signaling.append(received)
 
@@ -2385,34 +2390,26 @@ class SipCallClient:
             if dialog is None:
                 return None
             try:
-                routing = sip.dialog_request_routing(
-                    dialog.remote_target_uri or dialog.remote_uri,
-                    dialog.route_set,
-                )
-                ids = sip.SipDialogIds(
+                request = build_dialog_request(
+                    method,
                     call_id=self.dialog_ids.call_id,
                     local_tag=self.dialog_ids.local_tag,
                     remote_tag=self.dialog_ids.remote_tag,
                     cseq=self._next_dialog_cseq(),
-                    branch=sip.make_branch(),
-                )
-                headers = sip.dialog_headers(
-                    request_uri=routing.request_uri,
                     local_uri=dialog.local_uri,
                     remote_uri=dialog.remote_uri,
-                    dialog=ids,
-                    method=method,
+                    remote_target_uri=dialog.remote_target_uri,
+                    route_set=dialog.route_set,
                     contact_uri=dialog.local_uri,
-                    content_type=content_type,
                     transport=self.signaling_transport,
                     local_display_name=self.local_name,
                     remote_display_name=self._dialog_remote_display_name,
+                    extra_headers=extra_headers,
+                    content_type=content_type,
+                    body=body,
                 )
-                headers.extend(("Route", value) for value in routing.route_headers)
-                headers.extend(extra_headers)
-                raw = sip.build_request(method, routing.request_uri, headers, body)
                 next_host, next_port = self._dialog_next_hop(
-                    routing.next_hop_uri,
+                    request.routing.next_hop_uri,
                     dialog.remote_host,
                     dialog.remote_sip_port,
                 )
@@ -2428,7 +2425,7 @@ class SipCallClient:
             )
 
             async def _retransmit() -> None:
-                if not self._send_dialog_request(raw, next_host, next_port):
+                if not self._send_dialog_request(request.raw, next_host, next_port):
                     raise ConnectionError("SIP signaling path is unavailable")
 
             async def _read(read_timeout: float):
@@ -2448,11 +2445,15 @@ class SipCallClient:
                         if terminal is not None:
                             raise ConnectionAbortedError(terminal)
                         continue
-                    if sip.response_matches_dialog_transaction(message, ids, method):
+                    if sip.response_matches_dialog_transaction(
+                        message,
+                        request.ids,
+                        method,
+                    ):
                         return received
                 return None
 
-            if not self._send_dialog_request(raw, next_host, next_port):
+            if not self._send_dialog_request(request.raw, next_host, next_port):
                 return None
             sip.mark_sip_event(self, method)
             while self.dialog is dialog:

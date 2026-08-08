@@ -13,8 +13,11 @@ from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
 from .core.codec_capabilities import supports_dahua_pcm
 from .const import VOIP_STACK_RTP_PORT
 from .core import sdp, sip, sip_transfer
-from .core.sip_dialog import uas_request_matches_dialog
-from .sip_tcp_io import SipTcpWriter, read_sip_stream_message as _read_sip_stream_message
+from .core.sip_dialog import build_dialog_request, uas_request_matches_dialog
+from .sip_tcp_io import (
+    SipTcpWriter,
+    read_sip_stream_message as _read_sip_stream_message,
+)
 from .core.sip_transaction import (
     SIP_T1 as _SIP_T1,
     SIP_T2 as _SIP_T2,
@@ -975,50 +978,44 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             remote_tag = sip.extract_tag(dialog.request.header("From"))
             local_uri = local_uri or _uri_text_from_header(dialog.request.header("To"))
             try:
-                routing = sip.dialog_request_routing(
-                    dialog.remote_target_uri or remote_uri,
-                    dialog.route_set,
-                )
-                ids = sip.SipDialogIds(
+                request = build_dialog_request(
+                    method,
                     call_id=call_id,
                     local_tag=dialog.to_tag,
                     remote_tag=remote_tag,
                     cseq=dialog.local_cseq,
-                    branch=sip.make_branch(),
-                )
-                headers = sip.dialog_headers(
-                    request_uri=routing.request_uri,
                     local_uri=local_uri,
                     remote_uri=remote_uri,
-                    dialog=ids,
-                    method=method,
+                    remote_target_uri=dialog.remote_target_uri,
+                    route_set=dialog.route_set,
                     contact_uri=_response_contact_uri(
                         dialog.request,
                         local_ip=self.local_ip,
                         local_sip_port=self.local_sip_port,
                         transport=dialog.transport,
                     ),
-                    content_type=content_type,
                     transport=dialog.transport,
                     local_display_name=local_display_name,
                     remote_display_name=dialog.remote_display_name,
+                    extra_headers=extra_headers,
+                    content_type=content_type,
+                    body=body,
                 )
-                headers.extend(("Route", value) for value in routing.route_headers)
-                headers.extend(extra_headers)
-                raw = sip.build_request(method, routing.request_uri, headers, body)
                 target_addr = dialog.addr
                 if dialog.transport == "UDP":
-                    target = sip.parse_sip_uri(routing.next_hop_uri)
+                    target = sip.parse_sip_uri(request.routing.next_hop_uri)
                     target_addr = (target.host, int(target.port or 5060))
             except (TypeError, ValueError, sip.SipError) as err:
-                _LOGGER.warning("SIP %s routing rejected call_id=%s: %s", method, call_id, err)
+                _LOGGER.warning(
+                    "SIP %s routing rejected call_id=%s: %s", method, call_id, err
+                )
                 return None
 
             dialog.local_cseq += 1
             return await self._run_client_transaction(
-                raw=raw,
+                raw=request.raw,
                 addr=target_addr,
-                ids=ids,
+                ids=request.ids,
                 method=method,
                 transport=dialog.transport,
                 active=lambda: self.active_dialogs.get(call_id) is dialog,

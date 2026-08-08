@@ -52,6 +52,65 @@ class DialogKey:
         return bool(self.call_id and self.local_tag and self.remote_tag)
 
 
+@dataclass(frozen=True, slots=True)
+class DialogRequest:
+    """Serialized in-dialog request with its transaction and route identity."""
+
+    raw: bytes
+    ids: sip.SipDialogIds
+    routing: sip.SipDialogRoute
+
+
+def build_dialog_request(
+    method: str,
+    *,
+    call_id: str,
+    local_tag: str,
+    remote_tag: str,
+    cseq: int,
+    local_uri: str,
+    remote_uri: str,
+    remote_target_uri: str,
+    route_set: tuple[str, ...] = (),
+    contact_uri: str = "",
+    transport: str = "UDP",
+    local_display_name: str = "",
+    remote_display_name: str = "",
+    extra_headers: tuple[tuple[str, str], ...] = (),
+    content_type: str = "",
+    body: bytes = b"",
+) -> DialogRequest:
+    """Build one standards-shaped request shared by every dialog owner."""
+
+    routing = sip.dialog_request_routing(remote_target_uri or remote_uri, route_set)
+    ids = sip.SipDialogIds(
+        call_id=call_id,
+        local_tag=local_tag,
+        remote_tag=remote_tag,
+        cseq=cseq,
+        branch=sip.make_branch(),
+    )
+    headers = sip.dialog_headers(
+        request_uri=routing.request_uri,
+        local_uri=local_uri,
+        remote_uri=remote_uri,
+        dialog=ids,
+        method=method,
+        contact_uri=contact_uri or local_uri,
+        content_type=content_type,
+        transport=transport,
+        local_display_name=local_display_name,
+        remote_display_name=remote_display_name,
+    )
+    headers.extend(("Route", value) for value in routing.route_headers)
+    headers.extend(extra_headers)
+    return DialogRequest(
+        sip.build_request(method, routing.request_uri, headers, body),
+        ids,
+        routing,
+    )
+
+
 def uas_request_matches_dialog(
     request: sip.SipMessage,
     initial_request: sip.SipMessage,
