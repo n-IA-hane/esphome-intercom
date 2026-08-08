@@ -10,7 +10,11 @@ from homeassistant.core import HomeAssistant
 
 from ..endpoint_registry import EndpointBusyError
 from ..fsm import CallState, TerminalReason
-from ..media_ports import allocate_sip_rtp_port, reserve_sip_video_media
+from ..media_ports import (
+    allocate_sip_rtp_port,
+    reserve_sip_video_media,
+    take_delayed_offer_ports,
+)
 from ..phone_endpoint import (
     EndpointAvailability,
     EndpointKind,
@@ -232,7 +236,12 @@ def answer_inbound_ha_softphone(
             local_rtp_port = allocate_sip_rtp_port(hass)
             local_video_rtp_port = 0
     else:
-        local_rtp_port = allocate_sip_rtp_port(hass)
+        media_reservation = take_delayed_offer_ports(hass, invite.call_id)
+        local_rtp_port = (
+            media_reservation.ports[0]
+            if media_reservation is not None
+            else allocate_sip_rtp_port(hass)
+        )
 
     video_direction = (
         constrained_video_direction(

@@ -147,6 +147,7 @@ def _load_module():
     _module(
         "media_ports",
         allocate_sip_rtp_port=lambda hass: port_allocations.append(hass) or 40000,
+        take_delayed_offer_ports=lambda _hass, _call_id: None,
         reserve_sip_video_media=lambda _hass: (_ for _ in ()).throw(
             AssertionError("video reservation is not expected")
         ),

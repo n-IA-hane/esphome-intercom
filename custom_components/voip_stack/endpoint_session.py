@@ -240,6 +240,7 @@ class CallArtifacts:
     answer_commit: bool = False
     trunk_info_queue: asyncio.Queue[Any] | None = None
     trunk_closed: bool = False
+    delayed_offer_ports: Any | None = None
 
     def settle(self) -> None:
         """Make every pending coordination artifact terminal exactly once."""
@@ -256,6 +257,10 @@ class CallArtifacts:
         self.answer_commit = False
         self.trunk_info_queue = None
         self.trunk_closed = True
+        delayed_offer_ports = self.delayed_offer_ports
+        self.delayed_offer_ports = None
+        if delayed_offer_ports is not None:
+            delayed_offer_ports.release()
 
 
 class EndpointCallSession:

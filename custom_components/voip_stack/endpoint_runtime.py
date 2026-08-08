@@ -58,6 +58,8 @@ from .fsm import (
 from .media_ports import (
     RtpPortReservation,
     release_media_reservation as _release_media_reservation,
+    reserve_delayed_offer_ports,
+    take_delayed_offer_ports,
 )
 from .media_renegotiation import async_prepare_media_update
 from .invite_router import InviteRuntime, route_invite
@@ -115,7 +117,12 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     from .endpoint_session import TerminationInitiator, TerminationIntent
     from .core.sip import parse_sip_uri
     from .sip_endpoint import SipEndpointManager
-    from .sip_listener import SipInvite, SipInviteResult
+    from .sip_listener import (
+        SipInitialInvite,
+        SipInvite,
+        SipInviteResult,
+        UasDelayedOfferPlan,
+    )
     from .sip_registrar import SipRegistrar
     from .conference_ringing import (
         ConferenceRingRuntime,
@@ -695,6 +702,76 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             invite,
         )
 
+    async def _on_offerless_invite(
+        initial: SipInitialInvite,
+    ) -> UasDelayedOfferPlan | None:
+        """Prepare one offer, then continue through the canonical router."""
+
+        registry = _call_registry(hass)
+        session = registry.upsert(
+            initial.call_id,
+            state=CallState.CONNECTING.value,
+            owner="router",
+            caller=initial.caller,
+            callee=initial.target,
+            ingress="trunk" if initial.received_via_trunk else "extension",
+            origin="trunk" if initial.received_via_trunk else "extension",
+        )
+        try:
+            ports = reserve_delayed_offer_ports(hass, initial.call_id)
+        except RuntimeError:
+            await registry.terminate_call_wait(
+                initial.call_id,
+                reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
+            )
+            return None
+        offer_sdp = sip_sdp.build_offer_directional(
+            local_ip,
+            local_ip,
+            ports.ports[0],
+            list(HA_SIP_PCM_TX_FORMATS),
+            list(HA_SIP_PCM_RX_FORMATS),
+            include_common_codecs=True,
+        )
+
+        async def rollback() -> None:
+            if not registry.is_generation_current(
+                initial.call_id, session.generation
+            ):
+                return
+            await registry.terminate_call_wait(
+                initial.call_id,
+                reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
+            )
+
+        async def accept_answer(invite: SipInvite) -> SipInviteResult:
+            if not registry.is_generation_current(
+                initial.call_id, session.generation
+            ):
+                return SipInviteResult(487, "Request Terminated")
+            result = await _on_invite(invite)
+            if not result.defer_final:
+                return result
+
+            reservation = take_delayed_offer_ports(hass, invite.call_id)
+            if reservation is None:
+                return SipInviteResult(500, "Server Internal Error")
+            registry.attach_media(
+                invite.call_id,
+                {
+                    "invite": invite,
+                    "final_response_sent": True,
+                    "local_rtp_port": reservation.ports[0],
+                    "local_video_rtp_port": 0,
+                    "video_direction": "inactive",
+                    "rtp_reservation": reservation,
+                },
+                provisional=True,
+            )
+            return SipInviteResult(200, "OK")
+
+        return UasDelayedOfferPlan(offer_sdp, accept_answer, rollback)
+
     async def _on_media_update(
         previous: SipInvite,
         updated: SipInvite,
@@ -729,6 +806,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         supported_send_formats=list(HA_SIP_PCM_TX_FORMATS),
         supported_recv_formats=list(HA_SIP_PCM_RX_FORMATS),
         on_invite=_on_invite,
+        on_offerless_invite=_on_offerless_invite,
         on_terminated=_on_terminated,
         on_register=_on_register,
         on_info=_on_info,

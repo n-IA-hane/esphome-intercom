@@ -13,7 +13,7 @@ from ..endpoint_lifecycle import create_runtime_task
 from ..endpoint_registry import EndpointBusyError
 from ..fsm import CallState, TerminalReason
 from ..groups import GROUP_TYPE_CONFERENCE, GROUP_TYPE_RING
-from ..media_ports import RtpPortReservation
+from ..media_ports import RtpPortReservation, take_delayed_offer_ports
 from ..phone_endpoint import EndpointKind
 from ..router import RouteAction
 from ..core.sdp import build_answer_directional
@@ -112,7 +112,9 @@ async def route_local_assist(
     ):
         return busy
     try:
-        assist_ports = RtpPortReservation.allocate(runtime.hass)
+        assist_ports = take_delayed_offer_ports(
+            runtime.hass, invite.call_id
+        ) or RtpPortReservation.allocate(runtime.hass)
     except RuntimeError as err:
         _LOGGER.warning("Assist RTP port allocation failed: %s", err)
         registry.terminate_call(

@@ -40,6 +40,38 @@ class RtpPortReservation:
         self.released = True
 
 
+def reserve_delayed_offer_ports(
+    hass: HomeAssistant,
+    call_id: str,
+) -> RtpPortReservation:
+    """Reserve the media pair advertised by one initial delayed offer."""
+
+    runtime = require_runtime_data(hass).sip
+    artifacts = runtime.artifacts_for(call_id) if runtime is not None else None
+    if artifacts is None:
+        raise RuntimeError("SIP call session is unavailable")
+    if artifacts.delayed_offer_ports is not None:
+        raise RuntimeError("SIP delayed offer already owns media ports")
+    reservation = RtpPortReservation.allocate(hass)
+    artifacts.delayed_offer_ports = reservation
+    return reservation
+
+
+def take_delayed_offer_ports(
+    hass: HomeAssistant,
+    call_id: str,
+) -> RtpPortReservation | None:
+    """Transfer the advertised media pair to the canonical route owner."""
+
+    runtime = require_runtime_data(hass).sip
+    artifacts = runtime.artifacts_for(call_id) if runtime is not None else None
+    if artifacts is None:
+        return None
+    reservation = artifacts.delayed_offer_ports
+    artifacts.delayed_offer_ports = None
+    return reservation
+
+
 def rtp_port_available(port: int) -> bool:
     if not 1 <= int(port) <= 65535:
         return False

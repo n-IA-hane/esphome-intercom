@@ -76,7 +76,14 @@ class FakeHass:
                 }
             }
         }
-        self.runtime = types.SimpleNamespace(next_rtp_port=0, rtp_port_pool={})
+        self.call_artifacts = types.SimpleNamespace(delayed_offer_ports=None)
+        self.runtime = types.SimpleNamespace(
+            next_rtp_port=0,
+            rtp_port_pool={},
+            sip=types.SimpleNamespace(
+                artifacts_for=lambda _call_id: self.call_artifacts
+            ),
+        )
 
 
 class MediaPortPoolTest(unittest.TestCase):
@@ -132,6 +139,21 @@ class MediaPortPoolTest(unittest.TestCase):
             detached.release()
             self.assertEqual(hass.runtime.rtp_port_pool["used"], set(ports))
             media_ports.release_sip_rtp_port_pair(hass, ports)
+
+    def test_delayed_offer_reservation_transfers_once(self) -> None:
+        hass = FakeHass()
+        with patch.object(media_ports, "rtp_port_available", return_value=True):
+            reservation = media_ports.reserve_delayed_offer_ports(hass, "call-1")
+            self.assertIs(hass.call_artifacts.delayed_offer_ports, reservation)
+            self.assertIs(
+                media_ports.take_delayed_offer_ports(hass, "call-1"),
+                reservation,
+            )
+            self.assertIsNone(
+                media_ports.take_delayed_offer_ports(hass, "call-1")
+            )
+            reservation.release()
+            self.assertEqual(hass.runtime.rtp_port_pool["used"], set())
 
     def test_release_media_reservation_releases_runtime_metadata(self) -> None:
         hass = FakeHass()

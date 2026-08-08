@@ -11,6 +11,7 @@ from .session_cleanup import async_wait_for_cleanup
 from .sip_listener import (
     InfoHandler,
     InviteHandler,
+    OfferlessInviteHandler,
     MediaUpdateHandler,
     RequestHandler,
     ReferHandler,
@@ -60,6 +61,7 @@ class SipEndpointManager:
         supported_send_formats: list[AudioFormat] | None = None,
         supported_recv_formats: list[AudioFormat] | None = None,
         on_invite: InviteHandler,
+        on_offerless_invite: OfferlessInviteHandler | None = None,
         on_terminated: TerminateHandler | None = None,
         on_register: RegisterHandler | None = None,
         on_info: InfoHandler | None = None,
@@ -80,6 +82,7 @@ class SipEndpointManager:
         self.supported_send_formats = supported_send_formats
         self.supported_recv_formats = supported_recv_formats
         self.on_invite = on_invite
+        self.on_offerless_invite = on_offerless_invite
         self.on_terminated = on_terminated
         self.on_register = on_register
         self.on_info = on_info
@@ -145,6 +148,7 @@ class SipEndpointManager:
                     supported_send_formats=self.supported_send_formats,
                     supported_recv_formats=self.supported_recv_formats,
                     on_invite=self.on_invite,
+                    on_offerless_invite=self.on_offerless_invite,
                     on_terminated=self.on_terminated,
                     on_register=self.on_register,
                     on_info=self.on_info,
@@ -168,6 +172,7 @@ class SipEndpointManager:
                     supported_send_formats=self.supported_send_formats,
                     supported_recv_formats=self.supported_recv_formats,
                     on_invite=self.on_invite,
+                    on_offerless_invite=self.on_offerless_invite,
                     on_terminated=self.on_terminated,
                     on_register=self.on_register,
                     on_info=self.on_info,

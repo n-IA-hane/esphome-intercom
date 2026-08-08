@@ -41,6 +41,7 @@ from ..media_ports import (
     RtpPortReservation,
     release_sip_rtp_port_pair,
     reserve_sip_video_relay_media,
+    take_delayed_offer_ports,
 )
 from ..outbound_attempts import async_close_client_and_release
 from ..phone_endpoint import EndpointKind
@@ -184,7 +185,9 @@ async def route_sip_bridge(
         return None
 
     try:
-        bridge_ports = RtpPortReservation.allocate(hass)
+        bridge_ports = take_delayed_offer_ports(
+            hass, invite.call_id
+        ) or RtpPortReservation.allocate(hass)
     except RuntimeError as err:
         _LOGGER.warning("SIP RTP bridge port allocation failed: %s", err)
         return SipInviteResult(503, "Service Unavailable", to_tag="")
