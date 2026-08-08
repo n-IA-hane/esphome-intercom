@@ -2588,6 +2588,77 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(sends), 1)
         self.assertGreater(read_timeouts[-1], 1.0)
 
+    async def test_invite_tries_next_rfc3263_target_before_provisional(self) -> None:
+        selected: list[tuple[str, int]] = []
+        sent_branches: list[str] = []
+
+        class Resolver:
+            async def resolve(self, *_args, **_kwargs):
+                return (
+                    types.SimpleNamespace(
+                        endpoints=lambda: (("192.0.2.20", 5060, "TCP"),)
+                    ),
+                    types.SimpleNamespace(
+                        endpoints=lambda: (("192.0.2.21", 5060, "TCP"),)
+                    ),
+                )
+
+        client = sip_client.SipCallClient(
+            local_ip="192.0.2.10",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            signaling_transport="TCP",
+            target_resolver=Resolver(),
+        )
+
+        async def select(host: str, port: int) -> None:
+            selected.append((host, port))
+            client._resolved_signaling_target = (host, port)
+
+        async def send(raw: bytes, _host: str, _port: int) -> None:
+            sent_branches.append(sip.parse_via(sip.parse_message(raw).header("Via")).branch)
+
+        reads = 0
+
+        async def read(_timeout: float):
+            nonlocal reads
+            reads += 1
+            if reads == 1:
+                return None
+            response = sip.build_response(
+                180,
+                "Ringing",
+                [
+                    (
+                        "Via",
+                        f"SIP/2.0/TCP 192.0.2.10:5060;branch={client.dialog_ids.branch}",
+                    ),
+                    ("From", f"<sip:HA@192.0.2.10>;tag={client.dialog_ids.local_tag}"),
+                    ("To", "<sip:ESP@example.test>;tag=remote"),
+                    ("Call-ID", client.dialog_ids.call_id),
+                    ("CSeq", f"{client._invite_cseq} INVITE"),
+                ],
+            )
+            return sip.parse_message(response), selected[-1]
+
+        client._select_initial_signaling_target = select  # type: ignore[method-assign]
+        client._send_raw = send  # type: ignore[method-assign]
+        client._read_response = read  # type: ignore[method-assign]
+
+        result = await client.invite(
+            target="ESP",
+            remote_host="example.test",
+            remote_sip_port=5060,
+            request_uri="sip:ESP@example.test",
+            timeout=1,
+        )
+
+        self.assertEqual(result, "ringing")
+        self.assertEqual(selected, [("192.0.2.20", 5060), ("192.0.2.21", 5060)])
+        self.assertEqual(len(sent_branches), 2)
+        self.assertNotEqual(sent_branches[0], sent_branches[1])
+
     async def test_outbound_client_advertises_bound_socket_port(self) -> None:
         client = sip_client.SipCallClient(
             local_ip="127.0.0.1",

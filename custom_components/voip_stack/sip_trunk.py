@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 import socket
 import time
@@ -118,6 +118,8 @@ class SipTrunkClient:
         self._trusted_udp_hosts: frozenset[str] = frozenset()
         self.target_resolver = target_resolver or SipServerResolver()
         self._registrar_candidate: SipServerTarget | None = None
+        self._registrar_candidates: tuple[SipServerTarget, ...] = ()
+        self._registrar_candidate_index = -1
 
     def _ensure_receive_task(self) -> None:
         if not self._stopped and (
@@ -149,14 +151,32 @@ class SipTrunkClient:
     async def _resolve_registrar(self) -> SipServerTarget:
         host, port = self.registrar_target
         uri = sip.SipUri("", host, port)
-        candidates = await self.target_resolver.resolve(
+        resolved = await self.target_resolver.resolve(
             uri,
             transport=self.transport_name,
         )
-        if not candidates or not candidates[0].addresses:
+        candidates = tuple(
+            replace(candidate, addresses=(address,))
+            for candidate in resolved
+            for address in candidate.addresses
+        )
+        if not candidates:
             raise OSError(f"SIP registrar {host!r} has no reachable address")
+        self._registrar_candidates = candidates
+        self._registrar_candidate_index = 0
         self._registrar_candidate = candidates[0]
-        return candidates[0]
+        return self._registrar_candidate
+
+    async def _next_registrar_candidate(self) -> SipServerTarget | None:
+        """Select the next pre-registration server without cycling silently."""
+        if not self._registrar_candidates:
+            return await self._resolve_registrar()
+        next_index = self._registrar_candidate_index + 1
+        if next_index >= len(self._registrar_candidates):
+            return None
+        self._registrar_candidate_index = next_index
+        self._registrar_candidate = self._registrar_candidates[next_index]
+        return self._registrar_candidate
 
     @property
     def registrar_host(self) -> str:
@@ -362,11 +382,18 @@ class SipTrunkClient:
                 with contextlib.suppress(asyncio.QueueEmpty):
                     self.responses.get_nowait()
             candidate = self._registrar_candidate or await self._resolve_registrar()
-            host, port = candidate.addresses[0], candidate.port
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port),
-                timeout=2.0,
-            )
+            while True:
+                host, port = candidate.addresses[0], candidate.port
+                try:
+                    reader, writer = await asyncio.wait_for(
+                        asyncio.open_connection(host, port),
+                        timeout=2.0,
+                    )
+                    break
+                except (ConnectionError, OSError, TimeoutError):
+                    candidate = await self._next_registrar_candidate()
+                    if candidate is None:
+                        raise
             if self._stopped:
                 writer.close()
                 with contextlib.suppress(Exception):
@@ -377,10 +404,11 @@ class SipTrunkClient:
             self._tcp_writer = SipTcpWriter(self.writer, label=f"trunk {host}:{port}")
             self._reader_ready.set()
 
-    async def _connect_udp(self) -> None:
+    async def _connect_udp(self, *, refresh: bool = True) -> None:
         """Refresh UDP proxy trust and create the local socket when needed."""
 
-        await self._refresh_udp_trusted_hosts()
+        if refresh:
+            await self._refresh_udp_trusted_hosts()
         if self.transport is not None:
             return
         loop = asyncio.get_running_loop()
@@ -397,6 +425,35 @@ class SipTrunkClient:
             transport.close()
             raise RuntimeError("SIP trunk stopped while opening UDP transport")
         self.transport = transport  # type: ignore[assignment]
+
+    async def _failover_registrar(self) -> bool:
+        """Move one unconfirmed REGISTER transaction to its next server."""
+        candidate = await self._next_registrar_candidate()
+        if candidate is None:
+            return False
+        address = candidate.addresses[0]
+        while not self.responses.empty():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self.responses.get_nowait()
+        if self.transport_name == "TCP":
+            reader = self.reader
+            if reader is not None:
+                await self._detach_tcp_flow(reader, reason="registrar_failover")
+            await self._connect_tcp()
+            return True
+        family = socket.AF_INET6 if ":" in address else socket.AF_INET
+        current_family = None
+        if self.transport is not None:
+            sock = self.transport.get_extra_info("socket")
+            current_family = getattr(sock, "family", None)
+        if self.transport is not None and current_family not in {None, family}:
+            self.transport.close()
+            self.transport = None
+            self.protocol = None
+        self._trusted_udp_hosts = frozenset((address,))
+        if self.transport is None:
+            await self._connect_udp(refresh=False)
+        return True
 
     async def _refresh_udp_trusted_hosts(self) -> None:
         """Resolve the configured UDP proxy to a fail-closed source allowlist."""
@@ -770,6 +827,11 @@ class SipTrunkClient:
                 if msg is None:
                     raise asyncio.TimeoutError
             except asyncio.TimeoutError:
+                if await self._failover_registrar():
+                    _LOGGER.info(
+                        "SIP trunk REGISTER timed out, trying next RFC 3263 target"
+                    )
+                    continue
                 self.registered = False
                 self.status_code = 0
                 self.status_reason = "timeout"
@@ -781,6 +843,15 @@ class SipTrunkClient:
                 )
                 return "timeout"
             except Exception as err:
+                try:
+                    failed_over = await self._failover_registrar()
+                except Exception:
+                    failed_over = False
+                if failed_over:
+                    _LOGGER.info(
+                        "SIP trunk REGISTER transport failed, trying next RFC 3263 target"
+                    )
+                    continue
                 self.registered = False
                 self.status_code = 0
                 self.status_reason = str(err)
@@ -850,6 +921,12 @@ class SipTrunkClient:
                         msg.reason,
                     )
                 return "registered" if self.registered else "unregistered"
+            if msg.status_code in {408, 503} and await self._failover_registrar():
+                _LOGGER.info(
+                    "SIP trunk REGISTER received %s, trying next RFC 3263 target",
+                    msg.status_code,
+                )
+                continue
             self.registered = False
             result = sip.sip_failure_reason(msg.status_code)
             if expires_value <= 0:

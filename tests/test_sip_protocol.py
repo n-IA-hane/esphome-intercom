@@ -18,6 +18,7 @@ from .voip_phase1_support import (
     sip_listener,
     sip_transfer,
     sip_rtp_bridge,
+    sip_resolution,
     sip_tcp_io,
     sip_trunk,
     socket,
@@ -1705,6 +1706,86 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             trunk.registered = False
             await trunk.stop()
             server_transport.close()
+
+    async def test_tcp_trunk_connects_to_next_rfc3263_target(self) -> None:
+        class Resolver:
+            async def resolve(self, *_args, **_kwargs):
+                return (
+                    sip_resolution.SipServerTarget(
+                        "first.example",
+                        5060,
+                        "TCP",
+                        ("192.0.2.10",),
+                    ),
+                    sip_resolution.SipServerTarget(
+                        "second.example",
+                        5060,
+                        "TCP",
+                        ("192.0.2.11",),
+                    ),
+                )
+
+        class Writer:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def is_closing(self) -> bool:
+                return self.closed
+
+            def close(self) -> None:
+                self.closed = True
+
+            async def wait_closed(self) -> None:
+                return None
+
+            def get_extra_info(self, _name: str):
+                return None
+
+            def write(self, _data: bytes) -> None:
+                return None
+
+            async def drain(self) -> None:
+                return None
+
+        attempts: list[tuple[str, int]] = []
+        writer = Writer()
+
+        async def open_connection(host: str, port: int):
+            attempts.append((host, port))
+            if host == "192.0.2.10":
+                raise OSError("first target unavailable")
+            return asyncio.StreamReader(), writer
+
+        config = sip_trunk.SipTrunkConfig(
+            enabled=True,
+            transport="tcp",
+            server="pbx.example",
+            port=5060,
+            domain="pbx.example",
+            username="ha",
+            auth_username="ha",
+            password="",
+            expires=300,
+        )
+        trunk = sip_trunk.SipTrunkClient(
+            config=config,
+            local_ip="127.0.0.1",
+            local_sip_port=5060,
+            target_resolver=Resolver(),
+        )
+        with patch.object(
+            sip_trunk.asyncio,
+            "open_connection",
+            new=open_connection,
+        ):
+            await trunk._connect_tcp()
+
+        self.assertEqual(
+            attempts,
+            [("192.0.2.10", 5060), ("192.0.2.11", 5060)],
+        )
+        self.assertEqual(trunk.active_registrar_target, ("192.0.2.11", 5060))
+        await trunk.stop()
 
     def test_trunk_outbound_proxy_uri_selects_host_and_port(self) -> None:
         config = sip_trunk.SipTrunkConfig(

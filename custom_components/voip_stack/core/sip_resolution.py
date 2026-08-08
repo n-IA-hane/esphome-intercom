@@ -21,6 +21,10 @@ class SipServerTarget:
     priority: int = 0
     weight: int = 0
 
+    def endpoints(self) -> tuple[tuple[str, int, str], ...]:
+        """Return each resolved address as one ordered connection attempt."""
+        return tuple((address, self.port, self.transport) for address in self.addresses)
+
 
 @dataclass(frozen=True, slots=True)
 class NaptrRecord:
@@ -108,6 +112,16 @@ class SipServerResolver:
                 fallback,
             ),
         )
+
+    async def endpoints(
+        self,
+        uri: SipUri,
+        *,
+        transport: str = "",
+    ) -> tuple[tuple[str, int, str], ...]:
+        """Resolve every RFC 3263 target into ordered connection attempts."""
+        targets = await self.resolve(uri, transport=transport)
+        return tuple(endpoint for target in targets for endpoint in target.endpoints())
 
     @staticmethod
     def _requested_transport(uri: SipUri, configured: str) -> str:
