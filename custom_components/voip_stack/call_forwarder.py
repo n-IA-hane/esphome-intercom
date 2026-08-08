@@ -30,6 +30,7 @@ from .const import (
 from .dial_fork import DialDisposition, DialForkController, terminal_reason
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
+from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationInitiator, TerminationIntent
 from .runtime_data import (
     call_runtime_artifacts,
@@ -417,9 +418,9 @@ async def async_forward_existing_call(
                 expected_revision=current.revision,
                 expected_owner=current.owner,
             )
-        registry.terminate_call(
+        await EndpointTerminationHandler(hass).terminate(
             call_id,
-            intent=(
+            (
                 TerminationIntent.bye(
                     reason,
                     TerminationInitiator.ROUTING,

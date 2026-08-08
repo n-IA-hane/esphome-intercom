@@ -576,7 +576,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn('role="source"', claims)
         self.assertIn('role="destination"', claims)
         self.assertIn("except EndpointBusyError as err:", claims)
-        self.assertIn("registry.terminate_call(", claims)
+        self.assertIn("EndpointTerminationHandler(hass).terminate_reason(", claims)
 
         destination_policy = outbound.split(
             "target_endpoint = _logical_endpoint_for_route", 1

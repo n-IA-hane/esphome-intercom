@@ -681,9 +681,10 @@ async def async_originate_browser_call(
                 role="destination",
             )
     except EndpointBusyError as err:
-        registry.terminate_call(
+        await EndpointTerminationHandler(hass).terminate_reason(
             client.dialog_ids.call_id,
-            reason=TerminalReason.BUSY.value,
+            TerminalReason.BUSY.value,
+            TerminationInitiator.RUNTIME,
         )
         await client.close()
         raise ServiceValidationError(str(err)) from err

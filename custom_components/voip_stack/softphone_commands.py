@@ -17,6 +17,7 @@ from .call_scope import (
     single_pending_route_call_id,
 )
 from .endpoint_lifecycle import call_registry
+from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationInitiator, TerminationIntent
 from .service_endpoints import (
     async_require_phone_service_control,
@@ -196,9 +197,9 @@ async def async_decline_browser_call(
             sip_status_code=status,
             last_sip_event="BYE" if final_response_sent else "SIP_RESPONSE",
         )
-        registry.terminate_call(
+        await EndpointTerminationHandler(hass).terminate(
             call_id,
-            intent=TerminationIntent.bye(app_reason)
+            TerminationIntent.bye(app_reason)
             if final_response_sent
             else TerminationIntent.final_response(
                 app_reason, status, TerminationInitiator.LOCAL_USER
@@ -226,9 +227,9 @@ async def async_decline_browser_call(
         sip_status_code=status,
         last_sip_event="SIP_RESPONSE",
     )
-    registry.terminate_call(
+    await EndpointTerminationHandler(hass).terminate(
         call_id,
-        intent=TerminationIntent.final_response(
+        TerminationIntent.final_response(
             app_reason, status, TerminationInitiator.LOCAL_USER
         ),
     )

@@ -13,6 +13,7 @@ from .config import transport_config
 from .const import CONF_VIDEO_CAMERA_SEND
 from .fsm import CallState, TerminalReason
 from .endpoint_session import TerminationIntent
+from .endpoint_termination import EndpointTerminationHandler
 from .inbound_answer import AnswerTransaction
 from .media_ports import (
     allocate_sip_rtp_port,
@@ -375,9 +376,9 @@ async def async_answer_browser_call(
     answer_result = await transaction.commit(answer_sdp, claim=_claim_answer)
     if not answer_result.committed:
         failure_reason = answer_result.reason or TerminalReason.PROTOCOL_ERROR.value
-        registry.terminate_call(
+        await EndpointTerminationHandler(hass).terminate(
             call_id,
-            intent=(
+            (
                 TerminationIntent.bye(failure_reason)
                 if response_already_sent
                 else TerminationIntent(failure_reason)

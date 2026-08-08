@@ -65,6 +65,11 @@ def softphone_answer(monkeypatch):
                 },
             ),
         },
+        "endpoint_termination": {
+            "EndpointTerminationHandler": lambda _hass: SimpleNamespace(
+                terminate=AsyncMock(return_value=True)
+            )
+        },
         "inbound_answer": {"AnswerTransaction": object},
         "media_ports": {
             "allocate_sip_rtp_port": Mock(return_value=40000),
