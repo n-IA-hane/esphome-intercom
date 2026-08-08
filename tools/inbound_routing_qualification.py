@@ -60,9 +60,15 @@ class HomeAssistantApi:
         token: str | None = None,
     ) -> None:
         if token is None:
-            from ha_playwright_auth import ha_token
+            auth_file = Path(os.environ.get("HA_AUTH_FILE", ""))
+            if auth_file.is_file():
+                from live_voip_qualification import _refresh_ha_token
 
-            token = ha_token()
+                token = _refresh_ha_token(auth_file)
+            else:
+                from ha_playwright_auth import ha_token
+
+                token = ha_token()
         self.base_url = base_url.rstrip("/")
         self._token = token
         self.session = requests.Session()
