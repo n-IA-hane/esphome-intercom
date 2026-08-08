@@ -839,6 +839,32 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         if task is not None and task is not asyncio.current_task():
             task.cancel()
 
+    def _retire_dialog(self, call_id: str) -> _PendingDelayedOffer | None:
+        """Detach one dialog and every signaling owner exactly once."""
+
+        current = self.active_dialogs.get(call_id)
+        if current is None:
+            return None
+        self._cancel_invite_2xx(current)
+        self._cancel_connected_identity(current)
+        self._cancel_session_timer(current)
+        self._cancel_refer(current)
+        delayed = current.delayed_offer
+        current.delayed_offer = None
+        self._remember_terminated_invite(current)
+        self.active_dialogs.pop(call_id, None)
+        return delayed
+
+    async def _terminate_dialog(self, call_id: str, reason: str) -> None:
+        """Signal and retire a confirmed dialog, then notify its owner."""
+
+        if not self.send_bye(call_id):
+            delayed = self._retire_dialog(call_id)
+            if delayed is not None:
+                await self._rollback_delayed_offer(delayed)
+        if self.on_terminated is not None:
+            await self.on_terminated(call_id, reason)
+
     def _activate_dialog(
         self,
         call_id: str,
@@ -1270,10 +1296,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             if result.rollback is not None:
                 await result.rollback()
             await self._rollback_delayed_offer(delayed)
-            if not self.send_bye(call_id):
-                self.active_dialogs.pop(call_id, None)
-            if self.on_terminated is not None:
-                await self.on_terminated(call_id, "media_incompatible")
+            await self._terminate_dialog(call_id, "media_incompatible")
             return False
         if result.commit is not None:
             try:
@@ -1287,10 +1310,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 if result.rollback is not None:
                     await result.rollback()
                 await self._rollback_delayed_offer(delayed)
-                if not self.send_bye(call_id):
-                    self.active_dialogs.pop(call_id, None)
-                if self.on_terminated is not None:
-                    await self.on_terminated(call_id, "media_update_failed")
+                await self._terminate_dialog(call_id, "media_update_failed")
                 return False
         delayed.settled = True
         dialog.addr = addr
@@ -1368,10 +1388,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     if refresh != "refreshed":
                         break
                 if self.active_dialogs.get(call_id) is dialog:
-                    if not self.send_bye(call_id):
-                        self.active_dialogs.pop(call_id, None)
-                    if self.on_terminated is not None:
-                        await self.on_terminated(call_id, "session_timer_expired")
+                    await self._terminate_dialog(call_id, "session_timer_expired")
             except asyncio.CancelledError:
                 return
             finally:
@@ -1459,10 +1476,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             dialog.delayed_offer = None
             if delayed is not None:
                 await self._rollback_delayed_offer(delayed)
-            if not self.send_bye(call_id):
-                self.active_dialogs.pop(call_id, None)
-            if self.on_terminated is not None:
-                await self.on_terminated(call_id, "ack_timeout")
+            await self._terminate_dialog(call_id, "ack_timeout")
 
         dialog.invite_2xx.start(
             request,
@@ -1932,16 +1946,9 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             if not same_dialog:
                 self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
                 return
-            self._cancel_invite_2xx(dialog)
-            self._cancel_connected_identity(dialog)
-            self._cancel_session_timer(dialog)
-            self._cancel_refer(dialog)
-            delayed = dialog.delayed_offer
-            dialog.delayed_offer = None
+            delayed = self._retire_dialog(call_id)
             if delayed is not None:
                 await self._rollback_delayed_offer(delayed)
-            self._remember_terminated_invite(dialog)
-            self.active_dialogs.pop(call_id, None)
             self._remember_completed(
                 self.completed_byes,
                 call_id,
@@ -2298,10 +2305,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                             # The 2xx has committed the offer/answer exchange on
                             # the wire. If the local media owner cannot commit,
                             # terminate the now-confirmed dialog explicitly.
-                            if not self.send_bye(call_id):
-                                self.active_dialogs.pop(call_id, None)
-                            if self.on_terminated is not None:
-                                await self.on_terminated(call_id, "media_update_failed")
+                            await self._terminate_dialog(
+                                call_id,
+                                "media_update_failed",
+                            )
                             return
                     existing_dialog.addr = addr
                     if refreshed_remote_target:
@@ -2835,12 +2842,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             _LOGGER.warning("SIP TX BYE dropped call_id=%s", call_id)
             return False
         dialog.local_cseq += 1
-        self._cancel_invite_2xx(dialog)
-        self._cancel_connected_identity(dialog)
-        self._cancel_session_timer(dialog)
-        self._cancel_refer(dialog)
-        delayed = dialog.delayed_offer
-        dialog.delayed_offer = None
+        delayed = self._retire_dialog(call_id)
         if delayed is not None and not delayed.settled:
             task = asyncio.create_task(
                 self._rollback_delayed_offer(delayed),
@@ -2848,8 +2850,6 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             )
             self._maintenance_tasks.add(task)
             task.add_done_callback(self._maintenance_tasks.discard)
-        self._remember_terminated_invite(dialog)
-        self.active_dialogs.pop(call_id, None)
         _LOGGER.info("SIP TX BYE call_id=%s to %s:%s", call_id, target_addr[0], target_addr[1])
         sip.mark_sip_event(self, "BYE")
         return True
