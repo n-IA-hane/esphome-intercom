@@ -13,6 +13,8 @@ def merge_results(paths: list[Path]) -> dict[str, object]:
     identity: tuple[str, str, str] | None = None
     for path in paths:
         payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("schema_version") != 1:
+            raise RuntimeError(f"unsupported qualification result schema: {path}")
         source_identity = (
             str(payload.get("plan_id") or ""),
             str(payload.get("candidate_id") or ""),

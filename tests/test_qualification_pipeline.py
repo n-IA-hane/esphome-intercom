@@ -238,6 +238,7 @@ def test_result_merge_rejects_duplicate_job(tmp_path: Path) -> None:
     first = tmp_path / "first.json"
     second = tmp_path / "second.json"
     payload = {
+        "schema_version": 1,
         "plan_id": "plan",
         "candidate_id": "candidate",
         "head": "head",

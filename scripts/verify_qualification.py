@@ -12,6 +12,14 @@ from scripts.candidate_lock import candidate_id as compute_candidate_id
 from scripts.qualification_plan import plan_id as compute_plan_id
 
 
+ROOT = Path(__file__).resolve().parents[1]
+EXPECTED_REPOSITORIES = frozenset(
+    json.loads((ROOT / "qualification/sources.json").read_text(encoding="utf-8"))[
+        "repositories"
+    ]
+)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -28,6 +36,12 @@ def verify(
     artifact_root: Path,
 ) -> tuple[list[str], dict[str, object]]:
     errors: list[str] = []
+    if plan.get("schema_version") != 1:
+        errors.append("qualification plan schema is unsupported")
+    if candidate.get("schema_version") != 1:
+        errors.append("candidate schema is unsupported")
+    if results.get("schema_version") != 1:
+        errors.append("qualification results schema is unsupported")
     head = str(plan.get("head") or "")
     plan_id = str(plan.get("plan_id") or "")
     candidate_id = str(candidate.get("candidate_id") or "")
@@ -42,6 +56,11 @@ def verify(
     if results.get("head") != head:
         errors.append("qualification results do not match head")
     repositories = candidate.get("repositories")
+    if (
+        not isinstance(repositories, dict)
+        or frozenset(repositories) != EXPECTED_REPOSITORIES
+    ):
+        errors.append("candidate repository set is invalid")
     intercom = (
         repositories.get("esphome-intercom", {})
         if isinstance(repositories, dict)
@@ -64,6 +83,8 @@ def verify(
         errors.append("qualification results do not contain jobs")
         job_results = {}
     required_jobs = [str(job) for job in plan.get("required_jobs", [])]
+    for extra_job in sorted(set(job_results).difference(required_jobs)):
+        errors.append(f"qualification result was not required: {extra_job}")
     verified_jobs: dict[str, object] = {}
     for job in required_jobs:
         result = job_results.get(job)
