@@ -3764,6 +3764,223 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn(call_id, endpoint.active_dialogs)
 
+    async def test_inbound_initial_delayed_offer_commits_once_from_ack_answer(self) -> None:
+        sent: list[bytes] = []
+        accepted: list[tuple[str, int]] = []
+        routed: list[sip_listener.SipInitialInvite] = []
+        pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        local_offer = sdp.build_offer_directional(
+            "127.0.0.1", "127.0.0.1", 41000, [pcm], [pcm]
+        )
+
+        async def on_invite(_invite):
+            raise AssertionError("offered INVITE handler must not run")
+
+        async def accept_answer(invite):
+            async def commit() -> None:
+                accepted.append((invite.routing_target, invite.remote_rtp_port))
+
+            return sip_listener.SipInviteResult(200, "OK", commit=commit)
+
+        async def on_offerless(initial):
+            routed.append(initial)
+            return sip_listener.UasDelayedOfferPlan(local_offer, accept_answer)
+
+        endpoint = sip_listener.SipUdpEndpoint(
+            local_ip="127.0.0.1",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            supported_formats=[pcm],
+            on_invite=on_invite,
+            on_offerless_invite=on_offerless,
+            send_override=lambda raw, _addr: not sent.append(raw),
+        )
+        call_id = "initial-delayed-offer"
+        remote_tag = "remote"
+
+        def request(
+            method: str,
+            branch: str,
+            *,
+            to_tag: str = "",
+            body: bytes = b"",
+        ) -> bytes:
+            headers = [
+                ("Via", f"SIP/2.0/UDP 127.0.0.2:5060;branch={branch}"),
+                ("From", f'"Alice" <sip:alice@127.0.0.2>;tag={remote_tag}'),
+                ("To", "<sip:Casa@127.0.0.1>" + (f";tag={to_tag}" if to_tag else "")),
+                ("Contact", "<sip:alice@127.0.0.2:5060>"),
+                ("Call-ID", call_id),
+                ("CSeq", f"1 {method}"),
+            ]
+            if body:
+                headers.append(("Content-Type", "application/sdp"))
+            return sip.build_request(
+                method,
+                "sip:Casa@127.0.0.1:5060",
+                headers,
+                body,
+            )
+
+        initial = request("INVITE", "z9hG4bKinitial")
+        await endpoint._handle_datagram(initial, ("127.0.0.2", 5060))
+        responses = [sip.parse_message(raw) for raw in sent]
+        final = next(message for message in responses if message.status_code == 200)
+        self.assertEqual([message.status_code for message in responses], [100, 200])
+        self.assertEqual(sdp.parse_sdp(final.body)["media_port"], 41000)
+        self.assertEqual(len(routed), 1)
+        self.assertEqual(routed[0].routing_caller, "alice")
+        self.assertEqual(routed[0].routing_target, "Casa")
+
+        # A transaction retransmission must replay the byte-identical offer
+        # without routing or preparing media a second time.
+        await endpoint._handle_datagram(initial, ("127.0.0.2", 5060))
+        replay = sip.parse_message(sent[-1])
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(replay.body, final.body)
+        self.assertEqual(len(routed), 1)
+
+        negotiated = sdp.audio_format_to_rtp(pcm, 96)
+        remote_answer = sdp.build_answer_directional(
+            "127.0.0.2",
+            "127.0.0.2",
+            42000,
+            negotiated,
+            negotiated,
+            remote_sdp=final.body,
+        ).encode()
+        local_tag = sip.extract_tag(final.header("To"))
+        ack = request(
+            "ACK",
+            "z9hG4bKack",
+            to_tag=local_tag,
+            body=remote_answer,
+        )
+        await endpoint._handle_datagram(ack, ("127.0.0.2", 5060))
+        await endpoint._handle_datagram(ack, ("127.0.0.2", 5060))
+
+        self.assertEqual(accepted, [("Casa", 42000)])
+        dialog = endpoint.active_dialogs[call_id]
+        self.assertIsNone(dialog.delayed_offer)
+        self.assertIsNotNone(dialog.invite)
+        self.assertEqual(dialog.invite.remote_rtp_port, 42000)
+        endpoint.send_bye(call_id)
+        await endpoint.wait_closed()
+
+    async def test_inbound_initial_delayed_offer_requires_explicit_handler(self) -> None:
+        sent: list[bytes] = []
+
+        async def on_invite(_invite):
+            raise AssertionError("offered INVITE handler must not run")
+
+        endpoint = sip_listener.SipUdpEndpoint(
+            local_ip="127.0.0.1",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
+            on_invite=on_invite,
+            send_override=lambda raw, _addr: not sent.append(raw),
+        )
+        request = sip.build_request(
+            "INVITE",
+            "sip:Casa@127.0.0.1:5060",
+            [
+                ("Via", "SIP/2.0/UDP 127.0.0.2:5060;branch=z9hG4bKnone"),
+                ("From", "<sip:alice@127.0.0.2>;tag=remote"),
+                ("To", "<sip:Casa@127.0.0.1>"),
+                ("Call-ID", "no-offer-handler"),
+                ("CSeq", "1 INVITE"),
+            ],
+        )
+
+        await endpoint._handle_datagram(request, ("127.0.0.2", 5060))
+
+        self.assertEqual([sip.parse_message(raw).status_code for raw in sent], [488])
+        self.assertFalse(endpoint.pending_invites)
+        self.assertFalse(endpoint.active_dialogs)
+
+    async def test_inbound_initial_delayed_offer_invalid_ack_rolls_back_once(self) -> None:
+        sent: list[bytes] = []
+        rollbacks: list[str] = []
+        terminated: list[tuple[str, str]] = []
+        pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        local_offer = sdp.build_offer_directional(
+            "127.0.0.1", "127.0.0.1", 41000, [pcm], [pcm]
+        )
+
+        async def on_invite(_invite):
+            raise AssertionError("offered INVITE handler must not run")
+
+        async def accept_answer(_invite):
+            raise AssertionError("an ACK without SDP must not reach the application")
+
+        async def rollback() -> None:
+            rollbacks.append("rollback")
+
+        async def on_offerless(_initial):
+            return sip_listener.UasDelayedOfferPlan(
+                local_offer,
+                accept_answer,
+                rollback,
+            )
+
+        async def on_terminated(call_id, reason):
+            terminated.append((call_id, reason))
+
+        endpoint = sip_listener.SipUdpEndpoint(
+            local_ip="127.0.0.1",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            supported_formats=[pcm],
+            on_invite=on_invite,
+            on_offerless_invite=on_offerless,
+            on_terminated=on_terminated,
+            send_override=lambda raw, _addr: not sent.append(raw),
+        )
+        call_id = "invalid-initial-answer"
+
+        def request(method: str, branch: str, *, to_tag: str = "") -> bytes:
+            return sip.build_request(
+                method,
+                "sip:Casa@127.0.0.1:5060",
+                [
+                    ("Via", f"SIP/2.0/UDP 127.0.0.2:5060;branch={branch}"),
+                    ("From", "<sip:alice@127.0.0.2>;tag=remote"),
+                    ("To", "<sip:Casa@127.0.0.1>" + (f";tag={to_tag}" if to_tag else "")),
+                    ("Contact", "<sip:alice@127.0.0.2:5060>"),
+                    ("Call-ID", call_id),
+                    ("CSeq", f"1 {method}"),
+                ],
+            )
+
+        await endpoint._handle_datagram(
+            request("INVITE", "z9hG4bKinitial"),
+            ("127.0.0.2", 5060),
+        )
+        final = next(
+            message
+            for raw in sent
+            if (message := sip.parse_message(raw)).status_code == 200
+        )
+        ack = request(
+            "ACK",
+            "z9hG4bKack",
+            to_tag=sip.extract_tag(final.header("To")),
+        )
+        await endpoint._handle_datagram(ack, ("127.0.0.2", 5060))
+        await endpoint._handle_datagram(ack, ("127.0.0.2", 5060))
+        await endpoint.wait_closed()
+
+        requests = [
+            message.method
+            for raw in sent
+            if (message := sip.parse_message(raw)).is_request
+        ]
+        self.assertEqual(requests, ["BYE"])
+        self.assertEqual(rollbacks, ["rollback"])
+        self.assertEqual(terminated, [(call_id, "media_incompatible")])
+        self.assertNotIn(call_id, endpoint.active_dialogs)
+
     async def test_udp_endpoint_caps_concurrent_handler_tasks(self) -> None:
         async def on_invite(_invite):
             raise AssertionError("not used")
