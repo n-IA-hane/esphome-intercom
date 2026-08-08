@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import platform
 import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,6 +60,31 @@ def _package_version(name: str) -> str:
         return "unavailable"
 
 
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def _environment_digest(python: str) -> str:
+    frozen = _run(
+        python,
+        "-c",
+        (
+            "import importlib.metadata as m; "
+            "print('\\n'.join(sorted(f'{d.metadata.get(\"Name\", d.name)}=={d.version}' "
+            "for d in m.distributions())))"
+        ),
+    )
+    canonical = "\n".join(sorted(filter(None, frozen.splitlines()))) + "\n"
+    return _sha256_bytes(canonical.encode())
+
+
+def _input_hashes() -> dict[str, str]:
+    return {
+        path.name: _sha256_bytes(path.read_bytes())
+        for path in sorted(ROOT.glob("requirements*.txt"))
+    }
+
+
 def build_lock(
     config: dict[str, dict[str, dict[str, str]]],
     *,
@@ -90,6 +116,11 @@ def build_lock(
             "node": _run("node", "--version"),
             "esphome": _package_version("esphome"),
             "home_assistant": home_assistant,
+            "python_environment_sha256": _environment_digest(sys.executable),
+            "ha_environment_sha256": _environment_digest(ha_python)
+            if ha_python
+            else "unavailable",
+            "requirement_inputs": _input_hashes(),
         },
     }
     payload["candidate_id"] = candidate_id(payload)
