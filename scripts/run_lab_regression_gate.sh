@@ -39,7 +39,18 @@ PLAYWRIGHT_STORAGE_STATE="$STORAGE_STATE" \
 HA_PLAYWRIGHT_REFRESH_CREDENTIALS="$CREDENTIALS" \
 LOCAL_SIP_TARGET="sip:Casa@$LAB_HOST:15060;transport=tcp" \
   .venv/bin/python tools/ha_softphone_matrix.py \
-    --out "$CAPTURE_DIR/dtmf.json" \
+    --out "$CAPTURE_DIR/browser-matrix.json" \
+    --only trunk_live_ringing_remote_hangup \
+    --only refresh_during_ringing \
+    --only manual_answer_from_card \
+    --only decline_from_card \
+    --only auto_answer \
+    --only forward_releases_ha_and_keeps_call_alive \
+    --only failed_forward_resumes_ha \
+    --only two_browser_subscribers \
+    --only registered_sip_live_ringing \
+    --only registered_sip_answer_from_card \
+    --only automation_fallback \
     --only in_call_registered_sip_info_dtmf_event \
     --only in_call_rfc4733_dtmf_event \
     --only outbound_sip_info_dtmf_event \
