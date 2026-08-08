@@ -61,6 +61,7 @@ def test_matrix_declares_required_route_and_answer_cases() -> None:
     assert runner.ANSWER_CASES == (
         "registered_sip_auto_answer_on_caller_bye",
         "registered_sip_auto_answer_off_callee_bye",
+        "initial_delayed_offer_caller_bye",
     )
 
 
