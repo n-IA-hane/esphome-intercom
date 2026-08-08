@@ -3854,39 +3854,31 @@ class SipCallClient:
         if not self._has_signaling_path():
             return False
         try:
-            routing = sip.dialog_request_routing(request_uri, route_set)
+            request = build_dialog_request(
+                "ACK",
+                call_id=self.dialog_ids.call_id,
+                local_tag=self.dialog_ids.local_tag,
+                remote_tag=remote_tag or self.dialog_ids.remote_tag,
+                cseq=self._invite_cseq if cseq is None else int(cseq),
+                local_uri=local_uri,
+                remote_uri=remote_uri,
+                remote_target_uri=request_uri,
+                route_set=route_set,
+                transport=self.signaling_transport,
+                local_display_name=self.local_name,
+                remote_display_name=self._dialog_remote_display_name,
+                content_type="application/sdp" if body else "",
+                body=body,
+            )
         except (TypeError, ValueError, sip.SipError) as err:
             _LOGGER.warning("SIP ACK routing rejected: %s", err)
             return False
-        ack_ids = sip.SipDialogIds(
-            call_id=self.dialog_ids.call_id,
-            local_tag=self.dialog_ids.local_tag,
-            remote_tag=remote_tag or self.dialog_ids.remote_tag,
-            cseq=self._invite_cseq if cseq is None else int(cseq),
-            branch=sip.make_branch(),
-        )
-        headers = sip.dialog_headers(
-            request_uri=routing.request_uri,
-            local_uri=local_uri,
-            remote_uri=remote_uri,
-            dialog=ack_ids,
-            method="ACK",
-            contact_uri=local_uri,
-            content_type=("application/sdp" if body else None),
-            transport=self.signaling_transport,
-            local_display_name=self.local_name,
-            remote_display_name=(
-                self._dialog_remote_display_name
-            ),
-        )
-        headers.extend(("Route", value) for value in routing.route_headers)
-        raw = sip.build_request("ACK", routing.request_uri, headers, body)
         next_host, next_port = self._dialog_next_hop(
-            routing.next_hop_uri,
+            request.routing.next_hop_uri,
             host,
             int(port),
         )
-        if not self._send_dialog_request(raw, next_host, next_port):
+        if not self._send_dialog_request(request.raw, next_host, next_port):
             _LOGGER.warning("SIP TX ACK dropped: signaling path unavailable")
             return False
         sip.mark_sip_event(self, "ACK")
