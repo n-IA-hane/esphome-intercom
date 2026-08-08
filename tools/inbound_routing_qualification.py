@@ -928,7 +928,11 @@ def main() -> int:
 
         case("dtmf_no_digits_then_native_override", dtmf_no_digits_override)
 
-        def exact_dtmf_route(extension: str, callee: str) -> Callable[[], dict[str, Any]]:
+        def exact_dtmf_route(
+            extension: str,
+            callee: str,
+            expected_state: str,
+        ) -> Callable[[], dict[str, Any]]:
             def run() -> dict[str, Any]:
                 snapshot.apply(
                     api,
@@ -944,7 +948,9 @@ def main() -> int:
                     started = sip.dial()
                     sip.wait_for_dtmf_media()
                     sip.digits(extension)
-                    connected = wait_event_state(api, "in_call", 12, callee=callee)
+                    connected = wait_event_state(
+                        api, expected_state, 12, callee=callee
+                    )
                     elapsed = time.monotonic() - started
                     time.sleep(0.15)
                 triggered = automation_last_triggered(api, ROUTE_AUTOMATION)
@@ -968,11 +974,11 @@ def main() -> int:
 
         case(
             "dtmf_assist_extension_bypasses_automation",
-            exact_dtmf_route(ASSIST_EXTENSION, "Troiaio"),
+            exact_dtmf_route(ASSIST_EXTENSION, "Troiaio", "in_call"),
         )
         case(
             "dtmf_secondary_extension_bypasses_automation",
-            exact_dtmf_route(SECONDARY_EXTENSION, SECONDARY_CALLEE),
+            exact_dtmf_route(SECONDARY_EXTENSION, SECONDARY_CALLEE, "ringing"),
         )
 
         def dtmf_invalid_digits() -> dict[str, Any]:
