@@ -22,6 +22,7 @@ from .core.sip_auth import (
     DigestChallengeTracker,
     build_digest_authorization,
 )
+from .core.sip_resolution import SipServerResolver
 from .sip_tcp_io import SipTcpWriter, read_sip_stream_message as _read_sip_stream_message
 from .sip_udp_io import SipDatagramQueueProtocol
 from .core.sip_transaction import (
@@ -337,6 +338,7 @@ class SipCallClient:
         media_reservation=None,
         video_rtp_socket: socket.socket | None = None,
         video_rtcp_socket: socket.socket | None = None,
+        target_resolver: SipServerResolver | None = None,
     ) -> None:
         self.local_ip = local_ip
         self.local_name = local_name
@@ -379,6 +381,7 @@ class SipCallClient:
         self.media_reservation = media_reservation
         self.video_rtp_socket = video_rtp_socket
         self.video_rtcp_socket = video_rtcp_socket
+        self.target_resolver = target_resolver or SipServerResolver()
         # RTP source identity belongs to this SIP call and survives a
         # dashboard media-owner handoff. The WebSocket views initialize the
         # codec-specific state lazily to avoid coupling SIP signaling to them.
@@ -414,6 +417,9 @@ class SipCallClient:
         self._pending_request_uri = ""
         self._pending_local_uri = ""
         self._pending_remote_uri = ""
+        self._signaling_nominal: tuple[str, int] | None = None
+        self._resolved_signaling_target: tuple[str, int] | None = None
+        self._udp_family_host = ""
         self._pending_invite_body = b""
         self._pending_invite_auth: dict[str, tuple[str, str, int]] = {}
         self._initial_delayed_offer = False
@@ -473,10 +479,11 @@ class SipCallClient:
                 raise RuntimeError("SIP client is already closed")
             loop = asyncio.get_running_loop()
             protocol = SipDatagramQueueProtocol(self.queue)
+            family = socket.AF_INET6 if ":" in self._udp_family_host else socket.AF_INET
             transport, _ = await loop.create_datagram_endpoint(
                 lambda: protocol,
-                local_addr=("0.0.0.0", 0),
-                family=socket.AF_INET,
+                local_addr=("::" if family == socket.AF_INET6 else "0.0.0.0", 0),
+                family=family,
             )
             if self._closing or self._closed:
                 transport.close()
@@ -673,6 +680,11 @@ class SipCallClient:
                     self.local_sip_port = int(sockname[1])
 
     def _signaling_target(self, remote_host: str, remote_sip_port: int) -> tuple[str, int]:
+        if self._resolved_signaling_target is not None and (
+            self.outbound_proxy
+            or self._signaling_nominal == (remote_host, int(remote_sip_port))
+        ):
+            return self._resolved_signaling_target
         proxy = str(self.outbound_proxy or "").strip()
         if not proxy:
             return remote_host, int(remote_sip_port)
@@ -1690,16 +1702,40 @@ class SipCallClient:
         timeout: float = 8.0,
         delayed_offer: bool = False,
     ) -> str:
+        transport_param = (("transport", self.signaling_transport.lower()),)
+        request_uri = request_uri or str(sip.SipUri(target, remote_host, int(remote_sip_port), params=transport_param))
+        logical_uri = sip.parse_sip_uri(request_uri)
+        route_uri = logical_uri
+        if self.outbound_proxy:
+            proxy = str(self.outbound_proxy).strip()
+            route_uri = sip.parse_sip_uri(
+                proxy
+                if proxy.lower().startswith(("sip:", "sips:"))
+                else f"sip:{proxy}"
+            )
+        elif remote_host != logical_uri.host:
+            # The caller supplied an already selected next hop while keeping
+            # the logical Request-URI intact, as required for trunks/proxies.
+            route_uri = sip.SipUri("", remote_host, int(remote_sip_port))
         try:
+            if self._tcp_reuse_send is not None:
+                selected_host, selected_port = remote_host, int(remote_sip_port)
+            else:
+                candidates = await self.target_resolver.resolve(
+                    route_uri,
+                    transport=self.signaling_transport,
+                )
+                selected = candidates[0]
+                selected_host, selected_port = selected.addresses[0], selected.port
+            self._signaling_nominal = (remote_host, int(remote_sip_port))
+            self._resolved_signaling_target = (selected_host, selected_port)
             if self.signaling_transport == "TCP" and self._tcp_reuse_send is None:
                 await self._connect_tcp(remote_host, int(remote_sip_port))
             else:
+                self._udp_family_host = selected_host
                 await self.start()
-        except (ConnectionError, OSError, RuntimeError) as err:
+        except (ConnectionError, OSError, RuntimeError, sip.SipError, IndexError) as err:
             return self._transport_failure(err, target, remote_host, remote_sip_port)
-        transport_param = (("transport", self.signaling_transport.lower()),)
-        request_uri = request_uri or str(sip.SipUri(target, remote_host, int(remote_sip_port), params=transport_param))
-        sip.parse_sip_uri(request_uri)
         local_uri = str(
             sip.SipUri(
                 self.local_uri_user,
