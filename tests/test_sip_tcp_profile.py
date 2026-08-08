@@ -21,6 +21,33 @@ from .voip_phase1_support import (
 
 
 class SipTcpProfileTest(unittest.IsolatedAsyncioTestCase):
+    async def test_tcp_listener_answers_rfc5626_crlf_keepalive(self) -> None:
+        local = "127.0.0.1"
+        with _reserved_udp_ports(2) as ports:
+            sip_port, rtp_port = ports
+        server = sip_listener.SipTcpServer(
+            host=local,
+            port=sip_port,
+            local_ip=local,
+            local_rtp_port=rtp_port,
+            supported_formats=[audio_format.AudioFormat(16000, "s16le", 1, 20)],
+            on_invite=lambda _: None,  # type: ignore[arg-type]
+        )
+        self.assertTrue(await server.start())
+        _reader, writer = await asyncio.open_connection(local, sip_port)
+        try:
+            writer.write(b"\r\n\r\n")
+            await writer.drain()
+            self.assertEqual(
+                await asyncio.wait_for(_reader.readexactly(2), timeout=0.5),
+                b"\r\n",
+            )
+            self.assertEqual(len(server.endpoints), 1)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            await server.stop()
+
     async def test_tcp_listener_caps_connections_per_source(self) -> None:
         local = "127.0.0.1"
         with _reserved_udp_ports(2) as ports:

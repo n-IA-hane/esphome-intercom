@@ -1473,6 +1473,13 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             b"OPTIONS sip:ha SIP/2.0\r\nl: 4\r\n\r\ntest",
         )
 
+    async def test_sip_tcp_reader_exposes_crlf_keepalive_records(self) -> None:
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"\r\n\r\n")
+
+        self.assertEqual(await sip_tcp_io.read_sip_stream_message(reader), b"\r\n")
+        self.assertEqual(await sip_tcp_io.read_sip_stream_message(reader), b"\r\n")
+
     async def test_cancelled_tcp_send_cannot_enqueue_later(self) -> None:
         class BlockingWriter:
             def __init__(self) -> None:

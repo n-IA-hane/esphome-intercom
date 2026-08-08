@@ -9,6 +9,7 @@ import logging
 import math
 from secrets import token_hex, token_urlsafe
 import time
+import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -54,6 +55,9 @@ class SipRegistration:
     call_id: str = ""
     cseq: int = 0
     q: float = 1.0
+    instance_id: str = ""
+    reg_id: int = 0
+    outbound: bool = False
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -68,7 +72,20 @@ class SipRegistration:
             "call_id": self.call_id,
             "cseq": self.cseq,
             "q": self.q,
+            "outbound": self.outbound,
+            "reg_id": self.reg_id,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedContact:
+    advertised_uri: str
+    expires: int
+    contact_uri: str
+    q: float
+    instance_id: str = ""
+    reg_id: int = 0
+    outbound: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +209,45 @@ def _contact_q(raw_contact: str) -> float:
     if not 0.0 <= value <= 1.0:
         raise ValueError("invalid Contact q value")
     return value
+
+
+def _outbound_contact(
+    request: sip.SipMessage,
+    raw_contact: str,
+) -> tuple[str, int, bool]:
+    instance_id = _header_param(raw_contact, "+sip.instance").strip('"<>')
+    raw_reg_id = _header_param(raw_contact, "reg-id")
+    supports_outbound = "outbound" in sip.option_tags(request, "Supported")
+    if not supports_outbound:
+        # +sip.instance is also used independently by GRUU-aware user agents.
+        # It becomes an RFC 5626 flow identity only when the UA explicitly
+        # negotiates outbound and supplies the paired reg-id.
+        return "", 0, False
+    if not instance_id or not raw_reg_id:
+        raise ValueError("incomplete RFC 5626 Contact")
+    reg_id = int(raw_reg_id)
+    if not 1 <= reg_id <= 2_147_483_647:
+        raise ValueError("invalid RFC 5626 reg-id")
+    if not instance_id.lower().startswith("urn:uuid:"):
+        raise ValueError("invalid RFC 5626 instance ID")
+    instance_id = f"urn:uuid:{uuid.UUID(instance_id[9:])}"
+    return instance_id, reg_id, True
+
+
+def _registration_matches_contact(
+    registration: SipRegistration,
+    contact: _PreparedContact,
+) -> bool:
+    if contact.outbound:
+        return (
+            registration.outbound
+            and registration.instance_id == contact.instance_id
+            and registration.reg_id == contact.reg_id
+        )
+    return _same_contact(
+        contact.advertised_uri,
+        registration.advertised_contact_uri or registration.contact_uri,
+    )
 
 
 def _contact_for_source_flow(
@@ -329,16 +385,6 @@ class SipRegistrar:
                 key=lambda registration: (-registration.q, registration.contact_uri),
             )
         )
-
-    def _binding_key(self, username: str, contact_uri: str) -> str | None:
-        wanted = str(username or "").lower()
-        for key, registration in self.registrations.items():
-            if registration.username.lower() == wanted and _same_contact(
-                contact_uri,
-                registration.advertised_contact_uri or registration.contact_uri,
-            ):
-                return key
-        return None
 
     @staticmethod
     def _new_binding_key(
@@ -602,18 +648,18 @@ class SipRegistrar:
         ):
             return self._result(400, "Bad Request")
 
-        prepared: list[tuple[str, int, str, str, float]] = []
+        prepared: list[_PreparedContact] = []
         seen_contacts: set[str] = set()
         for advertised_contact_uri, expires, raw_contact in contacts:
             if advertised_contact_uri == "*":
-                prepared.append(("*", 0, raw_contact, "", 1.0))
+                prepared.append(_PreparedContact("*", 0, "", 1.0))
                 continue
-            identity = advertised_contact_uri.lower()
-            if identity in seen_contacts:
-                return self._result(400, "Bad Request")
-            seen_contacts.add(identity)
             try:
                 q = _contact_q(raw_contact)
+                instance_id, reg_id, outbound = _outbound_contact(
+                    request,
+                    raw_contact,
+                )
                 contact_uri = (
                     _contact_for_source_flow(
                         advertised_contact_uri,
@@ -625,23 +671,35 @@ class SipRegistrar:
                 )
             except (TypeError, ValueError, sip.SipError):
                 return self._result(400, "Bad Request")
+            identity = (
+                f"{instance_id.casefold()}:{reg_id}"
+                if outbound
+                else advertised_contact_uri.casefold()
+            )
+            if identity in seen_contacts:
+                return self._result(400, "Bad Request")
+            seen_contacts.add(identity)
             prepared.append(
-                (advertised_contact_uri, expires, raw_contact, contact_uri, q)
+                _PreparedContact(
+                    advertised_contact_uri,
+                    expires,
+                    contact_uri,
+                    q,
+                    instance_id,
+                    reg_id,
+                    outbound,
+                )
             )
 
         current_bindings = self._registrations(account.username)
-        for advertised_contact_uri, _expires, _raw, _contact, _q in prepared:
-            if advertised_contact_uri == "*":
+        for contact in prepared:
+            if contact.advertised_uri == "*":
                 continue
             current = next(
                 (
                     registration
                     for registration in current_bindings
-                    if _same_contact(
-                        advertised_contact_uri,
-                        registration.advertised_contact_uri
-                        or registration.contact_uri,
-                    )
+                    if _registration_matches_contact(registration, contact)
                 ),
                 None,
             )
@@ -673,27 +731,17 @@ class SipRegistrar:
             }
         else:
             now = time.time()
-            for (
-                advertised_contact_uri,
-                expires,
-                _raw_contact,
-                contact_uri,
-                q,
-            ) in prepared:
+            for contact in prepared:
                 key = next(
                     (
                         candidate_key
                         for candidate_key, registration in next_registrations.items()
                         if registration.username.lower() == wanted
-                        and _same_contact(
-                            advertised_contact_uri,
-                            registration.advertised_contact_uri
-                            or registration.contact_uri,
-                        )
+                        and _registration_matches_contact(registration, contact)
                     ),
                     None,
                 )
-                if expires <= 0:
+                if contact.expires <= 0:
                     if key is not None:
                         next_registrations.pop(key, None)
                     continue
@@ -704,16 +752,19 @@ class SipRegistrar:
                     )
                 next_registrations[key] = SipRegistration(
                     username=account.username,
-                    contact_uri=contact_uri,
+                    contact_uri=contact.contact_uri,
                     source_host=addr[0],
                     source_port=int(addr[1]),
                     transport=transport,
-                    expires_at=now + expires,
-                    advertised_contact_uri=advertised_contact_uri,
+                    expires_at=now + contact.expires,
+                    advertised_contact_uri=contact.advertised_uri,
                     user_agent=request.header("User-Agent"),
                     call_id=call_id,
                     cseq=cseq,
-                    q=q,
+                    q=contact.q,
+                    instance_id=contact.instance_id,
+                    reg_id=contact.reg_id,
+                    outbound=contact.outbound,
                 )
 
         self.registrations = next_registrations
@@ -745,15 +796,30 @@ class SipRegistrar:
         username: str,
     ) -> tuple[tuple[str, str], ...]:
         now = time.time()
-        return tuple(
+        registrations = self.registered_contacts(username)
+        headers = [
             (
                 "Contact",
                 f"<{registration.advertised_contact_uri or registration.contact_uri}>"
                 f";expires={max(0, math.ceil(registration.expires_at - now))}"
                 f";q={registration.q:g}",
             )
-            for registration in self.registered_contacts(username)
-        )
+            for registration in registrations
+        ]
+        for index, registration in enumerate(registrations):
+            if not registration.outbound:
+                continue
+            key, value = headers[index]
+            headers[index] = (
+                key,
+                f'{value};+sip.instance="<{registration.instance_id}>"'
+                f";reg-id={registration.reg_id}",
+            )
+        if any(registration.outbound for registration in registrations):
+            headers.extend(
+                (("Require", "outbound"), ("Supported", "outbound"), ("Flow-Timer", "25"))
+            )
+        return tuple(headers)
 
     def _result(self, status: int, reason: str, headers: tuple[tuple[str, str], ...] = ()) -> SipRegisterResult:
         self.last_sip_status_code = int(status)

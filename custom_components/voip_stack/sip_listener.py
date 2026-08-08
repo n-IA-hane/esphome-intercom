@@ -3238,6 +3238,7 @@ class SipTcpServer:
             writer.close()
             return
         first_message = True
+        keepalive_half = False
         try:
             while not reader.at_eof():
                 raw = await _read_sip_stream_message(
@@ -3249,6 +3250,12 @@ class SipTcpServer:
                 )
                 if raw is None:
                     break
+                if raw == b"\r\n":
+                    if keepalive_half:
+                        tx.send_nowait(b"\r\n")
+                    keepalive_half = not keepalive_half
+                    continue
+                keepalive_half = False
                 first_message = False
                 try:
                     msg = sip.parse_message(raw)

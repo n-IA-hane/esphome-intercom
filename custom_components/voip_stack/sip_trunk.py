@@ -16,6 +16,7 @@ import logging
 import socket
 import ssl
 import time
+import uuid
 from typing import Any, Awaitable, Callable
 
 from .core import sip
@@ -123,6 +124,9 @@ class SipTrunkClient:
         self._registrar_candidate: SipServerTarget | None = None
         self._registrar_candidates: tuple[SipServerTarget, ...] = ()
         self._registrar_candidate_index = -1
+        self._instance_id = f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, f'{local_ip}:{self.domain}:{config.username}')}"
+        self._flow_timer = 0.0
+        self._keepalive_task: asyncio.Task[None] | None = None
 
     def _ensure_receive_task(self) -> None:
         if not self._stopped and (
@@ -279,6 +283,10 @@ class SipTrunkClient:
             except asyncio.CancelledError:
                 pass
             self._refresh_task = None
+        if self._keepalive_task is not None:
+            self._keepalive_task.cancel()
+            await asyncio.gather(self._keepalive_task, return_exceptions=True)
+            self._keepalive_task = None
         if self.registered:
             try:
                 await self.register(expires=0, timeout=1.5)
@@ -319,6 +327,25 @@ class SipTrunkClient:
                 self._refresh_loop(),
                 name=f"voip-sip-trunk-refresh-{self.call_id}",
             )
+
+    def _ensure_keepalive_task(self) -> None:
+        if (
+            not self._stopped
+            and self._flow_timer > 0
+            and self.transport_name in {"TCP", "TLS"}
+            and (self._keepalive_task is None or self._keepalive_task.done())
+        ):
+            self._keepalive_task = asyncio.create_task(
+                self._keepalive_loop(),
+                name=f"voip-sip-trunk-keepalive-{self.call_id}",
+            )
+
+    async def _keepalive_loop(self) -> None:
+        while not self._stopped and self._flow_timer > 0:
+            await asyncio.sleep(max(2.5, self._flow_timer / 2.0))
+            tx = self._tcp_writer
+            if tx is not None and not await tx.send(b"\r\n\r\n"):
+                return
 
     async def _refresh_loop(self) -> None:
         retry_delay = 30.0
@@ -750,6 +777,8 @@ class SipTrunkClient:
                             reason="SIP trunk TCP connection closed",
                         )
                         continue
+                    if raw == b"\r\n":
+                        continue
                     addr = self._remote_addr()
                 else:
                     raw, addr = await self.queue.get()
@@ -917,6 +946,18 @@ class SipTrunkClient:
                 self.registered = expires_value > 0 and granted_expires > 0
                 self.expires_at = time.time() + granted_expires if self.registered else 0.0
                 if self.registered:
+                    if (
+                        "outbound" in sip.option_tags(msg, "Require")
+                        and self.transport_name in {"TCP", "TLS"}
+                    ):
+                        try:
+                            self._flow_timer = max(
+                                5.0,
+                                min(120.0, float(msg.header("Flow-Timer") or 25)),
+                            )
+                        except ValueError:
+                            self._flow_timer = 25.0
+                        self._ensure_keepalive_task()
                     _LOGGER.info(
                         "SIP trunk registered server=%s transport=%s expires=%ss status=%s %s",
                         self.config.server,
@@ -985,6 +1026,18 @@ class SipTrunkClient:
             transport=self.transport_name,
         )
         headers.append(("Expires", str(int(expires))))
+        if self.transport_name in {"TCP", "TLS"}:
+            headers = [
+                (
+                    key,
+                    f'{value};+sip.instance="<{self._instance_id}>";reg-id=1'
+                    if key.lower() == "contact"
+                    else f"{value}, outbound"
+                    if key.lower() == "supported" and "outbound" not in value.lower()
+                    else value,
+                )
+                for key, value in headers
+            ]
         headers.extend((key, value) for key, value in (auth_values or {}).items())
         return headers
 

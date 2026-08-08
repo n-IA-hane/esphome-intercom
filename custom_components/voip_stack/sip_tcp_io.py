@@ -28,6 +28,13 @@ async def read_sip_stream_message(
     except (TimeoutError, asyncio.IncompleteReadError):
         return None
 
+    if first == b"\r":
+        try:
+            second = await reader.readexactly(1)
+        except asyncio.IncompleteReadError:
+            return None
+        return b"\r\n" if second == b"\n" else None
+
     async def _read_remainder() -> bytes | None:
         try:
             head = first + await reader.readuntil(b"\r\n\r\n")

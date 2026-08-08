@@ -1575,6 +1575,8 @@ class SipCallClient:
             except asyncio.TimeoutError:
                 return None
 
+            if raw == b"\r\n":
+                continue
             message = sip.parse_message(raw)
             response_call_id = message.header("Call-ID")
             if response_call_id != self.dialog_ids.call_id:

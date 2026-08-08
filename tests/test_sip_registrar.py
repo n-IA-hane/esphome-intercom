@@ -26,6 +26,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         host: str = "192.0.2.50",
         port: int = 5062,
         transport: str = "UDP",
+        supported: str = "",
     ) -> sip.SipMessage:
         request_uri = "sip:192.168.1.10"
         challenge = registrar._challenge()[1]
@@ -47,6 +48,8 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         ]
         if expires is not None:
             headers.append(("Expires", str(expires)))
+        if supported:
+            headers.append(("Supported", supported))
         return sip.parse_message(
             sip.build_request("REGISTER", request_uri, headers, b"")
         )
@@ -818,6 +821,100 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
             registrar.roster_entries()[0].sip_uri,
             "sip:SmartphoneDany@192.168.1.50:49258;transport=tcp",
         )
+
+    async def test_outbound_instance_rebinds_one_logical_tcp_flow(self) -> None:
+        registrar = sip_registrar.SipRegistrar(
+            enabled=True,
+            accounts=[sip_registrar.SipAccount("Phone", "Phone", "secret")],
+            local_ip="192.168.1.10",
+            local_sip_port=5060,
+        )
+        instance = "urn:uuid:12345678-1234-5678-1234-567812345678"
+
+        first = self._authorized_register(
+            registrar,
+            username="Phone",
+            password="secret",
+            call_id="outbound-flow",
+            cseq=1,
+            contacts=[
+                f'<sip:Phone@192.0.2.50:40000;transport=tcp>;expires=120;'
+                f'+sip.instance="<{instance}>";reg-id=1'
+            ],
+            host="192.0.2.50",
+            port=40000,
+            transport="TCP",
+            supported="outbound",
+        )
+        first_result = await registrar.handle_register(
+            first,
+            ("192.0.2.50", 40000),
+            "TCP",
+        )
+        second = self._authorized_register(
+            registrar,
+            username="Phone",
+            password="secret",
+            call_id="outbound-flow",
+            cseq=2,
+            contacts=[
+                f'<sip:Phone@192.0.2.50:41000;transport=tcp>;expires=120;'
+                f'+sip.instance="<{instance}>";reg-id=1'
+            ],
+            host="192.0.2.50",
+            port=41000,
+            transport="TCP",
+            supported="outbound",
+        )
+        second_result = await registrar.handle_register(
+            second,
+            ("192.0.2.50", 41000),
+            "TCP",
+        )
+
+        self.assertEqual((first_result.status, second_result.status), (200, 200))
+        self.assertEqual(dict(second_result.headers)["Require"], "outbound")
+        self.assertEqual(dict(second_result.headers)["Flow-Timer"], "25")
+        contacts = registrar.registered_contacts("Phone")
+        self.assertEqual(len(contacts), 1)
+        self.assertEqual(contacts[0].source_port, 41000)
+        self.assertTrue(contacts[0].outbound)
+        self.assertEqual(contacts[0].instance_id, instance)
+
+    async def test_instance_parameter_without_outbound_remains_an_ordinary_contact(
+        self,
+    ) -> None:
+        registrar = sip_registrar.SipRegistrar(
+            enabled=True,
+            accounts=[sip_registrar.SipAccount("Phone", "Phone", "secret")],
+            local_ip="192.168.1.10",
+            local_sip_port=5060,
+        )
+        request = self._authorized_register(
+            registrar,
+            username="Phone",
+            password="secret",
+            call_id="gruu-instance",
+            cseq=1,
+            contacts=[
+                '<sip:Phone@192.0.2.50:40000>;expires=120;'
+                '+sip.instance="<urn:uuid:12345678-1234-5678-1234-567812345678>"'
+            ],
+            host="192.0.2.50",
+            port=40000,
+            transport="UDP",
+        )
+
+        result = await registrar.handle_register(
+            request,
+            ("192.0.2.50", 40000),
+            "UDP",
+        )
+
+        self.assertEqual(result.status, 200)
+        contact = registrar.registered_contacts("Phone")[0]
+        self.assertFalse(contact.outbound)
+        self.assertEqual(contact.instance_id, "")
 
     async def test_multiple_contacts_are_independent_and_all_returned(self) -> None:
         changes: list[tuple[str, bool]] = []
