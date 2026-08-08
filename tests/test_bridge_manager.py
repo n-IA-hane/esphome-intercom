@@ -24,7 +24,7 @@ class _Registry:
     def bridge_for(self, _call_id: str) -> tuple[str, str]:
         return self.bridge
 
-    async def finish_and_pop_wait(self, call_id: str, **values) -> None:
+    async def terminate_call_wait(self, call_id: str, **values) -> None:
         self.finished.append((call_id, values))
 
 

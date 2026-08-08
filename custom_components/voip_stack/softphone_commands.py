@@ -209,7 +209,7 @@ async def async_decline_browser_call(
             sip_status_code=status,
             last_sip_event="BYE" if final_response_sent else "SIP_RESPONSE",
         )
-        registry.finish_and_pop(call_id, reason=app_reason, state="declined")
+        registry.terminate_call(call_id, reason=app_reason, state="declined")
         return
     if not call_id or not send_final_response(
         hass,
@@ -238,4 +238,4 @@ async def async_decline_browser_call(
         sip_status_code=status,
         last_sip_event="SIP_RESPONSE",
     )
-    registry.finish_and_pop(call_id, reason=app_reason, state="declined")
+    registry.terminate_call(call_id, reason=app_reason, state="declined")

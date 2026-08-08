@@ -224,7 +224,7 @@ async def async_route_trunk_invite(
             sip_status_code=status,
             last_sip_event="BYE",
         )
-        registry.finish_and_pop(invite.call_id, reason=reason)
+        registry.terminate_call(invite.call_id, reason=reason)
         return
 
     default_target = trunk_default_target(configured_trunk)
@@ -282,7 +282,7 @@ async def async_route_trunk_invite(
             last_sip_event="BYE",
         )
         bridge_ports.release()
-        registry.finish_and_pop(
+        registry.terminate_call(
             invite.call_id,
             reason=terminal_reason,
             state=CallState.TRANSPORT_UNREACHABLE.value,

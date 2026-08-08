@@ -679,7 +679,7 @@ async def async_originate_browser_call(
                 role="destination",
             )
     except EndpointBusyError as err:
-        registry.finish_and_pop(
+        registry.terminate_call(
             client.dialog_ids.call_id,
             reason=TerminalReason.BUSY.value,
             state=CallState.BUSY.value,
@@ -747,7 +747,7 @@ async def async_originate_browser_call(
             last_sip_event="INVITE_ERROR",
             sip_uri=route_uri,
         )
-        registry.finish_and_pop(
+        registry.terminate_call(
             client.dialog_ids.call_id,
             reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
             state=CallState.TRANSPORT_UNREACHABLE.value,

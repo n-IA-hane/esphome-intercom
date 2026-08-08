@@ -56,7 +56,9 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "not active"):
             runtime.create_session("call-1")
 
-    async def test_live_bridge_requires_lifecycle_owner_before_registration(self) -> None:
+    async def test_live_bridge_requires_lifecycle_owner_before_registration(
+        self,
+    ) -> None:
         registry, runtime = _registry_runtime()
         runtime.activate()
         registry.upsert("source", state="ringing", owner="router")
@@ -72,7 +74,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registry.bridge_clients, {})
         self.assertEqual(registry.sip_clients, {})
         self.assertNotIn("destination", registry.leg_index)
-        registry.finish_and_pop("source", reason="cancelled", state="cancelled")
+        registry.terminate_call("source", reason="cancelled", state="cancelled")
         await runtime.shutdown()
 
     async def test_runtime_owns_generations_and_retires_derived_indexes(self) -> None:
@@ -86,16 +88,12 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         runtime.event_contexts["leg-1"] = {"source": "test"}
         token = first.token
 
-        self.assertIs(
-            runtime.get_session("call-1", generation=token.generation), first
-        )
-        await first.terminate("cancelled")
+        self.assertIs(runtime.get_session("call-1", generation=token.generation), first)
+        await first.terminate(endpoint_session.TerminationIntent("cancelled"))
         self.assertIsNone(runtime.get_session("call-1"))
         self.assertNotIn("leg-1", runtime.leg_index)
         self.assertNotIn("leg-1", runtime.event_contexts)
-        self.assertTrue(
-            runtime.is_terminated("call-1", generation=token.generation)
-        )
+        self.assertTrue(runtime.is_terminated("call-1", generation=token.generation))
 
         second = runtime.create_session("call-1")
         self.assertGreater(second.generation, token.generation)
@@ -133,10 +131,12 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         runtime = SipEndpointRuntime()
         runtime.activate()
         first = runtime.create_session("same")
-        await first.terminate("done")
+        await first.terminate(endpoint_session.TerminationIntent("done"))
         second = runtime.create_session("same")
 
-        runtime._on_terminated(first, await first.terminate("late"))
+        runtime._on_terminated(
+            first, await first.terminate(endpoint_session.TerminationIntent("late"))
+        )
 
         self.assertIs(runtime.get_session("same"), second)
 
@@ -147,20 +147,12 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         async def close(name: str) -> None:
             events.append(name)
 
-        runtime.attach_component(
-            "udp_listener", object(), closer=lambda: close("udp")
-        )
-        runtime.attach_component(
-            "trunk", object(), closer=lambda: close("trunk")
-        )
-        runtime.attach_component(
-            "extra", object(), closer=lambda: close("extra")
-        )
+        runtime.attach_component("udp_listener", object(), closer=lambda: close("udp"))
+        runtime.attach_component("trunk", object(), closer=lambda: close("trunk"))
+        runtime.attach_component("extra", object(), closer=lambda: close("extra"))
         runtime.activate()
         session = runtime.create_session("call-1")
-        session.add_resource(
-            "relay", object(), lambda _reason: close("call")
-        )
+        session.add_resource("relay", object(), lambda _reason: close("call"))
 
         await runtime.shutdown()
 
@@ -238,7 +230,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             endpoint_session.LegKind.ESPHOME,
         )
 
-        registry.finish_and_pop("call-1", reason="cancelled", state="cancelled")
+        registry.terminate_call("call-1", reason="cancelled", state="cancelled")
         await authoritative.terminated.wait()
 
         self.assertNotIn("call-1", registry.sessions)
@@ -258,13 +250,23 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             stage=endpoint_session.CleanupStage.MEDIA,
         )
 
-        self.assertTrue(registry.begin_termination("call-1", "remote_hangup"))
-        self.assertFalse(registry.begin_termination("call-1", "duplicate"))
+        self.assertTrue(
+            registry.begin_termination(
+                "call-1",
+                pbx_runtime.TerminationIntent("remote_hangup"),
+            )
+        )
+        self.assertFalse(
+            registry.begin_termination(
+                "call-1",
+                pbx_runtime.TerminationIntent("duplicate"),
+            )
+        )
         self.assertIs(authoritative.phase, SessionPhase.TERMINATING)
         self.assertIs(projected, authoritative)
         self.assertEqual(events, [])
 
-        registry.finish_and_pop("call-1", reason="remote_hangup")
+        registry.terminate_call("call-1", reason="remote_hangup")
         await authoritative.terminated.wait()
 
         self.assertEqual(events, ["relay:remote_hangup"])
@@ -277,7 +279,9 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         session = runtime.get_session("call-1")
         self.assertIsNotNone(session)
-        result = await session.terminate("remote_hangup")
+        result = await session.terminate(
+            endpoint_session.TerminationIntent("remote_hangup")
+        )
 
         self.assertIsNotNone(result)
         self.assertNotIn("call-1", registry.sessions)
@@ -289,7 +293,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         runtime.activate()
 
         first = registry.upsert("call-1", state="ringing", owner="router")
-        await registry.finish_and_pop_wait(
+        await registry.terminate_call_wait(
             "call-1",
             reason="local_group_selected",
         )
@@ -301,11 +305,9 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertGreater(second.generation, first.generation)
         self.assertFalse(registry.is_terminated("call-1"))
-        self.assertTrue(
-            registry.is_terminated("call-1", generation=first.generation)
-        )
+        self.assertTrue(registry.is_terminated("call-1", generation=first.generation))
         self.assertTrue(registry.is_generation_current("call-1", second.generation))
-        await registry.finish_and_pop_wait("call-1", reason="test_complete")
+        await registry.terminate_call_wait("call-1", reason="test_complete")
 
     async def test_projected_phase_cannot_override_authoritative_phase(self) -> None:
         registry, runtime = _registry_runtime()
@@ -352,7 +354,9 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(runtime.release_component("trunk", trunk))
         self.assertIsNone(runtime.component("trunk"))
 
-    async def test_registry_indexes_are_cleaned_by_session_owned_resources(self) -> None:
+    async def test_registry_indexes_are_cleaned_by_session_owned_resources(
+        self,
+    ) -> None:
         events: list[str] = []
 
         class Client:
@@ -398,9 +402,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(registry.pending_routes["source"], route)
         self.assertIs(authoritative.artifacts.pending_route, route)
         self.assertEqual(registry.video_parameter_sets["source"], parameter_sets)
-        self.assertEqual(
-            authoritative.artifacts.video_parameter_sets, parameter_sets
-        )
+        self.assertEqual(authoritative.artifacts.video_parameter_sets, parameter_sets)
         self.assertEqual(
             authoritative.metadata["bridge_dest_call_id"],
             "destination",
@@ -417,7 +419,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ["relay:source", "softphone_media:source"],
         )
 
-        registry.finish_and_pop("source", reason="cancelled", state="cancelled")
+        registry.terminate_call("source", reason="cancelled", state="cancelled")
         await authoritative.terminated.wait()
         await asyncio.sleep(0)
 
@@ -466,9 +468,11 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             authoritative.endpoint_claims,
             {"caller": "source", "callee": "destination"},
         )
-        self.assertEqual(registry.endpoint_claims, {"call-1": authoritative.endpoint_claims})
+        self.assertEqual(
+            registry.endpoint_claims, {"call-1": authoritative.endpoint_claims}
+        )
 
-        registry.finish_and_pop("call-1", reason="remote_hangup", state="idle")
+        registry.terminate_call("call-1", reason="remote_hangup", state="idle")
         await authoritative.terminated.wait()
 
         self.assertEqual(endpoints.active, {})
@@ -481,7 +485,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         completed = asyncio.Event()
 
         async def watcher_body() -> None:
-            registry.finish_and_pop(
+            registry.terminate_call(
                 "call-1",
                 reason="remote_hangup",
                 state="idle",

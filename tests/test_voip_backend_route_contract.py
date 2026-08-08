@@ -420,7 +420,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("adopt_transport=True", sip_route)
         self.assertIn('role="destination"', sip_route)
         self.assertIn("except EndpointBusyError:", sip_route)
-        self.assertGreaterEqual(sip_route.count("registry.finish_and_pop("), 3)
+        self.assertGreaterEqual(sip_route.count("registry.terminate_call("), 3)
 
     def test_ha_softphone_dnd_declines_with_dnd_reason(self) -> None:
         start = self.inbound_targets.index("if endpoint.dnd:")
@@ -1582,7 +1582,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         self.assertIn("_release_media_reservation(preanswered)", guarded)
         self.assertIn("_sip_send_bye(hass, invite.call_id)", guarded)
-        self.assertIn("registry.finish_and_pop(", guarded)
+        self.assertIn("registry.terminate_call(", guarded)
         creator = self.inbound_trunk[
             self.inbound_trunk.index("create_runtime_task(") :
             self.inbound_trunk.index("return SipInviteResult(200")
@@ -1600,11 +1600,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ]
         self.assertIn("send_bye(hass, invite.call_id)", rejected)
         self.assertIn("bridge_ports.release()", rejected)
-        self.assertIn("registry.finish_and_pop(", rejected)
+        self.assertIn("registry.terminate_call(", rejected)
         self.assertIn("state=CallState.TRANSPORT_UNREACHABLE.value", rejected)
         self.assertLess(
             rejected.index("bridge_ports.release()"),
-            rejected.index("registry.finish_and_pop("),
+            rejected.index("registry.terminate_call("),
         )
 
     def test_answer_ha_keeps_an_explicit_dtmf_extension(self) -> None:

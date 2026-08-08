@@ -105,7 +105,7 @@ def defer_browser_softphone_invite(
             sip_uri=decision.sip_uri,
         )
     except EndpointBusyError:
-        registry.finish_and_pop(
+        registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.BUSY.value,
             state=CallState.BUSY.value,
@@ -197,7 +197,7 @@ def answer_inbound_ha_softphone(
             role="destination",
         )
     except EndpointBusyError:
-        registry.finish_and_pop(
+        registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.BUSY.value,
             state=CallState.BUSY.value,

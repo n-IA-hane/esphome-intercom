@@ -11,6 +11,7 @@ from .endpoint_session import (
     CleanupStage,
     EndpointCallSession,
     SessionPhase,
+    TerminationIntent,
 )
 from .automation_routing import CALL_EVENT_SCHEMA_VERSION
 from .media_reservation import release_media_reservation
@@ -210,7 +211,7 @@ class CallRuntimeApi:
     def begin_termination(
         self,
         call_id: str,
-        reason: str = "terminated",
+        intent: TerminationIntent,
     ) -> bool:
         """Atomically claim teardown ownership for a call or one of its legs.
 
@@ -228,7 +229,7 @@ class CallRuntimeApi:
         if session is not None:
             if not self.claim_termination(
                 session_id,
-                reason,
+                intent,
                 generation=session.generation,
             ):
                 return False
@@ -305,11 +306,7 @@ class CallRuntimeApi:
             "sequence": context.sequence,
             "revision": session.revision if session is not None else 0,
             "generation": session.generation if session is not None else 0,
-            "pbx_phase": (
-                session.phase.value
-                if session is not None
-                else ""
-            ),
+            "pbx_phase": (session.phase.value if session is not None else ""),
             "owner": session.owner if session is not None else "",
             "previous_state": context.previous_state,
             "route_history": [dict(item) for item in context.route_history],
@@ -799,52 +796,27 @@ class CallRuntimeApi:
         session = self.sessions.get(self.resolve_session_id(str(call_id or "").strip()))
         return session.metadata.get("ha_context") if session is not None else None
 
-    def finish(
-        self, call_id: str, *, reason: str = "", state: str = "idle"
+    def _discard_dark_session(
+        self,
+        call_id: str,
+        intent: TerminationIntent,
     ) -> EndpointCallSession | None:
-        session_id = self.resolve_session_id(call_id)
+        """Synchronously discard an I/O-free session used by pure model tests."""
+
+        session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
         if session is None:
             return None
-        self._set_state(session, state)
-        session.terminal_reason = reason or session.terminal_reason
-        session.owner = "terminal"
-        session.outcome = reason or session.outcome
-        session.revision += 1
-        return session
-
-    def pop(self, call_id: str) -> EndpointCallSession | None:
-        call_id = str(call_id or "").strip()
-        session_id = self.resolve_session_id(call_id)
-        if not self.active:
-            self.release_endpoint_claims(session_id)
-        session = self.sessions.get(session_id)
-        if session is not None and self.active:
-            self.request_termination(
-                session_id,
-                session.terminal_reason or session.outcome or "removed",
-                generation=session.generation,
-            )
-        if not self.active:
-            self.sessions.pop(session_id, None)
+        self.release_endpoint_claims(session_id)
         self.forget_bridge_link(session_id)
-        event_context_ids = {call_id, session_id}
-        if session is not None:
-            for leg_id in list(session.legs):
-                event_context_ids.add(leg_id)
-                self.leg_index.pop(leg_id, None)
-        self.leg_index.pop(call_id, None)
-        for context_id in event_context_ids:
-            self.event_contexts.pop(context_id, None)
-        self.take_pending_invite(session_id)
-        self.clear_video_parameter_sets(session_id)
-        if call_id != session_id:
-            self.clear_video_parameter_sets(call_id)
-        route = self.take_pending_route(session_id)
-        if route is not None:
-            future = route.get("future")
-            if future is not None and hasattr(future, "done") and not future.done():
-                future.cancel()
+        session.artifacts.settle()
+        session.owner = "terminal"
+        session.outcome = intent.reason
+        session.terminal_reason = intent.reason
+        session.apply_observation(intent.public_state, None)
+        session.revision += 1
+        self._retire_observation(session)
+        self.sessions.pop(session_id, None)
         return session
 
     def bridge_for(self, call_id: str) -> tuple[str, str]:
@@ -872,7 +844,7 @@ class CallRuntimeApi:
         watcher = self.take_client_watcher(dest_call_id) if dest_call_id else None
         return source_call_id, dest_call_id, relay, client, watcher, called_by_dest
 
-    def finish_and_pop(
+    def terminate_call(
         self, call_id: str, *, reason: str = "", state: str = "idle"
     ) -> EndpointCallSession | None:
         session_id = self.resolve_session_id(str(call_id or "").strip())
@@ -883,10 +855,24 @@ class CallRuntimeApi:
                 session_id,
                 generation=session.generation if session is not None else 0,
             )
-        self.finish(call_id, reason=reason, state=state)
-        return self.pop(call_id)
+        if not self.active:
+            return self._discard_dark_session(
+                call_id,
+                TerminationIntent(reason or "removed", public_state=state),
+            )
+        session = self.sessions.get(session_id)
+        if session is None:
+            return None
+        session.owner = "terminal"
+        session.revision += 1
+        self.request_termination(
+            session_id,
+            TerminationIntent(reason or "removed", public_state=state),
+            generation=session.generation,
+        )
+        return session
 
-    async def finish_and_pop_wait(
+    async def terminate_call_wait(
         self,
         call_id: str,
         *,
@@ -901,10 +887,13 @@ class CallRuntimeApi:
         if session is not None:
             barrier = self.request_termination(
                 session_id,
-                reason or session.terminal_reason or session.outcome or "removed",
+                TerminationIntent(
+                    reason or session.terminal_reason or session.outcome or "removed",
+                    public_state=state,
+                ),
                 generation=session.generation,
             )
-        removed = self.finish_and_pop(call_id, reason=reason, state=state)
+        removed = session
         if barrier is not None:
             await barrier
         return removed
@@ -920,7 +909,7 @@ class CallRuntimeApi:
         dest = dest_call_id or self.bridge_clients.get(source_call_id, "")
         self.forget_bridge_link(source_call_id)
         client = self.take_sip_client(dest) if dest else None
-        self.finish_and_pop(source_call_id, reason=reason, state=state)
+        self.terminate_call(source_call_id, reason=reason, state=state)
         return client
 
     def detach_client(self, call_id: str) -> tuple[Any | None, Any | None]:

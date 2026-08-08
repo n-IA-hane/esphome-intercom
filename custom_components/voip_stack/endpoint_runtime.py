@@ -155,7 +155,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             last_sip_event="BYE",
             route_kind=GROUP_TYPE_CONFERENCE,
         )
-        registry.finish_and_pop(
+        registry.terminate_call(
             call_id,
             reason=reason,
             state=CallState.IDLE.value,
@@ -461,7 +461,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 sip_status_code=500,
                 last_sip_event="BYE",
             )
-            registry.finish_and_pop(
+            registry.terminate_call(
                 invite.call_id,
                 reason=RouteReason.TARGET_UNREACHABLE.value,
                 state=CallState.TRANSPORT_UNREACHABLE.value,
@@ -613,7 +613,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         try:
             registry.claim_endpoint(call_id, endpoint_id, role="source")
         except EndpointBusyError:
-            registry.finish_and_pop(
+            registry.terminate_call(
                 call_id,
                 reason=TerminalReason.BUSY.value,
                 state=CallState.BUSY.value,
@@ -661,7 +661,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 route_kind=GROUP_TYPE_RING,
                 last_sip_event="PEER_SNAPSHOT_FAILED",
             )
-            registry.finish_and_pop(
+            registry.terminate_call(
                 call_id,
                 reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
                 state=CallState.TRANSPORT_UNREACHABLE.value,

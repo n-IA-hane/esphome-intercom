@@ -229,9 +229,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
 
         async def wait_control():
             await control_gate.wait()
-            return dial_fork.DialOutcome(
-                dial_fork.DialDisposition.SOURCE_CANCELLED
-            )
+            return dial_fork.DialOutcome(dial_fork.DialDisposition.SOURCE_CANCELLED)
 
         async def close(_mode) -> None:
             return None
@@ -277,9 +275,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         async def dial_branch():
             branch_started.set()
             await keep_branch_pending.wait()
-            return dial_fork.DialOutcome(
-                dial_fork.DialDisposition.BUSY
-            )
+            return dial_fork.DialOutcome(dial_fork.DialDisposition.BUSY)
 
         async def answer_browser():
             await branch_started.wait()
@@ -307,11 +303,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         result = await dial_fork.DialForkController(
             session,
             (branch, browser),
-        ).run(
-            lambda candidate, _outcome: not committed.append(
-                candidate.candidate_id
-            )
-        )
+        ).run(lambda candidate, _outcome: not committed.append(candidate.candidate_id))
 
         self.assertIs(result.winner, browser)
         self.assertEqual(committed, ["browser-control"])
@@ -373,7 +365,9 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
             dial_fork.DialDisposition.ANSWERED,
         )
 
-    async def test_sequential_source_cancel_arbitrates_before_winner_commit(self) -> None:
+    async def test_sequential_source_cancel_arbitrates_before_winner_commit(
+        self,
+    ) -> None:
         session = endpoint_session.EndpointCallSession("call-1", 1)
         gate = asyncio.Event()
         committed: list[str] = []
@@ -384,9 +378,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
 
         async def source_cancel():
             await gate.wait()
-            return dial_fork.DialOutcome(
-                dial_fork.DialDisposition.SOURCE_CANCELLED
-            )
+            return dial_fork.DialOutcome(dial_fork.DialDisposition.SOURCE_CANCELLED)
 
         closed: list[tuple[str, object]] = []
 
@@ -410,9 +402,7 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
                 (answer_candidate, control_candidate),
                 strategy=dial_fork.ForkStrategy.SEQUENTIAL,
             ).run(
-                lambda candidate, _outcome: not committed.append(
-                    candidate.candidate_id
-                )
+                lambda candidate, _outcome: not committed.append(candidate.candidate_id)
             )
         )
         await asyncio.sleep(0)
@@ -436,7 +426,9 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-    async def test_source_cancel_during_blocked_loser_cleanup_closes_winner(self) -> None:
+    async def test_source_cancel_during_blocked_loser_cleanup_closes_winner(
+        self,
+    ) -> None:
         session = endpoint_session.EndpointCallSession("call-1", 1)
         answer = dial_fork.DialOutcome(dial_fork.DialDisposition.ANSWERED, 200)
         busy = dial_fork.DialOutcome(dial_fork.DialDisposition.BUSY, 486)
@@ -460,17 +452,23 @@ class DialForkControllerTest(unittest.IsolatedAsyncioTestCase):
         )
         await loser.close_started.wait()
 
-        termination = asyncio.create_task(session.terminate("cancelled"))
+        termination = asyncio.create_task(
+            session.terminate(endpoint_session.TerminationIntent("cancelled"))
+        )
         await asyncio.sleep(0)
         release_cleanup.set()
         result = await running
         await termination
 
-        self.assertEqual(result.outcome.disposition, dial_fork.DialDisposition.CANCELLED)
+        self.assertEqual(
+            result.outcome.disposition, dial_fork.DialDisposition.CANCELLED
+        )
         self.assertEqual(committed, [])
         self.assertEqual(winner.closes, [dial_fork.LegCloseMode.BYE])
 
-    async def test_lower_priority_tier_starts_only_after_higher_tier_fails(self) -> None:
+    async def test_lower_priority_tier_starts_only_after_higher_tier_fails(
+        self,
+    ) -> None:
         session = endpoint_session.EndpointCallSession("call-1", 1)
         events: list[str] = []
 

@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 
 from .call_scope import take_pending_route
 from .endpoint_lifecycle import call_registry
+from .endpoint_session import TerminationInitiator, TerminationIntent
 from .fsm import CallState, TerminalReason
 from .runtime_data import (
     call_runtime_artifacts,
@@ -46,7 +47,13 @@ class EndpointTerminationHandler:
         call_artifacts = artifacts.artifacts_for(call_id)
         if call_artifacts is not None and call_artifacts.trunk_info_queue is not None:
             call_artifacts.trunk_closed = True
-        if not registry.begin_termination(call_id, reason):
+        if not registry.begin_termination(
+            call_id,
+            TerminationIntent(
+                reason,
+                initiator=TerminationInitiator.REMOTE_PEER,
+            ),
+        ):
             _LOGGER.debug(
                 "Ignoring duplicate SIP termination call_id=%s reason=%s",
                 call_id,
@@ -101,9 +108,13 @@ class EndpointTerminationHandler:
             or getattr(session_endpoint, "device_id", "")
             or ""
         )
-        softphone_call_id = str(
-            _ha_softphone_store(self.hass, session_endpoint_id).get("call_id") or ""
-        ) if session_endpoint_id else ""
+        softphone_call_id = (
+            str(
+                _ha_softphone_store(self.hass, session_endpoint_id).get("call_id") or ""
+            )
+            if session_endpoint_id
+            else ""
+        )
         terminal_reason = reason or "remote_hangup"
         terminal_state = (
             CallState.CANCELLED.value
@@ -115,7 +126,7 @@ class EndpointTerminationHandler:
             call_id,
             reason=terminal_reason,
         ):
-            await registry.finish_and_pop_wait(
+            await registry.terminate_call_wait(
                 call_id,
                 reason=terminal_reason,
                 state=terminal_state,
@@ -138,8 +149,7 @@ class EndpointTerminationHandler:
             )
         elif (
             session_endpoint_id
-            and
-            relay is None
+            and relay is None
             and client is None
             and (invite is not None or (call_id and softphone_call_id == call_id))
         ):
@@ -185,7 +195,7 @@ class EndpointTerminationHandler:
         # begin_termination makes this callback the sole teardown owner.
         # Finalize exactly once even when transport reports a call without a
         # relay, client, pending INVITE or matching browser store.
-        await registry.finish_and_pop_wait(
+        await registry.terminate_call_wait(
             call_id,
             reason=terminal_reason,
             state=terminal_state,

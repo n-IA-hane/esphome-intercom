@@ -18,7 +18,7 @@ MODULE = ROOT / "custom_components" / "voip_stack" / "endpoint_termination.py"
 class _Registry:
     def __init__(self) -> None:
         self.begin_result = True
-        self.begin_calls: list[tuple[str, str]] = []
+        self.begin_calls: list[tuple[str, object]] = []
         self.pending_invites: dict[str, object] = {}
         self.sessions: dict[str, object] = {}
         self.preanswered: object = {"reservation": "early"}
@@ -29,8 +29,8 @@ class _Registry:
         self.sip_clients: dict[str, object] = {}
         self.finished: list[tuple[str, dict[str, object]]] = []
 
-    def begin_termination(self, call_id: str, reason: str = "terminated") -> bool:
-        self.begin_calls.append((call_id, reason))
+    def begin_termination(self, call_id: str, intent: object) -> bool:
+        self.begin_calls.append((call_id, intent))
         return self.begin_result
 
     def take_pending_invite(self, call_id: str):
@@ -61,10 +61,10 @@ class _Registry:
     def bridge_for(self, _call_id: str) -> tuple[str, str]:
         return self.detach_result[:2]
 
-    def finish_and_pop(self, call_id: str, **values) -> None:
+    def terminate_call(self, call_id: str, **values) -> None:
         self.finished.append((call_id, values))
 
-    async def finish_and_pop_wait(self, call_id: str, **values) -> None:
+    async def terminate_call_wait(self, call_id: str, **values) -> None:
         self.finished.append((call_id, values))
 
 
@@ -131,6 +131,13 @@ def endpoint_termination(monkeypatch):
         "endpoint_lifecycle": {
             "call_registry": lambda hass: hass.registry,
         },
+        "endpoint_session": {
+            "TerminationInitiator": SimpleNamespace(REMOTE_PEER="remote_peer"),
+            "TerminationIntent": lambda reason, initiator: SimpleNamespace(
+                reason=reason,
+                initiator=initiator,
+            ),
+        },
         "fsm": {
             "CallState": SimpleNamespace(
                 CANCELLED=SimpleNamespace(value="cancelled"),
@@ -148,9 +155,9 @@ def endpoint_termination(monkeypatch):
         },
         "runtime_data": {
             "call_runtime_artifacts": lambda hass: hass.artifacts,
-            "conference_component": lambda hass: hass.data.get(
-                "voip_stack", {}
-            ).get("conference_manager"),
+            "conference_component": lambda hass: hass.data.get("voip_stack", {}).get(
+                "conference_manager"
+            ),
             "endpoint_directory": lambda _hass: SimpleNamespace(
                 get=lambda _endpoint_id: None,
             ),
@@ -199,7 +206,11 @@ def test_duplicate_transport_termination_has_no_side_effects(
 
     asyncio.run(handler.handle("call-1"))
 
-    assert registry.begin_calls == [("call-1", "remote_hangup")]
+    assert len(registry.begin_calls) == 1
+    call_id, intent = registry.begin_calls[0]
+    assert call_id == "call-1"
+    assert intent.reason == "remote_hangup"
+    assert intent.initiator == "remote_peer"
     assert not registry.finished
     assert not hass.released
     assert not hass.events

@@ -54,7 +54,7 @@ def _runtime() -> ring_group_orchestrator.RingGroupRuntime:
 async def test_invalid_ring_policy_terminates_source_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    registry = SimpleNamespace(finish_and_pop=Mock())
+    registry = SimpleNamespace(terminate_call=Mock())
     final_response = Mock()
     monkeypatch.setattr(
         ring_group_orchestrator,
@@ -83,7 +83,7 @@ async def test_invalid_ring_policy_terminates_source_once(
 
     final_response.assert_called_once()
     assert final_response.call_args.args[2:4] == (500, "Server Internal Error")
-    registry.finish_and_pop.assert_called_once()
+    registry.terminate_call.assert_called_once()
 
 
 @pytest.mark.asyncio

@@ -374,7 +374,7 @@ async def async_answer_browser_call(
     if not answer_result.committed:
         if response_already_sent:
             send_bye(hass, call_id)
-        registry.finish_and_pop(
+        registry.terminate_call(
             call_id,
             reason=answer_result.reason or TerminalReason.PROTOCOL_ERROR.value,
             state=CallState.CANCELLED.value,

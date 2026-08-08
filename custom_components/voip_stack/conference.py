@@ -668,7 +668,7 @@ class ConferenceRoom:
                 last_sip_event="BYE",
             )
             registry.take_media(softphone_call_id)
-            registry.finish_and_pop(
+            registry.terminate_call(
                 softphone_call_id,
                 reason=reason,
                 state=CallState.IDLE.value,
@@ -745,7 +745,7 @@ class ConferenceManager:
         try:
             registry.claim_endpoint(candidate, endpoint_id, role="ha_softphone")
         except BaseException:
-            registry.finish_and_pop(
+            registry.terminate_call(
                 candidate,
                 reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
                 state=CallState.TRANSPORT_UNREACHABLE.value,
@@ -781,7 +781,7 @@ class ConferenceManager:
                 )
             finally:
                 registry.take_media(call_id)
-                registry.finish_and_pop(call_id, reason=reason, state=state)
+                registry.terminate_call(call_id, reason=reason, state=state)
                 self.forget_ha_call(call_id)
                 if room is not None:
                     room._ha_softphone_announced.pop(call_id, None)
@@ -1017,7 +1017,7 @@ class ConferenceManager:
         else:
             registry = call_registry(self.hass)
             registry.take_media(call_id)
-            registry.finish_and_pop(
+            registry.terminate_call(
                 call_id,
                 reason=reason,
                 state=CallState.IDLE.value,
@@ -1038,7 +1038,7 @@ class ConferenceManager:
         if room is not None:
             room._set_softphone_idle(reason, call_id=call_id)
         else:
-            call_registry(self.hass).finish_and_pop(
+            call_registry(self.hass).terminate_call(
                 call_id,
                 reason=reason,
                 state="declined",

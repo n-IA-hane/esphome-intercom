@@ -304,7 +304,7 @@ async def async_hangup_browser_call(
             sip_status_code=487,
             last_sip_event="SIP_RESPONSE",
         )
-        registry.finish_and_pop(
+        registry.terminate_call(
             pending_call_id,
             reason=TerminalReason.LOCAL_HANGUP.value,
         )
@@ -337,7 +337,7 @@ async def async_hangup_browser_call(
         pending_closed=pending_closed,
     )
     if call_id:
-        registry.finish_and_pop(
+        registry.terminate_call(
             call_id,
             reason=TerminalReason.LOCAL_HANGUP.value,
         )

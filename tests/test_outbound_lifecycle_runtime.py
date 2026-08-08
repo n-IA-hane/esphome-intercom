@@ -101,7 +101,7 @@ class _Registry:
         client = self.sip_clients.pop(call_id, None)
         return client, self.watchers.pop(call_id, None)
 
-    def finish_and_pop(self, call_id: str, **kwargs) -> None:
+    def terminate_call(self, call_id: str, **kwargs) -> None:
         self.calls.append(("finish", call_id, kwargs))
         self.sessions.pop(call_id, None)
 

@@ -441,7 +441,7 @@ async def async_forward_existing_call(
                 else "SIP_RESPONSE"
             ),
         )
-        registry.finish_and_pop(call_id, reason=reason, state=terminal_state)
+        registry.terminate_call(call_id, reason=reason, state=terminal_state)
 
     async def _run_forward() -> None:
         client = None

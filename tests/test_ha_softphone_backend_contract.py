@@ -614,7 +614,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn('role="source"', claims)
         self.assertIn('role="destination"', claims)
         self.assertIn("except EndpointBusyError as err:", claims)
-        self.assertIn("registry.finish_and_pop(", claims)
+        self.assertIn("registry.terminate_call(", claims)
 
         destination_policy = outbound.split(
             "target_endpoint = _logical_endpoint_for_route", 1
@@ -631,9 +631,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         immediate_failure = tracker.split(
             'if result not in {"ringing", "in_call"}:', 1
         )[1].split("registry.sip_clients[client.dialog_ids.call_id]", 1)[0]
-        self.assertIn("registry.finish_and_pop(", immediate_failure)
+        self.assertIn("registry.terminate_call(", immediate_failure)
         self.assertLess(
-            immediate_failure.index("registry.finish_and_pop("),
+            immediate_failure.index("registry.terminate_call("),
             immediate_failure.index("await client.close()"),
         )
 
@@ -646,7 +646,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )[1].split("if registry.sip_clients.get", 1)[0]
         self.assertIn("registry.detach_client", invite_error)
         self.assertIn("_set_ha_softphone_call_state(", invite_error)
-        self.assertIn("registry.finish_and_pop(", invite_error)
+        self.assertIn("registry.terminate_call(", invite_error)
 
     def test_esp_state_mirrors_physical_busy_ownership_into_logical_endpoint(
         self,
@@ -927,7 +927,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         conference_audio = _function_body(audio_ws, "_run_conference_audio_session")
         self.assertNotIn("leave_ha_softphone", conference_audio)
         self.assertNotIn("registry.softphone_media.pop", conference_audio)
-        self.assertNotIn("registry.finish_and_pop", conference_audio)
+        self.assertNotIn("registry.terminate_call", conference_audio)
         self.assertIn("conference_media_handoff", conference_audio)
         hangup = _function_body(self.softphone_termination, "async_hangup_browser_call")
         self.assertIn("await manager.leave_ha_softphone(", hangup)

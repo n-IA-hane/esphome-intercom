@@ -76,7 +76,7 @@ def _claim_source(
             adopt_transport=True,
         )
     except EndpointBusyError:
-        registry.finish_and_pop(
+        registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.BUSY.value,
             state=CallState.BUSY.value,
@@ -116,7 +116,7 @@ async def route_local_assist(
         assist_ports = RtpPortReservation.allocate(runtime.hass)
     except RuntimeError as err:
         _LOGGER.warning("Assist RTP port allocation failed: %s", err)
-        registry.finish_and_pop(
+        registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
             state=CallState.TRANSPORT_UNREACHABLE.value,
@@ -135,7 +135,7 @@ async def route_local_assist(
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Assist bridge failed call_id=%s", invite.call_id)
         assist_ports.release()
-        registry.finish_and_pop(
+        registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.PROTOCOL_ERROR.value,
             state=CallState.TRANSPORT_UNREACHABLE.value,
@@ -244,7 +244,7 @@ async def route_local_group(
             terminal_reason = (
                 result.decline_reason or TerminalReason.TRANSPORT_UNREACHABLE.value
             )
-            registry.finish_and_pop(
+            registry.terminate_call(
                 invite.call_id,
                 reason=terminal_reason,
                 state=sip_public_state(terminal_reason),
@@ -276,7 +276,7 @@ async def route_local_group(
             ),
         )
         return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)
-    registry.finish_and_pop(
+    registry.terminate_call(
         invite.call_id,
         reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
         state=CallState.TRANSPORT_UNREACHABLE.value,

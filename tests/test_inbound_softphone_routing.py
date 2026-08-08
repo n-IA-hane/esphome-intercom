@@ -92,7 +92,7 @@ class _Registry:
             raise _BusyError(endpoint_id)
         self.claims.append((call_id, endpoint_id, values))
 
-    def finish_and_pop(self, call_id: str, **values) -> None:
+    def terminate_call(self, call_id: str, **values) -> None:
         self.finished.append((call_id, values))
 
     def attach_media(self, call_id: str, media: dict) -> None:

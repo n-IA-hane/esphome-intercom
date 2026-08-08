@@ -52,6 +52,47 @@ class LegPhase(StrEnum):
     CLOSED = "closed"
 
 
+class TerminationInitiator(StrEnum):
+    """Actor or subsystem that made the terminal decision."""
+
+    LOCAL_USER = "local_user"
+    REMOTE_PEER = "remote_peer"
+    TIMEOUT = "timeout"
+    ROUTING = "routing"
+    MEDIA = "media"
+    RUNTIME = "runtime"
+    INTERNAL = "internal"
+
+
+class SipTerminationDisposition(StrEnum):
+    """Semantic SIP operation selected later by the owning leg transport."""
+
+    AUTO = "auto"
+    NONE = "none"
+    CANCEL = "cancel"
+    BYE = "bye"
+    FINAL_RESPONSE = "final_response"
+
+
+@dataclass(frozen=True, slots=True)
+class TerminationIntent:
+    """One immutable terminal decision shared by all cleanup observers."""
+
+    reason: str
+    initiator: TerminationInitiator = TerminationInitiator.INTERNAL
+    public_state: str = "idle"
+    sip_disposition: SipTerminationDisposition = SipTerminationDisposition.AUTO
+    response_status: int = 0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "reason", str(self.reason or "terminated").strip())
+        object.__setattr__(
+            self,
+            "public_state",
+            str(self.public_state or "idle").strip(),
+        )
+
+
 class CleanupStage(IntEnum):
     """Teardown order; higher stages close before lower stages."""
 
@@ -167,6 +208,21 @@ class CallArtifacts:
     trunk_info_queue: asyncio.Queue[Any] | None = None
     trunk_closed: bool = False
 
+    def settle(self) -> None:
+        """Make every pending coordination artifact terminal exactly once."""
+
+        route = self.pending_route
+        if route is not None:
+            future = route.get("future")
+            if future is not None and hasattr(future, "done") and not future.done():
+                future.cancel()
+        self.pending_invite = None
+        self.pending_route = None
+        self.video_parameter_sets = None
+        self.forward_claim = False
+        self.answer_commit = False
+        self.trunk_info_queue = None
+        self.trunk_closed = True
 
 
 class EndpointCallSession:
@@ -203,6 +259,7 @@ class EndpointCallSession:
         self.route_kind = ""
         self.phase = phase
         self.terminal_reason = ""
+        self.termination_intent: TerminationIntent | None = None
         self.legs: dict[str, CallLeg] = {}
         self.resources: list[ManagedResource] = []
         self.tasks: set[asyncio.Task[Any]] = set()
@@ -233,7 +290,9 @@ class EndpointCallSession:
     ) -> bool:
         """Apply one public state and accepted phase as one mutation."""
 
-        changed = self._state != state or (phase is not None and self.phase is not phase)
+        changed = self._state != state or (
+            phase is not None and self.phase is not phase
+        )
         self._state = state
         if phase is not None:
             self.phase = phase
@@ -398,10 +457,14 @@ class EndpointCallSession:
                     exc_info=True,
                 )
 
-    async def _run_termination(self, reason: str) -> SessionTerminationResult:
+    async def _run_termination(
+        self,
+        intent: TerminationIntent,
+    ) -> SessionTerminationResult:
         errors: list[str] = []
         closed_legs: list[str] = []
         closed_resources: list[str] = []
+        self.artifacts.settle()
 
         current = asyncio.current_task()
         tasks = [
@@ -457,6 +520,8 @@ class EndpointCallSession:
             closed_resources,
             errors,
         )
+        self._state = intent.public_state
+        self.outcome = intent.reason
         self.phase = SessionPhase.TERMINATED
         self.terminated.set()
         result = SessionTerminationResult(
@@ -475,12 +540,12 @@ class EndpointCallSession:
                 )
         return result
 
-    async def terminate(self, reason: str) -> SessionTerminationResult:
+    async def terminate(self, intent: TerminationIntent) -> SessionTerminationResult:
         """Terminate once; every caller waits for the same cleanup barrier."""
 
-        return await async_wait_for_cleanup(self.start_termination(reason))
+        return await async_wait_for_cleanup(self.start_termination(intent))
 
-    def claim_termination(self, reason: str) -> bool:
+    def claim_termination(self, intent: TerminationIntent) -> bool:
         """Make the terminal decision once without starting resource cleanup.
 
         A signaling callback may still need to detach a legacy adapter before
@@ -491,11 +556,15 @@ class EndpointCallSession:
         if not self.live:
             return False
         self.phase = SessionPhase.TERMINATING
-        self.terminal_reason = str(reason or "terminated")
+        self.termination_intent = intent
+        self.terminal_reason = intent.reason
         self.termination_started.set()
         return True
 
-    def start_termination(self, reason: str) -> asyncio.Task[SessionTerminationResult]:
+    def start_termination(
+        self,
+        intent: TerminationIntent,
+    ) -> asyncio.Task[SessionTerminationResult]:
         """Start teardown synchronously and return its unique cleanup barrier.
 
         Signalling callbacks are deliberately synchronous at several ownership
@@ -506,12 +575,24 @@ class EndpointCallSession:
 
         if self._termination_task is None:
             if self.live:
-                self.claim_termination(reason)
+                self.claim_termination(intent)
+            elif self.termination_intent is None:
+                self.termination_intent = intent
+                self.terminal_reason = intent.reason
+            elif self.termination_intent.reason == intent.reason:
+                current = self.termination_intent
+                self.termination_intent = TerminationIntent(
+                    current.reason,
+                    initiator=current.initiator,
+                    public_state=intent.public_state,
+                    sip_disposition=current.sip_disposition,
+                    response_status=current.response_status,
+                )
             self._termination_initiator = asyncio.current_task()
             if self._termination_initiator is not None:
                 self.tasks.discard(self._termination_initiator)
             self._termination_task = asyncio.create_task(
-                self._run_termination(self.terminal_reason),
+                self._run_termination(self.termination_intent or intent),
                 name=f"voip-call-session-terminate-{self.call_id}",
             )
         return self._termination_task

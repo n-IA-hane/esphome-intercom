@@ -859,7 +859,7 @@ class GroupCallMatrixTest(unittest.TestCase):
             callee="Casa",
         )
         asyncio.run(
-            registry.finish_and_pop_wait(
+            registry.terminate_call_wait(
                 "finished-call",
                 reason="remote_hangup",
             )

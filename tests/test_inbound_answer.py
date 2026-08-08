@@ -48,8 +48,8 @@ class AnswerTransactionTest(unittest.IsolatedAsyncioTestCase):
         session = endpoint_session.EndpointCallSession("call-1", 1)
         transaction = inbound_answer.AnswerTransaction(
             session,
-            lambda status, reason, sdp: not events.append(
-                f"response:{status}:{reason}:{sdp}"
+            lambda status, reason, sdp: (
+                not events.append(f"response:{status}:{reason}:{sdp}")
             ),
         )
         transaction.add_resource(
@@ -66,7 +66,7 @@ class AnswerTransactionTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.committed)
         self.assertEqual(events, ["claim", "response:200:OK:answer"])
         self.assertEqual([resource.name for resource in session.resources], ["ports"])
-        await session.terminate("remote_hangup")
+        await session.terminate(endpoint_session.TerminationIntent("remote_hangup"))
         self.assertEqual(events[-1], "ports:remote_hangup")
 
     async def test_stale_session_rolls_back_without_sending_response(self) -> None:
@@ -81,7 +81,7 @@ class AnswerTransactionTest(unittest.IsolatedAsyncioTestCase):
             object(),
             lambda reason: events.append(f"ports:{reason}"),
         )
-        await session.terminate("cancelled")
+        await session.terminate(endpoint_session.TerminationIntent("cancelled"))
 
         result = await transaction.commit("answer", claim=lambda: True)
 

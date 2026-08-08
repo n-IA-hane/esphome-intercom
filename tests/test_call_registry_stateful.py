@@ -99,9 +99,11 @@ def test_generated_lifecycle_sequences_preserve_registry_invariants(
         elif operation.action == "remove_leg":
             registry.remove_leg(call_id, f"{call_id}:leg:{index % 3}")
         elif operation.action == "begin_termination":
-            registry.begin_termination(call_id)
+            registry.begin_termination(
+                call_id, pbx_runtime.TerminationIntent("terminated")
+            )
         elif operation.action == "finish":
-            registry.finish_and_pop(
+            registry.terminate_call(
                 call_id,
                 reason="generated_terminal",
                 state="idle",
@@ -128,10 +130,7 @@ def test_generated_lifecycle_sequences_preserve_registry_invariants(
 
     asyncio.run(registry.shutdown())
     registry.clear_runtime()
-    assert all(
-        count == 0
-        for count in registry.snapshot()["resource_counts"].values()
-    )
+    assert all(count == 0 for count in registry.snapshot()["resource_counts"].values())
 
 
 @pytest.mark.mutation
@@ -150,25 +149,32 @@ def test_terminal_faults_cannot_resurrect_or_duplicate_calls(fault: str) -> None
     session = registry.upsert("physical:esp", state="in_call", owner="bridge")
     generation = session.generation
 
-    assert registry.begin_termination("physical:esp")
-    registry.finish_and_pop(
+    assert registry.begin_termination(
+        "physical:esp", pbx_runtime.TerminationIntent("terminated")
+    )
+    registry.terminate_call(
         "physical:esp",
         reason="remote_hangup",
         state="idle",
     )
 
     if fault == "duplicate_terminal":
-        assert not registry.begin_termination("physical:esp")
+        assert not registry.begin_termination(
+            "physical:esp", pbx_runtime.TerminationIntent("terminated")
+        )
     elif fault == "late_transition":
         assert registry.transition("physical:esp", state="in_call") is None
     elif fault == "late_bridge":
-        assert registry.register_bridge(
-            source_call_id="physical:esp",
-            dest_call_id="late-leg",
-            client=object(),
-            state="connecting",
-            expected_generation=generation,
-        ) is None
+        assert (
+            registry.register_bridge(
+                source_call_id="physical:esp",
+                dest_call_id="late-leg",
+                client=object(),
+                state="connecting",
+                expected_generation=generation,
+            )
+            is None
+        )
     else:
         replacement = registry.upsert(
             "physical:esp",

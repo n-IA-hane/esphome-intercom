@@ -115,7 +115,7 @@ async def async_track_outbound_sip_client(
         if registry.sip_clients.get(client.dialog_ids.call_id) is client:
             registry.detach_client(client.dialog_ids.call_id)
         public_result = sip_public_state(result)
-        registry.finish_and_pop(
+        registry.terminate_call(
             client.dialog_ids.call_id,
             reason=sip_terminal_reason(result, public_result),
             state=public_result,
@@ -273,7 +273,7 @@ async def async_track_outbound_sip_client(
             )
         if final not in {"ringing", "in_call"}:
             registry.detach_client(client.dialog_ids.call_id)
-            registry.finish_and_pop(
+            registry.terminate_call(
                 client.dialog_ids.call_id,
                 reason=terminal_reason,
                 state=public_final,
@@ -319,7 +319,7 @@ async def async_track_outbound_sip_client(
                 last_sip_event=client.last_sip_event or "BYE",
                 sip_uri=sip_uri,
             )
-            registry.finish_and_pop(
+            registry.terminate_call(
                 client.dialog_ids.call_id,
                 reason=terminal_reason,
             )
@@ -363,7 +363,7 @@ async def async_prepare_ha_outbound_call(
                     "Ignoring stale HA SIP client cleanup error",
                     exc_info=True,
                 )
-            registry.finish_and_pop(
+            registry.terminate_call(
                 call_id,
                 reason=TerminalReason.LOCAL_HANGUP.value,
             )

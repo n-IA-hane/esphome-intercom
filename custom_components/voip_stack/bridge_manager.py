@@ -78,7 +78,7 @@ async def async_terminate_sip_bridge(
 
     client_present = bool(dest_call_id and registry.sip_clients.get(dest_call_id))
     source_bye = send_bye(source_call_id)
-    await registry.finish_and_pop_wait(
+    await registry.terminate_call_wait(
         source_call_id,
         reason=terminal_reason or TerminalReason.LOCAL_HANGUP.value,
     )

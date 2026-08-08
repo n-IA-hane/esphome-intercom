@@ -22,6 +22,8 @@ from .endpoint_session import (
     LegPhase,
     SessionPhase,
     SessionTerminationResult,
+    TerminationInitiator,
+    TerminationIntent,
 )
 from .session_cleanup import async_wait_for_cleanup
 
@@ -345,8 +347,7 @@ class SipEndpointRuntime(CallRuntimeApi):
         return sum(
             1
             for session in self.calls.values()
-            if (task := session.named_tasks.get(name)) is not None
-            and not task.done()
+            if (task := session.named_tasks.get(name)) is not None and not task.done()
         )
 
     def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> None:
@@ -722,7 +723,7 @@ class SipEndpointRuntime(CallRuntimeApi):
     def request_termination(
         self,
         call_id: str,
-        reason: str,
+        intent: TerminationIntent,
         *,
         generation: int | None = None,
     ) -> asyncio.Task[SessionTerminationResult] | None:
@@ -731,12 +732,12 @@ class SipEndpointRuntime(CallRuntimeApi):
         session = self.get_session(call_id, generation=generation)
         if session is None:
             return None
-        return session.start_termination(reason)
+        return session.start_termination(intent)
 
     def claim_termination(
         self,
         call_id: str,
-        reason: str,
+        intent: TerminationIntent,
         *,
         generation: int | None = None,
     ) -> bool:
@@ -745,7 +746,7 @@ class SipEndpointRuntime(CallRuntimeApi):
         session = self.get_session(call_id, generation=generation)
         if session is None:
             return False
-        return session.claim_termination(reason)
+        return session.claim_termination(intent)
 
     def get_session(
         self,
@@ -772,7 +773,15 @@ class SipEndpointRuntime(CallRuntimeApi):
         sessions = tuple(self.calls.values())
         if sessions:
             await asyncio.gather(
-                *(session.terminate("runtime_shutdown") for session in sessions),
+                *(
+                    session.terminate(
+                        TerminationIntent(
+                            "runtime_shutdown",
+                            initiator=TerminationInitiator.RUNTIME,
+                        )
+                    )
+                    for session in sessions
+                ),
                 return_exceptions=True,
             )
         ordered_names = [

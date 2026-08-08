@@ -173,7 +173,7 @@ async def async_ring_conference_members(
                     ),
                 )
         except EndpointBusyError:
-            registry.finish_and_pop(
+            registry.terminate_call(
                 leg_call_id,
                 reason=TerminalReason.BUSY.value,
                 state=CallState.BUSY.value,
@@ -230,7 +230,7 @@ async def async_ring_conference_members(
                 client.dialog_ids.call_id,
                 reason=terminal_reason,
             )
-            registry.finish_and_pop(
+            registry.terminate_call(
                 client.dialog_ids.call_id,
                 reason=terminal_reason,
                 state=CallState.IDLE.value,
@@ -251,7 +251,7 @@ async def async_ring_conference_members(
                         client.dialog_ids.call_id,
                         reason=cleanup_reason,
                     )
-                registry.finish_and_pop(
+                registry.terminate_call(
                     client.dialog_ids.call_id,
                     reason=cleanup_reason,
                     state=CallState.IDLE.value,
@@ -262,7 +262,7 @@ async def async_ring_conference_members(
                         attempt,
                         bye_or_cancel=True,
                     )
-                registry.finish_and_pop(
+                registry.terminate_call(
                     attempt.client.dialog_ids.call_id,
                     reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
                     state=CallState.TRANSPORT_UNREACHABLE.value,

@@ -79,7 +79,11 @@ def start_local_softphone_call(
             caller_owner_id=caller_owner_id,
         )
     except BaseException:
-        registry.pop(call_id)
+        registry.terminate_call(
+            call_id,
+            reason="local_bridge_start_failed",
+            state="error",
+        )
         raise
 
 
@@ -117,10 +121,7 @@ def _reason(snapshot: LocalCallSnapshot, endpoint_id: str) -> str:
     is_caller = endpoint_id == snapshot.caller_endpoint_id
     ended_locally = (
         is_caller and snapshot.end_reason is LocalCallEndReason.CALLER_HANGUP
-    ) or (
-        not is_caller
-        and snapshot.end_reason is LocalCallEndReason.CALLEE_HANGUP
-    )
+    ) or (not is_caller and snapshot.end_reason is LocalCallEndReason.CALLEE_HANGUP)
     return "local_hangup" if ended_locally else "remote_hangup"
 
 
@@ -160,9 +161,7 @@ def _publish_leg(
         else _state_value(snapshot.state_for(endpoint_id))
     )
     video_direction = (
-        snapshot.video_direction_for(endpoint_id)
-        if state == "in_call"
-        else "inactive"
+        snapshot.video_direction_for(endpoint_id) if state == "in_call" else "inactive"
     )
     extra: dict[str, object] = {
         "local_name": local_name,
@@ -175,9 +174,7 @@ def _publish_leg(
         "dest_device_id": _device_id(callee_endpoint),
         "target_device_id": _device_id(peer_endpoint),
         "video_offered": bool(snapshot.video_requested),
-        "video_active": bool(
-            state == "in_call" and video_direction != "inactive"
-        ),
+        "video_active": bool(state == "in_call" and video_direction != "inactive"),
         "video_format": LOCAL_VIDEO_FORMAT if snapshot.video_enabled else "",
         "video_send_format": LOCAL_VIDEO_FORMAT if snapshot.video_enabled else "",
         "video_receive_format": LOCAL_VIDEO_FORMAT if snapshot.video_enabled else "",
@@ -260,13 +257,16 @@ def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
             role="local_phone",
             state="ringing",
         )
-        registry.attach_media(snapshot.call_id, {
-            "local_bridge": True,
-            "endpoint_ids": (
-                snapshot.caller_endpoint_id,
-                snapshot.callee_endpoint_id,
-            ),
-        })
+        registry.attach_media(
+            snapshot.call_id,
+            {
+                "local_bridge": True,
+                "endpoint_ids": (
+                    snapshot.caller_endpoint_id,
+                    snapshot.callee_endpoint_id,
+                ),
+            },
+        )
         _publish_leg(hass, snapshot, snapshot.caller_endpoint_id)
         _publish_leg(hass, snapshot, snapshot.callee_endpoint_id)
         return
@@ -307,7 +307,7 @@ def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
             terminal=True,
         )
         registry.take_media(snapshot.call_id)
-        registry.finish_and_pop(
+        registry.terminate_call(
             snapshot.call_id,
             reason=(
                 snapshot.end_reason.value

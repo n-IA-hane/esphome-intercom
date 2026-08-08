@@ -357,7 +357,7 @@ async def route_sip_bridge(
             await async_close_client_and_release(client, bridge_ports)
             if video_relay is not None:
                 await video_relay.stop()
-            registry.finish_and_pop(
+            registry.terminate_call(
                 invite.call_id,
                 reason=TerminalReason.BUSY.value,
                 state=CallState.BUSY.value,
@@ -388,7 +388,7 @@ async def route_sip_bridge(
         await async_close_client_and_release(client, bridge_ports)
         if video_relay is not None:
             await video_relay.stop()
-        registry.finish_and_pop(
+        registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
             state=CallState.TRANSPORT_UNREACHABLE.value,
@@ -410,7 +410,7 @@ async def route_sip_bridge(
         await async_close_client_and_release(client, bridge_ports, bye=True)
         if video_relay is not None:
             await video_relay.stop()
-        registry.finish_and_pop(
+        registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.CANCELLED.value,
             state=CallState.CANCELLED.value,
@@ -428,7 +428,7 @@ async def route_sip_bridge(
         await async_close_client_and_release(client, bridge_ports)
         if video_relay is not None:
             await video_relay.stop()
-        registry.finish_and_pop(
+        registry.terminate_call(
             invite.call_id,
             reason=terminal_reason,
             state=public_state,

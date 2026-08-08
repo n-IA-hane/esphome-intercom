@@ -14,6 +14,7 @@ from .endpoint_session import (
     CleanupStage,
     EndpointCallSession,
     ManagedResource,
+    TerminationIntent,
 )
 from .session_cleanup import async_wait_for_cleanup
 
@@ -147,7 +148,7 @@ class AnswerTransaction:
                 self.session.release_resource(resource.name, value=resource.value)
             self._prepared.extend(prepared)
             await self.rollback("resource_transfer_failed")
-            await self.session.terminate("resource_transfer_failed")
+            await self.session.terminate(TerminationIntent("resource_transfer_failed"))
             return AnswerCommitResult(False, False, "resource_transfer_failed")
         self._finished = True
         try:
@@ -163,5 +164,5 @@ class AnswerTransaction:
         if response_sent:
             return AnswerCommitResult(True, True)
 
-        await self.session.terminate("final_response_failed")
+        await self.session.terminate(TerminationIntent("final_response_failed"))
         return AnswerCommitResult(False, False, "final_response_failed")

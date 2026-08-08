@@ -145,7 +145,7 @@ async def run_ring_group_call(
             "Server Internal Error",
             decline_reason=TerminalReason.PROTOCOL_ERROR.value,
         )
-        registry.finish_and_pop(
+        registry.terminate_call(
             invite.call_id,
             reason=TerminalReason.PROTOCOL_ERROR.value,
             state=CallState.TRANSPORT_UNREACHABLE.value,
@@ -221,7 +221,7 @@ async def run_ring_group_call(
                 sip_reason,
                 decline_reason=reason,
             )
-        registry.finish_and_pop(invite.call_id, reason=reason, state=state)
+        registry.terminate_call(invite.call_id, reason=reason, state=state)
 
     try:
         await async_prepare_ring_group_candidates(
@@ -404,7 +404,7 @@ async def run_ring_group_call(
                     invite.call_id,
                     local_call.caller_endpoint_id,
                 )
-        registry.finish_and_pop(
+        registry.terminate_call(
             invite.call_id,
             reason=reason,
             state=(
@@ -552,7 +552,7 @@ async def run_ring_group_call(
                 last_sip_event="SIP_RESPONSE",
                 route_kind=GROUP_TYPE_RING,
             )
-            registry.finish_and_pop(
+            registry.terminate_call(
                 invite.call_id,
                 reason=terminal_reason,
                 state=public_state,
@@ -575,7 +575,7 @@ async def run_ring_group_call(
                 original_context = registry.ha_context(invite.call_id)
                 if await _abort_stale_ring_group():
                     return
-                await registry.finish_and_pop_wait(
+                await registry.terminate_call_wait(
                     invite.call_id,
                     reason="local_group_selected",
                     state=CallState.IDLE.value,
@@ -720,7 +720,7 @@ async def run_ring_group_call(
                 last_sip_event="SIP_RESPONSE",
                 sip_status_code=500,
             )
-            registry.finish_and_pop(
+            registry.terminate_call(
                 invite.call_id,
                 reason=TerminalReason.PROTOCOL_ERROR.value,
                 state=CallState.TRANSPORT_UNREACHABLE.value,

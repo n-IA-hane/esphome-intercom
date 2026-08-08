@@ -52,13 +52,21 @@ class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
             stage=endpoint_session.CleanupStage.MEDIA,
         )
 
-        self.assertTrue(session.claim_termination("remote_hangup"))
-        self.assertFalse(session.claim_termination("duplicate"))
+        self.assertTrue(
+            session.claim_termination(
+                endpoint_session.TerminationIntent("remote_hangup")
+            )
+        )
+        self.assertFalse(
+            session.claim_termination(endpoint_session.TerminationIntent("duplicate"))
+        )
         self.assertIs(session.phase, endpoint_session.SessionPhase.TERMINATING)
         self.assertEqual(session.terminal_reason, "remote_hangup")
         self.assertEqual(events, [])
 
-        result = await session.start_termination("duplicate")
+        result = await session.start_termination(
+            endpoint_session.TerminationIntent("duplicate")
+        )
 
         self.assertEqual(result.reason, "remote_hangup")
         self.assertEqual(events, ["relay:remote_hangup"])
@@ -68,7 +76,9 @@ class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
         session = endpoint_session.EndpointCallSession("call-1", 1)
         session.add_resource("blocked", object(), lambda _reason: gate.wait())
 
-        cleanup = session.start_termination("cancelled")
+        cleanup = session.start_termination(
+            endpoint_session.TerminationIntent("cancelled")
+        )
 
         self.assertIs(session.phase, endpoint_session.SessionPhase.TERMINATING)
         self.assertEqual(session.terminal_reason, "cancelled")
@@ -76,6 +86,31 @@ class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(cleanup.done())
         gate.set()
         await cleanup
+
+    async def test_public_idle_is_published_only_after_cleanup_barrier(self) -> None:
+        gate = asyncio.Event()
+        session = endpoint_session.EndpointCallSession(
+            "call-1",
+            1,
+            phase=endpoint_session.SessionPhase.ESTABLISHED,
+        )
+        session.apply_observation("in_call", endpoint_session.SessionPhase.ESTABLISHED)
+        session.add_resource("blocked", object(), lambda _reason: gate.wait())
+
+        cleanup = session.start_termination(
+            endpoint_session.TerminationIntent(
+                "local_hangup",
+                initiator=endpoint_session.TerminationInitiator.LOCAL_USER,
+            )
+        )
+        await asyncio.sleep(0)
+
+        self.assertEqual(session.state, "in_call")
+        self.assertIs(session.phase, endpoint_session.SessionPhase.TERMINATING)
+        gate.set()
+        await cleanup
+        self.assertEqual(session.state, "idle")
+        self.assertIs(session.phase, endpoint_session.SessionPhase.TERMINATED)
 
     async def test_teardown_order_is_media_legs_then_reservations(self) -> None:
         events: list[str] = []
@@ -100,7 +135,9 @@ class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
             stage=endpoint_session.CleanupStage.MEDIA,
         )
 
-        result = await session.terminate("cancelled")
+        result = await session.terminate(
+            endpoint_session.TerminationIntent("cancelled")
+        )
 
         self.assertEqual(
             events,
@@ -127,9 +164,13 @@ class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
                 "callee", endpoint_session.LegKind.SIP, closer=close
             )
         )
-        first = asyncio.create_task(session.terminate("remote_hangup"))
+        first = asyncio.create_task(
+            session.terminate(endpoint_session.TerminationIntent("remote_hangup"))
+        )
         await entered.wait()
-        second = asyncio.create_task(session.terminate("duplicate"))
+        second = asyncio.create_task(
+            session.terminate(endpoint_session.TerminationIntent("duplicate"))
+        )
         release.set()
 
         first_result, second_result = await asyncio.gather(first, second)
@@ -155,7 +196,9 @@ class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
             close,
             stage=endpoint_session.CleanupStage.MEDIA,
         )
-        waiter = asyncio.create_task(session.terminate("cancelled"))
+        waiter = asyncio.create_task(
+            session.terminate(endpoint_session.TerminationIntent("cancelled"))
+        )
         await entered.wait()
         waiter.cancel()
         await asyncio.sleep(0)
@@ -191,7 +234,7 @@ class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
         )
         await started.wait()
 
-        await session.terminate("local_hangup")
+        await session.terminate(endpoint_session.TerminationIntent("local_hangup"))
 
         self.assertEqual(events, ["watcher.cancelled", "relay.closed"])
 
@@ -217,7 +260,9 @@ class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        result = await session.terminate("protocol_error")
+        result = await session.terminate(
+            endpoint_session.TerminationIntent("protocol_error")
+        )
 
         self.assertEqual(events, ["broken", "leg"])
         self.assertEqual(result.errors, ("resource:broken:OSError",))
@@ -232,7 +277,9 @@ class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
             stage=endpoint_session.CleanupStage.LEG,
         )
 
-        result = await session.terminate("remote_hangup")
+        result = await session.terminate(
+            endpoint_session.TerminationIntent("remote_hangup")
+        )
 
         self.assertEqual(events, ["resource:remote_hangup"])
         self.assertEqual(result.closed_resources, ("leg-adjacent",))
@@ -242,11 +289,17 @@ class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
         relay = object()
         session.add_resource("relay", relay, lambda _reason: None)
 
-        self.assertTrue(session.claim_termination("remote_hangup"))
+        self.assertTrue(
+            session.claim_termination(
+                endpoint_session.TerminationIntent("remote_hangup")
+            )
+        )
         transferred = session.release_resource("relay", value=relay)
 
         self.assertIs(transferred.value, relay)
-        cleanup = session.start_termination("remote_hangup")
+        cleanup = session.start_termination(
+            endpoint_session.TerminationIntent("remote_hangup")
+        )
         with self.assertRaisesRegex(RuntimeError, "cleanup has started"):
             session.release_resource("relay")
         await cleanup

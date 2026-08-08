@@ -178,17 +178,33 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry.upsert("source", state="in_call", owner="bridge")
         registry.add_leg("source", "destination", role="callee", state="in_call")
 
-        self.assertTrue(registry.begin_termination("destination"))
-        self.assertFalse(registry.begin_termination("source"))
-        registry.finish_and_pop("source", reason="remote_hangup")
-        self.assertFalse(registry.begin_termination("destination"))
+        self.assertTrue(
+            registry.begin_termination(
+                "destination", pbx_runtime.TerminationIntent("terminated")
+            )
+        )
+        self.assertFalse(
+            registry.begin_termination(
+                "source", pbx_runtime.TerminationIntent("terminated")
+            )
+        )
+        registry.terminate_call("source", reason="remote_hangup")
+        self.assertFalse(
+            registry.begin_termination(
+                "destination", pbx_runtime.TerminationIntent("terminated")
+            )
+        )
 
     def test_async_generation_stops_owning_call_at_begin_termination(self) -> None:
         registry = _registry()
         session = registry.upsert("call-1", state="in_call", owner="bridge")
 
         self.assertTrue(registry.is_generation_current("call-1", session.generation))
-        self.assertTrue(registry.begin_termination("call-1"))
+        self.assertTrue(
+            registry.begin_termination(
+                "call-1", pbx_runtime.TerminationIntent("terminated")
+            )
+        )
         self.assertEqual(registry.sessions["call-1"].phase.value, "terminating")
         self.assertFalse(registry.is_generation_current("call-1", session.generation))
 
@@ -197,8 +213,12 @@ class CallRegistryEventContextTest(unittest.TestCase):
         session = registry.upsert("source", state="ringing", owner="router")
         client = object()
 
-        self.assertTrue(registry.begin_termination("source"))
-        registry.finish_and_pop("source", reason="cancelled", state="cancelled")
+        self.assertTrue(
+            registry.begin_termination(
+                "source", pbx_runtime.TerminationIntent("terminated")
+            )
+        )
+        registry.terminate_call("source", reason="cancelled", state="cancelled")
 
         attached = registry.register_bridge(
             source_call_id="source",
@@ -389,7 +409,10 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry.event_fields("source", "ringing")
         self.assertIn("destination", registry.event_contexts)
 
-        popped = registry.pop("destination")
+        popped = registry._discard_dark_session(
+            "destination",
+            pbx_runtime.TerminationIntent("test_complete"),
+        )
 
         self.assertIsNotNone(popped)
         self.assertEqual(registry.event_contexts, {})
@@ -522,7 +545,10 @@ class CallRegistryEventContextTest(unittest.TestCase):
         after_replace = session.revision
         registry.remove_leg("call-1", "leg-1")
         after_remove = session.revision
-        registry.finish("call-1", reason="remote_hangup")
+        registry._discard_dark_session(
+            "call-1",
+            pbx_runtime.TerminationIntent("remote_hangup"),
+        )
 
         self.assertGreater(after_add, initial)
         self.assertGreater(after_replace, after_add)
@@ -543,7 +569,11 @@ class CallRegistryEventContextTest(unittest.TestCase):
     def test_terminal_tombstones_evict_oldest_deterministically(self) -> None:
         registry = _registry()
         for index in range(call_registry.MAX_TERMINATED_CALL_IDS + 1):
-            self.assertTrue(registry.begin_termination(f"call-{index}"))
+            self.assertTrue(
+                registry.begin_termination(
+                    f"call-{index}", pbx_runtime.TerminationIntent("terminated")
+                )
+            )
 
         self.assertFalse(registry.is_terminated("call-0"))
         self.assertTrue(registry.is_terminated("call-1"))
@@ -570,7 +600,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
             )
         )
         generation = session.generation
-        registry.finish_and_pop("call-1", reason="remote_hangup")
+        registry.terminate_call("call-1", reason="remote_hangup")
 
         self.assertTrue(registry.is_terminated("call-1", generation=generation))
         self.assertFalse(registry.is_current("call-1", revision=session.revision))
@@ -582,7 +612,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry.set_pending_invite("call-1", object())
         registry.set_pending_route("call-1", {"future": object()})
 
-        registry.finish_and_pop("call-1", reason="remote_hangup")
+        registry.terminate_call("call-1", reason="remote_hangup")
 
         self.assertNotIn("call-1", registry.event_contexts)
         self.assertNotIn("call-1", registry.pending_invites)
@@ -613,7 +643,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
             state="ringing",
         )
 
-        registry.finish_and_pop("destination-leg", reason="remote_hangup")
+        registry.terminate_call("destination-leg", reason="remote_hangup")
 
         self.assertEqual(endpoints.active, {})
         self.assertCountEqual(
@@ -662,7 +692,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         )
 
         self.assertEqual(endpoints.active["kiosk"], "sip-call")
-        registry.finish_and_pop("sip-call", reason="remote_hangup")
+        registry.terminate_call("sip-call", reason="remote_hangup")
         self.assertEqual(endpoints.active, {})
 
     def test_controller_identity_is_sticky_and_preserves_first_ha_context(self) -> None:
