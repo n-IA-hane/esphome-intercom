@@ -143,14 +143,16 @@ class MediaPortPoolTest(unittest.TestCase):
     def test_delayed_offer_reservation_transfers_once(self) -> None:
         hass = FakeHass()
         with patch.object(media_ports, "rtp_port_available", return_value=True):
-            reservation = media_ports.reserve_delayed_offer_ports(hass, "call-1")
+            reservation = media_ports.reserve_delayed_offer_ports(
+                hass, hass.runtime.sip, "call-1"
+            )
             self.assertIs(hass.call_artifacts.delayed_offer_ports, reservation)
             self.assertIs(
-                media_ports.take_delayed_offer_ports(hass, "call-1"),
+                media_ports.take_delayed_offer_ports(hass.runtime.sip, "call-1"),
                 reservation,
             )
             self.assertIsNone(
-                media_ports.take_delayed_offer_ports(hass, "call-1")
+                media_ports.take_delayed_offer_ports(hass.runtime.sip, "call-1")
             )
             reservation.release()
             self.assertEqual(hass.runtime.rtp_port_pool["used"], set())

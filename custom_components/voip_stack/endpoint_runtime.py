@@ -718,7 +718,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             origin="trunk" if initial.received_via_trunk else "extension",
         )
         try:
-            ports = reserve_delayed_offer_ports(hass, initial.call_id)
+            ports = reserve_delayed_offer_ports(hass, registry, initial.call_id)
         except RuntimeError:
             await registry.terminate_call_wait(
                 initial.call_id,
@@ -753,7 +753,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             if not result.defer_final:
                 return result
 
-            reservation = take_delayed_offer_ports(hass, invite.call_id)
+            reservation = take_delayed_offer_ports(registry, invite.call_id)
             if reservation is None:
                 # A deferred bridge or fork already transferred the advertised
                 # pair into its asynchronous route owner. Its final answer is

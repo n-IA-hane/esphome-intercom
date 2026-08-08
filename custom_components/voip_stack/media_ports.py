@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import socket
+from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant
 
 from .config import transport_config
 from .runtime_data import require_runtime_data
+
+if TYPE_CHECKING:
+    from .pbx_runtime import SipEndpointRuntime
 from .media_reservation import (
     release_media_reservation as release_media_reservation,
     release_video_media_reservation as release_video_media_reservation,
@@ -42,12 +46,12 @@ class RtpPortReservation:
 
 def reserve_delayed_offer_ports(
     hass: HomeAssistant,
+    runtime: SipEndpointRuntime,
     call_id: str,
 ) -> RtpPortReservation:
     """Reserve the media pair advertised by one initial delayed offer."""
 
-    runtime = require_runtime_data(hass).sip
-    artifacts = runtime.artifacts_for(call_id) if runtime is not None else None
+    artifacts = runtime.artifacts_for(call_id)
     if artifacts is None:
         raise RuntimeError("SIP call session is unavailable")
     if artifacts.delayed_offer_ports is not None:
@@ -58,13 +62,12 @@ def reserve_delayed_offer_ports(
 
 
 def take_delayed_offer_ports(
-    hass: HomeAssistant,
+    runtime: SipEndpointRuntime,
     call_id: str,
 ) -> RtpPortReservation | None:
     """Transfer the advertised media pair to the canonical route owner."""
 
-    runtime = require_runtime_data(hass).sip
-    artifacts = runtime.artifacts_for(call_id) if runtime is not None else None
+    artifacts = runtime.artifacts_for(call_id)
     if artifacts is None:
         return None
     reservation = artifacts.delayed_offer_ports

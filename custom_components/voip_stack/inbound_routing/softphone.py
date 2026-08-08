@@ -236,7 +236,7 @@ def answer_inbound_ha_softphone(
             local_rtp_port = allocate_sip_rtp_port(hass)
             local_video_rtp_port = 0
     else:
-        media_reservation = take_delayed_offer_ports(hass, invite.call_id)
+        media_reservation = take_delayed_offer_ports(registry, invite.call_id)
         local_rtp_port = (
             media_reservation.ports[0]
             if media_reservation is not None

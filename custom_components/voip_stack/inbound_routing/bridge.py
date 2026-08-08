@@ -186,7 +186,7 @@ async def route_sip_bridge(
 
     try:
         bridge_ports = take_delayed_offer_ports(
-            hass, invite.call_id
+            registry, invite.call_id
         ) or RtpPortReservation.allocate(hass)
     except RuntimeError as err:
         _LOGGER.warning("SIP RTP bridge port allocation failed: %s", err)

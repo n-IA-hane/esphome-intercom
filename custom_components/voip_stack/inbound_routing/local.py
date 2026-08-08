@@ -113,7 +113,7 @@ async def route_local_assist(
         return busy
     try:
         assist_ports = take_delayed_offer_ports(
-            runtime.hass, invite.call_id
+            registry, invite.call_id
         ) or RtpPortReservation.allocate(runtime.hass)
     except RuntimeError as err:
         _LOGGER.warning("Assist RTP port allocation failed: %s", err)

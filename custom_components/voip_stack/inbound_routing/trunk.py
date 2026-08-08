@@ -92,7 +92,7 @@ def prepare_trunk_preanswer(
     artifacts.trunk_info_queue = asyncio.Queue(maxsize=MAX_TRUNK_INFO_DIGITS)
     try:
         bridge_ports = take_delayed_offer_ports(
-            hass, invite.call_id
+            registry, invite.call_id
         ) or RtpPortReservation.allocate(hass)
     except RuntimeError as err:
         _LOGGER.warning("SIP trunk RTP bridge port allocation failed: %s", err)
