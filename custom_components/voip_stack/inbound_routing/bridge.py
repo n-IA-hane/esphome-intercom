@@ -23,7 +23,7 @@ from ..const import (
 )
 from ..dtmf_events import attach_dtmf_event_bridge
 from ..endpoint_registry import EndpointBusyError
-from ..endpoint_session import SipTerminationDisposition, TerminationIntent
+from ..endpoint_session import CleanupStage, SipTerminationDisposition, TerminationIntent
 from ..endpoint_routing import (
     peer_audio_formats,
     peer_for_target,
@@ -36,6 +36,7 @@ from ..fsm import (
     TerminalReason,
     sip_failure_response,
 )
+from ..inbound_answer import AnswerTransaction, bind_final_response
 from ..media_ports import (
     RtpPortReservation,
     release_sip_rtp_port_pair,
@@ -526,20 +527,15 @@ async def route_sip_bridge(
             )
             return
 
+        session = registry.get_session(invite.call_id)
+        if session is None:
+            await relay.stop()
+            return
         bridge_ports.detach()
         runtime.attach_client_media_update(
             client,
             relay,
             source_call_id=invite.call_id,
-        )
-        registry.attach_relay(invite.call_id, relay)
-        registry.upsert(
-            invite.call_id,
-            state=CallState.IN_CALL.value,
-            owner="bridge",
-            caller=invite.caller,
-            callee=resolved_callee,
-            route_kind=decision.action.value,
         )
         answer = build_answer_directional(
             local_ip,
@@ -553,7 +549,37 @@ async def route_sip_bridge(
             video_format=selected_video,
             video_direction=selected_video_direction,
         )
-        runtime.send_final_response(hass, invite.call_id, 200, "OK", answer_sdp=answer)
+        transaction = AnswerTransaction(
+            session,
+            bind_final_response(
+                runtime.send_final_response,
+                hass,
+                invite.call_id,
+            ),
+        )
+        transaction.add_resource(
+            f"relay:{invite.call_id}",
+            relay,
+            lambda _reason: relay.stop(),
+            stage=CleanupStage.MEDIA,
+        )
+
+        def _claim_answer() -> bool:
+            return (
+                registry.transition(
+                    invite.call_id,
+                    state=CallState.IN_CALL.value,
+                    owner="bridge",
+                    caller=invite.caller,
+                    callee=resolved_callee,
+                    route_kind=decision.action.value,
+                    expected_generation=session.generation,
+                )
+                is not None
+            )
+
+        if not (await transaction.commit(answer, claim=_claim_answer)).committed:
+            return
         _set_sip_bridge_call_state(
             hass,
             CallState.IN_CALL.value,

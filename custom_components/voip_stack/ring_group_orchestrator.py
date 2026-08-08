@@ -35,6 +35,10 @@ from .fsm import (
     sip_failure_response as _sip_failure_response,
 )
 from .groups import GROUP_TYPE_RING
+from .inbound_answer import (
+    async_commit_runtime_answer,
+    bind_final_response,
+)
 from .media_ports import (
     allocate_sip_rtp_port as _allocate_sip_rtp_port,
     release_sip_rtp_port_pair as _release_sip_rtp_port_pair,
@@ -577,21 +581,6 @@ async def run_ring_group_call(
                 dtmf=first_offered_dtmf_format(invite.remote_sdp),
                 remote_sdp=invite.remote_sdp,
             )
-            committed = registry.transition(
-                invite.call_id,
-                state=CallState.IN_CALL.value,
-                owner="ha_softphone",
-                caller=invite.caller,
-                callee=entry.display_name,
-                route_kind=GROUP_TYPE_RING,
-                expected_generation=call_generation,
-                endpoint_id=winner.endpoint_id,
-                dest_endpoint_id=winner.endpoint_id,
-                media_client_id=winner_media_client_id,
-            )
-            if committed is None:
-                await _cleanup_ring_resources(TerminalReason.CANCELLED.value)
-                return
             media = {
                 "invite": invite,
                 "local_rtp_port": local_rtp_port,
@@ -606,14 +595,24 @@ async def run_ring_group_call(
                 role="ha_softphone",
                 state=CallState.IN_CALL.value,
             )
-            if not _sip_send_final_response(
-                hass, invite.call_id, 200, "OK", answer_sdp=answer
-            ):
-                await _cleanup_ring_resources(
-                    TerminalReason.CANCELLED.value
-                    if not _call_is_current()
-                    else TerminalReason.PROTOCOL_ERROR.value
+            if not (
+                await async_commit_runtime_answer(
+                    registry,
+                    invite.call_id,
+                    answer,
+                    send_final_response=bind_final_response(
+                        _sip_send_final_response, hass, invite.call_id
+                    ),
+                    owner="ha_softphone",
+                    caller=invite.caller,
+                    callee=entry.display_name,
+                    route_kind=GROUP_TYPE_RING,
+                    endpoint_id=winner.endpoint_id,
+                    dest_endpoint_id=winner.endpoint_id,
+                    media_client_id=winner_media_client_id,
                 )
+            ).committed:
+                await _cleanup_ring_resources(TerminalReason.PROTOCOL_ERROR.value)
                 return
             _set_ha_softphone_call_state(
                 hass,
@@ -829,20 +828,25 @@ async def run_ring_group_call(
             }
         else:
             softphone_media = None
-        committed = registry.transition(
-            invite.call_id,
-            state=CallState.IN_CALL.value,
-            owner="ha_softphone",
-            caller=invite.caller,
-            callee=dialed_target,
-            route_kind=GROUP_TYPE_RING,
-            endpoint_id=origin_endpoint_id if ha_origin else "",
-            source_endpoint_id=source_endpoint_id,
-            dest_endpoint_id=winner.endpoint_id,
-            media_client_id=origin_media_client_id,
-            expected_generation=call_generation,
-        )
-        if committed is None:
+        def _claim_selected_answer() -> bool:
+            return (
+                registry.transition(
+                    invite.call_id,
+                    state=CallState.IN_CALL.value,
+                    owner="ha_softphone",
+                    caller=invite.caller,
+                    callee=dialed_target,
+                    route_kind=GROUP_TYPE_RING,
+                    endpoint_id=origin_endpoint_id if ha_origin else "",
+                    source_endpoint_id=source_endpoint_id,
+                    dest_endpoint_id=winner.endpoint_id,
+                    media_client_id=origin_media_client_id,
+                    expected_generation=call_generation,
+                )
+                is not None
+            )
+
+        if ha_origin and not _claim_selected_answer():
             try:
                 await relay.stop()
             finally:
@@ -882,18 +886,24 @@ async def run_ring_group_call(
                     else "inactive"
                 ),
             )
-            if not _sip_send_final_response(
-                hass,
-                invite.call_id,
-                200,
-                "OK",
-                answer_sdp=answer,
-            ):
-                await _cleanup_ring_resources(
-                    TerminalReason.CANCELLED.value
-                    if not _call_is_current()
-                    else TerminalReason.PROTOCOL_ERROR.value
+            if not (
+                await async_commit_runtime_answer(
+                    registry,
+                    invite.call_id,
+                    answer,
+                    send_final_response=bind_final_response(
+                        _sip_send_final_response, hass, invite.call_id
+                    ),
+                    owner="ha_softphone",
+                    caller=invite.caller,
+                    callee=dialed_target,
+                    route_kind=GROUP_TYPE_RING,
+                    source_endpoint_id=source_endpoint_id,
+                    dest_endpoint_id=winner.endpoint_id,
+                    media_client_id=origin_media_client_id,
                 )
+            ).committed:
+                await _cleanup_ring_resources(TerminalReason.PROTOCOL_ERROR.value)
                 return
         _set_sip_bridge_call_state(
             hass,

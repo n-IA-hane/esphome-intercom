@@ -295,6 +295,7 @@ class EndpointCallSession:
         self.phase = phase
         self.terminal_reason = ""
         self.termination_intent: TerminationIntent | None = None
+        self.answer_committed = False
         self.legs: dict[str, CallLeg] = {}
         self.resources: list[ManagedResource] = []
         self.tasks: set[asyncio.Task[Any]] = set()
@@ -349,6 +350,16 @@ class EndpointCallSession:
             and token.call_id == self.call_id
             and token.generation == self.generation
         )
+
+    def claim_answer(self, token: CallToken, claim: Callable[[], bool]) -> bool:
+        """Commit one successful answer transition for this generation."""
+
+        if not self.owns(token) or self.answer_committed:
+            return False
+        if not bool(claim()) or not self.owns(token):
+            return False
+        self.answer_committed = True
+        return True
 
     def ensure_live(self, token: CallToken | None = None) -> None:
         if not self.live or (token is not None and not self.owns(token)):

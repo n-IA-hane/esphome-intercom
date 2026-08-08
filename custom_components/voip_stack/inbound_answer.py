@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 import logging
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from .endpoint_session import (
     AsyncCloser,
@@ -16,13 +16,29 @@ from .endpoint_session import (
     ManagedResource,
     TerminationIntent,
 )
+from .fsm import CallState
 from .session_cleanup import async_wait_for_cleanup
+
+if TYPE_CHECKING:
+    from .call_registry import CallRuntimeApi
 
 
 _LOGGER = logging.getLogger(__name__)
 
 SendFinalResponse: TypeAlias = Callable[[int, str, str], bool]
 ClaimAnswer: TypeAlias = Callable[[], bool]
+
+
+def bind_final_response(
+    send: Callable[..., bool],
+    context: object,
+    call_id: str,
+) -> SendFinalResponse:
+    """Bind the common HA final-response adapter once."""
+
+    return lambda status, reason, sdp: bool(
+        send(context, call_id, status, reason, answer_sdp=sdp)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,7 +132,7 @@ class AnswerTransaction:
         # state claim, resource transfer, and final response.  This makes the
         # sequence atomic relative to asyncio termination callbacks.
         try:
-            claimed = bool(claim())
+            claimed = self.session.claim_answer(self.token, claim)
         except Exception:
             _LOGGER.exception(
                 "Inbound answer state claim failed call_id=%s",
@@ -166,3 +182,65 @@ class AnswerTransaction:
 
         await self.session.terminate(TerminationIntent("final_response_failed"))
         return AnswerCommitResult(False, False, "final_response_failed")
+
+
+async def async_commit_answer(
+    session: EndpointCallSession,
+    answer_sdp: str,
+    *,
+    claim: ClaimAnswer,
+    send_final_response: SendFinalResponse,
+    response_already_sent: bool = False,
+) -> AnswerCommitResult:
+    """Commit one answer through the session generation owner."""
+
+    transaction = AnswerTransaction(
+        session,
+        (lambda _status, _reason, _sdp: True)
+        if response_already_sent
+        else send_final_response,
+    )
+    return await transaction.commit(answer_sdp, claim=claim)
+
+
+async def async_commit_runtime_answer(
+    runtime: CallRuntimeApi,
+    call_id: str,
+    answer_sdp: str,
+    *,
+    send_final_response: SendFinalResponse,
+    owner: str,
+    caller: str = "",
+    callee: str = "",
+    route_kind: str = "",
+    endpoint_id: str = "",
+    source_endpoint_id: str = "",
+    dest_endpoint_id: str = "",
+    media_client_id: str = "",
+    response_already_sent: bool = False,
+) -> AnswerCommitResult:
+    """Atomically publish and signal one ordinary runtime answer."""
+
+    session = runtime.get_session(call_id)
+    if session is None:
+        return AnswerCommitResult(False, False, "stale_call")
+    return await async_commit_answer(
+        session,
+        answer_sdp,
+        claim=lambda: runtime.transition(
+            call_id,
+            state=CallState.IN_CALL.value,
+            owner=owner,
+            caller=caller,
+            callee=callee,
+            route_kind=route_kind,
+            expected_generation=session.generation,
+            endpoint_id=endpoint_id,
+            source_endpoint_id=source_endpoint_id,
+            dest_endpoint_id=dest_endpoint_id,
+            media_client_id=media_client_id,
+        )
+        is not None,
+        send_final_response=send_final_response,
+        response_already_sent=response_already_sent,
+    )

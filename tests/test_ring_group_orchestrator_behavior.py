@@ -10,6 +10,7 @@ import pytest
 from custom_components.voip_stack import ring_group_orchestrator
 from custom_components.voip_stack.core.sdp import RtpPcmFormat
 from custom_components.voip_stack.core.sip import parse_sip_uri
+from custom_components.voip_stack.fsm import TerminalReason
 from custom_components.voip_stack.roster import RosterEntry
 from custom_components.voip_stack.sip_listener import SipInvite
 
@@ -55,7 +56,6 @@ async def test_invalid_ring_policy_terminates_source_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = SimpleNamespace(terminate_call=Mock())
-    final_response = Mock()
     monkeypatch.setattr(
         ring_group_orchestrator,
         "_call_registry",
@@ -65,11 +65,6 @@ async def test_invalid_ring_policy_terminates_source_once(
         ring_group_orchestrator,
         "endpoint_directory",
         lambda _hass: SimpleNamespace(get=Mock(return_value=None)),
-    )
-    monkeypatch.setattr(
-        ring_group_orchestrator,
-        "_sip_send_final_response",
-        final_response,
     )
     entry = RosterEntry(
         id="group",
@@ -81,9 +76,10 @@ async def test_invalid_ring_policy_terminates_source_once(
         _runtime(), _invite(), entry, [], []
     )
 
-    final_response.assert_called_once()
-    assert final_response.call_args.args[2:4] == (500, "Server Internal Error")
     registry.terminate_call.assert_called_once()
+    intent = registry.terminate_call.call_args.kwargs["intent"]
+    assert intent.reason == TerminalReason.PROTOCOL_ERROR.value
+    assert intent.response_status == 500
 
 
 @pytest.mark.asyncio

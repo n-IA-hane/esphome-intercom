@@ -107,6 +107,26 @@ class AnswerTransactionTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.committed)
         self.assertEqual(events, ["socket:stale_call"])
 
+    async def test_only_one_answer_can_commit_for_a_generation(self) -> None:
+        events: list[str] = []
+        session = endpoint_session.EndpointCallSession("call-1", 1)
+
+        first = inbound_answer.AnswerTransaction(
+            session,
+            lambda *_args: not events.append("first-response"),
+        )
+        second = inbound_answer.AnswerTransaction(
+            session,
+            lambda *_args: not events.append("second-response"),
+        )
+
+        self.assertTrue((await first.commit("answer", claim=lambda: True)).committed)
+        result = await second.commit("answer", claim=lambda: True)
+
+        self.assertFalse(result.committed)
+        self.assertEqual(result.reason, "stale_call")
+        self.assertEqual(events, ["first-response"])
+
     async def test_resource_conflict_rolls_back_without_claim_or_response(self) -> None:
         events: list[str] = []
         session = endpoint_session.EndpointCallSession("call-1", 1)

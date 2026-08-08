@@ -57,6 +57,11 @@ from .fsm import (
     TerminalReason,
 )
 from .groups import GROUP_TYPE_RING
+from .inbound_answer import (
+    AnswerCommitResult,
+    async_commit_runtime_answer,
+    bind_final_response,
+)
 from .media_ports import (
     RtpPortReservation,
     release_media_reservation as _release_media_reservation,
@@ -424,6 +429,28 @@ async def async_forward_existing_call(
                 if answered
                 else TerminationIntent.final_response(reason, status)
             ),
+        )
+
+    async def _commit_source_answer(
+        answer_sdp: str,
+        *,
+        owner: str,
+        callee: str,
+        route_kind: str,
+        response_already_sent: bool,
+    ) -> AnswerCommitResult:
+        return await async_commit_runtime_answer(
+            registry,
+            call_id,
+            answer_sdp,
+            send_final_response=bind_final_response(
+                _sip_send_final_response, hass, call_id
+            ),
+            owner=owner,
+            caller=invite.caller,
+            callee=callee,
+            route_kind=route_kind,
+            response_already_sent=response_already_sent,
         )
 
     async def _run_forward() -> None:
@@ -829,9 +856,9 @@ async def async_forward_existing_call(
                 # The audio reservation moved to Assist ownership above;
                 # any pre-answer video sockets did not and must be released.
                 _release_video_media_reservation(consumed_preanswer)
-                if preanswered is None or not bool(
-                    preanswered.get("final_response_sent", True)
-                ):
+                response_already_sent = _source_dialog_is_answered(preanswered)
+                answer = ""
+                if not response_already_sent:
                     answer = build_answer_directional(
                         local_ip,
                         local_ip,
@@ -856,9 +883,15 @@ async def async_forward_existing_call(
                             else "inactive"
                         ),
                     )
-                    _sip_send_final_response(
-                        hass, call_id, 200, "OK", answer_sdp=answer
-                    )
+                answer_result = await _commit_source_answer(
+                    answer,
+                    owner="bridge",
+                    callee=entry.display_name,
+                    route_kind=GROUP_TYPE_RING,
+                    response_already_sent=response_already_sent,
+                )
+                if not answer_result.committed:
+                    raise RuntimeError(answer_result.reason)
                 connected_party = str(winner.member or "").strip()
                 _set_sip_bridge_call_state(
                     hass,
@@ -927,9 +960,9 @@ async def async_forward_existing_call(
                     ),
                     release_reservation_on_failure=preanswered is None,
                 )
-                if preanswered is None or not bool(
-                    preanswered.get("final_response_sent", True)
-                ):
+                response_already_sent = _source_dialog_is_answered(preanswered)
+                answer = ""
+                if not response_already_sent:
                     answer = build_answer_directional(
                         local_ip,
                         local_ip,
@@ -938,25 +971,17 @@ async def async_forward_existing_call(
                         invite.recv_format,
                         remote_sdp=invite.remote_sdp,
                     )
-                    _sip_send_final_response(
-                        hass,
-                        call_id,
-                        200,
-                        "OK",
-                        answer_sdp=answer,
-                    )
                 registry.take_pending_invite(call_id)
                 registry.take_media(call_id, provisional=True)
-                current = registry.sessions.get(registry.resolve_session_id(call_id))
-                if current is not None:
-                    registry.transition(
-                        call_id,
-                        state=CallState.IN_CALL.value,
-                        owner="assist",
-                        callee=destination,
-                        expected_revision=current.revision,
-                        expected_owner=current.owner,
-                    )
+                answer_result = await _commit_source_answer(
+                    answer,
+                    owner="assist",
+                    callee=destination,
+                    route_kind=decision.action.value,
+                    response_already_sent=response_already_sent,
+                )
+                if not answer_result.committed:
+                    raise RuntimeError(answer_result.reason)
                 return
 
             bridge_to_trunk = decision.action is RouteAction.TRUNK
@@ -1245,9 +1270,9 @@ async def async_forward_existing_call(
             registry.attach_relay(call_id, relay)
             registry.take_pending_invite(call_id)
             registry.take_media(call_id, provisional=True)
-            if preanswered is None or not bool(
-                preanswered.get("final_response_sent", True)
-            ):
+            response_already_sent = _source_dialog_is_answered(preanswered)
+            answer = ""
+            if not response_already_sent:
                 answer = build_answer_directional(
                     local_ip,
                     local_ip,
@@ -1262,15 +1287,15 @@ async def async_forward_existing_call(
                     video_format=selected_video,
                     video_direction=selected_video_direction,
                 )
-                _sip_send_final_response(hass, call_id, 200, "OK", answer_sdp=answer)
-            registry.upsert(
-                call_id,
-                state=CallState.IN_CALL.value,
+            answer_result = await _commit_source_answer(
+                answer,
                 owner="bridge",
-                caller=invite.caller,
                 callee=destination,
                 route_kind=decision.action.value,
+                response_already_sent=response_already_sent,
             )
+            if not answer_result.committed:
+                raise RuntimeError(answer_result.reason)
             _set_sip_bridge_call_state(
                 hass,
                 CallState.IN_CALL.value,

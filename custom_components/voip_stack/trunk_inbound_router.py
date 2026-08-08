@@ -34,6 +34,7 @@ from .fsm import (
     sip_public_state,
     sip_terminal_reason,
 )
+from .inbound_answer import async_commit_runtime_answer, bind_final_response
 from .media_ports import (
     RtpPortReservation,
     release_media_reservation,
@@ -281,14 +282,24 @@ async def async_route_trunk_invite(
                 source="trunk",
                 called_extension=digits or route_hint,
             )
-            if not bool((preanswered or {}).get("final_response_sent", True)):
-                send_final_response(
+            answer_result = await async_commit_runtime_answer(
+                registry,
+                invite.call_id,
+                str((preanswered or {}).get("early_answer_sdp") or ""),
+                send_final_response=bind_final_response(
+                    send_final_response,
                     hass,
                     invite.call_id,
-                    200,
-                    "OK",
-                    answer_sdp=str((preanswered or {}).get("early_answer_sdp") or ""),
-                )
+                ),
+                owner="assist",
+                callee=destination,
+                route_kind=decision.action.value,
+                response_already_sent=bool(
+                    (preanswered or {}).get("final_response_sent", True)
+                ),
+            )
+            if not answer_result.committed:
+                raise RuntimeError(answer_result.reason)
         except Exception:
             _LOGGER.exception(
                 "SIP trunk Assist bridge failed call_id=%s", invite.call_id
