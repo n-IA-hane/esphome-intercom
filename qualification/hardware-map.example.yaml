@@ -22,7 +22,7 @@ devices:
           - --esp
           - ws3
           - --scenario
-          - ha_to_esp_api_answer_hangup
+          - esp_to_ha_extension_answer_hangup
           - --out-dir
           - "${HIL_ARTIFACT_DIR}/ws3-answer-hangup"
 
@@ -40,4 +40,3 @@ devices:
           - p4
           - --out-dir
           - "${HIL_ARTIFACT_DIR}/p4-reinvite"
-

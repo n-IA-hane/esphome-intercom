@@ -110,17 +110,35 @@ class LiveVoipQualificationContractTest(unittest.TestCase):
     def test_matrix_covers_real_ha_and_esp_paths(self) -> None:
         scenarios = runner.SCENARIOS
         self.assertIn("ha_to_esp_extension_answer_hangup", scenarios)
+        self.assertIn("esp_to_ha_extension_answer_hangup", scenarios)
         self.assertIn("esp_to_ha_extension_cancel", scenarios)
-        self.assertTrue(all("esp" in scenario.requires for scenario in scenarios.values()))
-        self.assertTrue(any("ha" in scenario.requires for scenario in scenarios.values()))
+        self.assertTrue(
+            all("esp" in scenario.requires for scenario in scenarios.values())
+        )
+        self.assertTrue(
+            any("ha" in scenario.requires for scenario in scenarios.values())
+        )
 
     def test_matrix_covers_groups_dnd_trunk_and_self_call(self) -> None:
         scenarios = runner.SCENARIOS
-        self.assertTrue(any("ring_group" in scenario.requires for scenario in scenarios.values()))
-        self.assertTrue(any("conference_group" in scenario.requires for scenario in scenarios.values()))
-        self.assertTrue(any("dnd" in scenario.requires for scenario in scenarios.values()))
-        self.assertTrue(any("trunk" in scenario.requires for scenario in scenarios.values()))
-        self.assertTrue(any("busy" in scenario.requires for scenario in scenarios.values()))
+        self.assertTrue(
+            any("ring_group" in scenario.requires for scenario in scenarios.values())
+        )
+        self.assertTrue(
+            any(
+                "conference_group" in scenario.requires
+                for scenario in scenarios.values()
+            )
+        )
+        self.assertTrue(
+            any("dnd" in scenario.requires for scenario in scenarios.values())
+        )
+        self.assertTrue(
+            any("trunk" in scenario.requires for scenario in scenarios.values())
+        )
+        self.assertTrue(
+            any("busy" in scenario.requires for scenario in scenarios.values())
+        )
         self.assertIn(
             "direct_media",
             scenarios["esp_to_esp_bidirectional"].requires,
@@ -146,6 +164,52 @@ class LiveVoipQualificationContractTest(unittest.TestCase):
 
 
 class EspPairQualificationBehaviorTest(unittest.IsolatedAsyncioTestCase):
+    async def test_esp_to_ha_answer_uses_selected_phone_identity(self) -> None:
+        ctx = SimpleNamespace(
+            cleanup=AsyncMock(),
+            esp=SimpleNamespace(service=AsyncMock()),
+            ha=SimpleNamespace(service=AsyncMock()),
+            args=SimpleNamespace(ha_extension="666"),
+            capture=unittest.mock.Mock(),
+        )
+        ringing = {
+            "state": "ringing",
+            "call_id": "call-1",
+            "device_id": "phone-device",
+        }
+
+        with (
+            unittest.mock.patch.object(
+                runner,
+                "wait_esp_voip_state",
+                AsyncMock(),
+            ),
+            unittest.mock.patch.object(
+                runner,
+                "wait_softphone_state",
+                AsyncMock(
+                    side_effect=[ringing, {"state": "in_call"}, {"state": "idle"}]
+                ),
+            ),
+        ):
+            await runner.scenario_esp_to_ha_extension_answer_hangup(ctx)
+
+        self.assertEqual(
+            ctx.ha.service.await_args_list,
+            [
+                call(
+                    "voip_stack",
+                    "answer",
+                    {"call_id": "call-1", "device_id": "phone-device"},
+                ),
+                call(
+                    "voip_stack",
+                    "hangup",
+                    {"call_id": "call-1", "device_id": "phone-device"},
+                ),
+            ],
+        )
+
     async def test_pair_scenario_covers_both_directions_and_hangup_owners(
         self,
     ) -> None:

@@ -45,9 +45,7 @@ except (
 
 DEFAULT_HA_URL = os.environ.get("HA_URL", "http://127.0.0.1:18123").rstrip("/")
 DEFAULT_TOKEN_FILE = Path("/home/codex/.secrets/esphome-intercom/ha_token_codex")
-DEFAULT_AUTH_FILE = Path(
-    "/home/codex/.secrets/esphome-intercom/ha_home_auth.json"
-)
+DEFAULT_AUTH_FILE = Path("/home/codex/.secrets/esphome-intercom/ha_home_auth.json")
 OUT = Path("test_runs/live_voip_qualification")
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -91,7 +89,9 @@ def qualification_token(args: argparse.Namespace) -> str:
     """Load a live-test token without persisting a refreshed credential."""
     if args.token:
         return str(args.token).strip()
-    helper_path = Path(__file__).resolve().parents[1] / "test_runs/ha_playwright_auth.py"
+    helper_path = (
+        Path(__file__).resolve().parents[1] / "test_runs/ha_playwright_auth.py"
+    )
     if not helper_path.is_file():
         if args.auth_file.is_file():
             return _refresh_ha_token(args.auth_file)
@@ -971,6 +971,34 @@ async def scenario_esp_to_ha_extension_cancel(ctx: LiveContext) -> None:
     ctx.capture("esp_to_ha_extension_cancel")
 
 
+async def scenario_esp_to_ha_extension_answer_hangup(ctx: LiveContext) -> None:
+    """Exercise the public HA answer and hangup actions for an ESP caller."""
+
+    await ctx.cleanup()
+    await ctx.esp.service("start_call", {"dest": ctx.args.ha_extension})
+    await wait_esp_voip_state(ctx, {"calling", "remote_ringing"}, timeout=12)
+    soft = await wait_softphone_state(ctx, {"ringing"}, timeout=8)
+    call_id = str(soft.get("call_id") or "").strip()
+    device_id = str(soft.get("device_id") or "").strip()
+    if not call_id or not device_id:
+        raise AssertionError(f"HA ringing state has no phone identity: {soft}")
+    await ctx.ha.service(
+        "voip_stack",
+        "answer",
+        {"call_id": call_id, "device_id": device_id},
+    )
+    await wait_softphone_state(ctx, {"in_call"}, timeout=10)
+    await wait_esp_voip_state(ctx, {"in_call"}, timeout=12)
+    await ctx.ha.service(
+        "voip_stack",
+        "hangup",
+        {"call_id": call_id, "device_id": device_id},
+    )
+    await wait_softphone_state(ctx, {"idle"}, timeout=10)
+    await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
+    ctx.capture("esp_to_ha_extension_answer_hangup")
+
+
 async def scenario_esp_to_self_extension_busy(ctx: LiveContext) -> None:
     await ctx.cleanup()
     await ctx.esp.service("start_call", {"dest": ctx.args.esp_extension})
@@ -1186,6 +1214,13 @@ SCENARIOS: dict[str, Scenario] = {
         frozenset({"ha", "esp", "extension", "cancel"}),
         frozenset({"ha_ringing", "dialed_target_preserved", "esp_cancel", "both_idle"}),
         scenario_esp_to_ha_extension_cancel,
+    ),
+    "esp_to_ha_extension_answer_hangup": Scenario(
+        "esp_to_ha_extension_answer_hangup",
+        "ESP calls HA by extension; HA answers and hangs up through public actions",
+        frozenset({"esp", "ha", "extension", "answer", "hangup"}),
+        frozenset({"esp_in_call", "ha_in_call", "ha_bye", "both_idle"}),
+        scenario_esp_to_ha_extension_answer_hangup,
     ),
     "esp_to_self_extension_busy": Scenario(
         "esp_to_self_extension_busy",
