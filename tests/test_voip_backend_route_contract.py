@@ -60,14 +60,9 @@ TRUNK_INBOUND_ROUTER = (
     ROOT / "custom_components" / "voip_stack" / "trunk_inbound_router.py"
 )
 CALL_FORWARDER = ROOT / "custom_components" / "voip_stack" / "call_forwarder.py"
-FORWARD_GROUP_CANDIDATES = (
-    ROOT / "custom_components" / "voip_stack" / "forward_group_candidates.py"
-)
+GROUP_CANDIDATES = ROOT / "custom_components" / "voip_stack" / "group_candidates.py"
 RING_GROUP_ORCHESTRATOR = (
     ROOT / "custom_components" / "voip_stack" / "ring_group_orchestrator.py"
-)
-RING_GROUP_CANDIDATES = (
-    ROOT / "custom_components" / "voip_stack" / "ring_group_candidates.py"
 )
 RING_GROUP_FORK = ROOT / "custom_components" / "voip_stack" / "ring_group_fork.py"
 CONFERENCE_RINGING = ROOT / "custom_components" / "voip_stack" / "conference_ringing.py"
@@ -112,9 +107,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.trunk_routing = TRUNK_ROUTING.read_text()
         cls.trunk_inbound_router = TRUNK_INBOUND_ROUTER.read_text()
         cls.call_forwarder = CALL_FORWARDER.read_text()
-        cls.forward_group_candidates = FORWARD_GROUP_CANDIDATES.read_text()
+        cls.group_candidates = GROUP_CANDIDATES.read_text()
         cls.ring_group = RING_GROUP_ORCHESTRATOR.read_text()
-        cls.ring_group_candidates = RING_GROUP_CANDIDATES.read_text()
         cls.ring_group_fork = RING_GROUP_FORK.read_text()
         cls.conference_ringing = CONFERENCE_RINGING.read_text()
         cls.invite_router = INVITE_ROUTER.read_text()
@@ -217,7 +211,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ):
             self.assertIn(field, publish)
         self.assertIn(
-            "200 if invite.call_id in registry.preanswered else 180",
+            'registry.resource_for(invite.call_id, "preanswered") is not None',
             publish,
         )
 
@@ -1108,9 +1102,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("discard(invite.call_id)", task_prelude)
 
     def test_ring_group_treats_ha_member_as_parallel_contender(self) -> None:
-        ring_group = self.ring_group + self.ring_group_candidates + self.ring_group_fork
+        ring_group = self.ring_group + self.group_candidates + self.ring_group_fork
         self.assertIn(
-            "await async_prepare_ring_group_candidates(",
+            "await async_prepare_group_candidates(",
             self.ring_group,
         )
         self.assertIn("browser_legs: list[BrowserLeg]", ring_group)
@@ -1134,12 +1128,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_initial_automation_group_selection_keeps_ha_members(self) -> None:
         forward = self.call_forwarder
-        candidates = self.forward_group_candidates
+        candidates = self.group_candidates
         group_fork = self.ring_group_fork
         trunk_route = self.trunk_inbound_router
         self.assertIn("initial_selection: bool = False", forward)
-        self.assertIn("prepare_forward_group_candidates(", forward)
-        self.assertIn("if not initial_selection:", candidates)
+        self.assertIn("async_prepare_group_candidates(", forward)
+        self.assertIn("not initial_selection", candidates)
         self.assertIn("browser_endpoint_can_ring(endpoint)", candidates)
         self.assertIn("browser_legs: list[BrowserLeg]", candidates)
         self.assertIn('role="group_candidate"', candidates)

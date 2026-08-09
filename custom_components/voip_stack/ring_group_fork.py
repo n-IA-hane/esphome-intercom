@@ -17,7 +17,7 @@ from .outbound_attempts import (
     OutboundLeg,
     async_close_outbound_leg,
 )
-from .ring_group_candidates import PreflightFailure
+from .group_candidates import PreflightFailure
 
 RING_GROUP_TIMEOUT_S = 30.0
 ForkPayload = OutboundLeg | BrowserLeg | dict[str, Any]

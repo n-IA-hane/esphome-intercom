@@ -48,10 +48,10 @@ from .endpoint_routing import (
     roster_from_peers as _roster_from_peers,
     sip_target_audio_profile as _sip_target_audio_profile,
 )
-from .forward_group_candidates import (
-    ForwardGroupCandidateRuntime,
-    ForwardGroupCandidates,
-    prepare_forward_group_candidates,
+from .group_candidates import (
+    GroupCandidateRuntime,
+    GroupCandidates,
+    async_prepare_group_candidates,
 )
 from .fsm import (
     CallState,
@@ -561,7 +561,7 @@ async def async_forward_existing_call(
                 if entry is None:
                     raise RuntimeError("ring group has no roster entry")
                 members = _unique_group_members(entry.metadata.get("members"))
-                candidates = ForwardGroupCandidates()
+                candidates = GroupCandidates()
                 attempts = candidates.attempts
                 browser_legs = candidates.browser_legs
                 endpoint_registry = endpoint_directory(hass)
@@ -586,9 +586,9 @@ async def async_forward_existing_call(
                     )
 
                 try:
-                    prepare_forward_group_candidates(
+                    await async_prepare_group_candidates(
                         candidates,
-                        ForwardGroupCandidateRuntime(
+                        GroupCandidateRuntime(
                             registry=registry,
                             endpoint_registry=endpoint_registry,
                             browser_leg_for_member=runtime.browser_leg_for_member,

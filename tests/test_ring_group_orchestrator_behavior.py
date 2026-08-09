@@ -110,7 +110,7 @@ async def test_terminated_source_never_starts_group_candidates(
     )
     monkeypatch.setattr(
         ring_group_orchestrator,
-        "async_prepare_ring_group_candidates",
+        "async_prepare_group_candidates",
         prepare,
     )
     entry = RosterEntry(

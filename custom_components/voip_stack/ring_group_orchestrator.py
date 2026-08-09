@@ -56,10 +56,10 @@ from .ring_group import (
     publish_ring_group_origin_state as _publish_ring_group_origin_state,
     settle_browser_candidates as _settle_ring_browser_candidates,
 )
-from .ring_group_candidates import (
-    RingGroupCandidateRuntime,
-    RingGroupCandidates,
-    async_prepare_ring_group_candidates,
+from .group_candidates import (
+    GroupCandidateRuntime,
+    GroupCandidates,
+    async_prepare_group_candidates,
 )
 from .ring_group_fork import build_ring_group_fork
 from .core.sdp import build_answer_directional, first_offered_dtmf_format
@@ -148,7 +148,7 @@ async def run_ring_group_call(
             ),
         )
         return
-    candidates = RingGroupCandidates()
+    candidates = GroupCandidates()
     attempts = candidates.attempts
     browser_legs = candidates.browser_legs
     preflight_failures = candidates.preflight_failures
@@ -220,9 +220,9 @@ async def run_ring_group_call(
         )
 
     try:
-        await async_prepare_ring_group_candidates(
+        await async_prepare_group_candidates(
             candidates,
-            RingGroupCandidateRuntime(
+            GroupCandidateRuntime(
                 registry=registry,
                 endpoint_registry=endpoint_registry,
                 browser_leg_for_member=_browser_leg_for_member,
@@ -354,7 +354,7 @@ async def run_ring_group_call(
         """Tear down every ownership layer after an aborted group call."""
         _take_pending_route(hass, invite.call_id)
         _source_call_id, dest_call_id = registry.bridge_for(invite.call_id)
-        bridge_client = registry.sip_clients.get(dest_call_id)
+        bridge_client = registry.sip_client_for(dest_call_id)
         remaining_attempts = [
             attempt
             for attempt in attempts

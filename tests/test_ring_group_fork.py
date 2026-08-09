@@ -80,7 +80,7 @@ def _load_module():
     outbound.async_close_outbound_leg = close_outbound_leg
     sys.modules[outbound.__name__] = outbound
 
-    candidates = types.ModuleType(f"{PACKAGE}.ring_group_candidates")
+    candidates = types.ModuleType(f"{PACKAGE}.group_candidates")
     candidates.PreflightFailure = tuple
     sys.modules[candidates.__name__] = candidates
 
