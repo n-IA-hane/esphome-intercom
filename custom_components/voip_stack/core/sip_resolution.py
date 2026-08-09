@@ -71,6 +71,7 @@ class SipServerResolver:
         self._address_query = address_query or self._query_addresses
         self._random = random_source or random.Random()
         self._cache: dict[tuple[str, str], tuple[float, tuple[object, ...]]] = {}
+        self._system_resolver: object | None = None
 
     async def resolve(
         self,
@@ -231,11 +232,16 @@ class SipServerResolver:
         )
         return tuple(dict.fromkeys(str(answer[4][0]) for answer in answers))
 
-    @staticmethod
-    async def _query_dns(name: str, kind: str) -> tuple[tuple[object, ...], float]:
+    async def _query_dns(self, name: str, kind: str) -> tuple[tuple[object, ...], float]:
         import dns.asyncresolver  # type: ignore[import-not-found]
 
-        answer = await dns.asyncresolver.resolve(name, kind, search=False)
+        if self._system_resolver is None:
+            # dnspython reads /etc/resolv.conf while constructing its default
+            # resolver. Home Assistant treats that synchronous file access as
+            # an event-loop violation, so create it once in the executor and
+            # keep all network I/O on dnspython's async resolver afterwards.
+            self._system_resolver = await asyncio.to_thread(dns.asyncresolver.Resolver)
+        answer = await self._system_resolver.resolve(name, kind, search=False)
         ttl = float(answer.rrset.ttl if answer.rrset is not None else 30)
         if kind == "SRV":
             records: Iterable[object] = (

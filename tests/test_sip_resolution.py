@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import random
+import sys
+from types import SimpleNamespace
+import types
 
 import pytest
 
@@ -87,6 +90,46 @@ async def test_sips_never_downgrades_transport() -> None:
         )
     target = (await resolver.resolve(sip.parse_sip_uri("sips:pbx.example")))[0]
     assert (target.port, target.transport) == (5061, "TLS")
+
+
+@pytest.mark.asyncio
+async def test_system_resolver_configuration_runs_off_event_loop_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructed: list[object] = []
+    queries: list[tuple[str, str, bool]] = []
+
+    class Answer(list):
+        rrset = SimpleNamespace(ttl=30)
+
+    class Resolver:
+        async def resolve(self, name: str, kind: str, *, search: bool):
+            queries.append((name, kind, search))
+            return Answer()
+
+    async def offload(factory):
+        resolver = factory()
+        constructed.append(resolver)
+        return resolver
+
+    dns = types.ModuleType("dns")
+    asyncresolver = types.ModuleType("dns.asyncresolver")
+    asyncresolver.Resolver = Resolver
+    dns.asyncresolver = asyncresolver
+    monkeypatch.setitem(sys.modules, "dns", dns)
+    monkeypatch.setitem(sys.modules, "dns.asyncresolver", asyncresolver)
+    monkeypatch.setattr(sip_resolution.asyncio, "to_thread", offload)
+    resolver = SipServerResolver()
+
+    first = await resolver._query_dns("pbx.example", "SRV")
+    second = await resolver._query_dns("pbx.example", "SRV")
+
+    assert first == second == ((), 30.0)
+    assert len(constructed) == 1
+    assert queries == [
+        ("pbx.example", "SRV", False),
+        ("pbx.example", "SRV", False),
+    ]
 
 
 async def _empty_dns() -> tuple[tuple[object, ...], float]:
