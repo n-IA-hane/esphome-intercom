@@ -164,16 +164,12 @@ def test_hil_evidence_requires_exact_passed_scenario_and_quiescence(
                             {
                                 "scenario": "esp-to-ha-answer-hangup",
                                 "status": "passed",
-                                "snapshots": {
-                                    "post": {"call_scoped_quiescent": True}
-                                },
+                                "snapshots": {"post": {"call_scoped_quiescent": True}},
                             },
                             {
                                 "scenario": "esp-to-esp-watchdog-and-bidirectional-hangup",
                                 "status": "passed",
-                                "snapshots": {
-                                    "post": {"call_scoped_quiescent": True}
-                                },
+                                "snapshots": {"post": {"call_scoped_quiescent": True}},
                             },
                         ],
                     }
@@ -507,8 +503,7 @@ def test_summary_rejects_claim_not_observed_by_owning_job(tmp_path: Path) -> Non
     )
 
     assert (
-        "scenario evidence exceeds contract: "
-        "esp-to-ha-answer-hangup/oracles"
+        "scenario evidence exceeds contract: esp-to-ha-answer-hangup/oracles"
     ) in errors
 
 
@@ -763,12 +758,13 @@ def test_real_ha_automation_package_covers_route_decisions() -> None:
             "entity_id": "event.voip_stack_call",
         }
     ]
-    route_action = next(
-        action
-        for action in automation["actions"]
-        if action.get("action") == "voip_stack.route"
-    )
+    choice = next(action for action in automation["actions"] if "choose" in action)
+    route_action = choice["default"][0]
+    assert route_action["action"] == "voip_stack.route"
     assert route_action["data"]["expected_sequence"] == "{{ selected_sequence }}"
+    forward_action = choice["choose"][0]["sequence"][0]
+    assert forward_action["action"] == "voip_stack.select_inbound_destination"
+    assert forward_action["data"]["expected_sequence"] == "{{ selected_sequence }}"
 
 
 def test_real_ha_package_uses_one_context_branch_and_one_forward_automation() -> None:
@@ -790,6 +786,7 @@ def test_real_ha_package_uses_one_context_branch_and_one_forward_automation() ->
             "trigger": "state",
             "entity_id": "sensor.casa_call_state",
             "to": "ringing",
+            "for": {"seconds": 1},
         }
     ]
     assert any(
