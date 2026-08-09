@@ -457,13 +457,13 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             registered_branch.index("hass = runtime.hass") :
         ]
         self.assertIn(
-            "session = call_registry(hass).get_session(invite.call_id)",
+            "session = registry.upsert(",
             route_requested_branch,
         )
         self.assertIn("publish_bridge_projection(", route_requested_branch)
         self.assertNotIn("CallProjectionEvent.bridge(", route_requested_branch)
         self.assertLess(
-            route_requested_branch.index("session = call_registry(hass).get_session"),
+            route_requested_branch.index("session = registry.upsert("),
             route_requested_branch.index("publish_bridge_projection("),
         )
         self.assertIn("route_request=True", route_requested_branch)
