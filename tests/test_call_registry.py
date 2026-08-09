@@ -71,6 +71,16 @@ class _EndpointRegistryStub:
 
 
 class CallRegistryEventContextTest(unittest.TestCase):
+    def test_physical_observation_is_adopted_by_materialised_call(self) -> None:
+        registry = _registry()
+        registry.event_fields("physical:esp", "calling")
+        registry.upsert("sip-call", state="connecting")
+
+        assert registry.adopt_event_observation("physical:esp", "sip-call") is True
+        assert "physical:esp" not in registry.sessions
+        assert registry.resolve_session_id("physical:esp") == "sip-call"
+        assert registry.event_context("physical:esp") is registry.event_context("sip-call")
+
     def test_bridge_index_resolves_either_leg(self) -> None:
         registry = _registry()
         registry.upsert("source", state="in_call")

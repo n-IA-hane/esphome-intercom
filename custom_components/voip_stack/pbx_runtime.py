@@ -413,6 +413,10 @@ class SipEndpointRuntime(CallRuntimeApi):
             raise ValueError("call_id must not be empty")
         session = self.sessions.get(session_id) or self.upsert(session_id, state="new")
         if adopt_transport and hasattr(registry, "adopt_transport_call"):
+            self.adopt_event_observation(
+                f"physical:{clean_endpoint_id}",
+                session.call_id,
+            )
             registry.adopt_transport_call(clean_endpoint_id, session.call_id)
         else:
             registry.claim_call(clean_endpoint_id, session.call_id)

@@ -782,6 +782,27 @@ class CallRuntimeApi:
     def resolve_session_id(self, call_id: str) -> str:
         return self.leg_index.get(call_id, call_id)
 
+    def adopt_event_observation(self, provisional_call_id: str, call_id: str) -> bool:
+        """Attach an ESP state-only observation to its materialised SIP call."""
+
+        provisional_id = str(provisional_call_id or "").strip()
+        session_id = self.resolve_session_id(str(call_id or "").strip())
+        if not provisional_id or not session_id or provisional_id == session_id:
+            return False
+        observation = self.sessions.get(provisional_id)
+        session = self.sessions.get(session_id)
+        if (
+            observation is None
+            or observation.metadata.get("event_only") is not True
+            or session is None
+        ):
+            return False
+        if observation.event_context.sequence > session.event_context.sequence:
+            session.event_context = observation.event_context
+        self.sessions.pop(provisional_id, None)
+        self.leg_index[provisional_id] = session_id
+        return True
+
     def bind_controller(
         self,
         call_id: str,
