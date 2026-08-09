@@ -228,6 +228,48 @@ async def _set_number(esp: EspApi, object_id: str, value: float) -> None:
     await esp.wait(object_id, {str(float(value))}, timeout=5, exact=True)
 
 
+async def _wait_ha_endpoint_ready(
+    ws: HaWs, extension: str, host: str, *, timeout: float = 30.0
+) -> dict[str, object]:
+    """Wait until HA has rediscovered the P4 after serial-open reboot."""
+
+    deadline = time.monotonic() + timeout
+    last: list[object] = []
+    while time.monotonic() < deadline:
+        response = await ws.command({"type": "voip_stack/list_devices"})
+        last = list((response.get("result") or {}).get("devices") or [])
+        endpoint = next(
+            (
+                item
+                for item in last
+                if isinstance(item, dict)
+                and str(item.get("extension") or "") == extension
+                and str(item.get("host") or "") == host
+                and norm(item.get("endpoint_type")) == "esphome"
+            ),
+            None,
+        )
+        if endpoint is not None:
+            await asyncio.sleep(0.8)
+            confirm = await ws.command({"type": "voip_stack/list_devices"})
+            if any(
+                isinstance(item, dict)
+                and item.get("endpoint_id") == endpoint.get("endpoint_id")
+                and str(item.get("extension") or "") == extension
+                and str(item.get("host") or "") == host
+                for item in (confirm.get("result") or {}).get("devices") or []
+            ):
+                return {
+                    "endpoint_type": endpoint.get("endpoint_type"),
+                    "extension": endpoint.get("extension"),
+                    "resolved": True,
+                }
+        await asyncio.sleep(0.25)
+    raise AssertionError(
+        f"HA did not expose available P4 extension {extension!r}; devices={last}"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DeviceSettings:
     volume: float
@@ -477,7 +519,11 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             ):
                 ctx = LiveContext(ha=ha, ws=ws, esp=p4, args=args)
                 async with quiet_p4(p4):
+                    await p4.text("voip_extension", args.p4_extension)
                     await ctx.cleanup()
+                    report["ha_endpoint"] = await _wait_ha_endpoint_ready(
+                        ws, args.p4_extension, args.p4_host
+                    )
                     try:
                         for cycle in range(1, args.cycles + 1):
                             mark = serial_capture.mark()

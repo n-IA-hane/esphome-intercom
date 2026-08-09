@@ -7,6 +7,7 @@ import pytest
 
 from scripts.run_p4_h264_reinvite_hil import (
     SerialCapture,
+    _wait_ha_endpoint_ready,
     cleanup_evidence,
     parse_ffprobe,
     parse_serial_metrics,
@@ -176,6 +177,46 @@ def test_cleanup_requires_ha_and_p4_quiescence() -> None:
     assert cleanup_evidence(snapshot, "idle")["call_scoped_quiescent"] is True
     with pytest.raises(AssertionError, match="did not quiesce"):
         cleanup_evidence(snapshot, "in_call")
+
+
+def test_ha_endpoint_readiness_requires_same_esp_host_and_extension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeWs:
+        calls = 0
+
+        async def command(self, _message: dict[str, object]) -> dict[str, object]:
+            self.calls += 1
+            devices = [
+                {
+                    "endpoint_id": "browser:wrong",
+                    "endpoint_type": "browser",
+                    "extension": "668",
+                    "host": "",
+                },
+                {
+                    "endpoint_id": "esphome:p4",
+                    "endpoint_type": "esphome",
+                    "extension": "668",
+                    "host": "192.0.2.4",
+                },
+            ]
+            return {"result": {"devices": devices}}
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    ws = FakeWs()
+
+    result = asyncio.run(_wait_ha_endpoint_ready(ws, "668", "192.0.2.4"))
+
+    assert result == {
+        "endpoint_type": "esphome",
+        "extension": "668",
+        "resolved": True,
+    }
+    assert ws.calls == 2
 
 
 class _FakeEsp:
