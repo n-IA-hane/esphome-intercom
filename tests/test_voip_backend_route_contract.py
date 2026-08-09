@@ -159,7 +159,20 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn(
             "registry.set_pending_invite(invite.call_id, invite)", self.source
         )
-        self.assertIn("_set_ha_softphone_call_state(", self.source)
+        publish = self.source[
+            self.source.index("def _publish_pending_ha_softphone_ringing(") :
+            self.source.index("def _defer_invite_to_ha_softphone(")
+        ]
+        defer = self.source[
+            self.source.index("def _defer_invite_to_ha_softphone(") :
+            self.source.index("def _inbound_route_decision(")
+        ]
+        self.assertIn("publish_call_projection(", publish)
+        self.assertIn("CallProjectionEvent.phone(", publish)
+        self.assertLess(
+            defer.index("session = registry.upsert("),
+            defer.index("hass.loop.call_soon(_publish_ringing_if_current)"),
+        )
         self.assertIn("CallState.RINGING.value", self.source)
 
     def test_browser_presence_never_owns_the_logical_call_lifetime(self) -> None:
@@ -443,7 +456,16 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         route_requested_branch = registered_branch[
             registered_branch.index("hass = runtime.hass") :
         ]
-        self.assertIn("CallState.CONNECTING.value", route_requested_branch)
+        self.assertIn(
+            "session = call_registry(hass).get_session(invite.call_id)",
+            route_requested_branch,
+        )
+        self.assertIn("publish_call_projection(", route_requested_branch)
+        self.assertIn("CallProjectionEvent.bridge(", route_requested_branch)
+        self.assertLess(
+            route_requested_branch.index("session = call_registry(hass).get_session"),
+            route_requested_branch.index("publish_call_projection("),
+        )
         self.assertIn("route_request=True", route_requested_branch)
         self.assertIn(
             "payload = await asyncio.wait_for(",
@@ -1591,8 +1613,13 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_route_request_publishes_a_canonical_connecting_state(self) -> None:
         route_branch = self.inbound_automation
-        self.assertIn("CallState.CONNECTING.value", route_branch)
+        self.assertIn(
+            "session = call_registry(hass).get_session(invite.call_id)", route_branch
+        )
+        self.assertIn("publish_call_projection(", route_branch)
+        self.assertIn("CallProjectionEvent.bridge(", route_branch)
         self.assertIn("route_request=True", route_branch)
+        self.assertIn('phase="route_decision"', route_branch)
         self.assertNotIn('"route_requested",\n                caller=', route_branch)
 
     def test_connecting_route_request_maps_to_native_event_type(self) -> None:

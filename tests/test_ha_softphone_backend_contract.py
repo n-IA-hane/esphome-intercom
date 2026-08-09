@@ -498,10 +498,14 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             start,
         )
         ring_start = endpoint_runtime[start:end]
-        publish = ring_start.index("_set_ha_softphone_call_state(")
+        upsert = ring_start.index("session = registry.upsert(")
+        publish = ring_start.index("publish_call_projection(")
         snapshot = ring_start.index("peers = await _async_build_peer_snapshot(hass)")
+        self.assertLess(upsert, publish)
         self.assertLess(publish, snapshot)
-        self.assertIn("PEER_SNAPSHOT_FAILED", ring_start)
+        self.assertIn("CallProjectionEvent.phone(", ring_start)
+        self.assertIn("TerminalReason.TRANSPORT_UNREACHABLE.value", ring_start)
+        self.assertIn("EndpointTerminationHandler(hass).terminate_reason(", ring_start)
 
     def test_initial_outbound_state_precedes_final_response_watcher(self) -> None:
         """A queued 200 OK must not be overwritten by the earlier 180 result."""
@@ -524,10 +528,11 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
         self.assertIn('getattr(target_endpoint, "device_id", "")', outbound)
         self.assertIn('entry_metadata.get("device_id")', outbound)
-        self.assertGreaterEqual(
+        self.assertEqual(
             outbound.count("target_device_id=target_device_id"),
-            6,
+            4,
         )
+        self.assertGreaterEqual(outbound.count("publish_call_projection("), 3)
         tracker = _function_body(
             self.outbound_lifecycle,
             "async_track_outbound_sip_client",
@@ -557,9 +562,11 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
         self.assertIn("registry.upsert(", accepted)
         self.assertIn("registry.add_leg(", accepted)
+        self.assertIn("publish_call_projection(", accepted)
+        self.assertIn("CallProjectionEvent.phone(", accepted)
         self.assertLess(
             accepted.index("registry.add_leg("),
-            accepted.index("_set_ha_softphone_call_state("),
+            accepted.index("publish_call_projection("),
         )
         self.assertIn("state=CallState.IN_CALL.value", accepted)
 
@@ -602,9 +609,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         invite_error = outbound.split(
             "except Exception as err:  # noqa: BLE001 - isolate one outbound SIP leg.",
             1,
-        )[1].split("if registry.sip_clients.get", 1)[0]
+        )[1].split("if registry.sip_client_for", 1)[0]
         self.assertNotIn("registry.detach_client", invite_error)
-        self.assertIn("_set_ha_softphone_call_state(", invite_error)
+        self.assertNotIn("publish_call_projection(", invite_error)
         self.assertIn("EndpointTerminationHandler(hass).terminate_reason(", invite_error)
 
     def test_esp_state_mirrors_physical_busy_ownership_into_logical_endpoint(
