@@ -54,7 +54,7 @@ def settle_browser_candidates(
 ) -> None:
     """Release and publish every browser candidate except one committed winner."""
 
-    session = registry.get(call_id)
+    session = registry.get_session(call_id)
     for leg in browser_legs:
         if leg.endpoint_id == keep_endpoint_id:
             continue
@@ -163,7 +163,7 @@ def publish_ring_group_origin_state(
     if sip_status_code is not None:
         extra["sip_status_code"] = int(sip_status_code)
     registry = call_registry(hass)
-    session = registry.get(call_id)
+    session = registry.get_session(call_id)
     if session is None:
         return
     leg_id = f"browser-origin:{endpoint_id}"

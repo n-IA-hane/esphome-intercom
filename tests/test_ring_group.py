@@ -117,7 +117,7 @@ def test_settlement_releases_every_loser_even_if_one_observer_fails(
     ring_group,
 ) -> None:
     registry = SimpleNamespace(
-        get=Mock(return_value=SimpleNamespace(generation=1)),
+        get_session=Mock(return_value=SimpleNamespace(generation=1)),
         release_endpoint_claim=Mock(),
     )
     legs = [
