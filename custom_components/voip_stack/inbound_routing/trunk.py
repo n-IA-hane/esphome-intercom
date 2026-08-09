@@ -203,13 +203,20 @@ def prepare_trunk_preanswer(
         ),
         video_failure_reason=video_failure_reason,
     )
-    create_runtime_task(
+    route_task = create_runtime_task(
         hass,
         runtime.run_trunk_inbound_route_guarded(
             invite,
             bridge_ports=bridge_ports,
         ),
     )
+    if not registry.own_task(
+        invite.call_id,
+        route_task,
+        name=f"trunk_route:{invite.call_id}",
+        generation=session.generation,
+    ):
+        route_task.cancel()
     if confirm_for_sip_info:
         return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")
     return SipInviteResult(

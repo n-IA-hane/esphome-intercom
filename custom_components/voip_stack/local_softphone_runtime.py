@@ -330,7 +330,6 @@ def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
             snapshot.callee_endpoint_id,
             terminal=True,
         )
-        registry.take_media(snapshot.call_id)
         reason = (
             TerminalReason.DECLINED.value
             if snapshot.end_reason is LocalCallEndReason.DECLINED

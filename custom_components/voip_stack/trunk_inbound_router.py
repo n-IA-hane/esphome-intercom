@@ -41,7 +41,6 @@ from .fsm import (
 from .inbound_answer import async_commit_runtime_answer
 from .media_ports import (
     RtpPortReservation,
-    release_media_reservation,
     release_video_media_reservation,
     reserve_sip_video_media,
 )
@@ -156,13 +155,10 @@ async def async_route_trunk_invite(
     # opened. Otherwise a cancelled pre-answer call can emit one stale
     # route_requested occurrence when its DTMF timer expires.
     if artifacts.trunk_closed:
-        artifacts.trunk_closed = False
-        artifacts.trunk_info_queue = None
         _LOGGER.info(
             "SIP trunk inbound call_id=%s closed during DTMF collection",
             invite.call_id,
         )
-        bridge_ports.release()
         return
 
     # Explicit digits always select the canonical phonebook route. Only
@@ -179,11 +175,9 @@ async def async_route_trunk_invite(
     artifacts.trunk_info_queue = None
 
     if artifacts.trunk_closed:
-        artifacts.trunk_closed = False
         _LOGGER.info(
             "SIP trunk inbound call_id=%s closed before routing", invite.call_id
         )
-        bridge_ports.release()
         return
 
     automation_action = str(automation_decision.get("action") or "").strip().lower()
@@ -215,9 +209,7 @@ async def async_route_trunk_invite(
             )
             return
     if automation_action in {"decline", "busy", "cancel"}:
-        registry.take_pending_invite(invite.call_id)
-        preanswered = registry.take_media(invite.call_id, provisional=True)
-        release_media_reservation(preanswered)
+        preanswered = registry.resource_for(invite.call_id, "preanswered")
         status = 486 if automation_action == "busy" else 603
         reason = (
             TerminalReason.BUSY.value
@@ -227,7 +219,6 @@ async def async_route_trunk_invite(
             else TerminalReason.DECLINED.value
         )
         answered = bool((preanswered or {}).get("final_response_sent", True))
-        bridge_ports.release()
         await terminate_source(reason, status=status, answered=answered)
         return
 
@@ -257,9 +248,7 @@ async def async_route_trunk_invite(
         # browser phone. Preserve explicit DTMF extensions for the second pass.
         destination = route_hint or decision.target or default_target
     elif decision.action is RouteAction.REJECT:
-        registry.take_pending_invite(invite.call_id)
-        preanswered = registry.take_media(invite.call_id, provisional=True)
-        release_media_reservation(preanswered)
+        preanswered = registry.resource_for(invite.call_id, "preanswered")
         terminal_reason = RouteReason.ROUTE_NOT_FOUND.value
         _LOGGER.info(
             "SIP trunk route not found call_id=%s digits=%s hint=%s",
@@ -268,7 +257,6 @@ async def async_route_trunk_invite(
             route_hint or "-",
         )
         answered = bool((preanswered or {}).get("final_response_sent", True))
-        bridge_ports.release()
         await terminate_source(terminal_reason, status=404, answered=answered)
         return
     else:
@@ -326,9 +314,7 @@ async def async_route_trunk_invite(
     if runtime.route_resolver.is_ha_target(destination):
         endpoint = preferred_browser_phone(hass)
         if endpoint is None:
-            registry.take_pending_invite(invite.call_id)
-            preanswered = registry.take_media(invite.call_id, provisional=True)
-            release_media_reservation(preanswered)
+            preanswered = registry.resource_for(invite.call_id, "preanswered")
             await terminate_source(
                 TerminalReason.TRANSPORT_UNREACHABLE.value,
                 status=480,
@@ -373,7 +359,6 @@ async def async_route_trunk_invite(
             status=480,
             answered=True,
         )
-        bridge_ports.release()
         return
     registry.take_pending_invite(invite.call_id)
     preanswered = registry.take_media(invite.call_id, provisional=True)

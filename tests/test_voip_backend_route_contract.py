@@ -69,6 +69,7 @@ RING_GROUP_ORCHESTRATOR = (
 )
 RING_GROUP_FORK = ROOT / "custom_components" / "voip_stack" / "ring_group_fork.py"
 CONFERENCE_RINGING = ROOT / "custom_components" / "voip_stack" / "conference_ringing.py"
+CONFERENCE = ROOT / "custom_components" / "voip_stack" / "conference.py"
 INVITE_ROUTER = ROOT / "custom_components" / "voip_stack" / "invite_router.py"
 INBOUND_SOFTPHONE = (
     ROOT / "custom_components" / "voip_stack" / "inbound_routing" / "softphone.py"
@@ -115,6 +116,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.ring_group = RING_GROUP_ORCHESTRATOR.read_text()
         cls.ring_group_fork = RING_GROUP_FORK.read_text()
         cls.conference_ringing = CONFERENCE_RINGING.read_text()
+        cls.conference = CONFERENCE.read_text()
         cls.invite_router = INVITE_ROUTER.read_text()
         cls.inbound_softphone = INBOUND_SOFTPHONE.read_text()
         cls.inbound_bridge = INBOUND_BRIDGE.read_text()
@@ -332,13 +334,13 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         self.assertLess(pending_route, forward_guard)
 
-    def test_ring_group_decline_resolves_leg_before_forward_cancellation(self) -> None:
+    def test_ring_group_decline_resolves_leg_without_parallel_task_cleanup(self) -> None:
         decline = self.softphone_commands[
             self.softphone_commands.index("async def async_decline_browser_call(") :
         ]
-        pending_route = decline.index("if call_id and call_id in pending_routes(hass):")
-        forward_cancel = decline.index("forward_task.cancel()")
-        self.assertLess(pending_route, forward_cancel)
+        self.assertIn("if call_id and call_id in pending_routes(hass):", decline)
+        self.assertNotIn("forward_task.cancel()", decline)
+        self.assertIn("EndpointTerminationHandler(hass).terminate(", decline)
 
     def test_mid_call_dtmf_is_an_event_not_a_second_dialplan(self) -> None:
         websocket_source = WEBSOCKET_API.read_text()
@@ -959,9 +961,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn('conference_queue = item.get("conference_queue")', audio_ws)
         self.assertIn("_run_conference_audio_session", audio_ws)
         self.assertIn("manager.push_ha_audio(session.call_id, pcm)", audio_ws)
-        self.assertIn("await manager.leave_ha_softphone(", termination)
-        self.assertIn("resolved[0],", termination)
-        self.assertIn("call_id=call_id", termination)
+        self.assertIn('f"conference_membership:{call_id}"', self.conference)
+        self.assertIn("registry.own_resource(", self.conference)
+        self.assertNotIn("conference_component", termination)
+        self.assertIn("await room.leave(call_id, reason=reason)", self.conference)
+        self.assertIn("self.forget_ha_call(call_id)", self.conference)
         card = CARD_JS.read_text()
         self.assertNotIn("conference_manager", card)
         self.assertNotIn("_ringConference", card)
@@ -1120,7 +1124,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "artifacts.trunk_closed",
             after_collect,
         )
-        self.assertIn("bridge_ports.release()", after_collect)
+        self.assertNotIn("bridge_ports.release()", after_collect.split("registry.take_pending_invite", 1)[0])
+        self.assertIn("registry.own_task(", self.inbound_trunk)
+        self.assertIn("name=f\"trunk_route:{invite.call_id}\"", self.inbound_trunk)
         self.assertIn("remote_host=invite.remote_rtp_host", self.trunk_dtmf)
         preanswer = self.inbound_trunk
         self.assertIn(

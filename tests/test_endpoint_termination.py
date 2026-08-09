@@ -281,7 +281,7 @@ async def test_sync_request_claims_once_then_drains_in_runtime_task(
     assert handler.request_reason("call-1", "local_hangup") is False
 
 
-def test_bridge_termination_projects_before_session_owned_cleanup(
+def test_bridge_termination_delegates_cleanup_to_the_session(
     endpoint_termination,
 ) -> None:
     registry = _Registry()
@@ -312,11 +312,7 @@ def test_bridge_termination_projects_before_session_owned_cleanup(
     handler = endpoint_termination.EndpointTerminationHandler(hass)
 
     async def run() -> None:
-        future = asyncio.get_running_loop().create_future()
-        hass.routes["call-1"] = {"future": future}
         await handler.handle("call-1", "remote_hangup")
-        assert future.result()["action"] == "cancel"
-        assert "call-1" not in hass.routes
 
     asyncio.run(run())
 

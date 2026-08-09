@@ -453,7 +453,14 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registry.bridge_links_snapshot(), {})
         self.assertIsNone(registry.artifact_for("source", "pending_invite"))
         self.assertIsNone(registry.artifact_for("source", "pending_route"))
-        self.assertTrue(route_future.cancelled())
+        self.assertEqual(
+            route_future.result(),
+            {
+                "action": "cancel",
+                "reason": "Request Terminated",
+                "decline_reason": "cancelled",
+            },
+        )
         self.assertIsNone(registry.artifact_for("source", "video_parameter_sets"))
 
     async def test_authoritative_session_owns_endpoint_claims_and_cleanup(self) -> None:

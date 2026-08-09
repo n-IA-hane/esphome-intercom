@@ -57,7 +57,6 @@ from .fsm import (
 )
 from .media_ports import (
     RtpPortReservation,
-    release_media_reservation as _release_media_reservation,
     reserve_delayed_offer_ports,
     take_delayed_offer_ports,
 )
@@ -419,11 +418,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             _LOGGER.exception(
                 "SIP trunk inbound routing failed call_id=%s", invite.call_id
             )
-            registry = _call_registry(hass)
-            registry.take_pending_invite(invite.call_id)
-            preanswered = registry.take_media(invite.call_id, provisional=True)
-            _release_media_reservation(preanswered)
-            bridge_ports.release()
             await EndpointTerminationHandler(hass).terminate(
                 invite.call_id,
                 TerminationIntent.bye(

@@ -229,15 +229,6 @@ async def async_ring_conference_members(
                 else sip_terminal_reason(terminal, sip_public_state(terminal))
             )
             cleanup_reason = terminal_reason
-            await manager.leave_call(
-                client.dialog_ids.call_id,
-                reason=terminal_reason,
-            )
-            await EndpointTerminationHandler(hass).terminate_reason(
-                client.dialog_ids.call_id,
-                terminal_reason,
-                TerminationInitiator.ROUTING,
-            )
         except asyncio.CancelledError:
             cleanup_reason = TerminalReason.CANCELLED.value
             raise
@@ -248,28 +239,17 @@ async def async_ring_conference_members(
                 err,
             )
         finally:
-            if owned_by_room:
-                with contextlib.suppress(Exception, asyncio.CancelledError):
-                    await manager.leave_call(
-                        client.dialog_ids.call_id,
-                        reason=cleanup_reason,
-                    )
-                await EndpointTerminationHandler(hass).terminate_reason(
-                    client.dialog_ids.call_id,
-                    cleanup_reason,
-                    TerminationInitiator.ROUTING,
-                )
-            else:
+            if not owned_by_room:
                 with contextlib.suppress(Exception):
                     await async_close_outbound_leg(
                         attempt,
                         bye_or_cancel=True,
                     )
-                await EndpointTerminationHandler(hass).terminate_reason(
-                    attempt.client.dialog_ids.call_id,
-                    TerminalReason.TRANSPORT_UNREACHABLE.value,
-                    TerminationInitiator.ROUTING,
-                )
+            await EndpointTerminationHandler(hass).terminate_reason(
+                client.dialog_ids.call_id,
+                cleanup_reason,
+                TerminationInitiator.ROUTING,
+            )
 
     await asyncio.gather(
         *(_dial(attempt) for attempt in attempts),

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 import logging
 from typing import Any
@@ -25,9 +24,8 @@ from .service_endpoints import (
     service_browser_endpoint,
 )
 from .fsm import TerminalReason
-from .media_ports import release_media_reservation
 from .route_decisions import set_pending_route_decision
-from .runtime_data import call_runtime_artifacts, conference_component
+from .runtime_data import conference_component
 from .websocket_api import _ha_softphone_store
 
 
@@ -166,20 +164,14 @@ async def async_decline_browser_call(
         )
         return
 
-    forward_task = call_runtime_artifacts(hass).task_for(call_id, "forward")
-    if forward_task is not None and not forward_task.done():
-        forward_task.cancel()
-        await asyncio.gather(forward_task, return_exceptions=True)
     pending = dict(registry.artifact_items("pending_invite"))
     endpoint_pending = endpoint_call_ids(registry, pending, endpoint_id)
     if not call_id and len(endpoint_pending) == 1:
         call_id = endpoint_pending[0]
-    registry.take_pending_invite(call_id)
     preanswered_item = (
-        registry.take_media(call_id, provisional=True) if call_id else None
+        registry.resource_for(call_id, "preanswered") if call_id else None
     )
     if preanswered_item is not None:
-        release_media_reservation(preanswered_item)
         final_response_sent = bool(preanswered_item.get("final_response_sent", True))
         _LOGGER.info(
             "SIP declined %s trunk call_id=%s reason=%s",

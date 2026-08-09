@@ -24,7 +24,7 @@ from .core.audio_format import AudioFormat, PcmFormat
 from .core.audio_pcm import PcmFrameConverter
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
-from .endpoint_session import TerminationInitiator
+from .endpoint_session import CleanupStage, TerminationInitiator
 from .endpoint_registry import EndpointBusyError
 from .fsm import CallState, TerminalReason
 from .groups import GROUP_TYPE_CONFERENCE
@@ -659,7 +659,6 @@ class ConferenceRoom:
         )
         endpoint_registry = endpoint_directory(self.hass)
         registry = call_registry(self.hass)
-        manager = conference_component(self.hass)
         for softphone_call_id, endpoint_id in selected.items():
             if not endpoint_id:
                 continue
@@ -687,15 +686,11 @@ class ConferenceRoom:
                 route_kind=GROUP_TYPE_CONFERENCE,
                 last_sip_event="BYE",
             )
-            registry.take_media(softphone_call_id)
             EndpointTerminationHandler(self.hass).request_reason(
                 softphone_call_id,
                 reason,
                 TerminationInitiator.RUNTIME,
             )
-            self._ha_softphone_announced.pop(softphone_call_id, None)
-            if isinstance(manager, ConferenceManager):
-                manager.forget_ha_call(softphone_call_id)
 
     def _fire(self, event: str, call_id: str, **extra: Any) -> None:
         _fire_call_event(
@@ -728,6 +723,50 @@ class ConferenceManager:
         self._closing = False
         self._closed = False
         self.on_inbound_timeout = on_inbound_timeout
+
+    def _own_membership(
+        self,
+        room_name: str,
+        call_id: str,
+        *,
+        ha_softphone: bool,
+    ) -> bool:
+        """Bind one room participant to its authoritative call lifetime."""
+
+        room_name = str(room_name or "").strip()
+        call_id = str(call_id or "").strip()
+        registry = call_registry(self.hass)
+        if registry.get_session(call_id) is None:
+            registry.upsert(
+                call_id,
+                state=CallState.IN_CALL.value,
+                owner="bridge",
+                callee=room_name,
+                route_kind=GROUP_TYPE_CONFERENCE,
+                conference_room=room_name,
+            )
+        membership = (room_name, ha_softphone)
+        owned_room = self.rooms.get(room_name)
+        if registry.resource_for(call_id, "conference_membership") == membership:
+            return True
+
+        async def _leave(reason: str) -> None:
+            room = owned_room or self.rooms.get(room_name)
+            if room is not None:
+                await room.leave(call_id, reason=reason)
+                room._ha_softphone_announced.pop(call_id, None)
+                if room._closed and self.rooms.get(room_name) is room:
+                    self.rooms.pop(room_name, None)
+            if ha_softphone:
+                self.forget_ha_call(call_id)
+
+        return registry.own_resource(
+            call_id,
+            f"conference_membership:{call_id}",
+            membership,
+            _leave,
+            stage=CleanupStage.MEDIA,
+        )
 
     def _reserve_ha_call(
         self,
@@ -772,6 +811,17 @@ class ConferenceManager:
             )
             raise
         self.ha_calls[candidate] = (room_name, endpoint_id)
+        if not self._own_membership(
+            room_name,
+            candidate,
+            ha_softphone=True,
+        ):
+            EndpointTerminationHandler(self.hass).request_reason(
+                candidate,
+                TerminalReason.TRANSPORT_UNREACHABLE.value,
+                TerminationInitiator.RUNTIME,
+            )
+            raise RuntimeError(f"conference call {candidate!r} is no longer active")
         return candidate
 
     def _release_ha_reservations(
@@ -788,27 +838,21 @@ class ConferenceManager:
         the browser state adapter.  Keep teardown idempotent so an exception
         at any point cannot leave a logical phone busy forever.
         """
-        registry = call_registry(self.hass)
         for _endpoint_id, call_id in reservations:
-            registry.release_endpoint_claims(call_id)
             try:
                 if room is not None and call_id in room._ha_softphone_announced:
                     room._set_softphone_idle(reason, call_id=call_id)
+                else:
+                    EndpointTerminationHandler(self.hass).request_reason(
+                        call_id,
+                        reason,
+                        TerminationInitiator.RUNTIME,
+                    )
             except Exception:  # pragma: no cover - defensive state adapter isolation
                 _LOGGER.exception(
                     "Failed to publish conference browser cleanup call_id=%s",
                     call_id,
                 )
-            finally:
-                registry.take_media(call_id)
-                EndpointTerminationHandler(self.hass).request_reason(
-                    call_id,
-                    reason,
-                    TerminationInitiator.RUNTIME,
-                )
-                self.forget_ha_call(call_id)
-                if room is not None:
-                    room._ha_softphone_announced.pop(call_id, None)
 
     def resolve_ha_call(self, call_id: str) -> tuple[str, str] | None:
         return self.ha_calls.get(str(call_id or "").strip())
@@ -897,6 +941,21 @@ class ConferenceManager:
                 invite,
                 ring_endpoints=tuple(ring_endpoints),
             )
+            if result.status == 200 and not self._own_membership(
+                room_name,
+                invite.call_id,
+                ha_softphone=False,
+            ):
+                await room.leave(
+                    invite.call_id,
+                    reason=TerminalReason.CANCELLED.value,
+                )
+                return SipInviteResult(
+                    487,
+                    "Request Terminated",
+                    to_tag="",
+                    decline_reason=TerminalReason.CANCELLED.value,
+                )
         except BaseException:
             self._release_ha_reservations(ring_endpoints, room=room)
             if not room.legs and self.rooms.get(room_name) is room:
@@ -939,13 +998,21 @@ class ConferenceManager:
                 on_inbound_timeout=self.on_inbound_timeout,
             )
             self.rooms[room_key] = room
-        return await room.add_client_leg(
+        joined = await room.add_client_leg(
             call_id=call_id,
             caller=caller,
             client=client,
             port_reservation=port_reservation,
             role=role,
         )
+        if joined and not self._own_membership(
+            room_key,
+            call_id,
+            ha_softphone=False,
+        ):
+            await room.leave(call_id, reason=TerminalReason.CANCELLED.value)
+            return False
+        return joined
 
     async def leave_call(self, call_id: str, reason: str = "remote_hangup") -> bool:
         for name, room in list(self.rooms.items()):
@@ -1032,21 +1099,12 @@ class ConferenceManager:
         call_id: str,
         reason: str = "local_hangup",
     ) -> None:
-        room_key = str(room_name or "").strip()
-        room = self.rooms.get(room_key)
         try:
-            if room is not None:
-                await room.remove_ha_softphone_leg(call_id, reason=reason)
-                if room._closed and self.rooms.get(room_key) is room:
-                    self.rooms.pop(room_key, None)
-            else:
-                registry = call_registry(self.hass)
-                registry.take_media(call_id)
-                await EndpointTerminationHandler(self.hass).terminate_reason(
-                    call_id,
-                    reason,
-                    TerminationInitiator.LOCAL_USER,
-                )
+            await EndpointTerminationHandler(self.hass).terminate_reason(
+                call_id,
+                reason,
+                TerminationInitiator.LOCAL_USER,
+            )
         finally:
             self.forget_ha_call(call_id)
 
@@ -1060,20 +1118,11 @@ class ConferenceManager:
         resolved = self.resolve_ha_call(call_id)
         if resolved is None or resolved[1] != endpoint_id:
             return False
-        room = self.rooms.get(resolved[0])
-        if room is not None:
-            room._set_softphone_idle(reason, call_id=call_id)
-            await call_registry(self.hass).terminate_call_wait(
-                call_id,
-                reason=reason,
-            )
-        else:
-            await EndpointTerminationHandler(self.hass).terminate_reason(
-                call_id,
-                reason,
-                TerminationInitiator.LOCAL_USER,
-            )
-            self.forget_ha_call(call_id)
+        await EndpointTerminationHandler(self.hass).terminate_reason(
+            call_id,
+            reason,
+            TerminationInitiator.LOCAL_USER,
+        )
         return True
 
     async def close(self, reason: str = "local_hangup") -> None:

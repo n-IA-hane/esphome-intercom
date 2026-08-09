@@ -243,14 +243,23 @@ class CallArtifacts:
     trunk_closed: bool = False
     delayed_offer_ports: Any | None = None
 
-    def settle(self) -> None:
+    def settle(self, intent: TerminationIntent | None = None) -> None:
         """Make every pending coordination artifact terminal exactly once."""
 
         route = self.pending_route
         if route is not None:
             future = route.get("future")
             if future is not None and hasattr(future, "done") and not future.done():
-                future.cancel()
+                if intent is None:
+                    future.cancel()
+                else:
+                    future.set_result(
+                        {
+                            "action": "cancel",
+                            "reason": "Request Terminated",
+                            "decline_reason": intent.reason,
+                        }
+                    )
         self.pending_invite = None
         self.pending_route = None
         self.video_parameter_sets = None
@@ -527,7 +536,7 @@ class EndpointCallSession:
                 self.call_id,
                 exc_info=True,
             )
-        self.artifacts.settle()
+        self.artifacts.settle(intent)
 
         current = asyncio.current_task()
         tasks = [
@@ -640,6 +649,7 @@ class EndpointCallSession:
         self.phase = SessionPhase.TERMINATING
         self.termination_intent = intent
         self.terminal_reason = intent.reason
+        self.artifacts.trunk_closed = True
         self.termination_started.set()
         return True
 

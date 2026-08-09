@@ -30,7 +30,7 @@ def _runtime() -> trunk_inbound_router.TrunkInboundRuntime:
 
 
 @pytest.mark.asyncio
-async def test_source_bye_before_routing_releases_only_reserved_media(
+async def test_source_bye_before_routing_leaves_cleanup_to_session_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     call_artifacts = SimpleNamespace(
@@ -85,9 +85,9 @@ async def test_source_bye_before_routing_releases_only_reserved_media(
         _runtime(), invite, bridge_ports=ports
     )
 
-    ports.release.assert_called_once_with()
-    assert not call_artifacts.trunk_closed
-    assert call_artifacts.trunk_info_queue is None
+    ports.release.assert_not_called()
+    assert call_artifacts.trunk_closed
+    assert call_artifacts.trunk_info_queue is not None
     route.assert_not_called()
     registry.take_pending_invite.assert_not_called()
 
@@ -104,7 +104,7 @@ async def test_unknown_route_terminates_answered_source_through_session_owner(
     )
     artifacts = SimpleNamespace(artifacts_for=lambda _call_id: call_artifacts)
     registry = Mock()
-    registry.take_media.return_value = {"final_response_sent": True}
+    registry.resource_for.return_value = {"final_response_sent": True}
     terminate = AsyncMock(return_value=True)
     ports = SimpleNamespace(ports=(40000, 40002), release=Mock())
     invite = SimpleNamespace(
@@ -152,13 +152,13 @@ async def test_unknown_route_terminates_answered_source_through_session_owner(
         Mock(return_value=decision),
     )
     monkeypatch.setattr(trunk_inbound_router, "trunk_default_target", lambda _cfg: "Casa")
-    monkeypatch.setattr(trunk_inbound_router, "release_media_reservation", Mock())
     await trunk_inbound_router.async_route_trunk_invite(
         _runtime(), invite, bridge_ports=ports
     )
 
-    registry.take_pending_invite.assert_called_once_with(invite.call_id)
-    ports.release.assert_called_once_with()
+    registry.take_pending_invite.assert_not_called()
+    registry.take_media.assert_not_called()
+    ports.release.assert_not_called()
     terminate.assert_awaited_once()
     call_id, intent = terminate.await_args.args
     assert call_id == invite.call_id
@@ -219,8 +219,11 @@ def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
     monkeypatch.setattr(trunk, "publish_bridge_projection", Mock())
     monkeypatch.setattr(trunk.sip_sdp, "offered_dtmf_formats", Mock(return_value=[]))
 
+    owned_task = Mock()
+
     def capture_task(_hass, coroutine):
         coroutine.close()
+        return owned_task
 
     monkeypatch.setattr(trunk, "create_runtime_task", capture_task)
 
@@ -241,3 +244,4 @@ def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
         resource.name == f"preanswered:{invite.call_id}"
         for resource in session.resources
     )
+    assert session.named_tasks[f"trunk_route:{invite.call_id}"] is owned_task
