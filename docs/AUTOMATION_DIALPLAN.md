@@ -33,12 +33,26 @@ general PBX scripting language. Presence, alarm, calendar, occupancy and light
 logic stay in HA. SIP dialog, fork, media, transfer and termination logic stay
 inside VoIP Stack.
 
-## Automatically qualified building blocks
+## Evidence levels and qualified building blocks
 
 The checked-in HA qualification package uses one parameterized route
 automation and one ringing-forward automation. SIPp and baresip observe the
 real signaling while the runner verifies call state and cleanup before and
 after every case.
+
+The project keeps four evidence levels separate:
+
+| Level | What it proves |
+| --- | --- |
+| Catalogued | The use case is recorded in `qualification/dialplan_matrix.py`, with its trigger, condition, operation and expected fallback. This is a coverage target, not an executed test. |
+| Static | The documented YAML parses and its `voip_stack.*` actions use fields exposed by the current service schemas. |
+| HA runtime | The action handler and state projections run inside a Home Assistant test installation. Mocked component tests do not count as this level. |
+| Live peer | The checked-in automation runs in the isolated HA laboratory while SIPp or baresip independently observes signaling, termination and post-call cleanup. |
+
+The `qualification` field in the catalogue names the evidence class required
+for a use case. It does not by itself mean that the class has an executor or
+that the scenario has passed. Release evidence must identify the concrete
+scenario result for the exact candidate.
 
 The current real-HA matrix covers:
 
@@ -51,7 +65,7 @@ The current real-HA matrix covers:
 | Caller filter mismatch | Automation does nothing and fallback answers |
 | Ringing phone forward | Casa rings first, then the registered destination answers |
 | Failed ringing forward with `resume` | Casa remains available and caller CANCEL completes correctly |
-| Auto-answer enabled and manual answer | Caller-side and callee-side BYE both clean up |
+| Automatically answering and manually answering registered SIP peers | Caller-side and callee-side BYE both clean up |
 | Initial delayed offer | Offerless INVITE completes and terminates cleanly |
 
 Every case requires zero remaining sessions, legs, pending routes, pending
@@ -63,10 +77,17 @@ scripts/dialplan_matrix.py --validate
 scripts/dialplan_matrix.py --json
 ```
 
-Native HA conditions that feed the same true/false route branch are equivalent
-from the integration's perspective. They are listed separately below because
-they solve different user problems, not because they create different PBX
-engines.
+The live true/false branch uses a controlled qualification boolean. Native HA
+conditions such as presence, time, calendar, alarm and connectivity feed the
+same branch from the integration's perspective. Their recipes are listed
+separately because they solve different user problems, not because each one is
+claimed as a separate live PBX test.
+
+The registered-peer answer cases above configure baresip answer policy. They
+do not qualify the `voip_stack.set_auto_answer` action of a Home Assistant or
+ESPHome phone. Likewise, the current ringing-forward case acts as soon as the
+source rings; it qualifies forwarding a live ringing call, not Home
+Assistant's native `for:` timer.
 
 The recipes use native Home Assistant Event Entities, state Sensors,
 conditions and `voip_stack.*` actions. Replace every example entity, Device ID,
@@ -357,12 +378,12 @@ mode: parallel
 max: 10
 triggers:
   - trigger: state
-    entity_id: sensor.voip_stack_call_state
+    entity_id: sensor.casa_call_state  # Select Call state on Device Casa
     to: ringing
     for: "00:00:30"
 conditions:
   - condition: state
-    entity_id: sensor.voip_stack_call_state
+    entity_id: sensor.casa_call_state
     attribute: ingress
     state: trunk
 actions:
@@ -409,12 +430,12 @@ mode: parallel
 max: 10
 triggers:
   - trigger: state
-    entity_id: sensor.voip_stack_call_state  # Call state entity on Device Casa
+    entity_id: sensor.casa_call_state  # Select Call state on Device Casa
     to: ringing
     for: "00:00:30"
 conditions:
   - condition: state
-    entity_id: sensor.voip_stack_call_state
+    entity_id: sensor.casa_call_state
     attribute: ingress
     state: trunk
 actions:
@@ -487,9 +508,10 @@ the same schedule in two automation branches.
 
 ### Prefer an available phone
 
-This is the availability equivalent of the tested true/false route branch.
-Home Assistant supplies the connectivity condition, while VoIP Stack performs
-the same qualified initial-selection operation in both branches:
+This uses the same integration-side true/false route primitive exercised by
+the live matrix. Home Assistant supplies the connectivity condition. The
+specific connectivity recipe remains a static cookbook example until it has a
+named live scenario:
 
 ```yaml
 alias: VoIP - Prefer P4 when online
@@ -668,8 +690,10 @@ data:
   replaces_call_id: "{{ states('input_text.consultation_call_id') }}"
 ```
 
-The SIP REFER/NOTIFY transaction and cleanup are automatically qualified. The
-example helpers merely show where an automation can retain its two call IDs.
+The transfer implementation has protocol and lifecycle tests. This particular
+Home Assistant automation recipe is catalogued and schema-checked, but the
+current live automation matrix does not execute it. The example helpers merely
+show where an automation can retain its two call IDs.
 
 ### Set DND from occupancy
 
@@ -732,9 +756,10 @@ actions:
       send_video: true
 ```
 
-The call action, selected Device, audio/video negotiation and termination are
-qualified independently. The time trigger itself is native Home Assistant
-behavior.
+The time trigger itself is native Home Assistant behavior. This recipe is
+catalogued and schema-checked; a release may claim the complete scenario only
+when its candidate evidence includes the selected phone, video negotiation,
+termination and the required P4 hardware run.
 
 ## Actionable doorbell notification
 
