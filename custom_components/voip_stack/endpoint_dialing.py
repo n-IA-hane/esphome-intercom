@@ -40,6 +40,20 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OutboundLegPolicy:
+    """Policy differences applied by the common outbound-leg builder."""
+
+    local_uri_user: str = ""
+    auth_username: str = ""
+    username: str = ""
+    password: str = ""
+    outbound_proxy: str = ""
+    force_common_audio: bool = False
+    reuse_registered_flow: bool = True
+    allow_video: bool = True
+
+
 @dataclass(slots=True)
 class EndpointDialer:
     """Resolve phonebook members and construct unstarted outbound legs."""
@@ -48,7 +62,6 @@ class EndpointDialer:
     local_ip: str
     config: dict[str, Any]
     route_resolver: EndpointRouteResolver
-    ha_peer_name: Callable[..., str]
     sip_uri_transport: Callable[..., str]
     enable_reused_tcp_connection: Callable[..., bool]
 
@@ -130,18 +143,24 @@ class EndpointDialer:
         tier: int = 0,
         order: int = 0,
         invite: SipInvite | None = None,
+        port_reservation: RtpPortReservation | None = None,
+        roster_entry_override: RosterEntry | None = None,
+        policy: OutboundLegPolicy | None = None,
     ) -> OutboundLeg | None:
         """Build one outbound SIP leg without starting its transaction."""
 
+        policy = policy or OutboundLegPolicy()
         resolved_uri, peer_target, member_entry = self.sip_uri_for_member(
             member,
             peers,
             roster_entries,
         )
+        member_entry = roster_entry_override or member_entry
         uri = parse_sip_uri(uri_override) if uri_override else resolved_uri
         if uri is None or self.route_resolver.is_local_listener_uri(uri):
             return None
-        ports = RtpPortReservation.allocate(self.hass)
+        owns_ports = port_reservation is None
+        ports = port_reservation or RtpPortReservation.allocate(self.hass)
         video_relay = None
         try:
             remote_tx_formats = peer_audio_formats(
@@ -162,7 +181,7 @@ class EndpointDialer:
                 and member_entry.sip_uri
                 and member_entry.metadata.get("registered")
             )
-            if bridge_to_softphone:
+            if bridge_to_softphone or policy.force_common_audio:
                 sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
                 sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
             target_endpoint = self.route_resolver.logical_endpoint(
@@ -174,6 +193,7 @@ class EndpointDialer:
             if (
                 invite is not None
                 and invite.video_format is not None
+                and policy.allow_video
                 and bool(self.config.get(CONF_SIP_VIDEO, False))
             ):
                 video_reservation = None
@@ -213,16 +233,25 @@ class EndpointDialer:
                 local_ip=self.local_ip,
                 local_name=local_name,
                 local_uri_user=(
-                    invite.routing_caller
-                    if invite is not None
-                    else local_name
+                    policy.local_uri_user
+                    or (
+                        invite.routing_caller
+                        if invite is not None
+                        else local_name
+                    )
                 ),
                 local_sip_port=int(self.config["sip_port"]),
                 local_rtp_port=ports.ports[local_rtp_port_index],
                 supported_send_formats=sip_send_formats,
                 supported_recv_formats=sip_recv_formats,
                 signaling_transport=self.sip_uri_transport(uri),
-                include_common_codecs=bridge_to_softphone,
+                auth_username=policy.auth_username,
+                username=policy.username,
+                password=policy.password,
+                outbound_proxy=policy.outbound_proxy,
+                include_common_codecs=(
+                    bridge_to_softphone or policy.force_common_audio
+                ),
                 peer_user_agent=(
                     str(peer_user_agent_override or "").strip()
                     or str(
@@ -257,13 +286,14 @@ class EndpointDialer:
                 ),
                 generic_video_relay=video_relay is not None,
             )
-            self.enable_reused_tcp_connection(
-                self.hass,
-                client,
-                uri,
-                target=member,
-                default_sip_port=int(self.config["sip_port"]),
-            )
+            if policy.reuse_registered_flow:
+                self.enable_reused_tcp_connection(
+                    self.hass,
+                    client,
+                    uri,
+                    target=member,
+                    default_sip_port=int(self.config["sip_port"]),
+                )
             return OutboundLeg(
                 member=member,
                 uri=uri,
@@ -284,5 +314,6 @@ class EndpointDialer:
         except Exception:  # noqa: BLE001
             if video_relay is not None:
                 create_runtime_task(self.hass, video_relay.stop())
-            ports.release()
+            if owns_ports:
+                ports.release()
             raise

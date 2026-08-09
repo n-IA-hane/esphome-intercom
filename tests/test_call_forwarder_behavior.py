@@ -25,7 +25,6 @@ def _runtime() -> call_forwarder.ForwardRuntime:
         defer_invite_to_softphone=Mock(),
         prepare_outbound_leg=Mock(),
         publish_pending_ringing=Mock(),
-        sip_uri_for_member=Mock(),
         start_local_assist_bridge=Mock(),
     )
 

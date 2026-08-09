@@ -10,7 +10,6 @@ from typing import Any, Awaitable, Callable
 
 from homeassistant.core import HomeAssistant
 
-from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .config import trunk_config as _get_trunk_config
 from .call_projection import publish_bridge_projection
 from .const import (
@@ -27,6 +26,7 @@ from .const import (
 )
 from .dial_fork import DialDisposition, DialForkController, terminal_reason
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
+from .endpoint_dialing import OutboundLegPolicy
 from .runtime_data import (
     call_runtime_artifacts,
     browser_phone,
@@ -36,12 +36,7 @@ from .runtime_data import (
 )
 from .endpoint_routing import (
     EndpointRouteResolver,
-    peer_audio_formats as _peer_audio_formats,
-    peer_for_target as _peer_for_target,
-    peer_video_codec as _peer_video_codec,
-    roster_entry_formats as _roster_entry_formats,
     roster_from_peers as _roster_from_peers,
-    sip_target_audio_profile as _sip_target_audio_profile,
 )
 from .group_candidates import (
     GroupCandidateRuntime,
@@ -57,14 +52,9 @@ from .inbound_answer import (
     AnswerCommitResult,
     async_commit_runtime_answer,
 )
-from .media_ports import (
-    RtpPortReservation,
-    release_sip_rtp_port_pair as _release_sip_rtp_port_pair,
-    reserve_sip_video_relay_media,
-)
+from .media_ports import RtpPortReservation
 from .outbound_attempts import (
     BrowserLeg,
-    OutboundLeg,
 )
 from .outbound_bridge_commit import (
     BridgeCommitData,
@@ -87,16 +77,9 @@ from .route_abort import (
 from .core.sdp import build_answer_directional
 from .session_cleanup import async_cleanup_sip_runtime
 from .service_errors import service_error as _service_error
-from .core.sip import parse_sip_uri
-from .sip_bridge import (
-    build_pending_invite_video_relay,
-    video_bridge_offer_formats,
-)
-from .sip_client import SIP_TIMER_B, SipCallClient
+from .sip_client import SIP_TIMER_B
 from .sip_runtime import (
-    enable_reused_tcp_connection as _enable_reused_sip_tcp_connection,
     send_final_response as _sip_send_final_response,
-    uri_transport as _sip_uri_transport,
 )
 from .peer_snapshot import async_build_peer_snapshot as _async_build_peer_snapshot
 from .websocket_api import (
@@ -125,7 +108,6 @@ class ForwardRuntime:
     defer_invite_to_softphone: Callable[..., None]
     prepare_outbound_leg: Callable[..., Any]
     publish_pending_ringing: Callable[..., None]
-    sip_uri_for_member: Callable[..., Any]
     start_local_assist_bridge: Callable[..., Awaitable[Any]]
 
 
@@ -883,54 +865,17 @@ async def async_forward_existing_call(
                 return
 
             bridge_to_trunk = decision.action is RouteAction.TRUNK
-            bridge_uri = None
-            peer_target = _peer_for_target(decision.target or destination, peers)
+            target = decision.target or destination
             if bridge_to_trunk:
                 trunk_cfg = _get_trunk_config(hass)
-                bridge_uri = parse_sip_uri(
-                    f"sip:{decision.target or destination}@{trunk_cfg[CONF_TRUNK_SERVER]}:"
+                uri_override = (
+                    f"sip:{target}@{trunk_cfg[CONF_TRUNK_SERVER]}:"
                     f"{int(trunk_cfg[CONF_TRUNK_PORT])};"
                     f"transport={str(trunk_cfg[CONF_TRUNK_TRANSPORT]).lower()}"
                 )
             else:
-                bridge_uri, _peer, member_entry = runtime.sip_uri_for_member(
-                    decision.target or destination,
-                    peers,
-                    roster_entries,
-                )
-                if bridge_uri is None and decision.sip_uri:
-                    bridge_uri = parse_sip_uri(decision.sip_uri)
-                if bridge_uri is None:
-                    raise RuntimeError(
-                        f"destination {destination} has no reachable SIP URI"
-                    )
+                uri_override = str(decision.sip_uri or "")
 
-            remote_tx_formats = _peer_audio_formats(
-                peer_target, "tx_formats"
-            ) or _roster_entry_formats(
-                decision.entry,
-                "tx_formats",
-            )
-            remote_rx_formats = _peer_audio_formats(
-                peer_target, "rx_formats"
-            ) or _roster_entry_formats(
-                decision.entry,
-                "rx_formats",
-            )
-            sip_send_formats, sip_recv_formats = _sip_target_audio_profile(
-                remote_tx_formats=remote_tx_formats,
-                remote_rx_formats=remote_rx_formats,
-                target=decision.target or destination,
-            )
-            bridge_to_registered = bool(
-                decision.entry is not None
-                and decision.entry.sip_uri
-                and decision.entry.metadata.get("registered")
-            )
-            if bridge_to_trunk or bridge_to_registered:
-                sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
-                sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
-            trunk_cfg = _get_trunk_config(hass)
             endpoint_registry = endpoint_directory(hass)
             source_route_endpoint_id = str(
                 ((session.metadata if session is not None else {}) or {}).get(
@@ -971,97 +916,55 @@ async def async_forward_existing_call(
             video_transcoding_enabled = bool(
                 forward_video_enabled and cfg.get(CONF_VIDEO_TRANSCODING, False)
             )
-            video_dest_port = 0
-            video_failure_reason = ""
-            if forward_video_enabled:
-                video_reservation = None
-                sockets = ()
-                try:
-                    video_reservation, sockets = reserve_sip_video_relay_media(hass)
-                    source_video_port, video_dest_port = video_reservation.ports
-                    video_relay = build_pending_invite_video_relay(
-                        invite,
-                        remote_host=str(bridge_uri.host),
-                        left_port=source_video_port,
-                        right_port=video_dest_port,
-                        sockets=sockets,
-                        on_release=lambda ports: _release_sip_rtp_port_pair(
-                            hass, ports
-                        ),
-                    )
-                    # The relay owns all four bound sockets from here.
-                    video_reservation.detach()
-                except (OSError, RuntimeError) as err:
-                    for sock in sockets:
-                        sock.close()
-                    if video_reservation is not None:
-                        video_reservation.release()
-                    video_relay = None
-                    video_dest_port = 0
-                    video_failure_reason = "local_video_resources_unavailable"
-                    _LOGGER.warning(
-                        "SIP forward video relay unavailable; continuing audio-only: %s",
-                        err,
-                    )
-            client = SipCallClient(
-                local_ip=local_ip,
+            trunk_cfg = _get_trunk_config(hass) if bridge_to_trunk else {}
+            direct_winner = runtime.prepare_outbound_leg(
+                member=target,
+                peers=peers,
+                roster_entries=roster_entries,
                 local_name=invite.caller or _ha_peer_name(hass),
-                local_uri_user=(
-                    str(trunk_cfg.get(CONF_TRUNK_USERNAME) or _ha_peer_name(hass))
-                    if bridge_to_trunk
-                    else invite.routing_caller or _ha_peer_name(hass)
-                ),
-                local_sip_port=int(cfg["sip_port"]),
-                local_rtp_port=dest_relay_port,
-                supported_send_formats=sip_send_formats,
-                supported_recv_formats=sip_recv_formats,
-                signaling_transport=_sip_uri_transport(bridge_uri),
-                auth_username=str(trunk_cfg.get(CONF_TRUNK_AUTH_USERNAME) or "")
-                if bridge_to_trunk
-                else "",
-                username=str(trunk_cfg.get(CONF_TRUNK_USERNAME) or "")
-                if bridge_to_trunk
-                else "",
-                password=str(trunk_cfg.get(CONF_TRUNK_PASSWORD) or "")
-                if bridge_to_trunk
-                else "",
-                outbound_proxy=str(trunk_cfg.get(CONF_TRUNK_OUTBOUND_PROXY) or "")
-                if bridge_to_trunk
-                else "",
-                include_common_codecs=bridge_to_trunk or bridge_to_registered,
-                peer_user_agent=(
-                    str(((decision.entry.metadata or {}).get("user_agent")) or "")
-                    if bridge_to_registered and decision.entry is not None
-                    else ""
-                ),
-                local_video_rtp_port=video_dest_port,
-                video_formats=(
-                    video_bridge_offer_formats(
-                        invite.video_format,
-                        enable_transcoding=video_transcoding_enabled,
-                        target_codec=_peer_video_codec(
-                            peer_target,
-                            member_entry or decision.entry,
-                        ),
+                local_rtp_port_index=1,
+                uri_override=uri_override,
+                peer_user_agent_override=str(
+                    (
+                        ((decision.entry.metadata or {}).get("user_agent"))
+                        if decision.entry is not None
+                        else ""
                     )
-                    if video_relay is not None and invite.video_format is not None
-                    else ()
+                    or ""
                 ),
-                video_direction=(
-                    invite.video_format.direction
-                    if video_relay is not None
-                    else "inactive"
+                invite=invite,
+                port_reservation=reservation,
+                roster_entry_override=decision.entry,
+                policy=OutboundLegPolicy(
+                    local_uri_user=(
+                        str(
+                            trunk_cfg.get(CONF_TRUNK_USERNAME)
+                            or _ha_peer_name(hass)
+                        )
+                        if bridge_to_trunk
+                        else invite.routing_caller or _ha_peer_name(hass)
+                    ),
+                    auth_username=str(
+                        trunk_cfg.get(CONF_TRUNK_AUTH_USERNAME) or ""
+                    ),
+                    username=str(trunk_cfg.get(CONF_TRUNK_USERNAME) or ""),
+                    password=str(trunk_cfg.get(CONF_TRUNK_PASSWORD) or ""),
+                    outbound_proxy=str(
+                        trunk_cfg.get(CONF_TRUNK_OUTBOUND_PROXY) or ""
+                    ),
+                    force_common_audio=bridge_to_trunk,
+                    reuse_registered_flow=not bridge_to_trunk,
+                    allow_video=forward_video_enabled,
                 ),
-                generic_video_relay=video_relay is not None,
             )
-            if not bridge_to_trunk:
-                _enable_reused_sip_tcp_connection(
-                    hass,
-                    client,
-                    bridge_uri,
-                    target=decision.target or destination,
-                    default_sip_port=int(cfg["sip_port"]),
+            if direct_winner is None:
+                raise RuntimeError(
+                    f"destination {destination} has no reachable SIP leg"
                 )
+            bridge_uri = direct_winner.uri
+            client = direct_winner.client
+            video_relay = direct_winner.video_relay
+            video_failure_reason = direct_winner.video_failure_reason
             result = await client.invite(
                 target=bridge_uri.user,
                 target_display_name=(
@@ -1100,14 +1003,6 @@ async def async_forward_existing_call(
                         route_source="automation",
                         last_sip_event="SIP_RESPONSE",
                     )
-            direct_winner = OutboundLeg(
-                destination,
-                bridge_uri,
-                client,
-                reservation,
-                video_relay=video_relay,
-                video_failure_reason=video_failure_reason,
-            )
             committed = await async_commit_outbound_bridge(
                 hass,
                 registry,

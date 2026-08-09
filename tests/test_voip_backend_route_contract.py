@@ -239,15 +239,25 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     ) -> None:
         forward = self.call_forwarder
         video_start = forward.index("forward_video_enabled = bool(")
-        video = forward[video_start:] + self.outbound_bridge_commit
+        video = (
+            forward[video_start:]
+            + self.endpoint_dialing
+            + self.outbound_bridge_commit
+        )
 
         self.assertIn("cfg.get(CONF_SIP_VIDEO, False)", video)
         self.assertIn('source_route_endpoint.supports("video")', video)
         self.assertIn('target_route_endpoint.supports("video")', video)
+        self.assertIn("runtime.prepare_outbound_leg(", forward[video_start:])
+        self.assertNotIn("SipCallClient(", forward[video_start:])
         self.assertIn("build_pending_invite_video_relay(", video)
         self.assertIn("configure_answered_invite_video_relay(", video)
         self.assertIn("video_bridge_offer_formats(", video)
-        self.assertIn("enable_transcoding=video_transcoding_enabled", video)
+        self.assertIn(
+            "enable_video_transcoding=video_transcoding_enabled",
+            forward[video_start:],
+        )
+        self.assertIn("enable_transcoding=data.enable_video_transcoding", video)
         self.assertIn("generic_video_relay=video_relay is not None", video)
         bridge_video = SIP_BRIDGE.read_text()
         self.assertEqual(

@@ -223,11 +223,9 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         local_ip=local_ip,
         config=cfg,
         route_resolver=route_resolver,
-        ha_peer_name=_ha_peer_name,
         sip_uri_transport=_sip_uri_transport,
         enable_reused_tcp_connection=_enable_reused_sip_tcp_connection,
     )
-    _sip_uri_for_member = endpoint_dialer.sip_uri_for_member
     _browser_leg_for_member = endpoint_dialer.browser_leg_for_member
     _prepare_outbound_leg = endpoint_dialer.prepare_outbound_leg
 
@@ -376,7 +374,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 defer_invite_to_softphone=_defer_invite_to_ha_softphone,
                 prepare_outbound_leg=_prepare_outbound_leg,
                 publish_pending_ringing=_publish_pending_ha_softphone_ringing,
-                sip_uri_for_member=_sip_uri_for_member,
                 start_local_assist_bridge=_start_local_assist_bridge,
             ),
             call_id=call_id,
