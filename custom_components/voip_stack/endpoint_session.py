@@ -219,7 +219,7 @@ class SessionTerminationResult:
 
 @dataclass(slots=True)
 class CallEventContext:
-    """Bounded automation history owned by the call runtime."""
+    """Bounded automation history owned by one call generation."""
 
     sequence: int = 0
     state: str = ""
@@ -227,6 +227,7 @@ class CallEventContext:
     route_history: list[dict[str, Any]] = field(default_factory=list)
     connected_at: float = 0.0
     duration_seconds: int | None = None
+    terminal_summary_claimed: bool = False
 
 
 @dataclass(slots=True)
@@ -306,6 +307,7 @@ class EndpointCallSession:
         self.tasks: set[asyncio.Task[Any]] = set()
         self.named_tasks: dict[str, asyncio.Task[Any]] = {}
         self.endpoint_claims: dict[str, str] = {}
+        self.event_context = CallEventContext()
         self.artifacts = CallArtifacts()
         self.metadata: dict[str, Any] = {}
         self.termination_started = asyncio.Event()

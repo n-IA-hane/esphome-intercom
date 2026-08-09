@@ -373,6 +373,27 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(answered["sequence"], 2)
         self.assertEqual(answered["previous_state"], "ringing")
 
+    def test_event_context_is_owned_by_the_call_generation(self) -> None:
+        registry = _registry()
+        session = registry.upsert("call-1", state="ringing")
+
+        registry.event_fields("call-1", "ringing")
+
+        self.assertIs(registry.event_context("call-1"), session.event_context)
+
+    def test_external_event_lifecycle_retires_without_phantom_active_call(self) -> None:
+        registry = _registry()
+
+        first = registry.event_fields("physical:esp", "ringing")
+        terminal = registry.event_fields("physical:esp", "idle")
+        self.assertEqual(registry.active_count(), 0)
+        second = registry.event_fields("physical:esp", "ringing")
+
+        self.assertEqual(registry.active_count(), 1)
+        self.assertGreater(second["generation"], first["generation"])
+        self.assertEqual(terminal["sequence"], 2)
+        self.assertEqual(second["sequence"], 1)
+
     def test_terminal_event_reports_connected_call_duration(self) -> None:
         registry = _registry()
 
@@ -504,11 +525,13 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(fields["sequence"], 2)
         self.assertEqual(fields["previous_state"], "ringing")
         self.assertEqual(registry.event_context("source").state, "in_call")
-        self.assertNotIn("destination", registry.event_contexts)
+        self.assertIs(
+            registry.event_context("destination"),
+            registry.event_context("source"),
+        )
 
     def test_pop_by_leg_alias_removes_alias_event_context(self) -> None:
         registry = _registry()
-        registry.event_fields("destination", "queued")
         registry.register_bridge(
             source_call_id="source",
             dest_call_id="destination",
@@ -516,7 +539,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
             state="ringing",
         )
         registry.event_fields("source", "ringing")
-        self.assertIn("destination", registry.event_contexts)
+        self.assertIsNotNone(registry.event_context("destination"))
 
         popped = registry._discard_dark_session(
             "destination",
@@ -524,7 +547,8 @@ class CallRegistryEventContextTest(unittest.TestCase):
         )
 
         self.assertIsNotNone(popped)
-        self.assertEqual(registry.event_contexts, {})
+        self.assertNotIn("destination", registry.sessions)
+        self.assertNotIn("source", registry.sessions)
 
     def test_revision_advances_for_owner_and_destination_without_state_change(
         self,
@@ -723,7 +747,8 @@ class CallRegistryEventContextTest(unittest.TestCase):
 
         asyncio.run(registry.terminate_call_wait("call-1", reason="remote_hangup"))
 
-        self.assertNotIn("call-1", registry.event_contexts)
+        self.assertIsNotNone(registry.event_context("call-1"))
+        self.assertNotIn("call-1", registry.sessions)
         self.assertIsNone(registry.artifact_for("call-1", "pending_invite"))
         self.assertIsNone(registry.artifact_for("call-1", "pending_route"))
 

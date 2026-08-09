@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Iterator, Literal
+from typing import Any, Iterable, Iterator, Literal
 
 from .endpoint_session import (
     CallEventContext,
@@ -43,8 +43,14 @@ TERMINAL_STATES = {
     "protocol_error",
     "error",
 }
+
+
 MAX_TERMINATED_CALL_IDS = 512
-MAX_TERMINAL_SUMMARY_IDS = 512
+_EVENT_IDENTITY_KEYS = (
+    "endpoint_id", "source_endpoint_id", "dest_endpoint_id", "target_endpoint_id",
+    "device_id", "source_device_id", "dest_device_id", "target_device_id",
+    "ingress", "origin",
+)
 
 
 class CallRuntimeApi:
@@ -55,6 +61,39 @@ class CallRuntimeApi:
 
         accepted, phase = self._resolve_observation(session, state)
         return accepted and session.apply_observation(state, phase)
+
+    @staticmethod
+    def _advance_event_context(context: CallEventContext, state: str) -> None:
+        if state and state != context.state:
+            context.previous_state = context.state
+            context.state = state
+            context.sequence += 1
+        if state == "in_call" and not context.connected_at:
+            context.connected_at = time.monotonic()
+        if state in TERMINAL_STATES and context.connected_at and context.duration_seconds is None:
+            context.duration_seconds = max(
+                0, round(time.monotonic() - context.connected_at)
+            )
+
+    @staticmethod
+    def _event_identity_fields(
+        metadata: dict[str, Any], endpoint_claims: Iterable[str] = ()
+    ) -> dict[str, Any]:
+        fields = {
+            key: metadata[key]
+            for key in _EVENT_IDENTITY_KEYS
+            if metadata.get(key) not in (None, "")
+        }
+        participants = {
+            str(fields[key]).strip()
+            for key in _EVENT_IDENTITY_KEYS[:4]
+            if key in fields
+        }
+        participants.update(endpoint_claims)
+        participants.discard("")
+        if participants:
+            fields["participant_endpoint_ids"] = sorted(participants)
+        return fields
 
     def artifact_for(self, call_id: str, name: str) -> Any | None:
         session = self.get_session(self.resolve_session_id(call_id))
@@ -176,11 +215,12 @@ class CallRuntimeApi:
 
         call_id = session.call_id
         self._remember_terminated(call_id, generation=session.generation)
+        context = session.event_context
+        self._advance_event_context(context, session.state)
+        self.terminated_call_ids[call_id] = (session.generation, context)
         for leg_id in tuple(session.legs):
             self.leg_index.pop(leg_id, None)
-            self.event_contexts.pop(leg_id, None)
         self.leg_index.pop(call_id, None)
-        self.event_contexts.pop(call_id, None)
 
     def _remember_terminated(
         self,
@@ -193,7 +233,10 @@ class CallRuntimeApi:
             clean_call_id = str(call_id or "").strip()
             if not clean_call_id:
                 continue
-            self.terminated_call_ids[clean_call_id] = int(generation)
+            previous = self.terminated_call_ids.get(clean_call_id)
+            self.terminated_call_ids[clean_call_id] = (
+                int(generation), previous[1] if previous is not None else None
+            )
             self.terminated_call_ids.move_to_end(clean_call_id)
         while len(self.terminated_call_ids) > MAX_TERMINATED_CALL_IDS:
             self.terminated_call_ids.popitem(last=False)
@@ -212,7 +255,7 @@ class CallRuntimeApi:
         for candidate in (call_id, session_id):
             if candidate not in self.terminated_call_ids:
                 continue
-            terminal_generation = self.terminated_call_ids[candidate]
+            terminal_generation = self.terminated_call_ids[candidate][0]
             if (
                 generation is None
                 and current is not None
@@ -251,7 +294,6 @@ class CallRuntimeApi:
             for leg_id, owner_id in tuple(self.leg_index.items()):
                 if owner_id == session_id:
                     self.leg_index.pop(leg_id, None)
-                    self.event_contexts.pop(leg_id, None)
         self._remember_terminated(
             call_id,
             session_id,
@@ -295,109 +337,73 @@ class CallRuntimeApi:
                 "route_history": [],
             }
         call_id = self.resolve_session_id(call_id)
-        context = self.event_contexts.get(call_id)
-        if context is None:
-            if len(self.event_contexts) >= 256:
-                self.event_contexts.pop(next(iter(self.event_contexts)))
-            context = CallEventContext()
-            self.event_contexts[call_id] = context
-        starts_new_lifecycle = bool(
-            state
-            and state not in TERMINAL_STATES
-            and (not context.state or context.state in TERMINAL_STATES)
-        )
-        if starts_new_lifecycle:
-            context.connected_at = 0.0
-            context.duration_seconds = None
-            self.terminal_summary_ids.pop(call_id, None)
-        if state and state != context.state:
-            context.previous_state = context.state
-            context.state = state
-            context.sequence += 1
-        if state == "in_call" and not context.connected_at:
-            context.connected_at = time.monotonic()
         session = self.sessions.get(call_id)
+        terminal = self.terminated_call_ids.get(call_id)
+        summary = terminal[1] if terminal is not None else None
+        if session is None and state in TERMINAL_STATES and summary is not None:
+            context = summary
+            revision = 0
+            generation = terminal[0] if terminal is not None else 0
+            phase = SessionPhase.TERMINATED.value
+            owner = "terminal"
+            metadata = {}
+        else:
+            if session is None:
+                session = self.ensure_session(call_id, event_only=True)
+            context = session.event_context
+            revision = session.revision
+            generation = session.generation
+            phase = session.phase.value
+            owner = session.owner
+            metadata = session.metadata
+        self._advance_event_context(context, state)
         fields = {
             "schema_version": CALL_EVENT_SCHEMA_VERSION,
             "sequence": context.sequence,
-            "revision": session.revision if session is not None else 0,
-            "generation": session.generation if session is not None else 0,
-            "pbx_phase": (session.phase.value if session is not None else ""),
-            "owner": session.owner if session is not None else "",
+            "revision": revision,
+            "generation": generation,
+            "pbx_phase": phase,
+            "owner": owner,
             "previous_state": context.previous_state,
             "route_history": [dict(item) for item in context.route_history],
         }
-        if state in TERMINAL_STATES and context.connected_at:
-            if context.duration_seconds is None:
-                context.duration_seconds = max(
-                    0,
-                    round(time.monotonic() - context.connected_at),
-                )
+        if state in TERMINAL_STATES and context.duration_seconds is not None:
             fields["duration_seconds"] = context.duration_seconds
-        if session is None:
-            return fields
-
         # Event entities must be attributed from call ownership, never by
         # resolving a caller-controlled display name. Preserve the explicit
         # source/destination metadata and include every atomically claimed
         # phone for ring groups and conferences.
-        identity_keys = (
-            "endpoint_id",
-            "source_endpoint_id",
-            "dest_endpoint_id",
-            "target_endpoint_id",
-            "device_id",
-            "source_device_id",
-            "dest_device_id",
-            "target_device_id",
-        )
         fields.update(
-            {
-                key: value
-                for key in identity_keys
-                if (value := session.metadata.get(key)) not in (None, "")
-            }
-        )
-        fields.update(
-            {
-                key: value
-                for key in ("ingress", "origin")
-                if (value := session.metadata.get(key)) not in (None, "")
-            }
-        )
-        participant_endpoint_ids = {
-            str(value).strip()
-            for key in (
-                "endpoint_id",
-                "source_endpoint_id",
-                "dest_endpoint_id",
-                "target_endpoint_id",
+            self._event_identity_fields(
+                metadata,
+                session.endpoint_claims if session is not None else (),
             )
-            if (value := session.metadata.get(key)) not in (None, "")
-        }
-        participant_endpoint_ids.update(session.endpoint_claims)
-        participant_endpoint_ids.discard("")
-        if participant_endpoint_ids:
-            fields["participant_endpoint_ids"] = sorted(participant_endpoint_ids)
+        )
+        if session is not None and state in TERMINAL_STATES and session.metadata.get(
+            "event_only"
+        ) is True:
+            self._retire_observation(session)
+            self.sessions.pop(call_id, None)
         return fields
 
     def claim_terminal_summary(self, call_id: str) -> bool:
         """Claim the single Logbook summary emitted for one logical call."""
 
         call_id = self.resolve_session_id(str(call_id or "").strip())
-        if not call_id or call_id in self.terminal_summary_ids:
+        context = self.event_context(call_id)
+        if context is None or context.terminal_summary_claimed:
             return False
-        self.terminal_summary_ids[call_id] = None
-        self.terminal_summary_ids.move_to_end(call_id)
-        while len(self.terminal_summary_ids) > MAX_TERMINAL_SUMMARY_IDS:
-            self.terminal_summary_ids.popitem(last=False)
+        context.terminal_summary_claimed = True
         return True
 
     def event_context(self, call_id: str) -> CallEventContext | None:
         """Return the current automation event context for a call or leg."""
-        return self.event_contexts.get(
-            self.resolve_session_id(str(call_id or "").strip())
-        )
+        call_id = self.resolve_session_id(str(call_id or "").strip())
+        session = self.sessions.get(call_id)
+        if session is not None:
+            return session.event_context
+        terminal = self.terminated_call_ids.get(call_id)
+        return terminal[1] if terminal is not None else None
 
     def record_route(
         self,
@@ -409,10 +415,10 @@ class CallRuntimeApi:
     ) -> list[dict[str, Any]]:
         """Append one bounded routing decision to the call history."""
         call_id = self.resolve_session_id(str(call_id or "").strip())
-        context = self.event_contexts.get(call_id)
-        if context is None:
-            self.event_fields(call_id, "")
-            context = self.event_contexts[call_id]
+        session = self.sessions.get(call_id)
+        if session is None:
+            session = self.ensure_session(call_id, event_only=True)
+        context = session.event_context
         context.route_history.append(
             {
                 "action": str(action or "").strip(),
@@ -421,9 +427,7 @@ class CallRuntimeApi:
             }
         )
         del context.route_history[:-8]
-        session = self.sessions.get(call_id)
-        if session is not None:
-            session.revision += 1
+        session.revision += 1
         return [dict(item) for item in context.route_history]
 
     def upsert(
@@ -980,8 +984,6 @@ class CallRuntimeApi:
         self._release_all_endpoint_claims()
         self.sessions.clear()
         self.leg_index.clear()
-        self.event_contexts.clear()
-        self.terminal_summary_ids.clear()
         self.terminated_call_ids.clear()
 
     def active_count(self, *, include_ha_softphone: bool = True) -> int:

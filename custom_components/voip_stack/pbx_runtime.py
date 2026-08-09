@@ -14,8 +14,8 @@ from typing import Any
 from .call_registry import CallRuntimeApi
 from .endpoint_session import (
     CallArtifacts,
-    CallLeg,
     CallEventContext,
+    CallLeg,
     CleanupStage,
     EndpointCallSession,
     LegKind,
@@ -149,9 +149,9 @@ class SipEndpointRuntime(CallRuntimeApi):
         self.calls: dict[str, EndpointCallSession] = {}
         self.sessions = self.calls
         self.leg_index: dict[str, str] = {}
-        self.event_contexts: dict[str, CallEventContext] = {}
-        self.terminal_summary_ids: OrderedDict[str, None] = OrderedDict()
-        self.terminated_call_ids: OrderedDict[str, int] = OrderedDict()
+        self.terminated_call_ids: OrderedDict[
+            str, tuple[int, CallEventContext | None]
+        ] = OrderedDict()
         self.media_controller_lock = asyncio.Lock()
         self._generation = 0
         self._allow_dark_sessions = allow_dark_sessions

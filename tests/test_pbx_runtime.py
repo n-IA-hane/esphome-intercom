@@ -86,19 +86,37 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(first.phase, SessionPhase.ROUTING)
         first.update_metadata(destination="100")
         runtime.observe_leg("call-1", "leg-1", role="sip")
-        runtime.event_contexts["leg-1"] = {"source": "test"}
         token = first.token
 
         self.assertIs(runtime.get_session("call-1", generation=token.generation), first)
         await first.terminate(endpoint_session.TerminationIntent("cancelled"))
         self.assertIsNone(runtime.get_session("call-1"))
         self.assertNotIn("leg-1", runtime.leg_index)
-        self.assertNotIn("leg-1", runtime.event_contexts)
+        self.assertIsNone(runtime.event_context("leg-1"))
         self.assertTrue(runtime.is_terminated("call-1", generation=token.generation))
 
         second = runtime.create_session("call-1")
         self.assertGreater(second.generation, token.generation)
         self.assertFalse(second.owns(token))
+        self.assertIsNot(second.event_context, first.event_context)
+        self.assertEqual(second.event_context.sequence, 0)
+
+    async def test_cleanup_retains_only_the_bounded_terminal_event_summary(self) -> None:
+        runtime = SipEndpointRuntime()
+        runtime.activate()
+        session = runtime.create_session("call-1")
+        runtime.event_fields("call-1", "in_call")
+        runtime.record_route("call-1", action="forward", destination="Casa")
+
+        await session.terminate(endpoint_session.TerminationIntent("remote_hangup"))
+
+        context = runtime.event_context("call-1")
+        assert context is not None
+        self.assertEqual(context.state, "idle")
+        self.assertEqual(context.sequence, 2)
+        self.assertEqual(context.route_history[-1]["destination"], "Casa")
+        self.assertTrue(runtime.claim_terminal_summary("call-1"))
+        self.assertFalse(runtime.claim_terminal_summary("call-1"))
 
     async def test_duplicate_live_call_id_is_rejected(self) -> None:
         runtime = SipEndpointRuntime()
