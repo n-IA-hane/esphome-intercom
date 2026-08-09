@@ -153,7 +153,7 @@ DEFAULT_ESPS = {
     "p4": EspDevice(
         "p4",
         "Waveshare P4 Touch",
-        "192.168.1.45",
+        "192.168.1.57",
         action_prefix="waveshare_p4_touch",
         ha_state_entity="sensor.waveshare_p4_touch_voip_state",
         runtime_entity="sensor.waveshare_p4_touch_runtime_snapshot",
