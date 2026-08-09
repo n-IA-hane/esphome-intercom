@@ -132,6 +132,34 @@ async def test_system_resolver_configuration_runs_off_event_loop_once(
     ]
 
 
+@pytest.mark.asyncio
+async def test_explicit_dnspython_default_resolver_is_preserved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queries: list[tuple[str, str, bool]] = []
+
+    class Answer(list):
+        rrset = SimpleNamespace(ttl=30)
+
+    class Resolver:
+        async def resolve(self, name: str, kind: str, *, search: bool):
+            queries.append((name, kind, search))
+            return Answer()
+
+    dns = types.ModuleType("dns")
+    asyncresolver = types.ModuleType("dns.asyncresolver")
+    asyncresolver.default_resolver = Resolver()
+    asyncresolver.Resolver = lambda: (_ for _ in ()).throw(
+        AssertionError("configured resolver must not be replaced")
+    )
+    dns.asyncresolver = asyncresolver
+    monkeypatch.setitem(sys.modules, "dns", dns)
+    monkeypatch.setitem(sys.modules, "dns.asyncresolver", asyncresolver)
+
+    assert await SipServerResolver()._query_dns("voip.test", "NAPTR") == ((), 30.0)
+    assert queries == [("voip.test", "NAPTR", False)]
+
+
 async def _empty_dns() -> tuple[tuple[object, ...], float]:
     return (), 30
 
