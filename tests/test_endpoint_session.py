@@ -157,6 +157,39 @@ class EndpointCallSessionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.state, "idle")
         self.assertIs(session.phase, endpoint_session.SessionPhase.TERMINATED)
 
+    async def test_terminal_projection_failure_cannot_break_cleanup_barrier(self) -> None:
+        events: list[str] = []
+
+        def retire(_session, _result) -> None:
+            events.append("retired")
+
+        async def broken_projection(_session, _intent) -> None:
+            events.append("project")
+            raise RuntimeError("projection failed")
+
+        session = endpoint_session.EndpointCallSession(
+            "call-1",
+            1,
+            termination_observer=broken_projection,
+            on_terminated=retire,
+        )
+        session.add_resource(
+            "relay",
+            object(),
+            lambda reason: events.append(f"relay:{reason}"),
+        )
+
+        result = await session.terminate(
+            endpoint_session.TerminationIntent("remote_hangup")
+        )
+
+        self.assertEqual(
+            events,
+            ["relay:remote_hangup", "retired", "project"],
+        )
+        self.assertTrue(session.terminated.is_set())
+        self.assertEqual(result.errors, ("observer:RuntimeError",))
+
     async def test_teardown_order_is_media_legs_then_reservations(self) -> None:
         events: list[str] = []
         session = endpoint_session.EndpointCallSession("call-1", 1)

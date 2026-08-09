@@ -67,6 +67,9 @@ def _load_runtime_module():
     call_projection = types.ModuleType(f"{package_name}.call_projection")
 
     call_projection.publish_phone_projection = lambda *_args, **_kwargs: True
+    call_projection.stage_phone_termination_projection = (
+        lambda *_args, **_kwargs: None
+    )
     sys.modules[call_projection.__name__] = call_projection
     endpoint_lifecycle = types.ModuleType(
         f"{package_name}.endpoint_lifecycle"

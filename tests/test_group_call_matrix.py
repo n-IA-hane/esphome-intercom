@@ -135,6 +135,7 @@ groups = _load_module("groups")
 router = _load_module("router")
 endpoint_routing = _load_module("endpoint_routing")
 websocket_api = _load_module("websocket_api")
+call_projection = _load_module("call_projection")
 fsm = _load_module("fsm")
 const = _load_module("const")
 conference = _load_module("conference")
@@ -194,6 +195,7 @@ runtime_data_module.require_runtime_data = _test_runtime
 runtime_data_module.runtime_data = _test_runtime
 endpoint_lifecycle_module.require_runtime_data = _test_runtime
 websocket_api.runtime_data = _test_runtime
+call_projection.require_runtime_data = _test_runtime
 
 
 class GroupCallMatrixTest(unittest.TestCase):
@@ -884,7 +886,7 @@ class GroupCallMatrixTest(unittest.TestCase):
     def test_late_state_cannot_resurrect_terminated_softphone_call(self) -> None:
         hass = _FakeHass()
         registry = websocket_api.call_registry(hass)
-        registry.upsert(
+        session = registry.upsert(
             "finished-call",
             state=fsm.CallState.IN_CALL.value,
             owner="ha_softphone",
@@ -915,14 +917,13 @@ class GroupCallMatrixTest(unittest.TestCase):
             reason="remote_hangup",
         )
 
-        websocket_api._set_ha_softphone_call_state(
-            hass,
-            fsm.CallState.IN_CALL.value,
-            endpoint_id="default",
-            call_id="finished-call",
-            direction="incoming",
-            caller="Door",
-            callee="Casa",
+        self.assertFalse(
+            call_projection.publish_phone_projection(
+                hass,
+                session,
+                "default",
+                direction="incoming",
+            )
         )
 
         state = websocket_api._ha_softphone_state(hass, "default")
@@ -955,29 +956,57 @@ class GroupCallMatrixTest(unittest.TestCase):
     def test_new_call_cannot_replace_live_ringing_projection(self) -> None:
         hass = _FakeHass()
         registry = websocket_api.call_registry(hass)
-        registry.upsert(
+        endpoint = _load_module("phone_endpoint").PhoneEndpoint(
+            endpoint_id="test",
+            name="Test",
+            kind="browser",
+        )
+        hass.runtime.endpoints.register(endpoint)
+        live = registry.upsert(
             "live-call",
             state=fsm.CallState.RINGING.value,
             owner="ha_softphone",
         )
-        websocket_api._set_ha_softphone_call_state(
-            hass,
-            fsm.CallState.RINGING.value,
-            call_id="live-call",
-            endpoint_id="test",
-            direction="incoming",
+        registry.claim_endpoint("live-call", "test", role="ha_softphone")
+        competing = registry.upsert(
+            "competing-call",
+            state=fsm.CallState.RINGING.value,
+            owner="ha_softphone",
+        )
+        self.assertTrue(
+            call_projection.publish_phone_projection(hass, live, "test")
         )
 
-        websocket_api._set_ha_softphone_call_state(
-            hass,
-            fsm.CallState.RINGING.value,
-            call_id="competing-call",
-            endpoint_id="test",
-            direction="incoming",
+        self.assertFalse(
+            call_projection.publish_phone_projection(hass, competing, "test")
         )
 
         state = websocket_api._ha_softphone_state(hass, "test")
         self.assertEqual(state["call_id"], "live-call")
+
+    def test_softphone_sink_never_changes_endpoint_ownership(self) -> None:
+        hass = _FakeHass()
+        registry = websocket_api.call_registry(hass)
+        endpoint = _load_module("phone_endpoint").PhoneEndpoint(
+            endpoint_id="test",
+            name="Test",
+            kind="browser",
+        )
+        hass.runtime.endpoints.register(endpoint)
+        registry.upsert("owner-call", state="ringing", owner="ha_softphone")
+        registry.claim_endpoint("owner-call", "test", role="ha_softphone")
+
+        websocket_api._set_ha_softphone_call_state(
+            hass,
+            fsm.CallState.IDLE.value,
+            call_id="competing-view",
+            endpoint_id="test",
+        )
+
+        self.assertEqual(
+            hass.runtime.endpoints.require("test").active_call_id,
+            "owner-call",
+        )
 
     def test_virtual_endpoint_phonebook_push_matrix(self) -> None:
         pbx = self._mini_pbx()

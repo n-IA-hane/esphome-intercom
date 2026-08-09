@@ -16,12 +16,15 @@ import numpy as np
 
 from homeassistant.core import HomeAssistant
 
-from .call_projection import observe_phone_leg_projection
+from .call_projection import (
+    observe_phone_leg_projection,
+    stage_phone_termination_projection,
+)
 from .core.audio_format import AudioFormat, PcmFormat
 from .core.audio_pcm import PcmFrameConverter
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
-from .endpoint_session import TerminationInitiator, TerminationIntent
+from .endpoint_session import TerminationInitiator
 from .endpoint_registry import EndpointBusyError
 from .fsm import CallState, TerminalReason
 from .groups import GROUP_TYPE_CONFERENCE
@@ -595,6 +598,10 @@ class ConferenceRoom:
             self._set_softphone_idle(reason, call_id=call_id)
         elif endpoint_id:
             self._set_softphone_idle(reason, call_id=call_id)
+        await call_registry(self.hass).terminate_call_wait(
+            call_id,
+            reason=reason,
+        )
 
     def push_ha_audio(self, call_id: str, pcm: bytes) -> None:
         leg = self.legs.get(call_id)
@@ -663,14 +670,22 @@ class ConferenceRoom:
             if session is None:
                 continue
             leg_id = f"browser:{endpoint_id}"
-            observe_phone_leg_projection(
-                self.hass, registry, session, endpoint_id, CallState.IDLE.value,
-                leg_id=leg_id,
-                intent=TerminationIntent(
-                    reason, TerminationInitiator.RUNTIME, CallState.IDLE.value,
-                ),
-                peer_name=self.name, direction="incoming", reason=reason,
-                route_kind=GROUP_TYPE_CONFERENCE, last_sip_event="BYE",
+            registry.observe_leg(
+                softphone_call_id,
+                leg_id,
+                role="ha_softphone",
+                state=CallState.IDLE.value,
+                endpoint_id=endpoint_id,
+                generation=session.generation,
+            )
+            stage_phone_termination_projection(
+                session,
+                endpoint_id,
+                peer_name=self.name,
+                direction="incoming",
+                reason=reason,
+                route_kind=GROUP_TYPE_CONFERENCE,
+                last_sip_event="BYE",
             )
             registry.take_media(softphone_call_id)
             EndpointTerminationHandler(self.hass).request_reason(
@@ -1048,6 +1063,10 @@ class ConferenceManager:
         room = self.rooms.get(resolved[0])
         if room is not None:
             room._set_softphone_idle(reason, call_id=call_id)
+            await call_registry(self.hass).terminate_call_wait(
+                call_id,
+                reason=reason,
+            )
         else:
             await EndpointTerminationHandler(self.hass).terminate_reason(
                 call_id,

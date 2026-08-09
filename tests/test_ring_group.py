@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 import types
 from types import SimpleNamespace
-from unittest.mock import ANY, Mock
+from unittest.mock import Mock
 
 import pytest
 
@@ -35,6 +35,13 @@ class _Kind(Enum):
 
 
 class _CallState(Enum):
+    IDLE = "idle"
+    BUSY = "busy"
+    DECLINED = "declined"
+    CANCELLED = "cancelled"
+    MEDIA_INCOMPATIBLE = "media_incompatible"
+    TRANSPORT_UNREACHABLE = "transport_unreachable"
+    AUTH_REQUIRED_UNSUPPORTED = "auth_required_unsupported"
     RINGING = "ringing"
 
 
@@ -53,7 +60,10 @@ def ring_group(monkeypatch):
     monkeypatch.setitem(sys.modules, "homeassistant.core", core)
 
     dependencies = {
-        "call_projection": {"observe_phone_leg_projection": Mock()},
+        "call_projection": {
+            "observe_phone_leg_projection": Mock(),
+            "stage_phone_termination_projection": Mock(),
+        },
         "dial_fork": {"DialDisposition": _Disposition},
         "endpoint_lifecycle": {"call_registry": Mock()},
         "fsm": {"CallState": _CallState},
@@ -235,13 +245,18 @@ def test_origin_projection_is_gated_and_preserves_terminal_metadata(
         **common,
     )
 
-    ring_group.observe_phone_leg_projection.assert_called_once_with(
-        ANY,
-        ANY,
-        ANY,
+    registry = ring_group.call_registry.return_value
+    registry.observe_leg.assert_called_once_with(
+        "call-1",
+        "browser-origin:hall",
+        role="ha_softphone",
+        state="transport_unreachable",
+        endpoint_id="hall",
+        generation=registry.get_session.return_value.generation,
+    )
+    ring_group.stage_phone_termination_projection.assert_called_once_with(
+        registry.get_session.return_value,
         "hall",
-        "transport_unreachable",
-        leg_id="browser-origin:hall",
         peer_name="RG Casa",
         direction="outgoing",
         reason="protocol_error",
@@ -251,6 +266,7 @@ def test_origin_projection_is_gated_and_preserves_terminal_metadata(
         route_kind="ring",
         sip_status_code=500,
     )
+    ring_group.observe_phone_leg_projection.assert_not_called()
 
 
 def test_esphome_transport_adoption_is_explicit(ring_group) -> None:

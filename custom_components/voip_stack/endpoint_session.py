@@ -527,18 +527,6 @@ class EndpointCallSession:
                 self.call_id,
                 exc_info=True,
             )
-        try:
-            if self._termination_observer is not None:
-                result = self._termination_observer(self, intent)
-                if inspect.isawaitable(result):
-                    await result
-        except BaseException as err:  # projection failure must not block cleanup
-            errors.append(f"observer:{type(err).__name__}")
-            _LOGGER.debug(
-                "PBX session terminal projection failed call_id=%s",
-                self.call_id,
-                exc_info=True,
-            )
         self.artifacts.settle()
 
         current = asyncio.current_task()
@@ -598,7 +586,6 @@ class EndpointCallSession:
         self._state = intent.public_state
         self.outcome = intent.reason
         self.phase = SessionPhase.TERMINATED
-        self.terminated.set()
         result = SessionTerminationResult(
             reason=self.terminal_reason,
             closed_legs=tuple(closed_legs),
@@ -613,6 +600,26 @@ class EndpointCallSession:
                     "PBX session termination observer failed call_id=%s",
                     self.call_id,
                 )
+        try:
+            if self._termination_observer is not None:
+                observed = self._termination_observer(self, intent)
+                if inspect.isawaitable(observed):
+                    await observed
+        except BaseException as err:  # projection failure must not block cleanup
+            errors.append(f"observer:{type(err).__name__}")
+            _LOGGER.debug(
+                "PBX session terminal projection failed call_id=%s",
+                self.call_id,
+                exc_info=True,
+            )
+            result = SessionTerminationResult(
+                reason=self.terminal_reason,
+                closed_legs=tuple(closed_legs),
+                closed_resources=tuple(closed_resources),
+                errors=tuple(errors),
+            )
+        finally:
+            self.terminated.set()
         return result
 
     async def terminate(self, intent: TerminationIntent) -> SessionTerminationResult:

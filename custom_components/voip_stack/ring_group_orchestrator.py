@@ -436,23 +436,6 @@ async def run_ring_group_call(
                 last_sip_event="SIP_RESPONSE",
                 sip_status_code=status_code,
             )
-            publish_bridge_projection(
-                hass,
-                session,
-                intent=TerminationIntent(
-                    terminal_reason,
-                    TerminationInitiator.ROUTING,
-                    public_state,
-                    response_status=status_code,
-                ),
-                peer_name=invite.target,
-                reason=terminal_reason,
-                terminal_reason=terminal_reason,
-                origin="remote",
-                sip_status_code=status_code,
-                last_sip_event="SIP_RESPONSE",
-                route_kind=GROUP_TYPE_RING,
-            )
             await _rollback_route(
                 terminal_reason,
                 sip_status=status_code,

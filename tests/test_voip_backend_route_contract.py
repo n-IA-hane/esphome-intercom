@@ -1298,16 +1298,16 @@ class VoipBackendRouteContractTest(unittest.TestCase):
                 "def _set_ha_softphone_call_state("
             )
         ]
-        terminal = websocket[
-            websocket.index("def _set_ha_softphone_call_state(") : websocket.index(
-                "def _set_sip_bridge_call_state("
-            )
-        ]
         self.assertIn('"dialed_target": dialed_target', state)
         self.assertIn('"last_terminal_dialed_target", ""', state)
+        call_fields = websocket[
+            websocket.index("_CALL_SCOPED_SOFTPHONE_FIELDS = (") : websocket.index(
+                "def _set_ha_softphone_call_state("
+            )
+        ]
         for field in ("connected_party", "answered_by"):
             self.assertIn(f'"{field}": store.get("{field}", "")', state)
-            self.assertIn(f'"{field}",', terminal)
+            self.assertIn(f'"{field}",', call_fields)
 
     def test_esp_origin_forward_to_same_source_host_is_rejected(self) -> None:
         self.assertIn("and sip_endpoints_equal(", self.inbound_bridge)
@@ -1403,7 +1403,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
                 "def _ha_softphone_groups("
             )
         ]
-        self.assertIn("_set_ha_softphone_call_state(", release)
+        self.assertIn("registry.release_endpoint_claim(", release)
+        self.assertIn("observe_phone_leg_projection(", release)
         self.assertIn("TerminalReason.FORWARDED.value", release)
 
     def test_explicit_browser_selector_returns_registry_canonical_id(self) -> None:
@@ -1622,8 +1623,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_route_request_publishes_a_canonical_connecting_state(self) -> None:
         route_branch = self.inbound_automation
         self.assertIn(
-            "session = call_registry(hass).get_session(invite.call_id)", route_branch
+            "registry = call_registry(hass)", route_branch
         )
+        self.assertIn("session = registry.upsert(", route_branch)
         self.assertIn("publish_bridge_projection(", route_branch)
         self.assertNotIn("CallProjectionEvent.bridge(", route_branch)
         self.assertIn("route_request=True", route_branch)

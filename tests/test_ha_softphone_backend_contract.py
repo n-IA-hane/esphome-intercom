@@ -46,6 +46,7 @@ SOFTPHONE_ANSWER = ROOT / "custom_components" / "voip_stack" / "softphone_answer
 SOFTPHONE_ORIGINATE = (
     ROOT / "custom_components" / "voip_stack" / "softphone_originate.py"
 )
+CALL_PROJECTION = ROOT / "custom_components" / "voip_stack" / "call_projection.py"
 
 
 def _function_body(source: str, function_name: str) -> str:
@@ -119,16 +120,13 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("await asyncio.wait(capture_tasks, timeout=2.0)", capture_cleanup)
         self.assertIn("will finish in background", capture_cleanup)
         self.assertNotIn("task.cancel()", capture_cleanup)
-        self.assertIn("_set_ha_softphone_call_state(", body)
-        self.assertIn("CallState.IDLE.value", body)
-        self.assertIn('last_sip_event="shutdown"', body)
-        self.assertIn("if active_call_id or active_state in {", body)
-        idle_branch = body.split("else:", 1)[1]
-        self.assertIn(
-            "_publish_ha_softphone_state(hass, endpoint_id=endpoint_id)",
-            idle_branch,
+        self.assertIn("_reset_ha_softphone_store(", body)
+        self.assertIn('event="shutdown"', body)
+        self.assertNotIn("_set_ha_softphone_call_state(", body)
+        self.assertNotIn(
+            "_fire_call_event",
+            _function_body(ws, "_reset_ha_softphone_store"),
         )
-        self.assertNotIn("_fire_call_event", idle_branch)
         self.assertIn("media.debug_capture_tasks", body)
 
     def test_topology_details_are_exposed_only_in_debug_mode(self) -> None:
@@ -330,15 +328,16 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         ws = (
             ROOT / "custom_components" / "voip_stack" / "websocket_api.py"
         ).read_text()
-        body = _function_body(ws, "_set_ha_softphone_call_state")
-        self.assertIn("next_call_id != previous_call_id", body)
-        self.assertIn("previous_state", body)
-        self.assertIn("Ignoring stale HA softphone", body)
-        guard = body.split("next_call_id != previous_call_id", 1)[1].split(
-            "if terminal:", 1
-        )[0]
-        self.assertIn("CallState.IN_CALL.value", guard)
-        self.assertIn("return", guard)
+        sink = _function_body(ws, "_set_ha_softphone_call_state")
+        projection = _function_body(
+            CALL_PROJECTION.read_text(),
+            "publish_call_projection",
+        )
+        self.assertNotIn("release_endpoint_claim", sink)
+        self.assertNotIn("claim_call", sink)
+        self.assertIn("event.token.generation", projection)
+        self.assertIn("runtime.get_session(event.token.call_id)", projection)
+        self.assertIn("if not live_projection and not terminal_projection:", projection)
 
     def test_softphone_rtp_latches_source_port_and_ssrc(self) -> None:
         audio_ws = (

@@ -6,9 +6,12 @@ import logging
 
 from homeassistant.core import HomeAssistant
 
-from .call_projection import publish_bridge_projection, publish_phone_projection
+from .call_projection import (
+    observe_phone_leg_projection,
+    publish_bridge_projection,
+    publish_phone_projection,
+)
 from .endpoint_lifecycle import call_registry
-from .endpoint_session import TerminationIntent
 from .fsm import CallState, TerminalReason
 from .runtime_data import endpoint_directory, preferred_browser_phone
 from .service_errors import service_error as _service_error
@@ -123,13 +126,13 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
         state = CallState.BUSY.value if action == "busy" else "declined"
         session = registry.get_session(call_id)
         if session is not None:
-            registry.add_leg(
-                call_id, f"browser:{endpoint_id}", role="ha_softphone", state=state
-            )
-            publish_phone_projection(
+            observe_phone_leg_projection(
                 hass,
-                session, endpoint_id, leg_id=f"browser:{endpoint_id}",
-                intent=TerminationIntent(app_reason, public_state=state),
+                registry,
+                session,
+                endpoint_id,
+                state,
+                leg_id=f"browser:{endpoint_id}",
                 peer_name=getattr(route.get("invite"), "caller", ""),
                 direction="incoming", reason=app_reason, terminal_reason=app_reason,
                 origin="self", sip_status_code=486 if action == "busy" else 603,
@@ -175,29 +178,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
     )
     invite = route.get("invite")
     session = registry.get_session(call_id)
-    if action in {"decline", "busy", "cancel"} and invite is not None:
-        status = int(data.get("status") or 0)
-        app_reason = str(data.get("decline_reason") or "").strip()
-        if action == "busy":
-            status = status or 486
-            app_reason = app_reason or TerminalReason.BUSY.value
-            state = CallState.BUSY.value
-        elif action == "cancel":
-            status = status or 487
-            app_reason = app_reason or TerminalReason.CANCELLED.value
-            state = CallState.CANCELLED.value
-        else:
-            status = status or 603
-            app_reason = app_reason or TerminalReason.DECLINED.value
-            state = "declined"
-        if session is not None:
-            publish_phone_projection(hass, session, endpoint_id,
-                intent=TerminationIntent(app_reason, public_state=state),
-                peer_name=getattr(invite, "caller", ""), direction="incoming",
-                reason=app_reason, terminal_reason=app_reason, origin="self",
-                sip_status_code=status, last_sip_event="SIP_RESPONSE",
-            )
-    elif action == "answer_ha" and invite is not None:
+    if action == "answer_ha" and invite is not None:
         if session is not None:
             session = registry.transition(
                 call_id, state=CallState.CONNECTING.value,

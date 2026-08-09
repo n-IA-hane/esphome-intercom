@@ -13,6 +13,7 @@ from .call_projection import publish_bridge_projection, publish_phone_projection
 from .pbx_runtime import SipEndpointRuntime
 from .endpoint_session import (
     EndpointCallSession,
+    LegKind,
     SipTerminationDisposition,
     TerminationInitiator,
     TerminationIntent,
@@ -40,7 +41,14 @@ def project_session_termination(
             str(value or "").strip()
             for value in (metadata.get("ring_endpoint_ids") or ())
         ),
+        *(
+            leg.endpoint_id
+            for leg in session.legs.values()
+            if leg.endpoint_id and leg.kind is LegKind.BROWSER
+        ),
     }
+    staged_phone = dict(metadata.get("terminal_phone_projections") or {})
+    phone_endpoint_ids.update(str(value).strip() for value in staged_phone)
     phone_endpoint_ids.discard("")
     remote = intent.initiator is TerminationInitiator.REMOTE_PEER
     event = (
@@ -62,16 +70,33 @@ def project_session_termination(
     if intent.response_status:
         common["sip_status_code"] = intent.response_status
     for endpoint_id in phone_endpoint_ids:
+        details = dict(staged_phone.get(endpoint_id) or {})
+        peer_name = str(
+            details.pop("peer_name", "")
+            or (
+                session.callee
+                if endpoint_id == metadata.get("source_endpoint_id")
+                else session.caller
+                if endpoint_id == metadata.get("dest_endpoint_id")
+                else session.caller
+                if str(details.get("direction") or metadata.get("direction") or "")
+                == "incoming"
+                else session.caller
+                if remote
+                else session.callee
+            )
+        )
+        direction = str(
+            details.pop("direction", "") or metadata.get("direction") or ""
+        )
         publish_phone_projection(
             hass,
             session,
             endpoint_id,
             intent=intent,
-            peer_name=session.caller if remote else session.callee,
-            direction=str(
-                metadata.get("direction") or ("incoming" if remote else "")
-            ),
-            **common,
+            peer_name=peer_name,
+            direction=direction or ("incoming" if remote else ""),
+            **(common | details),
         )
     if metadata.get("bridge_dest_call_id") or (
         not phone_endpoint_ids and session.route_kind

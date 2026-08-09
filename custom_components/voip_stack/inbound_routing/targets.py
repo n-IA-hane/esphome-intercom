@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
-from ..call_projection import publish_bridge_projection
-from ..endpoint_session import EndpointCallSession, TerminationIntent
+from ..endpoint_session import EndpointCallSession
 from ..fsm import TerminalReason
 from ..phone_endpoint import (
     EndpointAvailability,
@@ -175,17 +174,6 @@ def reject_route_decision(
         sip_reason = "Not Found"
     terminal_reason = (
         decision.reason.value if decision.reason else TerminalReason.DECLINED.value
-    )
-    intent = TerminationIntent.final_response(terminal_reason, status)
-    publish_bridge_projection(
-        hass,
-        session,
-        intent=intent,
-        peer_name=invite.caller,
-        reason=terminal_reason,
-        origin="self",
-        sip_status_code=status,
-        last_sip_event="SIP_RESPONSE",
     )
     return SipInviteResult(
         status,

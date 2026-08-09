@@ -8,11 +8,15 @@ from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant, callback
 
-from .call_projection import publish_phone_projection
+from .call_projection import (
+    publish_phone_projection,
+    stage_phone_termination_projection,
+)
 from .core.audio_format import HA_SIP_PCM_FORMATS
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationInitiator, TerminationIntent
+from .fsm import TerminalReason
 from .local_softphone_bridge import (
     LocalBridgeEvent,
     LocalBridgeEventType,
@@ -211,13 +215,32 @@ def _publish_leg(
     session = call_registry(hass).get_session(snapshot.call_id)
     if session is None:
         return
-    publish_phone_projection(
-        hass, session, endpoint_id, leg_id=f"local:{endpoint_id}",
-            intent=TerminationIntent(terminal_reason, public_state=state)
-            if terminal else None,
+    if terminal:
+        registry = call_registry(hass)
+        registry.observe_leg(
+            snapshot.call_id,
+            f"local:{endpoint_id}",
+            role="local_phone",
+            state=state,
+            endpoint_id=endpoint_id,
+            generation=session.generation,
+        )
+        stage_phone_termination_projection(
+            session,
+            endpoint_id,
             peer_name=peer_name,
             direction="outgoing" if is_caller else "incoming",
             **extra,
+        )
+        return
+    publish_phone_projection(
+        hass,
+        session,
+        endpoint_id,
+        leg_id=f"local:{endpoint_id}",
+        peer_name=peer_name,
+        direction="outgoing" if is_caller else "incoming",
+        **extra,
     )
 
 
@@ -249,12 +272,14 @@ def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
             f"local:{snapshot.caller_endpoint_id}",
             role="local_phone",
             state="calling",
+            endpoint_id=snapshot.caller_endpoint_id,
         )
         registry.add_leg(
             snapshot.call_id,
             f"local:{snapshot.callee_endpoint_id}",
             role="local_phone",
             state="ringing",
+            endpoint_id=snapshot.callee_endpoint_id,
         )
         registry.attach_media(
             snapshot.call_id,
@@ -306,14 +331,14 @@ def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
             terminal=True,
         )
         registry.take_media(snapshot.call_id)
-        EndpointTerminationHandler(hass).request_reason(
+        reason = (
+            TerminalReason.DECLINED.value
+            if snapshot.end_reason is LocalCallEndReason.DECLINED
+            else TerminalReason.LOCAL_HANGUP.value
+        )
+        EndpointTerminationHandler(hass).request(
             snapshot.call_id,
-            (
-                snapshot.end_reason.value
-                if snapshot.end_reason is not None
-                else "local_call_ended"
-            ),
-            TerminationInitiator.RUNTIME,
+            TerminationIntent(reason, TerminationInitiator.RUNTIME),
         )
 
 

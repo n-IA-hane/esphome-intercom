@@ -8,7 +8,12 @@ from typing import Any, Literal, Mapping
 
 from homeassistant.core import HomeAssistant
 
-from .endpoint_session import CallToken, EndpointCallSession, TerminationIntent
+from .endpoint_session import (
+    CallToken,
+    EndpointCallSession,
+    SessionPhase,
+    TerminationIntent,
+)
 from .runtime_data import require_runtime_data
 
 
@@ -25,6 +30,23 @@ class CallProjectionEvent:
 
 
 _RESERVED_FIELDS = {"state", "sip_state", "call_id", "caller", "callee", "endpoint_id"}
+_TERMINAL_PHONE_PROJECTIONS = "terminal_phone_projections"
+
+
+def stage_phone_termination_projection(
+    session: EndpointCallSession,
+    endpoint_id: str,
+    **details: Any,
+) -> bool:
+    """Store endpoint-specific terminal presentation on its owning session."""
+
+    endpoint_id = str(endpoint_id or "").strip()
+    if not endpoint_id or not session.live:
+        return False
+    staged = dict(session.metadata.get(_TERMINAL_PHONE_PROJECTIONS) or {})
+    staged[endpoint_id] = dict(details)
+    session.update_metadata(**{_TERMINAL_PHONE_PROJECTIONS: staged})
+    return True
 
 
 def publish_call_projection(
@@ -36,12 +58,34 @@ def publish_call_projection(
 
     runtime_data = require_runtime_data(hass)
     runtime = runtime_data.sip
-    if (
-        runtime is None
-        or runtime.get_session(event.token.call_id, generation=event.token.generation)
-        is not session
-    ):
+    if runtime is None:
         return False
+    current = runtime.get_session(
+        event.token.call_id,
+        generation=event.token.generation,
+    )
+    live_projection = current is session and event.intent is None
+    terminal_projection = bool(
+        event.intent is not None
+        and event.intent is session.termination_intent
+        and session.phase is SessionPhase.TERMINATED
+        and current is None
+        and runtime.get_session(event.token.call_id) is None
+        and runtime.is_terminated(
+            event.token.call_id,
+            generation=event.token.generation,
+        )
+    )
+    if not live_projection and not terminal_projection:
+        return False
+    if live_projection and event.scope == "phone":
+        endpoint = runtime_data.endpoints.get(event.endpoint_id)
+        active_call_id = str(getattr(endpoint, "active_call_id", "") or "")
+        if (
+            active_call_id
+            and runtime.resolve_session_id(active_call_id) != session.call_id
+        ):
+            return False
     state = event.intent.public_state if event.intent is not None else session.state
     if event.leg_id:
         leg = session.legs.get(event.leg_id)

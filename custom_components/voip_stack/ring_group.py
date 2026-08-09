@@ -6,7 +6,10 @@ import logging
 
 from homeassistant.core import HomeAssistant
 
-from .call_projection import observe_phone_leg_projection
+from .call_projection import (
+    observe_phone_leg_projection,
+    stage_phone_termination_projection,
+)
 from .dial_fork import DialDisposition
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState
@@ -167,6 +170,31 @@ def publish_ring_group_origin_state(
     if session is None:
         return
     leg_id = f"browser-origin:{endpoint_id}"
+    if state in {
+        CallState.IDLE.value,
+        CallState.BUSY.value,
+        CallState.DECLINED.value,
+        CallState.CANCELLED.value,
+        CallState.MEDIA_INCOMPATIBLE.value,
+        CallState.TRANSPORT_UNREACHABLE.value,
+        CallState.AUTH_REQUIRED_UNSUPPORTED.value,
+    }:
+        registry.observe_leg(
+            call_id,
+            leg_id,
+            role="ha_softphone",
+            state=state,
+            endpoint_id=endpoint_id,
+            generation=session.generation,
+        )
+        stage_phone_termination_projection(
+            session,
+            endpoint_id,
+            peer_name=peer_name,
+            direction="outgoing",
+            **extra,
+        )
+        return
     observe_phone_leg_projection(
         hass,
         registry,

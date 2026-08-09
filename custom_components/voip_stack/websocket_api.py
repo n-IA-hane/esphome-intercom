@@ -25,8 +25,6 @@ from .automation_routing import (
     canonical_call_origin,
     is_logbook_call_summary,
 )
-from .call_registry import TERMINAL_STATES
-from .pbx_runtime import SipEndpointRuntime
 from .const import (
     CONF_VIDEO_CAMERA_SEND,
     CONF_VIDEO_TRANSCODING,
@@ -392,64 +390,6 @@ def _update_browser_presence(
         _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
 
 
-def _endpoint_call_claim(
-    hass: HomeAssistant,
-    endpoint_id: str,
-    call_id: str,
-    *,
-    terminal: bool,
-) -> None:
-    """Keep the endpoint busy guard synchronized with softphone call state."""
-    registry = _endpoint_registry(hass)
-    if registry is None or registry.get(endpoint_id) is None or not call_id:
-        return
-    try:
-        if terminal:
-            registry.release_call(endpoint_id, call_id)
-        else:
-            registry.claim_call(endpoint_id, call_id)
-    except ValueError as err:
-        # The caller-facing routing path performs the authoritative 486 check.
-        # A late/stale state callback must not tear down the call which already
-        # owns the endpoint.
-        _LOGGER.warning(
-            "Could not synchronize endpoint=%s call=%s terminal=%s: %s",
-            endpoint_id,
-            call_id,
-            terminal,
-            err,
-        )
-
-
-def _registry_call_is_active(registry: SipEndpointRuntime, call_id: str) -> bool:
-    """Return whether a projected call still owns live backend state."""
-    call_id = str(call_id or "").strip()
-    if not call_id or registry.is_terminated(call_id):
-        return False
-    session_id = registry.resolve_session_id(call_id)
-    session = registry.sessions.get(session_id)
-    if (
-        session is not None
-        and not session.metadata.get("event_only")
-        and str(session.state or "").strip().lower() not in TERMINAL_STATES
-    ):
-        return True
-    # A route or media resource may exist briefly before its canonical session
-    # is materialised.  These are live ownership records, unlike a stale HA
-    # projection left behind after an interrupted teardown.
-    return any(
-        value is not None
-        for value in (
-            registry.artifact_for(call_id, "pending_route"),
-            registry.artifact_for(call_id, "pending_invite"),
-            registry.resource_for(call_id, "preanswered"),
-            registry.resource_for(call_id, "softphone_media"),
-            registry.sip_client_for(call_id),
-            registry.resource_for(call_id, "relay"),
-        )
-    )
-
-
 def _release_ha_softphone_claim(
     hass: HomeAssistant,
     call_id: str,
@@ -462,23 +402,28 @@ def _release_ha_softphone_claim(
     store = _ha_softphone_store(hass, endpoint_id)
     if str(store.get("call_id") or "") != str(call_id or ""):
         return False
-    _set_ha_softphone_call_state(
+    registry = call_registry(hass)
+    session_id = registry.resolve_session_id(str(call_id or "").strip())
+    session = registry.sessions.get(session_id)
+    if session is None or not registry.release_endpoint_claim(call_id, endpoint_id):
+        return False
+    from .call_projection import observe_phone_leg_projection
+
+    return observe_phone_leg_projection(
         hass,
+        registry,
+        session,
+        endpoint_id,
         CallState.CANCELLED.value,
-        session_device_id=str(store.get("device_id") or ""),
-        caller=str(store.get("caller") or ""),
-        callee=str(store.get("callee") or ""),
+        leg_id=f"browser:{endpoint_id}",
         peer_name=str(store.get("peer_name") or ""),
         direction=str(store.get("direction") or "incoming"),
-        call_id=call_id,
         reason=TerminalReason.FORWARDED.value,
         terminal_reason=TerminalReason.FORWARDED.value,
         dialed_target=destination,
         origin="automation",
         last_sip_event="ROUTE_FORWARD",
-        endpoint_id=endpoint_id,
     )
-    return True
 
 
 def _ha_softphone_groups(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]:
@@ -598,37 +543,7 @@ async def _async_shutdown_all(hass: HomeAssistant) -> None:
 
     async_shutdown_local_softphone_bridge(hass)
     for endpoint_id, store in tuple(_ha_softphone_stores(hass).items()):
-        active_call_id = str(store.get("call_id") or "")
-        active_state = str(store.get("state") or "").lower()
-        if active_call_id or active_state in {
-            CallState.CALLING.value,
-            CallState.REMOTE_RINGING.value,
-            CallState.RINGING.value,
-            CallState.CONNECTING.value,
-            CallState.IN_CALL.value,
-            CallState.TERMINATING.value,
-        }:
-            _set_ha_softphone_call_state(
-                hass,
-                CallState.IDLE.value,
-                session_device_id=str(store.get("session_device_id") or ""),
-                caller=str(store.get("caller") or ""),
-                callee=str(store.get("callee") or ""),
-                peer_name=str(store.get("peer_name") or ""),
-                direction=str(store.get("direction") or ""),
-                call_id=active_call_id,
-                reason=TerminalReason.LOCAL_HANGUP.value,
-                terminal_reason=TerminalReason.LOCAL_HANGUP.value,
-                last_sip_event="shutdown",
-                endpoint_id=endpoint_id,
-            )
-        else:
-            # Reloading an already-idle integration is not a call lifecycle
-            # event. Publish a dedicated state snapshot for every endpoint.
-            store["state"] = CallState.IDLE.value
-            store["sip_state"] = CallState.IDLE.value
-            store["last_sip_event"] = "shutdown"
-            _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
+        _reset_ha_softphone_store(hass, endpoint_id, store, event="shutdown")
 
 
 async def _async_load_ha_softphone_store(
@@ -746,6 +661,42 @@ _MEDIA_COUNTER_KEYS = (
     "video_rtcp_keyframe_requests_to_browser",
     "video_jpeg_normalized",
     "video_jpeg_normalizer_errors",
+)
+
+_CALL_SCOPED_SOFTPHONE_FIELDS = (
+    "session_device_id",
+    "caller",
+    "callee",
+    "local_name",
+    "peer_name",
+    "dialed_target",
+    "connected_party",
+    "answered_by",
+    "direction",
+    "role",
+    "call_id",
+    "target_device_id",
+    "selected_tx_format",
+    "selected_rx_format",
+    "selected_tx_rtp_format",
+    "selected_rx_rtp_format",
+    "audio_mode",
+    "audio_direction",
+    "audio_connection_held",
+    "video_active",
+    "video_offered",
+    "video_requested",
+    "video_negotiated",
+    "video_status",
+    "video_failure_reason",
+    "video_format",
+    "video_send_format",
+    "video_receive_format",
+    "video_direction",
+    "connected_at",
+    "route_kind",
+    "sip_uri",
+    "media_debug",
 )
 
 
@@ -1202,15 +1153,6 @@ def _set_ha_softphone_call_state(
     previous_call_id = str(store.get("call_id") or "")
     next_call_id = str(canonical.get("call_id") or "")
     previous_state = str(store.get("state") or "").strip().lower()
-    registry = call_registry(hass)
-    previous_call_is_active = _registry_call_is_active(registry, previous_call_id)
-    if not terminal and next_call_id and registry.is_terminated(next_call_id):
-        _LOGGER.info(
-            "Ignoring stale HA softphone state=%s for terminated call_id=%s",
-            state,
-            next_call_id,
-        )
-        return
     if state == CallState.IN_CALL.value:
         if (
             next_call_id != previous_call_id
@@ -1233,55 +1175,6 @@ def _set_ha_softphone_call_state(
                 extra["video_status"] = "offered"
             elif extra.get("video_requested"):
                 extra["video_status"] = "requested"
-    if (
-        previous_call_id
-        and next_call_id
-        and next_call_id != previous_call_id
-        and previous_state
-        in {
-            CallState.CALLING.value,
-            CallState.REMOTE_RINGING.value,
-            CallState.RINGING.value,
-            CallState.CONNECTING.value,
-            CallState.IN_CALL.value,
-            CallState.TERMINATING.value,
-        }
-        and previous_call_is_active
-    ):
-        _LOGGER.info(
-            "Ignoring stale HA softphone state=%s call_id=%s; active call_id=%s state=%s",
-            state,
-            next_call_id,
-            previous_call_id,
-            previous_state,
-        )
-        return
-    if (
-        previous_call_id
-        and next_call_id
-        and next_call_id != previous_call_id
-        and not previous_call_is_active
-    ):
-        _LOGGER.warning(
-            "Replacing orphaned HA softphone call_id=%s state=%s with call_id=%s state=%s",
-            previous_call_id,
-            previous_state,
-            next_call_id,
-            state,
-        )
-        registry.release_endpoint_claims(previous_call_id)
-        endpoint_registry = _endpoint_registry(hass)
-        if (
-            endpoint_registry is not None
-            and endpoint_registry.get(endpoint_id) is not None
-        ):
-            endpoint_registry.release_call(endpoint_id, previous_call_id)
-    _endpoint_call_claim(
-        hass,
-        endpoint_id,
-        next_call_id or previous_call_id,
-        terminal=terminal,
-    )
     if terminal:
         store["terminal_reason"] = (
             extra.get("reason") or extra.get("terminal_reason") or state
@@ -1305,41 +1198,7 @@ def _set_ha_softphone_call_state(
             store["last_sip_event"] = extra["last_sip_event"]
         if extra.get("last_sip_reason"):
             store["last_sip_reason"] = extra["last_sip_reason"]
-        for key in (
-            "session_device_id",
-            "caller",
-            "callee",
-            "local_name",
-            "peer_name",
-            "dialed_target",
-            "connected_party",
-            "answered_by",
-            "direction",
-            "role",
-            "call_id",
-            "target_device_id",
-            "selected_tx_format",
-            "selected_rx_format",
-            "selected_tx_rtp_format",
-            "selected_rx_rtp_format",
-            "audio_mode",
-            "audio_direction",
-            "audio_connection_held",
-            "video_active",
-            "video_offered",
-            "video_requested",
-            "video_negotiated",
-            "video_status",
-            "video_failure_reason",
-            "video_format",
-            "video_send_format",
-            "video_receive_format",
-            "video_direction",
-            "connected_at",
-            "route_kind",
-            "sip_uri",
-            "media_debug",
-        ):
+        for key in _CALL_SCOPED_SOFTPHONE_FIELDS:
             store.pop(key, None)
         store["state"] = state
         store["sip_state"] = state
@@ -1397,6 +1256,24 @@ def _set_ha_softphone_call_state(
     if terminal and state != CallState.IDLE.value:
         store["state"] = CallState.IDLE.value
         store["sip_state"] = CallState.IDLE.value
+    _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
+
+
+def _reset_ha_softphone_store(
+    hass: HomeAssistant,
+    endpoint_id: str,
+    store: dict[str, Any] | None = None,
+    *,
+    event: str,
+) -> None:
+    """Reset one detached view after its owning sessions have stopped."""
+
+    store = store if store is not None else _ha_softphone_store(hass, endpoint_id)
+    for key in _CALL_SCOPED_SOFTPHONE_FIELDS:
+        store.pop(key, None)
+    store["state"] = CallState.IDLE.value
+    store["sip_state"] = CallState.IDLE.value
+    store["last_sip_event"] = event
     _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
 
 
