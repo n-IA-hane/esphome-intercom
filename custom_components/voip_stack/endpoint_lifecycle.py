@@ -34,7 +34,14 @@ def project_session_termination(
     """Project one terminal session without taking lifecycle ownership."""
 
     metadata = session.metadata
-    endpoint_id = str(metadata.get("endpoint_id") or "")
+    phone_endpoint_ids = {
+        str(metadata.get("endpoint_id") or "").strip(),
+        *(
+            str(value or "").strip()
+            for value in (metadata.get("ring_endpoint_ids") or ())
+        ),
+    }
+    phone_endpoint_ids.discard("")
     remote = intent.initiator is TerminationInitiator.REMOTE_PEER
     event = (
         "SIP_RESPONSE"
@@ -54,28 +61,30 @@ def project_session_termination(
             common[key] = value
     if intent.response_status:
         common["sip_status_code"] = intent.response_status
-    if endpoint_id:
+    for endpoint_id in phone_endpoint_ids:
         publish_phone_projection(
             hass,
             session,
             endpoint_id,
             intent=intent,
-                peer_name=session.caller if remote else session.callee,
-                direction=str(metadata.get("direction") or ("incoming" if remote else "")),
-                **common,
+            peer_name=session.caller if remote else session.callee,
+            direction=str(
+                metadata.get("direction") or ("incoming" if remote else "")
+            ),
+            **common,
         )
     if metadata.get("bridge_dest_call_id") or (
-        not endpoint_id and session.route_kind
+        not phone_endpoint_ids and session.route_kind
     ):
         publish_bridge_projection(
             hass,
             session,
             intent=intent,
-                peer_name=session.callee,
-                target=session.callee,
-                terminal_reason=intent.reason,
-                route_kind=session.route_kind,
-                **common,
+            peer_name=session.callee,
+            target=session.callee,
+            terminal_reason=intent.reason,
+            route_kind=session.route_kind,
+            **common,
         )
 
 

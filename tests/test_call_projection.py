@@ -3,7 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from custom_components.voip_stack import call_projection, websocket_api
+from custom_components.voip_stack import call_projection, endpoint_lifecycle, websocket_api
 from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
 
@@ -81,3 +81,27 @@ def test_terminal_projection_uses_intent_without_mutating_session(monkeypatch) -
     )
     assert session.state == "in_call"
     assert sink.call_args.args[1] == "busy"
+
+
+def test_terminal_projection_retires_every_ring_group_phone(monkeypatch) -> None:
+    phone_sink = Mock(return_value=True)
+    bridge_sink = Mock(return_value=True)
+    monkeypatch.setattr(endpoint_lifecycle, "publish_phone_projection", phone_sink)
+    monkeypatch.setattr(endpoint_lifecycle, "publish_bridge_projection", bridge_sink)
+    runtime = SipEndpointRuntime()
+    runtime.activate()
+    session = runtime.upsert(
+        "call-1",
+        state="ringing",
+        caller="Alice",
+        callee="RG Casa",
+        endpoint_id="casa",
+        ring_endpoint_ids=("casa", "test"),
+    )
+    intent = TerminationIntent("cancelled")
+
+    endpoint_lifecycle.project_session_termination(object(), session, intent)
+
+    assert {call.args[2] for call in phone_sink.call_args_list} == {"casa", "test"}
+    assert all(call.kwargs["intent"] is intent for call in phone_sink.call_args_list)
+    bridge_sink.assert_not_called()
