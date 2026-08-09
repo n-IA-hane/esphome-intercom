@@ -793,7 +793,14 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
     def test_video_bridge_projects_destination_h264_level_to_source_leg(self) -> None:
         routing_sources = (
-            INVITE_ROUTER.read_text() + RING_GROUP_ORCHESTRATOR.read_text()
+            INVITE_ROUTER.read_text()
+            + RING_GROUP_ORCHESTRATOR.read_text()
+            + (
+                ROOT
+                / "custom_components"
+                / "voip_stack"
+                / "outbound_bridge_commit.py"
+            ).read_text()
         )
         sip_bridge = SIP_BRIDGE.read_text()
         self.assertIn("source_video = (", sip_bridge)
