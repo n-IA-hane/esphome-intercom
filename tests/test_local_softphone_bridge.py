@@ -64,6 +64,16 @@ def _load_runtime_module():
     sys.modules[f"{package_name}.core.audio_format"] = _load_module("audio_format")
     sys.modules[f"{package_name}.const"] = _load_module("const")
     sys.modules[f"{package_name}.local_softphone_bridge"] = bridge_module
+    call_projection = types.ModuleType(f"{package_name}.call_projection")
+
+    class CallProjectionEvent:
+        @staticmethod
+        def phone(session, endpoint_id: str, **details):
+            return session, endpoint_id, details
+
+    call_projection.CallProjectionEvent = CallProjectionEvent
+    call_projection.publish_call_projection = lambda *_args, **_kwargs: True
+    sys.modules[call_projection.__name__] = call_projection
     endpoint_lifecycle = types.ModuleType(
         f"{package_name}.endpoint_lifecycle"
     )
@@ -71,6 +81,9 @@ def _load_runtime_module():
     sys.modules[endpoint_lifecycle.__name__] = endpoint_lifecycle
     endpoint_session = types.ModuleType(f"{package_name}.endpoint_session")
     endpoint_session.TerminationInitiator = types.SimpleNamespace(RUNTIME="runtime")
+    endpoint_session.TerminationIntent = lambda reason, **values: types.SimpleNamespace(
+        reason=reason, **values
+    )
     sys.modules[endpoint_session.__name__] = endpoint_session
     endpoint_termination = types.ModuleType(f"{package_name}.endpoint_termination")
     endpoint_termination.EndpointTerminationHandler = lambda _hass: types.SimpleNamespace(

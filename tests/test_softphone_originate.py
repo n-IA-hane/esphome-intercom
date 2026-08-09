@@ -72,6 +72,7 @@ def softphone_originate(monkeypatch):
     monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions)
 
     dependencies = {
+        "call_projection": {},
         "audio_format": {"HA_TRUNK_AUDIO_FORMATS": []},
         "authorization": {"async_require_service_admin": AsyncMock()},
         "config": {
@@ -191,6 +192,29 @@ def softphone_originate(monkeypatch):
         for key, value in values.items():
             setattr(dependency, key, value)
         monkeypatch.setitem(sys.modules, dependency.__name__, dependency)
+
+    call_projection = sys.modules[f"{package_name}.call_projection"]
+
+    class CallProjectionEvent:
+        @staticmethod
+        def phone(session, endpoint_id: str, **details):
+            return session, endpoint_id, details
+
+    def publish_call_projection(hass, session, event) -> bool:
+        _source, endpoint_id, details = event
+        sys.modules[f"{package_name}.websocket_api"]._set_ha_softphone_call_state(
+            hass,
+            session.state,
+            endpoint_id=endpoint_id,
+            caller=session.caller,
+            callee=session.callee,
+            call_id=session.call_id,
+            **details,
+        )
+        return True
+
+    call_projection.CallProjectionEvent = CallProjectionEvent
+    call_projection.publish_call_projection = publish_call_projection
 
     module_name = f"{package_name}.softphone_originate"
     spec = importlib.util.spec_from_file_location(module_name, MODULE)

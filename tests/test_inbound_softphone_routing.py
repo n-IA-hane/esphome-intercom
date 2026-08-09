@@ -83,9 +83,14 @@ class _Registry:
         self.finished: list[tuple[str, dict]] = []
         self.media: dict[str, dict] = {}
         self.legs: list[tuple[str, str, dict]] = []
+        self.sessions: dict[str, SimpleNamespace] = {}
 
-    def upsert(self, call_id: str, **values) -> None:
+    def upsert(self, call_id: str, **values):
         self.upserts.append((call_id, values))
+        session = self.sessions.setdefault(call_id, SimpleNamespace(call_id=call_id))
+        for key, value in values.items():
+            setattr(session, key, value)
+        return session
 
     def claim_endpoint(self, call_id: str, endpoint_id: str, **values) -> None:
         if self.busy:
@@ -143,6 +148,29 @@ def _load_module():
 
     _module("const", HA_SOFTPHONE_DEVICE_ID="ha-device")
     _module("endpoint_registry", EndpointBusyError=_BusyError)
+    call_projection = _module("call_projection")
+
+    class CallProjectionEvent:
+        @staticmethod
+        def phone(session, endpoint_id: str, **details):
+            return session, endpoint_id, details
+
+    def publish_call_projection(_hass, session, event) -> bool:
+        _source, endpoint_id, details = event
+        state_updates.append(
+            {
+                "state": session.state,
+                "endpoint_id": endpoint_id,
+                "caller": session.caller,
+                "callee": session.callee,
+                "call_id": session.call_id,
+                **details,
+            }
+        )
+        return True
+
+    call_projection.CallProjectionEvent = CallProjectionEvent
+    call_projection.publish_call_projection = publish_call_projection
     _module(
         "endpoint_session",
         TerminationInitiator=SimpleNamespace(ROUTING="routing"),
