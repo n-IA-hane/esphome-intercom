@@ -1096,6 +1096,20 @@ def main() -> int:
                     time.monotonic() - hangup_started
                 ) * 1000
             cleaned = sample(label)
+            card_error = str(cleaned.get("card_error") or "").strip()
+            if card_error:
+                raise RuntimeError(
+                    f"card retained an error after call teardown: {card_error}"
+                )
+            websocket_errors = [
+                event
+                for event in result["websocket_events"]
+                if event.get("kind") == "error"
+            ]
+            if websocket_errors:
+                raise RuntimeError(
+                    f"media websocket failed during call teardown: {websocket_errors}"
+                )
             backend = cleaned.get("backend_state") or {}
             if backend.get("pending_transactions") or backend.get("active_dialogs"):
                 raise RuntimeError(f"SIP transactions or dialogs survived teardown: {cleaned}")

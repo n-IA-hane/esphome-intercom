@@ -189,6 +189,10 @@ def _load_outbound_lifecycle(
         REMOTE_PEER="remote_peer",
         RUNTIME="runtime",
     )
+    endpoint_session.SipTerminationDisposition = types.SimpleNamespace(
+        AUTO=types.SimpleNamespace(value="auto"),
+        NONE=types.SimpleNamespace(value="none"),
+    )
 
     class TerminationIntent:
         def __init__(
@@ -196,10 +200,12 @@ def _load_outbound_lifecycle(
             reason: str,
             *,
             initiator: str = "internal",
+            sip_disposition=endpoint_session.SipTerminationDisposition.AUTO,
             response_status: int = 0,
         ) -> None:
             self.reason = reason
             self.initiator = initiator
+            self.sip_disposition = sip_disposition
             self.response_status = response_status
             self.public_state = "idle" if reason == "remote_hangup" else reason
 
@@ -360,6 +366,12 @@ class OutboundLifecycleRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 for item in self.registry.calls
             )
         )
+        remote_intent = next(
+            item[2]["intent"]
+            for item in self.registry.calls
+            if item[0] == "finish" and item[2]["intent"].reason == "remote_hangup"
+        )
+        self.assertEqual(remote_intent.sip_disposition.value, "none")
 
     async def test_detached_final_watcher_cannot_resurrect_replaced_call(self) -> None:
         release = asyncio.Event()

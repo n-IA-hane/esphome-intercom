@@ -12,7 +12,11 @@ from .call_projection import publish_phone_projection
 from .const import HA_PEER_FALLBACK_NAME
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
-from .endpoint_session import TerminationInitiator, TerminationIntent
+from .endpoint_session import (
+    SipTerminationDisposition,
+    TerminationInitiator,
+    TerminationIntent,
+)
 from .fsm import (
     CallState,
     TerminalReason,
@@ -275,6 +279,11 @@ async def async_track_outbound_sip_client(
                         TerminationInitiator.REMOTE_PEER
                         if terminal == "remote_hangup"
                         else TerminationInitiator.INTERNAL
+                    ),
+                    sip_disposition=(
+                        SipTerminationDisposition.NONE
+                        if terminal == "remote_hangup"
+                        else SipTerminationDisposition.AUTO
                     ),
                     response_status=client.last_sip_status_code,
                 ),

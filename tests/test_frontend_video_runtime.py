@@ -62,6 +62,8 @@ def test_browser_probe_keeps_waits_light_and_bounded() -> None:
     assert "['answering','connecting','in_call'].includes" in source
     assert '"document_events": []' in source
     assert '"websocket_events": []' in source
+    assert "card retained an error after call teardown" in source
+    assert "media websocket failed during call teardown" in source
     assert "call terminated before connection" in source
     assert "'transport_unreachable'" in source
     assert "terminal_reason: String(snapshot.terminal_reason || \"\")" in source
