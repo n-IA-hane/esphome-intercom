@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -151,12 +151,9 @@ class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
-        result = await sip_transaction.async_refresh_session(
-            state,
-            send,
-            local_role="uac",
-            now=lambda: 10.0,
-        )
+        result = await sip_transaction.SessionTimerDriver(
+            state, send, "uac", lambda: 10.0
+        ).refresh()
 
         self.assertEqual(result, "refreshed")
         self.assertEqual(state.interval, 900)
@@ -187,12 +184,9 @@ class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
             intervals.append(dict(extra_headers)["Session-Expires"])
             return sip_transaction.sip.parse_message(next(responses))
 
-        result = await sip_transaction.async_refresh_session(
-            state,
-            send,
-            local_role="uac",
-            now=lambda: 20.0,
-        )
+        result = await sip_transaction.SessionTimerDriver(
+            state, send, "uac", lambda: 20.0
+        ).refresh()
 
         self.assertEqual(result, "refreshed")
         self.assertEqual(intervals, ["90;refresher=uac", "180;refresher=uac"])
@@ -211,14 +205,11 @@ class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
             )
             return None
 
-        result = await sip_transaction.async_refresh_session(
-            state,
-            send,
-            local_role="uac",
-            now=lambda: 0.0,
-        )
+        result = await sip_transaction.SessionTimerDriver(
+            state, send, "uac", lambda: 0.0
+        ).refresh()
 
-        self.assertEqual(result, "failed")
+        self.assertEqual(result, "session_timer_failed")
         self.assertEqual(calls, 1)
 
     async def test_session_refresh_allows_at_most_one_422_retry(self) -> None:
@@ -240,15 +231,58 @@ class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
-        result = await sip_transaction.async_refresh_session(
-            state,
-            send,
-            local_role="uac",
-            now=lambda: 0.0,
-        )
+        result = await sip_transaction.SessionTimerDriver(
+            state, send, "uac", lambda: 0.0
+        ).refresh()
 
-        self.assertEqual(result, "failed")
+        self.assertEqual(result, "session_timer_failed")
         self.assertEqual(calls, 2)
+
+    async def test_session_timer_driver_uses_role_deadline_and_refresh_method(
+        self,
+    ) -> None:
+        state = sip_transaction.sip.SipSessionTimer()
+        state.configure(
+            sip_transaction.sip.SipSessionExpires(90, "uas"),
+            local_role="uas",
+            now=100.0,
+        )
+        methods = []
+
+        async def send(method, *, extra_headers):
+            methods.append((method, dict(extra_headers)["Session-Expires"]))
+            return sip_transaction.sip.parse_message(
+                sip_transaction.sip.build_response(
+                    200,
+                    "OK",
+                    [("Session-Expires", "120;refresher=uas")],
+                )
+            )
+
+        driver = sip_transaction.SessionTimerDriver(
+            state, send, "uas", lambda: 145.0, "INVITE"
+        )
+        self.assertEqual(driver.deadline, 145.0)
+        self.assertEqual(await driver.advance(), "refreshed")
+        self.assertEqual(methods, [("INVITE", "90;refresher=uas")])
+        self.assertEqual(state.refresh_at, 205.0)
+
+    async def test_session_timer_driver_expires_remote_refresher_at_deadline(
+        self,
+    ) -> None:
+        state = sip_transaction.sip.SipSessionTimer()
+        state.configure(
+            sip_transaction.sip.SipSessionExpires(90, "uac"),
+            local_role="uas",
+            now=100.0,
+        )
+        send = AsyncMock()
+        driver = sip_transaction.SessionTimerDriver(
+            state, send, "uas", lambda: 160.0
+        )
+        self.assertEqual(driver.deadline, 160.0)
+        self.assertEqual(await driver.advance(), "session_timer_expired")
+        send.assert_not_awaited()
 
     def test_dialog_request_uses_remote_target_without_route_set(self) -> None:
         request = sip_dialog.build_dialog_request(

@@ -537,12 +537,12 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     async def _refresh_session(client, dialog) -> str:
         try:
-            return await sip_transaction.async_refresh_session(
+            return await sip_transaction.SessionTimerDriver(
                 dialog.session_timer,
                 client._send_in_dialog_request,
-                local_role="uac",
-                now=asyncio.get_running_loop().time,
-            )
+                "uac",
+                asyncio.get_running_loop().time,
+            ).refresh()
         except ConnectionAbortedError as err:
             return str(err) or "remote_hangup"
 

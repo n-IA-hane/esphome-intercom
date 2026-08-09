@@ -25,37 +25,55 @@ SessionRefreshSend = Callable[
     ...,
     Awaitable[sip.SipMessage | None],
 ]
-
-
 type SipTransactionKey = tuple[str, int, str]
 
 
-async def async_refresh_session(
-    state: sip.SipSessionTimer,
-    send: SessionRefreshSend,
-    *,
-    local_role: str,
-    now: Callable[[], float],
-) -> str:
-    """Run the single bounded RFC 4028 refresh policy for every SIP role."""
+@dataclass(frozen=True, slots=True)
+class SessionTimerDriver:
+    state: sip.SipSessionTimer
+    send: SessionRefreshSend
+    local_role: str
+    now: Callable[[], float]
+    refresh_method: str = "UPDATE"
 
-    for _attempt in range(2):
-        response = await send(
-            "UPDATE",
-            extra_headers=(
-                ("Supported", "timer"),
-                ("Session-Expires", f"{state.interval};refresher={local_role}"),
-            ),
-        )
-        result = sip.apply_session_refresh_response(
-            state,
-            response,
-            local_role=local_role,
-            now=now(),
-        )
-        if result != "retry":
-            return result
-    return "failed"
+    @property
+    def deadline(self) -> float:
+        return self.state.refresh_at if self.state.local_refresher else self.state.expiration_notice_at
+
+    async def advance(self) -> str:
+        deadline = self.deadline
+        if not deadline or self.now() < deadline:
+            return "waiting"
+        if not self.state.local_refresher:
+            return "session_timer_expired"
+        return await self.refresh()
+
+    async def refresh(self) -> str:
+        for _attempt in range(2):
+            response = await self.send(
+                self.refresh_method,
+                extra_headers=(
+                    ("Supported", "timer"),
+                    ("Session-Expires", f"{self.state.interval};refresher={self.local_role}"),
+                ),
+            )
+            result = sip.apply_session_refresh_response(
+                self.state,
+                response,
+                local_role=self.local_role,
+                now=self.now(),
+            )
+            if result != "retry":
+                return "refreshed" if result == "refreshed" else "session_timer_failed"
+        return "session_timer_failed"
+
+    async def run(self) -> str:
+        while deadline := self.deadline:
+            await asyncio.sleep(max(0.0, deadline - self.now()))
+            outcome = await self.advance()
+            if outcome != "refreshed":
+                return outcome
+        return "disabled"
 
 
 def transaction_key(message: sip.SipMessage) -> SipTransactionKey | None:
@@ -78,9 +96,7 @@ def matches_response(
 ) -> bool:
     key = transaction_key(message) if message.is_response else None
     return bool(
-        key is not None
-        and key == (method.upper(), int(cseq), branch)
-        and branch
+        key is not None and key == (method.upper(), int(cseq), branch) and branch
     )
 
 
@@ -186,11 +202,7 @@ class SipClientTransaction(Generic[_T]):
                 response = None
             if response is not None:
                 return response
-            if (
-                self.reliable
-                or not retransmit_enabled
-                or loop.time() >= self.deadline
-            ):
+            if self.reliable or not retransmit_enabled or loop.time() >= self.deadline:
                 return None
             await retransmit()
             self.retransmissions += 1
@@ -340,7 +352,11 @@ class SipInvite2xxTransaction:
             cseq = sip.parse_cseq(request.header("CSeq"))
         except (TypeError, ValueError, sip.SipError):
             return False
-        if cseq.method != "ACK" or cseq.number != self.cseq or not matches_dialog(request):
+        if (
+            cseq.method != "ACK"
+            or cseq.number != self.cseq
+            or not matches_dialog(request)
+        ):
             return False
         self.cancel()
         return True

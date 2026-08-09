@@ -37,7 +37,7 @@ from .core.sip_transaction import (
     SIP_TIMER_B,
     SipClientTransaction,
     SipInvite2xxTransaction,
-    async_refresh_session,
+    SessionTimerDriver,
     async_run_dialog_request_transaction,
     matches_response,
     same_request_transaction,
@@ -2477,33 +2477,22 @@ class SipCallClient:
                 return "remote_hangup"
             now = asyncio.get_running_loop().time()
             timer = getattr(dialog, "session_timer", sip.SipSessionTimer())
-            session_local_refresher = timer.local_refresher
-            session_refresh_at = timer.refresh_at
-            session_deadline = timer.deadline
-            if session_local_refresher and (
-                session_refresh_at and now >= session_refresh_at
-            ):
+            timer_driver = SessionTimerDriver(
+                timer,
+                self._send_in_dialog_request,
+                "uac",
+                asyncio.get_running_loop().time,
+            )
+            if timer_driver.deadline and now >= timer_driver.deadline:
                 try:
-                    refresh_result = await async_refresh_session(
-                        timer,
-                        self._send_in_dialog_request,
-                        local_role="uac",
-                        now=asyncio.get_running_loop().time,
-                    )
+                    refresh_result = await timer_driver.advance()
                 except ConnectionAbortedError as err:
                     return str(err) or "remote_hangup"
                 if refresh_result == "refreshed":
                     continue
-                if refresh_result != "failed":
-                    return refresh_result
                 self.bye()
                 self.dialog = None
-                return "session_timer_failed"
-            expiration_notice_at = timer.expiration_notice_at
-            if session_deadline and now >= expiration_notice_at:
-                self.bye()
-                self.dialog = None
-                return "session_timer_expired"
+                return refresh_result
             read_task: asyncio.Task[
                 tuple[sip.SipMessage, tuple[str, int]] | None
             ] | None = None
@@ -2518,11 +2507,7 @@ class SipCallClient:
                 if self._local_offer_requested.is_set():
                     continue
                 wait_timeout = 3600.0
-                timer_at = (
-                    session_refresh_at
-                    if session_local_refresher
-                    else expiration_notice_at
-                )
+                timer_at = timer_driver.deadline
                 if timer_at:
                     wait_timeout = max(0.05, timer_at - asyncio.get_running_loop().time())
                 if deadline is not None:

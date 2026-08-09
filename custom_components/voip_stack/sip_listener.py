@@ -28,9 +28,9 @@ from .core.sip_transaction import (
     SIP_T2 as _SIP_T2,
     SIP_TIMER_B as _INVITE_2XX_TIMEOUT,
     SIP_TIMER_H as _INVITE_NON2XX_TIMEOUT,
+    SessionTimerDriver,
     SipInvite2xxTransaction,
     async_run_dialog_request_transaction,
-    async_refresh_session,
     async_run_server_transaction,
     matches_invite_error_ack,
     same_request_transaction,
@@ -1328,31 +1328,27 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         """Own one RFC 4028 refresh or expiry timer on the dialog."""
 
         self._cancel_session_timer(dialog)
-        dialog.session_timer.configure(timer, local_role=local_role)
+        dialog.session_timer.configure(
+            timer,
+            local_role=local_role,
+            now=asyncio.get_running_loop().time(),
+        )
         if timer is None:
             return
 
         async def _run() -> None:
             try:
-                while self.active_dialogs.get(call_id) is dialog:
-                    await asyncio.sleep(
-                        dialog.session_timer.interval
-                        * (0.5 if dialog.session_timer.local_refresher else 2 / 3)
-                    )
-                    if self.active_dialogs.get(call_id) is not dialog:
-                        return
-                    if not dialog.session_timer.local_refresher:
-                        break
-                    refresh = await async_refresh_session(
-                        dialog.session_timer,
-                        partial(self._send_dialog_request, call_id, dialog),
-                        local_role="uac",
-                        now=asyncio.get_running_loop().time,
-                    )
-                    if refresh != "refreshed":
-                        break
-                if self.active_dialogs.get(call_id) is dialog:
-                    await self._terminate_dialog(call_id, "session_timer_expired")
+                outcome = await SessionTimerDriver(
+                    dialog.session_timer,
+                    partial(self._send_dialog_request, call_id, dialog),
+                    local_role,
+                    asyncio.get_running_loop().time,
+                ).run()
+                if (
+                    outcome != "disabled"
+                    and self.active_dialogs.get(call_id) is dialog
+                ):
+                    await self._terminate_dialog(call_id, outcome)
             except asyncio.CancelledError:
                 return
             finally:
