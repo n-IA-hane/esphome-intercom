@@ -848,6 +848,34 @@ await staleVideoAttach;
 assert.equal(videoStarts, 0);
 assert.equal(videoCloses, 0);
 
+// A remote hangup may close the optional video WebSocket before the card has
+// consumed the terminal state event. Re-check the authoritative backend call
+// before surfacing a transport error to the user.
+const terminalVideo = new Engine();
+terminalVideo._callId = "video-ended";
+terminalVideo._endpointId = "casa";
+terminalVideo._hass = {{
+  callWS: async () => ({{
+    endpoint_id: "casa",
+    call_id: "",
+    state: "idle",
+  }}),
+}};
+terminalVideo._loadVideo = async () => ({{
+  active: false,
+  callId: "",
+  async start() {{ throw new Error("SIP video WebSocket closed before negotiation"); }},
+  async close() {{}},
+}});
+let terminalVideoErrors = 0;
+terminalVideo.addEventListener("video-error", () => {{ terminalVideoErrors++; }});
+await terminalVideo._ensureVideo({{
+  call_id: "video-ended",
+  endpoint_id: "casa",
+  video_active: true,
+}});
+assert.equal(terminalVideoErrors, 0);
+
 // Once a previous video dialog is already closed, an audio-only state update
 // is a strict no-op. Calling close() again emits state and would otherwise
 // create an endless reconcile -> close -> emit loop in the renderer.

@@ -1848,6 +1848,14 @@ void P4VideoRenderer::stop_video() {
            (unsigned)this->rx_presented_frames_.load(std::memory_order_relaxed),
            (unsigned)this->rx_refresh_completed_.load(std::memory_order_relaxed));
 #endif
+#ifdef USE_P4_VIDEO_RENDERER_JPEG
+  ESP_LOGI(TAG, "JPEG RX evidence: admitted=%u rendered=%u presented=%u "
+                "refresh_done=%u",
+           (unsigned)this->rx_admitted_frames_.load(std::memory_order_relaxed),
+           (unsigned)this->rx_rendered_frames_.load(std::memory_order_relaxed),
+           (unsigned)this->rx_presented_frames_.load(std::memory_order_relaxed),
+           (unsigned)this->rx_refresh_completed_.load(std::memory_order_relaxed));
+#endif
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
 #ifdef USE_P4_VIDEO_RENDERER_H264
   ESP_LOGI(

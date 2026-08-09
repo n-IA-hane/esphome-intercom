@@ -249,6 +249,32 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertEqual(self.left_rtcp.sent, [(correct, ("10.0.0.1", 10001))])
         self.assertEqual(self.relay.dropped, 1)
 
+    def test_transcoder_requests_negotiated_rtcp_fir_on_first_source_packet(self) -> None:
+        self.right.local_video_format = RtpVideoFormat(
+            payload_type=110,
+            encoding="H264",
+            transport_profile="RTP/AVPF",
+            rtcp_feedback=("ccm fir",),
+        )
+        self.relay._transcode_directions = {"right"}  # noqa: SLF001
+
+        self.assertTrue(self.relay.arm_keyframe_request("right"))
+        packet = rtp.build_packet(
+            rtp.RtpPacket(110, 1, 1, 0x11223344, b"encoded")
+        )
+        self.relay.handle_rtp("right", packet, (self.right.host, self.right.port))
+
+        self.assertEqual(len(self.right_rtcp.sent), 1)
+        raw, destination = self.right_rtcp.sent[0]
+        self.assertEqual(destination, (self.right.rtcp_host, self.right.rtcp_port))
+        feedback = sys.modules[f"{PKG_NAME}.core.video_rtcp"].parse_compound(raw)[-1]
+        self.assertEqual((feedback.packet_type, feedback.fmt), (206, 4))
+
+    def test_avp_transcoder_does_not_emit_unnegotiated_rtcp_feedback(self) -> None:
+        self.relay._transcode_directions = {"right"}  # noqa: SLF001
+
+        self.assertFalse(self.relay.arm_keyframe_request("right"))
+
     def test_connection_hold_blocks_only_traffic_toward_held_leg(self) -> None:
         self.left.connection_held = True
         packet = rtp.build_packet(rtp.RtpPacket(110, 1, 1, 1, b"x"))

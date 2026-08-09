@@ -240,6 +240,13 @@ class BareSip:
                         content,
                         count=1,
                     )
+                if codec == "H264":
+                    content = re.sub(
+                        r"(?m)^\s*#?avcodec_keyint\s+.*$",
+                        "avcodec_keyint\t\t15",
+                        content,
+                        count=1,
+                    )
             config_path.write_text(content, encoding="utf-8")
             if dtmf_mode or video_codec:
                 accounts_path = runtime_config / "accounts"

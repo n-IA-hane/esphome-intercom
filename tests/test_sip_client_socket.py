@@ -34,6 +34,121 @@ from .voip_phase1_support import (
 
 
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
+    async def test_dialog_writer_wakeup_survives_queued_writer(self) -> None:
+        client = object.__new__(sip_client.SipCallClient)
+        client._dialog_read_lock = asyncio.Lock()  # noqa: SLF001
+        client._dialog_writer_requested = asyncio.Event()  # noqa: SLF001
+        client._dialog_writer_count = 0  # noqa: SLF001
+        first_entered = asyncio.Event()
+        release_first = asyncio.Event()
+        second_entered = asyncio.Event()
+        release_second = asyncio.Event()
+
+        async def first() -> None:
+            async with client._dialog_writer():  # noqa: SLF001
+                first_entered.set()
+                await release_first.wait()
+
+        async def second() -> None:
+            async with client._dialog_writer():  # noqa: SLF001
+                second_entered.set()
+                await release_second.wait()
+
+        first_task = asyncio.create_task(first())
+        await first_entered.wait()
+        second_task = asyncio.create_task(second())
+        await asyncio.sleep(0)
+        release_first.set()
+        await second_entered.wait()
+        self.assertTrue(client._dialog_writer_requested.is_set())  # noqa: SLF001
+        release_second.set()
+        await asyncio.gather(first_task, second_task)
+        self.assertFalse(client._dialog_writer_requested.is_set())  # noqa: SLF001
+
+    async def test_rfc5168_keyframe_request_uses_in_dialog_info(self) -> None:
+        client = object.__new__(sip_client.SipCallClient)
+        response = sip.SipMessage(status_code=200, reason="OK")
+        client._send_in_dialog_request = unittest.mock.AsyncMock(  # type: ignore[method-assign] # noqa: SLF001
+            return_value=response
+        )
+
+        accepted = await client.request_video_keyframe()
+
+        self.assertTrue(accepted)
+        request = client._send_in_dialog_request.await_args  # type: ignore[attr-defined] # noqa: SLF001
+        self.assertEqual(request.args, ("INFO",))
+        self.assertEqual(
+            request.kwargs["content_type"],
+            "application/media_control+xml",
+        )
+        self.assertIn(b"<picture_fast_update/>", request.kwargs["body"])
+
+    async def test_rfc5168_keyframe_request_rejects_non_success_response(self) -> None:
+        client = object.__new__(sip_client.SipCallClient)
+        client._send_in_dialog_request = unittest.mock.AsyncMock(  # type: ignore[method-assign] # noqa: SLF001
+            return_value=sip.SipMessage(status_code=415, reason="Unsupported Media Type")
+        )
+
+        self.assertFalse(await client.request_video_keyframe())
+
+    async def test_rfc5168_keyframe_request_uses_dialog_route_and_cseq(self) -> None:
+        sent: list[tuple[bytes, tuple[str, int]]] = []
+        pcm = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
+        client = sip_client.SipCallClient(
+            local_ip="127.0.0.1",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        client.transport = types.SimpleNamespace(
+            sendto=lambda data, addr: sent.append((data, addr)),
+            close=lambda: None,
+        )
+        client.dialog_ids.remote_tag = "remote"
+        client.dialog = sip_client.SipDialog(
+            target="peer",
+            remote_host="127.0.0.2",
+            remote_sip_port=5060,
+            remote_rtp_host="127.0.0.2",
+            remote_rtp_port=42000,
+            local_rtp_port=41000,
+            call_id=client.dialog_ids.call_id,
+            remote_tag="remote",
+            local_uri="sip:HA@127.0.0.1:5060",
+            remote_uri="sip:peer@127.0.0.2:5060",
+            send_format=pcm,
+            recv_format=pcm,
+            remote_target_uri="sip:peer@127.0.0.2:5060",
+            route_set=("sip:proxy@127.0.0.3:5070;lr",),
+        )
+
+        dialog_reader = asyncio.create_task(client.wait_for_dialog_termination())
+        await asyncio.sleep(0)
+        owner = asyncio.create_task(client.request_video_keyframe(timeout=0.5))
+        info = await self._wait_for_sent_request(sent, "INFO")
+        self.assertEqual(info.header("CSeq"), "2 INFO")
+        self.assertEqual(info.header("Route"), "sip:proxy@127.0.0.3:5070;lr")
+        self.assertEqual(info.header("Content-Type"), "application/media_control+xml")
+        client.queue.put_nowait(
+            (
+                sip.build_response(
+                    200,
+                    "OK",
+                    [
+                        *(("Via", value) for value in info.header_values("Via")),
+                        ("From", info.header("From")),
+                        ("To", info.header("To")),
+                        ("Call-ID", info.header("Call-ID")),
+                        ("CSeq", info.header("CSeq")),
+                    ],
+                ),
+                ("127.0.0.3", 5070),
+            )
+        )
+        self.assertTrue(await owner)
+        dialog_reader.cancel()
+        await asyncio.gather(dialog_reader, return_exceptions=True)
+
     @staticmethod
     async def _wait_for_sent_request(
         sent: list[tuple[bytes, tuple[str, int]]],

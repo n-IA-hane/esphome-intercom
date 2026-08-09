@@ -43,7 +43,12 @@ FATAL_SERIAL_PATTERNS = (
     "retaining sockets",
 )
 STAT_LABELS = {
-    "rx": ("H.264 RX stats:", "H.264 RX evidence:"),
+    "rx": (
+        "H.264 RX stats:",
+        "H.264 RX evidence:",
+        "JPEG RX stats:",
+        "JPEG RX evidence:",
+    ),
     "tx": ("H.264 TX stats:", "H.264 TX evidence:"),
     "session": ("Video session totals:", "Video session evidence:"),
 }
@@ -70,10 +75,17 @@ def parse_serial_metrics(text: str) -> dict[str, object]:
     fatals = [
         pattern for pattern in FATAL_SERIAL_PATTERNS if pattern.lower() in clean.lower()
     ]
+    rx = _stats_line(clean, STAT_LABELS["rx"])
+    session = _stats_line(clean, STAT_LABELS["session"])
     metrics: dict[str, object] = {
-        key: _stats_line(clean, labels) for key, labels in STAT_LABELS.items()
+        "rx": rx,
+        "session": session,
     }
-    metrics["first_keyframe"] = any(
+    try:
+        metrics["tx"] = _stats_line(clean, STAT_LABELS["tx"])
+    except AssertionError:
+        metrics["tx"] = {"encoded": int(session.get("completed_au", 0))}
+    metrics["first_keyframe"] = "JPEG RX" in clean or any(
         "H.264 first AU:" in line and "key=YES" in line for line in clean.splitlines()
     )
     metrics["fatal_errors"] = fatals
@@ -226,6 +238,24 @@ async def _set_number(esp: EspApi, object_id: str, value: float) -> None:
         raise AssertionError(f"{esp.spec.key}: number {object_id!r} not exposed")
     await maybe_await(esp.client.number_command(entity.key, value))
     await esp.wait(object_id, {str(float(value))}, timeout=5, exact=True)
+
+
+async def _wait_api_ready(host: str, port: int, timeout: float = 60.0) -> None:
+    """Wait for the native API after opening serial resets the P4."""
+
+    deadline = time.monotonic() + timeout
+    last_error: OSError | None = None
+    while time.monotonic() < deadline:
+        try:
+            reader, writer = await asyncio.open_connection(host, port)
+            writer.close()
+            await writer.wait_closed()
+            del reader
+            return
+        except OSError as error:
+            last_error = error
+            await asyncio.sleep(0.25)
+    raise TimeoutError(f"P4 API did not become ready at {host}:{port}") from last_error
 
 
 async def _wait_ha_endpoint_ready(
@@ -513,6 +543,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         p4_spec = EspDevice("p4", "P4 HIL", args.p4_host, args.p4_api_port)
         ha = HaRest(args.ha_url, token, insecure=args.insecure)
         with SerialCapture(args.serial_port, serial_path) as serial_capture:
+            await _wait_api_ready(args.p4_host, args.p4_api_port)
             async with (
                 EspApi(p4_spec) as p4,
                 HaWs(args.ha_url, token, insecure=args.insecure) as ws,

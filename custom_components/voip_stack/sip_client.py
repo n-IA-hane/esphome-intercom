@@ -10,7 +10,7 @@ import re
 import secrets
 import socket
 import ssl
-from typing import Any, Awaitable, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS, PcmFormat
 from .core import g711
@@ -457,7 +457,8 @@ class SipCallClient:
         self._incoming_refer_task: asyncio.Task[None] | None = None
         self._dialog_read_lock = asyncio.Lock()
         self._local_offer_lock = asyncio.Lock()
-        self._local_offer_requested = asyncio.Event()
+        self._dialog_writer_requested = asyncio.Event()
+        self._dialog_writer_count = 0
         self._prepared_reinvite: tuple[
             SipDialog,
             SipDialog,
@@ -2252,7 +2253,7 @@ class SipCallClient:
     ) -> sip.SipMessage | None:
         """Run one serialized non-INVITE client transaction on the dialog."""
 
-        async with self._dialog_read_lock:
+        async with self._dialog_writer():
             dialog = self.dialog
             if dialog is None:
                 return None
@@ -2313,6 +2314,45 @@ class SipCallClient:
             except (ConnectionError, OSError):
                 return None
         return None
+
+    @contextlib.asynccontextmanager
+    async def _dialog_writer(self) -> AsyncIterator[None]:
+        """Wake the dialog reader and serialize one outbound transaction."""
+
+        self._request_dialog_writer()
+        try:
+            async with self._dialog_read_lock:
+                yield
+        finally:
+            self._release_dialog_writer()
+
+    def _request_dialog_writer(self) -> None:
+        self._dialog_writer_count += 1
+        self._dialog_writer_requested.set()
+
+    def _release_dialog_writer(self) -> None:
+        self._dialog_writer_count -= 1
+        if self._dialog_writer_count == 0:
+            self._dialog_writer_requested.clear()
+
+    async def request_video_keyframe(self, *, timeout: float = 3.0) -> bool:
+        """Request a full intra frame with RFC 5168 media control."""
+
+        response = await self._send_in_dialog_request(
+            "INFO",
+            body=(
+                b'<?xml version="1.0" encoding="utf-8"?>\r\n'
+                b"<media_control><vc_primitive><to_encoder>"
+                b"<picture_fast_update/>"
+                b"</to_encoder></vc_primitive></media_control>\r\n"
+            ),
+            content_type="application/media_control+xml",
+            timeout=timeout,
+        )
+        return bool(
+            response is not None
+            and 200 <= int(response.status_code or 0) < 300
+        )
 
     def _dialog_is_current(self, expected: SipDialog) -> bool:
         current = self.dialog
@@ -2424,7 +2464,7 @@ class SipCallClient:
                 reader_acquired = True
                 if self.dialog is None:
                     return "remote_hangup"
-                if self._local_offer_requested.is_set():
+                if self._dialog_writer_requested.is_set():
                     continue
                 wait_timeout = 3600.0
                 timer_at = timer_driver.deadline
@@ -2444,7 +2484,7 @@ class SipCallClient:
                     name=f"voip-sip-dialog-ack-timeout-{self.dialog_ids.call_id}",
                 )
                 offer_request_task = asyncio.create_task(
-                    self._local_offer_requested.wait(),
+                    self._dialog_writer_requested.wait(),
                     name=f"voip-sip-dialog-offer-{self.dialog_ids.call_id}",
                 )
                 done, _pending = await asyncio.wait(
@@ -3023,11 +3063,11 @@ class SipCallClient:
                 )
                 return None
 
-            self._local_offer_requested.set()
+            self._request_dialog_writer()
             try:
                 await self._dialog_read_lock.acquire()
             except BaseException:
-                self._local_offer_requested.clear()
+                self._release_dialog_writer()
                 raise
             try:
                 if self.dialog is not current:
@@ -3180,7 +3220,7 @@ class SipCallClient:
                     self.dialog = None
                 return None
             finally:
-                self._local_offer_requested.clear()
+                self._release_dialog_writer()
                 self._dialog_read_lock.release()
 
     def commit_prepared_reinvite(

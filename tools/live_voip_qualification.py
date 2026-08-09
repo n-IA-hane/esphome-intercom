@@ -400,6 +400,19 @@ class EspApi:
         await maybe_await(self.client.switch_command(entity.key, value))
         await self.wait(object_id, {"on" if value else "off"}, timeout=5)
 
+    async def number(self, object_id: str, value: float) -> None:
+        entity = self.entities.get(object_id)
+        if entity is None:
+            raise AssertionError(
+                f"{self.spec.key}: ESP number {object_id!r} not exposed"
+            )
+        await maybe_await(self.client.number_command(entity.key, value))
+        await self.wait_predicate(
+            lambda: abs(float(self.values.get(object_id, -1)) - value) < 0.01,
+            f"{object_id}={value}",
+            timeout=5,
+        )
+
     async def text(self, object_id: str, value: str) -> None:
         entity = self.entities.get(object_id)
         if entity is None:
@@ -691,6 +704,7 @@ async def set_baseline(ctx: LiveContext) -> dict[str, Any]:
         == "on",
         "dnd": norm(ctx.esp.values.get("do_not_disturb")) == "on",
         "auto_answer": norm(ctx.esp.values.get("auto_answer")) == "on",
+        "master_volume": ctx.esp.values.get("master_volume"),
         "ha_extension": str(ha_phone.get("extension") or ""),
         "ha_ring_group": str(ha_groups.get("ring_group") or ""),
         "ha_conference_group": str(ha_groups.get("conference_group") or ""),
@@ -703,6 +717,8 @@ async def set_baseline(ctx: LiveContext) -> dict[str, Any]:
         await ctx.esp.switch("voip_ring_on_conference", False)
         await ctx.esp.switch("do_not_disturb", False)
         await ctx.esp.switch("auto_answer", False)
+        if "master_volume" in getattr(ctx.esp, "entities", {}):
+            await ctx.esp.number("master_volume", 1.0)
         await wait_phonebook_contains(ctx.ha, ctx.args.esp_extension)
         await wait_phonebook_contains(ctx.ha, ctx.args.ring_group)
         await wait_phonebook_contains(ctx.ha, ctx.args.conference_group)
@@ -733,6 +749,11 @@ async def restore_baseline(ctx: LiveContext, original: dict[str, Any]) -> None:
     )
     await ctx.esp.switch("do_not_disturb", bool(original["dnd"]))
     await ctx.esp.switch("auto_answer", bool(original["auto_answer"]))
+    if (
+        "master_volume" in getattr(ctx.esp, "entities", {})
+        and original["master_volume"] is not None
+    ):
+        await ctx.esp.number("master_volume", float(original["master_volume"]))
     await ctx.ha.service(
         "voip_stack",
         "set_ha_softphone_settings",

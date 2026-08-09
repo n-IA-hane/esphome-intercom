@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+import logging
 from typing import Any
 
 from .core import sdp
@@ -17,12 +18,43 @@ from .sip_video_relay import (
 )
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True, slots=True)
 class VideoBridgeAnswer:
     """Video contract that can be committed to the inbound answer."""
 
     video_format: sdp.RtpVideoFormat
     direction: str
+
+
+async def async_start_sip_bridge_media(
+    relay: SipRtpRelay,
+) -> bool:
+    """Start bridge media and report whether H.264 needs a decoder refresh."""
+
+    await relay.start()
+    video_relay = relay.video_relay
+    if (
+        video_relay is None
+        or not video_relay.transcodes_from("right")
+        or video_relay.right.recv_format.encoding != "H264"
+    ):
+        return False
+    return not video_relay.arm_keyframe_request("right")
+
+
+async def async_request_sip_bridge_keyframe(
+    client: SipCallClient,
+) -> None:
+    """Request one standards-based decoder refresh after answer commit."""
+
+    if not await client.request_video_keyframe():
+        _LOGGER.info(
+            "SIP peer did not accept RFC 5168 keyframe request call_id=%s",
+            client.dialog_ids.call_id,
+        )
 
 
 def video_bridge_offer_formats(

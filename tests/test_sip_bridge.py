@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 from .voip_phase1_support import (
     _reserved_udp_ports,
     asyncio,
@@ -182,6 +184,50 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(relay.transcoding)
         self.assertEqual(relay._transcode_directions, {"left", "right"})  # noqa: SLF001
         self.assertEqual(answer.video_format.encoding, "JPEG")
+
+    async def test_cross_codec_h264_start_requests_rfc5168_keyframe(self) -> None:
+        invite, dialog, video_relay = self._cross_codec_video_fixture()
+        sip_bridge.configure_answered_invite_video_relay(
+            invite,
+            dialog,
+            video_relay,
+            hass=types.SimpleNamespace(data={}),
+            enable_transcoding=True,
+        )
+        media = types.SimpleNamespace(
+            video_relay=video_relay,
+            start=AsyncMock(),
+        )
+        client = types.SimpleNamespace(
+            request_video_keyframe=AsyncMock(return_value=True),
+            dialog_ids=types.SimpleNamespace(call_id="destination"),
+        )
+
+        needs_keyframe = await sip_bridge.async_start_sip_bridge_media(media)
+
+        media.start.assert_awaited_once()
+        self.assertTrue(needs_keyframe)
+        client.request_video_keyframe.assert_not_awaited()
+
+        await sip_bridge.async_request_sip_bridge_keyframe(client)
+        client.request_video_keyframe.assert_awaited_once()
+
+    async def test_passthrough_video_start_does_not_request_keyframe(self) -> None:
+        _invite, _dialog, video_relay = self._cross_codec_video_fixture()
+        media = types.SimpleNamespace(
+            video_relay=video_relay,
+            start=AsyncMock(),
+        )
+        client = types.SimpleNamespace(
+            request_video_keyframe=AsyncMock(return_value=True),
+            dialog_ids=types.SimpleNamespace(call_id="destination"),
+        )
+
+        needs_keyframe = await sip_bridge.async_start_sip_bridge_media(media)
+
+        media.start.assert_awaited_once()
+        self.assertFalse(needs_keyframe)
+        client.request_video_keyframe.assert_not_awaited()
 
     def test_local_client_relay_does_not_require_a_synthetic_sdp_offer(self) -> None:
         local_to_relay = sdp.RtpPcmFormat(96, "L16", 16000, 1, 16)

@@ -1569,6 +1569,14 @@ class VoipStackEngine extends EventTarget {
         }
       } catch (err) {
         if (generation !== this._videoAttachGeneration) return;
+        const afterFailure = await this._mediaAttachState(
+          wantedCallId,
+          wantedEndpoint,
+        );
+        if (
+          generation !== this._videoAttachGeneration ||
+          this._mediaAttachNoLongerBelongsHere(afterFailure, wantedCallId)
+        ) return;
         console.warn("voip-stack-engine: optional SIP video setup failed", err);
         this.dispatchEvent(new CustomEvent("video-error", { detail: err?.message || String(err) }));
       }

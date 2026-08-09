@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import logging
+import secrets
 import socket
 import struct
 from typing import Any, Callable
@@ -23,7 +24,13 @@ from .video_transcoder import (
     _release_transcoder_slot,
     video_transcode_supported,
 )
-from .core.video_rtcp import RtcpError, parse_compound
+from .core.video_rtcp import (
+    RtcpError,
+    build_fir,
+    build_pli,
+    build_receiver_compound,
+    parse_compound,
+)
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -171,6 +178,9 @@ class SipVideoRtpRelay:
             "right": [],
         }
         self._transcode_startup_bytes = {"left": 0, "right": 0}
+        self._keyframe_requests: set[str] = set()
+        self._rtcp_ssrc = secrets.randbelow(0xFFFFFFFF) + 1
+        self._fir_sequence = 0
         self._on_release = on_release
         self._released = False
         self._lifecycle_lock = asyncio.Lock()
@@ -249,6 +259,41 @@ class SipVideoRtpRelay:
         if side not in {"left", "right"}:
             raise ValueError(f"unknown video relay side: {side}")
         return side in self._transcode_directions
+
+    def arm_keyframe_request(self, side: str) -> bool:
+        """Arm negotiated RTCP feedback for the first RTP source SSRC."""
+
+        source, _destination = self._peers(side)
+        feedback = set(source.recv_format.rtcp_feedback)
+        if (
+            not self.transcodes_from(side)
+            or source.recv_format.transport_profile != "RTP/AVPF"
+            or not feedback.intersection({"ccm fir", "nack pli"})
+        ):
+            return False
+        self._keyframe_requests.add(side)
+        return True
+
+    def _send_armed_keyframe_request(self, side: str, source: VideoRtpPeer) -> None:
+        if side not in self._keyframe_requests or source.rx_ssrc is None:
+            return
+        self._keyframe_requests.discard(side)
+        feedback = set(source.recv_format.rtcp_feedback)
+        if "ccm fir" in feedback:
+            self._fir_sequence = (self._fir_sequence + 1) & 0xFF
+            packet = build_fir(self._rtcp_ssrc, source.rx_ssrc, self._fir_sequence)
+        else:
+            packet = build_pli(self._rtcp_ssrc, source.rx_ssrc)
+        output = self._transports.get((side, True))
+        if output is None or source.rtcp_port <= 0:
+            return
+        raw = build_receiver_compound(
+            self._rtcp_ssrc,
+            source.rx_ssrc,
+            feedback=packet,
+        )
+        output.sendto(raw, (source.rtcp_host, int(source.rtcp_port)))
+        self.rtcp_forwarded += 1
 
     @property
     def stopping(self) -> bool:
@@ -567,6 +612,7 @@ class SipVideoRtpRelay:
                 raise ValueError("unexpected RTP SSRC")
             if source.rx_ssrc is None:
                 source.rx_ssrc = packet.ssrc
+                self._send_armed_keyframe_request(side, source)
             source.host = str(addr[0])
             source.port = int(addr[1])
             if side in self._transcode_directions:

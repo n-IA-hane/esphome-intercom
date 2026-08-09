@@ -56,6 +56,8 @@ from ..runtime_data import call_runtime_artifacts
 from ..core.sdp import build_answer_directional, first_offered_dtmf_format
 from ..core.sip import parse_sip_uri, sip_endpoints_equal, sip_uri_targets_listener
 from ..sip_bridge import (
+    async_request_sip_bridge_keyframe,
+    async_start_sip_bridge_media,
     build_invite_client_relay,
     build_pending_invite_video_relay,
     configure_answered_invite_video_relay,
@@ -468,7 +470,6 @@ async def route_sip_bridge(
             return
 
         selected_video = None
-        selected_video_direction = "inactive"
         if video_relay is not None:
             video_answer = configure_answered_invite_video_relay(
                 invite,
@@ -491,7 +492,6 @@ async def route_sip_bridge(
                 video_failure_reason = "remote_video_rejected"
             else:
                 selected_video = video_answer.video_format
-                selected_video_direction = video_answer.direction
         try:
             relay = build_invite_client_relay(
                 invite=invite,
@@ -518,7 +518,7 @@ async def route_sip_bridge(
                 if video_bridge_ports is not None:
                     video_bridge_ports.detach()
                 relay.attach_video_relay(video_relay)
-            await relay.start()
+            request_video_keyframe = await async_start_sip_bridge_media(relay)
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("SIP RTP bridge media conversion unavailable: %s", err)
             await registry.close_leg(
@@ -558,7 +558,9 @@ async def route_sip_bridge(
             remote_sdp=invite.remote_sdp,
             video_port=video_relay.left_port if video_relay is not None else 0,
             video_format=selected_video,
-            video_direction=selected_video_direction,
+            video_direction=(
+                video_answer.direction if video_relay is not None else "inactive"
+            ),
         )
         send_answer = (
             (lambda _status, _reason, _sdp: True)
@@ -593,6 +595,11 @@ async def route_sip_bridge(
 
         if not (await transaction.commit(answer, claim=_claim_answer)).committed:
             return
+        if request_video_keyframe:
+            session.create_task(
+                async_request_sip_bridge_keyframe(client),
+                name=f"voip-keyframe-{client.dialog_ids.call_id}",
+            )
         publish_bridge_projection(
             hass,
             session,

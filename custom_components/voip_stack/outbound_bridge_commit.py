@@ -21,6 +21,8 @@ from .media_ports import release_sip_rtp_port_pair, release_video_media_reservat
 from .outbound_attempts import OutboundLeg, async_apply_outbound_video_answer
 from .core.sdp import build_answer_directional, first_offered_dtmf_format
 from .sip_bridge import (
+    async_request_sip_bridge_keyframe,
+    async_start_sip_bridge_media,
     build_invite_client_relay,
     build_local_client_relay,
     configure_answered_invite_video_relay,
@@ -196,7 +198,7 @@ async def async_commit_outbound_bridge(
         )
         if winner.video_relay is not None:
             relay.attach_video_relay(winner.video_relay)
-        await relay.start()
+        request_video_keyframe = await async_start_sip_bridge_media(relay)
     except BaseException:
         await _cancel_watcher()
         registry.forget_bridge_link(invite.call_id)
@@ -287,6 +289,13 @@ async def async_commit_outbound_bridge(
     if not bool(getattr(committed, "committed", committed)):
         await _fail_commit(TerminalReason.PROTOCOL_ERROR.value)
         raise RuntimeError(str(getattr(committed, "reason", "answer_not_committed")))
+
+    if request_video_keyframe:
+        assert relay.video_relay is not None
+        session.create_task(
+            async_request_sip_bridge_keyframe(client),
+            name=f"voip-keyframe-{dest_call_id}",
+        )
 
     result = BridgeCommitResult(
         relay,
