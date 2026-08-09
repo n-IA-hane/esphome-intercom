@@ -82,7 +82,8 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         runtime.activate()
 
         first = runtime.create_session("call-1", origin="trunk")
-        first.transition(SessionPhase.ROUTING)
+        runtime.transition("call-1", state="route_requested")
+        self.assertIs(first.phase, SessionPhase.ROUTING)
         first.update_metadata(destination="100")
         runtime.observe_leg("call-1", "leg-1", role="sip")
         runtime.event_contexts["leg-1"] = {"source": "test"}

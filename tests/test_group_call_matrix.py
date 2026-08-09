@@ -38,6 +38,12 @@ class _FakeUnauthorized(Exception):
         self.details = kwargs
 
 
+class _FakeServiceValidationError(ValueError):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args)
+        self.details = kwargs
+
+
 def _install_ha_fakes() -> None:
     if "homeassistant" not in sys.modules:
         ha_pkg = types.ModuleType("homeassistant")
@@ -72,7 +78,7 @@ def _install_ha_fakes() -> None:
     exceptions.ServiceValidationError = getattr(
         exceptions,
         "ServiceValidationError",
-        type("ServiceValidationError", (ValueError,), {}),
+        _FakeServiceValidationError,
     )
     if "homeassistant.components" not in sys.modules:
         components = types.ModuleType("homeassistant.components")

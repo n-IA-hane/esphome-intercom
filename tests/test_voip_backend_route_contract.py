@@ -321,7 +321,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         answer = self.softphone_answer
         pending_route = answer.index("if call_id and call_id in pending_routes(hass):")
         forward_guard = answer.index(
-            'raise ServiceValidationError(f"call_id {call_id} is being forwarded")'
+            '"call_forwarding",\n            call_id=call_id,'
         )
         self.assertLess(pending_route, forward_guard)
 

@@ -453,21 +453,6 @@ async def async_forward_existing_call(
         answered = _source_dialog_is_answered(preanswered)
         status = 486 if on_failure == "busy" else 480
 
-        terminal_state = (
-            CallState.BUSY.value
-            if on_failure == "busy"
-            else CallState.TRANSPORT_UNREACHABLE.value
-        )
-        current = registry.sessions.get(registry.resolve_session_id(call_id))
-        if current is not None:
-            registry.transition(
-                call_id,
-                state=terminal_state,
-                owner="terminal",
-                outcome=reason,
-                expected_revision=current.revision,
-                expected_owner=current.owner,
-            )
         await EndpointTerminationHandler(hass).terminate(
             call_id,
             (
