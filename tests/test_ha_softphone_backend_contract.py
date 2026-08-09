@@ -831,11 +831,16 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         audio_ws = (
             ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
         ).read_text()
-        ring_group = RING_GROUP_ORCHESTRATOR.read_text()
-        self.assertIn('"rtp_loopback": True', ring_group)
-        self.assertIn('"remote_rtp_port": source_relay_port', ring_group)
-        self.assertIn('"send_format": invite.recv_format', ring_group)
-        self.assertIn('"recv_format": invite.send_format', ring_group)
+        bridge_commit = (
+            ROOT
+            / "custom_components"
+            / "voip_stack"
+            / "outbound_bridge_commit.py"
+        ).read_text()
+        self.assertIn('"rtp_loopback": True', bridge_commit)
+        self.assertIn('"remote_rtp_port": data.source_relay_port', bridge_commit)
+        self.assertIn('"send_format": invite.recv_format', bridge_commit)
+        self.assertIn('"recv_format": invite.send_format', bridge_commit)
         self.assertIn('item.get("rtp_loopback")', audio_ws)
         self.assertIn("local_rtp_port=0", audio_ws)
         self.assertIn(
