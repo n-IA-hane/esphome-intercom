@@ -13,9 +13,9 @@ from homeassistant.core import HomeAssistant
 from ..call_projection import CallProjectionEvent, publish_call_projection
 from ..call_scope import set_pending_route, take_pending_route
 from ..endpoint_lifecycle import call_registry
-from ..fsm import CallState, TerminalReason
+from ..endpoint_session import TerminationIntent
+from ..fsm import TerminalReason
 from ..sip_listener import SipInviteResult
-from ..websocket_api import _set_sip_bridge_call_state
 
 if TYPE_CHECKING:
     from ..router import RouteDecision
@@ -176,24 +176,22 @@ def automation_rejection(
         status = route.status or 603
         reason = route.reason or "Decline"
         app_reason = route.decline_reason or TerminalReason.DECLINED.value
-    _set_sip_bridge_call_state(
-        hass,
-        (
-            CallState.BUSY.value
-            if app_reason == TerminalReason.BUSY.value
-            else CallState.CANCELLED.value
-            if status == 487
-            else "declined"
-        ),
-        caller=invite.caller,
-        callee=invite.target,
-        peer_name=invite.caller,
-        call_id=invite.call_id,
-        reason=app_reason,
-        origin="self",
-        sip_status_code=status,
-        last_sip_event="SIP_RESPONSE",
-    )
+    session = call_registry(hass).get_session(invite.call_id)
+    if session is not None:
+        intent = TerminationIntent.final_response(app_reason, status)
+        publish_call_projection(
+            hass,
+            session,
+            CallProjectionEvent.bridge(
+                session,
+                intent=intent,
+                peer_name=invite.caller,
+                reason=app_reason,
+                origin="self",
+                sip_status_code=status,
+                last_sip_event="SIP_RESPONSE",
+            ),
+        )
     return SipInviteResult(
         status,
         reason,
