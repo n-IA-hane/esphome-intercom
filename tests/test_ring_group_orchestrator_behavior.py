@@ -46,7 +46,6 @@ def _runtime() -> ring_group_orchestrator.RingGroupRuntime:
         browser_leg_for_member=Mock(),
         logical_endpoint_for_member=Mock(),
         prepare_outbound_leg=Mock(),
-        attach_client_media_update=Mock(),
         terminate_sip_bridge=Mock(),
     )
 

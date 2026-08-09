@@ -71,11 +71,11 @@ async def test_commit_transfers_bridge_and_owns_destination_watcher(monkeypatch)
     from custom_components.voip_stack.inbound_answer import AnswerCommitResult
 
     invite, winner, registry, relay = _fixture()
-    runtime = SimpleNamespace(attach_client_media_update=MagicMock())
+    binder = SimpleNamespace(attach=MagicMock())
     monkeypatch.setattr(module, "build_invite_client_relay", lambda **_: relay)
     monkeypatch.setattr(module, "attach_dtmf_event_bridge", MagicMock())
     monkeypatch.setattr(module, "build_answer_directional", lambda *_a, **_k: "sdp")
-    monkeypatch.setattr(module, "sip_endpoint_runtime", lambda _hass: runtime)
+    monkeypatch.setattr(module, "BridgeMediaUpdateBinder", lambda _hass: binder)
     monkeypatch.setattr(
         module,
         "async_commit_runtime_answer",
@@ -110,7 +110,7 @@ async def test_commit_transfers_bridge_and_owns_destination_watcher(monkeypatch)
     relay.start.assert_awaited_once()
     winner.ports.detach.assert_called_once()
     registry.attach_relay.assert_called_once_with("source-call", relay)
-    runtime.attach_client_media_update.assert_called_once()
+    binder.attach.assert_called_once()
     assert not _pending_watchers()
 
 
@@ -121,11 +121,11 @@ async def test_commit_failure_leaves_no_destination_watcher(monkeypatch, failure
     from custom_components.voip_stack.inbound_answer import AnswerCommitResult
 
     invite, winner, registry, relay = _fixture()
-    runtime = SimpleNamespace(attach_client_media_update=MagicMock())
+    binder = SimpleNamespace(attach=MagicMock())
     monkeypatch.setattr(module, "build_invite_client_relay", lambda **_: relay)
     monkeypatch.setattr(module, "attach_dtmf_event_bridge", MagicMock())
     monkeypatch.setattr(module, "build_answer_directional", lambda *_a, **_k: "sdp")
-    monkeypatch.setattr(module, "sip_endpoint_runtime", lambda _hass: runtime)
+    monkeypatch.setattr(module, "BridgeMediaUpdateBinder", lambda _hass: binder)
     monkeypatch.setattr(
         module,
         "EndpointTerminationHandler",

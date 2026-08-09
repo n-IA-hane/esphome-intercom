@@ -381,6 +381,20 @@ class CallRegistryEventContextTest(unittest.TestCase):
 
         self.assertIs(registry.event_context("call-1"), session.event_context)
 
+    def test_upsert_promotes_event_observation_to_authoritative_call(self) -> None:
+        registry = _registry()
+        registry.event_fields("call-1", "route_requested")
+
+        session = registry.upsert(
+            "call-1",
+            state="ringing",
+            owner="ha_softphone",
+        )
+        registry.event_fields("call-1", "cancelled")
+
+        self.assertIs(registry.sessions["call-1"], session)
+        self.assertNotIn("event_only", session.metadata)
+
     def test_external_event_lifecycle_retires_without_phantom_active_call(self) -> None:
         registry = _registry()
 

@@ -458,6 +458,11 @@ class CallRuntimeApi:
         )
         session = authoritative
         changed = False
+        if session.metadata.pop("event_only", False):
+            # An observable route event may precede materialisation of the
+            # authoritative call. Once an owner upserts the call, terminal UI
+            # projections must no longer retire that live generation.
+            changed = True
         if state and self._set_state(session, state):
             changed = True
         for attribute, value in (

@@ -1671,12 +1671,13 @@ class SipCallClient:
                         selected_port,
                     )
                     return True
-                except (ConnectionError, OSError, RuntimeError):
+                except (ConnectionError, OSError, RuntimeError) as err:
                     _LOGGER.info(
-                        "SIP initial target unavailable %s:%s transport=%s",
+                        "SIP initial target unavailable %s:%s transport=%s error=%s",
                         selected_host,
                         selected_port,
                         selected_transport,
+                        err,
                     )
             return False
 

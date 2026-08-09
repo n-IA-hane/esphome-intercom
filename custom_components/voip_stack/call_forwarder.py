@@ -121,7 +121,6 @@ class ForwardRuntime:
     config: dict
     local_ip: str
     route_resolver: EndpointRouteResolver
-    attach_client_media_update: Callable[..., None]
     browser_leg_for_member: Callable[..., Any]
     defer_invite_to_softphone: Callable[..., None]
     prepare_outbound_leg: Callable[..., Any]

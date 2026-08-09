@@ -21,7 +21,6 @@ def _runtime() -> call_forwarder.ForwardRuntime:
         config={},
         local_ip="127.0.0.1",
         route_resolver=Mock(),
-        attach_client_media_update=Mock(),
         browser_leg_for_member=Mock(),
         defer_invite_to_softphone=Mock(),
         prepare_outbound_leg=Mock(),

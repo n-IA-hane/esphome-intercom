@@ -10,6 +10,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from .bridge_manager import async_watch_sip_bridge_destination
+from .bridge_media_updates import BridgeMediaUpdateBinder
 from .config import media_capture_enabled
 from .dtmf_events import attach_dtmf_event_bridge
 from .endpoint_termination import EndpointTerminationHandler
@@ -24,7 +25,6 @@ from .sip_bridge import (
     build_local_client_relay,
     configure_answered_invite_video_relay,
 )
-from .runtime_data import sip_endpoint_runtime
 from .sip_runtime import send_final_response
 from .softphone_termination import async_terminate_sip_bridge_session
 
@@ -216,7 +216,7 @@ async def async_commit_outbound_bridge(
     for reservation in data.detach_reservations:
         reservation.detach()
     winner.video_relay = None
-    sip_endpoint_runtime(hass).attach_client_media_update(
+    BridgeMediaUpdateBinder(hass).attach(
         client, relay, source_call_id=invite.call_id
     )
     registry.attach_relay(invite.call_id, relay)

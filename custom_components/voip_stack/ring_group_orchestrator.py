@@ -91,7 +91,6 @@ class RingGroupRuntime:
     browser_leg_for_member: Callable[..., BrowserLeg | None]
     logical_endpoint_for_member: Callable[..., Any]
     prepare_outbound_leg: Callable[..., Any]
-    attach_client_media_update: Callable[..., None]
     terminate_sip_bridge: Callable[..., Any]
 
 
@@ -113,7 +112,6 @@ async def run_ring_group_call(
     _browser_leg_for_member = runtime.browser_leg_for_member
     _logical_endpoint_for_member = runtime.logical_endpoint_for_member
     _prepare_outbound_leg = runtime.prepare_outbound_leg
-    _attach_client_media_update = runtime.attach_client_media_update
     _terminate_sip_bridge = runtime.terminate_sip_bridge
     registry = _call_registry(hass)
     origin_endpoint_id = str(origin_endpoint_id or "").strip()
