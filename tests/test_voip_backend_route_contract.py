@@ -49,6 +49,9 @@ SOFTPHONE_ORIGINATE = (
     ROOT / "custom_components" / "voip_stack" / "softphone_originate.py"
 )
 OUTBOUND_ATTEMPTS = ROOT / "custom_components" / "voip_stack" / "outbound_attempts.py"
+OUTBOUND_BRIDGE_COMMIT = (
+    ROOT / "custom_components" / "voip_stack" / "outbound_bridge_commit.py"
+)
 DTMF_EVENTS = ROOT / "custom_components" / "voip_stack" / "dtmf_events.py"
 CONFIG_ENTRY_RUNTIME = (
     ROOT / "custom_components" / "voip_stack" / "config_entry_runtime.py"
@@ -98,6 +101,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.softphone_answer = SOFTPHONE_ANSWER.read_text()
         cls.softphone_originate = SOFTPHONE_ORIGINATE.read_text()
         cls.outbound_attempts = OUTBOUND_ATTEMPTS.read_text()
+        cls.outbound_bridge_commit = OUTBOUND_BRIDGE_COMMIT.read_text()
         cls.dtmf_events = DTMF_EVENTS.read_text()
         cls.endpoint_routing = ENDPOINT_ROUTING.read_text()
         cls.endpoint_dialing = ENDPOINT_DIALING.read_text()
@@ -220,11 +224,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     ) -> None:
         forward = self.call_forwarder
         video_start = forward.index("forward_video_enabled = bool(")
-        video = forward[
-            video_start : forward.index(
-                "relay = build_invite_client_relay(", video_start
-            )
-        ]
+        video = forward[video_start:] + self.outbound_bridge_commit
 
         self.assertIn("cfg.get(CONF_SIP_VIDEO, False)", video)
         self.assertIn('source_route_endpoint.supports("video")', video)
@@ -243,7 +243,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             bridge_video,
         )
         self.assertIn("sdp.video_offer_answer_directional(", bridge_video)
-        self.assertIn("no direct or transcoded codec", video)
+        self.assertIn("async_apply_outbound_video_answer", video)
 
     def test_browser_to_browser_call_uses_local_bridge_before_network_discovery(
         self,
@@ -342,7 +342,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn('callback("left", digit, "sip_info")', self.dtmf_events)
         self.assertIn("relay.relay_dtmf(side, digit)", self.dtmf_events)
         self.assertNotIn("send_dtmf_info", self.source)
-        # Five established HA-anchored bridge paths keep in-call DTMF.
+        # Established bridge families keep DTMF through shared primitives.
         self.assertEqual(
             self.source.count("_attach_dtmf_event_bridge(")
             + self.invite_router.count("_attach_dtmf_event_bridge(")
@@ -350,7 +350,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             + self.trunk_inbound_router.count("attach_dtmf_event_bridge(")
             + self.call_forwarder.count("_attach_dtmf_event_bridge(")
             + self.ring_group.count("_attach_dtmf_event_bridge("),
-            5,
+            2,
+        )
+        self.assertEqual(
+            self.outbound_bridge_commit.count("attach_dtmf_event_bridge("), 1
         )
         self.assertNotIn("dtmf_sequence", self.source)
 
@@ -599,12 +602,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             + self.inbound_bridge
             + self.trunk_inbound_router
             + self.call_forwarder
+            + self.outbound_bridge_commit
         )
         self.assertIn("RtpPortReservation.allocate(hass)", routing_sources)
         self.assertNotIn('bucket.get("sip_rtp_next_port"', routing_sources)
         self.assertIn(
-            "on_release=lambda ports: _release_sip_rtp_port_pair(hass, ports)",
-            routing_sources,
+            "for ports in data.release_port_pairs:", self.outbound_bridge_commit
         )
         self.assertNotIn(
             "_release_sip_rtp_port_pair(hass, (source_relay_port, dest_relay_port))",
@@ -620,7 +623,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.outbound_attempts,
         )
         self.assertIn("attempt.ports.release()", self.outbound_attempts)
-        self.assertIn("winner.ports.detach()", routing_sources)
+        self.assertIn(
+            "for reservation in data.detach_reservations:",
+            self.outbound_bridge_commit,
+        )
         self.assertIn("bridge_ports.detach()", routing_sources)
         self.assertNotIn(
             "await client.close()\n            bridge_ports.release()", routing_sources
@@ -1203,7 +1209,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             ) : ring_group.index("if not isinstance(winner, OutboundLeg):")
         ]
         self.assertIn("_take_pending_route(hass, invite.call_id)", browser_winner)
-        bridge_index = ring_group.index("registry.register_bridge(")
+        bridge_index = ring_group.index("committed = await async_commit_outbound_bridge(")
         self.assertNotEqual(
             ring_group.rfind(
                 "_take_pending_route(hass, invite.call_id)",
@@ -1237,10 +1243,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_ring_group_external_winner_publishes_connected_party(self) -> None:
         ring_group = self.ring_group
+        winner_start = ring_group.index("source_relay_port, dest_relay_port")
         external_winner = ring_group[
-            ring_group.index("client = winner.client") : ring_group.index(
-                "await async_watch_sip_bridge_destination("
-            )
+            winner_start : ring_group.index("except asyncio.CancelledError:", winner_start)
         ]
 
         self.assertIn(
@@ -1256,7 +1261,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("connected_party=connected_party", external_winner)
         self.assertIn("answered_by=connected_party", external_winner)
         self.assertIn("if ha_origin:", external_winner)
-        self.assertIn('"endpoint_id": origin_endpoint_id', external_winner)
+        self.assertIn("local_endpoint_id=origin_endpoint_id", external_winner)
+        self.assertIn('"endpoint_id": data.local_endpoint_id', self.outbound_bridge_commit)
         self.assertIn("endpoint_id=origin_endpoint_id", external_winner)
         self.assertIn("session_device_id=origin_device_id", external_winner)
         self.assertIn("if ha_origin:", external_winner)
@@ -1451,22 +1457,13 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("routed_invite = replace(", group_dispatch)
 
     def test_ha_origin_ring_group_uses_local_media_without_sip_answer(self) -> None:
-        ring_group = self.ring_group
-        winner_bridge = ring_group[
-            ring_group.index(
-                "if ha_origin:\n                relay ="
-            ) : ring_group.index(
-                "_set_sip_bridge_call_state(",
-                ring_group.index("if ha_origin:\n                relay ="),
-            )
-        ]
-        self.assertIn("build_local_client_relay(", winner_bridge)
+        self.assertIn("local_source=ha_origin", self.ring_group)
+        self.assertIn("if policy.local_source:", self.outbound_bridge_commit)
+        self.assertIn("build_local_client_relay(", self.outbound_bridge_commit)
+        self.assertIn("build_invite_client_relay(", self.outbound_bridge_commit)
         self.assertIn(
-            "else:\n                relay = build_invite_client_relay(", winner_bridge
-        )
-        self.assertIn(
-            "if not ha_origin:\n            answer = build_answer_directional(",
-            winner_bridge,
+            "if not policy.response_already_sent and not policy.local_source:",
+            self.outbound_bridge_commit,
         )
 
     def test_offline_browser_remains_a_logical_ringing_destination(self) -> None:
@@ -1532,8 +1529,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
                     keyword.arg == "lifecycle_task" for keyword in node.keywords
                 ):
                     missing.append(f"{path.relative_to(ROOT)}:{node.lineno}")
-        self.assertGreaterEqual(registrations, 5)
+        self.assertEqual(registrations, 3)
         self.assertEqual(missing, [])
+        self.assertNotIn("registry.register_bridge(", self.call_forwarder)
+        self.assertNotIn("registry.register_bridge(", self.ring_group)
 
     def test_answer_ha_keeps_an_explicit_dtmf_extension(self) -> None:
         runner = self.trunk_inbound_router

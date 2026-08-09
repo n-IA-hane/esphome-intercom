@@ -11,11 +11,7 @@ from typing import Any, Awaitable, Callable
 from homeassistant.core import HomeAssistant
 
 from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
-from .bridge_manager import async_watch_sip_bridge_destination
-from .config import (
-    media_capture_enabled as _media_capture_enabled,
-    trunk_config as _get_trunk_config,
-)
+from .config import trunk_config as _get_trunk_config
 from .const import (
     CONF_SIP_VIDEO,
     CONF_VIDEO_TRANSCODING,
@@ -29,7 +25,6 @@ from .const import (
     DOMAIN,
 )
 from .dial_fork import DialDisposition, DialForkController, terminal_reason
-from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
 from .runtime_data import (
     call_runtime_artifacts,
@@ -64,12 +59,16 @@ from .inbound_answer import (
 from .media_ports import (
     RtpPortReservation,
     release_sip_rtp_port_pair as _release_sip_rtp_port_pair,
-    release_video_media_reservation as _release_video_media_reservation,
     reserve_sip_video_relay_media,
 )
 from .outbound_attempts import (
     BrowserLeg,
-    async_apply_outbound_video_answer,
+    OutboundLeg,
+)
+from .outbound_bridge_commit import (
+    BridgeCommitData,
+    BridgeCommitPolicy,
+    async_commit_outbound_bridge,
 )
 from .pbx_routing import unique_group_members as _unique_group_members
 from .phone_endpoint import EndpointAvailability, EndpointKind
@@ -84,14 +83,12 @@ from .route_abort import (
     RouteAbortIntent,
     async_abort_route,
 )
-from .core.sdp import build_answer_directional, first_offered_dtmf_format
+from .core.sdp import build_answer_directional
 from .session_cleanup import async_cleanup_sip_runtime
 from .service_errors import service_error as _service_error
 from .core.sip import parse_sip_uri
 from .sip_bridge import (
-    build_invite_client_relay,
     build_pending_invite_video_relay,
-    configure_answered_invite_video_relay,
     video_bridge_offer_formats,
 )
 from .sip_client import SIP_TIMER_B, SipCallClient
@@ -99,9 +96,6 @@ from .sip_runtime import (
     enable_reused_tcp_connection as _enable_reused_sip_tcp_connection,
     send_final_response as _sip_send_final_response,
     uri_transport as _sip_uri_transport,
-)
-from .softphone_termination import (
-    async_terminate_sip_bridge_session as _terminate_sip_bridge,
 )
 from .peer_snapshot import async_build_peer_snapshot as _async_build_peer_snapshot
 from .websocket_api import (
@@ -778,130 +772,44 @@ async def async_forward_existing_call(
                 client = winner.client
                 dest_call_id = client.dialog_ids.call_id
                 dest_relay_port = winner.ports.ports[1]
-                video_answer = None
-                if winner.video_relay is not None and client.dialog is not None:
-                    video_answer = configure_answered_invite_video_relay(
-                        invite,
-                        client.dialog,
-                        winner.video_relay,
-                        hass=hass,
-                        enable_transcoding=bool(cfg.get(CONF_VIDEO_TRANSCODING, False)),
-                    )
-                    await async_apply_outbound_video_answer(
-                        winner,
-                        video_answer,
-                    )
-                registry.register_bridge(
-                    source_call_id=call_id,
-                    dest_call_id=dest_call_id,
-                    client=client,
-                    lifecycle_task=asyncio.current_task(),
-                    state=CallState.CONNECTING.value,
-                    caller=invite.caller,
-                    callee=entry.display_name,
-                    route_kind=GROUP_TYPE_RING,
-                    source_role="trunk" if preanswered is not None else "caller",
-                    source_state=(
-                        CallState.IN_CALL.value
-                        if _source_dialog_is_answered(preanswered)
-                        else CallState.CONNECTING.value
-                    ),
-                    dest_state=CallState.IN_CALL.value,
-                )
-
                 source_ports = reservation.ports
                 winner_ports = winner.ports.ports
-
-                def _release_group_ports(_ports) -> None:
-                    _release_sip_rtp_port_pair(hass, source_ports)
-                    _release_sip_rtp_port_pair(hass, winner_ports)
-
-                relay = build_invite_client_relay(
-                    invite=invite,
-                    client=client,
-                    source_relay_port=source_relay_port,
-                    dest_relay_port=dest_relay_port,
-                    debug_capture=_media_capture_enabled(hass),
-                    on_release=_release_group_ports,
-                )
-                _attach_dtmf_event_bridge(
-                    hass,
-                    relay,
-                    call_id=call_id,
-                    dest_call_id=dest_call_id,
-                    caller=invite.caller,
-                    callee=winner.member,
-                    client=client,
-                )
-                if winner.video_relay is not None:
-                    relay.attach_video_relay(winner.video_relay)
-                try:
-                    await relay.start()
-                except Exception:
-                    registry.forget_bridge_link(call_id)
-                    await registry.close_leg(
-                        call_id,
-                        dest_call_id,
-                        reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-                    )
-                    if winner.video_relay is not None:
-                        await winner.video_relay.stop()
-                        winner.video_relay = None
-                    winner.ports.release()
-                    raise
-                reservation.detach()
-                winner.ports.detach()
-                if winner.video_relay is not None:
-                    # The audio relay now owns and tears down the video relay.
-                    winner.video_relay = None
-                runtime.attach_client_media_update(
-                    client,
-                    relay,
-                    source_call_id=call_id,
-                )
-                registry.attach_relay(call_id, relay)
-                registry.take_pending_invite(call_id)
-                consumed_preanswer = registry.take_media(call_id, provisional=True)
-                # The audio reservation moved to Assist ownership above;
-                # any pre-answer video sockets did not and must be released.
-                _release_video_media_reservation(consumed_preanswer)
                 response_already_sent = _source_dialog_is_answered(preanswered)
-                answer = ""
-                if not response_already_sent:
-                    answer = build_answer_directional(
-                        local_ip,
-                        local_ip,
-                        source_relay_port,
-                        invite.send_format,
-                        invite.recv_format,
-                        dtmf=first_offered_dtmf_format(invite.remote_sdp),
-                        remote_sdp=invite.remote_sdp,
-                        video_port=(
-                            relay.video_relay.left_port
-                            if relay.video_relay is not None
-                            else 0
-                        ),
-                        video_format=(
-                            video_answer.video_format
-                            if video_answer is not None
-                            else None
-                        ),
-                        video_direction=(
-                            video_answer.direction
-                            if video_answer is not None
-                            else "inactive"
-                        ),
-                    )
-                answer_result = await _commit_source_answer(
-                    answer,
-                    owner="bridge",
-                    callee=entry.display_name,
-                    route_kind=GROUP_TYPE_RING,
-                    response_already_sent=response_already_sent,
-                )
-                if not answer_result.committed:
-                    raise RuntimeError(answer_result.reason)
                 connected_party = str(winner.member or "").strip()
+
+                committed = await async_commit_outbound_bridge(
+                    hass,
+                    registry,
+                    BridgeCommitData(
+                        invite=invite,
+                        winner=winner,
+                        source_relay_port=source_relay_port,
+                        dest_relay_port=dest_relay_port,
+                        local_ip=local_ip,
+                        release_port_pairs=(source_ports, winner_ports),
+                        detach_reservations=(reservation, winner.ports),
+                        enable_video_transcoding=bool(
+                            cfg.get(CONF_VIDEO_TRANSCODING, False)
+                        ),
+                    ),
+                    BridgeCommitPolicy(
+                        route_kind=GROUP_TYPE_RING,
+                        caller=invite.caller,
+                        callee=entry.display_name,
+                        connected_party=connected_party,
+                        source_role=(
+                            "trunk" if preanswered is not None else "caller"
+                        ),
+                        source_state=(
+                            CallState.IN_CALL.value
+                            if response_already_sent
+                            else CallState.CONNECTING.value
+                        ),
+                        response_already_sent=response_already_sent,
+                    ),
+                )
+                if committed is None:
+                    raise RuntimeError(TerminalReason.CANCELLED.value)
                 _set_sip_bridge_call_state(
                     hass,
                     CallState.IN_CALL.value,
@@ -909,7 +817,7 @@ async def async_forward_existing_call(
                     callee=entry.display_name,
                     peer_name=connected_party,
                     call_id=call_id,
-                    dest_call_id=dest_call_id,
+                    dest_call_id=committed.dest_call_id,
                     dialed_target=entry.display_name,
                     connected_party=connected_party,
                     answered_by=connected_party,
@@ -919,28 +827,10 @@ async def async_forward_existing_call(
                     sip_status_code=200,
                     last_sip_event="SIP_RESPONSE",
                     sip_uri=str(winner.uri),
-                    video_active=bool(relay.video_relay is not None),
+                    video_active=bool(committed.relay.video_relay),
                     video_requested=invite.video_format is not None,
-                    video_negotiated=bool(relay.video_relay is not None),
-                    video_status=(
-                        "rejected"
-                        if winner.video_failure_reason
-                        else "active"
-                        if relay.video_relay is not None
-                        else "inactive"
-                    ),
-                    video_failure_reason=winner.video_failure_reason,
-                    video_format=(
-                        video_answer.video_format.wire_token()
-                        if video_answer is not None
-                        else ""
-                    ),
-                )
-                await async_watch_sip_bridge_destination(
-                    hass,
-                    client=client,
-                    source_call_id=call_id,
-                    terminate_sip_bridge=_terminate_sip_bridge,
+                    video_negotiated=bool(committed.relay.video_relay),
+                    video_failure_reason=committed.video_failure_reason,
                 )
                 return
 
@@ -1191,26 +1081,7 @@ async def async_forward_existing_call(
             if result not in {"ringing", "in_call"}:
                 raise RuntimeError(result)
 
-            dest_call_id = client.dialog_ids.call_id
-            registry.register_bridge(
-                source_call_id=call_id,
-                dest_call_id=dest_call_id,
-                client=client,
-                lifecycle_task=asyncio.current_task(),
-                state=CallState.REMOTE_RINGING.value
-                if result == "ringing"
-                else CallState.CONNECTING.value,
-                caller=invite.caller,
-                callee=destination,
-                route_kind=decision.action.value,
-                source_role="trunk" if preanswered is not None else "caller",
-                source_state=(
-                    CallState.IN_CALL.value
-                    if _source_dialog_is_answered(preanswered)
-                    else CallState.CONNECTING.value
-                ),
-                dest_state=result,
-            )
+            response_already_sent = _source_dialog_is_answered(preanswered)
             if result == "ringing":
                 _set_sip_bridge_call_state(
                     hass,
@@ -1219,92 +1090,55 @@ async def async_forward_existing_call(
                     callee=destination,
                     peer_name=destination,
                     call_id=call_id,
-                    dest_call_id=dest_call_id,
+                    dest_call_id=client.dialog_ids.call_id,
                     direction="incoming",
                     route_source="automation",
                     last_sip_event="SIP_RESPONSE",
                 )
-                result = await client.wait_for_final()
-            if result != "in_call" or client.dialog is None:
-                raise RuntimeError(result)
-
-            selected_video = None
-            selected_video_direction = "inactive"
-            if video_relay is not None:
-                video_answer = configure_answered_invite_video_relay(
-                    invite,
-                    client.dialog,
-                    video_relay,
-                    hass=hass,
-                    enable_transcoding=video_transcoding_enabled,
-                )
-                if video_answer is None:
-                    _LOGGER.info(
-                        "SIP forward video rejected: no direct or transcoded codec call_id=%s",
-                        call_id,
-                    )
-                    await video_relay.stop()
-                    video_relay = None
-                    video_failure_reason = "remote_video_rejected"
-                else:
-                    selected_video = video_answer.video_format
-                    selected_video_direction = video_answer.direction
-
-            relay = build_invite_client_relay(
-                invite=invite,
-                client=client,
-                source_relay_port=source_relay_port,
-                dest_relay_port=dest_relay_port,
-                debug_capture=_media_capture_enabled(hass),
-                on_release=lambda ports: _release_sip_rtp_port_pair(hass, ports),
-            )
-            _attach_dtmf_event_bridge(
-                hass,
-                relay,
-                call_id=call_id,
-                dest_call_id=dest_call_id,
-                caller=invite.caller,
-                callee=destination,
-                client=client,
-            )
-            if video_relay is not None:
-                relay.attach_video_relay(video_relay)
-            await relay.start()
-            reservation.detach()
-            runtime.attach_client_media_update(
+            direct_winner = OutboundLeg(
+                destination,
+                bridge_uri,
                 client,
-                relay,
-                source_call_id=call_id,
+                reservation,
+                video_relay=video_relay,
+                video_failure_reason=video_failure_reason,
             )
-            registry.attach_relay(call_id, relay)
-            registry.take_pending_invite(call_id)
-            registry.take_media(call_id, provisional=True)
-            response_already_sent = _source_dialog_is_answered(preanswered)
-            answer = ""
-            if not response_already_sent:
-                answer = build_answer_directional(
-                    local_ip,
-                    local_ip,
-                    source_relay_port,
-                    invite.send_format,
-                    invite.recv_format,
-                    dtmf=first_offered_dtmf_format(invite.remote_sdp),
-                    remote_sdp=invite.remote_sdp,
-                    video_port=(
-                        video_relay.left_port if video_relay is not None else 0
+            committed = await async_commit_outbound_bridge(
+                hass,
+                registry,
+                BridgeCommitData(
+                    invite=invite,
+                    winner=direct_winner,
+                    source_relay_port=source_relay_port,
+                    dest_relay_port=dest_relay_port,
+                    local_ip=local_ip,
+                    release_port_pairs=(reservation.ports,),
+                    detach_reservations=(reservation,),
+                    enable_video_transcoding=video_transcoding_enabled,
+                ),
+                BridgeCommitPolicy(
+                    route_kind=decision.action.value,
+                    caller=invite.caller,
+                    callee=destination,
+                    connected_party=destination,
+                    source_role="trunk" if preanswered is not None else "caller",
+                    source_state=(
+                        CallState.IN_CALL.value
+                        if response_already_sent
+                        else CallState.CONNECTING.value
                     ),
-                    video_format=selected_video,
-                    video_direction=selected_video_direction,
-                )
-            answer_result = await _commit_source_answer(
-                answer,
-                owner="bridge",
-                callee=destination,
-                route_kind=decision.action.value,
-                response_already_sent=response_already_sent,
+                    bridge_state=(
+                        CallState.REMOTE_RINGING.value
+                        if result == "ringing"
+                        else CallState.CONNECTING.value
+                    ),
+                    dest_state=result,
+                    response_already_sent=response_already_sent,
+                ),
             )
-            if not answer_result.committed:
-                raise RuntimeError(answer_result.reason)
+            if committed is None:
+                raise RuntimeError(TerminalReason.CANCELLED.value)
+            failure = committed.video_failure_reason or video_failure_reason
             _set_sip_bridge_call_state(
                 hass,
                 CallState.IN_CALL.value,
@@ -1312,7 +1146,7 @@ async def async_forward_existing_call(
                 callee=destination,
                 peer_name=destination,
                 call_id=call_id,
-                dest_call_id=dest_call_id,
+                dest_call_id=committed.dest_call_id,
                 direction="incoming",
                 route_source="automation",
                 answered_by=destination,
@@ -1324,26 +1158,10 @@ async def async_forward_existing_call(
                 last_sip_event="SIP_RESPONSE",
                 route_kind=decision.action.value,
                 sip_uri=str(bridge_uri),
-                video_active=bool(video_relay is not None),
+                video_active=bool(committed.relay.video_relay),
                 video_requested=forward_video_enabled,
-                video_negotiated=bool(video_relay is not None),
-                video_status=(
-                    "degraded"
-                    if video_failure_reason == "local_video_resources_unavailable"
-                    else "rejected"
-                    if video_failure_reason
-                    else "active"
-                    if video_relay is not None
-                    else "inactive"
-                ),
-                video_failure_reason=video_failure_reason,
-                video_format=(selected_video.wire_token() if selected_video else ""),
-            )
-            await async_watch_sip_bridge_destination(
-                hass,
-                client=client,
-                source_call_id=call_id,
-                terminate_sip_bridge=_terminate_sip_bridge,
+                video_negotiated=bool(committed.relay.video_relay),
+                video_failure_reason=failure,
             )
         except asyncio.CancelledError:
             await _cleanup_failed_route(TerminalReason.CANCELLED.value)

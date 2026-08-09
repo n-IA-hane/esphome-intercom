@@ -7,17 +7,14 @@ import contextlib
 from dataclasses import dataclass
 from functools import partial
 import logging
-import secrets
 from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
-from .bridge_manager import async_watch_sip_bridge_destination
 from .call_scope import (
     set_pending_route as _set_pending_route,
     take_pending_route as _take_pending_route,
 )
-from .config import media_capture_enabled as _media_capture_enabled
 from .const import CONF_VIDEO_TRANSCODING
 from .dial_fork import (
     DialDisposition,
@@ -25,7 +22,6 @@ from .dial_fork import (
     terminal_reason as fork_terminal_reason,
 )
 from .dial_plan import RingPolicy
-from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry
 from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationInitiator, TerminationIntent
@@ -41,13 +37,16 @@ from .inbound_answer import (
 )
 from .media_ports import (
     allocate_sip_rtp_port as _allocate_sip_rtp_port,
-    release_sip_rtp_port_pair as _release_sip_rtp_port_pair,
 )
 from .outbound_attempts import (
     BrowserLeg,
     OutboundLeg,
-    async_apply_outbound_video_answer,
     async_close_outbound_leg as _close_outbound_leg,
+)
+from .outbound_bridge_commit import (
+    BridgeCommitData,
+    BridgeCommitPolicy,
+    async_commit_outbound_bridge,
 )
 from .pbx_routing import unique_group_members as _unique_group_members
 from .ring_group import (
@@ -67,11 +66,6 @@ from .route_abort import (
     async_abort_route,
 )
 from .core.sdp import build_answer_directional, first_offered_dtmf_format
-from .sip_bridge import (
-    build_invite_client_relay,
-    build_local_client_relay,
-    configure_answered_invite_video_relay,
-)
 from .sip_runtime import send_final_response as _sip_send_final_response
 from .websocket_api import (
     _set_ha_softphone_call_state,
@@ -634,220 +628,45 @@ async def run_ring_group_call(
                 settle=False,
             )
             return
-        client = winner.client
         source_relay_port, dest_relay_port = winner.ports.ports
-        video_answer = None
-        if winner.video_relay is not None and client.dialog is not None:
-            video_answer = configure_answered_invite_video_relay(
-                invite,
-                client.dialog,
-                winner.video_relay,
-                hass=hass,
-                enable_transcoding=bool(
-                    runtime.config.get(CONF_VIDEO_TRANSCODING, False)
-                ),
-            )
-            await async_apply_outbound_video_answer(winner, video_answer)
-            if video_answer is None:
-                _LOGGER.info(
-                    "SIP ring group video rejected by winning branch "
-                    "call_id=%s member=%s",
-                    invite.call_id,
-                    winner.member,
-                )
-        bridge_session = registry.register_bridge(
-            source_call_id=invite.call_id,
-            dest_call_id=client.dialog_ids.call_id,
-            client=client,
-            lifecycle_task=asyncio.current_task(),
-            state=CallState.CONNECTING.value,
-            caller=invite.caller,
-            callee=invite.target,
-            route_kind=GROUP_TYPE_RING,
-            ingress=call_ingress,
-            origin=call_ingress,
-            source_state=CallState.CONNECTING.value,
-            dest_state=CallState.IN_CALL.value,
-            expected_generation=call_generation,
-        )
-        if bridge_session is None:
-            await _close_outbound_leg(winner, bye_or_cancel=True)
-            return
-        relay = None
-        try:
-            if ha_origin:
-                relay = build_local_client_relay(
-                    client=client,
-                    local_host=local_ip,
-                    local_to_relay_format=invite.recv_format,
-                    relay_to_local_format=invite.send_format,
-                    source_relay_port=source_relay_port,
-                    dest_relay_port=dest_relay_port,
-                    capture_name=f"{invite.call_id}_{client.dialog_ids.call_id}",
-                    debug_capture=_media_capture_enabled(hass),
-                    on_release=lambda ports: _release_sip_rtp_port_pair(hass, ports),
-                )
-            else:
-                relay = build_invite_client_relay(
-                    invite=invite,
-                    client=client,
-                    source_relay_port=source_relay_port,
-                    dest_relay_port=dest_relay_port,
-                    debug_capture=_media_capture_enabled(hass),
-                    on_release=lambda ports: _release_sip_rtp_port_pair(hass, ports),
-                )
-            _attach_dtmf_event_bridge(
-                hass,
-                relay,
-                call_id=invite.call_id,
-                dest_call_id=client.dialog_ids.call_id,
-                caller=invite.caller,
-                callee=str(winner.member or invite.target),
-                client=client,
-            )
-            if winner.video_relay is not None:
-                relay.attach_video_relay(winner.video_relay)
-            await relay.start()
-        except Exception as err:
-            _LOGGER.warning("SIP ring group media bridge unavailable: %s", err)
-            _publish_ring_group_origin_state(
-                hass,
-                enabled=ha_origin,
-                state=CallState.MEDIA_INCOMPATIBLE.value,
-                endpoint_id=origin_endpoint_id,
-                device_id=origin_device_id,
-                caller=origin_name,
-                callee=entry.display_name,
-                peer_name=str(winner.member or entry.display_name),
-                call_id=invite.call_id,
-                reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-                origin="self",
-                route_kind=GROUP_TYPE_RING,
-                last_sip_event="SIP_RESPONSE",
-                sip_status_code=488,
-            )
-            try:
-                if relay is not None:
-                    await relay.stop()
-                    winner.ports.detach()
-                    winner.video_relay = None
-                else:
-                    if winner.video_relay is not None:
-                        await winner.video_relay.stop()
-                        winner.video_relay = None
-                    winner.ports.release()
-            finally:
-                await EndpointTerminationHandler(hass).terminate(
-                    invite.call_id,
-                    TerminationIntent.final_response(
-                        TerminalReason.MEDIA_INCOMPATIBLE.value, 488
-                    ),
-                )
-            return
-        if not _call_is_current():
-            await relay.stop()
-            await _rollback_route(TerminalReason.CANCELLED.value, settle=False)
-            return
-        winner.ports.detach()
-        if winner.video_relay is not None:
-            # The audio relay now owns and tears down the video relay.
-            winner.video_relay = None
-        _attach_client_media_update(
-            client,
-            relay,
-            source_call_id=invite.call_id,
-        )
         dialed_target = entry.display_name or invite.target
         connected_party = str(winner.member or "").strip() or invite.target
-        if ha_origin:
-            # The synthetic HA caller has no SIP/RTP socket of its own.
-            # Feed the already-running source side of the relay from the
-            # authenticated browser websocket via a local UDP endpoint.
-            softphone_media = {
-                "rtp_loopback": True,
-                "remote_rtp_host": local_ip,
-                "remote_rtp_port": source_relay_port,
-                "send_format": invite.recv_format,
-                "recv_format": invite.send_format,
-                "local_ssrc": secrets.randbelow(0xFFFFFFFF) + 1,
-                "endpoint_id": origin_endpoint_id,
-            }
-        else:
-            softphone_media = None
-
-        def _claim_selected_answer() -> bool:
-            return (
-                registry.transition(
-                    invite.call_id,
-                    state=CallState.IN_CALL.value,
-                    owner="ha_softphone",
-                    caller=invite.caller,
-                    callee=dialed_target,
-                    route_kind=GROUP_TYPE_RING,
-                    endpoint_id=origin_endpoint_id if ha_origin else "",
-                    source_endpoint_id=source_endpoint_id,
-                    dest_endpoint_id=winner.endpoint_id,
-                    media_client_id=origin_media_client_id,
-                    expected_generation=call_generation,
-                )
-                is not None
-            )
-
-        if ha_origin and not _claim_selected_answer():
-            try:
-                await relay.stop()
-            finally:
-                winner.ports.detach()
-                winner.video_relay = None
-                await registry.close_leg(
-                    invite.call_id,
-                    client.dialog_ids.call_id,
-                    reason=TerminalReason.CANCELLED.value,
-                )
+        committed = await async_commit_outbound_bridge(
+            hass,
+            registry,
+            BridgeCommitData(
+                invite=invite,
+                winner=winner,
+                source_relay_port=source_relay_port,
+                dest_relay_port=dest_relay_port,
+                local_ip=local_ip,
+                release_port_pairs=(winner.ports.ports,),
+                detach_reservations=(winner.ports,),
+                enable_video_transcoding=bool(
+                    runtime.config.get(CONF_VIDEO_TRANSCODING, False)
+                ),
+                local_endpoint_id=origin_endpoint_id,
+            ),
+            BridgeCommitPolicy(
+                route_kind=GROUP_TYPE_RING,
+                caller=invite.caller,
+                callee=dialed_target,
+                connected_party=connected_party,
+                ingress=call_ingress,
+                origin=call_ingress,
+                expected_generation=call_generation,
+                local_source=ha_origin,
+                consume_pending_source=False,
+                answer_owner="ha_softphone",
+                endpoint_id=origin_endpoint_id if ha_origin else "",
+                source_endpoint_id=source_endpoint_id,
+                dest_endpoint_id=winner.endpoint_id,
+                media_client_id=origin_media_client_id,
+            ),
+        )
+        if committed is None:
+            await _close_outbound_leg(winner, bye_or_cancel=True)
             return
-        registry.attach_relay(invite.call_id, relay)
-        if softphone_media is not None:
-            registry.attach_media(invite.call_id, softphone_media)
-        if not ha_origin:
-            answer = build_answer_directional(
-                local_ip,
-                local_ip,
-                source_relay_port,
-                invite.send_format,
-                invite.recv_format,
-                dtmf=first_offered_dtmf_format(invite.remote_sdp),
-                remote_sdp=invite.remote_sdp,
-                video_port=(
-                    relay.video_relay.left_port if relay.video_relay is not None else 0
-                ),
-                video_format=(
-                    video_answer.video_format if video_answer is not None else None
-                ),
-                video_direction=(
-                    video_answer.direction if video_answer is not None else "inactive"
-                ),
-            )
-            if not (
-                await async_commit_runtime_answer(
-                    registry,
-                    invite.call_id,
-                    answer,
-                    send_final_response=_sip_send_final_response,
-                    response_context=hass,
-                    owner="ha_softphone",
-                    caller=invite.caller,
-                    callee=dialed_target,
-                    route_kind=GROUP_TYPE_RING,
-                    source_endpoint_id=source_endpoint_id,
-                    dest_endpoint_id=winner.endpoint_id,
-                    media_client_id=origin_media_client_id,
-                )
-            ).committed:
-                await _rollback_route(
-                    TerminalReason.PROTOCOL_ERROR.value,
-                    settle=False,
-                )
-                return
         _set_sip_bridge_call_state(
             hass,
             CallState.IN_CALL.value,
@@ -855,7 +674,7 @@ async def run_ring_group_call(
             callee=dialed_target,
             peer_name=connected_party,
             call_id=invite.call_id,
-            dest_call_id=client.dialog_ids.call_id,
+            dest_call_id=committed.dest_call_id,
             dialed_target=dialed_target,
             connected_party=connected_party,
             answered_by=connected_party,
@@ -879,7 +698,7 @@ async def run_ring_group_call(
                 peer_name=connected_party,
                 direction="outgoing",
                 call_id=invite.call_id,
-                dest_call_id=client.dialog_ids.call_id,
+                dest_call_id=committed.dest_call_id,
                 dialed_target=dialed_target,
                 connected_party=connected_party,
                 answered_by=connected_party,
@@ -893,16 +712,6 @@ async def run_ring_group_call(
                 last_sip_event="SIP_RESPONSE",
                 sip_uri=str(winner.uri),
             )
-        await async_watch_sip_bridge_destination(
-            hass,
-            client=client,
-            source_call_id=invite.call_id,
-            terminate_sip_bridge=partial(
-                _terminate_sip_bridge,
-                endpoint_id=origin_endpoint_id if ha_origin else "",
-                session_device_id=origin_device_id if ha_origin else "",
-            ),
-        )
     except asyncio.CancelledError:
         _publish_group_failure(
             CallState.CANCELLED.value,

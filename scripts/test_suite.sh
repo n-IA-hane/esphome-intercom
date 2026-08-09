@@ -76,6 +76,7 @@ ha_tests=(
   tests/test_ha_sip_application.py
   tests/test_phone_control_ha.py
   tests/test_call_forwarder_behavior.py
+  tests/test_outbound_bridge_commit.py
   tests/test_route_abort.py
   tests/test_invite_router_behavior.py
   tests/test_ring_group_orchestrator_behavior.py
