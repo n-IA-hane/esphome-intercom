@@ -6,7 +6,6 @@ import asyncio
 import logging
 
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ServiceValidationError
 
 from .call_scope import endpoint_call_ids, pending_routes
 from .config import transport_config
@@ -27,6 +26,7 @@ from .runtime_data import (
     sip_endpoint_runtime,
 )
 from .route_decisions import set_pending_route_decision
+from .service_errors import service_error as _service_error
 from .sip_runtime import send_final_response
 from .softphone_commands import BrowserCallCommand, bind_service_call_controller
 from .core.video_rtp import RtpSenderState
@@ -73,7 +73,10 @@ async def async_answer_browser_call(
                 enable_video_send=camera_send_requested,
             )
         except LocalBridgeError as err:
-            raise ServiceValidationError(str(err)) from err
+            raise _service_error(
+                str(err),
+                "local_phone_operation_failed",
+            ) from err
         return
 
     # A browser ring-group member resolves its own pending candidate before
@@ -99,14 +102,21 @@ async def async_answer_browser_call(
     if not group_answer_commit and (
         forward_claimed or (forward_task is not None and not forward_task.done())
     ):
-        raise ServiceValidationError(f"call_id {call_id} is being forwarded")
+        raise _service_error(
+            f"call_id {call_id} is being forwarded",
+            "call_forwarding",
+            call_id=call_id,
+        )
 
     if call_id.startswith("conference:"):
         manager = conference_component(hass)
         resolved = manager.resolve_ha_call(call_id) if manager is not None else None
         if resolved is None or resolved[1] != endpoint_id:
-            raise ServiceValidationError(
-                f"conference call {call_id} does not belong to phone {endpoint_id}"
+            raise _service_error(
+                f"conference call {call_id} does not belong to phone {endpoint_id}",
+                "conference_phone_mismatch",
+                call_id=call_id,
+                phone=endpoint_id,
             )
         room_name = resolved[0]
         joined = manager.join_ha_softphone(
@@ -170,8 +180,11 @@ async def async_answer_browser_call(
         bind_service_call_controller(registry, call_id, call)
     invite = pending.get(call_id) if call_id else None
     if invite is None:
-        raise ServiceValidationError(
-            f"SIP call {call_id or '(current)'} was already answered or is no longer ringing"
+        current_call_id = call_id or "(current)"
+        raise _service_error(
+            f"SIP call {current_call_id} was already answered or is no longer ringing",
+            "call_not_ringing",
+            call_id=current_call_id,
         )
 
     session = registry.sessions.get(registry.resolve_session_id(call_id))
@@ -185,8 +198,10 @@ async def async_answer_browser_call(
         else None
     )
     if authoritative_session is None:
-        raise ServiceValidationError(
-            f"PBX session for call_id {call_id} is no longer available"
+        raise _service_error(
+            f"PBX session for call_id {call_id} is no longer available",
+            "pbx_session_unavailable",
+            call_id=call_id,
         )
 
     preanswered = registry.take_media(call_id, provisional=True)
@@ -384,9 +399,11 @@ async def async_answer_browser_call(
                 else TerminationIntent(failure_reason)
             ),
         )
-        raise ServiceValidationError(
+        raise _service_error(
             f"SIP answer transaction failed for call_id {call_id}: "
-            f"{answer_result.reason or 'unknown error'}"
+            f"{answer_result.reason or 'unknown error'}",
+            "sip_answer_failed",
+            call_id=call_id,
         )
 
     registry.attach_media(call_id, softphone_media)

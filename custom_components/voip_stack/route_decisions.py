@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
 
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState, TerminalReason
 from .runtime_data import endpoint_directory, preferred_browser_phone
+from .service_errors import service_error as _service_error
 from .websocket_api import _set_ha_softphone_call_state, _set_sip_bridge_call_state
 
 _LOGGER = logging.getLogger(__name__)
@@ -19,35 +19,59 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
     """Apply an automation dial-plan decision to a pending inbound SIP route."""
     call_id = str(data.get("call_id") or "").strip()
     if not call_id:
-        raise ServiceValidationError("call_id is required")
+        raise _service_error("call_id is required", "call_id_required")
     action = str(data.get("action") or "default").strip().lower()
     destination = str(data.get("destination") or "").strip()
     if action in {"forward", "bridge"} and not destination:
-        raise ServiceValidationError(f"{action} requires destination")
+        raise _service_error(
+            f"{action} requires destination",
+            "route_destination_required",
+        )
     registry = call_registry(hass)
     route = registry.pending_routes.get(call_id)
     if route is None:
-        raise ServiceValidationError(f"no pending SIP route for call_id {call_id}")
+        raise _service_error(
+            f"no pending SIP route for call_id {call_id}",
+            "pending_route_missing",
+            call_id=call_id,
+        )
     context = registry.event_context(call_id)
     expected_state = str(data.get("expected_state") or "").strip().lower()
     expected_sequence = int(data.get("expected_sequence") or 0)
     if expected_state and (context is None or context.state != expected_state):
         actual = context.state if context is not None else "ended"
-        raise ServiceValidationError(
-            f"call_id {call_id} is {actual}, expected {expected_state}"
+        raise _service_error(
+            f"call_id {call_id} is {actual}, expected {expected_state}",
+            "call_state_mismatch",
+            call_id=call_id,
+            actual=actual,
+            expected=expected_state,
         )
     if expected_sequence and (
         context is None or context.sequence != expected_sequence
     ):
         actual = context.sequence if context is not None else 0
-        raise ServiceValidationError(
-            f"call_id {call_id} sequence is {actual}, expected {expected_sequence}"
+        raise _service_error(
+            f"call_id {call_id} sequence is {actual}, expected {expected_sequence}",
+            "call_sequence_mismatch",
+            call_id=call_id,
+            actual=actual,
+            expected=expected_sequence,
         )
     if action in {"forward", "bridge"} and context is not None and len(context.route_history) >= 8:
-        raise ServiceValidationError(f"call_id {call_id} exceeded 8 routing hops")
+        raise _service_error(
+            f"call_id {call_id} exceeded 8 routing hops",
+            "route_hop_limit_exceeded",
+            call_id=call_id,
+            limit=8,
+        )
     future = route.get("future")
     if future is None or future.done():
-        raise ServiceValidationError(f"SIP route for call_id {call_id} is no longer decidable")
+        raise _service_error(
+            f"SIP route for call_id {call_id} is no longer decidable",
+            "route_not_decidable",
+            call_id=call_id,
+        )
     endpoint_id = str(data.get("endpoint_id") or "").strip()
     ring_endpoint_ids = tuple(
         str(value or "").strip()
@@ -61,16 +85,21 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
     )
     if action in {"answer_ha", "decline", "busy", "cancel"} and not endpoint_id:
         if selected_endpoint is None:
-            raise ServiceValidationError("Select a Home Assistant phone")
+            raise _service_error(
+                "Select a Home Assistant phone",
+                "phone_selection_required",
+            )
         endpoint_id = selected_endpoint.endpoint_id
     if ring_endpoint_ids and action == "answer_ha":
         if endpoint_id not in ring_endpoint_ids:
-            raise ServiceValidationError(
-                "ring-group answer requires one of its ringing phone endpoints"
+            raise _service_error(
+                "ring-group answer requires one of its ringing phone endpoints",
+                "ring_group_phone_required",
             )
         if endpoint_id in route.get("declined_endpoint_ids", set()):
-            raise ServiceValidationError(
-                "this phone endpoint has already declined the ring-group call"
+            raise _service_error(
+                "this phone endpoint has already declined the ring-group call",
+                "ring_group_phone_already_declined",
             )
     if (
         ring_endpoint_ids

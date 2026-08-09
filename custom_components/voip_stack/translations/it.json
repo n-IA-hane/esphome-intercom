@@ -215,11 +215,122 @@
     "destination_required": {
       "message": "È richiesta una destinazione per la chiamata."
     },
+    "advertise_ip_unknown": {
+      "message": "L'indirizzo IP pubblicizzato da Home Assistant non è noto."
+    },
+    "call_changed_during_operation": {
+      "message": "La chiamata {call_id} è cambiata durante l'operazione richiesta."
+    },
+    "call_forwarding": {
+      "message": "La chiamata {call_id} è in fase di inoltro."
+    },
+    "call_id_destination_required": {
+      "message": "Sono richiesti l'ID della chiamata e la destinazione."
+    },
+    "call_id_required": {
+      "message": "È richiesto l'ID della chiamata."
+    },
+    "call_inactive": {
+      "message": "La chiamata {call_id} non è più attiva."
+    },
+    "call_not_forwardable": {
+      "message": "La chiamata {call_id} non è una chiamata Home Assistant in attesa o in squillo che può essere inoltrata."
+    },
+    "call_not_ringing": {
+      "message": "La chiamata {call_id} ha già ricevuto risposta oppure non sta più squillando."
+    },
+    "call_phase_mismatch": {
+      "message": "La chiamata {call_id} è nello stato {state}, non nella fase {phase}."
+    },
+    "call_phone_owner_missing": {
+      "message": "La chiamata {call_id} non ha un telefono Home Assistant proprietario."
+    },
+    "call_sequence_mismatch": {
+      "message": "La sequenza della chiamata {call_id} è {actual}, era attesa {expected}."
+    },
+    "call_state_mismatch": {
+      "message": "La chiamata {call_id} è nello stato {actual}, era atteso {expected}."
+    },
+    "call_unknown_or_ended": {
+      "message": "La chiamata {call_id} è sconosciuta oppure è terminata."
+    },
+    "conference_full": {
+      "message": "La conferenza {conference} è al completo."
+    },
+    "conference_phone_mismatch": {
+      "message": "La chiamata in conferenza {call_id} non appartiene al telefono {phone}."
+    },
+    "destination_not_forwardable": {
+      "message": "La destinazione {destination} non è una destinazione inoltrabile del dial-plan SIP."
+    },
+    "destination_not_ha_phone": {
+      "message": "La destinazione {destination} non è un telefono Home Assistant configurato."
+    },
+    "destination_not_ready": {
+      "message": "La destinazione {destination} non è ancora disponibile."
+    },
+    "forward_failure_policy_invalid": {
+      "message": "La policy in caso di inoltro fallito deve essere resume, terminate oppure busy."
+    },
+    "forward_ring_group_only": {
+      "message": "Al momento una chiamata che sta già squillando può essere inoltrata solo a un gruppo di chiamata."
+    },
+    "local_phone_operation_failed": {
+      "message": "Il telefono locale non ha potuto completare l'operazione richiesta sulla chiamata."
+    },
+    "pbx_session_unavailable": {
+      "message": "La sessione PBX della chiamata {call_id} non è più disponibile."
+    },
+    "pending_route_missing": {
+      "message": "Non esiste un percorso SIP in attesa per la chiamata {call_id}."
+    },
+    "phone_busy": {
+      "message": "{phone} è occupato."
+    },
+    "phone_disabled": {
+      "message": "{phone} è disabilitato."
+    },
+    "phone_self_target": {
+      "message": "Un telefono Home Assistant non può usare sé stesso come destinazione della chiamata."
+    },
+    "ring_group_phone_already_declined": {
+      "message": "Questo telefono ha già rifiutato la chiamata del gruppo."
+    },
+    "ring_group_phone_required": {
+      "message": "Rispondi alla chiamata del gruppo da uno dei telefoni che stanno squillando."
+    },
+    "route_destination_required": {
+      "message": "L'azione di instradamento richiesta necessita di una destinazione."
+    },
+    "route_hop_limit_exceeded": {
+      "message": "La chiamata {call_id} ha superato il limite di {limit} passaggi di instradamento."
+    },
+    "route_not_decidable": {
+      "message": "Il percorso SIP della chiamata {call_id} non può più essere deciso."
+    },
+    "sip_answer_failed": {
+      "message": "La transazione di risposta SIP è fallita per la chiamata {call_id}."
+    },
+    "sip_call_start_failed": {
+      "message": "Non è stato possibile avviare la chiamata SIP verso {destination}."
+    },
+    "sip_target_unresolved": {
+      "message": "Non è stato possibile risolvere la destinazione SIP {destination}."
+    },
+    "trunk_required": {
+      "message": "La destinazione {destination} richiede un trunk SIP registrato."
+    },
     "esphome_action_missing": {
       "message": "{phone} non espone l'azione ESPHome richiesta {action}. Aggiorna il package telefonico VoIP e il firmware."
     },
     "esphome_route_missing": {
       "message": "{phone} non espone un percorso ESPHome per il controllo delle chiamate."
+    },
+    "phone_not_browser": {
+      "message": "Il dispositivo selezionato non è un telefono browser di Home Assistant."
+    },
+    "phone_not_integration_owned": {
+      "message": "Il dispositivo selezionato non è un telefono gestito da VoIP Stack."
     },
     "phone_operation_not_supported": {
       "message": "{phone} non supporta l'operazione {operation}."
@@ -238,6 +349,9 @@
     },
     "transfer_target_invalid": {
       "message": "La destinazione del trasferimento non è valida oppure è ambigua."
+    },
+    "unknown_phone_device": {
+      "message": "Il dispositivo telefonico Home Assistant selezionato è sconosciuto."
     }
   },
   "entity": {

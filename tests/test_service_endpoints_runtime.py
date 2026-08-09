@@ -106,6 +106,17 @@ def _load_service_endpoints(
     runtime_data.preferred_browser_phone = lambda hass: runtime_data.endpoint_directory(
         hass
     ).get("default")
+    service_errors = types.ModuleType(f"{PKG_NAME}.service_errors")
+    def _service_error(message, key, **placeholders):
+        translated = {name: str(value) for name, value in placeholders.items()}
+        return ServiceValidationError(
+            message,
+            translation_domain="voip_stack",
+            translation_key=key,
+            **({"translation_placeholders": translated} if translated else {}),
+        )
+
+    service_errors.service_error = _service_error
 
     module_name = f"{PKG_NAME}.service_endpoints"
     spec = importlib.util.spec_from_file_location(
@@ -123,6 +134,7 @@ def _load_service_endpoints(
         const.__name__: const,
         phone_endpoint.__name__: phone_endpoint,
         runtime_data.__name__: runtime_data,
+        service_errors.__name__: service_errors,
     }
     with patch.dict(sys.modules, dependencies):
         sys.modules[module_name] = module

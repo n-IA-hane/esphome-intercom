@@ -74,6 +74,21 @@ async def test_forward_rejects_invalid_public_request(
 
 
 @pytest.mark.asyncio
+async def test_forward_validation_error_exposes_translation_contract() -> None:
+    with pytest.raises(ServiceValidationError) as captured:
+        await call_forwarder.async_forward_existing_call(
+            _runtime(),
+            call_id="",
+            destination="Test",
+        )
+
+    error = captured.value
+    assert error.translation_domain == "voip_stack"
+    assert error.translation_key == "call_id_destination_required"
+    assert error.translation_placeholders is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("expected_state", "expected_sequence", "message"),
     [

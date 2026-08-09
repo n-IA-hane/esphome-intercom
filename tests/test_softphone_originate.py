@@ -19,7 +19,11 @@ MODULE = ROOT / "custom_components" / "voip_stack" / "softphone_originate.py"
 
 
 class _ServiceValidationError(Exception):
-    pass
+    def __init__(self, message: str, **kwargs) -> None:
+        super().__init__(message)
+        self.translation_domain = kwargs.get("translation_domain")
+        self.translation_key = kwargs.get("translation_key")
+        self.translation_placeholders = kwargs.get("translation_placeholders")
 
 
 class _RouteAction(Enum):

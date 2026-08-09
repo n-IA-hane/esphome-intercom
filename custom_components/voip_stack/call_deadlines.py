@@ -9,12 +9,12 @@ from __future__ import annotations
 import asyncio
 
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
 
 from .automation_routing import deadline_is_current
 from .call_registry import TERMINAL_STATES
 from .endpoint_lifecycle import call_registry, create_runtime_task
 from .runtime_data import call_runtime_artifacts
+from .service_errors import service_error as _service_error
 from .websocket_api import _fire_call_event
 
 
@@ -35,14 +35,22 @@ async def async_set_call_deadline(hass: HomeAssistant, data: dict) -> None:
     registry = call_registry(hass)
     context = registry.event_context(call_id)
     if context is None:
-        raise ServiceValidationError(f"unknown or ended call_id {call_id}")
+        raise _service_error(
+            f"unknown or ended call_id {call_id}",
+            "call_unknown_or_ended",
+            call_id=call_id,
+        )
     allowed_states = {
         "calling": {"calling", "connecting"},
         "ringing": {"ringing", "remote_ringing"},
     }[phase]
     if context.state not in allowed_states:
-        raise ServiceValidationError(
-            f"call_id {call_id} is {context.state}, not in the {phase} phase"
+        raise _service_error(
+            f"call_id {call_id} is {context.state}, not in the {phase} phase",
+            "call_phase_mismatch",
+            call_id=call_id,
+            state=context.state,
+            phase=phase,
         )
     session = registry.sessions.get(registry.resolve_session_id(call_id))
     owned = bool(
@@ -53,14 +61,26 @@ async def async_set_call_deadline(hass: HomeAssistant, data: dict) -> None:
         or call_id in registry.softphone_media
     )
     if not owned:
-        raise ServiceValidationError(f"call_id {call_id} is no longer active")
+        raise _service_error(
+            f"call_id {call_id} is no longer active",
+            "call_inactive",
+            call_id=call_id,
+        )
     if expected_state and context.state != expected_state:
-        raise ServiceValidationError(
-            f"call_id {call_id} is {context.state}, expected {expected_state}"
+        raise _service_error(
+            f"call_id {call_id} is {context.state}, expected {expected_state}",
+            "call_state_mismatch",
+            call_id=call_id,
+            actual=context.state,
+            expected=expected_state,
         )
     if expected_sequence and context.sequence != expected_sequence:
-        raise ServiceValidationError(
-            f"call_id {call_id} sequence is {context.sequence}, expected {expected_sequence}"
+        raise _service_error(
+            f"call_id {call_id} sequence is {context.sequence}, expected {expected_sequence}",
+            "call_sequence_mismatch",
+            call_id=call_id,
+            actual=context.sequence,
+            expected=expected_sequence,
         )
 
     cancel_call_deadline(hass, call_id)
@@ -100,4 +120,8 @@ async def async_set_call_deadline(hass: HomeAssistant, data: dict) -> None:
     ):
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        raise ServiceValidationError(f"call_id {call_id} is no longer active")
+        raise _service_error(
+            f"call_id {call_id} is no longer active",
+            "call_inactive",
+            call_id=call_id,
+        )

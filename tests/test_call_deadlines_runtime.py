@@ -20,6 +20,12 @@ PKG_DIR = ROOT / "custom_components" / "voip_stack"
 class ServiceValidationError(ValueError):
     """Minimal Home Assistant service validation error."""
 
+    def __init__(self, message: str, **kwargs) -> None:
+        super().__init__(message)
+        self.translation_domain = kwargs.get("translation_domain")
+        self.translation_key = kwargs.get("translation_key")
+        self.translation_placeholders = kwargs.get("translation_placeholders")
+
 
 class _Context:
     def __init__(self, state: str, sequence: int) -> None:
@@ -101,6 +107,17 @@ def _load_deadlines(registry: _Registry, events: list[tuple[dict, str]], artifac
     )
     runtime_data = types.ModuleType(f"{PKG_NAME}.runtime_data")
     runtime_data.call_runtime_artifacts = lambda _hass: artifacts
+    service_errors = types.ModuleType(f"{PKG_NAME}.service_errors")
+    def _service_error(message, key, **placeholders):
+        translated = {name: str(value) for name, value in placeholders.items()}
+        return ServiceValidationError(
+            message,
+            translation_domain="voip_stack",
+            translation_key=key,
+            **({"translation_placeholders": translated} if translated else {}),
+        )
+
+    service_errors.service_error = _service_error
 
     module_name = f"{PKG_NAME}._test_call_deadlines_runtime"
     spec = importlib.util.spec_from_file_location(
@@ -118,6 +135,7 @@ def _load_deadlines(registry: _Registry, events: list[tuple[dict, str]], artifac
         call_registry.__name__: call_registry,
         endpoint_lifecycle.__name__: endpoint_lifecycle,
         runtime_data.__name__: runtime_data,
+        service_errors.__name__: service_errors,
         websocket_api.__name__: websocket_api,
     }
     with patch.dict(sys.modules, dependencies):

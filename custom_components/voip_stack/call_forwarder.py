@@ -84,6 +84,7 @@ from .ring_group_fork import build_ring_group_fork
 from .router import RouteAction
 from .core.sdp import build_answer_directional, first_offered_dtmf_format
 from .session_cleanup import async_cleanup_sip_runtime
+from .service_errors import service_error as _service_error
 from .core.sip import parse_sip_uri
 from .sip_bridge import (
     build_invite_client_relay,
@@ -154,43 +155,66 @@ async def async_forward_existing_call(
     hass = runtime.hass
     cfg = runtime.config
     local_ip = runtime.local_ip
-    from homeassistant.exceptions import ServiceValidationError
-
     call_id = str(call_id or "").strip()
     destination = str(destination or "").strip()
     on_failure = str(on_failure or "resume").strip().lower()
     if not call_id or not destination:
-        raise ServiceValidationError("call_id and destination are required")
+        raise _service_error(
+            "call_id and destination are required",
+            "call_id_destination_required",
+        )
     if on_failure not in {"resume", "terminate", "busy"}:
-        raise ServiceValidationError("on_failure must be resume, terminate, or busy")
+        raise _service_error(
+            "on_failure must be resume, terminate, or busy",
+            "forward_failure_policy_invalid",
+        )
 
     registry = _call_registry(hass)
     context = registry.event_context(call_id)
     expected_state = str(expected_state or "").strip().lower()
     if expected_state and (context is None or context.state != expected_state):
         actual = context.state if context is not None else "ended"
-        raise ServiceValidationError(
-            f"call_id {call_id} is {actual}, expected {expected_state}"
+        raise _service_error(
+            f"call_id {call_id} is {actual}, expected {expected_state}",
+            "call_state_mismatch",
+            call_id=call_id,
+            actual=actual,
+            expected=expected_state,
         )
     if expected_sequence and (
         context is None or context.sequence != int(expected_sequence)
     ):
         actual = context.sequence if context is not None else 0
-        raise ServiceValidationError(
-            f"call_id {call_id} sequence is {actual}, expected {expected_sequence}"
+        raise _service_error(
+            f"call_id {call_id} sequence is {actual}, expected {expected_sequence}",
+            "call_sequence_mismatch",
+            call_id=call_id,
+            actual=actual,
+            expected=expected_sequence,
         )
     if context is not None and len(context.route_history) >= 8:
-        raise ServiceValidationError(f"call_id {call_id} exceeded 8 routing hops")
+        raise _service_error(
+            f"call_id {call_id} exceeded 8 routing hops",
+            "route_hop_limit_exceeded",
+            call_id=call_id,
+            limit=8,
+        )
 
     invite = registry.pending_invites.get(call_id)
     if invite is None:
-        raise ServiceValidationError(
-            f"call_id {call_id} is not a forwardable pending or ringing HA-owned call"
+        raise _service_error(
+            f"call_id {call_id} is not a forwardable pending or ringing HA-owned call",
+            "call_not_forwardable",
+            call_id=call_id,
         )
     artifacts = call_runtime_artifacts(hass)
     call_artifacts = artifacts.artifacts_for(call_id)
     if call_artifacts is None:
-        raise ServiceValidationError(f"call_id {call_id} is no longer active")
+        raise _service_error(
+            f"call_id {call_id} is no longer active",
+            "call_inactive",
+            call_id=call_id,
+        )
     current_forward = artifacts.task_for(call_id, "forward")
     if current_forward is not None and not current_forward.done():
         current_context = registry.event_context(call_id)
@@ -198,33 +222,49 @@ async def async_forward_existing_call(
             current_context is None
             or current_context.state != CallState.REMOTE_RINGING.value
         ):
-            raise ServiceValidationError(
-                f"call_id {call_id} is already being forwarded"
+            raise _service_error(
+                f"call_id {call_id} is already being forwarded",
+                "call_forwarding",
+                call_id=call_id,
             )
         current_forward.cancel()
         await asyncio.gather(current_forward, return_exceptions=True)
     if call_artifacts.forward_claim:
-        raise ServiceValidationError(f"call_id {call_id} is already being forwarded")
+        raise _service_error(
+            f"call_id {call_id} is already being forwarded",
+            "call_forwarding",
+            call_id=call_id,
+        )
     call_artifacts.forward_claim = True
     target_browser_endpoint = None
     try:
         peers = await _async_build_peer_snapshot(hass)
         if registry.pending_invites.get(call_id) is not invite:
-            raise ServiceValidationError(
-                f"call_id {call_id} changed while the route was being resolved"
+            raise _service_error(
+                f"call_id {call_id} changed while the route was being resolved",
+                "call_changed_during_operation",
+                call_id=call_id,
             )
         context = registry.event_context(call_id)
         if expected_state and (context is None or context.state != expected_state):
             actual = context.state if context is not None else "ended"
-            raise ServiceValidationError(
-                f"call_id {call_id} is {actual}, expected {expected_state}"
+            raise _service_error(
+                f"call_id {call_id} is {actual}, expected {expected_state}",
+                "call_state_mismatch",
+                call_id=call_id,
+                actual=actual,
+                expected=expected_state,
             )
         if expected_sequence and (
             context is None or context.sequence != int(expected_sequence)
         ):
             actual = context.sequence if context is not None else 0
-            raise ServiceValidationError(
-                f"call_id {call_id} sequence is {actual}, expected {expected_sequence}"
+            raise _service_error(
+                f"call_id {call_id} sequence is {actual}, expected {expected_sequence}",
+                "call_sequence_mismatch",
+                call_id=call_id,
+                actual=actual,
+                expected=expected_sequence,
             )
         roster_entries = _roster_from_peers(
             hass,
@@ -242,12 +282,16 @@ async def async_forward_existing_call(
                 target_browser_endpoint is None
                 or target_browser_endpoint.kind is not EndpointKind.BROWSER
             ):
-                raise ServiceValidationError(
-                    f"destination {destination} is not a configured Home Assistant phone"
+                raise _service_error(
+                    f"destination {destination} is not a configured Home Assistant phone",
+                    "destination_not_ha_phone",
+                    destination=destination,
                 )
         if decision.action is RouteAction.REJECT:
-            raise ServiceValidationError(
-                f"destination {destination} is not a forwardable SIP dial-plan target"
+            raise _service_error(
+                f"destination {destination} is not a forwardable SIP dial-plan target",
+                "destination_not_forwardable",
+                destination=destination,
             )
         if (
             decision.action is RouteAction.GROUP
@@ -260,8 +304,9 @@ async def async_forward_existing_call(
             )
             != GROUP_TYPE_RING
         ):
-            raise ServiceValidationError(
-                "forwarding an already-ringing call is currently limited to ring groups"
+            raise _service_error(
+                "forwarding an already-ringing call is currently limited to ring groups",
+                "forward_ring_group_only",
             )
 
         last_route = (
@@ -288,8 +333,10 @@ async def async_forward_existing_call(
         if session_endpoint is None and initial_selection:
             session_endpoint = preferred_browser_phone(hass)
         if session_endpoint is None:
-            raise ServiceValidationError(
-                f"call_id {call_id} has no Home Assistant phone owner"
+            raise _service_error(
+                f"call_id {call_id} has no Home Assistant phone owner",
+                "call_phone_owner_missing",
+                call_id=call_id,
             )
         session_endpoint_id = session_endpoint.endpoint_id
         if (
@@ -297,8 +344,9 @@ async def async_forward_existing_call(
             and target_browser_endpoint is not None
             and target_browser_endpoint.endpoint_id == session_endpoint_id
         ):
-            raise ServiceValidationError(
-                "a Home Assistant phone cannot forward a call to itself"
+            raise _service_error(
+                "a Home Assistant phone cannot forward a call to itself",
+                "phone_self_target",
             )
         session_device_id = session_endpoint.device_id
         original_callee = session.callee if session is not None else invite.target
@@ -334,8 +382,10 @@ async def async_forward_existing_call(
                     automation_resume_ha=ha_claimed,
                 )
                 if claimed is None:
-                    raise ServiceValidationError(
-                        f"call_id {call_id} changed while forwarding ownership was claimed"
+                    raise _service_error(
+                        f"call_id {call_id} changed while forwarding ownership was claimed",
+                        "call_changed_during_operation",
+                        call_id=call_id,
                     )
         else:
             route_already_claimed = False
@@ -1390,4 +1440,8 @@ async def async_forward_existing_call(
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         call_artifacts.forward_claim = False
-        raise ServiceValidationError(f"call_id {call_id} is no longer active")
+        raise _service_error(
+            f"call_id {call_id} is no longer active",
+            "call_inactive",
+            call_id=call_id,
+        )

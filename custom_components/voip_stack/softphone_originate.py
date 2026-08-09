@@ -6,7 +6,6 @@ from dataclasses import replace
 import logging
 
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ServiceValidationError
 
 from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .authorization import async_require_service_admin
@@ -73,6 +72,7 @@ from .service_endpoints import (
     async_require_phone_service_control as _require_phone_service_control,
     browser_endpoint_name as _browser_endpoint_name,
 )
+from .service_errors import service_error as _service_error
 from .sip_runtime import (
     enable_reused_tcp_connection as _enable_reused_sip_tcp_connection,
     uri_transport as _sip_uri_transport,
@@ -137,11 +137,22 @@ async def _async_resolve_browser_destination(
     if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
         return route, target, None
     if endpoint.endpoint_id == source_endpoint_id:
-        raise ServiceValidationError("a Home Assistant phone cannot call itself")
+        raise _service_error(
+            "a Home Assistant phone cannot call itself",
+            "phone_self_target",
+        )
     if endpoint.dnd or endpoint.active_call_id:
-        raise ServiceValidationError(f"{endpoint.name} is busy")
+        raise _service_error(
+            f"{endpoint.name} is busy",
+            "phone_busy",
+            phone=endpoint.name,
+        )
     if endpoint.availability is EndpointAvailability.UNAVAILABLE:
-        raise ServiceValidationError(f"{endpoint.name} is disabled")
+        raise _service_error(
+            f"{endpoint.name} is disabled",
+            "phone_disabled",
+            phone=endpoint.name,
+        )
 
     # OFFLINE means that no browser currently owns media. The configured
     # logical phone still rings so automations can observe or reroute it, and
@@ -176,7 +187,7 @@ async def async_originate_browser_call(
     if not target and dest_device is not None:
         target = str(dest_device.get("name") or "").strip()
     if not target:
-        raise ServiceValidationError("destination is required")
+        raise _service_error("destination is required", "destination_required")
     await _require_phone_service_control(
         hass,
         call,
@@ -186,7 +197,11 @@ async def async_originate_browser_call(
         browser_endpoint is not None
         and browser_endpoint.availability is EndpointAvailability.UNAVAILABLE
     ):
-        raise ServiceValidationError(f"{browser_endpoint.name} is disabled")
+        raise _service_error(
+            f"{browser_endpoint.name} is disabled",
+            "phone_disabled",
+            phone=browser_endpoint.name,
+        )
     local_name = _browser_endpoint_name(hass, endpoint_id, browser_endpoint)
     source_device_id = str(getattr(browser_endpoint, "device_id", ""))
     _ha_softphone_store(hass, endpoint_id)["device_id"] = source_device_id
@@ -229,7 +244,10 @@ async def async_originate_browser_call(
                 context=getattr(call, "context", None),
             )
         except LocalBridgeError as err:
-            raise ServiceValidationError(str(err)) from err
+            raise _service_error(
+                str(err),
+                "local_phone_operation_failed",
+            ) from err
         _LOGGER.info(
             "HA local phone call started call_id=%s source=%s destination=%s video=%s",
             snapshot.call_id,
@@ -241,15 +259,26 @@ async def async_originate_browser_call(
     target_endpoint = _logical_endpoint_for_route(hass, route)
     if target_endpoint is not None and target_endpoint.kind is not EndpointKind.BROWSER:
         if target_endpoint.dnd or target_endpoint.active_call_id:
-            raise ServiceValidationError(f"{target_endpoint.name} is busy")
+            raise _service_error(
+                f"{target_endpoint.name} is busy",
+                "phone_busy",
+                phone=target_endpoint.name,
+            )
         if target_endpoint.availability is not EndpointAvailability.AVAILABLE:
-            raise ServiceValidationError(f"{target_endpoint.name} is unavailable")
+            raise _service_error(
+                f"{target_endpoint.name} is unavailable",
+                "phone_unavailable",
+                phone=target_endpoint.name,
+            )
     # Browser-to-browser calls use the in-memory logical bridge and must not
     # depend on SIP network discovery.  Resolve the advertised address only
     # after that path has been exhausted, for conference or external SIP/RTP.
     local_ip = await _ha_advertise_host(hass)
     if not local_ip:
-        raise ServiceValidationError("HA advertise IP is unknown")
+        raise _service_error(
+            "HA advertise IP is unknown",
+            "advertise_ip_unknown",
+        )
     if route.reason is RouteReason.DIRECT_URI:
         # Entity CONTROL permits ordinary phone operation, but an ad-hoc SIP
         # URI also chooses an arbitrary network host/port.  Keep that SSRF and
@@ -277,13 +306,21 @@ async def async_originate_browser_call(
         and route.entry.metadata.get("registered")
     )
     if route.action is RouteAction.TRUNK and not use_trunk:
-        raise ServiceValidationError(f"{target} requires a registered SIP trunk")
+        raise _service_error(
+            f"{target} requires a registered SIP trunk",
+            "trunk_required",
+            destination=target,
+        )
     if route.action is RouteAction.GROUP and route.entry is not None:
         group_type = str((route.entry.metadata or {}).get("group_type") or "")
         if group_type == "ring":
             start_ring_group = call_runtime_artifacts(hass).start_ring_group_from_ha
             if start_ring_group is None:
-                raise ServiceValidationError(f"{target} is not available yet")
+                raise _service_error(
+                    f"{target} is not available yet",
+                    "destination_not_ready",
+                    destination=target,
+                )
             await _async_prepare_ha_outbound_call(hass, endpoint_id)
             await start_ring_group(
                 route.entry,
@@ -311,7 +348,11 @@ async def async_originate_browser_call(
                 endpoint_id=endpoint_id,
             )
             if joined is None:
-                raise ServiceValidationError(f"Conference {room_name} is full")
+                raise _service_error(
+                    f"Conference {room_name} is full",
+                    "conference_full",
+                    conference=room_name,
+                )
             call_id, queue = joined
             registry = _call_registry(hass)
             conference_media = {
@@ -394,7 +435,11 @@ async def async_originate_browser_call(
         }
         or not route_uri
     ):
-        raise ServiceValidationError(f"cannot resolve SIP target: {target}")
+        raise _service_error(
+            f"cannot resolve SIP target: {target}",
+            "sip_target_unresolved",
+            destination=target,
+        )
     await _async_prepare_ha_outbound_call(hass, endpoint_id)
     uri = parse_sip_uri(route_uri)
     remote_tx_formats = _roster_entry_formats(
@@ -687,7 +732,11 @@ async def async_originate_browser_call(
             TerminationInitiator.RUNTIME,
         )
         await client.close()
-        raise ServiceValidationError(str(err)) from err
+        raise _service_error(
+            str(err),
+            "phone_busy",
+            phone=str(getattr(target_endpoint, "name", "") or display_target),
+        ) from err
     _bind_service_call_controller(registry, client.dialog_ids.call_id, call)
     _set_ha_softphone_call_state(
         hass,
@@ -752,8 +801,10 @@ async def async_originate_browser_call(
             last_sip_event="INVITE_ERROR",
             sip_uri=route_uri,
         )
-        raise ServiceValidationError(
-            f"could not start SIP call to {display_target}"
+        raise _service_error(
+            f"could not start SIP call to {display_target}",
+            "sip_call_start_failed",
+            destination=display_target,
         ) from err
     if registry.sip_clients.get(client.dialog_ids.call_id) is not client:
         await EndpointTerminationHandler(hass).terminate_reason(

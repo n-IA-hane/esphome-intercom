@@ -3,28 +3,18 @@
 from __future__ import annotations
 
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ServiceValidationError
 
 from .authorization import (
     async_require_service_endpoint_control,
     async_require_service_entity_control,
 )
-from .const import DOMAIN, HA_PEER_FALLBACK_NAME
+from .const import HA_PEER_FALLBACK_NAME
 from .phone_endpoint import (
     EndpointKind,
     PhoneEndpoint,
 )
 from .runtime_data import endpoint_directory, preferred_browser_phone
-
-
-def _service_error(message: str, key: str) -> ServiceValidationError:
-    """Build one translated service error while preserving its log message."""
-
-    return ServiceValidationError(
-        message,
-        translation_domain=DOMAIN,
-        translation_key=key,
-    )
+from .service_errors import service_error as _service_error
 
 
 def service_browser_endpoint(

@@ -215,6 +215,111 @@
     "destination_required": {
       "message": "A call destination is required."
     },
+    "advertise_ip_unknown": {
+      "message": "The Home Assistant advertised IP address is unknown."
+    },
+    "call_changed_during_operation": {
+      "message": "Call {call_id} changed during the requested operation."
+    },
+    "call_forwarding": {
+      "message": "Call {call_id} is being forwarded."
+    },
+    "call_id_destination_required": {
+      "message": "A call ID and destination are required."
+    },
+    "call_id_required": {
+      "message": "A call ID is required."
+    },
+    "call_inactive": {
+      "message": "Call {call_id} is no longer active."
+    },
+    "call_not_forwardable": {
+      "message": "Call {call_id} is not a forwardable pending or ringing Home Assistant call."
+    },
+    "call_not_ringing": {
+      "message": "Call {call_id} was already answered or is no longer ringing."
+    },
+    "call_phase_mismatch": {
+      "message": "Call {call_id} is in state {state}, not in the {phase} phase."
+    },
+    "call_phone_owner_missing": {
+      "message": "Call {call_id} has no Home Assistant phone owner."
+    },
+    "call_sequence_mismatch": {
+      "message": "Call {call_id} sequence is {actual}, expected {expected}."
+    },
+    "call_state_mismatch": {
+      "message": "Call {call_id} is {actual}, expected {expected}."
+    },
+    "call_unknown_or_ended": {
+      "message": "Call {call_id} is unknown or has ended."
+    },
+    "conference_full": {
+      "message": "Conference {conference} is full."
+    },
+    "conference_phone_mismatch": {
+      "message": "Conference call {call_id} does not belong to phone {phone}."
+    },
+    "destination_not_forwardable": {
+      "message": "Destination {destination} is not a forwardable SIP dial-plan target."
+    },
+    "destination_not_ha_phone": {
+      "message": "Destination {destination} is not a configured Home Assistant phone."
+    },
+    "destination_not_ready": {
+      "message": "Destination {destination} is not available yet."
+    },
+    "forward_failure_policy_invalid": {
+      "message": "The forward failure policy must be resume, terminate or busy."
+    },
+    "forward_ring_group_only": {
+      "message": "An already ringing call can currently be forwarded only to a ring group."
+    },
+    "local_phone_operation_failed": {
+      "message": "The local phone could not complete the requested call operation."
+    },
+    "pbx_session_unavailable": {
+      "message": "The PBX session for call {call_id} is no longer available."
+    },
+    "pending_route_missing": {
+      "message": "There is no pending SIP route for call {call_id}."
+    },
+    "phone_busy": {
+      "message": "{phone} is busy."
+    },
+    "phone_disabled": {
+      "message": "{phone} is disabled."
+    },
+    "phone_self_target": {
+      "message": "A Home Assistant phone cannot use itself as the call destination."
+    },
+    "ring_group_phone_already_declined": {
+      "message": "This phone has already declined the ring-group call."
+    },
+    "ring_group_phone_required": {
+      "message": "Answer the ring-group call from one of its ringing phones."
+    },
+    "route_destination_required": {
+      "message": "The requested route action requires a destination."
+    },
+    "route_hop_limit_exceeded": {
+      "message": "Call {call_id} exceeded the routing limit of {limit} hops."
+    },
+    "route_not_decidable": {
+      "message": "The SIP route for call {call_id} can no longer be decided."
+    },
+    "sip_answer_failed": {
+      "message": "The SIP answer transaction failed for call {call_id}."
+    },
+    "sip_call_start_failed": {
+      "message": "The SIP call to {destination} could not be started."
+    },
+    "sip_target_unresolved": {
+      "message": "The SIP destination {destination} could not be resolved."
+    },
+    "trunk_required": {
+      "message": "Destination {destination} requires a registered SIP trunk."
+    },
     "esphome_action_missing": {
       "message": "{phone} does not expose the required ESPHome action {action}. Update its VoIP phone package and firmware."
     },
