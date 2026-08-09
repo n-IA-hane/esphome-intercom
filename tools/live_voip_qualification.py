@@ -29,11 +29,12 @@ import urllib.request
 from urllib.parse import urlencode, urlsplit
 
 try:
-    from aioesphomeapi import APIClient
+    from aioesphomeapi import APIClient, LogLevel
 except (
     ModuleNotFoundError
 ):  # pragma: no cover - dependency-light CI only imports contracts.
     APIClient = None
+    LogLevel = None
 
 try:
     import websockets
@@ -314,6 +315,8 @@ class EspApi:
         self.values: dict[str, Any] = {}
         self._object_by_key: dict[int, str] = {}
         self._updates = asyncio.Event()
+        self.logs: list[dict[str, Any]] = []
+        self._unsubscribe_logs: Callable[[], None] | None = None
 
     async def __aenter__(self) -> "EspApi":
         await self.client.connect(login=True)
@@ -329,11 +332,30 @@ class EspApi:
             for object_id, entity in self.entities.items()
         }
         await maybe_await(self.client.subscribe_states(self._on_state))
+        self._unsubscribe_logs = self.client.subscribe_logs(
+            self._on_log,
+            log_level=LogLevel.LOG_LEVEL_DEBUG,
+            dump_config=False,
+        )
         await asyncio.sleep(0.6)
         return self
 
     async def __aexit__(self, *_: object) -> None:
+        if self._unsubscribe_logs is not None:
+            self._unsubscribe_logs()
         await self.client.disconnect()
+
+    def _on_log(self, entry: Any) -> None:
+        message = getattr(entry, "message", b"")
+        if isinstance(message, bytes):
+            message = message.decode(errors="replace")
+        self.logs.append(
+            {
+                "monotonic_s": time.monotonic(),
+                "level": int(getattr(entry, "level", 0)),
+                "message": str(message).rstrip(),
+            }
+        )
 
     def _on_state(self, state: Any) -> None:
         key = int(getattr(state, "key", -1))
@@ -423,7 +445,7 @@ class EspApi:
         )
 
     def snapshot(self) -> dict[str, Any]:
-        return {
+        snapshot = {
             "device": self.spec.key,
             "state": self.values.get("voip_state"),
             "caller": self.values.get("voip_caller"),
@@ -438,6 +460,20 @@ class EspApi:
             "dnd": self.values.get("do_not_disturb"),
             "auto_answer": self.values.get("auto_answer"),
         }
+        snapshot["runtime"] = {
+            key: self.values.get(key)
+            for key in (
+                "free_heap",
+                "largest_free_block",
+                "minimum_free_heap",
+                "heap_fragmentation",
+                "psram_free",
+                "main_loop_max_time",
+                "uptime",
+            )
+            if key in self.values
+        }
+        return snapshot
 
 
 @dataclass
@@ -463,12 +499,14 @@ class LiveContext:
 
     async def cleanup(self) -> None:
         for _ in range(2):
-            await self.ha.service("voip_stack", "hangup", {})
-            await self.ha.service(
-                "voip_stack",
-                "decline",
-                {"reason": "cleanup", "decline_reason": "cleanup"},
-            )
+            with contextlib.suppress(Exception):
+                await self.ha.service("voip_stack", "hangup", {})
+            with contextlib.suppress(Exception):
+                await self.ha.service(
+                    "voip_stack",
+                    "decline",
+                    {"reason": "cleanup", "decline_reason": "cleanup"},
+                )
         with contextlib.suppress(Exception):
             await self.esp.service("decline_call", {"reason": "cleanup"})
         deadline = time.monotonic() + 8.0
@@ -1348,7 +1386,11 @@ async def run(args: argparse.Namespace) -> int:
                     print(f"PASS {scenario.id}")
                     await ctx.cleanup()
             finally:
-                await restore_baseline(ctx, original)
+                restore_error: Exception | None = None
+                try:
+                    await restore_baseline(ctx, original)
+                except Exception as err:  # preserve evidence from a failed cleanup
+                    restore_error = err
                 artifact = {
                     "schema_version": 2,
                     "created_at": datetime.now(UTC).isoformat(),
@@ -1357,6 +1399,12 @@ async def run(args: argparse.Namespace) -> int:
                     "results": results,
                     "samples": ctx.artifacts,
                     "events": ws.events,
+                    "esp_logs": esp.logs,
+                    "restore_error": (
+                        f"{type(restore_error).__name__}: {restore_error}"
+                        if restore_error is not None
+                        else None
+                    ),
                 }
                 path = (
                     output_dir
@@ -1366,6 +1414,8 @@ async def run(args: argparse.Namespace) -> int:
                     json.dumps(artifact, indent=2, ensure_ascii=False), encoding="utf-8"
                 )
                 print(f"artifact={path}")
+                if restore_error is not None:
+                    raise restore_error
     return 0
 
 

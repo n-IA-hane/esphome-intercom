@@ -1186,6 +1186,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "Conference",
             call_id=softphone_call_id,
         )
+        self.assertNotIn(softphone_call_id, manager.ha_calls)
         self.assertNotIn(softphone_call_id, room.legs)
         self.assertIn("call-3", room.legs)
 

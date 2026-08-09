@@ -1019,18 +1019,20 @@ class ConferenceManager:
     ) -> None:
         room_key = str(room_name or "").strip()
         room = self.rooms.get(room_key)
-        if room is not None:
-            await room.remove_ha_softphone_leg(call_id, reason=reason)
-            if room._closed and self.rooms.get(room_key) is room:
-                self.rooms.pop(room_key, None)
-        else:
-            registry = call_registry(self.hass)
-            registry.take_media(call_id)
-            await EndpointTerminationHandler(self.hass).terminate_reason(
-                call_id,
-                reason,
-                TerminationInitiator.LOCAL_USER,
-            )
+        try:
+            if room is not None:
+                await room.remove_ha_softphone_leg(call_id, reason=reason)
+                if room._closed and self.rooms.get(room_key) is room:
+                    self.rooms.pop(room_key, None)
+            else:
+                registry = call_registry(self.hass)
+                registry.take_media(call_id)
+                await EndpointTerminationHandler(self.hass).terminate_reason(
+                    call_id,
+                    reason,
+                    TerminationInitiator.LOCAL_USER,
+                )
+        finally:
             self.forget_ha_call(call_id)
 
     async def decline_ha_softphone(
