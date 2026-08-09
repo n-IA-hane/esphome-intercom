@@ -45,7 +45,7 @@ def attach_outbound_connected_identity_state(
 
     def _update(connected_party: str, connected_uri: str) -> None:
         registry = call_registry(hass)
-        if registry.sip_clients.get(call_id) is not client:
+        if registry.sip_client_for(call_id) is not client:
             return
         store = _ha_softphone_store(hass, endpoint_id)
         if (
@@ -168,7 +168,7 @@ async def async_track_outbound_sip_client(
         connected_party = str(
             getattr(client, "connected_party", "") or target
         ).strip()
-        if registry.sip_clients.get(client.dialog_ids.call_id) is not client:
+        if registry.sip_client_for(client.dialog_ids.call_id) is not client:
             # Hangup/replacement already revoked this watcher. A queued final
             # response must never resurrect a detached call in the HA store.
             return
@@ -312,7 +312,7 @@ async def async_prepare_ha_outbound_call(
         if str(store.get("state") or "").strip().lower() in HA_SOFTPHONE_ACTIVE_STATES:
             raise ServiceValidationError("HA softphone already has an active SIP call")
 
-        for call_id, _client in list(registry.sip_clients.items()):
+        for call_id, _client in list(registry.sip_client_items()):
             session = registry.sessions.get(registry.resolve_session_id(call_id))
             session_endpoint_id = str(
                 (session.metadata if session is not None else {}).get("endpoint_id")

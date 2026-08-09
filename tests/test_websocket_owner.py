@@ -17,7 +17,9 @@ MODULE_PATH = (
     / "voip_stack"
     / "websocket_owner.py"
 )
-SPEC = importlib.util.spec_from_file_location("voip_stack_websocket_owner_test", MODULE_PATH)
+SPEC = importlib.util.spec_from_file_location(
+    "voip_stack_websocket_owner_test", MODULE_PATH
+)
 assert SPEC is not None and SPEC.loader is not None
 OWNER_MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = OWNER_MODULE
@@ -27,9 +29,7 @@ MediaWebSocketOwner = OWNER_MODULE.MediaWebSocketOwner
 WebSocketOwnerBusyError = OWNER_MODULE.WebSocketOwnerBusyError
 async_claim_media_owner = OWNER_MODULE.async_claim_media_owner
 async_claim_call_media_owner = OWNER_MODULE.async_claim_call_media_owner
-async_release_local_media_if_unowned = (
-    OWNER_MODULE.async_release_local_media_if_unowned
-)
+async_release_local_media_if_unowned = OWNER_MODULE.async_release_local_media_if_unowned
 async_release_media_owner = OWNER_MODULE.async_release_media_owner
 async_revoke_media_owners = OWNER_MODULE.async_revoke_media_owners
 media_websocket_owner_status = OWNER_MODULE.media_websocket_owner_status
@@ -79,13 +79,14 @@ class _CallRegistry:
                 revision=1,
             )
         }
-        self.softphone_media = {
-            "call-1": {"media_client_id": client_id}
-        }
+        self.softphone_media = {"call-1": {"media_client_id": client_id}}
 
     @staticmethod
     def resolve_session_id(call_id: str) -> str:
         return call_id
+
+    def resource_for(self, call_id: str, _kind: str):
+        return self.softphone_media.get(call_id)
 
     def add_call(self, call_id: str, client_id: str = "") -> None:
         self.sessions[call_id] = types.SimpleNamespace(
@@ -105,9 +106,7 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
             ),
             "available",
         )
-        bucket["audio_ws_owners"] = {
-            key: MediaWebSocketOwner(client_id="document-a")
-        }
+        bucket["audio_ws_owners"] = {key: MediaWebSocketOwner(client_id="document-a")}
         self.assertEqual(
             media_websocket_owner_status(
                 bucket,
@@ -375,10 +374,12 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_local_lease_releases_only_after_last_media_channel(self) -> None:
         key = "kitchen|call-1"
-        bucket = _MediaRuntime({
-            "audio_ws_owners": {key: object()},
-            "video_ws_owners": {key: object()},
-        })
+        bucket = _MediaRuntime(
+            {
+                "audio_ws_owners": {key: object()},
+                "video_ws_owners": {key: object()},
+            }
+        )
         releases: list[tuple[str, str, str]] = []
         bridge = types.SimpleNamespace(
             release_media=lambda call_id, endpoint_id, token: (
@@ -667,6 +668,7 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(owners, {})
+
 
 if __name__ == "__main__":
     unittest.main()

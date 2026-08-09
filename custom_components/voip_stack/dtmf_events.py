@@ -38,7 +38,7 @@ async def handle_sip_info(
     queue = artifacts.trunk_info_queue if artifacts is not None else None
     if queue is None:
         registry = call_registry(hass)
-        relay = registry.relays.get(call_id)
+        relay = registry.resource_for(call_id, "relay")
         callback = getattr(relay, "on_dtmf", None)
         if callback is not None:
             callback("left", digit, "sip_info")
@@ -49,12 +49,12 @@ async def handle_sip_info(
                 transport,
             )
             return
-        if relay is not None or call_id in registry.softphone_media:
+        if relay is not None or registry.resource_for(call_id, "softphone_media"):
             session = registry.sessions.get(registry.resolve_session_id(call_id))
             publish_dtmf_event(
                 hass,
                 call_id=call_id,
-                dest_call_id=registry.bridge_clients.get(call_id, ""),
+                dest_call_id=registry.bridge_link_for(call_id),
                 caller=session.caller if session is not None else "",
                 callee=session.callee if session is not None else "",
                 side="left",

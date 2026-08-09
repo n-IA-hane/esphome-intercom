@@ -286,26 +286,11 @@ class SipEndpointRuntime(CallRuntimeApi):
 
     def resources_snapshot(self, prefix: str) -> dict[str, Any]:
         """Return one named class of resources from authoritative sessions."""
-
-        marker = f"{str(prefix or '').strip()}:"
-        if marker == ":":
-            return {}
-        return {
-            resource.name.removeprefix(marker): resource.value
-            for session in self.calls.values()
-            for resource in session.resources
-            if resource.name.startswith(marker)
-        }
+        return dict(self.resource_items(prefix)) if str(prefix or "").strip() else {}
 
     def sip_clients_snapshot(self) -> dict[str, Any]:
         """Return dialogs indexed by their SIP Call-ID from owned legs."""
-
-        clients: dict[str, Any] = {}
-        for session in self.calls.values():
-            for leg in session.legs.values():
-                if leg.dialog is not None:
-                    clients[leg.sip_call_id or leg.leg_id] = leg.dialog
-        return clients
+        return dict(self.sip_client_items())
 
     def client_watchers_snapshot(self) -> dict[str, asyncio.Task[Any]]:
         """Return lifecycle watchers derived from session-owned named tasks."""
@@ -319,12 +304,7 @@ class SipEndpointRuntime(CallRuntimeApi):
 
     def bridge_links_snapshot(self) -> dict[str, str]:
         """Return source-to-destination links stored by authoritative sessions."""
-
-        return {
-            call_id: dest_call_id
-            for call_id, session in self.calls.items()
-            if (dest_call_id := str(session.metadata.get("bridge_dest_call_id") or ""))
-        }
+        return dict(self.bridge_link_items())
 
     def artifacts_for(self, call_id: str) -> CallArtifacts | None:
         """Return transient state owned by the current call generation."""

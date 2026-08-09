@@ -30,7 +30,7 @@ async def async_terminate_sip_bridge_session(
     source_call_id, dest_call_id = registry.bridge_for(call_id)
     if not source_call_id:
         return False, "", "", False, False
-    client_present = bool(dest_call_id and registry.sip_clients.get(dest_call_id))
+    client_present = bool(dest_call_id and registry.sip_client_for(dest_call_id))
     terminated = await EndpointTerminationHandler(hass).terminate(
         source_call_id,
         TerminationIntent.bye(terminal_reason),
@@ -77,13 +77,13 @@ async def async_hangup_browser_call(
             )
             return
 
-    clients = registry.sip_clients
-    pending = registry.pending_invites
-    media_sessions = registry.softphone_media
+    clients = dict(registry.sip_client_items())
+    pending = dict(registry.artifact_items("pending_invite"))
+    media_sessions = dict(registry.resource_items("softphone_media"))
     softphone_store = _ha_softphone_store(hass, endpoint_id)
     endpoint_bridge_calls = endpoint_call_ids(
         registry,
-        registry.bridge_clients,
+        dict(registry.bridge_link_items()),
         endpoint_id,
     )
     endpoint_clients = endpoint_call_ids(registry, clients, endpoint_id)
@@ -111,7 +111,7 @@ async def async_hangup_browser_call(
         invite = pending.get(pending_call_id)
         if invite is None:
             continue
-        preanswered_item = registry.preanswered.get(pending_call_id)
+        preanswered_item = registry.resource_for(pending_call_id, "preanswered")
         await terminator.terminate(
             pending_call_id,
             (

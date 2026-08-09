@@ -1274,7 +1274,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             )
         ]
         self.assertIn('"dialed_target": dialed_target', state)
-        self.assertIn('store.get("last_terminal_dialed_target", "")', state)
+        self.assertIn('"last_terminal_dialed_target", ""', state)
         for field in ("connected_party", "answered_by"):
             self.assertIn(f'"{field}": store.get("{field}", "")', state)
             self.assertIn(f'"{field}",', terminal)
@@ -1570,7 +1570,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_preanswered_forward_failure_resumes_ha_ringing(self) -> None:
         forward = self.call_forwarder
-        self.assertIn("or call_id in registry.preanswered", forward)
+        self.assertIn(
+            'or registry.resource_for(call_id, "preanswered") is not None',
+            forward,
+        )
         restore = forward[
             forward.index("async def _restore_or_terminate(") : forward.index(
                 "async def _run_forward("

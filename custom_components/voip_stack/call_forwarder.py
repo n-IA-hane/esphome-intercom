@@ -200,7 +200,7 @@ async def async_forward_existing_call(
             limit=8,
         )
 
-    invite = registry.pending_invites.get(call_id)
+    invite = registry.artifact_for(call_id, "pending_invite")
     if invite is None:
         raise _service_error(
             f"call_id {call_id} is not a forwardable pending or ringing HA-owned call",
@@ -239,7 +239,7 @@ async def async_forward_existing_call(
     target_browser_endpoint = None
     try:
         peers = await _async_build_peer_snapshot(hass)
-        if registry.pending_invites.get(call_id) is not invite:
+        if registry.artifact_for(call_id, "pending_invite") is not invite:
             raise _service_error(
                 f"call_id {call_id} changed while the route was being resolved",
                 "call_changed_during_operation",
@@ -358,7 +358,7 @@ async def async_forward_existing_call(
         # instead of leaving the answered caller on silent RTP.
         ha_claimed = (
             bool(session is not None and session.owner == "ha_softphone")
-            or call_id in registry.preanswered
+            or registry.resource_for(call_id, "preanswered") is not None
             or bool(
                 session is not None and session.metadata.get("automation_resume_ha")
             )
@@ -414,7 +414,7 @@ async def async_forward_existing_call(
         raise
 
     async def _restore_or_terminate(reason: str) -> None:
-        preanswered = registry.preanswered.get(call_id)
+        preanswered = registry.resource_for(call_id, "preanswered")
         if on_failure == "resume" and not call_artifacts.trunk_closed:
             if session is not None:
                 current = registry.sessions.get(registry.resolve_session_id(call_id))
@@ -494,7 +494,7 @@ async def async_forward_existing_call(
         video_relay = None
         dest_call_id = ""
         try:
-            preanswered = registry.preanswered.get(call_id)
+            preanswered = registry.resource_for(call_id, "preanswered")
             if decision.action is RouteAction.ANSWER_HA:
                 endpoint = target_browser_endpoint
                 if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
@@ -506,7 +506,7 @@ async def async_forward_existing_call(
                 if endpoint.availability is EndpointAvailability.UNAVAILABLE:
                     raise RuntimeError("target Home Assistant phone is disabled")
                 session_id = registry.resolve_session_id(call_id)
-                claims = registry.endpoint_claims.get(session_id, {})
+                claims = registry.endpoint_claims_for(session_id)
                 target_was_claimed = endpoint.endpoint_id in claims
                 old_was_claimed = session_endpoint_id in claims
                 target_claimed = False

@@ -198,6 +198,10 @@ def test_sip_info_prefers_the_live_relay_callback(monkeypatch) -> None:
         bridge_clients={},
         resolve_session_id=lambda call_id: call_id,
     )
+    registry.resource_for = lambda call_id, kind: (
+        registry.relays if kind == "relay" else registry.softphone_media
+    ).get(call_id)
+    registry.bridge_link_for = lambda call_id: registry.bridge_clients.get(call_id, "")
     monkeypatch.setattr(dtmf_events, "call_registry", lambda _hass: registry)
     hass = SimpleNamespace(
         data={"voip_stack": {}},

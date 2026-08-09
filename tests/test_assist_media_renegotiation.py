@@ -31,6 +31,12 @@ def _module(name: str, **values):
 
 
 def _load_module(registry, answer_calls: list[dict]):
+    registry.resource_for = lambda call_id, kind: (
+        getattr(registry, f"{kind}s", {}).get(call_id)
+        if kind == "relay"
+        else getattr(registry, kind, {}).get(call_id)
+    )
+    registry.sip_client_for = lambda call_id: registry.sip_clients.get(call_id)
     package = types.ModuleType(PACKAGE)
     package.__path__ = [str(SOURCE.parent)]
     sys.modules[PACKAGE] = package
@@ -237,8 +243,9 @@ def test_bridge_video_addition_cancellation_releases_staged_media() -> None:
     video_relay = VideoRelay()
     media_ports = sys.modules[f"{PACKAGE}.media_ports"]
     media_ports.release_sip_rtp_port_pair = lambda *_args: None
-    media_ports.reserve_sip_video_relay_media = (
-        lambda _hass: (reservation, (None, None, None, None))
+    media_ports.reserve_sip_video_relay_media = lambda _hass: (
+        reservation,
+        (None, None, None, None),
     )
 
     candidate = types.SimpleNamespace()
@@ -260,11 +267,9 @@ def test_bridge_video_addition_cancellation_releases_staged_media() -> None:
     registry.sip_clients["destination"] = client
     registry.relays["source"] = types.SimpleNamespace()
     sip_bridge = sys.modules[f"{PACKAGE}.sip_bridge"]
-    sip_bridge.build_pending_invite_video_relay = (
-        lambda *_args, **_kwargs: video_relay
-    )
-    sip_bridge.configure_answered_invite_video_relay = (
-        lambda *_args, **_kwargs: types.SimpleNamespace(
+    sip_bridge.build_pending_invite_video_relay = lambda *_args, **_kwargs: video_relay
+    sip_bridge.configure_answered_invite_video_relay = lambda *_args, **_kwargs: (
+        types.SimpleNamespace(
             video_format="jpeg",
             direction="sendrecv",
         )
@@ -418,11 +423,11 @@ def test_bridge_activates_video_when_initial_offer_was_recvonly() -> None:
     client = Client()
     registry.sip_clients["destination"] = client
     sip_bridge = sys.modules[f"{PACKAGE}.sip_bridge"]
-    sip_bridge.build_pending_invite_video_relay = (
-        lambda *_args, **_kwargs: staged_video_relay
+    sip_bridge.build_pending_invite_video_relay = lambda *_args, **_kwargs: (
+        staged_video_relay
     )
-    sip_bridge.configure_answered_invite_video_relay = (
-        lambda *_args, **_kwargs: types.SimpleNamespace(
+    sip_bridge.configure_answered_invite_video_relay = lambda *_args, **_kwargs: (
+        types.SimpleNamespace(
             video_format="vp8",
             direction="sendrecv",
         )
@@ -559,9 +564,7 @@ def test_bridge_video_removal_updates_both_dialogs_and_stops_media() -> None:
     sip_bridge = sys.modules[f"{PACKAGE}.sip_bridge"]
     sip_bridge.dialog_rtp_peer = lambda item: item
     sip_bridge.build_pending_invite_video_relay = lambda *_args, **_kwargs: None
-    sip_bridge.configure_answered_invite_video_relay = (
-        lambda *_args, **_kwargs: None
-    )
+    sip_bridge.configure_answered_invite_video_relay = lambda *_args, **_kwargs: None
     sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: ()
 
     previous = types.SimpleNamespace(
@@ -730,19 +733,20 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically() -> None:
     registry.sip_clients["destination"] = client
     sip_bridge = sys.modules[f"{PACKAGE}.sip_bridge"]
     sip_bridge.build_pending_invite_video_relay = lambda *_args, **_kwargs: None
-    sip_bridge.configure_answered_invite_video_relay = (
-        lambda *_args, **_kwargs: None
-    )
+    sip_bridge.configure_answered_invite_video_relay = lambda *_args, **_kwargs: None
     sip_bridge.dialog_rtp_peer = lambda _dialog: new_audio_right
     sip_bridge.dialog_video_rtp_peer = lambda _dialog: new_video_right
     sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: ()
     module.invite_rtp_peer = lambda _invite: new_audio_left
     module.invite_video_rtp_peer = lambda _invite: new_video_left
     module.remote_can_send = lambda fmt: fmt.direction in {"sendonly", "sendrecv"}
-    module.remote_can_receive = lambda fmt, **_kwargs: fmt.direction in {
-        "recvonly",
-        "sendrecv",
-    }
+    module.remote_can_receive = lambda fmt, **_kwargs: (
+        fmt.direction
+        in {
+            "recvonly",
+            "sendrecv",
+        }
+    )
     module.constrained_video_direction = lambda *_args, **_kwargs: "inactive"
 
     previous_video = types.SimpleNamespace(direction="sendrecv")

@@ -30,7 +30,6 @@ from .media_ws_session import (
 from .queue_utils import drain_queue
 from .runtime_data import call_projection, registration_data, require_runtime_data
 from .session_cleanup import async_wait_for_cleanup
-from .sip_client import SipCallClient
 from .core.video_rtcp import (
     RtcpError,
     build_fir,
@@ -167,10 +166,7 @@ class _VideoMediaSession:
     def can_receive(self) -> bool:
         return bool(
             self.local_direction in {"recvonly", "sendrecv"}
-            and (
-                not self.requires_receive_transcoding
-                or self.transcoding_enabled
-            )
+            and (not self.requires_receive_transcoding or self.transcoding_enabled)
         )
 
 
@@ -441,9 +437,7 @@ class VoipVideoWebSocketView(HomeAssistantView):
                 context,
                 prepared.registry,
                 channel="video",
-                max_msg_size=(
-                    _MAX_BROWSER_ACCESS_UNIT_BYTES + _VIDEO_HEADER.size
-                ),
+                max_msg_size=(_MAX_BROWSER_ACCESS_UNIT_BYTES + _VIDEO_HEADER.size),
                 timeout=_VIDEO_OWNER_HANDOFF_TIMEOUT,
                 local_call=prepared.local_call,
                 publish_state=lambda: _publish_ha_softphone_state(
@@ -474,7 +468,9 @@ class VoipVideoWebSocketView(HomeAssistantView):
                         endpoint_id=endpoint_id,
                     )
         except WebSocketOwnerBusyError as err:
-            raise web.HTTPConflict(text="HA softphone video is already attached") from err
+            raise web.HTTPConflict(
+                text="HA softphone video is already attached"
+            ) from err
         return claimed.websocket
 
 
@@ -501,7 +497,7 @@ def _active_video_session(
     transcode = bool(config.get(CONF_VIDEO_TRANSCODING, False))
     debug = debug_mode(hass)
 
-    item = registry.softphone_media.get(call_id)
+    item = registry.resource_for(call_id, "softphone_media")
     if item is not None:
         invite = item.get("invite")
         video_format = getattr(invite, "video_format", None)
@@ -523,7 +519,8 @@ def _active_video_session(
                     invite.remote_video_rtcp_host or invite.remote_video_rtp_host
                 ),
                 remote_rtcp_port=int(
-                    invite.remote_video_rtcp_port or int(invite.remote_video_rtp_port) + 1
+                    invite.remote_video_rtcp_port
+                    or int(invite.remote_video_rtp_port) + 1
                 ),
                 remote_rtcp_mux=bool(invite.remote_video_rtcp_mux),
                 video_format=video_format,
@@ -535,20 +532,15 @@ def _active_video_session(
                 ),
                 signaling_host=str(invite.source_host),
                 remote_video_payload_types=tuple(invite.remote_video_payload_types),
-                remote_connection_held=bool(
-                    invite.remote_video_connection_held
-                ),
-                camera_send_enabled=bool(
-                    item.get("camera_send_authorized", False)
-                ),
+                remote_connection_held=bool(invite.remote_video_connection_held),
+                camera_send_enabled=bool(item.get("camera_send_authorized", False)),
                 transcoding_enabled=transcode,
                 debug_mode=debug,
                 rtp_source=rtp_source,
                 rtp_socket=item.get("video_rtp_socket"),
                 rtcp_socket=item.get("video_rtcp_socket"),
             )
-    clients: dict[str, SipCallClient] = registry.sip_clients
-    client = clients.get(call_id)
+    client = registry.sip_client_for(call_id)
     dialog = client.dialog if client is not None else None
     if dialog is None or dialog.video_format is None or not dialog.local_video_rtp_port:
         return None
@@ -592,7 +584,7 @@ def _detach_video_socket(hass: HomeAssistant, session: _VideoMediaSession) -> No
     registry = call_projection(hass)
     if registry is None:
         return
-    item = registry.softphone_media.get(session.call_id)
+    item = registry.resource_for(session.call_id, "softphone_media")
     if isinstance(item, dict) and (
         item.get("video_rtp_socket") is session.rtp_socket
         or item.get("video_rtcp_socket") is session.rtcp_socket
@@ -602,7 +594,7 @@ def _detach_video_socket(hass: HomeAssistant, session: _VideoMediaSession) -> No
         if item.get("video_rtcp_socket") is session.rtcp_socket:
             item.pop("video_rtcp_socket", None)
         return
-    client = registry.sip_clients.get(session.call_id)
+    client = registry.sip_client_for(session.call_id)
     if client is not None and client.video_rtp_socket is session.rtp_socket:
         client.video_rtp_socket = None
     if client is not None and client.video_rtcp_socket is session.rtcp_socket:
@@ -695,9 +687,7 @@ async def _run_local_video_session(
             )
             if control == "force_key_frame":
                 async with ws_send_lock:
-                    await ws.send_json(
-                        {"type": "force_key_frame", "feedback": "local"}
-                    )
+                    await ws.send_json({"type": "force_key_frame", "feedback": "local"})
                 counters["video_keyframe_requests_to_browser"] += 1
 
     async def browser_to_peer() -> None:
@@ -715,8 +705,7 @@ async def _run_local_video_session(
                 frame = bytes(msg.data)
                 if (
                     len(frame) <= _VIDEO_HEADER.size
-                    or len(frame)
-                    > _MAX_BROWSER_ACCESS_UNIT_BYTES + _VIDEO_HEADER.size
+                    or len(frame) > _MAX_BROWSER_ACCESS_UNIT_BYTES + _VIDEO_HEADER.size
                 ):
                     counters["video_drop_error"] += 1
                     continue
@@ -747,11 +736,7 @@ async def _run_local_video_session(
                         )
             elif msg.type == WSMsgType.TEXT:
                 try:
-                    control = (
-                        json.loads(msg.data)
-                        if len(str(msg.data)) <= 256
-                        else {}
-                    )
+                    control = json.loads(msg.data) if len(str(msg.data)) <= 256 else {}
                 except (TypeError, ValueError):
                     control = {}
                 if control.get("type") == "request_key_frame":
@@ -880,14 +865,13 @@ def _make_video_depacketizer(
     if browser_format.encoding == "H264":
         parameter_sets = cached_parameter_sets
         if registry is not None:
-            parameter_sets = registry.video_parameter_sets.get(
-                session.call_id, parameter_sets
+            parameter_sets = (
+                registry.artifact_for(session.call_id, "video_parameter_sets")
+                or parameter_sets
             )
         # A current SDP sprop is authoritative over parameter sets learned
         # from the preceding RTP generation.
-        return H264Depacketizer(
-            [*parameter_sets, *_sdp_parameter_sets(browser_format)]
-        )
+        return H264Depacketizer([*parameter_sets, *_sdp_parameter_sets(browser_format)])
     if browser_format.encoding == "VP8":
         return Vp8Depacketizer()
     if browser_format.encoding == "JPEG":
@@ -961,9 +945,7 @@ async def _video_access_units_to_ws(
         flags = 1 if access_unit.key_frame else 0
         async with ws_send_lock:
             await ws.send_bytes(
-                _VIDEO_HEADER.pack(
-                    _VIDEO_ACCESS_UNIT, flags, access_unit.timestamp
-                )
+                _VIDEO_HEADER.pack(_VIDEO_ACCESS_UNIT, flags, access_unit.timestamp)
                 + access_unit.data
             )
         if access_unit.encoding == "JPEG":
@@ -1055,8 +1037,7 @@ async def _run_video_session(
     remote_rtcp_host = str(session.remote_rtcp_host or remote_host)
     remote_rtcp_port = int(session.remote_rtcp_port)
     remote_rtcp_host_explicit = bool(
-        session.remote_rtcp_host
-        and session.remote_rtcp_host != session.remote_rtp_host
+        session.remote_rtcp_host and session.remote_rtcp_host != session.remote_rtp_host
     )
     remote_rtcp_offset = (
         0
@@ -1210,7 +1191,9 @@ async def _run_video_session(
     registry = call_projection(hass)
     cached_parameter_sets: tuple[bytes, ...] = ()
     if registry is not None:
-        cached_parameter_sets = registry.video_parameter_sets.get(session.call_id, ())
+        cached_parameter_sets = (
+            registry.artifact_for(session.call_id, "video_parameter_sets") or ()
+        )
     depacketizer = _make_video_depacketizer(
         session,
         browser_format,
@@ -1236,14 +1219,16 @@ async def _run_video_session(
     )
     rtcp_protocol = _RtpVideoProtocol(
         rtcp_queue,
-        source_allowed=lambda host: host
-        in {
-            str(session.remote_rtp_host),
-            str(session.remote_rtcp_host),
-            str(session.signaling_host),
-            remote_host,
-            remote_rtcp_host,
-        },
+        source_allowed=lambda host: (
+            host
+            in {
+                str(session.remote_rtp_host),
+                str(session.remote_rtcp_host),
+                str(session.signaling_host),
+                remote_host,
+                remote_rtcp_host,
+            }
+        ),
         min_datagram_bytes=4,
     )
     last_browser_keyframe_feedback = 0.0
@@ -1329,9 +1314,7 @@ async def _run_video_session(
                 and session.remote_rtcp_host != session.remote_rtp_host
             )
             remote_rtcp_offset = (
-                0
-                if session.remote_rtcp_mux
-                else remote_rtcp_port - remote_port
+                0 if session.remote_rtcp_mux else remote_rtcp_port - remote_port
             )
             latched_source = None
             latched_ssrc = None
@@ -1428,9 +1411,7 @@ async def _run_video_session(
                     "direction": session.local_direction,
                     "remote_connection_held": session.remote_connection_held,
                     **counters,
-                    "video_rtp_dropped_packets": store[
-                        "video_rtp_dropped_packets"
-                    ],
+                    "video_rtp_dropped_packets": store["video_rtp_dropped_packets"],
                 },
             )
         _publish_ha_softphone_state(hass, endpoint_id=endpoint_id)
@@ -1569,7 +1550,9 @@ async def _run_video_session(
             if browser_format.encoding == "H264"
             else result
         )
-        if browser_format.encoding == "H264" and isinstance(depacketizer, H264Depacketizer):
+        if browser_format.encoding == "H264" and isinstance(
+            depacketizer, H264Depacketizer
+        ):
             parameter_sets = depacketizer.parameter_sets
             if len(parameter_sets) == 2 and registry is not None:
                 registry.cache_video_parameter_sets(
@@ -1609,7 +1592,9 @@ async def _run_video_session(
                 if not await refresh_media_state(observed_generation):
                     return
             deadline = input_reorder.next_deadline
-            timeout = None if deadline is None else max(0.0, deadline - local_loop.time())
+            timeout = (
+                None if deadline is None else max(0.0, deadline - local_loop.time())
+            )
             try:
                 data, addr = await asyncio.wait_for(queue.get(), timeout=timeout)
             except TimeoutError:
@@ -1619,9 +1604,7 @@ async def _run_video_session(
                 if input_reorder.lost > lost_before:
                     needs_key_frame = True
                     request_key_frame(local_loop.time())
-                _sync_video_reorder_counters(
-                    counters, session, reorder, input_reorder
-                )
+                _sync_video_reorder_counters(counters, session, reorder, input_reorder)
                 continue
             dequeued_in_burst += 1
             if dequeued_in_burst >= _VIDEO_RTP_RECEIVE_BURST_PACKETS:
@@ -1672,9 +1655,7 @@ async def _run_video_session(
                 if input_reorder.lost > lost_before:
                     needs_key_frame = True
                     request_key_frame(local_loop.time())
-                _sync_video_reorder_counters(
-                    counters, session, reorder, input_reorder
-                )
+                _sync_video_reorder_counters(counters, session, reorder, input_reorder)
             except (OSError, RuntimeError, ValueError) as err:
                 counters["video_drop_error"] += 1
                 drop_logs += 1
@@ -1708,9 +1689,7 @@ async def _run_video_session(
                 if reorder.lost > lost_before:
                     needs_key_frame = True
                     request_key_frame(loop.time())
-                _sync_video_reorder_counters(
-                    counters, session, reorder, input_reorder
-                )
+                _sync_video_reorder_counters(counters, session, reorder, input_reorder)
                 continue
             dequeued_in_burst += 1
             if dequeued_in_burst >= _VIDEO_RTP_RECEIVE_BURST_PACKETS:
@@ -1775,9 +1754,7 @@ async def _run_video_session(
                 if reorder.lost > lost_before:
                     needs_key_frame = True
                     request_key_frame(loop.time())
-                _sync_video_reorder_counters(
-                    counters, session, reorder, input_reorder
-                )
+                _sync_video_reorder_counters(counters, session, reorder, input_reorder)
             except Exception as err:  # noqa: BLE001 - a bad frame must not stop audio/call control.
                 counters["video_drop_error"] += 1
                 drop_logs += 1
@@ -1818,9 +1795,7 @@ async def _run_video_session(
                     ssrc,
                     latched_ssrc,
                     ntp_seconds=unix_seconds + 2_208_988_800,
-                    ntp_fraction=int(
-                        (unix_now - unix_seconds) * (1 << 32)
-                    ),
+                    ntp_fraction=int((unix_now - unix_seconds) * (1 << 32)),
                     rtp_timestamp=outbound_clock.current(monotonic_now),
                     packet_count=counters["video_rtp_tx_packets"],
                     octet_count=counters["video_rtp_tx_payload_bytes"],
@@ -1835,9 +1810,7 @@ async def _run_video_session(
             else:
                 continue
             try:
-                rtcp_transport.sendto(
-                    report, (remote_rtcp_host, remote_rtcp_port)
-                )
+                rtcp_transport.sendto(report, (remote_rtcp_host, remote_rtcp_port))
             except (OSError, RuntimeError, ValueError) as err:
                 record_rtcp_send_error("report", err)
                 continue
@@ -1970,9 +1943,7 @@ async def _run_video_session(
             observed_generation = generation
             async with ws_send_lock:
                 await ws.send_json(
-                    _video_negotiation_payload(
-                        session, message_type="media_update"
-                    )
+                    _video_negotiation_payload(session, message_type="media_update")
                 )
 
     jpeg_normalization_required = False
@@ -2005,8 +1976,7 @@ async def _run_video_session(
                 data = bytes(msg.data)
                 if (
                     len(data) <= _VIDEO_HEADER.size
-                    or len(data)
-                    > _MAX_BROWSER_ACCESS_UNIT_BYTES + _VIDEO_HEADER.size
+                    or len(data) > _MAX_BROWSER_ACCESS_UNIT_BYTES + _VIDEO_HEADER.size
                 ):
                     counters["video_drop_error"] += 1
                     continue
@@ -2034,9 +2004,7 @@ async def _run_video_session(
                             # instead; the browser's bounded WebSocket queue
                             # remains the overload gate.
                             try:
-                                await asyncio.wait_for(
-                                    closed.wait(), timeout=due - now
-                                )
+                                await asyncio.wait_for(closed.wait(), timeout=due - now)
                                 return
                             except TimeoutError:
                                 pass
@@ -2054,10 +2022,7 @@ async def _run_video_session(
                         )
 
                     access_unit = data[_VIDEO_HEADER.size :]
-                    if (
-                        send_format.encoding == "JPEG"
-                        and jpeg_normalization_required
-                    ):
+                    if send_format.encoding == "JPEG" and jpeg_normalization_required:
                         access_unit = await jpeg_normalizer.normalize(
                             access_unit,
                             media_current=media_current,
@@ -2148,11 +2113,7 @@ async def _run_video_session(
                         )
             elif msg.type == WSMsgType.TEXT:
                 try:
-                    control = (
-                        json.loads(msg.data)
-                        if len(str(msg.data)) <= 256
-                        else {}
-                    )
+                    control = json.loads(msg.data) if len(str(msg.data)) <= 256 else {}
                 except (TypeError, ValueError):
                     control = {}
                 if control.get("type") == "request_key_frame":
@@ -2383,9 +2344,7 @@ async def _run_video_session(
             rtcp_transport.close()
         caller_cancelled = False
         try:
-            await async_wait_for_cleanup(
-                asyncio.gather(*tasks, return_exceptions=True)
-            )
+            await async_wait_for_cleanup(asyncio.gather(*tasks, return_exceptions=True))
         except asyncio.CancelledError:
             caller_cancelled = True
         try:
@@ -2404,11 +2363,11 @@ async def _run_video_session(
             )
         finally:
             counters["video_rtp_dropped_packets"] = protocol.dropped_packets + int(
-                transcode_protocol.dropped_packets if transcode_protocol is not None else 0
+                transcode_protocol.dropped_packets
+                if transcode_protocol is not None
+                else 0
             )
-            _sync_video_reorder_counters(
-                counters, session, reorder, input_reorder
-            )
+            _sync_video_reorder_counters(counters, session, reorder, input_reorder)
             store_counters(force=True)
             _LOGGER.info(
                 "HA softphone video websocket detached call_id=%s counters=%s",

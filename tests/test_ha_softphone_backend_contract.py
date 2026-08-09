@@ -552,7 +552,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             1,
         )[1].split("elif public_final", 1)[0]
         self.assertIn(
-            "registry.sip_clients.get(client.dialog_ids.call_id) is not client",
+            "registry.sip_client_for(client.dialog_ids.call_id) is not client",
             watcher,
         )
         self.assertIn("registry.upsert(", accepted)

@@ -173,7 +173,7 @@ async def async_answer_browser_call(
         )
         return
 
-    pending = registry.pending_invites
+    pending = dict(registry.artifact_items("pending_invite"))
     endpoint_pending = endpoint_call_ids(registry, pending, endpoint_id)
     if not call_id and len(endpoint_pending) == 1:
         call_id = endpoint_pending[0]
@@ -213,19 +213,15 @@ async def async_answer_browser_call(
     )
 
     local_rtp_port = int((preanswered or {}).get("local_rtp_port") or 0)
-    local_video_rtp_port = int(
-        (preanswered or {}).get("local_video_rtp_port") or 0
-    )
+    local_video_rtp_port = int((preanswered or {}).get("local_video_rtp_port") or 0)
     video_rtp_socket = (preanswered or {}).get("video_rtp_socket")
     video_rtcp_socket = (preanswered or {}).get("video_rtcp_socket")
     video_rtp_source = (preanswered or {}).get("video_rtp_source")
     media_reservation = (preanswered or {}).get("rtp_reservation")
     video_media_reservation = (preanswered or {}).get("video_rtp_reservation")
-    video_failure_reason = str(
-        (preanswered or {}).get("video_failure_reason") or ""
-    )
-    endpoint_video_enabled = (
-        browser_endpoint is None or browser_endpoint.supports("video")
+    video_failure_reason = str((preanswered or {}).get("video_failure_reason") or "")
+    endpoint_video_enabled = browser_endpoint is None or browser_endpoint.supports(
+        "video"
     )
     camera_send_enabled = (
         endpoint_video_enabled
@@ -324,9 +320,7 @@ async def async_answer_browser_call(
             video_direction=video_direction,
         )
 
-    resolved_callee = str(
-        (session.callee if session is not None else "") or local_name
-    )
+    resolved_callee = str((session.callee if session is not None else "") or local_name)
     softphone_media = {
         "invite": invite,
         "local_rtp_port": local_rtp_port,

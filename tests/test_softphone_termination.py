@@ -176,6 +176,12 @@ def test_outbound_hangup_delegates_to_session_cleanup_owner(termination) -> None
         sessions={},
         resolve_session_id=lambda call_id: call_id,
     )
+    registry.sip_client_for = lambda call_id: registry.sip_clients.get(call_id)
+    registry.sip_client_items = lambda: iter(registry.sip_clients.items())
+    registry.artifact_items = lambda _name: iter(registry.pending_invites.items())
+    registry.resource_items = lambda kind: iter(getattr(registry, kind).items())
+    registry.bridge_link_items = lambda: iter(registry.bridge_clients.items())
+    registry.resource_for = lambda call_id, kind: getattr(registry, kind).get(call_id)
     command = SimpleNamespace(
         endpoint_id="kitchen",
         device_id="device-kitchen",
@@ -203,6 +209,7 @@ def test_bridge_termination_delegates_projection_to_session_owner(termination) -
         return_value=SimpleNamespace(
             bridge_for=Mock(return_value=("source-call", "dest-call")),
             sip_clients={"dest-call": object()},
+            sip_client_for=lambda call_id: object() if call_id == "dest-call" else None,
         )
     )
 

@@ -82,7 +82,7 @@ def _call_media_client_id(registry: Any, call_id: str) -> str:
         (session.metadata if session is not None else {}).get("media_client_id")
         or ""
     )
-    media = registry.softphone_media.get(call_id, {})
+    media = registry.resource_for(call_id, "softphone_media") or {}
     return session_id_value or str(media.get("media_client_id") or "")
 
 
@@ -130,7 +130,7 @@ def _set_call_media_client_id(registry: Any, call_id: str, client_id: str) -> No
         session.metadata["media_client_id"] = client_id
         session.revision += 1
     for media_call_id in {call_id, session_id}:
-        media = registry.softphone_media.get(media_call_id)
+        media = registry.resource_for(media_call_id, "softphone_media")
         if isinstance(media, dict):
             media["media_client_id"] = client_id
 

@@ -28,7 +28,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             "route_destination_required",
         )
     registry = call_registry(hass)
-    route = registry.pending_routes.get(call_id)
+    route = registry.artifact_for(call_id, "pending_route")
     if route is None:
         raise _service_error(
             f"no pending SIP route for call_id {call_id}",

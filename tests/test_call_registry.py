@@ -82,9 +82,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         )
 
         self.assertEqual(registry.bridge_for("source"), ("source", "destination"))
-        self.assertEqual(
-            registry.bridge_for("destination"), ("source", "destination")
-        )
+        self.assertEqual(registry.bridge_for("destination"), ("source", "destination"))
 
     def test_close_leg_settles_watcher_and_client_without_ending_source(self) -> None:
         async def exercise() -> None:
@@ -116,7 +114,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
             client.terminate.assert_awaited_once()
             client.close.assert_awaited_once()
             self.assertIn("source", registry.sessions)
-            self.assertNotIn("destination", registry.sip_clients)
+            self.assertNotIn("destination", registry.sip_clients_snapshot())
 
         asyncio.run(exercise())
 
@@ -124,10 +122,24 @@ class CallRegistryEventContextTest(unittest.TestCase):
         async def exercise() -> None:
             registry = _registry()
             registry.upsert("source", state="in_call", owner="bridge")
-            source = types.SimpleNamespace(dialog=object(), on_refer=None, refer=mock.AsyncMock(), terminate=mock.AsyncMock(), close=mock.AsyncMock())
-            destination = types.SimpleNamespace(dialog=object(), on_refer=None, refer=mock.AsyncMock(return_value=types.SimpleNamespace(status=200)), terminate=mock.AsyncMock(), close=mock.AsyncMock())
+            source = types.SimpleNamespace(
+                dialog=object(),
+                on_refer=None,
+                refer=mock.AsyncMock(),
+                terminate=mock.AsyncMock(),
+                close=mock.AsyncMock(),
+            )
+            destination = types.SimpleNamespace(
+                dialog=object(),
+                on_refer=None,
+                refer=mock.AsyncMock(return_value=types.SimpleNamespace(status=200)),
+                terminate=mock.AsyncMock(),
+                close=mock.AsyncMock(),
+            )
             registry.attach_sip_client("source", "source", source, role="caller")
-            registry.attach_sip_client("source", "destination", destination, role="callee")
+            registry.attach_sip_client(
+                "source", "destination", destination, role="callee"
+            )
 
             status = await source.on_refer(object())
 
@@ -285,9 +297,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
                 "source", pbx_runtime.TerminationIntent("terminated")
             )
         )
-        asyncio.run(
-            registry.terminate_call_wait("source", reason="remote_hangup")
-        )
+        asyncio.run(registry.terminate_call_wait("source", reason="remote_hangup"))
         self.assertFalse(
             registry.begin_termination(
                 "destination", pbx_runtime.TerminationIntent("terminated")
@@ -329,8 +339,8 @@ class CallRegistryEventContextTest(unittest.TestCase):
 
         self.assertIsNone(attached)
         self.assertNotIn("source", registry.sessions)
-        self.assertNotIn("source", registry.bridge_clients)
-        self.assertNotIn("late-destination", registry.sip_clients)
+        self.assertNotIn("source", registry.bridge_links_snapshot())
+        self.assertNotIn("late-destination", registry.sip_clients_snapshot())
         self.assertNotIn("late-destination", registry.leg_index)
 
     def test_wrong_generation_rejects_bridge_before_mutating_indexes(self) -> None:
@@ -346,8 +356,8 @@ class CallRegistryEventContextTest(unittest.TestCase):
         )
 
         self.assertIsNone(attached)
-        self.assertEqual(registry.bridge_clients, {})
-        self.assertEqual(registry.sip_clients, {})
+        self.assertEqual(registry.bridge_links_snapshot(), {})
+        self.assertEqual(registry.sip_clients_snapshot(), {})
         self.assertEqual(session.legs, {})
 
     def test_sequence_advances_only_for_canonical_state_changes(self) -> None:
@@ -699,9 +709,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
             )
         )
         generation = session.generation
-        asyncio.run(
-            registry.terminate_call_wait("call-1", reason="remote_hangup")
-        )
+        asyncio.run(registry.terminate_call_wait("call-1", reason="remote_hangup"))
 
         self.assertTrue(registry.is_terminated("call-1", generation=generation))
         self.assertFalse(registry.is_current("call-1", revision=session.revision))
@@ -713,24 +721,23 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry.set_pending_invite("call-1", object())
         registry.set_pending_route("call-1", {"future": object()})
 
-        asyncio.run(
-            registry.terminate_call_wait("call-1", reason="remote_hangup")
-        )
+        asyncio.run(registry.terminate_call_wait("call-1", reason="remote_hangup"))
 
         self.assertNotIn("call-1", registry.event_contexts)
-        self.assertNotIn("call-1", registry.pending_invites)
-        self.assertNotIn("call-1", registry.pending_routes)
+        self.assertIsNone(registry.artifact_for("call-1", "pending_invite"))
+        self.assertIsNone(registry.artifact_for("call-1", "pending_route"))
 
     def test_pending_route_begins_its_authoritative_call_generation(self) -> None:
         registry = _registry()
 
-        registry.set_pending_route("route-first", {"future": object()})
+        route = {"future": object()}
+        registry.set_pending_route("route-first", route)
 
         session = registry.sessions["route-first"]
         assert session.state == "connecting"
         assert session.owner == "router"
         assert registry.get_session("route-first") is not None
-        assert "route-first" in registry.pending_routes
+        assert registry.artifact_for("route-first", "pending_route") is route
 
     def test_endpoint_claims_are_atomic_and_released_by_leg_teardown(self) -> None:
         registry = _registry()
@@ -758,7 +765,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
             endpoints.releases,
             [("caller", "source"), ("callee", "source")],
         )
-        self.assertEqual(registry.endpoint_claims, {})
+        self.assertEqual(registry.endpoint_claims_snapshot(), {})
 
     def test_busy_endpoint_claim_never_records_partial_ownership(self) -> None:
         registry = _registry()
@@ -769,7 +776,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "kitchen is busy"):
             registry.claim_endpoint("new-call", "kitchen")
 
-        self.assertEqual(registry.endpoint_claims, {})
+        self.assertEqual(registry.endpoint_claims_snapshot(), {})
         self.assertEqual(endpoints.active, {"kitchen": "existing"})
 
     def test_clear_runtime_releases_endpoint_claims_before_indexes(self) -> None:
@@ -783,7 +790,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         registry.clear_runtime()
 
         self.assertEqual(endpoints.active, {})
-        self.assertEqual(registry.endpoint_claims, {})
+        self.assertEqual(registry.endpoint_claims_snapshot(), {})
         self.assertEqual(registry.sessions, {})
 
     def test_source_call_can_adopt_provisional_physical_state_token(self) -> None:
@@ -800,9 +807,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         )
 
         self.assertEqual(endpoints.active["kiosk"], "sip-call")
-        asyncio.run(
-            registry.terminate_call_wait("sip-call", reason="remote_hangup")
-        )
+        asyncio.run(registry.terminate_call_wait("sip-call", reason="remote_hangup"))
         self.assertEqual(endpoints.active, {})
 
     def test_controller_identity_is_sticky_and_preserves_first_ha_context(self) -> None:

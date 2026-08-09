@@ -806,7 +806,7 @@ async def async_originate_browser_call(
             "sip_call_start_failed",
             destination=display_target,
         ) from err
-    if registry.sip_clients.get(client.dialog_ids.call_id) is not client:
+    if registry.sip_client_for(client.dialog_ids.call_id) is not client:
         await EndpointTerminationHandler(hass).terminate_reason(
             client.dialog_ids.call_id,
             TerminalReason.LOCAL_HANGUP.value,

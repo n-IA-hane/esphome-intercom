@@ -271,13 +271,13 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             route_kind=route_kind,
             sip_uri=sip_uri,
             sip_status_code=(
-                200 if invite.call_id in registry.preanswered else 180
+                200
+                if registry.resource_for(invite.call_id, "preanswered") is not None
+                else 180
             ),
             last_sip_event=last_sip_event,
             video_offered=video_enabled,
-            video_format=(
-                invite.video_format.wire_token() if video_enabled else ""
-            ),
+            video_format=(invite.video_format.wire_token() if video_enabled else ""),
             video_send_format=(
                 invite.send_video_format.wire_token()
                 if video_enabled and invite.send_video_format is not None
@@ -363,7 +363,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         route_target = invite.routing_target
         target = _ha_peer_name(hass) if _is_ha_target(route_target) else route_target
         return _ha_router_decision(target, entries)
-
 
     async def _async_forward_existing_call(
         *,
@@ -737,9 +736,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         )
 
         async def rollback() -> None:
-            if not registry.is_generation_current(
-                initial.call_id, session.generation
-            ):
+            if not registry.is_generation_current(initial.call_id, session.generation):
                 return
             await EndpointTerminationHandler(hass).terminate_reason(
                 initial.call_id,
@@ -748,9 +745,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             )
 
         async def accept_answer(invite: SipInvite) -> SipInviteResult:
-            if not registry.is_generation_current(
-                initial.call_id, session.generation
-            ):
+            if not registry.is_generation_current(initial.call_id, session.generation):
                 return SipInviteResult(487, "Request Terminated")
             result = await _on_invite(invite)
             if not result.defer_final:

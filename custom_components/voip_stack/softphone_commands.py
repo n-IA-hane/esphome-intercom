@@ -82,9 +82,10 @@ async def async_resolve_browser_call_command(
     await async_require_phone_service_control(hass, call, endpoint=endpoint)
     call_id = str(call.data.get("call_id") or "").strip()
     if not call_id:
-        call_id = single_pending_route_call_id(hass, endpoint_id) or str(
-            _ha_softphone_store(hass, endpoint_id).get("call_id") or ""
-        ).strip()
+        call_id = (
+            single_pending_route_call_id(hass, endpoint_id)
+            or str(_ha_softphone_store(hass, endpoint_id).get("call_id") or "").strip()
+        )
     registry = call_registry(hass)
     if call_id and not call_belongs_to_endpoint(registry, call_id, endpoint_id):
         raise ServiceValidationError(
@@ -172,12 +173,14 @@ async def async_decline_browser_call(
     if forward_task is not None and not forward_task.done():
         forward_task.cancel()
         await asyncio.gather(forward_task, return_exceptions=True)
-    pending = registry.pending_invites
+    pending = dict(registry.artifact_items("pending_invite"))
     endpoint_pending = endpoint_call_ids(registry, pending, endpoint_id)
     if not call_id and len(endpoint_pending) == 1:
         call_id = endpoint_pending[0]
     registry.take_pending_invite(call_id)
-    preanswered_item = registry.take_media(call_id, provisional=True) if call_id else None
+    preanswered_item = (
+        registry.take_media(call_id, provisional=True) if call_id else None
+    )
     if preanswered_item is not None:
         release_media_reservation(preanswered_item)
         final_response_sent = bool(preanswered_item.get("final_response_sent", True))
@@ -206,7 +209,10 @@ async def async_decline_browser_call(
             ),
         )
         return
-    if not call_id or registry.sessions.get(registry.resolve_session_id(call_id)) is None:
+    if (
+        not call_id
+        or registry.sessions.get(registry.resolve_session_id(call_id)) is None
+    ):
         _LOGGER.warning("sip_decline: no pending SIP call %s", call_id or "(current)")
         return
 

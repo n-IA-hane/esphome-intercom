@@ -47,9 +47,7 @@ def forwarding(monkeypatch):
         return candidates[0]
 
     dependencies = {
-        "automation_routing": {
-            "resolve_forward_call_id": resolve_forward_call_id
-        },
+        "automation_routing": {"resolve_forward_call_id": resolve_forward_call_id},
         "call_scope": {
             "call_belongs_to_endpoint": Mock(return_value=True),
             "pending_routes": Mock(),
@@ -88,9 +86,14 @@ def _runtime(*, ring_group: bool = False):
     registry = SimpleNamespace(
         pending_routes={"call-1": route},
         pending_invites={},
-        event_context=Mock(
-            return_value=SimpleNamespace(state="ringing", sequence=4)
-        ),
+        event_context=Mock(return_value=SimpleNamespace(state="ringing", sequence=4)),
+    )
+    registry.artifact_items = lambda name: iter(
+        (
+            registry.pending_routes
+            if name == "pending_route"
+            else registry.pending_invites
+        ).items()
     )
     callback = AsyncMock()
     hass = SimpleNamespace(
@@ -113,9 +116,7 @@ def test_pending_route_is_decided_without_starting_second_forward(
     hass, registry, route, callback = _runtime()
     forwarding.call_registry = Mock(return_value=registry)
     forwarding.pending_routes = Mock(return_value=registry.pending_routes)
-    forwarding.service_browser_endpoint = Mock(
-        return_value=("casa", SimpleNamespace())
-    )
+    forwarding.service_browser_endpoint = Mock(return_value=("casa", SimpleNamespace()))
     forwarding.async_require_phone_service_control = AsyncMock()
     forwarding.set_pending_route_decision = Mock()
     call = _call(hass, destination="Test")
@@ -138,9 +139,7 @@ def test_ring_group_handoff_finishes_before_canonical_forward(
     hass, registry, route, callback = _runtime(ring_group=True)
     forwarding.call_registry = Mock(return_value=registry)
     forwarding.pending_routes = Mock(return_value=registry.pending_routes)
-    forwarding.service_browser_endpoint = Mock(
-        return_value=("casa", SimpleNamespace())
-    )
+    forwarding.service_browser_endpoint = Mock(return_value=("casa", SimpleNamespace()))
     forwarding.async_require_phone_service_control = AsyncMock()
 
     def release_group(_hass, _decision):
@@ -164,18 +163,14 @@ def test_foreign_call_is_rejected_before_route_mutation(forwarding) -> None:
     hass, registry, _route, callback = _runtime()
     forwarding.call_registry = Mock(return_value=registry)
     forwarding.pending_routes = Mock(return_value=registry.pending_routes)
-    forwarding.service_browser_endpoint = Mock(
-        return_value=("test", SimpleNamespace())
-    )
+    forwarding.service_browser_endpoint = Mock(return_value=("test", SimpleNamespace()))
     forwarding.async_require_phone_service_control = AsyncMock()
     forwarding.call_belongs_to_endpoint = Mock(return_value=False)
     forwarding.set_pending_route_decision = Mock()
 
     with pytest.raises(_ServiceValidationError, match="No forwardable SIP call"):
         asyncio.run(
-            forwarding.async_forward_browser_call(
-                _call(hass, destination="WS3")
-            )
+            forwarding.async_forward_browser_call(_call(hass, destination="WS3"))
         )
 
     forwarding.set_pending_route_decision.assert_not_called()

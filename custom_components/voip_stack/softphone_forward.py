@@ -28,12 +28,12 @@ async def async_forward_browser_call(call: ServiceCall) -> None:
     await async_require_phone_service_control(hass, call, endpoint=endpoint)
     owned_routes = {
         call_id: route
-        for call_id, route in registry.pending_routes.items()
+        for call_id, route in registry.artifact_items("pending_route")
         if call_belongs_to_endpoint(registry, call_id, endpoint_id)
     }
     owned_invites = {
         call_id: invite
-        for call_id, invite in registry.pending_invites.items()
+        for call_id, invite in registry.artifact_items("pending_invite")
         if call_belongs_to_endpoint(registry, call_id, endpoint_id)
     }
     try:
@@ -76,9 +76,7 @@ async def async_forward_browser_call(call: ServiceCall) -> None:
                 f"ring-group route for call_id {selected_call_id} "
                 "did not release ownership"
             ) from err
-        previous = call_runtime_artifacts(hass).task_for(
-            selected_call_id, "forward"
-        )
+        previous = call_runtime_artifacts(hass).task_for(selected_call_id, "forward")
         if previous is not None and not previous.done():
             await asyncio.gather(previous, return_exceptions=True)
 

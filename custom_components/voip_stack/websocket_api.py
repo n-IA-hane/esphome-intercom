@@ -35,7 +35,12 @@ from .const import (
     SIP_CALL_ENDED_EVENT,
 )
 from .endpoint_lifecycle import call_registry
-from .fsm import CallState, TerminalReason, sip_phone_state, sip_public_state as _sip_public_state
+from .fsm import (
+    CallState,
+    TerminalReason,
+    sip_phone_state,
+    sip_public_state as _sip_public_state,
+)
 from .phone_endpoint import (
     EndpointAvailability,
     EndpointKind,
@@ -150,7 +155,13 @@ def _canonical_session_fields(
         peer_name = callee if direction == "outgoing" else caller
     if not local_name:
         local_name = caller if direction == "outgoing" else callee
-    role = "caller" if direction == "outgoing" else "callee" if direction == "incoming" else ""
+    role = (
+        "caller"
+        if direction == "outgoing"
+        else "callee"
+        if direction == "incoming"
+        else ""
+    )
     sip_state = _sip_public_state(state)
     return {
         "call_id": call_id or (f"{caller}<->{callee}" if caller and callee else ""),
@@ -221,7 +232,9 @@ def _async_fire_with_context(
         hass.bus.async_fire(event_type, payload, context=context)
 
 
-def _fire_call_event(hass: HomeAssistant, payload: dict[str, Any], scope: str) -> dict[str, Any]:
+def _fire_call_event(
+    hass: HomeAssistant, payload: dict[str, Any], scope: str
+) -> dict[str, Any]:
     event = _json_event_value(payload) or {}
     # Scope identifies the state owner publishing this occurrence. Transport
     # provenance belongs in origin/source and must not replace the owner.
@@ -235,7 +248,9 @@ def _fire_call_event(hass: HomeAssistant, payload: dict[str, Any], scope: str) -
     event["state"] = _sip_public_state(str(event.get("state") or ""))
     event["sip_state"] = event["state"]
     reason = event.get("reason") or event.get("terminal_reason")
-    event["type"] = _call_event_type(event["state"], str(reason) if reason is not None else None)
+    event["type"] = _call_event_type(
+        event["state"], str(reason) if reason is not None else None
+    )
     call_id = str(event.get("call_id") or "").strip()
     registry = call_registry(hass)
     forwardable_state = event["state"] in {
@@ -247,9 +262,13 @@ def _fire_call_event(hass: HomeAssistant, payload: dict[str, Any], scope: str) -
     event["automation_control"] = (
         "routable"
         if forwardable_state
-        and (call_id in registry.pending_invites or call_id in registry.pending_routes)
+        and (
+            registry.artifact_for(call_id, "pending_invite") is not None
+            or registry.artifact_for(call_id, "pending_route") is not None
+        )
         else "ha_anchored"
-        if call_id and (
+        if call_id
+        and (
             registry.event_context(call_id) is not None
             or registry.resolve_session_id(call_id) in registry.sessions
         )
@@ -363,9 +382,7 @@ def _update_browser_presence(
     endpoint = _browser_endpoint(hass, endpoint_id)
     if endpoint is not None:
         availability = (
-            EndpointAvailability.AVAILABLE
-            if current
-            else EndpointAvailability.OFFLINE
+            EndpointAvailability.AVAILABLE if current else EndpointAvailability.OFFLINE
         )
         registry = _endpoint_registry(hass)
         if endpoint.availability is not EndpointAvailability.UNAVAILABLE:
@@ -411,23 +428,25 @@ def _registry_call_is_active(registry: SipEndpointRuntime, call_id: str) -> bool
         return False
     session_id = registry.resolve_session_id(call_id)
     session = registry.sessions.get(session_id)
-    if session is not None and str(session.state or "").strip().lower() not in TERMINAL_STATES:
+    if (
+        session is not None
+        and str(session.state or "").strip().lower() not in TERMINAL_STATES
+    ):
         return True
     # A route or media resource may exist briefly before its canonical session
     # is materialised.  These are live ownership records, unlike a stale HA
     # projection left behind after an interrupted teardown.
-    for resources in (
-        registry.pending_routes,
-        registry.pending_invites,
-        registry.preanswered,
-        registry.softphone_media,
-        registry.sip_clients,
-        registry.client_watchers,
-        registry.relays,
-    ):
-        if call_id in resources or session_id in resources:
-            return True
-    return False
+    return any(
+        value is not None
+        for value in (
+            registry.artifact_for(call_id, "pending_route"),
+            registry.artifact_for(call_id, "pending_invite"),
+            registry.resource_for(call_id, "preanswered"),
+            registry.resource_for(call_id, "softphone_media"),
+            registry.sip_client_for(call_id),
+            registry.resource_for(call_id, "relay"),
+        )
+    )
 
 
 def _release_ha_softphone_claim(
@@ -527,7 +546,7 @@ def _sip_bridge_store(hass: HomeAssistant) -> dict[str, Any]:
 async def _async_shutdown_all(hass: HomeAssistant) -> None:
     """Clear HA softphone volatile state before SIP transports are stopped."""
     registry = call_registry(hass)
-    for route in list(registry.pending_routes.values()):
+    for _call_id, route in registry.artifact_items("pending_route"):
         future = route.get("future") if isinstance(route, dict) else None
         if future is not None and not future.done():
             future.cancel()
@@ -657,9 +676,7 @@ async def _async_load_ha_softphone_store(
         runtime["local_name"] = endpoint.name
 
 
-async def _async_save_ha_softphone_store(
-    hass: HomeAssistant, endpoint_id: str
-) -> None:
+async def _async_save_ha_softphone_store(hass: HomeAssistant, endpoint_id: str) -> None:
     endpoint_id = _endpoint_store_id(endpoint_id)
     runtime = _ha_softphone_store(hass, endpoint_id)
     groups = _ha_softphone_groups(hass, endpoint_id)
@@ -777,16 +794,24 @@ def _sip_runtime_snapshot(
             {
                 "sip_udp_ready": bool(getattr(snap, "udp_ready", False)),
                 "sip_tcp_ready": bool(getattr(snap, "tcp_ready", False)),
-                "pending_transactions": int(getattr(snap, "pending_transactions", getattr(snap, "pending_invites", 0))),
+                "pending_transactions": int(
+                    getattr(
+                        snap,
+                        "pending_transactions",
+                        getattr(snap, "pending_invites", 0),
+                    )
+                ),
                 "active_dialogs": int(getattr(snap, "active_dialogs", 0)),
                 "pending_call_ids": list(getattr(snap, "pending_call_ids", ()) or ()),
                 "active_call_ids": list(getattr(snap, "active_call_ids", ()) or ()),
                 "last_sip_event": str(getattr(snap, "last_sip_event", "") or ""),
-                "last_sip_status_code": int(getattr(snap, "last_sip_status_code", 0) or 0),
+                "last_sip_status_code": int(
+                    getattr(snap, "last_sip_status_code", 0) or 0
+                ),
                 "last_sip_reason": str(getattr(snap, "last_sip_reason", "") or ""),
             }
         )
-    for call_id, relay in dict((registry.relays if registry is not None else {}) or {}).items():
+    for call_id, relay in registry.relays_snapshot().items():
         if detailed:
             snap = getattr(relay, "snapshot", None)
             if not callable(snap):
@@ -805,12 +830,20 @@ def _sip_runtime_snapshot(
                 "right_tx_bytes": getattr(relay, "right_tx_bytes", 0),
                 "dropped_packets": getattr(relay, "dropped", 0),
             }
-        data["rtp_rx_packets"] += int(relay_data.get("left_rx_packets", 0)) + int(relay_data.get("right_rx_packets", 0))
-        data["rtp_rx_bytes"] += int(relay_data.get("left_rx_bytes", 0)) + int(relay_data.get("right_rx_bytes", 0))
-        data["rtp_tx_packets"] += int(relay_data.get("left_tx_packets", 0)) + int(relay_data.get("right_tx_packets", 0))
-        data["rtp_tx_bytes"] += int(relay_data.get("left_tx_bytes", 0)) + int(relay_data.get("right_tx_bytes", 0))
+        data["rtp_rx_packets"] += int(relay_data.get("left_rx_packets", 0)) + int(
+            relay_data.get("right_rx_packets", 0)
+        )
+        data["rtp_rx_bytes"] += int(relay_data.get("left_rx_bytes", 0)) + int(
+            relay_data.get("right_rx_bytes", 0)
+        )
+        data["rtp_tx_packets"] += int(relay_data.get("left_tx_packets", 0)) + int(
+            relay_data.get("right_tx_packets", 0)
+        )
+        data["rtp_tx_bytes"] += int(relay_data.get("left_tx_bytes", 0)) + int(
+            relay_data.get("right_tx_bytes", 0)
+        )
         data["rtp_dropped_packets"] += int(relay_data.get("dropped_packets", 0))
-    for key, client in dict((registry.sip_clients if registry is not None else {}) or {}).items():
+    for key, client in registry.sip_clients_snapshot().items():
         snap = getattr(client, "snapshot", None)
         if not callable(snap):
             continue
@@ -828,9 +861,17 @@ def _sip_runtime_snapshot(
             if call_id and call_id not in data["pending_call_ids"]:
                 data["pending_call_ids"].append(call_id)
         if client_data.get("last_sip_event"):
-            data["last_sip_event"] = str(client_data.get("last_sip_event") or data["last_sip_event"])
-            data["last_sip_status_code"] = int(client_data.get("last_sip_status_code") or data["last_sip_status_code"] or 0)
-            data["last_sip_reason"] = str(client_data.get("last_sip_reason") or data["last_sip_reason"])
+            data["last_sip_event"] = str(
+                client_data.get("last_sip_event") or data["last_sip_event"]
+            )
+            data["last_sip_status_code"] = int(
+                client_data.get("last_sip_status_code")
+                or data["last_sip_status_code"]
+                or 0
+            )
+            data["last_sip_reason"] = str(
+                client_data.get("last_sip_reason") or data["last_sip_reason"]
+            )
     trunk = sip_trunk(hass)
     trunk_snapshot = getattr(trunk, "snapshot", None)
     if callable(trunk_snapshot):
@@ -842,21 +883,24 @@ def _sip_runtime_snapshot(
                 trunk_data.get("trunk_last_sip_event") or data["last_sip_event"]
             )
         if trunk_data.get("trunk_status_code"):
-            data["last_sip_status_code"] = int(
-                trunk_data.get("trunk_status_code") or 0
-            )
-            data["last_sip_reason"] = str(
-                trunk_data.get("trunk_status_reason") or ""
-            )
+            data["last_sip_status_code"] = int(trunk_data.get("trunk_status_code") or 0)
+            data["last_sip_reason"] = str(trunk_data.get("trunk_status_reason") or "")
     registrar = sip_registrar(hass)
     registrar_snapshot = getattr(registrar, "snapshot", None)
     if detailed and callable(registrar_snapshot):
         data["sip_registrar"] = dict(registrar_snapshot())
         if data["sip_registrar"].get("registrar_last_sip_event"):
-            data["last_sip_event"] = str(data["sip_registrar"].get("registrar_last_sip_event") or data["last_sip_event"])
+            data["last_sip_event"] = str(
+                data["sip_registrar"].get("registrar_last_sip_event")
+                or data["last_sip_event"]
+            )
         if data["sip_registrar"].get("registrar_last_sip_status_code"):
-            data["last_sip_status_code"] = int(data["sip_registrar"].get("registrar_last_sip_status_code") or 0)
-            data["last_sip_reason"] = str(data["sip_registrar"].get("registrar_last_sip_reason") or "")
+            data["last_sip_status_code"] = int(
+                data["sip_registrar"].get("registrar_last_sip_status_code") or 0
+            )
+            data["last_sip_reason"] = str(
+                data["sip_registrar"].get("registrar_last_sip_reason") or ""
+            )
     elif registrar is not None:
         if getattr(registrar, "last_sip_event", ""):
             data["last_sip_event"] = str(registrar.last_sip_event)
@@ -900,18 +944,24 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         CallState.IN_CALL.value,
         CallState.TERMINATING.value,
     }
-    last_status = store.get("sip_status_code", "") or runtime["last_sip_status_code"] or ""
+    last_status = (
+        store.get("sip_status_code", "") or runtime["last_sip_status_code"] or ""
+    )
     last_event = store.get("last_sip_event", "") or runtime["last_sip_event"]
     caller = store.get("caller", "") or store.get("last_terminal_caller", "")
     callee = store.get("callee", "") or store.get("last_terminal_callee", "")
-    connected_party = str(store.get("connected_party", "") or store.get("answered_by", ""))
+    connected_party = str(
+        store.get("connected_party", "") or store.get("answered_by", "")
+    )
     peer_name = store.get("peer_name", "") or store.get("last_terminal_peer_name", "")
     direction = store.get("direction", "") or store.get("last_terminal_direction", "")
     if direction == "incoming" and caller:
         peer_name = caller
     elif store.get("state") == CallState.IN_CALL.value and connected_party:
         peer_name = connected_party
-    dialed_target = store.get("dialed_target", "") or store.get("last_terminal_dialed_target", "")
+    dialed_target = store.get("dialed_target", "") or store.get(
+        "last_terminal_dialed_target", ""
+    )
     call_id = store.get("call_id", "") or store.get("last_terminal_call_id", "")
     registry = call_registry(hass)
     media_debug = dict(store.get("media_debug") or {}) if debug_mode else {}
@@ -1061,7 +1111,8 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         "sip_status_code": last_status,
         "terminal_reason": store.get("terminal_reason", ""),
         "last_sip_event": last_event,
-        "last_sip_reason": store.get("last_sip_reason", "") or runtime["last_sip_reason"],
+        "last_sip_reason": store.get("last_sip_reason", "")
+        or runtime["last_sip_reason"],
         "sip_udp_ready": runtime["sip_udp_ready"],
         "sip_tcp_ready": runtime["sip_tcp_ready"],
         "pending_transactions": runtime["pending_transactions"],
@@ -1096,18 +1147,12 @@ def _publish_ha_softphone_state(
     endpoint_id: str,
 ) -> None:
     """Publish one complete authoritative HA softphone snapshot."""
-    endpoint_id = _endpoint_store_id(
-        (state or {}).get("endpoint_id") or endpoint_id
-    )
+    endpoint_id = _endpoint_store_id((state or {}).get("endpoint_id") or endpoint_id)
     payload = (
-        dict(state)
-        if state is not None
-        else _ha_softphone_state(hass, endpoint_id)
+        dict(state) if state is not None else _ha_softphone_state(hass, endpoint_id)
     )
     payload["endpoint_id"] = endpoint_id
-    call_id = str(
-        payload.get("call_id") or payload.get("last_terminal_call_id") or ""
-    )
+    call_id = str(payload.get("call_id") or payload.get("last_terminal_call_id") or "")
     context = call_registry(hass).ha_context(call_id)
     _async_fire_with_context(
         hass,
@@ -1166,7 +1211,10 @@ def _set_ha_softphone_call_state(
         )
         return
     if state == CallState.IN_CALL.value:
-        if next_call_id != previous_call_id or previous_state != CallState.IN_CALL.value:
+        if (
+            next_call_id != previous_call_id
+            or previous_state != CallState.IN_CALL.value
+        ):
             extra.setdefault("connected_at", time.time())
         elif store.get("connected_at"):
             extra.setdefault("connected_at", store["connected_at"])
@@ -1222,7 +1270,10 @@ def _set_ha_softphone_call_state(
         )
         registry.release_endpoint_claims(previous_call_id)
         endpoint_registry = _endpoint_registry(hass)
-        if endpoint_registry is not None and endpoint_registry.get(endpoint_id) is not None:
+        if (
+            endpoint_registry is not None
+            and endpoint_registry.get(endpoint_id) is not None
+        ):
             endpoint_registry.release_call(endpoint_id, previous_call_id)
     _endpoint_call_claim(
         hass,
@@ -1231,8 +1282,14 @@ def _set_ha_softphone_call_state(
         terminal=terminal,
     )
     if terminal:
-        store["terminal_reason"] = extra.get("reason") or extra.get("terminal_reason") or state
-        store["sip_status_code"] = extra.get("code") or extra.get("sip_status_code") or store.get("sip_status_code", "")
+        store["terminal_reason"] = (
+            extra.get("reason") or extra.get("terminal_reason") or state
+        )
+        store["sip_status_code"] = (
+            extra.get("code")
+            or extra.get("sip_status_code")
+            or store.get("sip_status_code", "")
+        )
         store["last_terminal_call_id"] = canonical.get("call_id", "")
         store["last_terminal_direction"] = canonical.get("direction", "")
         store["last_terminal_caller"] = canonical.get("caller", "")
@@ -1521,11 +1578,7 @@ def _endpoint_id_from_selector(
             values = raw
         else:
             values = (raw,)
-        return tuple(
-            text
-            for value in values
-            if (text := str(value or "").strip())
-        )
+        return tuple(text for value in values if (text := str(value or "").strip()))
 
     explicit = str(endpoint_id or "").strip()
     registry = _endpoint_registry(hass)
@@ -1546,7 +1599,9 @@ def _endpoint_id_from_selector(
         except (AttributeError, ImportError):
             entity_entry = None
         device = str(getattr(entity_entry, "device_id", "") or "")
-        return registry.by_device_id(device) if registry is not None and device else None
+        return (
+            registry.by_device_id(device) if registry is not None and device else None
+        )
 
     for device in _values(device_id):
         endpoint = registry.by_device_id(device) if registry is not None else None
@@ -1653,7 +1708,9 @@ def websocket_subscribe_call_events(
                 return
         connection.send_event(msg_id, {"event_type": CALL_EVENT, "data": event.data})
 
-    connection.subscriptions[msg_id] = hass.bus.async_listen(CALL_EVENT, forward_call_event)
+    connection.subscriptions[msg_id] = hass.bus.async_listen(
+        CALL_EVENT, forward_call_event
+    )
     connection.send_result(msg_id)
 
 
@@ -1698,9 +1755,7 @@ def websocket_subscribe_ha_softphone_state(
             return
         connection.send_event(msg_id, event.data)
 
-    unsubscribe_state = hass.bus.async_listen(
-        HA_SOFTPHONE_STATE_EVENT, forward_state
-    )
+    unsubscribe_state = hass.bus.async_listen(HA_SOFTPHONE_STATE_EVENT, forward_state)
     if publishes_presence:
         _update_browser_presence(hass, requested_endpoint, 1)
     released = False
@@ -1765,9 +1820,7 @@ async def websocket_ha_softphone_state(
             endpoint_id,
             str(getattr(connection.user, "id", "") or ""),
         )
-        state["media_owner"] = (
-            "other" if controller_status == "other" else owner_status
-        )
+        state["media_owner"] = "other" if controller_status == "other" else owner_status
     connection.send_result(msg["id"], state)
 
 

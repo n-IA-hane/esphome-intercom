@@ -42,7 +42,7 @@ from .media_call_lifetime import (
 from .queue_utils import drain_queue, put_drop_oldest
 from .runtime_data import conference_component, registration_data, require_runtime_data
 from .session_cleanup import async_wait_for_cleanup
-from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder, SipCallClient
+from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder
 from .media_ws_session import (
     async_claimed_media_websocket,
     async_prepare_media_websocket_request,
@@ -407,7 +407,7 @@ def _active_softphone_media_session(
         return None
     call_id = active.call_id
     registry = active.registry
-    inbound = registry.softphone_media
+    item = registry.resource_for(call_id, "softphone_media") if call_id else None
 
     def _dtmf_callback(side: str) -> Callable[[str], None]:
         def _emit(digit: str) -> None:
@@ -429,8 +429,7 @@ def _active_softphone_media_session(
 
         return _emit
 
-    if call_id and call_id in inbound:
-        item = inbound[call_id]
+    if item is not None:
         if item.get("rtp_loopback"):
             rtp_source = item.get("audio_rtp_source")
             if not isinstance(rtp_source, rtp.AudioRtpSenderState):
@@ -496,9 +495,8 @@ def _active_softphone_media_session(
                 rtp_source=rtp_source,
             )
 
-    clients: dict[str, SipCallClient] = registry.sip_clients
-    if call_id and call_id in clients:
-        client = clients[call_id]
+    client = registry.sip_client_for(call_id) if call_id else None
+    if client is not None:
         if client.dialog is not None:
             dialog = client.dialog
             rtp_source = getattr(client, "audio_rtp_source", None)

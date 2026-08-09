@@ -324,7 +324,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(manager.rooms)
         self.assertFalse(manager.ha_calls)
         self.assertFalse(registry.sessions)
-        self.assertFalse(registry.endpoint_claims)
+        self.assertFalse(registry.endpoint_claims_snapshot())
         self.assertFalse(endpoints.require("kitchen").active_call_id)
         self.assertFalse(endpoints.require("hall").active_call_id)
 
@@ -360,7 +360,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         await _wait_call_cleanup(registry)
         self.assertFalse(manager.ha_calls)
         self.assertFalse(registry.sessions)
-        self.assertFalse(registry.endpoint_claims)
+        self.assertFalse(registry.endpoint_claims_snapshot())
         self.assertFalse(room._ha_softphone_announced)
         self.assertFalse(endpoints.require("kitchen").active_call_id)
         self.assertFalse(endpoints.require("hall").active_call_id)
@@ -392,7 +392,7 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(manager.rooms)
         self.assertFalse(manager.ha_calls)
         self.assertFalse(registry.sessions)
-        self.assertFalse(registry.endpoint_claims)
+        self.assertFalse(registry.endpoint_claims_snapshot())
         self.assertFalse(endpoints.require("kitchen").active_call_id)
 
     async def test_media_timeout_respects_direction_hold_and_ha_listener(self) -> None:
@@ -810,8 +810,8 @@ class ConferenceRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("release_preanswered", calls)
         self.assertEqual(calls[-1], "endpoint_stop")
         self.assertFalse(registry.sessions)
-        self.assertFalse(registry.relays)
-        self.assertFalse(registry.sip_clients)
+        self.assertFalse(registry.relays_snapshot())
+        self.assertFalse(registry.sip_clients_snapshot())
 
     async def test_endpoint_shutdown_mapping_survives_until_cancel_safe_stop(self) -> None:
         hass = _FakeHass()

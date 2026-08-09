@@ -212,12 +212,10 @@ async def route_invite(
         else ""
     ).strip()
     source_endpoint = (
-        endpoint_registry.get(source_endpoint_id)
-        if source_endpoint_id
-        else None
+        endpoint_registry.get(source_endpoint_id) if source_endpoint_id else None
     )
     route_bucket = _pending_routes(hass)
-    pending = registry.pending_invites
+    pending = dict(registry.artifact_items("pending_invite"))
     if invite.call_id in route_bucket:
         _LOGGER.debug(
             "SIP INVITE retransmit while route is pending call_id=%s",
@@ -398,9 +396,7 @@ async def route_invite(
         getattr(trunk, "registered", False)
     )
     bridge_to_trunk = bool(
-        not force_ha_softphone
-        and decision.action is RouteAction.TRUNK
-        and trunk_ready
+        not force_ha_softphone and decision.action is RouteAction.TRUNK and trunk_ready
     )
     if invalid_target := validate_target_endpoint(
         invite=invite,

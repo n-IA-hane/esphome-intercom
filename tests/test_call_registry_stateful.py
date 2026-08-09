@@ -62,10 +62,10 @@ def _assert_indexes_are_consistent(registry) -> None:
     assert counts["legs"] == sum(
         len(session.legs) for session in registry.sessions.values()
     )
-    assert counts["sip_clients"] == len(registry.sip_clients)
-    assert counts["client_watchers"] == len(registry.client_watchers)
-    assert counts["relays"] == len(registry.relays)
-    assert counts["bridges"] == len(registry.bridge_clients)
+    assert counts["sip_clients"] == len(registry.sip_clients_snapshot())
+    assert counts["client_watchers"] == len(registry.client_watchers_snapshot())
+    assert counts["relays"] == len(registry.relays_snapshot())
+    assert counts["bridges"] == len(registry.bridge_links_snapshot())
 
 
 @given(operations)

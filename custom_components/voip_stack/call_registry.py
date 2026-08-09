@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Literal
+from typing import Any, Iterator, Literal
 
 from .endpoint_session import (
     CallEventContext,
@@ -56,12 +56,71 @@ class CallRuntimeApi:
         accepted, phase = self._resolve_observation(session, state)
         return accepted and session.apply_observation(state, phase)
 
-    def _artifact_view(self, name: str) -> dict[str, Any]:
-        return {
-            call_id: value
-            for call_id, session in self.calls.items()
+    def artifact_for(self, call_id: str, name: str) -> Any | None:
+        session = self.get_session(self.resolve_session_id(call_id))
+        return getattr(session.artifacts, name) if session is not None else None
+
+    def artifact_items(self, name: str) -> Iterator[tuple[str, Any]]:
+        return (
+            (call_id, value)
+            for call_id, session in self.sessions.items()
             if (value := getattr(session.artifacts, name)) not in (None, False)
-        }
+        )
+
+    def resource_for(self, call_id: str, kind: str) -> Any | None:
+        session = self.get_session(self.resolve_session_id(call_id))
+        if session is None:
+            return None
+        name = f"{kind}:{call_id}"
+        return next((r.value for r in session.resources if r.name == name), None)
+
+    def resource_items(self, kind: str) -> Iterator[tuple[str, Any]]:
+        marker = f"{kind}:"
+        return (
+            (resource.name.removeprefix(marker), resource.value)
+            for session in self.sessions.values()
+            for resource in session.resources
+            if resource.name.startswith(marker)
+        )
+
+    def sip_client_for(self, call_id: str) -> Any | None:
+        session = self.get_session(self.resolve_session_id(call_id))
+        if session is None:
+            return None
+        leg = session.legs.get(call_id)
+        if leg is not None:
+            return leg.dialog
+        return next(
+            (leg.dialog for leg in session.legs.values() if leg.sip_call_id == call_id),
+            None,
+        )
+
+    def sip_client_items(self) -> Iterator[tuple[str, Any]]:
+        return (
+            (leg.sip_call_id or leg.leg_id, leg.dialog)
+            for session in self.sessions.values()
+            for leg in session.legs.values()
+            if leg.dialog is not None
+        )
+
+    def bridge_link_for(self, call_id: str) -> str:
+        session = self.get_session(call_id)
+        return (
+            str(session.metadata.get("bridge_dest_call_id") or "")
+            if session is not None
+            else ""
+        )
+
+    def bridge_link_items(self) -> Iterator[tuple[str, str]]:
+        return (
+            (call_id, dest_call_id)
+            for call_id in self.sessions
+            if (dest_call_id := self.bridge_link_for(call_id))
+        )
+
+    def endpoint_claims_for(self, call_id: str) -> dict[str, str]:
+        session = self.get_session(self.resolve_session_id(call_id))
+        return session.endpoint_claims if session is not None else {}
 
     def _set_artifact(self, call_id: str, name: str, value: Any) -> None:
         session = self.get_session(call_id)
@@ -76,39 +135,6 @@ class CallRuntimeApi:
         value = getattr(session.artifacts, name)
         setattr(session.artifacts, name, False if isinstance(value, bool) else None)
         return value
-
-    def _resource_view(self, name: str) -> dict[str, Any]:
-        return self.resources_snapshot(name)
-
-    @property
-    def relays(self) -> dict[str, Any]:
-        return self.relays_snapshot()
-
-    @property
-    def sip_clients(self) -> dict[str, Any]:
-        return self.sip_clients_snapshot()
-
-    @property
-    def client_watchers(self) -> dict[str, Any]:
-        return self.client_watchers_snapshot()
-
-    @property
-    def bridge_clients(self) -> dict[str, str]:
-        """Return a detached projection of bridge links."""
-
-        return self.bridge_links_snapshot()
-
-    @property
-    def pending_invites(self) -> dict[str, Any]:
-        return self._artifact_view("pending_invite")
-
-    @property
-    def pending_routes(self) -> dict[str, dict[str, Any]]:
-        return self._artifact_view("pending_route")
-
-    @property
-    def video_parameter_sets(self) -> dict[str, tuple[bytes, ...]]:
-        return self._artifact_view("video_parameter_sets")
 
     def cache_video_parameter_sets(
         self, call_id: str, parameter_sets: tuple[bytes, ...]
@@ -135,14 +161,6 @@ class CallRuntimeApi:
 
         return self._take_artifact(call_id, "pending_route")
 
-    @property
-    def preanswered(self) -> dict[str, dict[str, Any]]:
-        return self._resource_view("preanswered")
-
-    @property
-    def softphone_media(self) -> dict[str, dict[str, Any]]:
-        return self._resource_view("softphone_media")
-
     def set_pending_invite(self, call_id: str, invite: Any) -> None:
         """Attach an INVITE to the sole current call owner."""
 
@@ -152,10 +170,6 @@ class CallRuntimeApi:
         """Take an INVITE without mutating a detached compatibility view."""
 
         return self._take_artifact(call_id, "pending_invite")
-
-    @property
-    def endpoint_claims(self) -> dict[str, dict[str, str]]:
-        return self.endpoint_claims_snapshot()
 
     def _retire_observation(self, session: EndpointCallSession) -> None:
         """Drop derived indexes after authoritative cleanup completes."""
@@ -256,13 +270,14 @@ class CallRuntimeApi:
         """
         if registry is self.endpoint_registry:
             return
-        if self.endpoint_claims:
+        if any(session.endpoint_claims for session in self.sessions.values()):
             self._release_all_endpoint_claims()
         self._bind_endpoint_registry(registry)
 
     def _release_all_endpoint_claims(self) -> None:
-        for session_id in tuple(self.endpoint_claims):
-            self.release_endpoint_claims(session_id)
+        for session in tuple(self.sessions.values()):
+            if session.endpoint_claims:
+                self.release_endpoint_claims(session.call_id)
 
     def event_fields(self, call_id: str, state: str) -> dict[str, Any]:
         """Return stable automation fields, advancing only on a state change."""
@@ -360,7 +375,7 @@ class CallRuntimeApi:
             )
             if (value := session.metadata.get(key)) not in (None, "")
         }
-        participant_endpoint_ids.update(self.endpoint_claims.get(call_id, {}))
+        participant_endpoint_ids.update(session.endpoint_claims)
         participant_endpoint_ids.discard("")
         if participant_endpoint_ids:
             fields["participant_endpoint_ids"] = sorted(participant_endpoint_ids)
@@ -725,8 +740,9 @@ class CallRuntimeApi:
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)
         prefix = "preanswered" if provisional else "softphone_media"
-        index = self._resource_view(prefix)
-        media = index.get(call_id, default)
+        media = self.resource_for(call_id, prefix)
+        if media is None:
+            media = default
         if media is default or session is None:
             return media
         self.release_resource(
@@ -746,9 +762,9 @@ class CallRuntimeApi:
     ) -> bool:
         """Update an owned media record without mutating a detached view."""
 
-        media = self._resource_view(
-            "preanswered" if provisional else "softphone_media"
-        ).get(call_id)
+        media = self.resource_for(
+            call_id, "preanswered" if provisional else "softphone_media"
+        )
         if not isinstance(media, dict):
             return False
         media.update(values)
@@ -847,15 +863,11 @@ class CallRuntimeApi:
         return session
 
     def bridge_for(self, call_id: str) -> tuple[str, str]:
-        source_call_id = call_id if call_id in self.bridge_clients else ""
-        dest_call_id = (
-            self.bridge_clients.get(source_call_id, "") if source_call_id else ""
-        )
-        if source_call_id:
-            return source_call_id, dest_call_id
-        for source, dest in self.bridge_clients.items():
-            if dest == call_id:
-                return source, dest
+        if dest_call_id := self.bridge_link_for(call_id):
+            return call_id, dest_call_id
+        for source, session in self.sessions.items():
+            if self.bridge_link_for(source) == call_id:
+                return source, call_id
         return "", ""
 
     async def terminate_call_wait(
@@ -984,20 +996,24 @@ class CallRuntimeApi:
         return count
 
     def snapshot(self) -> dict[str, Any]:
+        pending_routes = dict(self.artifact_items("pending_route"))
+        pending_invites = dict(self.artifact_items("pending_invite"))
+        preanswered = self.resources_snapshot("preanswered")
+        media = self.resources_snapshot("softphone_media")
+        bridges = self.bridge_links_snapshot()
+        claims = self.endpoint_claims_snapshot()
         resource_counts = {
             "sessions": len(self.sessions),
             "legs": sum(len(session.legs) for session in self.sessions.values()),
-            "pending_routes": len(self.pending_routes),
-            "pending_invites": len(self.pending_invites),
-            "preanswered": len(self.preanswered),
-            "softphone_media": len(self.softphone_media),
-            "sip_clients": len(self.sip_clients),
-            "client_watchers": len(self.client_watchers),
-            "relays": len(self.relays),
-            "bridges": len(self.bridge_clients),
-            "endpoint_claims": sum(
-                len(claims) for claims in self.endpoint_claims.values()
-            ),
+            "pending_routes": len(pending_routes),
+            "pending_invites": len(pending_invites),
+            "preanswered": len(preanswered),
+            "softphone_media": len(media),
+            "sip_clients": len(self.sip_clients_snapshot()),
+            "client_watchers": len(self.client_watchers_snapshot()),
+            "relays": len(self.relays_snapshot()),
+            "bridges": len(bridges),
+            "endpoint_claims": sum(len(item) for item in claims.values()),
         }
         return {
             "sessions": len(self.sessions),
@@ -1005,11 +1021,10 @@ class CallRuntimeApi:
             "terminated_calls": len(self.terminated_call_ids),
             "resource_counts": resource_counts,
             "call_ids": sorted(self.sessions),
-            "pending_call_ids": sorted(self.pending_invites),
-            "media_call_ids": sorted(self.softphone_media),
-            "bridge_call_ids": sorted(self.bridge_clients),
+            "pending_call_ids": sorted(pending_invites),
+            "media_call_ids": sorted(media),
+            "bridge_call_ids": sorted(bridges),
             "endpoint_claims": {
-                call_id: dict(claims)
-                for call_id, claims in sorted(self.endpoint_claims.items())
+                call_id: dict(item) for call_id, item in sorted(claims.items())
             },
         }

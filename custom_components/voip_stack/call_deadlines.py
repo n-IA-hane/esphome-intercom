@@ -55,10 +55,10 @@ async def async_set_call_deadline(hass: HomeAssistant, data: dict) -> None:
     session = registry.sessions.get(registry.resolve_session_id(call_id))
     owned = bool(
         (session is not None and session.state not in TERMINAL_STATES)
-        or call_id in registry.pending_invites
-        or call_id in registry.preanswered
-        or call_id in registry.bridge_clients
-        or call_id in registry.softphone_media
+        or registry.artifact_for(call_id, "pending_invite") is not None
+        or registry.resource_for(call_id, "preanswered") is not None
+        or registry.bridge_link_for(call_id)
+        or registry.resource_for(call_id, "softphone_media") is not None
     )
     if not owned:
         raise _service_error(

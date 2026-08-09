@@ -49,6 +49,15 @@ class _Registry:
     def event_context(self, call_id: str) -> _Context | None:
         return self.context if call_id == "call-1" else None
 
+    def artifact_for(self, call_id: str, name: str):
+        return getattr(self, f"{name}s").get(call_id)
+
+    def resource_for(self, call_id: str, kind: str):
+        return getattr(self, kind).get(call_id)
+
+    def bridge_link_for(self, call_id: str) -> str:
+        return self.bridge_clients.get(call_id, "")
+
 
 class _Artifacts:
     def __init__(self) -> None:
@@ -98,16 +107,17 @@ def _load_deadlines(registry: _Registry, events: list[tuple[dict, str]], artifac
     )
     endpoint_lifecycle = types.ModuleType(f"{PKG_NAME}.endpoint_lifecycle")
     endpoint_lifecycle.call_registry = lambda _hass: registry
-    endpoint_lifecycle.create_runtime_task = (
-        lambda _hass, coroutine: asyncio.create_task(coroutine)
+    endpoint_lifecycle.create_runtime_task = lambda _hass, coroutine: (
+        asyncio.create_task(coroutine)
     )
     websocket_api = types.ModuleType(f"{PKG_NAME}.websocket_api")
-    websocket_api._fire_call_event = (
-        lambda _hass, payload, source: events.append((payload, source))
+    websocket_api._fire_call_event = lambda _hass, payload, source: events.append(
+        (payload, source)
     )
     runtime_data = types.ModuleType(f"{PKG_NAME}.runtime_data")
     runtime_data.call_runtime_artifacts = lambda _hass: artifacts
     service_errors = types.ModuleType(f"{PKG_NAME}.service_errors")
+
     def _service_error(message, key, **placeholders):
         translated = {name: str(value) for name, value in placeholders.items()}
         return ServiceValidationError(

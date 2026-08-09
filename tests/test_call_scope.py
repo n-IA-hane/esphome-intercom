@@ -83,6 +83,9 @@ class _Registry:
     def resolve_session_id(self, call_id: str) -> str:
         return self.aliases.get(call_id, call_id)
 
+    def artifact_items(self, _name: str):
+        return iter(self.pending_routes.items())
+
 
 class CallScopeTest(unittest.TestCase):
     def setUp(self) -> None:

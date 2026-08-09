@@ -96,6 +96,12 @@ class _Registry:
     def resolve_session_id(call_id: str) -> str:
         return call_id
 
+    def sip_client_for(self, call_id: str):
+        return self.sip_clients.get(call_id)
+
+    def sip_client_items(self):
+        return iter(self.sip_clients.items())
+
     def terminate_call(self, call_id: str, **kwargs) -> None:
         self.calls.append(("finish", call_id, kwargs))
         self.sessions.pop(call_id, None)
@@ -206,9 +212,7 @@ def _load_outbound_lifecycle(
                     {
                         "terminal_reason": intent.reason,
                         "origin": (
-                            "remote"
-                            if intent.initiator == "remote_peer"
-                            else "self"
+                            "remote" if intent.initiator == "remote_peer" else "self"
                         ),
                     },
                 )
@@ -240,11 +244,11 @@ def _load_outbound_lifecycle(
     runtime_data = types.ModuleType(f"{PKG_NAME}.runtime_data")
     runtime_data.call_runtime_artifacts = lambda hass: hass.artifacts
     websocket_api = types.ModuleType(f"{PKG_NAME}.websocket_api")
-    websocket_api._ha_softphone_store = (
-        lambda _hass, endpoint_id: stores.setdefault(endpoint_id, {})
+    websocket_api._ha_softphone_store = lambda _hass, endpoint_id: stores.setdefault(
+        endpoint_id, {}
     )
-    websocket_api._set_ha_softphone_call_state = (
-        lambda _hass, state, **kwargs: states.append((state, kwargs))
+    websocket_api._set_ha_softphone_call_state = lambda _hass, state, **kwargs: (
+        states.append((state, kwargs))
     )
 
     module_name = f"{PKG_NAME}._test_outbound_lifecycle_runtime"
@@ -330,8 +334,7 @@ class OutboundLifecycleRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ended["origin"], "remote")
         self.assertTrue(
             any(
-                item[0] == "finish"
-                and item[2]["intent"].reason == "remote_hangup"
+                item[0] == "finish" and item[2]["intent"].reason == "remote_hangup"
                 for item in self.registry.calls
             )
         )
@@ -386,9 +389,7 @@ class OutboundLifecycleRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 "call-selected": types.SimpleNamespace(
                     metadata={"endpoint_id": "default"}
                 ),
-                "call-other": types.SimpleNamespace(
-                    metadata={"endpoint_id": "office"}
-                ),
+                "call-other": types.SimpleNamespace(metadata={"endpoint_id": "office"}),
             }
         )
 

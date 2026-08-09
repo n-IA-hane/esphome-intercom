@@ -71,8 +71,8 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 state="connecting",
             )
 
-        self.assertEqual(registry.bridge_clients, {})
-        self.assertEqual(registry.sip_clients, {})
+        self.assertEqual(registry.bridge_links_snapshot(), {})
+        self.assertEqual(registry.sip_clients_snapshot(), {})
         self.assertNotIn("destination", registry.leg_index)
         await registry.terminate_call_wait("source", reason="cancelled")
         await runtime.shutdown()
@@ -396,25 +396,27 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         registry.attach_media("source", media)
         authoritative = runtime.get_session("source")
 
-        self.assertIs(registry.sip_clients["destination"], client)
-        self.assertEqual(registry.bridge_clients, {"source": "destination"})
-        self.assertIs(registry.pending_invites["source"], invite)
+        self.assertIs(registry.sip_client_for("destination"), client)
+        self.assertEqual(registry.bridge_links_snapshot(), {"source": "destination"})
+        self.assertIs(registry.artifact_for("source", "pending_invite"), invite)
         self.assertIs(authoritative.artifacts.pending_invite, invite)
-        self.assertIs(registry.pending_routes["source"], route)
+        self.assertIs(registry.artifact_for("source", "pending_route"), route)
         self.assertIs(authoritative.artifacts.pending_route, route)
-        self.assertEqual(registry.video_parameter_sets["source"], parameter_sets)
+        self.assertEqual(
+            registry.artifact_for("source", "video_parameter_sets"), parameter_sets
+        )
         self.assertEqual(authoritative.artifacts.video_parameter_sets, parameter_sets)
         self.assertEqual(
             authoritative.metadata["bridge_dest_call_id"],
             "destination",
         )
-        self.assertIs(registry.client_watchers["destination"], watcher)
+        self.assertIs(registry.client_watchers_snapshot()["destination"], watcher)
         self.assertIs(
             authoritative.named_tasks["client_watcher:destination"],
             watcher,
         )
-        self.assertIs(registry.relays["source"], relay)
-        self.assertIs(registry.softphone_media["source"], media)
+        self.assertIs(registry.resource_for("source", "relay"), relay)
+        self.assertIs(registry.resource_for("source", "softphone_media"), media)
         self.assertEqual(
             [resource.name for resource in authoritative.resources],
             ["relay:source", "softphone_media:source"],
@@ -426,15 +428,15 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(watcher.cancelled())
         self.assertEqual(events, ["relay-stop", "client-terminate", "client-close"])
-        self.assertEqual(registry.relays, {})
-        self.assertEqual(registry.softphone_media, {})
-        self.assertEqual(registry.sip_clients, {})
-        self.assertEqual(registry.client_watchers, {})
-        self.assertEqual(registry.bridge_clients, {})
-        self.assertEqual(registry.pending_invites, {})
-        self.assertEqual(registry.pending_routes, {})
+        self.assertEqual(registry.relays_snapshot(), {})
+        self.assertEqual(registry.resources_snapshot("softphone_media"), {})
+        self.assertEqual(registry.sip_clients_snapshot(), {})
+        self.assertEqual(registry.client_watchers_snapshot(), {})
+        self.assertEqual(registry.bridge_links_snapshot(), {})
+        self.assertIsNone(registry.artifact_for("source", "pending_invite"))
+        self.assertIsNone(registry.artifact_for("source", "pending_route"))
         self.assertTrue(route_future.cancelled())
-        self.assertEqual(registry.video_parameter_sets, {})
+        self.assertIsNone(registry.artifact_for("source", "video_parameter_sets"))
 
     async def test_authoritative_session_owns_endpoint_claims_and_cleanup(self) -> None:
         class Endpoints:
@@ -470,14 +472,15 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             {"caller": "source", "callee": "destination"},
         )
         self.assertEqual(
-            registry.endpoint_claims, {"call-1": authoritative.endpoint_claims}
+            registry.endpoint_claims_snapshot(),
+            {"call-1": authoritative.endpoint_claims},
         )
 
         await registry.terminate_call_wait("call-1", reason="remote_hangup")
         await authoritative.terminated.wait()
 
         self.assertEqual(endpoints.active, {})
-        self.assertEqual(registry.endpoint_claims, {})
+        self.assertEqual(registry.endpoint_claims_snapshot(), {})
 
     async def test_watcher_that_ends_call_is_not_cancelled_by_own_cleanup(self) -> None:
         registry, runtime = _registry_runtime()

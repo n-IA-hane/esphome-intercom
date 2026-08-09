@@ -345,7 +345,8 @@ async def _handle_select_inbound_destination_service(call: ServiceCall) -> None:
     registry = _call_registry(call.hass)
     try:
         call_id = resolve_pending_route_call_id(
-            str(data.get("call_id") or ""), registry.pending_routes
+            str(data.get("call_id") or ""),
+            dict(registry.artifact_items("pending_route")),
         )
     except ValueError as err:
         raise ServiceValidationError(str(err)) from err
@@ -530,9 +531,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
         endpoint_registry,
         str(entry.data.get(CONF_PREFERRED_PHONE_DEVICE_ID) or "").strip(),
     )
-    if preferred_phone_device_id != str(
-        entry.data.get(CONF_PREFERRED_PHONE_DEVICE_ID) or ""
-    ).strip():
+    if (
+        preferred_phone_device_id
+        != str(entry.data.get(CONF_PREFERRED_PHONE_DEVICE_ID) or "").strip()
+    ):
         data = dict(entry.data)
         if preferred_phone_device_id:
             data[CONF_PREFERRED_PHONE_DEVICE_ID] = preferred_phone_device_id
@@ -570,9 +572,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
             previous_runtime.softphones if previous_runtime is not None else {}
         ),
         softphone_presence=(
-            previous_runtime.softphone_presence
-            if previous_runtime is not None
-            else {}
+            previous_runtime.softphone_presence if previous_runtime is not None else {}
         ),
     )
     from .local_softphone_runtime import async_setup_local_softphone_bridge

@@ -11,7 +11,7 @@ from .endpoint_lifecycle import call_registry
 
 def pending_routes(hass: HomeAssistant) -> dict:
     """Return a detached read projection of pending routes."""
-    return call_registry(hass).pending_routes
+    return dict(call_registry(hass).artifact_items("pending_route"))
 
 
 def set_pending_route(hass: HomeAssistant, call_id: str, route: dict) -> None:
@@ -43,7 +43,7 @@ def call_endpoint_ids(registry, call_id: str) -> frozenset[str]:
     """
     session_id = registry.resolve_session_id(str(call_id or "").strip())
     session = registry.sessions.get(session_id)
-    metadata = ((session.metadata if session is not None else {}) or {})
+    metadata = (session.metadata if session is not None else {}) or {}
     endpoint_ids = {
         str(metadata.get(key) or "").strip()
         for key in (
@@ -54,8 +54,7 @@ def call_endpoint_ids(registry, call_id: str) -> frozenset[str]:
         )
     }
     endpoint_ids.update(
-        str(value or "").strip()
-        for value in (metadata.get("ring_endpoint_ids") or ())
+        str(value or "").strip() for value in (metadata.get("ring_endpoint_ids") or ())
     )
     endpoint_ids.discard("")
     return frozenset(endpoint_ids)
@@ -85,5 +84,9 @@ def single_pending_route_call_id(
 ) -> str:
     """Return the only pending route visible to one endpoint, if unambiguous."""
     registry = call_registry(hass)
-    routes = endpoint_call_ids(registry, pending_routes(hass), endpoint_id)
+    routes = endpoint_call_ids(
+        registry,
+        (call_id for call_id, _route in registry.artifact_items("pending_route")),
+        endpoint_id,
+    )
     return routes[0] if len(routes) == 1 else ""

@@ -76,7 +76,7 @@ async def _prepare_bridge_video_contract_change(
     registry = _call_registry(hass)
     source_call_id, dest_call_id = registry.bridge_for(updated.call_id)
     session = registry.sessions.get(registry.resolve_session_id(updated.call_id))
-    client = registry.sip_clients.get(dest_call_id)
+    client = registry.sip_client_for(dest_call_id)
     cfg = transport_config(hass)
     current_video_relay = getattr(relay, "video_relay", None)
     adding_video = current_video_relay is None and updated.video_format is not None
@@ -273,8 +273,8 @@ async def _prepare_bridge_video_contract_change(
                 not registry.is_generation_current(
                     updated.call_id, call_generation
                 )
-                or registry.relays.get(updated.call_id) is not relay
-                or registry.sip_clients.get(dest_call_id) is not client
+                or registry.resource_for(updated.call_id, "relay") is not relay
+                or registry.sip_client_for(dest_call_id) is not client
                 or relay.left is not previous_left
                 or relay.right is not previous_right
                 or relay.video_relay is not current_video_relay
@@ -349,7 +349,7 @@ async def async_prepare_media_update(
     if call_id != previous.call_id:
         return SipInviteResult(481, "Call/Transaction Does Not Exist")
 
-    preanswered = registry.preanswered.get(call_id)
+    preanswered = registry.resource_for(call_id, "preanswered")
     if isinstance(preanswered, dict):
         # The trunk dialog is already established while DTMF and the
         # bounded automation decision select its destination.  It still
@@ -436,7 +436,7 @@ async def async_prepare_media_update(
                 raise RuntimeError(
                     "SIP pre-answer media update belongs to a terminated call"
                 )
-            current = registry.preanswered.get(call_id)
+            current = registry.resource_for(call_id, "preanswered")
             if current is not preanswered:
                 raise RuntimeError("SIP pre-answer media owner changed")
             if staged_video_reservation is not None:
@@ -462,7 +462,7 @@ async def async_prepare_media_update(
             rollback=_rollback_preanswered_update,
         )
 
-    media = registry.softphone_media.get(call_id)
+    media = registry.resource_for(call_id, "softphone_media")
     if isinstance(media, dict) and media.get("invite") is not None:
         session = registry.sessions.get(registry.resolve_session_id(call_id))
         if session is None:
@@ -707,14 +707,14 @@ async def async_prepare_media_update(
             rollback=_rollback_softphone_update,
         )
 
-    relay = registry.relays.get(call_id)
+    relay = registry.resource_for(call_id, "relay")
     if relay is None:
         _LOGGER.warning(
             "SIP media update rejected without media owner call_id=%s "
             "softphone=%s relay=%s",
             call_id,
-            call_id in registry.softphone_media,
-            call_id in registry.relays,
+            registry.resource_for(call_id, "softphone_media") is not None,
+            relay is not None,
         )
         return SipInviteResult(488, "Not Acceptable Here")
     session = registry.sessions.get(registry.resolve_session_id(call_id))
@@ -754,7 +754,7 @@ async def async_prepare_media_update(
                 raise RuntimeError(
                     "SIP Assist media update belongs to a terminated call"
                 )
-            if registry.relays.get(call_id) is not relay:
+            if registry.resource_for(call_id, "relay") is not relay:
                 raise RuntimeError("SIP Assist media owner changed before commit")
             commit_assist()
             _LOGGER.info(
