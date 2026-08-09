@@ -50,8 +50,8 @@ ROUTE_ACTIONS = (
     "bridge",
 )
 ANSWER_CASES = (
-    "registered_sip_auto_answer_on_caller_bye",
-    "registered_sip_auto_answer_off_callee_bye",
+    "registered_sip_peer_auto_answer_on_caller_bye",
+    "registered_sip_peer_auto_answer_off_callee_bye",
     "initial_delayed_offer_caller_bye",
 )
 
@@ -576,6 +576,13 @@ def main() -> int:
         )
     run_dir = args.out_dir / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir.mkdir(parents=True, exist_ok=False)
+    delayed_cancel = run_dir / "inbound-cancel-after-forward-delay.xml"
+    delayed_cancel.write_text(
+        (ROOT / "tests/sipp/inbound-cancel.xml")
+        .read_text(encoding="utf-8")
+        .replace('<pause milliseconds="100" />', '<pause milliseconds="1500" />'),
+        encoding="utf-8",
+    )
     token = lab_token(args.ha_url, args.credentials)
     api = HomeAssistantApi(base_url=args.ha_url, token=token)
 
@@ -676,6 +683,36 @@ def main() -> int:
             )
             target_host, target_port = trunk_contact_target()
         with QualificationPackage(api) as package:
+            def answered_route(
+                action: str,
+                *,
+                destination: str = "",
+                scenario: Path = ROOT / "tests/sipp/answered-local-bye.xml",
+                mode: str = "caller_bye",
+                callee_config: Path = args.callee_config,
+                expected_decision: str | None = None,
+                **selection: object,
+            ) -> dict[str, object]:
+                package.select(action, destination=destination, **selection)
+                result = run_answered_case(
+                    mode,
+                    scenario,
+                    target_host=target_host,
+                    target_port=target_port,
+                    extension="9999",
+                    local_port=trunk_source_port,
+                    callee_config=callee_config,
+                    capture_dir=run_dir,
+                    ha_url=args.ha_url,
+                    token=token,
+                )
+                result["automation_decision"] = (
+                    package.decision(expected_decision)
+                    if expected_decision
+                    else package.assert_no_decision()
+                )
+                return result
+
             for action, status in (("decline", 603), ("busy", 486), ("cancel", 487)):
 
                 def rejected(
@@ -695,98 +732,59 @@ def main() -> int:
                 execute(MatrixCase(f"route_{action}", rejected))
 
             for action in ("default", "forward", "bridge"):
-
-                def answered(action: str = action) -> dict[str, object]:
-                    package.select(
-                        action,
-                        destination="" if action == "default" else "video_sink",
+                execute(
+                    MatrixCase(
+                        f"route_{action}",
+                        lambda action=action: answered_route(
+                            action,
+                            destination=("" if action == "default" else "video_sink"),
+                            expected_decision=action,
+                        ),
                     )
-                    result = run_answered_case(
-                        "caller_bye",
-                        ROOT / "tests/sipp/answered-local-bye.xml",
-                        target_host=target_host,
-                        target_port=target_port,
-                        extension="9999",
-                        local_port=trunk_source_port,
-                        callee_config=args.callee_config,
-                        capture_dir=run_dir,
-                        ha_url=args.ha_url,
-                        token=token,
+                )
+            execute(
+                MatrixCase(
+                    "route_no_action_uses_fallback",
+                    lambda: answered_route("no_action"),
+                )
+            )
+            for name, selection in (
+                ("caller_filter_miss_uses_fallback", {"expected_caller": "Different caller"}),
+                ("callee_filter_miss_uses_fallback", {"expected_target": "Different target"}),
+                ("ingress_filter_miss_uses_fallback", {"expected_origin": "extension"}),
+            ):
+                execute(
+                    MatrixCase(
+                        name,
+                        lambda selection=selection: answered_route(
+                            "decline", **selection
+                        ),
                     )
-                    result["automation_decision"] = package.decision(action)
-                    return result
-
-                execute(MatrixCase(f"route_{action}", answered))
-
-            def presence_home() -> dict[str, object]:
-                package.select(
-                    "forward",
-                    destination="video_sink",
-                    condition=True,
-                    false_action="default",
                 )
-                result = run_answered_case(
-                    "caller_bye",
-                    ROOT / "tests/sipp/answered-local-bye.xml",
-                    target_host=target_host,
-                    target_port=target_port,
-                    extension="9999",
-                    local_port=trunk_source_port,
-                    callee_config=args.callee_config,
-                    capture_dir=run_dir,
-                    ha_url=args.ha_url,
-                    token=token,
+            execute(
+                MatrixCase(
+                    "conditional_presence_home",
+                    lambda: answered_route(
+                        "forward",
+                        destination="video_sink",
+                        condition=True,
+                        false_action="default",
+                        expected_decision="forward",
+                    ),
                 )
-                result["automation_decision"] = package.decision("forward")
-                return result
-
-            execute(MatrixCase("conditional_presence_home", presence_home))
-
-            def presence_away() -> dict[str, object]:
-                package.select(
-                    "forward",
-                    destination="video_sink",
-                    condition=False,
-                    false_action="default",
+            )
+            execute(
+                MatrixCase(
+                    "conditional_presence_away",
+                    lambda: answered_route(
+                        "forward",
+                        destination="video_sink",
+                        condition=False,
+                        false_action="default",
+                        expected_decision="default",
+                    ),
                 )
-                result = run_answered_case(
-                    "caller_bye",
-                    ROOT / "tests/sipp/answered-local-bye.xml",
-                    target_host=target_host,
-                    target_port=target_port,
-                    extension="9999",
-                    local_port=trunk_source_port,
-                    callee_config=args.callee_config,
-                    capture_dir=run_dir,
-                    ha_url=args.ha_url,
-                    token=token,
-                )
-                result["automation_decision"] = package.decision("default")
-                return result
-
-            execute(MatrixCase("conditional_presence_away", presence_away))
-
-            def caller_filter_miss() -> dict[str, object]:
-                package.select(
-                    "decline",
-                    expected_caller="Different caller",
-                )
-                result = run_answered_case(
-                    "caller_bye",
-                    ROOT / "tests/sipp/answered-local-bye.xml",
-                    target_host=target_host,
-                    target_port=target_port,
-                    extension="9999",
-                    local_port=trunk_source_port,
-                    callee_config=args.callee_config,
-                    capture_dir=run_dir,
-                    ha_url=args.ha_url,
-                    token=token,
-                )
-                result["automation_decision"] = package.assert_no_decision()
-                return result
-
-            execute(MatrixCase("caller_filter_miss_uses_fallback", caller_filter_miss))
+            )
 
             def ringing_forward_success() -> dict[str, object]:
                 package.select("forward", destination="Casa")
@@ -817,7 +815,7 @@ def main() -> int:
                 package.forward("missing qualification target", on_failure="resume")
                 try:
                     result = _run_sipp_scenario(
-                        ROOT / "tests/sipp/inbound-cancel.xml",
+                        delayed_cancel,
                         host=target_host,
                         port=target_port,
                         extension="9999",
@@ -834,61 +832,46 @@ def main() -> int:
 
             execute(MatrixCase("ringing_forward_failure_resumes_source", ringing_forward_failure_resume))
 
-            def auto_answer_on() -> dict[str, object]:
-                package.select("forward", destination="video_sink")
-                return run_answered_case(
-                    "caller_bye",
-                    ROOT / "tests/sipp/answered-local-bye.xml",
-                    target_host=target_host,
-                    target_port=target_port,
-                    extension="9999",
-                    local_port=trunk_source_port,
-                    callee_config=args.callee_config,
-                    capture_dir=run_dir,
-                    ha_url=args.ha_url,
-                    token=token,
+            execute(
+                MatrixCase(
+                    ANSWER_CASES[0],
+                    lambda: answered_route(
+                        "forward",
+                        destination="video_sink",
+                        expected_decision="forward",
+                    ),
                 )
-
-            execute(MatrixCase(ANSWER_CASES[0], auto_answer_on))
-
-            def initial_delayed_offer() -> dict[str, object]:
-                package.select("forward", destination="video_sink")
-                return run_answered_case(
-                    "caller_bye",
-                    ROOT / "tests/sipp/initial-delayed-offer-local-bye.xml",
-                    target_host=target_host,
-                    target_port=target_port,
-                    extension="9999",
-                    local_port=trunk_source_port,
-                    callee_config=args.callee_config,
-                    capture_dir=run_dir,
-                    ha_url=args.ha_url,
-                    token=token,
+            )
+            execute(
+                MatrixCase(
+                    ANSWER_CASES[2],
+                    lambda: answered_route(
+                        "forward",
+                        destination="video_sink",
+                        scenario=ROOT / "tests/sipp/initial-delayed-offer-local-bye.xml",
+                        expected_decision="forward",
+                    ),
                 )
-
-            execute(MatrixCase(ANSWER_CASES[2], initial_delayed_offer))
+            )
 
             with tempfile.TemporaryDirectory(prefix="voip-manual-answer-") as temp:
                 manual = _manual_baresip_config(
                     args.callee_config, Path(temp) / "baresip"
                 )
 
-                def auto_answer_off() -> dict[str, object]:
-                    package.select("forward", destination="video_sink")
-                    return run_answered_case(
-                        "callee_bye",
-                        ROOT / "tests/sipp/answered-remote-bye.xml",
-                        target_host=target_host,
-                        target_port=target_port,
-                        extension="9999",
-                        local_port=trunk_source_port,
-                        callee_config=manual,
-                        capture_dir=run_dir,
-                        ha_url=args.ha_url,
-                        token=token,
+                execute(
+                    MatrixCase(
+                        ANSWER_CASES[1],
+                        lambda: answered_route(
+                            "forward",
+                            destination="video_sink",
+                            scenario=ROOT / "tests/sipp/answered-remote-bye.xml",
+                            mode="callee_bye",
+                            callee_config=manual,
+                            expected_decision="forward",
+                        ),
                     )
-
-                execute(MatrixCase(ANSWER_CASES[1], auto_answer_off))
+                )
     finally:
         with suppress(Exception):
             snapshot.apply(api)

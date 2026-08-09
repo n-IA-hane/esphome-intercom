@@ -64,10 +64,20 @@ def test_matrix_declares_required_route_and_answer_cases() -> None:
         "bridge",
     )
     assert runner.ANSWER_CASES == (
-        "registered_sip_auto_answer_on_caller_bye",
-        "registered_sip_auto_answer_off_callee_bye",
+        "registered_sip_peer_auto_answer_on_caller_bye",
+        "registered_sip_peer_auto_answer_off_callee_bye",
         "initial_delayed_offer_caller_bye",
     )
+
+
+def test_qualification_package_uses_public_selection_and_real_ring_delay() -> None:
+    package = (
+        ROOT / "qualification/home_assistant/voip_qualification.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert "action: voip_stack.select_inbound_destination" in package
+    assert "continue_on_error" not in package
+    assert "for:\n          seconds: 1" in package
 
 
 def test_runner_rejects_a_stale_installed_automation_package(

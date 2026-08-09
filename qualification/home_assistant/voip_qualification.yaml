@@ -123,14 +123,23 @@ automation:
             {{ trigger.to_state.attributes.get('sequence', 0) | int }}
       - condition: template
         value_template: "{{ selected_action != 'no_action' }}"
-      - action: voip_stack.route
-        continue_on_error: true
-        data:
-          call_id: "{{ selected_call_id }}"
-          action: "{{ selected_action }}"
-          destination: "{{ selected_destination }}"
-          expected_state: "{{ selected_state }}"
-          expected_sequence: "{{ selected_sequence }}"
+      - choose:
+          - conditions: "{{ selected_action == 'forward' }}"
+            sequence:
+              - action: voip_stack.select_inbound_destination
+                data:
+                  call_id: "{{ selected_call_id }}"
+                  destination: "{{ selected_destination }}"
+                  expected_state: "{{ selected_state }}"
+                  expected_sequence: "{{ selected_sequence }}"
+        default:
+          - action: voip_stack.route
+            data:
+              call_id: "{{ selected_call_id }}"
+              action: "{{ selected_action }}"
+              destination: "{{ selected_destination }}"
+              expected_state: "{{ selected_state }}"
+              expected_sequence: "{{ selected_sequence }}"
       - action: input_text.set_value
         data:
           entity_id: input_text.voip_qualification_last_decision
@@ -145,6 +154,8 @@ automation:
       - trigger: state
         entity_id: sensor.casa_call_state
         to: ringing
+        for:
+          seconds: 1
     conditions:
       - condition: state
         entity_id: input_boolean.voip_qualification_enabled
