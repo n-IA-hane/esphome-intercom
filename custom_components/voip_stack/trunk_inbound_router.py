@@ -10,14 +10,15 @@ from typing import Any, Awaitable, Callable
 from homeassistant.core import HomeAssistant
 
 from .call_projection import publish_bridge_projection
-from .bridge_manager import async_watch_sip_bridge_destination
-from .config import media_capture_enabled, trunk_config
+from .config import trunk_config
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
     CONF_TRUNK_DTMF_ENABLED,
     CONF_TRUNK_DTMF_TERMINATOR,
     CONF_TRUNK_DTMF_TIMEOUT_MS,
     CONF_TRUNK_INBOUND_DEFAULT_TARGET,
+    CONF_SIP_VIDEO,
+    CONF_VIDEO_TRANSCODING,
 )
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
@@ -26,6 +27,7 @@ from .endpoint_routing import (
     EndpointRouteResolver,
     peer_audio_formats,
     peer_for_target,
+    peer_video_codec,
     roster_entry_formats,
     roster_from_peers,
     sip_target_audio_profile,
@@ -40,10 +42,15 @@ from .inbound_answer import async_commit_runtime_answer
 from .media_ports import (
     RtpPortReservation,
     release_media_reservation,
-    release_sip_rtp_port_pair,
     release_video_media_reservation,
+    reserve_sip_video_media,
 )
-from .outbound_attempts import async_close_client_and_release
+from .outbound_attempts import OutboundLeg, async_close_client_and_release
+from .outbound_bridge_commit import (
+    BridgeCommitData,
+    BridgeCommitPolicy,
+    async_commit_outbound_bridge,
+)
 from .pbx_routing import dtmf_extension_routes
 from .peer_snapshot import async_build_peer_snapshot
 from .phone_endpoint import EndpointKind
@@ -51,7 +58,7 @@ from .phonebook_runtime import registered_roster_entries
 from .router import CallContext, RouteAction, RouteReason, route_inbound_trunk
 from .runtime_data import call_runtime_artifacts, preferred_browser_phone
 from .core.sip import parse_sip_uri
-from .sip_bridge import build_invite_client_relay
+from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
 from .sip_client import SipCallClient
 from .sip_runtime import (
     enable_reused_tcp_connection,
@@ -370,7 +377,6 @@ async def async_route_trunk_invite(
         return
     registry.take_pending_invite(invite.call_id)
     preanswered = registry.take_media(invite.call_id, provisional=True)
-    release_video_media_reservation(preanswered)
     peer_target = peer_for_target(decision.target or destination, peers)
     bridge_uri = None
     try:
@@ -417,6 +423,7 @@ async def async_route_trunk_invite(
             destination,
             decision.action.value,
         )
+        release_video_media_reservation(preanswered)
         bridge_ports.release()
         await terminate_source(
             TerminalReason.TRANSPORT_UNREACHABLE.value,
@@ -437,6 +444,73 @@ async def async_route_trunk_invite(
         remote_rx_formats=remote_rx_formats,
         target=destination,
     )
+    source_video_reservation = (
+        preanswered.pop("video_rtp_reservation", None)
+        if isinstance(preanswered, dict)
+        else None
+    )
+    source_video_rtp_socket = (
+        preanswered.pop("video_rtp_socket", None)
+        if isinstance(preanswered, dict)
+        else None
+    )
+    source_video_rtcp_socket = (
+        preanswered.pop("video_rtcp_socket", None)
+        if isinstance(preanswered, dict)
+        else None
+    )
+    destination_video_reservation = None
+    video_relay = None
+    video_failure_reason = str(
+        (preanswered or {}).get("video_failure_reason") or ""
+    )
+    if (
+        cfg.get(CONF_SIP_VIDEO, False)
+        and invite.video_format is not None
+        and source_video_reservation is not None
+        and source_video_rtp_socket is not None
+        and source_video_rtcp_socket is not None
+    ):
+        try:
+            (
+                destination_video_reservation,
+                destination_video_rtp_socket,
+                destination_video_rtcp_socket,
+            ) = reserve_sip_video_media(hass)
+
+            def _release_video_ports(_ports) -> None:
+                source_video_reservation.release()
+                destination_video_reservation.release()
+
+            video_relay = build_pending_invite_video_relay(
+                invite,
+                remote_host=str(bridge_uri.host),
+                left_port=int((preanswered or {}).get("local_video_rtp_port") or 0),
+                right_port=destination_video_reservation.ports[1],
+                sockets=(
+                    source_video_rtp_socket,
+                    source_video_rtcp_socket,
+                    destination_video_rtp_socket,
+                    destination_video_rtcp_socket,
+                ),
+                on_release=_release_video_ports,
+            )
+        except (OSError, RuntimeError, ValueError) as err:
+            for sock in (source_video_rtp_socket, source_video_rtcp_socket):
+                sock.close()
+            source_video_reservation.release()
+            if destination_video_reservation is not None:
+                destination_video_reservation.release()
+            video_failure_reason = "local_video_resources_unavailable"
+            _LOGGER.warning(
+                "SIP trunk destination video unavailable; bridge remains audio-only: %s",
+                err,
+            )
+    elif source_video_reservation is not None:
+        for sock in (source_video_rtp_socket, source_video_rtcp_socket):
+            if sock is not None:
+                sock.close()
+        source_video_reservation.release()
     client = SipCallClient(
         local_ip=runtime.local_ip,
         local_name=invite.caller or runtime.ha_peer_name,
@@ -454,6 +528,27 @@ async def async_route_trunk_invite(
             )
             or ""
         ),
+        local_video_rtp_port=(
+            destination_video_reservation.ports[1]
+            if destination_video_reservation is not None
+            else 0
+        ),
+        video_formats=(
+            video_bridge_offer_formats(
+                invite.video_format,
+                source_receive=invite.recv_video_format,
+                enable_transcoding=bool(
+                    cfg.get(CONF_VIDEO_TRANSCODING, False)
+                ),
+                target_codec=peer_video_codec(peer_target, decision.entry),
+            )
+            if video_relay is not None and invite.video_format is not None
+            else ()
+        ),
+        video_direction=(
+            invite.video_format.direction if video_relay is not None else "inactive"
+        ),
+        generic_video_relay=video_relay is not None,
     )
     enable_reused_tcp_connection(
         hass,
@@ -482,6 +577,8 @@ async def async_route_trunk_invite(
             result,
         )
         await async_close_client_and_release(client, bridge_ports)
+        if video_relay is not None:
+            await video_relay.stop()
         public_result = sip_public_state(result)
         terminal_reason = sip_terminal_reason(result, public_result)
         await terminate_source(
@@ -500,70 +597,77 @@ async def async_route_trunk_invite(
         client.dialog.recv_format.wire_token(),
     )
 
+    winner = OutboundLeg(
+        member=destination,
+        uri=bridge_uri,
+        client=client,
+        ports=bridge_ports,
+        video_relay=video_relay,
+        video_failure_reason=video_failure_reason,
+    )
+    reservations = tuple(
+        item
+        for item in (
+            bridge_ports,
+            source_video_reservation,
+            destination_video_reservation,
+        )
+        if item is not None
+    )
     try:
-        relay = build_invite_client_relay(
-            invite=invite,
-            client=client,
-            source_relay_port=source_relay_port,
-            dest_relay_port=dest_relay_port,
-            debug_capture=media_capture_enabled(hass),
-            on_release=lambda ports: release_sip_rtp_port_pair(hass, ports),
-        )
-        runtime.attach_dtmf_event_bridge(
+        committed = await async_commit_outbound_bridge(
             hass,
-            relay,
-            call_id=invite.call_id,
-            dest_call_id=client.dialog_ids.call_id,
-            caller=invite.caller,
-            callee=destination,
-            client=client,
+            registry,
+            BridgeCommitData(
+                invite=invite,
+                winner=winner,
+                source_relay_port=source_relay_port,
+                dest_relay_port=dest_relay_port,
+                local_ip=runtime.local_ip,
+                release_port_pairs=tuple(item.ports for item in reservations),
+                detach_reservations=reservations,
+                enable_video_transcoding=bool(
+                    cfg.get(CONF_VIDEO_TRANSCODING, False)
+                ),
+            ),
+            BridgeCommitPolicy(
+                route_kind="trunk",
+                caller=invite.caller,
+                callee=destination,
+                connected_party=destination,
+                source_role="trunk",
+                source_state=CallState.IN_CALL.value,
+                bridge_state=CallState.IN_CALL.value,
+                response_already_sent=bool(
+                    (preanswered or {}).get("final_response_sent", True)
+                ),
+                consume_pending_source=False,
+            ),
         )
-        await relay.start()
     except Exception as err:
         _LOGGER.warning("SIP trunk RTP bridge unavailable: %s", err)
-        await async_close_client_and_release(
-            client, bridge_ports, bye=True
-        )
         await terminate_source(
             TerminalReason.MEDIA_INCOMPATIBLE.value,
             status=488,
             answered=True,
         )
         return
-
-    finish_task = hass.async_create_task(
-        async_watch_sip_bridge_destination(
-            hass,
-            client=client,
-            source_call_id=invite.call_id,
-            terminate_sip_bridge=runtime.terminate_sip_bridge,
+    if committed is None:
+        await terminate_source(
+            TerminalReason.PROTOCOL_ERROR.value,
+            status=500,
+            answered=True,
         )
-    )
-    session = registry.register_bridge(
-        source_call_id=invite.call_id,
-        dest_call_id=client.dialog_ids.call_id,
-        client=client,
-        lifecycle_task=finish_task,
-        state=CallState.IN_CALL.value,
-        caller=invite.caller,
-        callee=destination,
-        route_kind="trunk",
-        source_role="trunk",
-    )
-    assert session is not None
+        return
+    session = registry.get_session(invite.call_id)
+    if session is None:
+        raise RuntimeError("SIP trunk bridge session disappeared after commit")
     _LOGGER.info(
         "SIP bridge registered call_id=%s dest_call_id=%s target=%s",
         invite.call_id,
         client.dialog_ids.call_id,
         bridge_uri.user,
     )
-    runtime.attach_client_media_update(
-        client,
-        relay,
-        source_call_id=invite.call_id,
-    )
-    registry.attach_relay(invite.call_id, relay)
-    bridge_ports.detach()
     publish_bridge_projection(
         hass,
         session,
@@ -579,4 +683,17 @@ async def async_route_trunk_invite(
         sip_uri=str(bridge_uri),
         scope="sip_trunk",
         dtmf_digits=digits,
+        video_active=committed.video_answer is not None,
+        video_requested=invite.video_format is not None,
+        video_failure_reason=committed.video_failure_reason,
+        video_format=(
+            committed.video_answer.video_format.wire_token()
+            if committed.video_answer is not None
+            else ""
+        ),
+        video_direction=(
+            committed.video_answer.direction
+            if committed.video_answer is not None
+            else "inactive"
+        ),
     )

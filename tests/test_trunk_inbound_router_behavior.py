@@ -216,7 +216,7 @@ def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
         classmethod(lambda cls, _hass: ports),
     )
     monkeypatch.setattr(trunk, "build_answer_directional", Mock(return_value="sdp"))
-    monkeypatch.setattr(trunk, "publish_call_projection", Mock())
+    monkeypatch.setattr(trunk, "publish_bridge_projection", Mock())
     monkeypatch.setattr(trunk.sip_sdp, "offered_dtmf_formats", Mock(return_value=[]))
 
     def capture_task(_hass, coroutine):

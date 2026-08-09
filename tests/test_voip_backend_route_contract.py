@@ -362,7 +362,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             + self.inbound_bridge.count("attach_dtmf_event_bridge(")
             + self.trunk_inbound_router.count("attach_dtmf_event_bridge(")
             + self.call_forwarder.count("_attach_dtmf_event_bridge(")
-            + self.ring_group.count("_attach_dtmf_event_bridge("),
+            + self.ring_group.count("_attach_dtmf_event_bridge(")
+            + self.outbound_bridge_commit.count("attach_dtmf_event_bridge("),
             2,
         )
         self.assertEqual(
@@ -1530,9 +1531,15 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
     def test_dtmf_sip_bridge_tracks_destination_dialog_termination(self) -> None:
         runner = self.trunk_inbound_router
-        self.assertIn("async_watch_sip_bridge_destination(", runner)
-        self.assertIn("lifecycle_task=finish_task", runner)
-        self.assertIn("terminate_sip_bridge=runtime.terminate_sip_bridge", runner)
+        self.assertIn("async_commit_outbound_bridge(", runner)
+        primitive = (
+            ROOT
+            / "custom_components"
+            / "voip_stack"
+            / "outbound_bridge_commit.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("async_watch_sip_bridge_destination(", primitive)
+        self.assertIn("lifecycle_task=watcher", primitive)
 
     def test_every_sip_bridge_registration_has_a_lifecycle_owner(self) -> None:
         missing: list[str] = []
@@ -1552,7 +1559,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
                     keyword.arg == "lifecycle_task" for keyword in node.keywords
                 ):
                     missing.append(f"{path.relative_to(ROOT)}:{node.lineno}")
-        self.assertEqual(registrations, 3)
+        self.assertEqual(registrations, 2)
         self.assertEqual(missing, [])
         self.assertNotIn("registry.register_bridge(", self.call_forwarder)
         self.assertNotIn("registry.register_bridge(", self.ring_group)
