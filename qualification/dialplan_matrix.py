@@ -103,9 +103,9 @@ QUALIFICATION_CLASSES = {
     ),
     "trunk-dtmf-live": QualificationClass(
         "peer-live",
-        "tools/inbound_routing_qualification.py",
+        "scripts/run_dtmf_precedence_lab.py",
         (
-            "dtmf_assist_extension_bypasses_automation",
+            "dtmf_primary_extension_bypasses_automation",
             "dtmf_secondary_extension_bypasses_automation",
         ),
     ),

@@ -31,6 +31,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 TEST_CAPTURE_DIR = ROOT / "test_captures"
 sys.path.insert(0, str(ROOT / "test_runs"))
+sys.path.insert(0, str(ROOT / "tools"))
 
 
 HA_BASE = os.environ.get("HA_BASE", "http://127.0.0.1:18123").rstrip("/")
@@ -60,8 +61,13 @@ class HomeAssistantApi:
         token: str | None = None,
     ) -> None:
         if token is None:
+            lab_credentials = Path(os.environ.get("HA_LAB_CREDENTIALS", ""))
             auth_file = Path(os.environ.get("HA_AUTH_FILE", ""))
-            if auth_file.is_file():
+            if lab_credentials.is_file():
+                from ha_voip_lab.auth import lab_token
+
+                token = lab_token(base_url, lab_credentials)
+            elif auth_file.is_file():
                 from live_voip_qualification import _refresh_ha_token
 
                 token = _refresh_ha_token(auth_file)
@@ -131,7 +137,12 @@ class HomeAssistantApi:
 class BareSip:
     """Run one real SIP user agent with deterministic keypad timing."""
 
-    def __init__(self, config: Path = WILDIX_CONFIG) -> None:
+    def __init__(
+        self,
+        config: Path = WILDIX_CONFIG,
+        *,
+        wait_registered: bool = True,
+    ) -> None:
         TEST_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
         self.master, slave = pty.openpty()
         self.proc = subprocess.Popen(
@@ -145,7 +156,7 @@ class BareSip:
         os.close(slave)
         os.set_blocking(self.master, False)
         self.output = ""
-        self.wait_for("registered successfully", 10)
+        self.wait_for("registered successfully" if wait_registered else "ready", 10)
 
     def read(self) -> str:
         while True:
@@ -491,21 +502,24 @@ def wait_for(predicate: Callable[[], Any], timeout: float, label: str) -> Any:
 
 
 def browser_call_state_entity(api: HomeAssistantApi) -> str:
-    """Return the preferred browser phone call-state sensor."""
+    """Return the explicitly selected browser phone call-state sensor."""
 
-    candidates = [
-        state
-        for state in api.get("/api/states")
-        if str(state.get("entity_id") or "").startswith("sensor.")
-        and str((state.get("attributes") or {}).get("endpoint_id") or "").strip()
-        == "default"
-        and "ringing" in ((state.get("attributes") or {}).get("options") or ())
-    ]
-    if len(candidates) != 1:
-        raise RuntimeError(
-            f"expected one preferred browser call-state sensor, found {len(candidates)}"
-        )
-    return str(candidates[0]["entity_id"])
+    endpoint_id = os.environ.get("VOIP_QUALIFICATION_POLICY_ENDPOINT_ID", "default")
+
+    def resolve() -> str:
+        candidates = [
+            state
+            for state in api.get("/api/states")
+            if str(state.get("entity_id") or "").startswith("sensor.")
+            and str((state.get("attributes") or {}).get("endpoint_id") or "").strip()
+            == endpoint_id
+            and "ringing" in ((state.get("attributes") or {}).get("options") or ())
+        ]
+        return str(candidates[0]["entity_id"]) if len(candidates) == 1 else ""
+
+    return str(
+        wait_for(resolve, 8, f"browser call-state sensor for endpoint {endpoint_id}")
+    )
 
 
 def call_state(api: HomeAssistantApi) -> dict[str, Any]:

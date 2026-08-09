@@ -70,11 +70,11 @@ CONCURRENCY_CASES = (
 )
 EXTERNAL_EXECUTABLE_CONTRACTS = {
     "dtmf_extension_bypasses_automation": (
-        "tools/inbound_routing_qualification.py",
-        "dtmf_assist_extension_bypasses_automation",
+        "scripts/run_dtmf_precedence_lab.py",
+        "dtmf_primary_extension_bypasses_automation",
     ),
     "ingress_extension_is_not_overridden": (
-        "tools/inbound_routing_qualification.py",
+        "scripts/run_dtmf_precedence_lab.py",
         "dtmf_secondary_extension_bypasses_automation",
     ),
 }
@@ -624,7 +624,12 @@ def _parallel_sipp(
 
 
 @contextmanager
-def _registered_local_trunk(out_dir: Path, port: int):
+def _registered_local_trunk(
+    out_dir: Path,
+    port: int,
+    *,
+    host: str = "127.0.0.1",
+):
     def hass_udp_ports() -> set[int]:
         output = subprocess.run(
             ["ss", "-H", "-u", "-a", "-n", "-p"],
@@ -675,7 +680,7 @@ def _registered_local_trunk(out_dir: Path, port: int):
             "-sf",
             str(scenario),
             "-i",
-            "127.0.0.1",
+            host,
             "-p",
             str(port),
             "-m",

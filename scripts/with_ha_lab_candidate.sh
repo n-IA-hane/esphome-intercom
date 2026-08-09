@@ -36,18 +36,26 @@ cp "$package_file" "$package_backup"
 restored=0
 
 restart_ha() {
-  local pid
-  pid=$(ps -eo pid=,args= | awk -v config="$config_dir" \
-    '$0 ~ /\/bin\/hass -c / && index($0, config) {print $1; exit}')
-  if [[ -n "$pid" ]]; then
-    kill "$pid"
+  tmux kill-session -t "$session_name" 2>/dev/null || true
+  local -a pids=()
+  mapfile -t pids < <(
+    ps -eo pid=,args= | awk -v config="$config_dir" \
+      'index($0, config) && ($0 ~ /\/bin\/hass -c / || $0 ~ /\/bin\/python .*\/bin\/hass -c /) {print $1}'
+  )
+  if ((${#pids[@]})); then
+    kill "${pids[@]}" 2>/dev/null || true
     for _ in $(seq 1 50); do
-      kill -0 "$pid" 2>/dev/null || break
+      mapfile -t pids < <(
+        printf '%s\n' "${pids[@]}" |
+          while read -r pid; do kill -0 "$pid" 2>/dev/null && echo "$pid"; done
+      )
+      ((${#pids[@]})) || break
       sleep 0.1
     done
-    kill -0 "$pid" 2>/dev/null && { echo "Home Assistant did not stop" >&2; return 1; }
+    if ((${#pids[@]})); then
+      kill -KILL "${pids[@]}" 2>/dev/null || true
+    fi
   fi
-  tmux kill-session -t "$session_name" 2>/dev/null || true
   tmux new-session -d -s "$session_name" \
     "$lab_root/.venv/bin/hass -c $config_dir 2>&1 | tee -a $config_dir/home-assistant.log" \
     9>&-

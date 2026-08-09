@@ -40,7 +40,7 @@ def test_live_dialplan_classes_bind_exact_artifact_scenarios() -> None:
         "concurrent_route_requests_remain_distinct",
     )
     assert QUALIFICATION_CLASSES["trunk-dtmf-live"].scenario_ids == (
-        "dtmf_assist_extension_bypasses_automation",
+        "dtmf_primary_extension_bypasses_automation",
         "dtmf_secondary_extension_bypasses_automation",
     )
     assert all(

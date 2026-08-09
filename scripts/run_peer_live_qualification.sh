@@ -17,10 +17,7 @@ mkdir -p "$evidence_root"
   --out-dir "$evidence_root/ha-real-matrix" \
   --policy-endpoint-id "$policy_endpoint_id" \
   --summary-output "$evidence_root/peer-live.json"
-HA_BASE=${HA_LAB_URL:-http://127.0.0.1:18123} \
-  "$ha_python" tools/inbound_routing_qualification.py \
-  --only dtmf_assist_extension_bypasses_automation \
-  --only dtmf_secondary_extension_bypasses_automation \
+"$ha_python" scripts/run_dtmf_precedence_lab.py \
   --out "$evidence_root/dtmf-extension-precedence.json"
 "$ha_python" scripts/run_sip_extensions_lab.py \
   --out-dir "$evidence_root/sip-extensions"

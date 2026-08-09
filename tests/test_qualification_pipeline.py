@@ -261,7 +261,7 @@ def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
             {
                 "results": [
                     {
-                        "name": "dtmf_assist_extension_bypasses_automation",
+                        "name": "dtmf_primary_extension_bypasses_automation",
                         "status": "pass",
                     },
                     {
@@ -291,7 +291,7 @@ def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
             {
                 "results": [
                     {
-                        "name": "dtmf_assist_extension_bypasses_automation",
+                        "name": "dtmf_primary_extension_bypasses_automation",
                         "status": "pass",
                     }
                 ]

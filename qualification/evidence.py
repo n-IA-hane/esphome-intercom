@@ -101,7 +101,7 @@ ARTIFACT_SCENARIOS: dict[tuple[str, str], tuple[str, ...]] = {
         "concurrent_route_requests_remain_distinct",
     ),
     ("trunk-dtmf-routing-and-established-dtmf", "peer-live"): (
-        "dtmf_assist_extension_bypasses_automation",
+        "dtmf_primary_extension_bypasses_automation",
         "dtmf_secondary_extension_bypasses_automation",
     ),
     ("trunk-dtmf-routing-and-established-dtmf", "browser-real"): (

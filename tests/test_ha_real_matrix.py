@@ -25,6 +25,16 @@ def load_runner() -> ModuleType:
     return module
 
 
+def load_dtmf_runner() -> ModuleType:
+    path = ROOT / "scripts/run_dtmf_precedence_lab.py"
+    spec = importlib.util.spec_from_file_location("run_dtmf_precedence_lab", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_final_response_scenario_is_a_real_sipp_dialog() -> None:
     runner = load_runner()
 
@@ -88,6 +98,34 @@ def test_external_dtmf_contracts_have_real_executors() -> None:
         path = ROOT / executor
         assert path.is_file()
         assert case_name in path.read_text(encoding="utf-8")
+
+
+def test_dtmf_peer_uses_early_media_rfc4733_and_preserves_bind_host(
+    tmp_path: Path,
+) -> None:
+    runner = load_dtmf_runner()
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "config").write_text(
+        "sip_listen             192.0.2.10:15101\n",
+        encoding="utf-8",
+    )
+    (source / "accounts").write_text("stale\n", encoding="utf-8")
+
+    destination, host = runner._caller_config(source, tmp_path / "peer", port=19999)
+
+    assert host == "192.0.2.10"
+    assert "192.0.2.10:19999" in (destination / "config").read_text()
+    account = (destination / "accounts").read_text()
+    assert "dtmfmode=rtp" in account
+    assert "dtmfmode=info" not in account
+
+
+def test_lab_wrapper_stops_tmux_before_collecting_processes() -> None:
+    source = (ROOT / "scripts/with_ha_lab_candidate.sh").read_text()
+
+    assert source.index("tmux kill-session") < source.index("mapfile -t pids")
+    assert 'kill -KILL "${pids[@]}"' in source
 
 
 def test_phone_policy_helper_uses_public_service_and_restores_state() -> None:

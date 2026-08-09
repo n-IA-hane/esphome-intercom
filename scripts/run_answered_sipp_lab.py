@@ -11,70 +11,13 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from ha_softphone_matrix import BareSip  # noqa: E402
+from ha_voip_lab.auth import lab_token  # noqa: E402
 from live_voip_qualification import HaWs, candidate_revision  # noqa: E402
-
-
-def _credentials(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        key, separator, value = line.partition("=")
-        if separator and key.strip():
-            values[key.strip()] = value.strip()
-    return values
-
-
-def _post_json(url: str, data: dict[str, object], *, form: bool = False) -> dict:
-    payload = urlencode(data).encode() if form else json.dumps(data).encode()
-    request = Request(
-        url,
-        data=payload,
-        headers={
-            "Content-Type": (
-                "application/x-www-form-urlencoded" if form else "application/json"
-            )
-        },
-        method="POST",
-    )
-    with urlopen(request, timeout=8) as response:  # noqa: S310 - explicit lab URL.
-        return json.load(response)
-
-
-def lab_token(base_url: str, credentials_path: Path) -> str:
-    credentials = _credentials(credentials_path)
-    client_id = "https://home-assistant.io/iOS"
-    flow = _post_json(
-        f"{base_url}/auth/login_flow",
-        {
-            "client_id": client_id,
-            "handler": ["homeassistant", None],
-            "redirect_uri": client_id,
-        },
-    )
-    result = _post_json(
-        f"{base_url}/auth/login_flow/{flow['flow_id']}",
-        {
-            "client_id": client_id,
-            "username": credentials["username"],
-            "password": credentials["password"],
-        },
-    )
-    token = _post_json(
-        f"{base_url}/auth/token",
-        {
-            "grant_type": "authorization_code",
-            "code": result["result"],
-            "client_id": client_id,
-        },
-        form=True,
-    )
-    return str(token["access_token"])
 
 
 async def runtime_quiescence(base_url: str, token: str) -> dict[str, object]:
