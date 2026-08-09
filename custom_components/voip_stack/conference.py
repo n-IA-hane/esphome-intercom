@@ -16,11 +16,12 @@ import numpy as np
 
 from homeassistant.core import HomeAssistant
 
+from .call_projection import observe_phone_leg_projection
 from .core.audio_format import AudioFormat, PcmFormat
 from .core.audio_pcm import PcmFrameConverter
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
-from .endpoint_session import TerminationInitiator
+from .endpoint_session import TerminationInitiator, TerminationIntent
 from .endpoint_registry import EndpointBusyError
 from .fsm import CallState, TerminalReason
 from .groups import GROUP_TYPE_CONFERENCE
@@ -37,7 +38,7 @@ from .runtime_data import (
 )
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder
 from .sip_listener import SipInvite, SipInviteResult
-from .websocket_api import _fire_call_event, _set_ha_softphone_call_state
+from .websocket_api import _fire_call_event
 from .phone_endpoint import EndpointAvailability, EndpointKind
 
 _LOGGER = logging.getLogger(__name__)
@@ -620,18 +621,21 @@ class ConferenceRoom:
         if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
             raise ValueError(f"endpoint {endpoint_id!r} is not a browser phone")
         self._ha_softphone_announced[call_id] = endpoint_id
-        _set_ha_softphone_call_state(
-            self.hass,
-            CallState.RINGING.value,
-            endpoint_id=endpoint_id,
-            session_device_id=endpoint.device_id,
+        registry = call_registry(self.hass)
+        session = registry.transition(
+            call_id,
+            state=CallState.RINGING.value,
             caller=str(caller or getattr(invite, "caller", "") or self.name),
             callee=str(target or getattr(invite, "target", "") or self.name),
-            peer_name=str(caller or getattr(invite, "caller", "") or self.name),
-            direction="incoming",
-            call_id=call_id,
-            route_kind=GROUP_TYPE_CONFERENCE,
-            sip_status_code=180,
+        )
+        if session is None:
+            return
+        leg_id = f"browser:{endpoint_id}"
+        observe_phone_leg_projection(
+            self.hass, registry, session, endpoint_id, CallState.RINGING.value,
+            leg_id=leg_id,
+            peer_name=session.caller, direction="incoming",
+            route_kind=GROUP_TYPE_CONFERENCE, sip_status_code=180,
             last_sip_event="INVITE",
         )
 
@@ -655,19 +659,18 @@ class ConferenceRoom:
             endpoint = endpoint_registry.get(endpoint_id)
             if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
                 continue
-            _set_ha_softphone_call_state(
-                self.hass,
-                CallState.IDLE.value,
-                endpoint_id=endpoint_id,
-                session_device_id=endpoint.device_id,
-                caller=self.name,
-                callee=self.name,
-                peer_name=self.name,
-                direction="incoming",
-                call_id=softphone_call_id,
-                reason=reason,
-                route_kind=GROUP_TYPE_CONFERENCE,
-                last_sip_event="BYE",
+            session = registry.get_session(softphone_call_id)
+            if session is None:
+                continue
+            leg_id = f"browser:{endpoint_id}"
+            observe_phone_leg_projection(
+                self.hass, registry, session, endpoint_id, CallState.IDLE.value,
+                leg_id=leg_id,
+                intent=TerminationIntent(
+                    reason, TerminationInitiator.RUNTIME, CallState.IDLE.value,
+                ),
+                peer_name=self.name, direction="incoming", reason=reason,
+                route_kind=GROUP_TYPE_CONFERENCE, last_sip_event="BYE",
             )
             registry.take_media(softphone_call_id)
             EndpointTerminationHandler(self.hass).request_reason(

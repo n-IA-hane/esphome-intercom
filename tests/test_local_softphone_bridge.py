@@ -66,13 +66,7 @@ def _load_runtime_module():
     sys.modules[f"{package_name}.local_softphone_bridge"] = bridge_module
     call_projection = types.ModuleType(f"{package_name}.call_projection")
 
-    class CallProjectionEvent:
-        @staticmethod
-        def phone(session, endpoint_id: str, **details):
-            return session, endpoint_id, details
-
-    call_projection.CallProjectionEvent = CallProjectionEvent
-    call_projection.publish_call_projection = lambda *_args, **_kwargs: True
+    call_projection.publish_phone_projection = lambda *_args, **_kwargs: True
     sys.modules[call_projection.__name__] = call_projection
     endpoint_lifecycle = types.ModuleType(
         f"{package_name}.endpoint_lifecycle"

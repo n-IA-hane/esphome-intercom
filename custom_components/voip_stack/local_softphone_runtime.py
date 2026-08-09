@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant, callback
 
-from .call_projection import CallProjectionEvent, publish_call_projection
+from .call_projection import publish_phone_projection
 from .core.audio_format import HA_SIP_PCM_FORMATS
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
@@ -211,15 +211,13 @@ def _publish_leg(
     session = call_registry(hass).get_session(snapshot.call_id)
     if session is None:
         return
-    publish_call_projection(
-        hass, session, CallProjectionEvent.phone(
-            session, endpoint_id, leg_id=f"local:{endpoint_id}",
+    publish_phone_projection(
+        hass, session, endpoint_id, leg_id=f"local:{endpoint_id}",
             intent=TerminationIntent(terminal_reason, public_state=state)
             if terminal else None,
             peer_name=peer_name,
             direction="outgoing" if is_caller else "incoming",
             **extra,
-        )
     )
 
 

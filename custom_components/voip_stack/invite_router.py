@@ -404,10 +404,12 @@ async def route_invite(
     ):
         return invalid_target
     if not force_ha_softphone:
+        route_session = registry.ensure_session(invite.call_id, event_only=True)
         if rejected_route := reject_route_decision(
             hass=hass,
             invite=invite,
             decision=decision,
+            session=route_session,
         ):
             return rejected_route
     if (

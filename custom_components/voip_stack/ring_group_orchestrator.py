@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
+from .call_projection import (
+    observe_phone_leg_projection,
+    publish_bridge_projection,
+)
 from .call_scope import (
     set_pending_route as _set_pending_route,
     take_pending_route as _take_pending_route,
@@ -67,10 +71,6 @@ from .route_abort import (
 )
 from .core.sdp import build_answer_directional, first_offered_dtmf_format
 from .sip_runtime import send_final_response as _sip_send_final_response
-from .websocket_api import (
-    _set_ha_softphone_call_state,
-    _set_sip_bridge_call_state,
-)
 
 if TYPE_CHECKING:
     from .peer import Peer
@@ -121,10 +121,6 @@ async def run_ring_group_call(
     origin_endpoint = (
         endpoint_registry.get(origin_endpoint_id) if origin_endpoint_id else None
     )
-    origin_device_id = str(getattr(origin_endpoint, "device_id", "") or "")
-    origin_name = str(
-        getattr(origin_endpoint, "name", "") or _ha_peer_name(hass)
-    ).strip()
     ha_origin = origin_endpoint is not None
     call_ingress = "trunk" if invite.received_via_trunk else "extension"
     members = _unique_group_members(entry.metadata.get("members"))
@@ -194,9 +190,6 @@ async def run_ring_group_call(
                 enabled=ha_origin,
                 state=state,
                 endpoint_id=origin_endpoint_id,
-                device_id=origin_device_id,
-                caller=origin_name,
-                callee=entry.display_name,
                 peer_name=entry.display_name,
                 call_id=invite.call_id,
                 reason=reason,
@@ -314,9 +307,6 @@ async def run_ring_group_call(
             enabled=ha_origin,
             state=CallState.TRANSPORT_UNREACHABLE.value,
             endpoint_id=origin_endpoint_id,
-            device_id=origin_device_id,
-            caller=origin_name,
-            callee=entry.display_name,
             peer_name=entry.display_name,
             call_id=invite.call_id,
             reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
@@ -441,9 +431,6 @@ async def run_ring_group_call(
                 enabled=ha_origin,
                 state=public_state,
                 endpoint_id=origin_endpoint_id,
-                device_id=origin_device_id,
-                caller=origin_name,
-                callee=entry.display_name,
                 peer_name=entry.display_name,
                 call_id=invite.call_id,
                 reason=terminal_reason,
@@ -452,13 +439,16 @@ async def run_ring_group_call(
                 last_sip_event="SIP_RESPONSE",
                 sip_status_code=status_code,
             )
-            _set_sip_bridge_call_state(
+            publish_bridge_projection(
                 hass,
-                public_state,
-                caller=invite.caller,
-                callee=invite.target,
+                session,
+                intent=TerminationIntent(
+                    terminal_reason,
+                    TerminationInitiator.ROUTING,
+                    public_state,
+                    response_status=status_code,
+                ),
                 peer_name=invite.target,
-                call_id=invite.call_id,
                 reason=terminal_reason,
                 terminal_reason=terminal_reason,
                 origin="remote",
@@ -559,16 +549,16 @@ async def run_ring_group_call(
                     settle=False,
                 )
                 return
-            _set_ha_softphone_call_state(
+            winner_leg_id = f"browser:{winner.endpoint_id}"
+            observe_phone_leg_projection(
                 hass,
+                registry,
+                session,
+                winner.endpoint_id,
                 CallState.IN_CALL.value,
-                endpoint_id=winner.endpoint_id,
-                session_device_id=winner.device_id,
-                caller=invite.caller,
-                callee=entry.display_name,
+                leg_id=winner_leg_id,
                 peer_name=invite.caller,
                 direction="incoming",
-                call_id=invite.call_id,
                 selected_tx_format=invite.send_format.audio_format.wire_token(),
                 selected_rx_format=invite.recv_format.audio_format.wire_token(),
                 selected_tx_rtp_format=invite.send_format.wire_token(),
@@ -581,13 +571,10 @@ async def run_ring_group_call(
             # Mirror the same established-call contract used when a SIP
             # endpoint wins: retain the group as dialed target and expose
             # the HA softphone as the party that actually answered.
-            _set_sip_bridge_call_state(
+            publish_bridge_projection(
                 hass,
-                CallState.IN_CALL.value,
-                caller=invite.caller,
-                callee=entry.display_name,
+                session,
                 peer_name=connected_party,
-                call_id=invite.call_id,
                 dialed_target=entry.display_name,
                 connected_party=connected_party,
                 answered_by=connected_party,
@@ -611,9 +598,6 @@ async def run_ring_group_call(
                 enabled=ha_origin,
                 state=CallState.TRANSPORT_UNREACHABLE.value,
                 endpoint_id=origin_endpoint_id,
-                device_id=origin_device_id,
-                caller=origin_name,
-                callee=entry.display_name,
                 peer_name=entry.display_name,
                 call_id=invite.call_id,
                 reason=TerminalReason.PROTOCOL_ERROR.value,
@@ -667,14 +651,10 @@ async def run_ring_group_call(
         if committed is None:
             await _close_outbound_leg(winner, bye_or_cancel=True)
             return
-        _set_sip_bridge_call_state(
+        publish_bridge_projection(
             hass,
-            CallState.IN_CALL.value,
-            caller=invite.caller,
-            callee=dialed_target,
+            session,
             peer_name=connected_party,
-            call_id=invite.call_id,
-            dest_call_id=committed.dest_call_id,
             dialed_target=dialed_target,
             connected_party=connected_party,
             answered_by=connected_party,
@@ -688,16 +668,16 @@ async def run_ring_group_call(
             sip_uri=str(winner.uri),
         )
         if ha_origin:
-            _set_ha_softphone_call_state(
+            origin_leg_id = f"browser-origin:{origin_endpoint_id}"
+            observe_phone_leg_projection(
                 hass,
+                registry,
+                session,
+                origin_endpoint_id,
                 CallState.IN_CALL.value,
-                endpoint_id=origin_endpoint_id,
-                session_device_id=origin_device_id,
-                caller=invite.caller,
-                callee=dialed_target,
+                leg_id=origin_leg_id,
                 peer_name=connected_party,
                 direction="outgoing",
-                call_id=invite.call_id,
                 dest_call_id=committed.dest_call_id,
                 dialed_target=dialed_target,
                 connected_party=connected_party,

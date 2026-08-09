@@ -62,7 +62,7 @@ from .media_ports import (
     take_delayed_offer_ports,
 )
 from .media_renegotiation import async_prepare_media_update
-from .call_projection import CallProjectionEvent, publish_call_projection
+from .call_projection import publish_phone_projection
 from .invite_router import InviteRuntime, route_invite
 from .endpoint_registry import EndpointBusyError
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
@@ -252,11 +252,10 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         session = registry.get_session(invite.call_id)
         if session is None:
             return
-        publish_call_projection(
+        publish_phone_projection(
             hass,
             session,
-            CallProjectionEvent.phone(
-            session, endpoint_id, peer_name=invite.caller, direction="incoming",
+            endpoint_id, peer_name=invite.caller, direction="incoming",
             dialed_target=invite.target,
             selected_tx_format=invite.send_format.audio_format.wire_token(),
             selected_rx_format=invite.recv_format.audio_format.wire_token(),
@@ -282,7 +281,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 invite.recv_video_format.wire_token()
                 if video_enabled and invite.recv_video_format is not None
                 else ""
-            ),
             ),
         )
 
@@ -595,14 +593,12 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         registry.add_leg(
             call_id, call_id, role="ha_softphone", state=CallState.REMOTE_RINGING.value
         )
-        publish_call_projection(
+        publish_phone_projection(
             hass,
             session,
-            CallProjectionEvent.phone(
-                session, endpoint_id, peer_name=group_name, direction="outgoing",
+            endpoint_id, peer_name=group_name, direction="outgoing",
                 route_kind=GROUP_TYPE_RING, sip_status_code=180,
                 last_sip_event="LOCAL_RING_GROUP",
-            ),
         )
         try:
             peers = await _async_build_peer_snapshot(hass)

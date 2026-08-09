@@ -221,7 +221,7 @@ class GroupCallMatrixTest(unittest.TestCase):
 
         with (
             patch.object(route_decisions, "preferred_browser_phone", return_value=None),
-            patch.object(route_decisions, "publish_call_projection") as publish,
+            patch.object(route_decisions, "publish_phone_projection") as publish,
         ):
             route_decisions.set_pending_route_decision(
                 hass,

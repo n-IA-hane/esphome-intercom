@@ -23,40 +23,6 @@ class CallProjectionEvent:
     intent: TerminationIntent | None = None
     details: Mapping[str, Any] = field(default_factory=dict)
 
-    @classmethod
-    def phone(
-        cls,
-        session: EndpointCallSession,
-        endpoint_id: str,
-        *,
-        leg_id: str = "",
-        intent: TerminationIntent | None = None,
-        **details: Any,
-    ) -> CallProjectionEvent:
-        return cls(
-            session.token,
-            "phone",
-            endpoint_id,
-            leg_id,
-            intent,
-            MappingProxyType(dict(details)),
-        )
-
-    @classmethod
-    def bridge(
-        cls,
-        session: EndpointCallSession,
-        *,
-        intent: TerminationIntent | None = None,
-        **details: Any,
-    ) -> CallProjectionEvent:
-        return cls(
-            session.token,
-            "sip_bridge",
-            intent=intent,
-            details=MappingProxyType(dict(details)),
-        )
-
 
 _RESERVED_FIELDS = {"state", "sip_state", "call_id", "caller", "callee", "endpoint_id"}
 
@@ -119,3 +85,72 @@ def publish_call_projection(
             **details,
         )
     return True
+
+
+def publish_bridge_projection(
+    hass: HomeAssistant,
+    session: EndpointCallSession,
+    *,
+    intent: TerminationIntent | None = None,
+    **details: Any,
+) -> bool:
+    return publish_call_projection(
+        hass,
+        session,
+        CallProjectionEvent(
+            session.token,
+            "sip_bridge",
+            intent=intent,
+            details=MappingProxyType(dict(details)),
+        ),
+    )
+
+
+def publish_phone_projection(
+    hass: HomeAssistant,
+    session: EndpointCallSession,
+    endpoint_id: str,
+    *,
+    leg_id: str = "",
+    intent: TerminationIntent | None = None,
+    **details: Any,
+) -> bool:
+    return publish_call_projection(
+        hass,
+        session,
+        CallProjectionEvent(
+            session.token,
+            "phone",
+            endpoint_id,
+            leg_id,
+            intent,
+            MappingProxyType(dict(details)),
+        ),
+    )
+
+
+def observe_phone_leg_projection(
+    hass: HomeAssistant,
+    registry: Any,
+    session: EndpointCallSession,
+    endpoint_id: str,
+    state: str,
+    *,
+    leg_id: str,
+    role: str = "ha_softphone",
+    **details: Any,
+) -> bool:
+    observed = registry.observe_leg(
+        session.call_id,
+        leg_id,
+        role=role,
+        state=state,
+        endpoint_id=endpoint_id,
+        generation=session.generation,
+    )
+    return bool(
+        observed
+        and publish_phone_projection(
+            hass, session, endpoint_id, leg_id=leg_id, **details
+        )
+    )

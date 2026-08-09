@@ -150,13 +150,7 @@ def _load_module():
     _module("endpoint_registry", EndpointBusyError=_BusyError)
     call_projection = _module("call_projection")
 
-    class CallProjectionEvent:
-        @staticmethod
-        def phone(session, endpoint_id: str, **details):
-            return session, endpoint_id, details
-
-    def publish_call_projection(_hass, session, event) -> bool:
-        _source, endpoint_id, details = event
+    def publish_phone_projection(_hass, session, endpoint_id, **details) -> bool:
         state_updates.append(
             {
                 "state": session.state,
@@ -169,8 +163,7 @@ def _load_module():
         )
         return True
 
-    call_projection.CallProjectionEvent = CallProjectionEvent
-    call_projection.publish_call_projection = publish_call_projection
+    call_projection.publish_phone_projection = publish_phone_projection
     _module(
         "endpoint_session",
         TerminationInitiator=SimpleNamespace(ROUTING="routing"),

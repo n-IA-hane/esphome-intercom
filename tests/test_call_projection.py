@@ -37,17 +37,14 @@ def test_phone_projection_derives_authoritative_identity(monkeypatch) -> None:
         endpoint_id="phone-1",
     )
 
-    accepted = call_projection.publish_call_projection(
+    accepted = call_projection.publish_phone_projection(
         object(),
         session,
-        call_projection.CallProjectionEvent.phone(
-            session,
-            "phone-1",
-            caller="spoofed",
-            call_id="wrong",
-            peer_name="Alice",
-            selected_tx_format="PCMA/8000",
-        ),
+        "phone-1",
+        caller="spoofed",
+        call_id="wrong",
+        peer_name="Alice",
+        selected_tx_format="PCMA/8000",
     )
 
     assert accepted
@@ -65,9 +62,7 @@ def test_projection_rejects_stale_generation(monkeypatch) -> None:
     runtime._discard_dark_session("call-1", TerminationIntent("cancelled"))
     runtime.create_session("call-1")
 
-    assert not call_projection.publish_call_projection(
-        object(), stale, call_projection.CallProjectionEvent.bridge(stale)
-    )
+    assert not call_projection.publish_bridge_projection(object(), stale)
     sink.assert_not_called()
 
 
@@ -78,12 +73,11 @@ def test_terminal_projection_uses_intent_without_mutating_session(monkeypatch) -
     session = runtime.upsert("call-1", state="in_call", caller="A", callee="B")
     intent = TerminationIntent("busy", public_state="busy")
 
-    assert call_projection.publish_call_projection(
+    assert call_projection.publish_bridge_projection(
         object(),
         session,
-        call_projection.CallProjectionEvent.bridge(
-            session, intent=intent, reason="busy"
-        ),
+        intent=intent,
+        reason="busy",
     )
     assert session.state == "in_call"
     assert sink.call_args.args[1] == "busy"

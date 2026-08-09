@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
 
-from .call_projection import CallProjectionEvent, publish_call_projection
+from .call_projection import publish_bridge_projection
 from .assist_runtime import AssistMediaSession, build_call_connected_intent
 from .automation_routing import canonical_call_origin
 from .config import assist_config
@@ -145,11 +145,10 @@ class AssistEndpoint:
             role="assist",
             state=CallState.IN_CALL.value,
         )
-        publish_call_projection(
+        publish_bridge_projection(
             self.hass,
             session,
-            CallProjectionEvent.bridge(
-            session, peer_name=destination_name, direction="incoming",
+            peer_name=destination_name, direction="incoming",
             route_kind=RouteAction.ASSIST.value,
             ingress=call_ingress,
             origin=call_ingress,
@@ -163,6 +162,5 @@ class AssistEndpoint:
             last_sip_event="ASSIST_PIPELINE",
             caller_uri=caller_uri,
             source=source,
-            ),
         )
         return media

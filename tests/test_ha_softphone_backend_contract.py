@@ -84,8 +84,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             INBOUND_BRIDGE.read_text(),
             "route_sip_bridge",
         )
-        self.assertIn("_set_sip_bridge_call_state(", bridge_path)
+        self.assertIn("publish_bridge_projection(", bridge_path)
         self.assertNotIn("_set_ha_softphone_call_state(", bridge_path)
+        self.assertNotIn("publish_phone_projection(", bridge_path)
 
     def test_ha_softphone_busy_excludes_bridge_runtime_maps(self) -> None:
         ws = (
@@ -499,11 +500,11 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
         ring_start = endpoint_runtime[start:end]
         upsert = ring_start.index("session = registry.upsert(")
-        publish = ring_start.index("publish_call_projection(")
+        publish = ring_start.index("publish_phone_projection(")
         snapshot = ring_start.index("peers = await _async_build_peer_snapshot(hass)")
         self.assertLess(upsert, publish)
         self.assertLess(publish, snapshot)
-        self.assertIn("CallProjectionEvent.phone(", ring_start)
+        self.assertNotIn("CallProjectionEvent.phone(", ring_start)
         self.assertIn("TerminalReason.TRANSPORT_UNREACHABLE.value", ring_start)
         self.assertIn("EndpointTerminationHandler(hass).terminate_reason(", ring_start)
 
@@ -532,7 +533,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             outbound.count("target_device_id=target_device_id"),
             4,
         )
-        self.assertGreaterEqual(outbound.count("publish_call_projection("), 3)
+        self.assertGreaterEqual(outbound.count("publish_phone_projection("), 3)
         tracker = _function_body(
             self.outbound_lifecycle,
             "async_track_outbound_sip_client",
@@ -562,11 +563,11 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
         self.assertIn("registry.upsert(", accepted)
         self.assertIn("registry.add_leg(", accepted)
-        self.assertIn("publish_call_projection(", accepted)
-        self.assertIn("CallProjectionEvent.phone(", accepted)
+        self.assertIn("publish_phone_projection(", accepted)
+        self.assertNotIn("CallProjectionEvent.phone(", accepted)
         self.assertLess(
             accepted.index("registry.add_leg("),
-            accepted.index("publish_call_projection("),
+            accepted.index("publish_phone_projection("),
         )
         self.assertIn("state=CallState.IN_CALL.value", accepted)
 
@@ -611,7 +612,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             1,
         )[1].split("if registry.sip_client_for", 1)[0]
         self.assertNotIn("registry.detach_client", invite_error)
-        self.assertNotIn("publish_call_projection(", invite_error)
+        self.assertNotIn("publish_phone_projection(", invite_error)
         self.assertIn("EndpointTerminationHandler(hass).terminate_reason(", invite_error)
 
     def test_esp_state_mirrors_physical_busy_ownership_into_logical_endpoint(

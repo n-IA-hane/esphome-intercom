@@ -32,6 +32,7 @@ def trunk_routing(monkeypatch):
     monkeypatch.setitem(sys.modules, "homeassistant.core", core)
 
     routes: dict = {}
+    publish_bridge_projection = Mock()
     dependencies = {
         "call_scope": {
             "set_pending_route": Mock(
@@ -44,12 +45,12 @@ def trunk_routing(monkeypatch):
             ),
         },
         "const": {"CONF_TRUNK_INBOUND_DEFAULT_TARGET": "fallback"},
+        "call_projection": {"publish_bridge_projection": publish_bridge_projection},
         "fsm": {
             "CallState": SimpleNamespace(
                 CONNECTING=SimpleNamespace(value="connecting")
             )
         },
-        "websocket_api": {"_set_sip_bridge_call_state": Mock()},
     }
     for name, values in dependencies.items():
         dependency = types.ModuleType(f"{package_name}.{name}")
@@ -64,6 +65,7 @@ def trunk_routing(monkeypatch):
     monkeypatch.setitem(sys.modules, module_name, module)
     spec.loader.exec_module(module)
     module.test_routes = routes
+    module.test_publish_bridge_projection = publish_bridge_projection
     return module
 
 
@@ -75,6 +77,12 @@ def _invite():
     )
 
 
+def _registry_and_session():
+    session = SimpleNamespace(generation=1, state="connecting")
+    registry = SimpleNamespace(transition=Mock(return_value=session))
+    return registry, session
+
+
 def test_explicit_automation_decision_wins_and_future_is_removed(
     trunk_routing,
 ) -> None:
@@ -83,12 +91,15 @@ def test_explicit_automation_decision_wins_and_future_is_removed(
             {"action": "forward", "destination": "RG Casa"}
         )
 
-    trunk_routing._set_sip_bridge_call_state = Mock(side_effect=answer_route)
+    trunk_routing.test_publish_bridge_projection.side_effect = answer_route
+    registry, session = _registry_and_session()
 
     result = asyncio.run(
         trunk_routing.async_request_inbound_destination(
             SimpleNamespace(),
             _invite(),
+            registry=registry,
+            session=session,
             trunk_config={"fallback": "Casa"},
             timeout=1.0,
         )
@@ -96,8 +107,8 @@ def test_explicit_automation_decision_wins_and_future_is_removed(
 
     assert result == {"action": "forward", "destination": "RG Casa"}
     assert trunk_routing.test_routes == {}
-    state = trunk_routing._set_sip_bridge_call_state.call_args
-    assert state.args[1] == "connecting"
+    state = trunk_routing.test_publish_bridge_projection.call_args
+    assert state.args[1] is session
     assert state.kwargs["fallback_destination"] == "Casa"
     assert state.kwargs["ingress"] == "trunk"
 
@@ -108,11 +119,14 @@ def test_default_or_timeout_preserves_configured_fallback(trunk_routing) -> None
             {"action": "default", "destination": "ignored"}
         )
 
-    trunk_routing._set_sip_bridge_call_state = Mock(side_effect=select_default)
+    trunk_routing.test_publish_bridge_projection.side_effect = select_default
+    registry, session = _registry_and_session()
     result = asyncio.run(
         trunk_routing.async_request_inbound_destination(
             SimpleNamespace(),
             _invite(),
+            registry=registry,
+            session=session,
             trunk_config={"fallback": "  Test  "},
             timeout=1.0,
         )
@@ -124,10 +138,13 @@ def test_default_or_timeout_preserves_configured_fallback(trunk_routing) -> None
 
 
 def test_timeout_always_removes_pending_route(trunk_routing) -> None:
+    registry, session = _registry_and_session()
     result = asyncio.run(
         trunk_routing.async_request_inbound_destination(
             SimpleNamespace(),
             _invite(),
+            registry=registry,
+            session=session,
             trunk_config={},
             timeout=0.001,
         )

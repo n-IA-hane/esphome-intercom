@@ -167,8 +167,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.source.index("def _defer_invite_to_ha_softphone(") :
             self.source.index("def _inbound_route_decision(")
         ]
-        self.assertIn("publish_call_projection(", publish)
-        self.assertIn("CallProjectionEvent.phone(", publish)
+        self.assertIn("publish_phone_projection(", publish)
+        self.assertNotIn("CallProjectionEvent.phone(", publish)
         self.assertLess(
             defer.index("session = registry.upsert("),
             defer.index("hass.loop.call_soon(_publish_ringing_if_current)"),
@@ -460,11 +460,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "session = call_registry(hass).get_session(invite.call_id)",
             route_requested_branch,
         )
-        self.assertIn("publish_call_projection(", route_requested_branch)
-        self.assertIn("CallProjectionEvent.bridge(", route_requested_branch)
+        self.assertIn("publish_bridge_projection(", route_requested_branch)
+        self.assertNotIn("CallProjectionEvent.bridge(", route_requested_branch)
         self.assertLess(
             route_requested_branch.index("session = call_registry(hass).get_session"),
-            route_requested_branch.index("publish_call_projection("),
+            route_requested_branch.index("publish_bridge_projection("),
         )
         self.assertIn("route_request=True", route_requested_branch)
         self.assertIn(
@@ -1144,7 +1144,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         for argument in ("member", "peers", "roster_entries"):
             self.assertIn(argument, browser_lookup)
         self.assertIn('role="group_candidate"', ring_group)
-        self.assertIn("_set_ha_softphone_call_state(", ring_group)
+        self.assertIn("observe_phone_leg_projection(", ring_group)
         self.assertIn("async def _wait_browser()", ring_group)
         self.assertIn(
             'control_candidate_id = "browser:route-control"',
@@ -1256,8 +1256,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             ) : ring_group.index("if not isinstance(winner, OutboundLeg):")
         ]
         self.assertIn("connected_party = winner.name", ha_winner)
-        self.assertIn("_set_sip_bridge_call_state(", ha_winner)
-        self.assertIn("callee=entry.display_name", ha_winner)
+        self.assertIn("publish_bridge_projection(", ha_winner)
+        self.assertIn("session,", ha_winner)
         self.assertIn("peer_name=connected_party", ha_winner)
         self.assertIn("dialed_target=entry.display_name", ha_winner)
         self.assertIn("connected_party=connected_party", ha_winner)
@@ -1277,7 +1277,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             'connected_party = str(winner.member or "").strip() or invite.target',
             external_winner,
         )
-        self.assertIn("callee=dialed_target", external_winner)
+        self.assertIn("publish_bridge_projection(", external_winner)
         self.assertIn("peer_name=connected_party", external_winner)
         self.assertIn("dialed_target=dialed_target", external_winner)
         self.assertIn("connected_party=connected_party", external_winner)
@@ -1286,9 +1286,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("local_endpoint_id=origin_endpoint_id", external_winner)
         self.assertIn('"endpoint_id": data.local_endpoint_id', self.outbound_bridge_commit)
         self.assertIn("endpoint_id=origin_endpoint_id", external_winner)
-        self.assertIn("session_device_id=origin_device_id", external_winner)
+        self.assertIn("observe_phone_leg_projection(", external_winner)
+        self.assertIn("origin_endpoint_id", external_winner)
+        self.assertNotIn("session_device_id=origin_device_id", external_winner)
         self.assertIn("if ha_origin:", external_winner)
-        self.assertIn("_set_ha_softphone_call_state(", external_winner)
 
         websocket = WEBSOCKET_API.read_text()
         state = websocket[
@@ -1616,8 +1617,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn(
             "session = call_registry(hass).get_session(invite.call_id)", route_branch
         )
-        self.assertIn("publish_call_projection(", route_branch)
-        self.assertIn("CallProjectionEvent.bridge(", route_branch)
+        self.assertIn("publish_bridge_projection(", route_branch)
+        self.assertNotIn("CallProjectionEvent.bridge(", route_branch)
         self.assertIn("route_request=True", route_branch)
         self.assertIn('phase="route_decision"', route_branch)
         self.assertNotIn('"route_requested",\n                caller=', route_branch)

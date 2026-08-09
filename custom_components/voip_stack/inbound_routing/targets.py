@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
-from ..fsm import CallState, TerminalReason
+from ..call_projection import publish_bridge_projection
+from ..endpoint_session import EndpointCallSession, TerminationIntent
+from ..fsm import TerminalReason
 from ..phone_endpoint import (
     EndpointAvailability,
     EndpointKind,
@@ -17,7 +19,6 @@ from ..phone_endpoint import (
 )
 from ..router import RouteAction, RouteReason
 from ..sip_listener import SipInviteResult
-from ..websocket_api import _set_sip_bridge_call_state
 
 if TYPE_CHECKING:
     from ..endpoint_registry import EndpointRegistry
@@ -154,6 +155,7 @@ def reject_route_decision(
     hass: HomeAssistant,
     invite: SipInvite,
     decision: RouteDecision,
+    session: EndpointCallSession,
 ) -> SipInviteResult | None:
     """Publish and return a terminal response for a rejected dialplan route."""
 
@@ -174,13 +176,12 @@ def reject_route_decision(
     terminal_reason = (
         decision.reason.value if decision.reason else TerminalReason.DECLINED.value
     )
-    _set_sip_bridge_call_state(
+    intent = TerminationIntent.final_response(terminal_reason, status)
+    publish_bridge_projection(
         hass,
-        CallState.TRANSPORT_UNREACHABLE.value if status == 480 else "declined",
-        caller=invite.caller,
-        callee=invite.target,
+        session,
+        intent=intent,
         peer_name=invite.caller,
-        call_id=invite.call_id,
         reason=terminal_reason,
         origin="self",
         sip_status_code=status,

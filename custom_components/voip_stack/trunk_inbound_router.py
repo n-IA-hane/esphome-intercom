@@ -9,7 +9,7 @@ from typing import Any, Awaitable, Callable
 
 from homeassistant.core import HomeAssistant
 
-from .call_projection import CallProjectionEvent, publish_call_projection
+from .call_projection import publish_bridge_projection
 from .bridge_manager import async_watch_sip_bridge_destination
 from .config import media_capture_enabled, trunk_config
 from .const import (
@@ -99,6 +99,10 @@ async def async_route_trunk_invite(
         bridge_ports.release()
         return
     registry = call_registry(hass)
+    session = registry.get_session(invite.call_id)
+    if session is None:
+        bridge_ports.release()
+        return
 
     async def terminate_source(reason: str, *, status: int, answered: bool) -> None:
         intent = (
@@ -160,6 +164,8 @@ async def async_route_trunk_invite(
         automation_decision = await async_request_inbound_destination(
             hass,
             invite,
+            registry=registry,
+            session=session,
             trunk_config=configured_trunk,
             timeout=SIP_ROUTE_DECISION_TIMEOUT,
         )
@@ -558,11 +564,10 @@ async def async_route_trunk_invite(
     )
     registry.attach_relay(invite.call_id, relay)
     bridge_ports.detach()
-    publish_call_projection(
+    publish_bridge_projection(
         hass,
         session,
-        CallProjectionEvent.bridge(
-        session, peer_name=destination,
+        peer_name=destination,
         selected_tx_format=invite.send_format.audio_format.wire_token(),
         selected_rx_format=invite.recv_format.audio_format.wire_token(),
         selected_tx_rtp_format=invite.send_format.wire_token(),
@@ -574,5 +579,4 @@ async def async_route_trunk_invite(
         sip_uri=str(bridge_uri),
         scope="sip_trunk",
         dtmf_digits=digits,
-        ),
     )

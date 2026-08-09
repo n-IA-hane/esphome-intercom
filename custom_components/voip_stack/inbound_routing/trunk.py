@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from homeassistant.core import HomeAssistant
 
-from ..call_projection import CallProjectionEvent, publish_call_projection
+from ..call_projection import publish_bridge_projection
 from ..core import sdp as sip_sdp
 from ..const import (
     CONF_SIP_VIDEO,
@@ -172,11 +172,10 @@ def prepare_trunk_preanswer(
         early_answer_sdp=answer,
     ):
         raise RuntimeError("preanswered media owner disappeared during trunk setup")
-    publish_call_projection(
+    publish_bridge_projection(
         hass,
         session,
-        CallProjectionEvent.bridge(
-        session, peer_name=invite.caller,
+        peer_name=invite.caller,
         selected_tx_format=invite.send_format.audio_format.wire_token(),
         selected_rx_format=invite.recv_format.audio_format.wire_token(),
         selected_tx_rtp_format=invite.send_format.wire_token(),
@@ -203,7 +202,6 @@ def prepare_trunk_preanswer(
             else "inactive"
         ),
         video_failure_reason=video_failure_reason,
-        ),
     )
     create_runtime_task(
         hass,

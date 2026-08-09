@@ -258,13 +258,7 @@ def _load_outbound_lifecycle(
     )
     call_projection = types.ModuleType(f"{PKG_NAME}.call_projection")
 
-    class CallProjectionEvent:
-        @staticmethod
-        def phone(session, endpoint_id: str, **details):
-            return session, endpoint_id, details
-
-    def publish_call_projection(_hass, session, event) -> bool:
-        _source, endpoint_id, details = event
+    def publish_phone_projection(_hass, session, endpoint_id, **details) -> bool:
         websocket_api._set_ha_softphone_call_state(
             _hass,
             session.state,
@@ -276,8 +270,7 @@ def _load_outbound_lifecycle(
         )
         return True
 
-    call_projection.CallProjectionEvent = CallProjectionEvent
-    call_projection.publish_call_projection = publish_call_projection
+    call_projection.publish_phone_projection = publish_phone_projection
 
     module_name = f"{PKG_NAME}._test_outbound_lifecycle_runtime"
     spec = importlib.util.spec_from_file_location(

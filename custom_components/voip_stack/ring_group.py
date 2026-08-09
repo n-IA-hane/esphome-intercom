@@ -6,11 +6,12 @@ import logging
 
 from homeassistant.core import HomeAssistant
 
+from .call_projection import observe_phone_leg_projection
 from .dial_fork import DialDisposition
+from .endpoint_lifecycle import call_registry
 from .fsm import CallState
 from .outbound_attempts import BrowserLeg
 from .phone_endpoint import EndpointAvailability, EndpointKind
-from .websocket_api import _set_ha_softphone_call_state
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,21 +54,24 @@ def settle_browser_candidates(
 ) -> None:
     """Release and publish every browser candidate except one committed winner."""
 
+    session = registry.get(call_id)
     for leg in browser_legs:
         if leg.endpoint_id == keep_endpoint_id:
             continue
         registry.release_endpoint_claim(call_id, leg.endpoint_id)
         try:
-            _set_ha_softphone_call_state(
+            leg_id = f"browser:{leg.endpoint_id}"
+            if session is None:
+                continue
+            observe_phone_leg_projection(
                 hass,
+                registry,
+                session,
+                leg.endpoint_id,
                 state,
-                endpoint_id=leg.endpoint_id,
-                session_device_id=leg.device_id,
-                caller=caller,
-                callee=callee,
+                leg_id=leg_id,
                 peer_name=caller,
                 direction="incoming",
-                call_id=call_id,
                 reason=reason,
                 terminal_reason=reason,
                 route_kind=route_kind,
@@ -98,7 +102,7 @@ def publish_browser_candidates_ringing(
 
     if not browser_legs:
         return
-    registry.upsert(
+    session = registry.upsert(
         invite.call_id,
         state=CallState.RINGING.value,
         owner="ha_softphone",
@@ -107,28 +111,19 @@ def publish_browser_candidates_ringing(
         route_kind=route_kind,
         endpoint_id=origin_endpoint_id,
         source_endpoint_id=source_endpoint_id,
-        ring_endpoint_ids=tuple(
-            leg.endpoint_id for leg in browser_legs
-        ),
+        ring_endpoint_ids=tuple(leg.endpoint_id for leg in browser_legs),
         media_client_id=origin_media_client_id,
     )
     for leg in browser_legs:
-        registry.add_leg(
-            invite.call_id,
-            f"browser:{leg.endpoint_id}",
-            role="ha_softphone",
-            state=CallState.RINGING.value,
-        )
-        _set_ha_softphone_call_state(
+        observe_phone_leg_projection(
             hass,
+            registry,
+            session,
+            leg.endpoint_id,
             CallState.RINGING.value,
-            endpoint_id=leg.endpoint_id,
-            session_device_id=leg.device_id,
-            caller=invite.caller,
-            callee=callee,
+            leg_id=f"browser:{leg.endpoint_id}",
             peer_name=invite.caller,
             direction="incoming",
-            call_id=invite.call_id,
             selected_tx_format=invite.send_format.audio_format.wire_token(),
             selected_rx_format=invite.recv_format.audio_format.wire_token(),
             selected_tx_rtp_format=invite.send_format.wire_token(),
@@ -146,9 +141,6 @@ def publish_ring_group_origin_state(
     enabled: bool,
     state: str,
     endpoint_id: str,
-    device_id: str,
-    caller: str,
-    callee: str,
     peer_name: str,
     call_id: str,
     reason: str,
@@ -170,16 +162,20 @@ def publish_ring_group_origin_state(
     }
     if sip_status_code is not None:
         extra["sip_status_code"] = int(sip_status_code)
-    _set_ha_softphone_call_state(
+    registry = call_registry(hass)
+    session = registry.get(call_id)
+    if session is None:
+        return
+    leg_id = f"browser-origin:{endpoint_id}"
+    observe_phone_leg_projection(
         hass,
+        registry,
+        session,
+        endpoint_id,
         state,
-        endpoint_id=endpoint_id,
-        session_device_id=device_id,
-        caller=caller,
-        callee=callee,
+        leg_id=leg_id,
         peer_name=peer_name,
         direction="outgoing",
-        call_id=call_id,
         **extra,
     )
 

@@ -113,13 +113,7 @@ def softphone_answer(monkeypatch):
 
     call_projection = sys.modules[f"{package_name}.call_projection"]
 
-    class CallProjectionEvent:
-        @staticmethod
-        def phone(session, endpoint_id: str, **details):
-            return session, endpoint_id, details
-
-    def publish_call_projection(hass, session, event) -> bool:
-        _source, endpoint_id, details = event
+    def publish_phone_projection(hass, session, endpoint_id, **details) -> bool:
         sys.modules[f"{package_name}.websocket_api"]._set_ha_softphone_call_state(
             hass,
             session.state,
@@ -131,8 +125,7 @@ def softphone_answer(monkeypatch):
         )
         return True
 
-    call_projection.CallProjectionEvent = CallProjectionEvent
-    call_projection.publish_call_projection = publish_call_projection
+    call_projection.publish_phone_projection = publish_phone_projection
 
     module_name = f"{package_name}.softphone_answer"
     spec = importlib.util.spec_from_file_location(module_name, MODULE)

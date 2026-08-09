@@ -7,7 +7,7 @@ import logging
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
-from .call_projection import CallProjectionEvent, publish_call_projection
+from .call_projection import publish_phone_projection
 from .call_scope import endpoint_call_ids, pending_routes
 from .config import transport_config
 from .const import CONF_VIDEO_CAMERA_SEND
@@ -155,17 +155,15 @@ async def async_answer_browser_call(
             role="ha_softphone",
             state=CallState.IN_CALL.value,
         )
-        publish_call_projection(
+        publish_phone_projection(
             hass,
             session,
-            CallProjectionEvent.phone(
-                session, endpoint_id, peer_name=room_name, direction="incoming",
+            endpoint_id, peer_name=room_name, direction="incoming",
                 sip_status_code=200, last_sip_event="SIP_RESPONSE",
                 selected_tx_format="16000:s16le:1:20",
                 selected_rx_format="16000:s16le:1:20",
                 selected_tx_rtp_format="pt=96:L16/16000/1/20ms",
                 selected_rx_rtp_format="pt=96:L16/16000/1/20ms",
-            ),
         )
         return
 
@@ -410,11 +408,10 @@ async def async_answer_browser_call(
         and local_video_rtp_port
         and video_direction != "inactive"
     )
-    publish_call_projection(
+    publish_phone_projection(
         hass,
         authoritative_session,
-        CallProjectionEvent.phone(
-            authoritative_session, endpoint_id,
+        endpoint_id,
             peer_name=invite.caller, connected_party=invite.caller,
             answered_by=invite.caller, direction="incoming",
             dialed_target=invite.target, sip_status_code=200,
@@ -437,5 +434,4 @@ async def async_answer_browser_call(
             if invite.recv_video_format else "",
             video_direction=video_direction
             if invite.video_format and local_video_rtp_port else "inactive",
-        ),
     )

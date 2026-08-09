@@ -9,7 +9,7 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 
-from .call_projection import CallProjectionEvent, publish_call_projection
+from .call_projection import publish_bridge_projection, publish_phone_projection
 from .pbx_runtime import SipEndpointRuntime
 from .endpoint_session import (
     EndpointCallSession,
@@ -55,33 +55,27 @@ def project_session_termination(
     if intent.response_status:
         common["sip_status_code"] = intent.response_status
     if endpoint_id:
-        publish_call_projection(
+        publish_phone_projection(
             hass,
             session,
-            CallProjectionEvent.phone(
-                session,
-                endpoint_id,
-                intent=intent,
+            endpoint_id,
+            intent=intent,
                 peer_name=session.caller if remote else session.callee,
                 direction=str(metadata.get("direction") or ("incoming" if remote else "")),
                 **common,
-            ),
         )
     if metadata.get("bridge_dest_call_id") or (
         not endpoint_id and session.route_kind
     ):
-        publish_call_projection(
+        publish_bridge_projection(
             hass,
             session,
-            CallProjectionEvent.bridge(
-                session,
-                intent=intent,
+            intent=intent,
                 peer_name=session.callee,
                 target=session.callee,
                 terminal_reason=intent.reason,
                 route_kind=session.route_kind,
                 **common,
-            ),
         )
 
 

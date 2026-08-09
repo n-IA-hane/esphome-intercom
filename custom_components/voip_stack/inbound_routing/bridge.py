@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 from homeassistant.core import HomeAssistant
 
 from ..bridge_manager import async_watch_sip_bridge_destination
+from ..call_projection import publish_bridge_projection
 from ..core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from ..config import media_capture_enabled
 from ..const import (
@@ -62,9 +63,6 @@ from ..sip_bridge import (
 )
 from ..sip_client import SIP_TIMER_B, SipCallClient
 from ..sip_listener import SipInviteResult
-from ..websocket_api import (
-    _set_sip_bridge_call_state,
-)
 
 if TYPE_CHECKING:
     from ..pbx_runtime import SipEndpointRuntime
@@ -594,14 +592,10 @@ async def route_sip_bridge(
 
         if not (await transaction.commit(answer, claim=_claim_answer)).committed:
             return
-        _set_sip_bridge_call_state(
+        publish_bridge_projection(
             hass,
-            CallState.IN_CALL.value,
-            caller=invite.caller,
-            callee=resolved_callee,
+            session,
             peer_name=resolved_callee,
-            call_id=invite.call_id,
-            dest_call_id=client.dialog_ids.call_id,
             direction="incoming",
             selected_tx_format=invite.send_format.audio_format.wire_token(),
             selected_rx_format=invite.recv_format.audio_format.wire_token(),
@@ -634,7 +628,7 @@ async def route_sip_bridge(
         )
 
     finish_task = hass.async_create_task(finish_bridge(result))
-    registry.register_bridge(
+    session = registry.register_bridge(
         source_call_id=invite.call_id,
         dest_call_id=client.dialog_ids.call_id,
         client=client,
@@ -648,6 +642,8 @@ async def route_sip_bridge(
         source_state=CallState.CONNECTING.value,
         dest_state=result,
     )
+    if session is None:
+        return SipInviteResult(487, "Request Terminated", to_tag="")
     _LOGGER.info(
         "SIP bridge registered call_id=%s dest_call_id=%s target=%s",
         invite.call_id,
@@ -655,18 +651,20 @@ async def route_sip_bridge(
         decision_uri.user,
     )
     if result == "ringing":
-        _set_sip_bridge_call_state(
-            hass,
-            CallState.REMOTE_RINGING.value,
-            caller=invite.caller,
-            callee=resolved_callee,
-            peer_name=resolved_callee,
-            call_id=invite.call_id,
-            dest_call_id=client.dialog_ids.call_id,
-            direction="incoming",
-            route_kind=decision.action.value,
-            sip_uri=str(decision_uri),
-            sip_status_code=180,
-            last_sip_event="SIP_RESPONSE",
+        session = registry.transition(
+            invite.call_id,
+            state=CallState.REMOTE_RINGING.value,
+            expected_generation=session.generation,
         )
+        if session is not None:
+            publish_bridge_projection(
+                hass,
+                session,
+                peer_name=resolved_callee,
+                direction="incoming",
+                route_kind=decision.action.value,
+                sip_uri=str(decision_uri),
+                sip_status_code=180,
+                last_sip_event="SIP_RESPONSE",
+            )
     return SipInviteResult(180, "Ringing", to_tag="", defer_final=True)

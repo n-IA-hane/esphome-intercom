@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant
 
 from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .config import trunk_config as _get_trunk_config
+from .call_projection import publish_bridge_projection
 from .const import (
     CONF_SIP_VIDEO,
     CONF_VIDEO_TRANSCODING,
@@ -101,7 +102,6 @@ from .peer_snapshot import async_build_peer_snapshot as _async_build_peer_snapsh
 from .websocket_api import (
     _ha_peer_name,
     _release_ha_softphone_claim,
-    _set_sip_bridge_call_state,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -377,19 +377,17 @@ async def async_forward_existing_call(
             endpoint_id=session_endpoint_id,
         )
         if not route_already_claimed:
-            _set_sip_bridge_call_state(
-                hass,
-                CallState.CONNECTING.value,
-                caller=invite.caller,
-                callee=destination,
-                peer_name=destination,
-                call_id=call_id,
-                direction="incoming",
-                route_source="automation",
-                route_kind=decision.action.value,
-                event_type="forwarding",
-                last_sip_event="ROUTE_FORWARD",
-            )
+            if session is not None:
+                publish_bridge_projection(
+                    hass,
+                    session,
+                    peer_name=destination,
+                    direction="incoming",
+                    route_source="automation",
+                    route_kind=decision.action.value,
+                    event_type="forwarding",
+                    last_sip_event="ROUTE_FORWARD",
+                )
     except Exception:
         call_artifacts.forward_claim = False
         raise
@@ -643,18 +641,23 @@ async def async_forward_existing_call(
                         )
 
                 def _publish_group_ringing() -> None:
-                    _set_sip_bridge_call_state(
-                        hass,
-                        CallState.REMOTE_RINGING.value,
+                    ringing_session = registry.transition(
+                        call_id,
+                        state=CallState.REMOTE_RINGING.value,
                         caller=invite.caller,
                         callee=entry.display_name,
-                        peer_name=entry.display_name,
-                        call_id=call_id,
-                        direction="incoming",
-                        route_source="automation",
                         route_kind=GROUP_TYPE_RING,
-                        last_sip_event="SIP_RESPONSE",
                     )
+                    if ringing_session is not None:
+                        publish_bridge_projection(
+                            hass,
+                            ringing_session,
+                            peer_name=entry.display_name,
+                            direction="incoming",
+                            route_source="automation",
+                            route_kind=GROUP_TYPE_RING,
+                            last_sip_event="SIP_RESPONSE",
+                        )
 
                 (
                     fork_candidates,
@@ -810,28 +813,25 @@ async def async_forward_existing_call(
                 )
                 if committed is None:
                     raise RuntimeError(TerminalReason.CANCELLED.value)
-                _set_sip_bridge_call_state(
-                    hass,
-                    CallState.IN_CALL.value,
-                    caller=invite.caller,
-                    callee=entry.display_name,
-                    peer_name=connected_party,
-                    call_id=call_id,
-                    dest_call_id=committed.dest_call_id,
-                    dialed_target=entry.display_name,
-                    connected_party=connected_party,
-                    answered_by=connected_party,
-                    direction="incoming",
-                    route_source="automation",
-                    route_kind=GROUP_TYPE_RING,
-                    sip_status_code=200,
-                    last_sip_event="SIP_RESPONSE",
-                    sip_uri=str(winner.uri),
-                    video_active=bool(committed.relay.video_relay),
-                    video_requested=invite.video_format is not None,
-                    video_negotiated=bool(committed.relay.video_relay),
-                    video_failure_reason=committed.video_failure_reason,
-                )
+                if session is not None:
+                    publish_bridge_projection(
+                        hass,
+                        session,
+                        peer_name=connected_party,
+                        dialed_target=entry.display_name,
+                        connected_party=connected_party,
+                        answered_by=connected_party,
+                        direction="incoming",
+                        route_source="automation",
+                        route_kind=GROUP_TYPE_RING,
+                        sip_status_code=200,
+                        last_sip_event="SIP_RESPONSE",
+                        sip_uri=str(winner.uri),
+                        video_active=bool(committed.relay.video_relay),
+                        video_requested=invite.video_format is not None,
+                        video_negotiated=bool(committed.relay.video_relay),
+                        video_failure_reason=committed.video_failure_reason,
+                    )
                 return
 
             if decision.action is RouteAction.ASSIST:
@@ -1083,18 +1083,24 @@ async def async_forward_existing_call(
 
             response_already_sent = _source_dialog_is_answered(preanswered)
             if result == "ringing":
-                _set_sip_bridge_call_state(
-                    hass,
-                    CallState.REMOTE_RINGING.value,
+                ringing_session = registry.transition(
+                    call_id,
+                    state=CallState.REMOTE_RINGING.value,
                     caller=invite.caller,
                     callee=destination,
-                    peer_name=destination,
-                    call_id=call_id,
-                    dest_call_id=client.dialog_ids.call_id,
-                    direction="incoming",
-                    route_source="automation",
-                    last_sip_event="SIP_RESPONSE",
                 )
+                if ringing_session is not None:
+                    ringing_session.metadata["bridge_dest_call_id"] = (
+                        client.dialog_ids.call_id
+                    )
+                    publish_bridge_projection(
+                        hass,
+                        ringing_session,
+                        peer_name=destination,
+                        direction="incoming",
+                        route_source="automation",
+                        last_sip_event="SIP_RESPONSE",
+                    )
             direct_winner = OutboundLeg(
                 destination,
                 bridge_uri,
@@ -1139,30 +1145,27 @@ async def async_forward_existing_call(
             if committed is None:
                 raise RuntimeError(TerminalReason.CANCELLED.value)
             failure = committed.video_failure_reason or video_failure_reason
-            _set_sip_bridge_call_state(
-                hass,
-                CallState.IN_CALL.value,
-                caller=invite.caller,
-                callee=destination,
-                peer_name=destination,
-                call_id=call_id,
-                dest_call_id=committed.dest_call_id,
-                direction="incoming",
-                route_source="automation",
-                answered_by=destination,
-                selected_tx_format=invite.send_format.audio_format.wire_token(),
-                selected_rx_format=invite.recv_format.audio_format.wire_token(),
-                selected_tx_rtp_format=invite.send_format.wire_token(),
-                selected_rx_rtp_format=invite.recv_format.wire_token(),
-                sip_status_code=200,
-                last_sip_event="SIP_RESPONSE",
-                route_kind=decision.action.value,
-                sip_uri=str(bridge_uri),
-                video_active=bool(committed.relay.video_relay),
-                video_requested=forward_video_enabled,
-                video_negotiated=bool(committed.relay.video_relay),
-                video_failure_reason=failure,
-            )
+            if session is not None:
+                publish_bridge_projection(
+                    hass,
+                    session,
+                    peer_name=destination,
+                    direction="incoming",
+                    route_source="automation",
+                    answered_by=destination,
+                    selected_tx_format=invite.send_format.audio_format.wire_token(),
+                    selected_rx_format=invite.recv_format.audio_format.wire_token(),
+                    selected_tx_rtp_format=invite.send_format.wire_token(),
+                    selected_rx_rtp_format=invite.recv_format.wire_token(),
+                    sip_status_code=200,
+                    last_sip_event="SIP_RESPONSE",
+                    route_kind=decision.action.value,
+                    sip_uri=str(bridge_uri),
+                    video_active=bool(committed.relay.video_relay),
+                    video_requested=forward_video_enabled,
+                    video_negotiated=bool(committed.relay.video_relay),
+                    video_failure_reason=failure,
+                )
         except asyncio.CancelledError:
             await _cleanup_failed_route(TerminalReason.CANCELLED.value)
             raise

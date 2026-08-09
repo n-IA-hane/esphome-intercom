@@ -7,7 +7,7 @@ import logging
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
-from .call_projection import CallProjectionEvent, publish_call_projection
+from .call_projection import publish_phone_projection
 from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .authorization import async_require_service_admin
 from .config import (
@@ -377,11 +377,10 @@ async def async_originate_browser_call(
             registry.add_leg(
                 call_id, call_id, role="ha_softphone", state=CallState.IN_CALL.value
             )
-            publish_call_projection(
+            publish_phone_projection(
                 hass,
                 session,
-                CallProjectionEvent.phone(
-                    session, endpoint_id, peer_name=room_name, direction="outgoing",
+                endpoint_id, peer_name=room_name, direction="outgoing",
                     route_kind="conference", sip_status_code=200,
                     last_sip_event="LOCAL_CONFERENCE_JOIN",
                     selected_tx_format="16000:s16le:1:20",
@@ -389,7 +388,6 @@ async def async_originate_browser_call(
                     selected_tx_rtp_format="pt=96:L16/16000/1/20ms",
                     selected_rx_rtp_format="pt=96:L16/16000/1/20ms",
                     scope="conference", room=room_name, target=target,
-                ),
             )
             ring_members = call_runtime_artifacts(
                 hass
@@ -732,11 +730,10 @@ async def async_originate_browser_call(
             phone=str(getattr(target_endpoint, "name", "") or display_target),
         ) from err
     _bind_service_call_controller(registry, client.dialog_ids.call_id, call)
-    publish_call_projection(
+    publish_phone_projection(
         hass,
         session,
-        CallProjectionEvent.phone(
-            session, endpoint_id, peer_name=display_target, direction="outgoing",
+        endpoint_id, peer_name=display_target, direction="outgoing",
             target_device_id=target_device_id,
             sip_transport=_sip_uri_transport(uri).lower(), last_sip_event="INVITE",
             sip_uri=route_uri, video_requested=video_enabled,
@@ -744,7 +741,6 @@ async def async_originate_browser_call(
             video_status="degraded" if video_failure_reason else "requested"
             if video_enabled else "inactive",
             video_failure_reason=video_failure_reason,
-        ),
     )
     registry.attach_sip_client(
         client.dialog_ids.call_id,
@@ -803,14 +799,12 @@ async def async_originate_browser_call(
     # Keeping the signaling order here makes the backend snapshot monotonic;
     # the card remains a plain mirror of that authoritative state.
     if public_result == CallState.REMOTE_RINGING.value or result == "ringing":
-        publish_call_projection(
+        publish_phone_projection(
             hass,
             session,
-            CallProjectionEvent.phone(
-                session, endpoint_id, peer_name=display_target, direction="outgoing",
+            endpoint_id, peer_name=display_target, direction="outgoing",
                 target_device_id=target_device_id, sip_status_code=180,
                 last_sip_event="SIP_RESPONSE", sip_uri=route_uri,
-            ),
         )
     elif public_result == CallState.IN_CALL.value and client.dialog is not None:
         connected_party = str(client.connected_party or display_target).strip()
@@ -830,11 +824,10 @@ async def async_originate_browser_call(
         final_video_failure_reason = video_failure_reason or (
             "remote_video_rejected" if video_enabled and not video_active else ""
         )
-        publish_call_projection(
+        publish_phone_projection(
             hass,
             session,
-            CallProjectionEvent.phone(
-            session, endpoint_id, peer_name=connected_party,
+            endpoint_id, peer_name=connected_party,
             connected_party=connected_party, direction="outgoing",
             target_device_id=target_device_id,
             selected_tx_format=client.dialog.send_format.audio_format.wire_token(),
@@ -867,7 +860,6 @@ async def async_originate_browser_call(
             sip_status_code=200,
             last_sip_event="SIP_RESPONSE",
             sip_uri=route_uri,
-            ),
         )
     await _track_outbound_sip_client(
         hass,

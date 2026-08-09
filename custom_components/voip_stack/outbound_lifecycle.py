@@ -8,7 +8,7 @@ import logging
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
-from .call_projection import CallProjectionEvent, publish_call_projection
+from .call_projection import publish_phone_projection
 from .const import HA_PEER_FALLBACK_NAME
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
@@ -67,14 +67,12 @@ def attach_outbound_connected_identity_state(
                 connected_party=connected_party,
                 connected_uri=connected_uri,
             )
-            publish_call_projection(
-                hass, session, CallProjectionEvent.phone(
-                    session, endpoint_id, peer_name=connected_party,
+            publish_phone_projection(
+                hass, session, endpoint_id, peer_name=connected_party,
                     connected_party=connected_party,
                     direction=str(store.get("direction") or "outgoing"),
                     target_device_id=str(store.get("target_device_id") or ""),
                     remote_uri=connected_uri, last_sip_event="UPDATE",
-                )
             )
 
     client.on_connected_identity = _update
@@ -201,11 +199,10 @@ async def async_track_outbound_sip_client(
                 role="ha_softphone",
                 state=CallState.IN_CALL.value,
             )
-            publish_call_projection(
+            publish_phone_projection(
                 hass,
                 session,
-                CallProjectionEvent.phone(
-                session, endpoint_id, peer_name=connected_party,
+                endpoint_id, peer_name=connected_party,
                 connected_party=connected_party, direction="outgoing",
                 target_device_id=target_device_id,
                 selected_tx_format=client.dialog.send_format.audio_format.wire_token(),
@@ -238,7 +235,6 @@ async def async_track_outbound_sip_client(
                 sip_status_code=200,
                 last_sip_event="SIP_RESPONSE",
                 sip_uri=sip_uri,
-                ),
             )
         elif public_final not in {
             CallState.RINGING.value,

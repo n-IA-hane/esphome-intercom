@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Callable, Protocol
 
 from homeassistant.core import HomeAssistant
 
-from ..call_projection import CallProjectionEvent, publish_call_projection
+from ..call_projection import publish_bridge_projection
 from ..call_scope import set_pending_route, take_pending_route
 from ..endpoint_lifecycle import call_registry
 from ..endpoint_session import TerminationIntent
@@ -98,11 +98,10 @@ async def request_route_override(
     })
     session = call_registry(hass).get_session(invite.call_id)
     assert session is not None
-    publish_call_projection(
+    publish_bridge_projection(
         hass,
         session,
-        CallProjectionEvent.bridge(
-        session, peer_name=invite.caller, local_name=runtime.ha_peer_name(hass),
+        peer_name=invite.caller, local_name=runtime.ha_peer_name(hass),
         selected_tx_format=invite.send_format.audio_format.wire_token(),
         selected_rx_format=invite.recv_format.audio_format.wire_token(),
         selected_tx_rtp_format=invite.send_format.wire_token(),
@@ -130,7 +129,6 @@ async def request_route_override(
             f"{invite.selected_format.encoding}/"
             f"{invite.selected_format.sample_rate}/"
             f"{invite.selected_format.channels}"
-        ),
         ),
     )
     _LOGGER.info(
@@ -179,18 +177,15 @@ def automation_rejection(
     session = call_registry(hass).get_session(invite.call_id)
     if session is not None:
         intent = TerminationIntent.final_response(app_reason, status)
-        publish_call_projection(
+        publish_bridge_projection(
             hass,
             session,
-            CallProjectionEvent.bridge(
-                session,
-                intent=intent,
+            intent=intent,
                 peer_name=invite.caller,
                 reason=app_reason,
                 origin="self",
                 sip_status_code=status,
                 last_sip_event="SIP_RESPONSE",
-            ),
         )
     return SipInviteResult(
         status,
