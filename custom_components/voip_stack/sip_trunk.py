@@ -21,10 +21,7 @@ from typing import Any, Awaitable, Callable
 
 from .core import sip
 from .core.sip_transport import default_tls_context
-from .core.sip_auth import (
-    DigestChallengeTracker,
-    build_digest_authorization,
-)
+from .core.sip_auth import DigestChallengeTracker
 from .core.sip_resolution import SipServerResolver, SipServerTarget
 from .core.sip_transaction import SIP_T1, SIP_T2, SIP_TIMER_F, SipClientTransaction, transaction_key
 from .sip_udp_io import SipDatagramQueueProtocol
@@ -927,23 +924,9 @@ class SipTrunkClient:
             self.last_sip_event = "SIP_RESPONSE"
             _LOGGER.info("SIP trunk RX %s %s", msg.status_code, msg.reason)
             if msg.status_code in {401, 407}:
-                auth_header = (
-                    "Proxy-Authorization"
-                    if msg.status_code == 407
-                    else "Authorization"
-                )
-                challenge_header = (
-                    "Proxy-Authenticate"
-                    if msg.status_code == 407
-                    else "WWW-Authenticate"
-                )
                 try:
-                    challenge = auth_challenges.claim(
-                        auth_header,
-                        msg.header_values(challenge_header),
-                    )
-                    auth_value = build_digest_authorization(
-                        challenge_header=challenge,
+                    auth_header, _challenge, auth_value = auth_challenges.authorize(
+                        msg,
                         username=self.config.username,
                         auth_username=self.config.auth_username,
                         password=self.config.password,

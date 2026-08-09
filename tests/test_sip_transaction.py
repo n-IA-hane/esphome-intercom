@@ -48,6 +48,95 @@ sip_dialog = _load_module("sip_dialog")
 
 
 class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_dialog_transaction_handles_requests_and_defers_other_responses(
+        self,
+    ) -> None:
+        messages = iter(
+            (
+                (
+                    sip_transaction.sip.parse_message(
+                        b"BYE sip:local@example.test SIP/2.0\r\n"
+                        b"Call-ID: call-1\r\nCSeq: 2 BYE\r\nContent-Length: 0\r\n\r\n"
+                    ),
+                    ("192.0.2.2", 5060),
+                ),
+                (
+                    sip_transaction.sip.parse_message(
+                        sip_transaction.sip.build_response(
+                            200,
+                            "OK",
+                            (("Call-ID", "other"), ("CSeq", "7 UPDATE")),
+                        )
+                    ),
+                    ("192.0.2.3", 5060),
+                ),
+                (
+                    sip_transaction.sip.parse_message(
+                        sip_transaction.sip.build_response(
+                            200,
+                            "OK",
+                            (("Call-ID", "call-1"), ("CSeq", "8 UPDATE")),
+                        )
+                    ),
+                    ("192.0.2.4", 5060),
+                ),
+            )
+        )
+        requests = []
+        deferred = []
+        sends = 0
+
+        async def read(_timeout):
+            return next(messages, None)
+
+        async def on_request(message, source):
+            requests.append((message.method, source))
+
+        def send():
+            nonlocal sends
+            sends += 1
+            return True
+
+        response = await sip_transaction.async_run_dialog_request_transaction(
+            send=send,
+            read=read,
+            matches=lambda message: message.header("Call-ID") == "call-1",
+            active=lambda: True,
+            transport="TCP",
+            timeout=0.1,
+            on_request=on_request,
+            on_unmatched=lambda message, source: deferred.append(
+                (message.header("Call-ID"), source)
+            ),
+        )
+
+        self.assertEqual(response.header("CSeq"), "8 UPDATE")
+        self.assertEqual(requests, [("BYE", ("192.0.2.2", 5060))])
+        self.assertEqual(deferred, [("other", ("192.0.2.3", 5060))])
+        self.assertEqual(sends, 1)
+
+    async def test_dialog_transaction_does_not_send_when_owner_is_inactive(
+        self,
+    ) -> None:
+        sends = 0
+
+        def send():
+            nonlocal sends
+            sends += 1
+            return True
+
+        response = await sip_transaction.async_run_dialog_request_transaction(
+            send=send,
+            read=lambda _timeout: asyncio.sleep(0, result=None),
+            matches=lambda _message: True,
+            active=lambda: False,
+            transport="UDP",
+            timeout=0.01,
+        )
+
+        self.assertIsNone(response)
+        self.assertEqual(sends, 0)
+
     async def test_session_refresh_commits_successful_response(self) -> None:
         state = sip_transaction.sip.SipSessionTimer(interval=1800)
         calls = []

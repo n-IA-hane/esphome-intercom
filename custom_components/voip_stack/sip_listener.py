@@ -14,7 +14,11 @@ from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
 from .core.codec_capabilities import supports_dahua_pcm
 from .const import VOIP_STACK_RTP_PORT
 from .core import sdp, sip, sip_transfer
-from .core.sip_dialog import build_dialog_request, uas_request_matches_dialog
+from .core.sip_dialog import (
+    DialogSignalingState,
+    build_dialog_request,
+    uas_request_matches_dialog,
+)
 from .sip_tcp_io import (
     SipTcpWriter,
     read_sip_stream_message as _read_sip_stream_message,
@@ -24,8 +28,8 @@ from .core.sip_transaction import (
     SIP_T2 as _SIP_T2,
     SIP_TIMER_B as _INVITE_2XX_TIMEOUT,
     SIP_TIMER_H as _INVITE_NON2XX_TIMEOUT,
-    SipClientTransaction,
     SipInvite2xxTransaction,
+    async_run_dialog_request_transaction,
     async_refresh_session,
     async_run_server_transaction,
     matches_invite_error_ack,
@@ -264,7 +268,7 @@ class _PendingDelayedOffer:
 
 
 @dataclass(slots=True)
-class _ActiveDialog:
+class _ActiveDialog(DialogSignalingState):
     request: sip.SipMessage
     addr: tuple[str, int]
     to_tag: str
@@ -273,8 +277,6 @@ class _ActiveDialog:
     status: int = 200
     reason: str = "OK"
     answer_sdp: str = ""
-    remote_target_uri: str = ""
-    route_set: tuple[str, ...] = ()
     invite: SipInvite | None = None
     last_request: sip.SipMessage | None = None
     last_status: int = 200
@@ -287,17 +289,13 @@ class _ActiveDialog:
         default_factory=SipInvite2xxTransaction
     )
     response_cache: list[_DialogResponse] = field(default_factory=list)
-    local_sdp_session_id: int = 0
-    local_sdp_session_version: int = 0
     connected_identity_name: str = ""
     connected_identity_user: str = ""
     connected_identity_sent: bool = False
-    peer_supports_from_change: bool = False
     connected_identity_task: asyncio.Task[None] | None = None
     remote_uri: str = ""
     remote_display_name: str = ""
     update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    session_timer: sip.SipSessionTimer = field(default_factory=sip.SipSessionTimer)
     session_timer_task: asyncio.Task[None] | None = None
     refer_task: asyncio.Task[None] | None = None
     delayed_offer: _PendingDelayedOffer | None = None
@@ -685,7 +683,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         for task in tuple(self._request_tasks):
             task.cancel()
         for dialog in tuple(self.active_dialogs.values()):
-            self._cancel_invite_2xx(dialog)
+            dialog.invite_2xx.cancel()
             self._cancel_connected_identity(dialog)
             self._cancel_session_timer(dialog)
         for pending in tuple(self.pending_invites.values()):
@@ -820,10 +818,6 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         task.add_done_callback(self._maintenance_tasks.discard)
 
     @staticmethod
-    def _cancel_invite_2xx(dialog: _ActiveDialog) -> None:
-        dialog.invite_2xx.cancel()
-
-    @staticmethod
     def _cancel_connected_identity(dialog: _ActiveDialog) -> None:
         task = dialog.connected_identity_task
         dialog.connected_identity_task = None
@@ -850,7 +844,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         current = self.active_dialogs.get(call_id)
         if current is None:
             return None
-        self._cancel_invite_2xx(current)
+        current.invite_2xx.cancel()
         self._cancel_connected_identity(current)
         self._cancel_session_timer(current)
         self._cancel_refer(current)
@@ -1039,37 +1033,23 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             asyncio.Queue(maxsize=8)
         )
         self._client_transaction_responses[ids.branch] = responses
-        transaction = SipClientTransaction[tuple[sip.SipMessage, tuple[str, int]]](
-            transport=transport,
-            timeout=_INVITE_2XX_TIMEOUT,
-            t1=_SIP_T1,
-            t2=_SIP_T2,
-        )
-
         async def _read(timeout: float):
             return await asyncio.wait_for(responses.get(), timeout=timeout)
 
-        async def _retransmit() -> None:
-            if active():
-                self._send(raw, addr)
-
         try:
-            if not active() or not self._send(raw, addr):
-                return None
-            sip.mark_sip_event(self, method)
-            while active():
-                received = await transaction.receive(_read, _retransmit)
-                if received is None:
-                    return None
-                response, _response_addr = received
-                if (
-                    sip.response_matches_dialog_transaction(response, ids, method)
-                    and int(response.status_code or 0) >= 200
-                ):
-                    return response
+            return await async_run_dialog_request_transaction(
+                send=lambda: self._send(raw, addr),
+                read=_read,
+                matches=lambda response: sip.response_matches_dialog_transaction(
+                    response, ids, method
+                ),
+                active=active,
+                transport=transport,
+                timeout=_INVITE_2XX_TIMEOUT,
+                on_sent=lambda: sip.mark_sip_event(self, method),
+            )
         finally:
             self._client_transaction_responses.pop(ids.branch, None)
-        return None
 
     async def _send_application_follow_up(
         self,

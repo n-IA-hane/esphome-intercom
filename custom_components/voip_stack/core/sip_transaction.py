@@ -17,6 +17,7 @@ SIP_TIMER_F = 64 * SIP_T1
 SIP_TIMER_H = 64 * SIP_T1
 
 _T = TypeVar("_T")
+_C = TypeVar("_C")
 ResponseReader = Callable[[float], Awaitable[_T | None]]
 AsyncSend = Callable[[], Awaitable[None]]
 SyncSend = Callable[[], bool | None]
@@ -195,6 +196,75 @@ class SipClientTransaction(Generic[_T]):
             self.retransmissions += 1
             self.interval = min(self.interval * 2.0, self.t2)
             self.next_retransmit = loop.time() + self.interval
+
+
+async def async_run_dialog_request_transaction(
+    *,
+    send: Callable[[], bool | None],
+    read: Callable[[float], Awaitable[tuple[sip.SipMessage, _C] | None]],
+    matches: Callable[[sip.SipMessage], bool],
+    active: Callable[[], bool],
+    transport: str,
+    timeout: float,
+    on_request: Callable[[sip.SipMessage, _C], Awaitable[None]] | None = None,
+    on_provisional: Callable[[sip.SipMessage, _C], Awaitable[None]] | None = None,
+    on_final: Callable[[sip.SipMessage, _C], None] | None = None,
+    on_unmatched: Callable[[sip.SipMessage, _C], None] | None = None,
+    on_sent: Callable[[], None] | None = None,
+) -> sip.SipMessage | None:
+    """Run one non-INVITE dialog transaction for every SIP owner."""
+
+    transaction = SipClientTransaction[tuple[sip.SipMessage, _C]](
+        transport=transport,
+        timeout=timeout,
+    )
+
+    async def receive(read_timeout: float) -> tuple[sip.SipMessage, _C] | None:
+        deadline = asyncio.get_running_loop().time() + read_timeout
+        while active():
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return None
+            received = await read(remaining)
+            if received is None:
+                return None
+            message, context = received
+            if message.is_request:
+                if on_request is not None:
+                    await on_request(message, context)
+                continue
+            if matches(message):
+                return received
+            if on_unmatched is not None:
+                on_unmatched(message, context)
+        return None
+
+    async def retransmit() -> None:
+        if active() and send() is False:
+            raise ConnectionError("SIP signaling path is unavailable")
+
+    if not active() or send() is False:
+        return None
+    if on_sent is not None:
+        on_sent()
+    received_provisional = False
+    while active():
+        received = await transaction.receive(
+            receive,
+            retransmit,
+            retransmit_enabled=not received_provisional,
+        )
+        if received is None:
+            return None
+        response, context = received
+        if int(response.status_code or 0) >= 200:
+            if on_final is not None:
+                on_final(response, context)
+            return response
+        received_provisional = True
+        if on_provisional is not None:
+            await on_provisional(response, context)
+    return None
 
 
 @dataclass(frozen=True, slots=True)

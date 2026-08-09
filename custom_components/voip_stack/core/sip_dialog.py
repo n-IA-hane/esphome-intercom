@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import sip
+
+
+@dataclass(kw_only=True, slots=True)
+class DialogSignalingState:
+    """Signaling state shared by UAC and UAS dialog owners."""
+
+    remote_target_uri: str = ""
+    route_set: tuple[str, ...] = ()
+    local_sdp_session_id: int = 0
+    local_sdp_session_version: int = 0
+    local_sdp_body: str = ""
+    peer_supports_from_change: bool = False
+    session_timer: sip.SipSessionTimer = field(default_factory=sip.SipSessionTimer)
 
 
 @dataclass(frozen=True, slots=True)

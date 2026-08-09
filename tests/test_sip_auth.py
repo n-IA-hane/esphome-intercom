@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -137,3 +138,39 @@ def test_digest_retry_requires_one_fresh_stale_challenge() -> None:
     assert tracker.claim("Authorization", [stale]) == stale
     with pytest.raises(ValueError, match="credentials were rejected"):
         tracker.claim("Authorization", [stale])
+
+
+@pytest.mark.parametrize(
+    ("status", "challenge_name", "authorization_name"),
+    (
+        (401, "WWW-Authenticate", "Authorization"),
+        (407, "Proxy-Authenticate", "Proxy-Authorization"),
+    ),
+)
+def test_digest_tracker_authorizes_challenge_response(
+    status: int,
+    challenge_name: str,
+    authorization_name: str,
+) -> None:
+    challenge = (
+        'Digest realm="pbx", nonce="one", algorithm=SHA-256, qop="auth"'
+    )
+    response = SimpleNamespace(
+        status_code=status,
+        header_values=lambda name: [challenge] if name == challenge_name else [],
+    )
+
+    header, selected_challenge, value = DigestChallengeTracker().authorize(
+        response,
+        username="alice",
+        password="secret",
+        method="REGISTER",
+        uri="sip:pbx.local",
+        nonce_count=3,
+    )
+
+    assert header == authorization_name
+    params = parse_digest_challenge(value)
+    assert params["username"] == "alice"
+    assert params["nc"] == "00000003"
+    assert selected_challenge.endswith('qop="auth"')

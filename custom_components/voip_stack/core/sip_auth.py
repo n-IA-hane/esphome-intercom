@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import re
 from secrets import token_hex
+from typing import Protocol
 
 
 _PARAM_RE = re.compile(r'([a-zA-Z0-9_-]+)=("([^"\\]*(?:\\.[^"\\]*)*)"|[^,\s]+)')
@@ -21,6 +22,12 @@ _ALGORITHM_PREFERENCE = {
     "SHA-256": 2,
     "SHA-512-256": 3,
 }
+
+
+class DigestChallengeResponse(Protocol):
+    status_code: int | None
+
+    def header_values(self, name: str) -> list[str]: ...
 
 
 class DigestChallengeTracker:
@@ -41,6 +48,43 @@ class DigestChallengeTracker:
             raise ValueError("SIP digest credentials were rejected")
         self.attempts[scope] = attempts + 1
         return challenge
+
+    def authorize(
+        self,
+        response: DigestChallengeResponse,
+        *,
+        username: str,
+        password: str,
+        method: str,
+        uri: str,
+        auth_username: str = "",
+        nonce_count: int = 1,
+        body: str | bytes = b"",
+    ) -> tuple[str, str, str]:
+        """Build one bounded Authorization response for a 401 or 407."""
+
+        proxy = response.status_code == 407
+        header = "Proxy-Authorization" if proxy else "Authorization"
+        challenge = self.claim(
+            header,
+            response.header_values(
+                "Proxy-Authenticate" if proxy else "WWW-Authenticate"
+            ),
+        )
+        return (
+            header,
+            challenge,
+            build_digest_authorization(
+                challenge_header=challenge,
+                username=username,
+                auth_username=auth_username,
+                password=password,
+                method=method,
+                uri=uri,
+                nonce_count=nonce_count,
+                body=body,
+            ),
+        )
 
 
 def _digest(value: str | bytes, algorithm: str) -> str:

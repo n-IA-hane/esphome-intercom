@@ -29,7 +29,7 @@ __all__ = ["EndpointTerminationHandler", "project_session_termination"]
 
 
 @dataclass(slots=True)
-class EndpointTerminationHandler:
+class _EndpointTerminationHandler:
     """Terminate one call generation through its sole cleanup owner."""
 
     hass: HomeAssistant
@@ -152,3 +152,14 @@ class EndpointTerminationHandler:
             call_id,
             TerminationIntent(reason, initiator=initiator),
         )
+
+
+def EndpointTerminationHandler(hass: HomeAssistant) -> _EndpointTerminationHandler:
+    """Return the sole termination service owned by the active PBX runtime."""
+
+    runtime = call_runtime_artifacts(hass)
+    service = getattr(runtime, "_termination_service", None)
+    if not isinstance(service, _EndpointTerminationHandler):
+        service = _EndpointTerminationHandler(hass)
+        runtime._termination_service = service
+    return service

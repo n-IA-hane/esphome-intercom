@@ -376,19 +376,6 @@ class EndpointCallSession:
         if self.phase is SessionPhase.TERMINATED or self._termination_task is not None:
             raise RuntimeError(f"call session {self.call_id!r} cleanup has started")
 
-    def transition(
-        self,
-        phase: SessionPhase,
-        *,
-        expected: set[SessionPhase] | frozenset[SessionPhase] | None = None,
-    ) -> None:
-        self.ensure_live()
-        if expected is not None and self.phase not in expected:
-            raise RuntimeError(
-                f"invalid call transition {self.phase.value}->{phase.value}"
-            )
-        self.phase = phase
-
     def update_metadata(self, **values: Any) -> None:
         """Update observable call metadata while this generation is live."""
 
