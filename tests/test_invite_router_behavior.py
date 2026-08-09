@@ -85,7 +85,12 @@ def _patch_route_prefix(
         "_roster_entry_for_target",
         Mock(return_value=None),
     )
-    registry = SimpleNamespace(pending_invites=pending_invites or {})
+    invites = pending_invites or {}
+    registry = SimpleNamespace(
+        artifact_items=lambda name: (
+            iter(invites.items()) if name == "pending_invite" else iter(())
+        )
+    )
     monkeypatch.setattr(invite_router, "_call_registry", lambda _hass: registry)
     monkeypatch.setattr(
         invite_router,

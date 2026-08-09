@@ -45,6 +45,9 @@ def _registry(
     )
     return SimpleNamespace(
         pending_invites={"call-1": invite} if invite is not None else {},
+        artifact_for=lambda call_id, name: (
+            invite if call_id == "call-1" and name == "pending_invite" else None
+        ),
         event_context=Mock(return_value=context),
     )
 

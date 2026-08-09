@@ -47,7 +47,6 @@ from .outbound_attempts import (
     BrowserLeg,
     OutboundLeg,
     async_apply_outbound_video_answer,
-    async_cleanup_outbound_attempts as _cleanup_outbound_attempts,
     async_close_outbound_leg as _close_outbound_leg,
 )
 from .pbx_routing import unique_group_members as _unique_group_members
@@ -62,6 +61,11 @@ from .group_candidates import (
     async_prepare_group_candidates,
 )
 from .ring_group_fork import build_ring_group_fork
+from .route_abort import (
+    RouteAbortContext,
+    RouteAbortIntent,
+    async_abort_route,
+)
 from .core.sdp import build_answer_directional, first_offered_dtmf_format
 from .sip_bridge import (
     build_invite_client_relay,
@@ -121,9 +125,7 @@ async def run_ring_group_call(
     origin_endpoint_id = str(origin_endpoint_id or "").strip()
     endpoint_registry = endpoint_directory(hass)
     origin_endpoint = (
-        endpoint_registry.get(origin_endpoint_id)
-        if origin_endpoint_id
-        else None
+        endpoint_registry.get(origin_endpoint_id) if origin_endpoint_id else None
     )
     origin_device_id = str(getattr(origin_endpoint, "device_id", "") or "")
     origin_name = str(
@@ -143,9 +145,7 @@ async def run_ring_group_call(
         )
         await EndpointTerminationHandler(hass).terminate(
             invite.call_id,
-            TerminationIntent.final_response(
-                TerminalReason.PROTOCOL_ERROR.value, 500
-            ),
+            TerminationIntent.final_response(TerminalReason.PROTOCOL_ERROR.value, 500),
         )
         return
     candidates = GroupCandidates()
@@ -178,45 +178,59 @@ async def run_ring_group_call(
         or ""
     ).strip()
 
-    def _settle_browser_candidates(
-        state: str,
-        reason: str,
-        *,
-        keep_endpoint_id: str = "",
-    ) -> None:
-        """Release and publish every browser candidate except the winner."""
-        _settle_ring_browser_candidates(
-            hass,
-            registry,
-            browser_legs,
-            call_id=invite.call_id,
-            caller=invite.caller,
-            callee=entry.display_name,
-            state=state,
-            reason=reason,
-            route_kind=GROUP_TYPE_RING,
-            keep_endpoint_id=keep_endpoint_id,
-        )
+    settle_group = partial(
+        _settle_ring_browser_candidates,
+        hass,
+        registry,
+        browser_legs,
+        call_id=invite.call_id,
+        caller=invite.caller,
+        callee=entry.display_name,
+        route_kind=GROUP_TYPE_RING,
+    )
 
-    async def _abort_before_fork(
-        state: str,
-        reason: str,
-        *,
-        sip_status: int = 0,
-        sip_reason: str = "",
-    ) -> None:
-        """Close every candidate and the source through one failure path."""
+    def _settle_browser_candidates(state, reason, **kwargs) -> None:
+        settle_group(state=state, reason=reason, **kwargs)
 
-        _take_pending_route(hass, invite.call_id)
+    def _publish_group_failure(state, reason, event, status=0) -> None:
         _settle_browser_candidates(state, reason)
-        await _cleanup_outbound_attempts([], attempts)
-        await EndpointTerminationHandler(hass).terminate(
-            invite.call_id,
-            (
-                TerminationIntent.final_response(reason, sip_status)
-                if sip_status
-                else TerminationIntent(reason)
-            ),
+        with contextlib.suppress(Exception):
+            _publish_ring_group_origin_state(
+                hass,
+                enabled=ha_origin,
+                state=state,
+                endpoint_id=origin_endpoint_id,
+                device_id=origin_device_id,
+                caller=origin_name,
+                callee=entry.display_name,
+                peer_name=entry.display_name,
+                call_id=invite.call_id,
+                reason=reason,
+                origin="self",
+                route_kind=GROUP_TYPE_RING,
+                last_sip_event=event,
+                sip_status_code=status,
+            )
+
+    abort_context = RouteAbortContext(
+        hass,
+        registry,
+        invite.call_id,
+        settle=_settle_browser_candidates,
+        attempts=attempts,
+    )
+
+    async def _rollback_route(
+        reason: str,
+        *,
+        action: str = "terminate",
+        sip_status: int = 0,
+        settle: bool = True,
+    ) -> None:
+        abort_context.settle = _settle_browser_candidates if settle else None
+        await async_abort_route(
+            abort_context,
+            RouteAbortIntent(reason, action, sip_status),
         )
 
     try:
@@ -239,15 +253,13 @@ async def run_ring_group_call(
             local_name=invite.caller or _ha_peer_name(hass),
         )
         if not _call_is_current():
-            _settle_browser_candidates(
-                CallState.CANCELLED.value,
+            await _rollback_route(
                 TerminalReason.CANCELLED.value,
+                action="cleanup",
             )
-            await _cleanup_outbound_attempts([], attempts)
             return
     except asyncio.CancelledError:
-        await _abort_before_fork(
-            CallState.CANCELLED.value,
+        await _rollback_route(
             TerminalReason.CANCELLED.value,
         )
         raise
@@ -257,22 +269,22 @@ async def run_ring_group_call(
             invite.call_id,
             err,
         )
-        await _abort_before_fork(
-            CallState.TRANSPORT_UNREACHABLE.value,
+        await _rollback_route(
             TerminalReason.PROTOCOL_ERROR.value,
             sip_status=500,
-            sip_reason="Server Internal Error",
         )
         return
     route_future: asyncio.Future = asyncio.get_running_loop().create_future()
-    _set_pending_route(hass, invite.call_id, {
-        "invite": invite,
-        "future": route_future,
-        "ring_group_endpoint_ids": tuple(
-            leg.endpoint_id for leg in browser_legs
-        ),
-        "declined_endpoint_ids": set(),
-    })
+    _set_pending_route(
+        hass,
+        invite.call_id,
+        {
+            "invite": invite,
+            "future": route_future,
+            "ring_group_endpoint_ids": tuple(leg.endpoint_id for leg in browser_legs),
+            "declined_endpoint_ids": set(),
+        },
+    )
     try:
         _publish_browser_candidates_ringing(
             hass,
@@ -281,15 +293,12 @@ async def run_ring_group_call(
             invite=invite,
             callee=entry.display_name,
             route_kind=GROUP_TYPE_RING,
-            origin_endpoint_id=(
-                origin_endpoint_id if ha_origin else ""
-            ),
+            origin_endpoint_id=(origin_endpoint_id if ha_origin else ""),
             source_endpoint_id=source_endpoint_id,
             origin_media_client_id=origin_media_client_id,
         )
     except asyncio.CancelledError:
-        await _abort_before_fork(
-            CallState.CANCELLED.value,
+        await _rollback_route(
             TerminalReason.CANCELLED.value,
         )
         raise
@@ -299,11 +308,9 @@ async def run_ring_group_call(
             invite.call_id,
             err,
         )
-        await _abort_before_fork(
-            CallState.TRANSPORT_UNREACHABLE.value,
+        await _rollback_route(
             TerminalReason.PROTOCOL_ERROR.value,
             sip_status=500,
-            sip_reason="Server Internal Error",
         )
         return
     if not attempts and not browser_legs and not preflight_failures:
@@ -324,8 +331,7 @@ async def run_ring_group_call(
             last_sip_event="SIP_RESPONSE",
             sip_status_code=480,
         )
-        await _abort_before_fork(
-            CallState.TRANSPORT_UNREACHABLE.value,
+        await _rollback_route(
             TerminalReason.TRANSPORT_UNREACHABLE.value,
             sip_status=480,
             sip_reason="Temporarily Unavailable",
@@ -344,62 +350,14 @@ async def run_ring_group_call(
         preflight_failures=preflight_failures,
     )
 
-    # DialForkController owns every branch task and its loser cleanup
-    # barrier.  Keep this compatibility list empty for later rollback
-    # helpers, which may still close the selected branch after media setup
-    # fails but must never own the fork tasks themselves.
-    tasks: list[asyncio.Task] = []
-
-    async def _cleanup_ring_resources(reason: str, *, sip_status: int = 0) -> None:
-        """Tear down every ownership layer after an aborted group call."""
-        _take_pending_route(hass, invite.call_id)
-        _source_call_id, dest_call_id = registry.bridge_for(invite.call_id)
-        bridge_client = registry.sip_client_for(dest_call_id)
-        remaining_attempts = [
-            attempt
-            for attempt in attempts
-            if attempt.client is not bridge_client
-        ]
-
-        # HA-to-HA ring groups switch to the transport-neutral local bridge
-        # after selection.  If answer publication then fails, terminate
-        # that newly-created call as part of the same rollback boundary.
-        from .local_softphone_runtime import local_softphone_bridge
-
-        local_bridge = local_softphone_bridge(hass)
-        local_call = (
-            local_bridge.get_call(invite.call_id)
-            if local_bridge is not None
-            else None
-        )
-        if local_call is not None:
-            with contextlib.suppress(Exception):
-                local_bridge.hangup(
-                    invite.call_id,
-                    local_call.caller_endpoint_id,
-                )
-        try:
-            await EndpointTerminationHandler(hass).terminate(
-                invite.call_id,
-                (
-                    TerminationIntent.final_response(reason, sip_status)
-                    if sip_status
-                    else TerminationIntent(reason)
-                ),
-            )
-        finally:
-            await _cleanup_outbound_attempts(tasks, remaining_attempts)
-
     async def _abort_stale_ring_group() -> bool:
         """Close every fork if the source generation lost ownership."""
 
         if _call_is_current():
             return False
-        _settle_browser_candidates(
-            CallState.CANCELLED.value,
+        await _rollback_route(
             TerminalReason.CANCELLED.value,
         )
-        await _cleanup_ring_resources(TerminalReason.CANCELLED.value)
         return True
 
     winner: OutboundLeg | BrowserLeg | dict | None = None
@@ -417,7 +375,7 @@ async def run_ring_group_call(
             else None
         )
         if authoritative_session is None:
-            await _cleanup_ring_resources(TerminalReason.CANCELLED.value)
+            await _rollback_route(TerminalReason.CANCELLED.value, settle=False)
             return
         fork_result = await DialForkController(
             authoritative_session,
@@ -426,13 +384,9 @@ async def run_ring_group_call(
             tier_strategies=ring_policy.tier_strategies,
             overall_timeout=ring_policy.overall_timeout,
             step_timeout=ring_policy.step_timeout,
-        ).run(
-            lambda _candidate, _dial_outcome: _call_is_current()
-        )
+        ).run(lambda _candidate, _dial_outcome: _call_is_current())
         if fork_result.winner is not None:
-            winner = candidate_payloads.get(
-                fork_result.winner.candidate_id
-            )
+            winner = candidate_payloads.get(fork_result.winner.candidate_id)
             browser_winner = isinstance(winner, BrowserLeg)
         elif fork_result.outcome.disposition is DialDisposition.REROUTE:
             reroute_decision = dict(browser_decision)
@@ -442,14 +396,11 @@ async def run_ring_group_call(
         )
         if await _abort_stale_ring_group():
             return
-        winner_endpoint_id = str(
-            getattr(winner, "endpoint_id", "") or ""
-        )
+        winner_endpoint_id = str(getattr(winner, "endpoint_id", "") or "")
         for losing_endpoint_id in {
             attempt.endpoint_id
             for attempt in attempts
-            if attempt.endpoint_id
-            and attempt.endpoint_id != winner_endpoint_id
+            if attempt.endpoint_id and attempt.endpoint_id != winner_endpoint_id
         }:
             registry.release_endpoint_claim(
                 invite.call_id,
@@ -521,11 +472,10 @@ async def run_ring_group_call(
                 last_sip_event="SIP_RESPONSE",
                 route_kind=GROUP_TYPE_RING,
             )
-            await EndpointTerminationHandler(hass).terminate(
-                invite.call_id,
-                TerminationIntent.final_response(
-                    terminal_reason, status_code
-                ),
+            await _rollback_route(
+                terminal_reason,
+                sip_status=status_code,
+                settle=False,
             )
             return
         if browser_winner and isinstance(winner, BrowserLeg):
@@ -567,9 +517,7 @@ async def run_ring_group_call(
                     snapshot.call_id,
                     winner.endpoint_id,
                     winner_media_client_id,
-                    enable_video_send=bool(
-                        browser_decision.get("send_video", False)
-                    ),
+                    enable_video_send=bool(browser_decision.get("send_video", False)),
                 )
                 return
             local_rtp_port = _allocate_sip_rtp_port(hass)
@@ -612,7 +560,10 @@ async def run_ring_group_call(
                     media_client_id=winner_media_client_id,
                 )
             ).committed:
-                await _cleanup_ring_resources(TerminalReason.PROTOCOL_ERROR.value)
+                await _rollback_route(
+                    TerminalReason.PROTOCOL_ERROR.value,
+                    settle=False,
+                )
                 return
             _set_ha_softphone_call_state(
                 hass,
@@ -677,11 +628,10 @@ async def run_ring_group_call(
                 last_sip_event="SIP_RESPONSE",
                 sip_status_code=500,
             )
-            await EndpointTerminationHandler(hass).terminate(
-                invite.call_id,
-                TerminationIntent.final_response(
-                    TerminalReason.PROTOCOL_ERROR.value, 500
-                ),
+            await _rollback_route(
+                TerminalReason.PROTOCOL_ERROR.value,
+                sip_status=500,
+                settle=False,
             )
             return
         client = winner.client
@@ -735,9 +685,7 @@ async def run_ring_group_call(
                     dest_relay_port=dest_relay_port,
                     capture_name=f"{invite.call_id}_{client.dialog_ids.call_id}",
                     debug_capture=_media_capture_enabled(hass),
-                    on_release=lambda ports: _release_sip_rtp_port_pair(
-                        hass, ports
-                    ),
+                    on_release=lambda ports: _release_sip_rtp_port_pair(hass, ports),
                 )
             else:
                 relay = build_invite_client_relay(
@@ -746,9 +694,7 @@ async def run_ring_group_call(
                     source_relay_port=source_relay_port,
                     dest_relay_port=dest_relay_port,
                     debug_capture=_media_capture_enabled(hass),
-                    on_release=lambda ports: _release_sip_rtp_port_pair(
-                        hass, ports
-                    ),
+                    on_release=lambda ports: _release_sip_rtp_port_pair(hass, ports),
                 )
             _attach_dtmf_event_bridge(
                 hass,
@@ -800,7 +746,7 @@ async def run_ring_group_call(
             return
         if not _call_is_current():
             await relay.stop()
-            await _cleanup_ring_resources(TerminalReason.CANCELLED.value)
+            await _rollback_route(TerminalReason.CANCELLED.value, settle=False)
             return
         winner.ports.detach()
         if winner.video_relay is not None:
@@ -828,6 +774,7 @@ async def run_ring_group_call(
             }
         else:
             softphone_media = None
+
         def _claim_selected_answer() -> bool:
             return (
                 registry.transition(
@@ -871,19 +818,13 @@ async def run_ring_group_call(
                 dtmf=first_offered_dtmf_format(invite.remote_sdp),
                 remote_sdp=invite.remote_sdp,
                 video_port=(
-                    relay.video_relay.left_port
-                    if relay.video_relay is not None
-                    else 0
+                    relay.video_relay.left_port if relay.video_relay is not None else 0
                 ),
                 video_format=(
-                    video_answer.video_format
-                    if video_answer is not None
-                    else None
+                    video_answer.video_format if video_answer is not None else None
                 ),
                 video_direction=(
-                    video_answer.direction
-                    if video_answer is not None
-                    else "inactive"
+                    video_answer.direction if video_answer is not None else "inactive"
                 ),
             )
             if not (
@@ -902,7 +843,10 @@ async def run_ring_group_call(
                     media_client_id=origin_media_client_id,
                 )
             ).committed:
-                await _cleanup_ring_resources(TerminalReason.PROTOCOL_ERROR.value)
+                await _rollback_route(
+                    TerminalReason.PROTOCOL_ERROR.value,
+                    settle=False,
+                )
                 return
         _set_sip_bridge_call_state(
             hass,
@@ -960,27 +904,12 @@ async def run_ring_group_call(
             ),
         )
     except asyncio.CancelledError:
-        _settle_browser_candidates(
+        _publish_group_failure(
             CallState.CANCELLED.value,
             TerminalReason.CANCELLED.value,
+            "CANCEL",
         )
-        with contextlib.suppress(Exception):
-            _publish_ring_group_origin_state(
-                hass,
-                enabled=ha_origin,
-                state=CallState.CANCELLED.value,
-                endpoint_id=origin_endpoint_id,
-                device_id=origin_device_id,
-                caller=origin_name,
-                callee=entry.display_name,
-                peer_name=entry.display_name,
-                call_id=invite.call_id,
-                reason=TerminalReason.CANCELLED.value,
-                origin="self",
-                route_kind=GROUP_TYPE_RING,
-                last_sip_event="CANCEL",
-            )
-        await _cleanup_ring_resources(TerminalReason.CANCELLED.value)
+        await _rollback_route(TerminalReason.CANCELLED.value, settle=False)
         raise
     except Exception as err:
         _LOGGER.exception(
@@ -988,28 +917,14 @@ async def run_ring_group_call(
             invite.call_id,
             err,
         )
-        _settle_browser_candidates(
+        _publish_group_failure(
             CallState.TRANSPORT_UNREACHABLE.value,
             TerminalReason.PROTOCOL_ERROR.value,
+            "SIP_RESPONSE",
+            500,
         )
-        with contextlib.suppress(Exception):
-            _publish_ring_group_origin_state(
-                hass,
-                enabled=ha_origin,
-                state=CallState.TRANSPORT_UNREACHABLE.value,
-                endpoint_id=origin_endpoint_id,
-                device_id=origin_device_id,
-                caller=origin_name,
-                callee=entry.display_name,
-                peer_name=entry.display_name,
-                call_id=invite.call_id,
-                reason=TerminalReason.PROTOCOL_ERROR.value,
-                origin="self",
-                route_kind=GROUP_TYPE_RING,
-                last_sip_event="SIP_RESPONSE",
-                sip_status_code=500,
-            )
-        await _cleanup_ring_resources(
+        await _rollback_route(
             TerminalReason.PROTOCOL_ERROR.value,
             sip_status=500,
+            settle=False,
         )

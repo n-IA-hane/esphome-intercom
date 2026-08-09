@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from functools import partial
 import logging
 from typing import Any, Awaitable, Callable
 
@@ -30,8 +31,6 @@ from .const import (
 from .dial_fork import DialDisposition, DialForkController, terminal_reason
 from .dtmf_events import attach_dtmf_event_bridge as _attach_dtmf_event_bridge
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
-from .endpoint_termination import EndpointTerminationHandler
-from .endpoint_session import TerminationInitiator, TerminationIntent
 from .runtime_data import (
     call_runtime_artifacts,
     browser_phone,
@@ -64,7 +63,6 @@ from .inbound_answer import (
 )
 from .media_ports import (
     RtpPortReservation,
-    release_media_reservation as _release_media_reservation,
     release_sip_rtp_port_pair as _release_sip_rtp_port_pair,
     release_video_media_reservation as _release_video_media_reservation,
     reserve_sip_video_relay_media,
@@ -72,7 +70,6 @@ from .media_ports import (
 from .outbound_attempts import (
     BrowserLeg,
     async_apply_outbound_video_answer,
-    async_cleanup_outbound_attempts as _cleanup_outbound_attempts,
 )
 from .pbx_routing import unique_group_members as _unique_group_members
 from .phone_endpoint import EndpointAvailability, EndpointKind
@@ -82,6 +79,11 @@ from .ring_group import (
 )
 from .ring_group_fork import build_ring_group_fork
 from .router import RouteAction
+from .route_abort import (
+    RouteAbortContext,
+    RouteAbortIntent,
+    async_abort_route,
+)
 from .core.sdp import build_answer_directional, first_offered_dtmf_format
 from .session_cleanup import async_cleanup_sip_runtime
 from .service_errors import service_error as _service_error
@@ -170,28 +172,33 @@ async def async_forward_existing_call(
         )
 
     registry = _call_registry(hass)
-    context = registry.event_context(call_id)
     expected_state = str(expected_state or "").strip().lower()
-    if expected_state and (context is None or context.state != expected_state):
-        actual = context.state if context is not None else "ended"
-        raise _service_error(
-            f"call_id {call_id} is {actual}, expected {expected_state}",
-            "call_state_mismatch",
-            call_id=call_id,
-            actual=actual,
-            expected=expected_state,
-        )
-    if expected_sequence and (
-        context is None or context.sequence != int(expected_sequence)
-    ):
-        actual = context.sequence if context is not None else 0
-        raise _service_error(
-            f"call_id {call_id} sequence is {actual}, expected {expected_sequence}",
-            "call_sequence_mismatch",
-            call_id=call_id,
-            actual=actual,
-            expected=expected_sequence,
-        )
+
+    def _validate_snapshot():
+        current = registry.event_context(call_id)
+        if expected_state and (current is None or current.state != expected_state):
+            actual = current.state if current is not None else "ended"
+            raise _service_error(
+                f"call_id {call_id} is {actual}, expected {expected_state}",
+                "call_state_mismatch",
+                call_id=call_id,
+                actual=actual,
+                expected=expected_state,
+            )
+        if expected_sequence and (
+            current is None or current.sequence != int(expected_sequence)
+        ):
+            actual = current.sequence if current is not None else 0
+            raise _service_error(
+                f"call_id {call_id} sequence is {actual}, expected {expected_sequence}",
+                "call_sequence_mismatch",
+                call_id=call_id,
+                actual=actual,
+                expected=expected_sequence,
+            )
+        return current
+
+    context = _validate_snapshot()
     if context is not None and len(context.route_history) >= 8:
         raise _service_error(
             f"call_id {call_id} exceeded 8 routing hops",
@@ -245,27 +252,7 @@ async def async_forward_existing_call(
                 "call_changed_during_operation",
                 call_id=call_id,
             )
-        context = registry.event_context(call_id)
-        if expected_state and (context is None or context.state != expected_state):
-            actual = context.state if context is not None else "ended"
-            raise _service_error(
-                f"call_id {call_id} is {actual}, expected {expected_state}",
-                "call_state_mismatch",
-                call_id=call_id,
-                actual=actual,
-                expected=expected_state,
-            )
-        if expected_sequence and (
-            context is None or context.sequence != int(expected_sequence)
-        ):
-            actual = context.sequence if context is not None else 0
-            raise _service_error(
-                f"call_id {call_id} sequence is {actual}, expected {expected_sequence}",
-                "call_sequence_mismatch",
-                call_id=call_id,
-                actual=actual,
-                expected=expected_sequence,
-            )
+        context = _validate_snapshot()
         roster_entries = _roster_from_peers(
             hass,
             peers,
@@ -413,58 +400,26 @@ async def async_forward_existing_call(
         call_artifacts.forward_claim = False
         raise
 
-    async def _restore_or_terminate(reason: str) -> None:
-        preanswered = registry.resource_for(call_id, "preanswered")
-        if on_failure == "resume" and not call_artifacts.trunk_closed:
-            if session is not None:
-                current = registry.sessions.get(registry.resolve_session_id(call_id))
-                if current is None or current.owner not in {
-                    "router",
-                    "bridge",
-                    "assist",
-                }:
-                    return
-                resumed = registry.transition(
-                    call_id,
-                    state=CallState.RINGING.value,
-                    owner="ha_softphone",
-                    callee=original_callee,
-                    route_kind=original_route_kind,
-                    expected_revision=current.revision,
-                    expected_owner=current.owner,
-                )
-                if resumed is None:
-                    return
-            if ha_claimed:
-                runtime.publish_pending_ringing(
-                    invite,
-                    route_kind=original_route_kind,
-                    endpoint_id=session_endpoint_id,
-                    endpoint_device_id=session_device_id,
-                    callee=original_callee,
-                    last_sip_event="ROUTE_RESUME",
-                )
-            return
-
-        registry.take_pending_invite(call_id)
-        preanswered = registry.take_media(call_id, provisional=True)
-        if preanswered is not None:
-            _release_media_reservation(preanswered)
-        answered = _source_dialog_is_answered(preanswered)
-        status = 486 if on_failure == "busy" else 480
-
-        await EndpointTerminationHandler(hass).terminate(
-            call_id,
-            (
-                TerminationIntent.bye(
-                    reason,
-                    TerminationInitiator.ROUTING,
-                    response_status=status,
-                )
-                if answered
-                else TerminationIntent.final_response(reason, status)
-            ),
+    forward_abort = RouteAbortContext(
+        hass,
+        registry,
+        call_id,
+        consume_source=True,
+        resume_callee=original_callee,
+        resume_route_kind=original_route_kind,
+        transition_resume=session is not None,
+        publish_resume=partial(
+            runtime.publish_pending_ringing,
+            invite,
+            route_kind=original_route_kind,
+            endpoint_id=session_endpoint_id,
+            endpoint_device_id=session_device_id,
+            callee=original_callee,
+            last_sip_event="ROUTE_RESUME",
         )
+        if ha_claimed
+        else None,
+    )
 
     async def _commit_source_answer(
         answer_sdp: str,
@@ -493,6 +448,28 @@ async def async_forward_existing_call(
         reservation_from_preanswer = False
         video_relay = None
         dest_call_id = ""
+
+        async def _cleanup_failed_route(reason: str) -> None:
+            nonlocal video_relay
+            attached_client = False
+            if dest_call_id:
+                registry.forget_bridge_link(call_id)
+                attached_client = await registry.close_leg(
+                    call_id,
+                    dest_call_id,
+                    reason=reason,
+                )
+            if reservation is not None and not reservation_from_preanswer:
+                reservation.release()
+            if video_relay is not None:
+                await video_relay.stop()
+                video_relay = None
+            if client is not None and not attached_client:
+                await async_cleanup_sip_runtime(
+                    client=client,
+                    terminate_client=True,
+                )
+
         try:
             preanswered = registry.resource_for(call_id, "preanswered")
             if decision.action is RouteAction.ANSWER_HA:
@@ -566,23 +543,30 @@ async def async_forward_existing_call(
                 browser_legs = candidates.browser_legs
                 endpoint_registry = endpoint_directory(hass)
 
-                def _settle_browser_candidates(
-                    state: str,
-                    reason: str,
-                    *,
-                    keep_endpoint_id: str = "",
-                ) -> None:
-                    _settle_ring_browser_candidates(
-                        hass,
-                        registry,
-                        browser_legs,
-                        call_id=call_id,
-                        caller=invite.caller,
-                        callee=entry.display_name,
-                        state=state,
-                        reason=reason,
-                        route_kind=GROUP_TYPE_RING,
-                        keep_endpoint_id=keep_endpoint_id,
+                settle_group = partial(
+                    _settle_ring_browser_candidates,
+                    hass,
+                    registry,
+                    browser_legs,
+                    call_id=call_id,
+                    caller=invite.caller,
+                    callee=entry.display_name,
+                    route_kind=GROUP_TYPE_RING,
+                )
+
+                def _settle_browser_candidates(state, reason, **kwargs) -> None:
+                    settle_group(state=state, reason=reason, **kwargs)
+
+                async def _abort_group(reason, *, cleanup=True) -> None:
+                    await async_abort_route(
+                        RouteAbortContext(
+                            hass,
+                            registry,
+                            call_id,
+                            settle=_settle_browser_candidates,
+                            attempts=attempts if cleanup else (),
+                        ),
+                        RouteAbortIntent(reason, "cleanup"),
                     )
 
                 try:
@@ -602,11 +586,9 @@ async def async_forward_existing_call(
                         initial_selection=initial_selection,
                     )
                 except Exception:
-                    _settle_browser_candidates(
-                        CallState.TRANSPORT_UNREACHABLE.value,
+                    await _abort_group(
                         TerminalReason.PROTOCOL_ERROR.value,
                     )
-                    await _cleanup_outbound_attempts([], attempts)
                     raise
                 if not attempts and not browser_legs:
                     raise RuntimeError("ring group has no reachable members")
@@ -627,11 +609,9 @@ async def async_forward_existing_call(
                     else None
                 )
                 if authoritative_session is None:
-                    _settle_browser_candidates(
-                        CallState.CANCELLED.value,
+                    await _abort_group(
                         TerminalReason.CANCELLED.value,
                     )
-                    await _cleanup_outbound_attempts([], attempts)
                     raise RuntimeError("forward source call is no longer current")
 
                 browser_route_future = asyncio.get_running_loop().create_future()
@@ -705,19 +685,15 @@ async def async_forward_existing_call(
                         )
                     )
                 except asyncio.CancelledError:
-                    registry.take_pending_route(call_id)
-                    _settle_browser_candidates(
-                        CallState.CANCELLED.value,
+                    await _abort_group(
                         TerminalReason.CANCELLED.value,
+                        cleanup=False,
                     )
                     raise
                 except Exception:
-                    registry.take_pending_route(call_id)
-                    _settle_browser_candidates(
-                        CallState.TRANSPORT_UNREACHABLE.value,
+                    await _abort_group(
                         TerminalReason.PROTOCOL_ERROR.value,
                     )
-                    await _cleanup_outbound_attempts([], attempts)
                     raise
 
                 winner = (
@@ -745,10 +721,9 @@ async def async_forward_existing_call(
                         fork_result.outcome.disposition,
                         fork_result.outcome.reason or "transport_unreachable",
                     )
-                    registry.take_pending_route(call_id)
-                    _settle_browser_candidates(
-                        CallState.TRANSPORT_UNREACHABLE.value,
+                    await _abort_group(
                         TerminalReason.TRANSPORT_UNREACHABLE.value,
+                        cleanup=False,
                     )
                     raise RuntimeError(failure)
 
@@ -1371,24 +1346,7 @@ async def async_forward_existing_call(
                 terminate_sip_bridge=_terminate_sip_bridge,
             )
         except asyncio.CancelledError:
-            attached_client = False
-            if dest_call_id:
-                registry.forget_bridge_link(call_id)
-                attached_client = await registry.close_leg(
-                    call_id,
-                    dest_call_id,
-                    reason=TerminalReason.CANCELLED.value,
-                )
-            if reservation is not None and not reservation_from_preanswer:
-                reservation.release()
-            if video_relay is not None:
-                await video_relay.stop()
-                video_relay = None
-            if client is not None and not attached_client:
-                await async_cleanup_sip_runtime(
-                    client=client,
-                    terminate_client=True,
-                )
+            await _cleanup_failed_route(TerminalReason.CANCELLED.value)
             raise
         except Exception as err:  # noqa: BLE001 - convert route failures to policy.
             reason = str(err or TerminalReason.TRANSPORT_UNREACHABLE.value)
@@ -1398,25 +1356,14 @@ async def async_forward_existing_call(
                 destination,
                 reason,
             )
-            attached_client = False
-            if dest_call_id:
-                registry.forget_bridge_link(call_id)
-                attached_client = await registry.close_leg(
-                    call_id,
-                    dest_call_id,
-                    reason=reason,
-                )
-            if reservation is not None and not reservation_from_preanswer:
-                reservation.release()
-            if video_relay is not None:
-                await video_relay.stop()
-                video_relay = None
-            if client is not None and not attached_client:
-                await async_cleanup_sip_runtime(
-                    client=client,
-                    terminate_client=True,
-                )
-            await _restore_or_terminate(reason)
+            await _cleanup_failed_route(reason)
+            await async_abort_route(
+                forward_abort,
+                RouteAbortIntent(
+                    reason,
+                    on_failure,
+                ),
+            )
         finally:
             call_artifacts.forward_claim = False
 

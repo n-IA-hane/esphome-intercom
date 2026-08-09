@@ -1574,14 +1574,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             'or registry.resource_for(call_id, "preanswered") is not None',
             forward,
         )
-        restore = forward[
-            forward.index("async def _restore_or_terminate(") : forward.index(
-                "async def _run_forward("
-            )
-        ]
-        self.assertIn("if ha_claimed:", restore)
-        self.assertIn("CallState.RINGING.value", restore)
-        self.assertIn('last_sip_event="ROUTE_RESUME"', restore)
+        self.assertIn("resume_callee=original_callee", forward)
+        self.assertIn("async_abort_route(", forward)
+        self.assertIn('last_sip_event="ROUTE_RESUME"', forward)
 
     def test_in_dialog_dtmf_uses_the_canonical_call_envelope(self) -> None:
         bridge = self.dtmf_events
