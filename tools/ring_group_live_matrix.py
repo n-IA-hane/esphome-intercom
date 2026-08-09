@@ -38,6 +38,7 @@ CALL_EVENT_ENTITY = "event.voip_stack_call"
 INBOUND_AUTOMATION = "automation.voip_inbound_trunk_to_rg_casa"
 DIRECT_AUTOMATION_ID = "codex_voip_video_route_matrix"
 DIRECT_AUTOMATION = "automation.codex_voip_video_direct_route_matrix"
+RING_GROUP_NAME = os.environ.get("RING_GROUP_NAME", "RG Casa")
 
 
 def _load_runtime_dependencies() -> None:
@@ -283,6 +284,7 @@ def main(*, output: Path | None = None) -> int:
         ha_request(f"/api/states/{ESP_AUTO_ANSWER_ENTITY}")["state"] == "on"
     )
     original_inbound_automation = inbound_automation_state["state"] == "on"
+    phone_settings: list[dict[str, Any]] = []
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(
@@ -302,7 +304,7 @@ def main(*, output: Path | None = None) -> int:
             test.goto(TEST_URL, wait_until="domcontentloaded", timeout=30_000)
             for page, name in ((casa, "Casa"), (test, "Test")):
                 try:
-                    wait_card(
+                    ready = wait_card(
                         page,
                         lambda item: bool(item),
                         30,
@@ -315,13 +317,40 @@ def main(*, output: Path | None = None) -> int:
                     # recovery used by the single-card matrix; a second
                     # failure remains a real qualification failure.
                     page.reload(wait_until="domcontentloaded", timeout=30_000)
-                    wait_card(
+                    ready = wait_card(
                         page,
                         lambda item: bool(item),
                         30,
                         f"{name} card ready after reload",
                     )
-                page.evaluate(SET_AUTO_ANSWER, False)
+                backend = ready["backend"]
+                settings = {
+                    "device_id": backend["device_id"],
+                    "ring_group": str((backend.get("groups") or {}).get("ring_group") or ""),
+                    "auto_answer": bool(backend.get("auto_answer")),
+                    "send_video": bool(backend.get("send_video")),
+                }
+                phone_settings.append(settings)
+                service(
+                    "voip_stack",
+                    "set_ha_softphone_settings",
+                    {
+                        "device_id": settings["device_id"],
+                        "ring_group": RING_GROUP_NAME,
+                        "auto_answer": False,
+                        "send_video": True if EXPECT_VIDEO else settings["send_video"],
+                    },
+                )
+                wait_card(
+                    page,
+                    lambda item: (
+                        str((item["backend"].get("groups") or {}).get("ring_group") or "")
+                        == RING_GROUP_NAME
+                        and not item["backend"].get("auto_answer")
+                    ),
+                    10,
+                    f"{name} temporary ring-group settings",
+                )
                 if EXPECT_VIDEO and not page.evaluate(SET_SEND_VIDEO, True):
                     raise RuntimeError(f"failed to enable Send Camera on {name}")
 
@@ -700,6 +729,13 @@ def main(*, output: Path | None = None) -> int:
             context.close()
             browser.close()
     finally:
+        for settings in phone_settings:
+            with suppress(Exception):
+                service(
+                    "voip_stack",
+                    "set_ha_softphone_settings",
+                    settings,
+                )
         _set_esp_dnd(original_esp_dnd)
         _set_esp_auto_answer(original_esp_auto_answer)
         if EXPECT_VIDEO:

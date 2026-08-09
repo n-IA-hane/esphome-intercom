@@ -93,6 +93,7 @@ async () => {
       runtime_resources: backend?.runtime_resources || backend?.media_debug?.runtime_resources || {},
       auto_answer: !!backend?.auto_answer,
       send_video: !!backend?.send_video,
+      groups: backend?.groups || {},
     },
     card: {
       state: snapshot.state || "", call_id: snapshot.call_id || "", caller: snapshot.caller || "",
