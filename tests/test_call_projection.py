@@ -1,9 +1,14 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
 from custom_components.voip_stack import call_projection, websocket_api
 from custom_components.voip_stack.endpoint_session import TerminationIntent
 from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
+
+
+pytestmark = pytest.mark.ha
 
 
 def _runtime(monkeypatch):
