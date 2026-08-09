@@ -195,6 +195,20 @@ AREAS = (
 
 SCENARIOS = (
     ScenarioContract(
+        "ha-phone-policy-and-dnd-routing",
+        frozenset({"ha_surface", "ha_lifecycle"}),
+        frozenset({"ha-lab", "sipp"}),
+        frozenset({"ha-state", "sip-final-status", "selected-destination"}),
+        frozenset({"policy-restored", "resources-at-baseline"}),
+    ),
+    ScenarioContract(
+        "inbound-route-decision-guards",
+        frozenset({"ha_surface", "ha_lifecycle"}),
+        frozenset({"ha-lab", "sipp"}),
+        frozenset({"route-events", "service-validation", "distinct-call-ids"}),
+        frozenset({"cleanup-barrier", "resources-at-baseline"}),
+    ),
+    ScenarioContract(
         "esp-to-ha-answer-hangup",
         frozenset({"ha_lifecycle", "sip_core", "browser_media", "esp_control"}),
         frozenset({"ha-lab", "sipp", "playwright", "ws3"}),

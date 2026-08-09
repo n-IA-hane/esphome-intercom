@@ -73,6 +73,11 @@ Configure the GitHub Actions repository variable
 fails before testing when the selection is absent. It never assumes the
 historical `default` endpoint.
 
+The same peer-live command also executes the two explicit-extension precedence
+cases from `tools/inbound_routing_qualification.py`. Their separate JSON
+artifact must contain both exact scenario IDs. A generic green SIP matrix or
+only one extension case cannot satisfy the DTMF routing contract.
+
 Important groups:
 
 - `tests/test_voip_backend_route_contract.py`: static contracts for SIP route

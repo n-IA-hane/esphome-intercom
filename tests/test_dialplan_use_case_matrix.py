@@ -32,3 +32,20 @@ def test_every_qualification_class_names_an_existing_executor() -> None:
         (root / evidence.executor).is_file()
         for evidence in QUALIFICATION_CLASSES.values()
     )
+
+
+def test_live_dialplan_classes_bind_exact_artifact_scenarios() -> None:
+    assert QUALIFICATION_CLASSES["guarded-route-real-ha"].scenario_ids == (
+        "stale_route_sequence_is_rejected",
+        "concurrent_route_requests_remain_distinct",
+    )
+    assert QUALIFICATION_CLASSES["trunk-dtmf-live"].scenario_ids == (
+        "dtmf_assist_extension_bypasses_automation",
+        "dtmf_secondary_extension_bypasses_automation",
+    )
+    assert all(
+        scenario.endswith("_ha_runtime")
+        for scenario in QUALIFICATION_CLASSES[
+            "phone-policy-ha-runtime"
+        ].scenario_ids
+    )

@@ -326,7 +326,10 @@ jobs:
           esac
           artifacts=()
           if [ "$JOB" = peer-live ]; then
-            artifacts=(--artifact evidence/results/peer-live.json)
+            artifacts=(
+              --artifact evidence/results/peer-live.json
+              --artifact evidence/results/dtmf-extension-precedence.json
+            )
           elif [ "$JOB" = browser-real ]; then
             artifacts=(
               --artifact evidence/results/browser-real/browser-matrix.json

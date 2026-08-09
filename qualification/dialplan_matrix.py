@@ -25,6 +25,7 @@ class QualificationClass:
 
     level: str
     executor: str
+    scenario_ids: tuple[str, ...] = ()
 
 
 QUALIFICATION_CLASSES = {
@@ -38,7 +39,12 @@ QUALIFICATION_CLASSES = {
         "ha-peer-live", "scripts/run_ha_real_matrix.py"
     ),
     "established-dtmf-live": QualificationClass(
-        "peer-live", "scripts/run_peer_live_qualification.sh"
+        "peer-live",
+        "scripts/run_peer_live_qualification.sh",
+        (
+            "in_call_registered_sip_info_dtmf_event",
+            "in_call_rfc4733_dtmf_event",
+        ),
     ),
     "event-entity-ha-runtime": QualificationClass(
         "ha-runtime", "tests/test_endpoint_ha_entities.py"
@@ -46,15 +52,30 @@ QUALIFICATION_CLASSES = {
     "forward-failure-ha-runtime": QualificationClass(
         "ha-peer-live", "scripts/run_ha_real_matrix.py"
     ),
-    "guarded-route-ha-runtime": QualificationClass(
-        "ha-runtime", "tests/test_automation_route_result.py"
+    "guarded-route-real-ha": QualificationClass(
+        "ha-peer-live",
+        "scripts/run_ha_real_matrix.py",
+        (
+            "stale_route_sequence_is_rejected",
+            "concurrent_route_requests_remain_distinct",
+        ),
     ),
     "ingress-filter-real-ha": QualificationClass(
         "ha-peer-live", "scripts/run_ha_real_matrix.py"
     ),
     "p4-video-hil": QualificationClass("hil-p4", "scripts/run_hil_qualification.py"),
     "phone-policy-ha-runtime": QualificationClass(
-        "ha-runtime", "tests/test_phone_control_ha.py"
+        "ha-runtime",
+        "scripts/run_ha_real_matrix.py",
+        (
+            "browser_phone_auto_answer_enabled_ha_runtime",
+            "browser_phone_auto_answer_disabled_ha_runtime",
+        ),
+    ),
+    "phone-dnd-real-ha": QualificationClass(
+        "ha-peer-live",
+        "scripts/run_ha_real_matrix.py",
+        ("browser_phone_dnd_enabled", "browser_phone_dnd_disabled"),
     ),
     "refer-notify-real-sipp": QualificationClass(
         "peer-live", "scripts/run_sipp_rfc_lab.py"
@@ -81,7 +102,12 @@ QUALIFICATION_CLASSES = {
         "ha-runtime", "tests/test_endpoint_ha_entities.py"
     ),
     "trunk-dtmf-live": QualificationClass(
-        "peer-live", "scripts/run_peer_live_qualification.sh"
+        "peer-live",
+        "tools/inbound_routing_qualification.py",
+        (
+            "dtmf_assist_extension_bypasses_automation",
+            "dtmf_secondary_extension_bypasses_automation",
+        ),
     ),
 }
 
@@ -207,7 +233,7 @@ USE_CASES = (
         "route",
         "apply current decision",
         "reject stale decision",
-        "guarded-route-ha-runtime",
+        "guarded-route-real-ha",
     ),
     _case(
         "no-answer-next-room",
@@ -297,7 +323,7 @@ USE_CASES = (
         "set_dnd",
         "DND enabled",
         "DND disabled",
-        "phone-policy-ha-runtime",
+        "phone-dnd-real-ha",
     ),
     _case(
         "scheduled-auto-answer",

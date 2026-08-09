@@ -68,7 +68,12 @@ def test_ha_service_surface_requires_real_ha_without_hardware() -> None:
 
     assert plan["unknown_files"] == []
     assert plan["areas"] == ["ha_surface"]
-    assert plan["required_jobs"] == ["ha-runtime", "software-full", "static"]
+    assert plan["required_jobs"] == [
+        "ha-runtime",
+        "peer-live",
+        "software-full",
+        "static",
+    ]
     assert plan["firmware_profiles"] == []
 
 
@@ -219,6 +224,88 @@ def test_browser_evidence_rejects_a_failed_real_matrix(tmp_path: Path) -> None:
         assert str(error) == "browser-real produced no supported scenario artifact"
     else:
         raise AssertionError("failed browser matrix was accepted as evidence")
+
+
+def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
+    tmp_path: Path,
+) -> None:
+    plan = build_plan(
+        ["custom_components/voip_stack/endpoint_termination.py"],
+        base="base",
+        head="head",
+        full=False,
+        event="pull-request",
+    )
+    matrix = tmp_path / "peer-live.json"
+    matrix.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {"name": name, "status": "passed"}
+                    for name in (
+                        "browser_phone_auto_answer_enabled_ha_runtime",
+                        "browser_phone_auto_answer_disabled_ha_runtime",
+                        "browser_phone_dnd_enabled",
+                        "browser_phone_dnd_disabled",
+                        "stale_route_sequence_is_rejected",
+                        "concurrent_route_requests_remain_distinct",
+                    )
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    dtmf = tmp_path / "dtmf-extension-precedence.json"
+    dtmf.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "name": "dtmf_assist_extension_bypasses_automation",
+                        "status": "pass",
+                    },
+                    {
+                        "name": "dtmf_secondary_extension_bypasses_automation",
+                        "status": "pass",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    claims = derive_scenario_evidence("peer-live", plan, [matrix, dtmf])
+
+    assert {
+        claim["scenario_id"] for claim in claims
+    }.issuperset(
+        {
+            "ha-phone-policy-and-dnd-routing",
+            "inbound-route-decision-guards",
+            "trunk-dtmf-routing-and-established-dtmf",
+        }
+    )
+
+    dtmf.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "name": "dtmf_assist_extension_bypasses_automation",
+                        "status": "pass",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    try:
+        derive_scenario_evidence("peer-live", plan, [matrix, dtmf])
+    except EvidenceError as error:
+        assert "did not prove exact scenarios" in str(error)
+        assert "dtmf_secondary_extension_bypasses_automation" in str(error)
+    else:
+        raise AssertionError("partial DTMF evidence was accepted")
 
 
 def test_push_to_dev_selects_complete_firmware_matrix() -> None:
