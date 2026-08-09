@@ -989,7 +989,7 @@ class CallRuntimeApi:
     def active_count(self, *, include_ha_softphone: bool = True) -> int:
         count = 0
         for session in self.sessions.values():
-            if session.state in TERMINAL_STATES:
+            if session.state in TERMINAL_STATES or session.metadata.get("event_only"):
                 continue
             if include_ha_softphone or not any(
                 leg.role == "ha_softphone" for leg in session.legs.values()

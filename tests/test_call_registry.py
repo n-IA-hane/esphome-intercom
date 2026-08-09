@@ -389,7 +389,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertEqual(registry.active_count(), 0)
         second = registry.event_fields("physical:esp", "ringing")
 
-        self.assertEqual(registry.active_count(), 1)
+        self.assertEqual(registry.active_count(), 0)
         self.assertGreater(second["generation"], first["generation"])
         self.assertEqual(terminal["sequence"], 2)
         self.assertEqual(second["sequence"], 1)

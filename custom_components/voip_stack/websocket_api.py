@@ -430,6 +430,7 @@ def _registry_call_is_active(registry: SipEndpointRuntime, call_id: str) -> bool
     session = registry.sessions.get(session_id)
     if (
         session is not None
+        and not session.metadata.get("event_only")
         and str(session.state or "").strip().lower() not in TERMINAL_STATES
     ):
         return True
