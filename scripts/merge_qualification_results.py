@@ -10,6 +10,7 @@ from pathlib import Path
 
 def merge_results(paths: list[Path]) -> dict[str, object]:
     jobs: dict[str, object] = {}
+    scenario_evidence: list[object] = []
     identity: tuple[str, str, str] | None = None
     for path in paths:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -35,6 +36,10 @@ def merge_results(paths: list[Path]) -> dict[str, object]:
                 f"duplicate qualification jobs: {', '.join(sorted(duplicates))}"
             )
         jobs.update(source_jobs)
+        source_evidence = payload.get("scenario_evidence", [])
+        if not isinstance(source_evidence, list):
+            raise RuntimeError(f"qualification scenario evidence is invalid: {path}")
+        scenario_evidence.extend(source_evidence)
     assert identity is not None
     return {
         "schema_version": 1,
@@ -42,6 +47,7 @@ def merge_results(paths: list[Path]) -> dict[str, object]:
         "candidate_id": identity[1],
         "head": identity[2],
         "jobs": jobs,
+        "scenario_evidence": scenario_evidence,
     }
 
 

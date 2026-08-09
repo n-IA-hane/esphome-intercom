@@ -26,6 +26,7 @@ def build_result(
     plan_id: str,
     candidate_id: str,
     head: str,
+    scenario_evidence: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     if status == "success" and not artifacts:
         raise RuntimeError(f"successful qualification job has no evidence: {job}")
@@ -48,12 +49,18 @@ def build_result(
                 "sha256": _sha256(path),
             }
         )
+    evidence = []
+    for claim in scenario_evidence or []:
+        if not isinstance(claim, dict):
+            raise RuntimeError("scenario evidence entry is invalid")
+        evidence.append({**claim, "job": job})
     return {
         "schema_version": 1,
         "plan_id": plan_id,
         "candidate_id": candidate_id,
         "head": head,
         "jobs": {job: {"status": status, "artifacts": records}},
+        "scenario_evidence": evidence,
     }
 
 
@@ -71,7 +78,14 @@ def main() -> int:
     parser.add_argument("--plan-id", required=True)
     parser.add_argument("--candidate-id", required=True)
     parser.add_argument("--head", required=True)
+    parser.add_argument("--scenario-evidence", type=Path)
     args = parser.parse_args()
+    scenario_evidence: list[dict[str, object]] = []
+    if args.scenario_evidence:
+        source = json.loads(args.scenario_evidence.read_text(encoding="utf-8"))
+        scenario_evidence = source.get("scenarios", []) if isinstance(source, dict) else []
+        if not isinstance(scenario_evidence, list):
+            raise RuntimeError("scenario evidence does not contain a scenario list")
     payload = build_result(
         args.job,
         args.status,
@@ -80,6 +94,7 @@ def main() -> int:
         plan_id=args.plan_id,
         candidate_id=args.candidate_id,
         head=args.head,
+        scenario_evidence=scenario_evidence,
     )
     args.output.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"

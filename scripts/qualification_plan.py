@@ -19,9 +19,12 @@ sys.path.insert(0, str(ROOT))
 from qualification.registry import (  # noqa: E402
     ALL_JOBS,
     AREAS,
+    EXECUTOR_JOBS,
     FIRMWARE_PROFILES,
+    HIL_FIRMWARE_PROFILES,
     Risk,
     SCENARIOS,
+    regression_ledger,
 )
 
 
@@ -93,15 +96,33 @@ def build_plan(
         jobs.update(ALL_JOBS)
 
     area_ids = frozenset(matched)
-    profiles = [
-        profile
-        for profile in FIRMWARE_PROFILES
-        if "firmware" in jobs and (run_all or profile.areas.intersection(area_ids))
-    ]
     scenarios = [
         scenario
         for scenario in SCENARIOS
         if run_all or scenario.areas.intersection(area_ids)
+    ]
+    for scenario in scenarios:
+        jobs.update(EXECUTOR_JOBS[executor] for executor in scenario.executors)
+    hil_profiles = {
+        profile_id for job, profile_id in HIL_FIRMWARE_PROFILES.items() if job in jobs
+    }
+    if hil_profiles:
+        jobs.add("firmware")
+    profiles = [
+        profile
+        for profile in FIRMWARE_PROFILES
+        if "firmware" in jobs
+        and (
+            run_all
+            or profile.id in hil_profiles
+            or profile.areas.intersection(area_ids)
+        )
+    ]
+    selected_scenario_ids = {scenario.id for scenario in scenarios}
+    regressions = [
+        record
+        for record in regression_ledger()
+        if selected_scenario_ids.intersection(map(str, record["scenarios"]))
     ]
     risk = max(
         (area.risk for area in matched.values()), key=RISK_ORDER.get, default=Risk.LOW
@@ -124,6 +145,7 @@ def build_plan(
         "skipped_jobs": skipped,
         "firmware_profiles": [_json_record(profile) for profile in profiles],
         "scenarios": [_json_record(scenario) for scenario in scenarios],
+        "regressions": regressions,
     }
     payload["plan_id"] = plan_id(payload)
     return payload

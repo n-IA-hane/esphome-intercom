@@ -261,9 +261,14 @@ jobs:
             --candidate "$GITHUB_WORKSPACE/evidence/input/candidate-lock.json" \
             --evidence-root "$GITHUB_WORKSPACE/evidence/results" \
             -- .venv/bin/python scripts/compile_qualification_profiles.py \
-              --plan "$GITHUB_WORKSPACE/evidence/input/qualification-plan.json"
+              --plan "$GITHUB_WORKSPACE/evidence/input/qualification-plan.json" \
+              --index "$GITHUB_WORKSPACE/evidence/results/firmware-build-index.json"
           .venv/bin/python scripts/firmware_manifest.py \
             --expected "$(python -c 'import json, os; print(len(json.load(open(os.environ["GITHUB_WORKSPACE"] + "/evidence/input/qualification-plan.json"))["firmware_profiles"]))')" \
+            --plan "$GITHUB_WORKSPACE/evidence/input/qualification-plan.json" \
+            --candidate "$GITHUB_WORKSPACE/evidence/input/candidate-lock.json" \
+            --bundle "$GITHUB_WORKSPACE/evidence/results/firmware" \
+            --index "$GITHUB_WORKSPACE/evidence/results/firmware-build-index.json" \
             --output "$GITHUB_WORKSPACE/evidence/results/firmware-manifest.json"
           plan_id="$(python -c 'import json, os; print(json.load(open(os.environ["GITHUB_WORKSPACE"] + "/evidence/input/qualification-plan.json"))["plan_id"])')"
           candidate_id="$(python -c 'import json, os; print(json.load(open(os.environ["GITHUB_WORKSPACE"] + "/evidence/input/candidate-lock.json"))["candidate_id"])')"
@@ -279,9 +284,7 @@ jobs:
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
           name: qualification-result-firmware-${{ github.sha }}
-          path: |
-            evidence/results/
-            ${{ runner.temp }}/candidate/esphome-intercom/**/.esphome/**/firmware*.bin
+          path: evidence/results/
           if-no-files-found: error
 
   live:
@@ -313,6 +316,7 @@ jobs:
         env:
           JOB: ${{ matrix.job }}
           HA_PYTHON: /home/codex/ha-voip-lab/.venv/bin/python
+          SIP_REGRESSION_CAPTURE_DIR: evidence/results/browser-real
         run: |
           case "$JOB" in
             peer-live) command=(./scripts/run_peer_live_qualification.sh evidence/results) ;;
@@ -322,6 +326,11 @@ jobs:
           artifacts=()
           if [ "$JOB" = peer-live ]; then
             artifacts=(--artifact evidence/results/peer-live.json)
+          elif [ "$JOB" = browser-real ]; then
+            artifacts=(
+              --artifact evidence/results/browser-real/browser-matrix.json
+              --artifact evidence/results/browser-real/video-reinvite.json
+            )
           fi
           .venv/bin/python scripts/run_qualification_command.py \
             --job "$JOB" \
@@ -339,7 +348,7 @@ jobs:
           if-no-files-found: error
 
   hil:
-    needs: plan
+    needs: [plan, firmware]
     if: contains(needs.plan.outputs.required_jobs, '"hil-s3"') || contains(needs.plan.outputs.required_jobs, '"hil-p4"')
     runs-on: [self-hosted, voip-lab]
     strategy:
@@ -357,6 +366,11 @@ jobs:
         with:
           name: qualification-input-${{ github.sha }}
           path: evidence/input
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
+        with:
+          name: qualification-result-firmware-${{ github.sha }}
+          path: evidence/firmware-input
       - name: Prepare qualification environment
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         run: |
@@ -381,6 +395,9 @@ jobs:
               .venv/bin/python scripts/run_hil_qualification.py \
                 --job "$JOB" \
                 --plan evidence/input/qualification-plan.json \
+                --candidate evidence/input/candidate-lock.json \
+                --firmware-manifest evidence/firmware-input/firmware-manifest.json \
+                --firmware-root evidence/firmware-input \
                 --hardware-map "$hardware_map" \
                 --output "evidence/results/$JOB.json"
       - name: Upload ${{ matrix.job }} evidence

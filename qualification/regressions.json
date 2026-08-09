@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "regressions": [
+    {
+      "id": "issue-85",
+      "issue": "https://github.com/n-IA-hane/esphome-intercom/issues/85",
+      "protected_behavior": "Dahua digest registration, TCP flow reuse, PCM/16000 negotiation and complete call teardown",
+      "scenarios": ["dahua-interop-contract-replay"]
+    },
+    {
+      "id": "issue-88",
+      "issue": "https://github.com/n-IA-hane/esphome-intercom/issues/88",
+      "protected_behavior": "ESP to ESP RTP survives the media watchdog in both directions and both hangup owners clean up",
+      "scenarios": ["esp-to-esp-watchdog-and-bidirectional-hangup"]
+    },
+    {
+      "id": "issue-93",
+      "issue": "https://github.com/n-IA-hane/esphome-intercom/issues/93",
+      "protected_behavior": "device_id selects either an ESPHome or Home Assistant phone without exposing adapter internals",
+      "scenarios": ["esp-to-ha-answer-hangup"]
+    },
+    {
+      "id": "issue-94",
+      "issue": "https://github.com/n-IA-hane/esphome-intercom/issues/94",
+      "protected_behavior": "Arbitrary PCMA chunks are reassembled into complete Assist frames without a 20 ms assumption",
+      "scenarios": ["fritzbox-pcma-to-assist-frame-reassembly"]
+    },
+    {
+      "id": "issue-95",
+      "issue": "https://github.com/n-IA-hane/esphome-intercom/issues/95",
+      "protected_behavior": "FRITZBox registration uses a bare registrar URI and star dial strings reach the trunk unchanged",
+      "scenarios": ["trunk-dtmf-routing-and-established-dtmf"]
+    }
+  ]
+}

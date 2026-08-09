@@ -8,7 +8,8 @@ import sys
 
 import yaml
 
-from qualification.registry import FIRMWARE_PROFILES
+from qualification.registry import FIRMWARE_PROFILES, regression_ledger
+from qualification.evidence import EvidenceError, derive_scenario_evidence
 from scripts.candidate_lock import build_lock, candidate_id
 from scripts.install_ha_qualification_package import install
 from scripts.qualification_plan import build_plan
@@ -84,12 +85,144 @@ def test_lifecycle_change_requires_real_qualification() -> None:
         "software-full",
         "ha-runtime",
         "peer-live",
+        "firmware",
         "hil-s3",
+    }
+    assert "waveshare-s3-full" in {
+        profile["id"] for profile in plan["firmware_profiles"]
     }
     assert any(
         scenario["id"] == "registered-sip-to-esp-bidirectional-hangup"
         for scenario in plan["scenarios"]
     )
+    assert "browser-real" in plan["required_jobs"]
+    assert {record["id"] for record in plan["regressions"]} == {
+        "issue-85",
+        "issue-88",
+        "issue-93",
+        "issue-94",
+        "issue-95",
+    }
+
+
+def test_community_regression_ledger_has_executable_scenarios() -> None:
+    records = regression_ledger()
+
+    assert {record["id"] for record in records} == {
+        "issue-85",
+        "issue-88",
+        "issue-93",
+        "issue-94",
+        "issue-95",
+    }
+    assert all(record["scenarios"] for record in records)
+
+
+def test_software_evidence_claims_only_mapped_replay_contracts(
+    tmp_path: Path,
+) -> None:
+    plan = build_plan(
+        ["custom_components/voip_stack/sip_listener.py"],
+        base="base",
+        head="head",
+        full=False,
+        event="pull-request",
+    )
+    log = tmp_path / "software-full.log"
+    log.write_text("1498 passed\n", encoding="utf-8")
+
+    claims = derive_scenario_evidence("software-full", plan, [log])
+
+    assert {claim["scenario_id"] for claim in claims} == {
+        "dahua-interop-contract-replay",
+        "fritzbox-pcma-to-assist-frame-reassembly",
+    }
+    assert not any(
+        claim["scenario_id"] == "trunk-dtmf-routing-and-established-dtmf"
+        for claim in claims
+    )
+
+
+def test_hil_evidence_requires_exact_passed_scenario_and_quiescence(
+    tmp_path: Path,
+) -> None:
+    plan = build_plan(
+        ["custom_components/voip_stack/endpoint_termination.py"],
+        base="base",
+        head="head",
+        full=False,
+        event="pull-request",
+    )
+    artifact = tmp_path / "hil-s3.json"
+    artifact.write_text(
+        json.dumps(
+            {
+                "jobs": {
+                    "hil-s3": {
+                        "status": "passed",
+                        "results": [
+                            {
+                                "scenario": "esp-to-ha-answer-hangup",
+                                "status": "passed",
+                                "snapshots": {
+                                    "post": {"call_scoped_quiescent": True}
+                                },
+                            },
+                            {
+                                "scenario": "esp-to-esp-watchdog-and-bidirectional-hangup",
+                                "status": "passed",
+                                "snapshots": {
+                                    "post": {"call_scoped_quiescent": True}
+                                },
+                            },
+                        ],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    claims = derive_scenario_evidence("hil-s3", plan, [artifact])
+
+    assert {claim["scenario_id"] for claim in claims} == {
+        "esp-to-ha-answer-hangup",
+        "esp-to-esp-watchdog-and-bidirectional-hangup",
+    }
+
+    payload = json.loads(artifact.read_text(encoding="utf-8"))
+    payload["jobs"]["hil-s3"]["results"][0]["snapshots"]["post"][
+        "call_scoped_quiescent"
+    ] = False
+    artifact.write_text(json.dumps(payload), encoding="utf-8")
+    try:
+        derive_scenario_evidence("hil-s3", plan, [artifact])
+    except EvidenceError as error:
+        assert "did not prove planned scenario" in str(error)
+    else:
+        raise AssertionError("non-quiescent HIL evidence was accepted")
+
+
+def test_browser_evidence_rejects_a_failed_real_matrix(tmp_path: Path) -> None:
+    plan = build_plan(
+        ["custom_components/voip_stack/sip_listener.py"],
+        base="base",
+        head="head",
+        full=False,
+        event="pull-request",
+    )
+    artifact = tmp_path / "browser-matrix.json"
+    artifact.write_text(
+        json.dumps([{"name": "in_call_rfc4733_dtmf_event", "status": "fail"}]),
+        encoding="utf-8",
+    )
+
+    try:
+        derive_scenario_evidence("browser-real", plan, [artifact])
+    except EvidenceError as error:
+        assert str(error) == "browser-real produced no supported scenario artifact"
+    else:
+        raise AssertionError("failed browser matrix was accepted as evidence")
 
 
 def test_push_to_dev_selects_complete_firmware_matrix() -> None:
@@ -207,6 +340,178 @@ def test_summary_accepts_exact_candidate_and_evidence(tmp_path: Path) -> None:
     assert manifest["qualified"] is True
 
 
+def _scenario_plan() -> dict[str, object]:
+    plan = build_plan(
+        ["docs/qualification.md"],
+        base="base",
+        head="head",
+        full=False,
+        event="pull-request",
+    )
+    plan["required_jobs"] = ["software-full", "static"]
+    plan["scenarios"] = [
+        {
+            "id": "dahua-interop-contract-replay",
+            "areas": ["ha_lifecycle", "sip_core"],
+            "executors": ["software-replay"],
+            "oracles": [
+                "digest-challenge",
+                "negotiated-pcm",
+                "tcp-flow-state",
+                "teardown-state",
+            ],
+            "postconditions": ["tcp-flow-reused", "terminal-idempotent"],
+            "regressions": ["issue-85"],
+        }
+    ]
+    plan["regressions"] = [
+        record for record in regression_ledger() if record["id"] == "issue-85"
+    ]
+    from scripts.qualification_plan import plan_id
+
+    plan["plan_id"] = plan_id(plan)
+    return plan
+
+
+def _job_results(tmp_path: Path, plan: dict[str, object]) -> dict[str, object]:
+    jobs: dict[str, object] = {}
+    for job in plan["required_jobs"]:
+        artifact = tmp_path / f"{job}.json"
+        artifact.write_text("{}\n", encoding="utf-8")
+        jobs[job] = {
+            "status": "success",
+            "artifacts": [
+                {
+                    "path": artifact.name,
+                    "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                    "bytes": artifact.stat().st_size,
+                }
+            ],
+        }
+    return _results(plan, jobs)
+
+
+def test_summary_requires_all_planned_scenario_evidence(tmp_path: Path) -> None:
+    plan = _scenario_plan()
+    results = _job_results(tmp_path, plan)
+
+    errors, manifest = verify(plan, _candidate("head"), results, artifact_root=tmp_path)
+
+    assert any(error.startswith("planned scenario lacks executors") for error in errors)
+    assert any(error.startswith("planned scenario lacks oracles") for error in errors)
+    assert any(
+        error.startswith("planned scenario lacks postconditions") for error in errors
+    )
+    assert manifest["scenarios"]["dahua-interop-contract-replay"]["complete"] is False
+
+
+def test_summary_accepts_scenario_evidence_from_owning_jobs(tmp_path: Path) -> None:
+    plan = _scenario_plan()
+    results = _job_results(tmp_path, plan)
+    results["scenario_evidence"] = [
+        {
+            "scenario_id": "dahua-interop-contract-replay",
+            "job": "software-full",
+            "status": "passed",
+            "executors": ["software-replay"],
+            "oracles": [
+                "digest-challenge",
+                "negotiated-pcm",
+                "tcp-flow-state",
+                "teardown-state",
+            ],
+            "postconditions": ["tcp-flow-reused", "terminal-idempotent"],
+        },
+    ]
+
+    errors, manifest = verify(plan, _candidate("head"), results, artifact_root=tmp_path)
+
+    assert errors == []
+    assert manifest["scenarios"]["dahua-interop-contract-replay"]["complete"] is True
+
+
+def test_summary_rejects_executor_claimed_by_wrong_job(tmp_path: Path) -> None:
+    plan = _scenario_plan()
+    results = _job_results(tmp_path, plan)
+    results["scenario_evidence"] = [
+        {
+            "scenario_id": "dahua-interop-contract-replay",
+            "job": "static",
+            "status": "passed",
+            "executors": ["software-replay"],
+            "oracles": [],
+            "postconditions": [],
+        }
+    ]
+
+    errors, _manifest = verify(
+        plan, _candidate("head"), results, artifact_root=tmp_path
+    )
+
+    assert (
+        "scenario evidence is claimed by an unrelated job: "
+        "dahua-interop-contract-replay/static"
+    ) in errors
+
+
+def test_summary_rejects_claim_not_observed_by_owning_job(tmp_path: Path) -> None:
+    plan = build_plan(
+        ["docs/qualification.md"],
+        base="base",
+        head="head",
+        full=False,
+        event="pull-request",
+    )
+    plan["required_jobs"] = ["ha-runtime", "static"]
+    plan["scenarios"] = [
+        {
+            "id": "esp-to-ha-answer-hangup",
+            "areas": [],
+            "executors": ["ha-lab", "playwright", "sipp", "ws3"],
+            "oracles": [
+                "browser-state",
+                "esp-state",
+                "ha-state",
+                "rtp-duplex",
+                "sip-trace",
+            ],
+            "postconditions": [
+                "cleanup-barrier",
+                "immediate-redial",
+                "resources-at-baseline",
+                "single-terminal",
+            ],
+            "regressions": ["issue-93"],
+        }
+    ]
+    plan["regressions"] = [
+        record for record in regression_ledger() if record["id"] == "issue-93"
+    ]
+    from scripts.qualification_plan import plan_id
+
+    plan["plan_id"] = plan_id(plan)
+    results = _job_results(tmp_path, plan)
+    results["scenario_evidence"] = [
+        {
+            "scenario_id": "esp-to-ha-answer-hangup",
+            "job": "ha-runtime",
+            "status": "passed",
+            "executors": [],
+            "oracles": ["ha-state", "rtp-duplex"],
+            "postconditions": [],
+        }
+    ]
+
+    errors, _manifest = verify(
+        plan, _candidate("head"), results, artifact_root=tmp_path
+    )
+
+    assert (
+        "scenario evidence exceeds contract: "
+        "esp-to-ha-answer-hangup/oracles"
+    ) in errors
+
+
 def test_job_result_hashes_only_artifacts_below_root(tmp_path: Path) -> None:
     evidence = tmp_path / "nested" / "result.json"
     evidence.parent.mkdir()
@@ -225,6 +530,68 @@ def test_job_result_hashes_only_artifacts_below_root(tmp_path: Path) -> None:
     artifact = result["jobs"]["static"]["artifacts"][0]
     assert artifact["path"] == "nested/result.json"
     assert artifact["sha256"] == hashlib.sha256(evidence.read_bytes()).hexdigest()
+
+
+def test_job_result_binds_scenario_evidence_to_its_job(tmp_path: Path) -> None:
+    evidence = tmp_path / "peer.json"
+    evidence.write_text("{}\n", encoding="utf-8")
+
+    result = build_result(
+        "peer-live",
+        "success",
+        [evidence],
+        tmp_path,
+        plan_id="plan",
+        candidate_id="candidate",
+        head="head",
+        scenario_evidence=[
+            {
+                "scenario_id": "call",
+                "status": "passed",
+                "executors": ["sipp"],
+                "oracles": ["sip-trace"],
+                "postconditions": [],
+            }
+        ],
+    )
+
+    assert result["scenario_evidence"][0]["job"] == "peer-live"
+
+
+def test_result_merge_preserves_disjoint_scenario_evidence(tmp_path: Path) -> None:
+    paths = []
+    for job, executor in (("peer-live", "sipp"), ("hil-s3", "ws3")):
+        path = tmp_path / f"{job}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "plan_id": "plan",
+                    "candidate_id": "candidate",
+                    "head": "head",
+                    "jobs": {job: {"status": "success", "artifacts": []}},
+                    "scenario_evidence": [
+                        {
+                            "scenario_id": "call",
+                            "job": job,
+                            "status": "passed",
+                            "executors": [executor],
+                            "oracles": [],
+                            "postconditions": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        paths.append(path)
+
+    merged = merge_results(paths)
+
+    assert [claim["job"] for claim in merged["scenario_evidence"]] == [
+        "peer-live",
+        "hil-s3",
+    ]
 
 
 def test_candidate_lock_has_stable_identity(monkeypatch, tmp_path: Path) -> None:
@@ -426,8 +793,7 @@ def test_real_ha_package_uses_one_context_branch_and_one_forward_automation() ->
         }
     ]
     assert any(
-        action.get("action") == "voip_stack.forward"
-        for action in forward["actions"]
+        action.get("action") == "voip_stack.forward" for action in forward["actions"]
     )
     assert "sensor.voip_stack_call_state" not in yaml.safe_dump(package)
 

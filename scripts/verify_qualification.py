@@ -10,6 +10,8 @@ from pathlib import Path
 
 from scripts.candidate_lock import candidate_id as compute_candidate_id
 from scripts.qualification_plan import plan_id as compute_plan_id
+from qualification.evidence import CLAIMS
+from qualification.registry import EXECUTOR_JOBS, regression_ledger
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -126,6 +128,98 @@ def verify(
             checked_artifacts.append({"path": str(relative), "sha256": actual})
         verified_jobs[job] = {"status": status, "artifacts": checked_artifacts}
 
+    planned_scenarios = {
+        str(scenario.get("id") or ""): scenario
+        for scenario in plan.get("scenarios", [])
+        if isinstance(scenario, dict)
+    }
+    selected_scenario_ids = set(planned_scenarios)
+    expected_regressions = [
+        record
+        for record in regression_ledger()
+        if selected_scenario_ids.intersection(map(str, record["scenarios"]))
+    ]
+    if plan.get("regressions") != expected_regressions:
+        errors.append("qualification regression ledger selection is invalid")
+    evidence = results.get("scenario_evidence", [])
+    if not isinstance(evidence, list):
+        errors.append("qualification scenario evidence is invalid")
+        evidence = []
+    observed = {
+        scenario_id: {"executors": set(), "oracles": set(), "postconditions": set()}
+        for scenario_id in planned_scenarios
+    }
+    verified_evidence: list[dict[str, object]] = []
+    for claim in evidence:
+        if not isinstance(claim, dict):
+            errors.append("qualification scenario evidence entry is invalid")
+            continue
+        scenario_id = str(claim.get("scenario_id") or "")
+        job = str(claim.get("job") or "")
+        if scenario_id not in planned_scenarios:
+            errors.append(f"scenario evidence was not planned: {scenario_id}")
+            continue
+        if job not in required_jobs or job_results.get(job, {}).get("status") != "success":
+            errors.append(f"scenario evidence job did not succeed: {scenario_id}/{job}")
+            continue
+        if claim.get("status") != "passed":
+            errors.append(f"planned scenario did not pass: {scenario_id}/{job}")
+            continue
+        contract = planned_scenarios[scenario_id]
+        supported = CLAIMS.get((scenario_id, job))
+        if supported is None:
+            errors.append(
+                f"scenario evidence is claimed by an unrelated job: {scenario_id}/{job}"
+            )
+            continue
+        normalized: dict[str, list[str]] = {}
+        invalid = False
+        for field in ("executors", "oracles", "postconditions"):
+            values = claim.get(field, [])
+            if not isinstance(values, list) or not all(
+                isinstance(value, str) and value for value in values
+            ):
+                errors.append(f"scenario {field} evidence is invalid: {scenario_id}/{job}")
+                invalid = True
+                break
+            values = sorted(set(values))
+            unsupported = set(values).difference(map(str, contract.get(field, [])))
+            unsupported.update(set(values).difference(supported[field]))
+            if unsupported:
+                errors.append(
+                    f"scenario evidence exceeds contract: {scenario_id}/{field}"
+                )
+                invalid = True
+            if field == "executors" and any(
+                EXECUTOR_JOBS.get(value) != job for value in values
+            ):
+                errors.append(
+                    f"scenario executor is claimed by the wrong job: {scenario_id}/{job}"
+                )
+                invalid = True
+            normalized[field] = values
+        if invalid:
+            continue
+        for field, values in normalized.items():
+            observed[scenario_id][field].update(values)
+        verified_evidence.append(
+            {"scenario_id": scenario_id, "job": job, "status": "passed", **normalized}
+        )
+
+    scenario_manifest: dict[str, object] = {}
+    for scenario_id, contract in planned_scenarios.items():
+        missing: dict[str, list[str]] = {}
+        for field in ("executors", "oracles", "postconditions"):
+            absent = sorted(set(map(str, contract.get(field, []))) - observed[scenario_id][field])
+            if absent:
+                missing[field] = absent
+                errors.append(
+                    f"planned scenario lacks {field}: {scenario_id} ({', '.join(absent)})"
+                )
+        scenario_manifest[scenario_id] = {
+            field: sorted(values) for field, values in observed[scenario_id].items()
+        } | {"complete": not missing, "missing": missing}
+
     manifest = {
         "schema_version": 1,
         "candidate": candidate,
@@ -133,6 +227,8 @@ def verify(
         "candidate_id": candidate_id,
         "head": head,
         "jobs": verified_jobs,
+        "scenario_evidence": verified_evidence,
+        "scenarios": scenario_manifest,
         "qualified": not errors,
         "errors": errors,
     }

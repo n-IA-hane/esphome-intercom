@@ -14,6 +14,16 @@ devices:
     capabilities: [hil-s3, ws3, audio]
     volume_percent: 1
     doctor: [nc, -z, "${WS3_HOST}", "${WS3_API_PORT}"]
+    firmware:
+      profile: waveshare-s3-full
+      mode: install
+      command:
+        - esptool
+        - --port
+        - "${WS3_SERIAL_PORT}"
+        - write-flash
+        - "0x0"
+        - "${HIL_FIRMWARE_PATH}"
     scenarios:
       esp-to-ha-answer-hangup:
         command:
@@ -31,6 +41,16 @@ devices:
     capabilities: [hil-p4, p4, audio, video]
     volume_percent: 1
     doctor: [nc, -z, "${P4_HOST}", "${P4_API_PORT}"]
+    firmware:
+      profile: waveshare-p4-h264
+      mode: install
+      command:
+        - esptool
+        - --port
+        - "${P4_SERIAL_PORT}"
+        - write-flash
+        - "0x0"
+        - "${HIL_FIRMWARE_PATH}"
     scenarios:
       p4-audio-to-bidirectional-video-reinvite:
         command:

@@ -172,6 +172,102 @@ def _digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def _file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _prepare_firmware(
+    device_name: str,
+    device: dict[str, object],
+    manifest: dict[str, object],
+    candidate: dict[str, object],
+    *,
+    source_lock_sha256: str,
+    firmware_root: Path,
+    environment: dict[str, str],
+    timeout: float,
+) -> dict[str, str]:
+    """Install or independently attest the exact planned firmware."""
+
+    if manifest.get("schema_version") != 2:
+        raise HilError("firmware manifest schema is unsupported")
+    candidate_id = str(candidate.get("candidate_id") or "")
+    if not candidate_id or manifest.get("candidate_id") != candidate_id:
+        raise HilError("firmware manifest does not match candidate")
+    if manifest.get("source_lock_sha256") != source_lock_sha256:
+        raise HilError("firmware manifest does not match source lock")
+    config = device.get("firmware")
+    if not isinstance(config, dict):
+        raise HilError(f"device {device_name} does not define firmware attestation")
+    profile = str(config.get("profile") or "")
+    matches = [
+        item
+        for item in manifest.get("firmware", [])
+        if isinstance(item, dict) and item.get("profile") == profile
+    ]
+    if not profile or len(matches) != 1:
+        raise HilError(f"device {device_name} firmware profile is not unique")
+    artifact = matches[0].get("artifact")
+    if not isinstance(artifact, dict):
+        raise HilError(f"profile {profile} has no candidate artifact")
+    path = (firmware_root / str(artifact.get("path") or "")).resolve()
+    try:
+        path.relative_to(firmware_root.resolve())
+    except ValueError as error:
+        raise HilError("firmware artifact escapes evidence root") from error
+    expected_sha256 = str(artifact.get("sha256") or "")
+    if not path.is_file() or _file_digest(path) != expected_sha256:
+        raise HilError(f"candidate firmware hash mismatch for profile {profile}")
+    firmware_environment = {
+        **environment,
+        "HIL_FIRMWARE_PATH": str(path),
+        "HIL_FIRMWARE_SHA256": expected_sha256,
+        "HIL_FIRMWARE_PROFILE": profile,
+        "HIL_CANDIDATE_ID": candidate_id,
+        "HIL_SOURCE_LOCK_SHA256": source_lock_sha256,
+    }
+    mode = config.get("mode")
+    command = _command(config.get("command"), firmware_environment)
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=firmware_environment,
+        check=False,
+        stdout=subprocess.PIPE if mode == "verify" else subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=timeout,
+    )
+    if result.returncode:
+        raise HilError(f"firmware {mode} failed for required device {device_name}")
+    if mode == "verify":
+        try:
+            observed = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise HilError("firmware verification returned invalid JSON") from error
+        expected = {
+            "candidate_id": candidate_id,
+            "profile": profile,
+            "sha256": expected_sha256,
+            "source_lock_sha256": source_lock_sha256,
+        }
+        if observed != expected:
+            raise HilError(f"firmware attestation mismatch for device {device_name}")
+    elif mode != "install":
+        raise HilError(f"device {device_name} firmware mode must be install or verify")
+    return {
+        "mode": str(mode),
+        "profile": profile,
+        "sha256": expected_sha256,
+        "candidate_id": candidate_id,
+        "source_lock_sha256": source_lock_sha256,
+    }
+
+
 def _stop_process(process: subprocess.Popen[str]) -> None:
     process.terminate()
     try:
@@ -262,6 +358,10 @@ def run_hil(
     *,
     environment: dict[str, str],
     selected_job: str | None = None,
+    candidate: dict[str, object] | None = None,
+    source_lock_sha256: str = "",
+    firmware_manifest: dict[str, object] | None = None,
+    firmware_root: Path | None = None,
 ) -> dict[str, object]:
     if hardware.get("schema_version") != 1:
         raise HilError("hardware map schema is unsupported")
@@ -282,6 +382,9 @@ def run_hil(
     if not required_jobs:
         artifact["skip_reason"] = "qualification plan does not require hardware"
         return artifact
+
+    if candidate is None or firmware_manifest is None or firmware_root is None:
+        raise HilError("required HIL job has no candidate firmware evidence")
 
     lock_value = hardware.get("lock_file")
     if not isinstance(lock_value, str) or not lock_value:
@@ -306,6 +409,16 @@ def run_hil(
                 )
             child_environment = dict(environment)
             child_environment["VOIP_TEST_VOLUME_PERCENT"] = str(volume)
+            firmware = _prepare_firmware(
+                device_name,
+                device,
+                firmware_manifest,
+                candidate,
+                source_lock_sha256=source_lock_sha256,
+                firmware_root=firmware_root,
+                environment=child_environment,
+                timeout=timeout,
+            )
             doctor = subprocess.run(
                 _command(device.get("doctor"), child_environment),
                 cwd=ROOT,
@@ -353,12 +466,13 @@ def run_hil(
             artifact["jobs"][job] = {
                 "status": "passed" if job_passed else "failed",
                 "doctor": "passed",
+                "firmware": firmware,
                 "device": device_name,
                 "capabilities": sorted(
                     str(item) for item in device.get("capabilities", [])
                 ),
                 "volume_percent": volume,
-                "scenarios": results,
+                "results": results,
                 "skipped_scenarios": skipped_scenarios,
             }
             if not job_passed:
@@ -374,16 +488,26 @@ def main() -> int:
     parser.add_argument("--hardware-map", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--job", choices=sorted(HIL_CAPABILITIES))
+    parser.add_argument("--candidate", type=Path, required=True)
+    parser.add_argument("--firmware-manifest", type=Path, required=True)
+    parser.add_argument("--firmware-root", type=Path, required=True)
     args = parser.parse_args()
     artifact: dict[str, Any]
     plan: dict[str, Any] = {}
     try:
         plan = json.loads(args.plan.read_text(encoding="utf-8"))
+        candidate_bytes = args.candidate.read_bytes()
         artifact = run_hil(
             plan,
             yaml.safe_load(args.hardware_map.read_text(encoding="utf-8")),
             environment=dict(os.environ),
             selected_job=args.job,
+            candidate=json.loads(candidate_bytes),
+            source_lock_sha256=hashlib.sha256(candidate_bytes).hexdigest(),
+            firmware_manifest=json.loads(
+                args.firmware_manifest.read_text(encoding="utf-8")
+            ),
+            firmware_root=args.firmware_root,
         )
         status = 0 if artifact["status"] in {"passed", "skipped"} else 2
     except (HilError, OSError, subprocess.SubprocessError, ValueError) as error:

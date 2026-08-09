@@ -23,10 +23,7 @@ def load_script():
 
 
 def test_manifest_records_toolchain_config_and_binary_hash(tmp_path: Path) -> None:
-    build_root = (
-        tmp_path
-        / "yamls/voip-only/.esphome/build/test-phone"
-    )
+    build_root = tmp_path / "yamls/voip-only/.esphome/build/test-phone"
     output = build_root / "build"
     output.mkdir(parents=True)
     (output / "project_description.json").write_text(
@@ -90,3 +87,35 @@ def test_manifest_does_not_duplicate_nested_esphome_builds(tmp_path: Path) -> No
     records = load_script().build_records(tmp_path)
 
     assert [record["node"] for record in records] == ["phone"]
+
+
+def test_manifest_binds_profile_candidate_and_factory_binary(tmp_path: Path) -> None:
+    firmware = tmp_path / "build/firmware.factory.bin"
+    firmware.parent.mkdir()
+    firmware.write_bytes(b"candidate")
+    records = [
+        {
+            "node": "waveshare-s3",
+            "profile": "waveshare-s3-full",
+            "artifact": {
+                "path": str(firmware.relative_to(tmp_path)),
+                "sha256": load_script().sha256(firmware),
+            },
+        }
+    ]
+    bundle = tmp_path / "evidence/firmware"
+
+    payload = load_script().bind_candidate(
+        records,
+        {"firmware_profiles": [{"id": "waveshare-s3-full"}]},
+        {"candidate_id": "candidate"},
+        source_lock_sha256="lock",
+        root=tmp_path,
+        bundle=bundle,
+    )
+
+    artifact = payload["firmware"][0]["artifact"]
+    assert payload["candidate_id"] == "candidate"
+    assert payload["source_lock_sha256"] == "lock"
+    assert payload["firmware"][0]["profile"] == "waveshare-s3-full"
+    assert (bundle.parent / artifact["path"]).read_bytes() == b"candidate"

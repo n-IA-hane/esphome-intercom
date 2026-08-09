@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.record_qualification_result import build_result  # noqa: E402
+from qualification.evidence import derive_scenario_evidence  # noqa: E402
 
 
 def main() -> int:
@@ -23,6 +24,7 @@ def main() -> int:
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--evidence-root", type=Path, required=True)
     parser.add_argument("--artifact", type=Path, action="append", default=[])
+    parser.add_argument("--scenario-evidence", type=Path)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -50,6 +52,15 @@ def main() -> int:
         plan_id=str(plan["plan_id"]),
         candidate_id=str(candidate["candidate_id"]),
         head=str(plan["head"]),
+        scenario_evidence=(
+            json.loads(args.scenario_evidence.read_text(encoding="utf-8")).get(
+                "scenarios", []
+            )
+            if args.scenario_evidence
+            else derive_scenario_evidence(args.job, plan, [log, *args.artifact])
+            if completed.returncode == 0
+            else []
+        ),
     )
     result_path = evidence_root / f"result-{args.job}.json"
     result_path.write_text(
