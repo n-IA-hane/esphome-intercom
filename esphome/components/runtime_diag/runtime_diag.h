@@ -6,6 +6,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#if CONFIG_HEAP_TRACING_STANDALONE
+#include <esp_heap_trace.h>
+#endif
+
 #include "esphome/core/component.h"
 
 namespace esphome {
@@ -21,7 +25,10 @@ class RuntimeDiag : public Component {
   void mark_api_disconnected();
   void set_context(const char *key, const char *value);
   void capture(const char *reason);
+  void capture_heap(const char *reason);
   void start_burst(const char *reason, uint32_t samples, uint32_t interval_ms);
+  void start_heap_trace(const char *reason);
+  void stop_heap_trace(const char *reason);
 
  protected:
   std::string build_snapshot_(const char *reason);
@@ -53,6 +60,13 @@ class RuntimeDiag : public Component {
   int64_t previous_task_sample_us_{0};
   bool have_previous_tasks_{false};
   std::vector<std::pair<std::string, std::string>> context_;
+
+#if CONFIG_HEAP_TRACING_STANDALONE
+  static constexpr size_t HEAP_TRACE_RECORDS = 2048;
+  heap_trace_record_t *heap_trace_records_{nullptr};
+  bool heap_trace_active_{false};
+  std::string heap_trace_reason_;
+#endif
 };
 
 }  // namespace runtime_diag

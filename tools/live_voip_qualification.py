@@ -303,12 +303,13 @@ class HaWs:
 
 
 class EspApi:
-    def __init__(self, spec: EspDevice) -> None:
+    def __init__(self, spec: EspDevice, *, capture_info_logs: bool = False) -> None:
         if APIClient is None:
             raise RuntimeError(
                 "aioesphomeapi is required to run live ESP qualification"
             )
         self.spec = spec
+        self.capture_info_logs = capture_info_logs
         self.client = APIClient(spec.host, spec.port, spec.password)
         self.entities: dict[str, Any] = {}
         self.services: dict[str, Any] = {}
@@ -338,7 +339,11 @@ class EspApi:
             # TX buffers being qualified. Keep the always-on observer at WARN;
             # state, runtime and failure logs remain available without turning
             # the test harness into a source of network backpressure.
-            log_level=LogLevel.LOG_LEVEL_WARN,
+            log_level=(
+                LogLevel.LOG_LEVEL_INFO
+                if self.capture_info_logs
+                else LogLevel.LOG_LEVEL_WARN
+            ),
             dump_config=False,
         )
         await asyncio.sleep(0.6)
@@ -487,6 +492,19 @@ class LiveContext:
     esp: EspApi
     args: argparse.Namespace
     artifacts: list[dict[str, Any]] = field(default_factory=list)
+    heap_trace_started: bool = False
+
+    async def start_heap_trace(self, reason: str) -> None:
+        if self.heap_trace_started:
+            return
+        await self.esp.service("start_runtime_heap_trace", {"reason": reason})
+        self.heap_trace_started = True
+
+    async def stop_heap_trace(self, reason: str) -> None:
+        if not self.heap_trace_started:
+            return
+        await self.esp.service("stop_runtime_heap_trace", {"reason": reason})
+        self.heap_trace_started = False
 
     def _call_resources_are_quiescent(self, snapshot: dict[str, Any]) -> bool:
         resources = dict(
@@ -911,14 +929,26 @@ async def _start_conference_call(
         "ring_members",
         timeout=15,
     )
+    if (
+        ctx.args.runtime_heap_trace
+        and ctx.args.runtime_heap_trace_start == "ring-start"
+    ):
+        await ctx.start_heap_trace("ring_start")
     await ctx.ha.service(
         "voip_stack", "call", {"destination": ctx.args.conference_group}
     )
     if not auto_answer:
         await wait_esp_voip_state(ctx, {"ringing", "incoming"}, timeout=12)
+        await asyncio.sleep(max(0.0, ctx.args.ring_settle_seconds))
+        if (
+            ctx.args.runtime_heap_trace
+            and ctx.args.runtime_heap_trace_start == "manual-answer"
+        ):
+            await ctx.start_heap_trace("manual_answer")
         await ctx.esp.button("call")
     await wait_esp_voip_state(ctx, {"in_call"}, timeout=12)
     await wait_softphone_state(ctx, {"in_call"}, timeout=8)
+    await asyncio.sleep(max(0.0, ctx.args.in_call_seconds))
 
 
 async def scenario_ha_to_conference_group_rings_esp(ctx: LiveContext) -> None:
@@ -1351,7 +1381,12 @@ async def run(args: argparse.Namespace) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
     async with HaWs(args.ha_url, token, insecure=args.insecure) as ws:
-        async with EspApi(esp_spec) as esp:
+        async with EspApi(
+            esp_spec,
+            capture_info_logs=(
+                args.runtime_burst_samples > 0 or args.runtime_heap_trace
+            ),
+        ) as esp:
             ctx = LiveContext(ha=ha, ws=ws, esp=esp, args=args)
             await ctx.cleanup()
             original = await set_baseline(ctx)
@@ -1367,9 +1402,45 @@ async def run(args: argparse.Namespace) -> int:
                         )
                         continue
                     start = time.monotonic()
+                    burst_deadline = 0.0
+                    scenario_index = len(results) + 1
+                    if args.runtime_heap_sample:
+                        await esp.service(
+                            "capture_runtime_heap",
+                            {"reason": f"{scenario_index}_{scenario.id}_before"},
+                        )
+                    if args.runtime_heap_trace:
+                        await esp.service(
+                            "capture_runtime_snapshot",
+                            {"reason": f"{scenario.id}_before"},
+                        )
+                    if (
+                        args.runtime_heap_trace
+                        and args.runtime_heap_trace_start == "scenario"
+                    ):
+                        await ctx.start_heap_trace(scenario.id)
+                    if args.runtime_burst_samples > 0:
+                        await esp.service(
+                            "start_runtime_burst",
+                            {
+                                "reason": scenario.id,
+                                "samples": args.runtime_burst_samples,
+                                "interval_ms": args.runtime_burst_interval_ms,
+                            },
+                        )
+                        burst_deadline = (
+                            time.monotonic()
+                            + args.runtime_burst_samples
+                            * args.runtime_burst_interval_ms
+                            / 1000.0
+                            + 0.5
+                        )
                     try:
                         await scenario.run(ctx)
                     except Exception as err:  # noqa: BLE001 - write artifact before failing.
+                        if ctx.heap_trace_started:
+                            with contextlib.suppress(Exception):
+                                await ctx.stop_heap_trace(f"{scenario.id}_failed")
                         ctx.capture(f"{scenario.id}_failed")
                         results.append(
                             {
@@ -1388,7 +1459,26 @@ async def run(args: argparse.Namespace) -> int:
                         }
                     )
                     print(f"PASS {scenario.id}")
+                    if args.runtime_heap_sample:
+                        # The call state can reach idle one scheduler turn
+                        # before the ringtone owner has joined its decoder.
+                        # This delay is an observation boundary, never a
+                        # product retry or teardown workaround.
+                        await asyncio.sleep(0.25)
+                        await esp.service(
+                            "capture_runtime_heap",
+                            {"reason": f"{scenario_index}_{scenario.id}_after"},
+                        )
+                    if ctx.heap_trace_started:
+                        await ctx.stop_heap_trace(f"{scenario.id}_complete")
+                        await esp.service(
+                            "capture_runtime_snapshot",
+                            {"reason": f"{scenario.id}_after"},
+                        )
+                    if burst_deadline:
+                        await asyncio.sleep(max(0.0, burst_deadline - time.monotonic()))
                     await ctx.cleanup()
+                    await asyncio.sleep(max(0.0, args.scenario_gap_seconds))
             finally:
                 restore_error: Exception | None = None
                 try:
@@ -1482,6 +1572,37 @@ def parse_args() -> argparse.Namespace:
         help="explicit conference group; omitted runs use a unique isolated group",
     )
     parser.add_argument("--trunk-number", default="3519968203")
+    parser.add_argument("--ring-settle-seconds", type=float, default=0.0)
+    parser.add_argument("--in-call-seconds", type=float, default=0.0)
+    parser.add_argument("--scenario-gap-seconds", type=float, default=0.0)
+    parser.add_argument(
+        "--runtime-burst-samples",
+        type=int,
+        default=0,
+        help="capture this many on-device runtime snapshots around every scenario",
+    )
+    parser.add_argument(
+        "--runtime-burst-interval-ms",
+        type=int,
+        default=250,
+        help="interval for --runtime-burst-samples (default: 250 ms)",
+    )
+    parser.add_argument(
+        "--runtime-heap-trace",
+        action="store_true",
+        help="record surviving IDF heap allocations around every scenario",
+    )
+    parser.add_argument(
+        "--runtime-heap-sample",
+        action="store_true",
+        help="emit lightweight per-scenario heap samples to the device logger",
+    )
+    parser.add_argument(
+        "--runtime-heap-trace-start",
+        choices=("scenario", "ring-start", "manual-answer"),
+        default="scenario",
+        help="start heap tracing at scenario entry or immediately before manual answer",
+    )
     return parser.parse_args()
 
 

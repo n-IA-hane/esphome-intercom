@@ -5,6 +5,7 @@
 #include <sstream>
 
 #include <esp_heap_caps.h>
+#include <esp_memory_utils.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -162,6 +163,32 @@ void RuntimeDiag::capture(const char *reason) {
   this->last_loop_ms_ = millis();
 }
 
+void RuntimeDiag::capture_heap(const char *reason) {
+  multi_heap_info_t internal{};
+  multi_heap_info_t dma{};
+  multi_heap_info_t psram{};
+  heap_caps_get_info(&internal, MALLOC_CAP_INTERNAL);
+  heap_caps_get_info(&dma, MALLOC_CAP_DMA);
+  heap_caps_get_info(&psram, MALLOC_CAP_SPIRAM);
+  ESP_LOGI(TAG,
+           "heap_sample reason=%s internal_free=%u internal_largest=%u internal_min=%u internal_blocks=%u "
+           "dma_free=%u dma_largest=%u dma_min=%u dma_blocks=%u "
+           "psram_free=%u psram_largest=%u psram_min=%u psram_blocks=%u",
+           reason == nullptr ? "" : reason,
+           static_cast<unsigned>(internal.total_free_bytes),
+           static_cast<unsigned>(internal.largest_free_block),
+           static_cast<unsigned>(internal.minimum_free_bytes),
+           static_cast<unsigned>(internal.allocated_blocks),
+           static_cast<unsigned>(dma.total_free_bytes),
+           static_cast<unsigned>(dma.largest_free_block),
+           static_cast<unsigned>(dma.minimum_free_bytes),
+           static_cast<unsigned>(dma.allocated_blocks),
+           static_cast<unsigned>(psram.total_free_bytes),
+           static_cast<unsigned>(psram.largest_free_block),
+           static_cast<unsigned>(psram.minimum_free_bytes),
+           static_cast<unsigned>(psram.allocated_blocks));
+}
+
 void RuntimeDiag::start_burst(const char *reason, uint32_t samples, uint32_t interval_ms) {
   this->burst_reason_ = reason == nullptr || reason[0] == '\0' ? "burst" : reason;
   this->burst_remaining_ = std::max<uint32_t>(1, std::min<uint32_t>(samples, 120));
@@ -171,6 +198,88 @@ void RuntimeDiag::start_burst(const char *reason, uint32_t samples, uint32_t int
   this->burst_active_ = true;
   ESP_LOGI(TAG, "burst start reason=%s samples=%u interval_ms=%u", this->burst_reason_.c_str(),
            static_cast<unsigned>(this->burst_remaining_), static_cast<unsigned>(this->burst_interval_ms_));
+}
+
+void RuntimeDiag::start_heap_trace(const char *reason) {
+#if CONFIG_HEAP_TRACING_STANDALONE
+  if (this->heap_trace_active_) {
+    heap_trace_stop();
+    this->heap_trace_active_ = false;
+  }
+  if (this->heap_trace_records_ != nullptr) {
+    heap_trace_init_standalone(nullptr, 0);
+    heap_caps_free(this->heap_trace_records_);
+    this->heap_trace_records_ = nullptr;
+  }
+  this->heap_trace_reason_ = reason == nullptr ? "" : reason;
+  this->heap_trace_records_ = static_cast<heap_trace_record_t *>(
+      heap_caps_calloc(HEAP_TRACE_RECORDS, sizeof(heap_trace_record_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (this->heap_trace_records_ == nullptr) {
+    ESP_LOGE(TAG, "heap_trace start failed reason=%s error=psram_allocation", this->heap_trace_reason_.c_str());
+    return;
+  }
+  esp_err_t err = heap_trace_init_standalone(this->heap_trace_records_, HEAP_TRACE_RECORDS);
+  if (err == ESP_OK) {
+    ESP_LOGI(TAG, "heap_trace start reason=%s capacity=%u", this->heap_trace_reason_.c_str(),
+             static_cast<unsigned>(HEAP_TRACE_RECORDS));
+    err = heap_trace_start(HEAP_TRACE_LEAKS);
+  }
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "heap_trace start failed reason=%s error=%s", this->heap_trace_reason_.c_str(),
+             esp_err_to_name(err));
+    heap_trace_init_standalone(nullptr, 0);
+    heap_caps_free(this->heap_trace_records_);
+    this->heap_trace_records_ = nullptr;
+    return;
+  }
+  this->heap_trace_active_ = true;
+#else
+  ESP_LOGE(TAG, "heap_trace unavailable reason=%s", reason == nullptr ? "" : reason);
+#endif
+}
+
+void RuntimeDiag::stop_heap_trace(const char *reason) {
+#if CONFIG_HEAP_TRACING_STANDALONE
+  if (!this->heap_trace_active_) {
+    ESP_LOGW(TAG, "heap_trace stop ignored reason=%s active=false", reason == nullptr ? "" : reason);
+    return;
+  }
+  const esp_err_t stop_err = heap_trace_stop();
+  this->heap_trace_active_ = false;
+  heap_trace_summary_t summary{};
+  const esp_err_t summary_err = heap_trace_summary(&summary);
+  ESP_LOGI(TAG,
+           "heap_trace summary start_reason=%s stop_reason=%s stop_error=%s summary_error=%s records=%u capacity=%u "
+           "high_water=%u overflow=%u allocations=%u frees=%u",
+           this->heap_trace_reason_.c_str(), reason == nullptr ? "" : reason, esp_err_to_name(stop_err),
+           esp_err_to_name(summary_err), static_cast<unsigned>(summary.count), static_cast<unsigned>(summary.capacity),
+           static_cast<unsigned>(summary.high_water_mark), static_cast<unsigned>(summary.has_overflowed),
+           static_cast<unsigned>(summary.total_allocations), static_cast<unsigned>(summary.total_frees));
+  for (size_t i = 0; i < summary.count; i++) {
+    heap_trace_record_t record{};
+    if (heap_trace_get(i, &record) != ESP_OK || record.address == nullptr || record.freed) {
+      continue;
+    }
+    char callers[192]{};
+    size_t used = 0;
+    for (size_t frame = 0; frame < CONFIG_HEAP_TRACING_STACK_DEPTH && record.alloced_by[frame] != nullptr; frame++) {
+      const int written = snprintf(callers + used, sizeof(callers) - used, "%s%p", frame == 0 ? "" : ":",
+                                   record.alloced_by[frame]);
+      if (written <= 0 || static_cast<size_t>(written) >= sizeof(callers) - used) {
+        break;
+      }
+      used += static_cast<size_t>(written);
+    }
+    ESP_LOGI(TAG, "heap_trace record=%u size=%u region=%s address=%p callers=%s", static_cast<unsigned>(i),
+             static_cast<unsigned>(record.size), esp_ptr_external_ram(record.address) ? "psram" : "internal",
+             record.address, callers);
+  }
+  heap_trace_init_standalone(nullptr, 0);
+  heap_caps_free(this->heap_trace_records_);
+  this->heap_trace_records_ = nullptr;
+#else
+  ESP_LOGE(TAG, "heap_trace unavailable reason=%s", reason == nullptr ? "" : reason);
+#endif
 }
 
 std::string RuntimeDiag::build_snapshot_(const char *reason) {
