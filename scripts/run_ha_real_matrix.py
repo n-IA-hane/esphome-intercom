@@ -39,7 +39,16 @@ from run_answered_sipp_lab import (  # noqa: E402
 
 PACKAGE = ROOT / "qualification/home_assistant/voip_qualification.yaml"
 HELPER_PREFIX = "voip_qualification_"
-ROUTE_ACTIONS = ("default", "decline", "busy", "cancel", "forward", "bridge")
+ROUTE_ACTIONS = (
+    "no_action",
+    "default",
+    "answer_ha",
+    "decline",
+    "busy",
+    "cancel",
+    "forward",
+    "bridge",
+)
 ANSWER_CASES = (
     "registered_sip_auto_answer_on_caller_bye",
     "registered_sip_auto_answer_off_callee_bye",
@@ -63,20 +72,31 @@ class QualificationPackage:
     def __enter__(self) -> QualificationPackage:
         entities = (
             "input_boolean.voip_qualification_enabled",
+            "input_boolean.voip_qualification_condition",
+            "input_boolean.voip_qualification_forward_enabled",
             "input_select.voip_qualification_route_action",
+            "input_select.voip_qualification_false_route_action",
+            "input_select.voip_qualification_forward_failure",
             "input_text.voip_qualification_expected_origin",
             "input_text.voip_qualification_expected_caller",
             "input_text.voip_qualification_expected_target",
             "input_text.voip_qualification_destination",
+            "input_text.voip_qualification_false_destination",
+            "input_text.voip_qualification_forward_destination",
+            "input_text.voip_qualification_last_forward",
         )
         self.original = {entity: self.api.state(entity)["state"] for entity in entities}
-        automation = self.api.state("automation.voip_qualification_route_decision")
-        if automation["state"] != "on":
-            self.api.service(
-                "automation",
-                "turn_on",
-                {"entity_id": automation["entity_id"]},
-            )
+        for entity_id in (
+            "automation.voip_qualification_route_decision",
+            "automation.voip_qualification_ringing_forward",
+        ):
+            automation = self.api.state(entity_id)
+            if automation["state"] != "on":
+                self.api.service(
+                    "automation",
+                    "turn_on",
+                    {"entity_id": automation["entity_id"]},
+                )
         self.api.service(
             "input_boolean",
             "turn_on",
@@ -84,9 +104,24 @@ class QualificationPackage:
         )
         return self
 
-    def select(self, action: str, *, destination: str = "") -> None:
+    def select(
+        self,
+        action: str,
+        *,
+        destination: str = "",
+        condition: bool = True,
+        false_action: str = "no_action",
+        false_destination: str = "",
+        expected_origin: str = "trunk",
+        expected_caller: str = "SIPp caller",
+        expected_target: str = "",
+    ) -> None:
         if action not in ROUTE_ACTIONS:
             raise ValueError(f"unsupported qualification route action: {action}")
+        if false_action not in (*ROUTE_ACTIONS, "no_action"):
+            raise ValueError(
+                f"unsupported qualification false route action: {false_action}"
+            )
         self.api.service(
             "input_select",
             "select_option",
@@ -95,11 +130,25 @@ class QualificationPackage:
                 "option": action,
             },
         )
+        self.api.service(
+            "input_select",
+            "select_option",
+            {
+                "entity_id": "input_select.voip_qualification_false_route_action",
+                "option": false_action,
+            },
+        )
+        self.api.service(
+            "input_boolean",
+            "turn_on" if condition else "turn_off",
+            {"entity_id": "input_boolean.voip_qualification_condition"},
+        )
         values = {
-            "input_text.voip_qualification_expected_origin": "trunk",
-            "input_text.voip_qualification_expected_caller": "SIPp caller",
-            "input_text.voip_qualification_expected_target": "",
+            "input_text.voip_qualification_expected_origin": expected_origin,
+            "input_text.voip_qualification_expected_caller": expected_caller,
+            "input_text.voip_qualification_expected_target": expected_target,
             "input_text.voip_qualification_destination": destination,
+            "input_text.voip_qualification_false_destination": false_destination,
             "input_text.voip_qualification_last_decision": "",
         }
         for entity_id, value in values.items():
@@ -125,6 +174,77 @@ class QualificationPackage:
             f"qualification automation decision {action}",
         )
         return str(state)
+
+    def assert_no_decision(self) -> str:
+        value = self.api.state(
+            "input_text.voip_qualification_last_decision"
+        )["state"]
+        if value:
+            raise RuntimeError(f"unexpected qualification decision: {value}")
+        return str(value)
+
+    def forward(
+        self,
+        destination: str,
+        *,
+        on_failure: str = "resume",
+    ) -> None:
+        if on_failure not in {"resume", "terminate", "busy"}:
+            raise ValueError(f"unsupported forward failure policy: {on_failure}")
+        self.api.service(
+            "input_text",
+            "set_value",
+            {
+                "entity_id": "input_text.voip_qualification_last_forward",
+                "value": "",
+            },
+        )
+        self.api.service(
+            "input_text",
+            "set_value",
+            {
+                "entity_id": "input_text.voip_qualification_forward_destination",
+                "value": destination,
+            },
+        )
+        self.api.service(
+            "input_select",
+            "select_option",
+            {
+                "entity_id": "input_select.voip_qualification_forward_failure",
+                "option": on_failure,
+            },
+        )
+        self.api.service(
+            "input_boolean",
+            "turn_on",
+            {"entity_id": "input_boolean.voip_qualification_forward_enabled"},
+        )
+
+    def forward_decision(self, destination: str, timeout: float = 8) -> str:
+        value = wait_for(
+            lambda: (
+                state
+                if state.endswith(f"|{destination}")
+                else ""
+            )
+            if (
+                state := self.api.state(
+                    "input_text.voip_qualification_last_forward"
+                )["state"]
+            )
+            else "",
+            timeout,
+            f"ringing forward decision to {destination}",
+        )
+        return str(value)
+
+    def disable_forward(self) -> None:
+        self.api.service(
+            "input_boolean",
+            "turn_off",
+            {"entity_id": "input_boolean.voip_qualification_forward_enabled"},
+        )
 
     def __exit__(self, *_args: object) -> None:
         for entity_id, value in self.original.items():
@@ -237,6 +357,51 @@ def _run_final_response(
             f"{completed.stdout[-2000:]}"
         )
     return {"sip_status": status}
+
+
+def _run_sipp_scenario(
+    scenario: Path,
+    *,
+    host: str,
+    port: int,
+    extension: str,
+    local_port: int,
+    out_dir: Path,
+) -> dict[str, object]:
+    command = [
+        "sipp",
+        f"{host}:{port}",
+        "-sf",
+        str(scenario.resolve()),
+        "-s",
+        extension,
+        "-i",
+        "127.0.0.1",
+        "-p",
+        str(local_port),
+        "-m",
+        "1",
+        "-timeout",
+        "15s",
+        "-trace_msg",
+        "-trace_err",
+        "-nostdin",
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=out_dir,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=18,
+        check=False,
+    )
+    if completed.returncode:
+        raise RuntimeError(
+            f"SIPp {scenario.name} exited {completed.returncode}: "
+            f"{completed.stdout[-2000:]}"
+        )
+    return {"scenario": scenario.stem, "sip_status": "completed"}
 
 
 def _manual_baresip_config(source: Path, destination: Path) -> Path:
@@ -439,9 +604,20 @@ def main() -> int:
     results: list[dict[str, object]] = []
     selected = set(args.only)
     trunk_source_port = 19999
+    matrix_tainted = False
 
     def execute(case: MatrixCase) -> None:
+        nonlocal matrix_tainted
         if selected and case.name not in selected:
+            return
+        if matrix_tainted:
+            results.append(
+                {
+                    "name": case.name,
+                    "status": "skipped",
+                    "reason": "previous failure left the shared SIP lab tainted",
+                }
+            )
             return
         started = time.monotonic()
         before: dict[str, object] = {}
@@ -466,14 +642,7 @@ def main() -> int:
                 _cleanup(args.ha_url, token)
                 recovered = True
             if not recovered:
-                with suppress(Exception):
-                    api.service(
-                        "homeassistant",
-                        "reload_config_entry",
-                        {"entry_id": snapshot.entry_id},
-                    )
-                    _cleanup(args.ha_url, token)
-                    recovered = True
+                matrix_tainted = True
             results.append(
                 {
                     "name": case.name,
@@ -548,6 +717,122 @@ def main() -> int:
                     return result
 
                 execute(MatrixCase(f"route_{action}", answered))
+
+            def presence_home() -> dict[str, object]:
+                package.select(
+                    "forward",
+                    destination="video_sink",
+                    condition=True,
+                    false_action="default",
+                )
+                result = run_answered_case(
+                    "caller_bye",
+                    ROOT / "tests/sipp/answered-local-bye.xml",
+                    target_host=target_host,
+                    target_port=target_port,
+                    extension="9999",
+                    local_port=trunk_source_port,
+                    callee_config=args.callee_config,
+                    capture_dir=run_dir,
+                    ha_url=args.ha_url,
+                    token=token,
+                )
+                result["automation_decision"] = package.decision("forward")
+                return result
+
+            execute(MatrixCase("conditional_presence_home", presence_home))
+
+            def presence_away() -> dict[str, object]:
+                package.select(
+                    "forward",
+                    destination="video_sink",
+                    condition=False,
+                    false_action="default",
+                )
+                result = run_answered_case(
+                    "caller_bye",
+                    ROOT / "tests/sipp/answered-local-bye.xml",
+                    target_host=target_host,
+                    target_port=target_port,
+                    extension="9999",
+                    local_port=trunk_source_port,
+                    callee_config=args.callee_config,
+                    capture_dir=run_dir,
+                    ha_url=args.ha_url,
+                    token=token,
+                )
+                result["automation_decision"] = package.decision("default")
+                return result
+
+            execute(MatrixCase("conditional_presence_away", presence_away))
+
+            def caller_filter_miss() -> dict[str, object]:
+                package.select(
+                    "decline",
+                    expected_caller="Different caller",
+                )
+                result = run_answered_case(
+                    "caller_bye",
+                    ROOT / "tests/sipp/answered-local-bye.xml",
+                    target_host=target_host,
+                    target_port=target_port,
+                    extension="9999",
+                    local_port=trunk_source_port,
+                    callee_config=args.callee_config,
+                    capture_dir=run_dir,
+                    ha_url=args.ha_url,
+                    token=token,
+                )
+                result["automation_decision"] = package.assert_no_decision()
+                return result
+
+            execute(MatrixCase("caller_filter_miss_uses_fallback", caller_filter_miss))
+
+            def ringing_forward_success() -> dict[str, object]:
+                package.select("forward", destination="Casa")
+                package.forward("video_sink", on_failure="resume")
+                try:
+                    result = run_answered_case(
+                        "caller_bye",
+                        ROOT / "tests/sipp/answered-local-bye.xml",
+                        target_host=target_host,
+                        target_port=target_port,
+                        extension="9999",
+                        local_port=trunk_source_port,
+                        callee_config=args.callee_config,
+                        capture_dir=run_dir,
+                        ha_url=args.ha_url,
+                        token=token,
+                    )
+                    result["initial_decision"] = package.decision("forward")
+                    result["forward_decision"] = package.forward_decision("video_sink")
+                    return result
+                finally:
+                    package.disable_forward()
+
+            execute(MatrixCase("ringing_forward_to_available_phone", ringing_forward_success))
+
+            def ringing_forward_failure_resume() -> dict[str, object]:
+                package.select("forward", destination="Casa")
+                package.forward("missing qualification target", on_failure="resume")
+                try:
+                    result = _run_sipp_scenario(
+                        ROOT / "tests/sipp/inbound-cancel.xml",
+                        host=target_host,
+                        port=target_port,
+                        extension="9999",
+                        local_port=trunk_source_port,
+                        out_dir=run_dir,
+                    )
+                    result["initial_decision"] = package.decision("forward")
+                    result["forward_decision"] = package.forward_decision(
+                        "missing qualification target"
+                    )
+                    return result
+                finally:
+                    package.disable_forward()
+
+            execute(MatrixCase("ringing_forward_failure_resumes_source", ringing_forward_failure_resume))
 
             def auto_answer_on() -> dict[str, object]:
                 package.select("forward", destination="video_sink")

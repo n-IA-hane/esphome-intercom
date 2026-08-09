@@ -54,7 +54,9 @@ def test_matrix_declares_required_route_and_answer_cases() -> None:
     runner = load_runner()
 
     assert runner.ROUTE_ACTIONS == (
+        "no_action",
         "default",
+        "answer_ha",
         "decline",
         "busy",
         "cancel",

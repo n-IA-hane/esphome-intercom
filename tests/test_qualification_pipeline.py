@@ -404,6 +404,34 @@ def test_real_ha_automation_package_covers_route_decisions() -> None:
     assert route_action["data"]["expected_sequence"] == "{{ selected_sequence }}"
 
 
+def test_real_ha_package_uses_one_context_branch_and_one_forward_automation() -> None:
+    package_path = (
+        Path(__file__).parents[1]
+        / "qualification/home_assistant/voip_qualification.yaml"
+    )
+    package = yaml.safe_load(package_path.read_text(encoding="utf-8"))
+    automations = {item["id"]: item for item in package["automation"]}
+
+    route = automations["voip_qualification_route_decision"]
+    rendered = yaml.safe_dump(route)
+    assert "voip_qualification_condition" in rendered
+    assert "voip_qualification_false_route_action" in rendered
+
+    forward = automations["voip_qualification_ringing_forward"]
+    assert forward["triggers"] == [
+        {
+            "trigger": "state",
+            "entity_id": "sensor.casa_call_state",
+            "to": "ringing",
+        }
+    ]
+    assert any(
+        action.get("action") == "voip_stack.forward"
+        for action in forward["actions"]
+    )
+    assert "sensor.voip_stack_call_state" not in yaml.safe_dump(package)
+
+
 def test_ha_package_installer_preserves_one_canonical_source(tmp_path: Path) -> None:
     config = tmp_path / "configuration.yaml"
     config.write_text(

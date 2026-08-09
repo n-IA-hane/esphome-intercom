@@ -15,6 +15,59 @@ without changing contacts, extensions or the configured inbound destination.
 The Lovelace card never chooses or filters a route. It mirrors the authoritative
 backend state and sends user actions to the same router.
 
+## Design model
+
+VoIP Stack deliberately does not introduce another dial-plan language inside
+Home Assistant. Mature PBXs separate call conditions from a small set of call
+applications:
+
+| System | Condition layer | Call primitives |
+| --- | --- | --- |
+| [Asterisk](https://docs.asterisk.org/Configuration/Dialplan/) | Contexts, extensions, expressions and `GotoIf` | `Dial`, `FollowMe`, `Queue`, `Bridge`, transfer and hangup applications |
+| [FreeSWITCH](https://developer.signalwire.com/freeswitch/dialplan/xml/) | Ordered XML conditions, channel fields, time rules and anti-actions | `bridge`, `transfer`, `answer`, `hangup` and other applications |
+| [Kamailio](https://www.kamailio.org/docs/modules/stable/modules/dispatcher.html) | Request, branch, reply and failure routes | Relay, destination selection, health probing and failover |
+| VoIP Stack | Native HA state, Event Entity, presence, schedule, calendar and device conditions | Initial selection, forward, transfer, call control and phone policy actions |
+
+This gives Home Assistant users the same useful separation without copying a
+general PBX scripting language. Presence, alarm, calendar, occupancy and light
+logic stay in HA. SIP dialog, fork, media, transfer and termination logic stay
+inside VoIP Stack.
+
+## Automatically qualified building blocks
+
+The checked-in HA qualification package uses one parameterized route
+automation and one ringing-forward automation. SIPp and baresip observe the
+real signaling while the runner verifies call state and cleanup before and
+after every case.
+
+The current real-HA matrix covers:
+
+| Building block | Real outcome checked |
+| --- | --- |
+| Decline, busy and cancel route decisions | SIP `603`, `486` and `487` |
+| No override | Configured fallback answers normally |
+| Initial forward and bridge | Selected registered SIP destination answers |
+| Context condition true and false | Correct branch and destination are recorded |
+| Caller filter mismatch | Automation does nothing and fallback answers |
+| Ringing phone forward | Casa rings first, then the registered destination answers |
+| Failed ringing forward with `resume` | Casa remains available and caller CANCEL completes correctly |
+| Auto-answer enabled and manual answer | Caller-side and callee-side BYE both clean up |
+| Initial delayed offer | Offerless INVITE completes and terminates cleanly |
+
+Every case requires zero remaining sessions, legs, pending routes, pending
+INVITEs, relays, media owners, forward tasks and allocated RTP ports. Inspect
+the structured catalog with:
+
+```bash
+scripts/dialplan_matrix.py --validate
+scripts/dialplan_matrix.py --json
+```
+
+Native HA conditions that feed the same true/false route branch are equivalent
+from the integration's perspective. They are listed separately below because
+they solve different user problems, not because they create different PBX
+engines.
+
 The recipes use native Home Assistant Event Entities, state Sensors,
 conditions and `voip_stack.*` actions. Replace every example entity, Device ID,
 person and destination with selections from your own installation. Prefer the
@@ -432,6 +485,90 @@ To send out-of-hours calls to Assist instead, configure Assist as the normal
 trunk fallback. This keeps one clear routing authority and avoids duplicating
 the same schedule in two automation branches.
 
+### Prefer an available phone
+
+This is the availability equivalent of the tested true/false route branch.
+Home Assistant supplies the connectivity condition, while VoIP Stack performs
+the same qualified initial-selection operation in both branches:
+
+```yaml
+alias: VoIP - Prefer P4 when online
+mode: parallel
+max: 10
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: event.voip_stack_call
+    options:
+      event_type: [route_requested]
+actions:
+  - if:
+      - condition: state
+        entity_id: binary_sensor.p4_connectivity
+        state: "on"
+    then:
+      - action: voip_stack.select_inbound_destination
+        data:
+          destination: P4
+    else:
+      - action: voip_stack.select_inbound_destination
+        data:
+          destination: Casa
+```
+
+### Route holidays to Assist
+
+Calendar, alarm and presence checks do not require PBX-specific syntax. This
+example routes to Assist only while the holiday calendar is active. Otherwise
+it performs no action and the configured fallback remains authoritative:
+
+```yaml
+alias: VoIP - Holiday calls to Assist
+mode: parallel
+max: 10
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: event.voip_stack_call
+    options:
+      event_type: [route_requested]
+conditions:
+  - condition: state
+    entity_id: calendar.company_holidays
+    state: "on"
+actions:
+  - action: voip_stack.select_inbound_destination
+    data:
+      destination: Assist
+```
+
+### Reject calls while the alarm is triggered
+
+Use the Call-ID from the Event Entity when the action rejects a specific
+pending call. The backend rejects a stale or already settled decision. The
+real-HA matrix qualifies the `decline` decision and its `603` response:
+
+```yaml
+alias: VoIP - Reject calls while alarm is triggered
+mode: parallel
+max: 10
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: event.voip_stack_call
+    options:
+      event_type: [route_requested]
+conditions:
+  - condition: state
+    entity_id: alarm_control_panel.home
+    state: triggered
+actions:
+  - action: voip_stack.route
+    data:
+      call_id: "{{ trigger.to_state.attributes.call_id }}"
+      action: decline
+```
+
 ### Notify a no-answer timeout
 
 Use the Event Entity belonging to the phone you care about. This example sends
@@ -485,12 +622,12 @@ mode: parallel
 max: 10
 triggers:
   - trigger: state
-    entity_id: sensor.voip_stack_call_state  # Call state entity on Device Casa
+    entity_id: sensor.casa_call_state
     to: ringing
     for: "00:00:10"
 conditions:
   - condition: state
-    entity_id: sensor.voip_stack_call_state
+    entity_id: sensor.casa_call_state
     attribute: ingress
     state: trunk
 actions:
@@ -505,6 +642,99 @@ number. It creates an ordinary external telephone call, not a Companion-app
 VoIP channel. `on_failure: resume` leaves the original call available if the
 trunk call cannot be started. Remove the `ingress: trunk` condition if local
 extension calls should use the same fallback.
+
+### Transfer a connected call
+
+Forwarding changes a destination while HA still owns routing. Transfer uses
+SIP REFER on an established dialog. A blind transfer needs the active call ID:
+
+```yaml
+alias: VoIP - Transfer Casa to Reception
+triggers: []
+actions:
+  - action: voip_stack.transfer
+    data:
+      call_id: "{{ state_attr('sensor.casa_call_state', 'call_id') }}"
+      destination: Reception
+```
+
+For an attended transfer, pass the consultation call as `replaces_call_id`:
+
+```yaml
+action: voip_stack.transfer
+data:
+  call_id: "{{ states('input_text.original_call_id') }}"
+  destination: Reception
+  replaces_call_id: "{{ states('input_text.consultation_call_id') }}"
+```
+
+The SIP REFER/NOTIFY transaction and cleanup are automatically qualified. The
+example helpers merely show where an automation can retain its two call IDs.
+
+### Set DND from occupancy
+
+```yaml
+alias: VoIP - Casa DND follows occupancy
+mode: restart
+triggers:
+  - trigger: state
+    entity_id: zone.home
+actions:
+  - if:
+      - condition: numeric_state
+        entity_id: zone.home
+        above: 0
+    then:
+      - action: voip_stack.set_dnd
+        data:
+          device_id: <casa_phone_device_id>
+          dnd: false
+    else:
+      - action: voip_stack.set_dnd
+        data:
+          device_id: <casa_phone_device_id>
+          dnd: true
+```
+
+### Pause media during a call
+
+This recipe changes only ordinary HA media state. The PBX remains the owner of
+the call lifecycle:
+
+```yaml
+alias: VoIP - Pause living-room media during calls
+mode: restart
+triggers:
+  - trigger: state
+    entity_id: sensor.casa_call_state
+    to: ringing
+  - trigger: state
+    entity_id: sensor.casa_call_state
+    to: in_call
+actions:
+  - action: media_player.media_pause
+    target:
+      entity_id: media_player.living_room
+```
+
+### Start a scheduled P4 video call
+
+```yaml
+alias: VoIP - Scheduled P4 video check-in
+triggers:
+  - trigger: time
+    at: "18:00:00"
+actions:
+  - action: voip_stack.call
+    data:
+      device_id: <p4_phone_device_id>
+      destination: Casa
+      send_video: true
+```
+
+The call action, selected Device, audio/video negotiation and termination are
+qualified independently. The time trigger itself is native Home Assistant
+behavior.
 
 ## Actionable doorbell notification
 
@@ -727,7 +957,8 @@ normal no-answer forward.
 
 - Direct ESP-to-ESP calls remain peer-to-peer and observable only. HA cannot
   redirect media it does not own.
-- The current operation is an HA B2BUA redirect, not a SIP phone transfer.
+- Initial selection and forward are HA B2BUA routing operations.
+  `voip_stack.transfer` is the separate established-call SIP REFER operation.
 - Supported signaling includes INVITE, ACK, BYE, CANCEL, REGISTER, OPTIONS,
   authenticated text/plain MESSAGE, SIP INFO DTMF, RTP telephone-event,
   REFER/NOTIFY transfer, presence PUBLISH/SUBSCRIBE/NOTIFY, PRACK/100rel,
