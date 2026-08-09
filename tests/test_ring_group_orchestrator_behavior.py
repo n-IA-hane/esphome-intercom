@@ -128,3 +128,57 @@ async def test_terminated_source_never_starts_group_candidates(
 
     prepare.assert_not_called()
     registry.is_generation_current.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ring_group_without_candidates_terminates_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = SimpleNamespace(generation=7, metadata={})
+    registry = SimpleNamespace(
+        sessions={"call-1": session},
+        resolve_session_id=Mock(return_value="call-1"),
+        is_generation_current=Mock(return_value=True),
+    )
+    abort = AsyncMock()
+    monkeypatch.setattr(
+        ring_group_orchestrator,
+        "_call_registry",
+        lambda _hass: registry,
+    )
+    monkeypatch.setattr(
+        ring_group_orchestrator,
+        "endpoint_directory",
+        lambda _hass: SimpleNamespace(get=Mock(return_value=None)),
+    )
+    monkeypatch.setattr(
+        ring_group_orchestrator,
+        "async_prepare_group_candidates",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(ring_group_orchestrator, "_set_pending_route", Mock())
+    monkeypatch.setattr(
+        ring_group_orchestrator,
+        "_take_pending_route",
+        Mock(return_value=None),
+    )
+    monkeypatch.setattr(
+        ring_group_orchestrator,
+        "_publish_ring_group_origin_state",
+        Mock(),
+    )
+    monkeypatch.setattr(ring_group_orchestrator, "async_abort_route", abort)
+    entry = RosterEntry(
+        id="empty-group",
+        name="Empty group",
+        metadata={"members": [], "ring_timeout": 30},
+    )
+
+    await ring_group_orchestrator.run_ring_group_call(
+        _runtime(), _invite(), entry, [], []
+    )
+
+    abort.assert_awaited_once()
+    intent = abort.await_args.args[1]
+    assert intent.reason == TerminalReason.TRANSPORT_UNREACHABLE.value
+    assert intent.sip_status == 480

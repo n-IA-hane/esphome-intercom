@@ -316,7 +316,6 @@ async def run_ring_group_call(
         await _rollback_route(
             TerminalReason.TRANSPORT_UNREACHABLE.value,
             sip_status=480,
-            sip_reason="Temporarily Unavailable",
         )
         return
 
