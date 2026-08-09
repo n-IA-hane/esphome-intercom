@@ -286,6 +286,7 @@ async def route_sip_bridge(
         video_formats=(
             video_bridge_offer_formats(
                 invite.video_format,
+                source_receive=invite.recv_video_format,
                 enable_transcoding=video_transcoding_enabled,
                 target_codec=peer_video_codec(peer_target, decision.entry),
             )

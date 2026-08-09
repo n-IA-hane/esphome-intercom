@@ -26,14 +26,19 @@ class VideoBridgeAnswer:
 
 
 def video_bridge_offer_formats(
-    source: sdp.RtpVideoFormat,
+    source_send: sdp.RtpVideoFormat,
     *,
+    source_receive: sdp.RtpVideoFormat | None = None,
     enable_transcoding: bool,
     target_codec: str = "",
 ) -> tuple[sdp.RtpVideoFormat, ...]:
-    """Offer direct passthrough first, then bounded FFmpeg fallback codecs."""
+    """Offer what the source can receive, with bounded transcoding fallbacks."""
+
+    source = source_receive or source_send
 
     if not enable_transcoding:
+        if source_send.encoding != source.encoding:
+            return ()
         return (source,)
     normalized_target = str(target_codec or "").strip().upper()
     if normalized_target in {"H264", "JPEG"}:
