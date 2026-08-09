@@ -344,7 +344,10 @@ def main(*, output: Path | None = None) -> int:
                     # INFO DTMF while the configured five-second routing
                     # window is still open. Start the ESP winner deadline from
                     # the full route window, not from that early 200 OK.
-                    _wait_entity(ESP_CALL_STATE_ENTITY, "in_call", 10)
+                    # The configured inbound digit window may consume the
+                    # first ten seconds before the ring-group INVITE exists.
+                    # Keep a separate endpoint-answer budget beyond it.
+                    _wait_entity(ESP_CALL_STATE_ENTITY, "in_call", 20)
                     casa_lost = wait_card(
                         casa,
                         lambda item: (
