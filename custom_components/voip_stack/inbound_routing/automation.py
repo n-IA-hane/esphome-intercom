@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING, Callable, Protocol
 
 from homeassistant.core import HomeAssistant
 
+from ..call_projection import CallProjectionEvent, publish_call_projection
 from ..call_scope import set_pending_route, take_pending_route
+from ..endpoint_lifecycle import call_registry
 from ..fsm import CallState, TerminalReason
 from ..sip_listener import SipInviteResult
 from ..websocket_api import _set_sip_bridge_call_state
@@ -94,14 +96,13 @@ async def request_route_override(
         "decision_deadline": expires_at,
         "fallback_destination": decision.target,
     })
-    _set_sip_bridge_call_state(
+    session = call_registry(hass).get_session(invite.call_id)
+    assert session is not None
+    publish_call_projection(
         hass,
-        CallState.CONNECTING.value,
-        caller=invite.caller,
-        callee=invite.target,
-        peer_name=invite.caller,
-        local_name=runtime.ha_peer_name(hass),
-        call_id=invite.call_id,
+        session,
+        CallProjectionEvent.bridge(
+        session, peer_name=invite.caller, local_name=runtime.ha_peer_name(hass),
         selected_tx_format=invite.send_format.audio_format.wire_token(),
         selected_rx_format=invite.recv_format.audio_format.wire_token(),
         selected_tx_rtp_format=invite.send_format.wire_token(),
@@ -129,6 +130,7 @@ async def request_route_override(
             f"{invite.selected_format.encoding}/"
             f"{invite.selected_format.sample_rate}/"
             f"{invite.selected_format.channels}"
+        ),
         ),
     )
     _LOGGER.info(

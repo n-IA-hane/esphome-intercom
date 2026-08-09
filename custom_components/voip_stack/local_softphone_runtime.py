@@ -8,10 +8,11 @@ from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant, callback
 
+from .call_projection import CallProjectionEvent, publish_call_projection
 from .core.audio_format import HA_SIP_PCM_FORMATS
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
-from .endpoint_session import TerminationInitiator
+from .endpoint_session import TerminationInitiator, TerminationIntent
 from .local_softphone_bridge import (
     LocalBridgeEvent,
     LocalBridgeEventType,
@@ -146,14 +147,11 @@ def _publish_leg(
     terminal: bool = False,
 ) -> None:
     """Project one local bridge leg into the existing softphone contract."""
-    from .websocket_api import _set_ha_softphone_call_state
-
     caller_endpoint = _endpoint(hass, snapshot.caller_endpoint_id)
     callee_endpoint = _endpoint(hass, snapshot.callee_endpoint_id)
     caller_name = _name(caller_endpoint, snapshot.caller_endpoint_id)
     callee_name = _name(callee_endpoint, snapshot.callee_endpoint_id)
     is_caller = endpoint_id == snapshot.caller_endpoint_id
-    endpoint = caller_endpoint if is_caller else callee_endpoint
     peer_endpoint = callee_endpoint if is_caller else caller_endpoint
     local_name = caller_name if is_caller else callee_name
     peer_name = callee_name if is_caller else caller_name
@@ -210,17 +208,18 @@ def _publish_leg(
                 "origin": _origin(snapshot, endpoint_id),
             }
         )
-    _set_ha_softphone_call_state(
-        hass,
-        state,
-        endpoint_id=endpoint_id,
-        session_device_id=_device_id(endpoint),
-        caller=caller_name,
-        callee=callee_name,
-        peer_name=peer_name,
-        direction="outgoing" if is_caller else "incoming",
-        call_id=snapshot.call_id,
-        **extra,
+    session = call_registry(hass).get_session(snapshot.call_id)
+    if session is None:
+        return
+    publish_call_projection(
+        hass, session, CallProjectionEvent.phone(
+            session, endpoint_id, leg_id=f"local:{endpoint_id}",
+            intent=TerminationIntent(terminal_reason, public_state=state)
+            if terminal else None,
+            peer_name=peer_name,
+            direction="outgoing" if is_caller else "incoming",
+            **extra,
+        )
     )
 
 

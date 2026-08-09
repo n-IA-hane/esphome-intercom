@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from homeassistant.core import HomeAssistant
 
+from ..call_projection import CallProjectionEvent, publish_call_projection
 from ..core import sdp as sip_sdp
 from ..const import (
     CONF_SIP_VIDEO,
@@ -28,7 +29,6 @@ from ..media_ports import (
 from ..runtime_data import call_runtime_artifacts
 from ..core.sdp import build_answer_directional, constrained_video_direction
 from ..sip_listener import SipInviteResult
-from ..websocket_api import _set_sip_bridge_call_state
 
 if TYPE_CHECKING:
     from ..pbx_runtime import SipEndpointRuntime
@@ -75,7 +75,7 @@ def prepare_trunk_preanswer(
     cfg = runtime.config
     local_ip = runtime.local_ip
     callee = str(trunk_config.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "HA")
-    registry.upsert(
+    session = registry.upsert(
         invite.call_id,
         state=CallState.CONNECTING.value,
         owner="router",
@@ -172,13 +172,11 @@ def prepare_trunk_preanswer(
         early_answer_sdp=answer,
     ):
         raise RuntimeError("preanswered media owner disappeared during trunk setup")
-    _set_sip_bridge_call_state(
+    publish_call_projection(
         hass,
-        CallState.CONNECTING.value,
-        caller=invite.caller,
-        callee=callee,
-        peer_name=invite.caller,
-        call_id=invite.call_id,
+        session,
+        CallProjectionEvent.bridge(
+        session, peer_name=invite.caller,
         selected_tx_format=invite.send_format.audio_format.wire_token(),
         selected_rx_format=invite.recv_format.audio_format.wire_token(),
         selected_tx_rtp_format=invite.send_format.wire_token(),
@@ -205,6 +203,7 @@ def prepare_trunk_preanswer(
             else "inactive"
         ),
         video_failure_reason=video_failure_reason,
+        ),
     )
     create_runtime_task(
         hass,

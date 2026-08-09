@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
 
+from .call_projection import CallProjectionEvent, publish_call_projection
 from .assist_runtime import AssistMediaSession, build_call_connected_intent
 from .automation_routing import canonical_call_origin
 from .config import assist_config
@@ -19,7 +20,6 @@ from .endpoint_lifecycle import call_registry
 from .fsm import CallState, TerminalReason
 from .pbx_routing import roster_entry_for_target
 from .router import RouteAction
-from .websocket_api import _set_sip_bridge_call_state
 
 if TYPE_CHECKING:
     from .media_ports import RtpPortReservation
@@ -121,7 +121,7 @@ class AssistEndpoint:
                 reservation.release()
             raise
 
-        registry.upsert(
+        session = registry.upsert(
             invite.call_id,
             state=CallState.IN_CALL.value,
             owner="assist",
@@ -145,15 +145,11 @@ class AssistEndpoint:
             role="assist",
             state=CallState.IN_CALL.value,
         )
-        _set_sip_bridge_call_state(
+        publish_call_projection(
             self.hass,
-            CallState.IN_CALL.value,
-            caller=caller_name,
-            callee=destination_name,
-            peer_name=destination_name,
-            call_id=invite.call_id,
-            dest_call_id=assist_leg_id,
-            direction="incoming",
+            session,
+            CallProjectionEvent.bridge(
+            session, peer_name=destination_name, direction="incoming",
             route_kind=RouteAction.ASSIST.value,
             ingress=call_ingress,
             origin=call_ingress,
@@ -167,5 +163,6 @@ class AssistEndpoint:
             last_sip_event="ASSIST_PIPELINE",
             caller_uri=caller_uri,
             source=source,
+            ),
         )
         return media

@@ -6,11 +6,12 @@ import logging
 
 from homeassistant.core import HomeAssistant
 
+from .call_projection import CallProjectionEvent, publish_call_projection
 from .endpoint_lifecycle import call_registry
+from .endpoint_session import TerminationIntent
 from .fsm import CallState, TerminalReason
 from .runtime_data import endpoint_directory, preferred_browser_phone
 from .service_errors import service_error as _service_error
-from .websocket_api import _set_ha_softphone_call_state, _set_sip_bridge_call_state
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -119,24 +120,22 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             if action == "busy"
             else TerminalReason.DECLINED.value
         )
-        _set_ha_softphone_call_state(
+        state = CallState.BUSY.value if action == "busy" else "declined"
+        session = registry.get_session(call_id)
+        if session is not None:
+            registry.add_leg(
+                call_id, f"browser:{endpoint_id}", role="ha_softphone", state=state
+            )
+            publish_call_projection(
             hass,
-            CallState.BUSY.value if action == "busy" else "declined",
-            endpoint_id=endpoint_id,
-            session_device_id=str(
-                getattr(selected_endpoint, "device_id", "")
-            ),
-            caller=getattr(route.get("invite"), "caller", ""),
-            callee=getattr(route.get("invite"), "target", ""),
-            peer_name=getattr(route.get("invite"), "caller", ""),
-            direction="incoming",
-            call_id=call_id,
-            reason=app_reason,
-            terminal_reason=app_reason,
-            origin="self",
-            sip_status_code=486 if action == "busy" else 603,
-            last_sip_event="SIP_RESPONSE",
-        )
+            session, CallProjectionEvent.phone(
+                session, endpoint_id, leg_id=f"browser:{endpoint_id}",
+                intent=TerminationIntent(app_reason, public_state=state),
+                peer_name=getattr(route.get("invite"), "caller", ""),
+                direction="incoming", reason=app_reason, terminal_reason=app_reason,
+                origin="self", sip_status_code=486 if action == "busy" else 603,
+                last_sip_event="SIP_RESPONSE",
+            ))
         if set(ring_endpoint_ids).issubset(declined):
             future.set_result(
                 {
@@ -155,7 +154,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
     if action in {"forward", "bridge"}:
         session = registry.sessions.get(registry.resolve_session_id(call_id))
         if session is not None:
-            registry.transition(
+            session = registry.transition(
                 call_id,
                 state=CallState.CONNECTING.value,
                 owner="router",
@@ -176,6 +175,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
         }
     )
     invite = route.get("invite")
+    session = registry.get_session(call_id)
     if action in {"decline", "busy", "cancel"} and invite is not None:
         status = int(data.get("status") or 0)
         app_reason = str(data.get("decline_reason") or "").strip()
@@ -191,33 +191,26 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             status = status or 603
             app_reason = app_reason or TerminalReason.DECLINED.value
             state = "declined"
-        _set_ha_softphone_call_state(
-            hass,
-            state,
-            endpoint_id=endpoint_id,
-            session_device_id=str(getattr(selected_endpoint, "device_id", "")),
-            caller=getattr(invite, "caller", ""),
-            callee=getattr(invite, "target", ""),
-            peer_name=getattr(invite, "caller", ""),
-            direction="incoming",
-            call_id=call_id,
-            reason=app_reason,
-            terminal_reason=app_reason,
-            origin="self",
-            sip_status_code=status,
-            last_sip_event="SIP_RESPONSE",
-        )
+        if session is not None:
+            publish_call_projection(hass, session, CallProjectionEvent.phone(
+                session, endpoint_id,
+                intent=TerminationIntent(app_reason, public_state=state),
+                peer_name=getattr(invite, "caller", ""), direction="incoming",
+                reason=app_reason, terminal_reason=app_reason, origin="self",
+                sip_status_code=status, last_sip_event="SIP_RESPONSE",
+            ))
     elif action == "answer_ha" and invite is not None:
-        _set_ha_softphone_call_state(
+        if session is not None:
+            session = registry.transition(
+                call_id, state=CallState.CONNECTING.value,
+                expected_generation=session.generation,
+            )
+        if session is not None:
+            publish_call_projection(
             hass,
-            CallState.CONNECTING.value,
-            endpoint_id=endpoint_id,
-            session_device_id=str(getattr(selected_endpoint, "device_id", "")),
-            caller=getattr(invite, "caller", ""),
-            callee=getattr(invite, "target", ""),
-            peer_name=getattr(invite, "caller", ""),
+            session, CallProjectionEvent.phone(
+            session, endpoint_id, peer_name=getattr(invite, "caller", ""),
             direction="incoming",
-            call_id=call_id,
             selected_tx_format=invite.send_format.audio_format.wire_token(),
             selected_rx_format=invite.recv_format.audio_format.wire_token(),
             selected_tx_rtp_format=invite.send_format.wire_token(),
@@ -225,16 +218,13 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             audio_mode="full_duplex",
             sip_status_code=180,
             last_sip_event="SIP_RESPONSE",
-        )
+            ))
     elif action in {"forward", "bridge"} and invite is not None:
-        _set_sip_bridge_call_state(
+        if session is not None:
+            publish_call_projection(
             hass,
-            CallState.CONNECTING.value,
-            caller=getattr(invite, "caller", ""),
-            callee=destination or getattr(invite, "target", ""),
-            peer_name=getattr(invite, "caller", ""),
-            call_id=call_id,
-            direction="incoming",
+            session, CallProjectionEvent.bridge(
+            session, peer_name=getattr(invite, "caller", ""), direction="incoming",
             selected_tx_format=invite.send_format.audio_format.wire_token(),
             selected_rx_format=invite.recv_format.audio_format.wire_token(),
             selected_tx_rtp_format=invite.send_format.wire_token(),
@@ -243,7 +233,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             sip_status_code=180,
             event_type="forwarding",
             last_sip_event="SIP_RESPONSE",
-        )
+            ))
     _LOGGER.info(
         "SIP route decision call_id=%s action=%s destination=%s",
         call_id,

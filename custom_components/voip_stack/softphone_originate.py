@@ -7,6 +7,7 @@ import logging
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
+from .call_projection import CallProjectionEvent, publish_call_projection
 from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .authorization import async_require_service_admin
 from .config import (
@@ -40,7 +41,6 @@ from .fsm import (
     CallState,
     TerminalReason,
     sip_public_state as _sip_public_state,
-    sip_terminal_reason as _sip_terminal_reason,
 )
 from .media_ports import (
     allocate_sip_rtp_port as _allocate_sip_rtp_port,
@@ -83,7 +83,6 @@ from .softphone_commands import (
 from .websocket_api import (
     _fire_call_event,
     _ha_softphone_store,
-    _set_ha_softphone_call_state,
 )
 
 
@@ -361,7 +360,7 @@ async def async_originate_browser_call(
                 "endpoint_id": endpoint_id,
                 "media_client_id": str(call.data.get("media_client_id") or ""),
             }
-            registry.upsert(
+            session = registry.upsert(
                 call_id,
                 state=CallState.IN_CALL.value,
                 owner="ha_softphone",
@@ -370,6 +369,7 @@ async def async_originate_browser_call(
                 route_kind="conference",
                 endpoint_id=endpoint_id,
                 source_endpoint_id=endpoint_id,
+                session_device_id=source_device_id,
                 media_client_id=str(call.data.get("media_client_id") or ""),
             )
             registry.attach_media(call_id, conference_media)
@@ -377,26 +377,19 @@ async def async_originate_browser_call(
             registry.add_leg(
                 call_id, call_id, role="ha_softphone", state=CallState.IN_CALL.value
             )
-            _set_ha_softphone_call_state(
+            publish_call_projection(
                 hass,
-                CallState.IN_CALL.value,
-                endpoint_id=endpoint_id,
-                session_device_id=source_device_id,
-                caller=local_name,
-                callee=room_name,
-                peer_name=room_name,
-                direction="outgoing",
-                call_id=call_id,
-                route_kind="conference",
-                sip_status_code=200,
-                last_sip_event="LOCAL_CONFERENCE_JOIN",
-                selected_tx_format="16000:s16le:1:20",
-                selected_rx_format="16000:s16le:1:20",
-                selected_tx_rtp_format="pt=96:L16/16000/1/20ms",
-                selected_rx_rtp_format="pt=96:L16/16000/1/20ms",
-                scope="conference",
-                room=room_name,
-                target=target,
+                session,
+                CallProjectionEvent.phone(
+                    session, endpoint_id, peer_name=room_name, direction="outgoing",
+                    route_kind="conference", sip_status_code=200,
+                    last_sip_event="LOCAL_CONFERENCE_JOIN",
+                    selected_tx_format="16000:s16le:1:20",
+                    selected_rx_format="16000:s16le:1:20",
+                    selected_tx_rtp_format="pt=96:L16/16000/1/20ms",
+                    selected_rx_rtp_format="pt=96:L16/16000/1/20ms",
+                    scope="conference", room=room_name, target=target,
+                ),
             )
             ring_members = call_runtime_artifacts(
                 hass
@@ -682,7 +675,7 @@ async def async_originate_browser_call(
             default_sip_port=int(cfg["sip_port"]),
         )
     registry = _call_registry(hass)
-    registry.upsert(
+    session = registry.upsert(
         client.dialog_ids.call_id,
         state=CallState.CALLING.value,
         owner="ha_softphone",
@@ -691,6 +684,7 @@ async def async_originate_browser_call(
         route_kind="direct",
         direction="outgoing",
         endpoint_id=endpoint_id,
+        session_device_id=source_device_id,
         media_client_id=str(call.data.get("media_client_id") or ""),
         target_endpoint_id=(
             target_endpoint.endpoint_id if target_endpoint is not None else ""
@@ -738,30 +732,19 @@ async def async_originate_browser_call(
             phone=str(getattr(target_endpoint, "name", "") or display_target),
         ) from err
     _bind_service_call_controller(registry, client.dialog_ids.call_id, call)
-    _set_ha_softphone_call_state(
+    publish_call_projection(
         hass,
-        CallState.CALLING.value,
-        endpoint_id=endpoint_id,
-        session_device_id=source_device_id,
-        caller=local_name,
-        callee=display_target,
-        peer_name=display_target,
-        direction="outgoing",
-        call_id=client.dialog_ids.call_id,
-        target_device_id=target_device_id,
-        sip_transport=_sip_uri_transport(uri).lower(),
-        last_sip_event="INVITE",
-        sip_uri=route_uri,
-        video_requested=video_enabled,
-        video_negotiated=False,
-        video_status=(
-            "degraded"
-            if video_failure_reason
-            else "requested"
-            if video_enabled
-            else "inactive"
+        session,
+        CallProjectionEvent.phone(
+            session, endpoint_id, peer_name=display_target, direction="outgoing",
+            target_device_id=target_device_id,
+            sip_transport=_sip_uri_transport(uri).lower(), last_sip_event="INVITE",
+            sip_uri=route_uri, video_requested=video_enabled,
+            video_negotiated=False,
+            video_status="degraded" if video_failure_reason else "requested"
+            if video_enabled else "inactive",
+            video_failure_reason=video_failure_reason,
         ),
-        video_failure_reason=video_failure_reason,
     )
     registry.attach_sip_client(
         client.dialog_ids.call_id,
@@ -785,22 +768,6 @@ async def async_originate_browser_call(
             TerminalReason.TRANSPORT_UNREACHABLE.value,
             TerminationInitiator.RUNTIME,
         )
-        _set_ha_softphone_call_state(
-            hass,
-            CallState.TRANSPORT_UNREACHABLE.value,
-            endpoint_id=endpoint_id,
-            session_device_id=source_device_id,
-            caller=local_name,
-            callee=display_target,
-            peer_name=display_target,
-            direction="outgoing",
-            call_id=client.dialog_ids.call_id,
-            target_device_id=target_device_id,
-            reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-            terminal_reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-            last_sip_event="INVITE_ERROR",
-            sip_uri=route_uri,
-        )
         raise _service_error(
             f"could not start SIP call to {display_target}",
             "sip_call_start_failed",
@@ -820,6 +787,15 @@ async def async_originate_browser_call(
     ):
         await _mark_sip_account_unreachable(hass, route.entry.id)
     public_result = _sip_public_state(result)
+    if public_result in {CallState.REMOTE_RINGING.value, CallState.IN_CALL.value}:
+        session = registry.upsert(
+            client.dialog_ids.call_id,
+            state=public_result,
+            owner="ha_softphone",
+            caller=local_name,
+            callee=display_target,
+            route_kind="direct",
+        )
     # Publish the first result before starting the detached final-response
     # watcher. A fast peer can place 180 and 200 on the socket back-to-back:
     # if the watcher runs first it publishes IN_CALL, then this coroutine used
@@ -827,20 +803,14 @@ async def async_originate_browser_call(
     # Keeping the signaling order here makes the backend snapshot monotonic;
     # the card remains a plain mirror of that authoritative state.
     if public_result == CallState.REMOTE_RINGING.value or result == "ringing":
-        _set_ha_softphone_call_state(
+        publish_call_projection(
             hass,
-            CallState.REMOTE_RINGING.value,
-            endpoint_id=endpoint_id,
-            session_device_id=source_device_id,
-            caller=local_name,
-            callee=display_target,
-            peer_name=display_target,
-            direction="outgoing",
-            call_id=client.dialog_ids.call_id,
-            target_device_id=target_device_id,
-            sip_status_code=180,
-            last_sip_event="SIP_RESPONSE",
-            sip_uri=route_uri,
+            session,
+            CallProjectionEvent.phone(
+                session, endpoint_id, peer_name=display_target, direction="outgoing",
+                target_device_id=target_device_id, sip_status_code=180,
+                last_sip_event="SIP_RESPONSE", sip_uri=route_uri,
+            ),
         )
     elif public_result == CallState.IN_CALL.value and client.dialog is not None:
         connected_party = str(client.connected_party or display_target).strip()
@@ -860,17 +830,12 @@ async def async_originate_browser_call(
         final_video_failure_reason = video_failure_reason or (
             "remote_video_rejected" if video_enabled and not video_active else ""
         )
-        _set_ha_softphone_call_state(
+        publish_call_projection(
             hass,
-            CallState.IN_CALL.value,
-            endpoint_id=endpoint_id,
-            session_device_id=source_device_id,
-            caller=local_name,
-            callee=display_target,
-            peer_name=connected_party,
-            connected_party=connected_party,
-            direction="outgoing",
-            call_id=client.dialog_ids.call_id,
+            session,
+            CallProjectionEvent.phone(
+            session, endpoint_id, peer_name=connected_party,
+            connected_party=connected_party, direction="outgoing",
             target_device_id=target_device_id,
             selected_tx_format=client.dialog.send_format.audio_format.wire_token(),
             selected_rx_format=client.dialog.recv_format.audio_format.wire_token(),
@@ -902,25 +867,7 @@ async def async_originate_browser_call(
             sip_status_code=200,
             last_sip_event="SIP_RESPONSE",
             sip_uri=route_uri,
-        )
-    elif public_result not in {CallState.REMOTE_RINGING.value, CallState.IN_CALL.value}:
-        terminal_reason = _sip_terminal_reason(result, public_result)
-        _set_ha_softphone_call_state(
-            hass,
-            public_result,
-            endpoint_id=endpoint_id,
-            session_device_id=source_device_id,
-            caller=local_name,
-            callee=display_target,
-            peer_name=display_target,
-            direction="outgoing",
-            call_id=client.dialog_ids.call_id,
-            target_device_id=target_device_id,
-            reason=terminal_reason,
-            terminal_reason=terminal_reason,
-            sip_status_code=client.last_sip_status_code,
-            last_sip_event=client.last_sip_event or "SIP_RESPONSE",
-            sip_uri=route_uri,
+            ),
         )
     await _track_outbound_sip_client(
         hass,

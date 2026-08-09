@@ -114,11 +114,17 @@ class _Registry:
         if client is not None and hasattr(client, "close"):
             await client.close()
 
-    def upsert(self, call_id: str, **kwargs) -> None:
+    def upsert(self, call_id: str, **kwargs):
         self.calls.append(("upsert", call_id, kwargs))
-        self.sessions[call_id] = types.SimpleNamespace(
-            metadata={"endpoint_id": kwargs.get("endpoint_id", "default")}
+        session = types.SimpleNamespace(
+            call_id=call_id,
+            state=kwargs.get("state", ""),
+            caller=kwargs.get("caller", ""),
+            callee=kwargs.get("callee", ""),
+            metadata={"endpoint_id": kwargs.get("endpoint_id", "default")},
         )
+        self.sessions[call_id] = session
+        return session
 
     def add_leg(self, call_id: str, leg_id: str, **kwargs) -> None:
         self.calls.append(("leg", call_id, leg_id, kwargs))
@@ -250,6 +256,28 @@ def _load_outbound_lifecycle(
     websocket_api._set_ha_softphone_call_state = lambda _hass, state, **kwargs: (
         states.append((state, kwargs))
     )
+    call_projection = types.ModuleType(f"{PKG_NAME}.call_projection")
+
+    class CallProjectionEvent:
+        @staticmethod
+        def phone(session, endpoint_id: str, **details):
+            return session, endpoint_id, details
+
+    def publish_call_projection(_hass, session, event) -> bool:
+        _source, endpoint_id, details = event
+        websocket_api._set_ha_softphone_call_state(
+            _hass,
+            session.state,
+            endpoint_id=endpoint_id,
+            caller=session.caller,
+            callee=session.callee,
+            call_id=session.call_id,
+            **details,
+        )
+        return True
+
+    call_projection.CallProjectionEvent = CallProjectionEvent
+    call_projection.publish_call_projection = publish_call_projection
 
     module_name = f"{PKG_NAME}._test_outbound_lifecycle_runtime"
     spec = importlib.util.spec_from_file_location(
@@ -264,6 +292,7 @@ def _load_outbound_lifecycle(
         "homeassistant.core": core,
         "homeassistant.exceptions": exceptions,
         const.__name__: const,
+        call_projection.__name__: call_projection,
         endpoint_lifecycle.__name__: endpoint_lifecycle,
         endpoint_session.__name__: endpoint_session,
         endpoint_termination.__name__: endpoint_termination,

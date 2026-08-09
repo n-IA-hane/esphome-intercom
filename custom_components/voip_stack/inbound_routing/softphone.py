@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
+from ..call_projection import CallProjectionEvent, publish_call_projection
 from ..endpoint_registry import EndpointBusyError
 from ..endpoint_termination import EndpointTerminationHandler
 from ..endpoint_session import TerminationInitiator
@@ -25,7 +26,6 @@ from ..phone_endpoint import (
 from ..router import RouteReason
 from ..core.sdp import build_answer_directional, constrained_video_direction
 from ..sip_listener import SipInviteResult
-from ..websocket_api import _set_ha_softphone_call_state
 
 if TYPE_CHECKING:
     from ..pbx_runtime import SipEndpointRuntime
@@ -171,7 +171,7 @@ def answer_inbound_ha_softphone(
                 decline_reason=RouteReason.TARGET_UNREACHABLE.value,
             )
 
-    registry.upsert(
+    session = registry.upsert(
         invite.call_id,
         state=CallState.CONNECTING.value,
         owner="ha_softphone",
@@ -306,16 +306,11 @@ def answer_inbound_ha_softphone(
         and local_video_rtp_port
         and video_direction != "inactive"
     )
-    _set_ha_softphone_call_state(
+    publish_call_projection(
         hass,
-        CallState.IN_CALL.value,
-        endpoint_id=target.endpoint_id,
-        session_device_id=target.device_id,
-        caller=invite.caller,
-        callee=resolved_callee,
-        peer_name=invite.caller,
-        direction="incoming",
-        call_id=invite.call_id,
+        session,
+        CallProjectionEvent.phone(
+        session, target.endpoint_id, peer_name=invite.caller, direction="incoming",
         selected_tx_format=invite.send_format.audio_format.wire_token(),
         selected_rx_format=invite.recv_format.audio_format.wire_token(),
         selected_tx_rtp_format=invite.send_format.wire_token(),
@@ -360,5 +355,6 @@ def answer_inbound_ha_softphone(
         sip_uri=decision.sip_uri,
         sip_status_code=200,
         last_sip_event="SIP_RESPONSE",
+        ),
     )
     return SipInviteResult(200, "OK", answer_sdp=answer, to_tag="")

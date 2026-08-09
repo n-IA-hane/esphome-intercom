@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable
 
 from homeassistant.core import HomeAssistant
 
+from .call_projection import CallProjectionEvent, publish_call_projection
 from .bridge_manager import async_watch_sip_bridge_destination
 from .config import media_capture_enabled, trunk_config
 from .const import (
@@ -59,7 +60,6 @@ from .sip_runtime import (
 )
 from .trunk_dtmf import collect_trunk_dtmf
 from .trunk_routing import async_request_inbound_destination, trunk_default_target
-from .websocket_api import _set_sip_bridge_call_state
 
 _LOGGER = logging.getLogger(__name__)
 SIP_ROUTE_DECISION_TIMEOUT = 1.5
@@ -533,7 +533,7 @@ async def async_route_trunk_invite(
             terminate_sip_bridge=runtime.terminate_sip_bridge,
         )
     )
-    registry.register_bridge(
+    session = registry.register_bridge(
         source_call_id=invite.call_id,
         dest_call_id=client.dialog_ids.call_id,
         client=client,
@@ -544,6 +544,7 @@ async def async_route_trunk_invite(
         route_kind="trunk",
         source_role="trunk",
     )
+    assert session is not None
     _LOGGER.info(
         "SIP bridge registered call_id=%s dest_call_id=%s target=%s",
         invite.call_id,
@@ -557,14 +558,11 @@ async def async_route_trunk_invite(
     )
     registry.attach_relay(invite.call_id, relay)
     bridge_ports.detach()
-    _set_sip_bridge_call_state(
+    publish_call_projection(
         hass,
-        CallState.IN_CALL.value,
-        caller=invite.caller,
-        callee=destination,
-        peer_name=destination,
-        call_id=invite.call_id,
-        dest_call_id=client.dialog_ids.call_id,
+        session,
+        CallProjectionEvent.bridge(
+        session, peer_name=destination,
         selected_tx_format=invite.send_format.audio_format.wire_token(),
         selected_rx_format=invite.recv_format.audio_format.wire_token(),
         selected_tx_rtp_format=invite.send_format.wire_token(),
@@ -576,4 +574,5 @@ async def async_route_trunk_invite(
         sip_uri=str(bridge_uri),
         scope="sip_trunk",
         dtmf_digits=digits,
+        ),
     )

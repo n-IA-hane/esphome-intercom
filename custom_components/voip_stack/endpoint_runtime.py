@@ -62,6 +62,7 @@ from .media_ports import (
     take_delayed_offer_ports,
 )
 from .media_renegotiation import async_prepare_media_update
+from .call_projection import CallProjectionEvent, publish_call_projection
 from .invite_router import InviteRuntime, route_invite
 from .endpoint_registry import EndpointBusyError
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
@@ -78,10 +79,6 @@ from .store import sip_accounts as _sip_accounts
 from .trunk_inbound_router import (
     TrunkInboundRuntime,
     async_route_trunk_invite,
-)
-from .websocket_api import (
-    _set_ha_softphone_call_state,
-    _set_sip_bridge_call_state,
 )
 
 if TYPE_CHECKING:
@@ -252,16 +249,14 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             invite.video_format is not None
             and (endpoint is None or endpoint.supports("video"))
         )
-        _set_ha_softphone_call_state(
+        session = registry.get_session(invite.call_id)
+        if session is None:
+            return
+        publish_call_projection(
             hass,
-            CallState.RINGING.value,
-            endpoint_id=endpoint_id,
-            session_device_id=endpoint_device_id,
-            caller=invite.caller,
-            callee=callee,
-            peer_name=invite.caller,
-            direction="incoming",
-            call_id=invite.call_id,
+            session,
+            CallProjectionEvent.phone(
+            session, endpoint_id, peer_name=invite.caller, direction="incoming",
             dialed_target=invite.target,
             selected_tx_format=invite.send_format.audio_format.wire_token(),
             selected_rx_format=invite.recv_format.audio_format.wire_token(),
@@ -287,6 +282,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 invite.recv_video_format.wire_token()
                 if video_enabled and invite.recv_video_format is not None
                 else ""
+            ),
             ),
         )
 
@@ -422,7 +418,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             )
         except asyncio.CancelledError:
             raise
-        except Exception as err:  # noqa: BLE001 - detached call boundary.
+        except Exception:  # noqa: BLE001 - detached call boundary.
             _LOGGER.exception(
                 "SIP trunk inbound routing failed call_id=%s", invite.call_id
             )
@@ -431,20 +427,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             preanswered = registry.take_media(invite.call_id, provisional=True)
             _release_media_reservation(preanswered)
             bridge_ports.release()
-            _set_sip_bridge_call_state(
-                hass,
-                CallState.TRANSPORT_UNREACHABLE.value,
-                caller=invite.caller,
-                callee=invite.target,
-                peer_name=invite.caller,
-                call_id=invite.call_id,
-                direction="incoming",
-                reason=str(err),
-                terminal_reason=RouteReason.TARGET_UNREACHABLE.value,
-                origin="self",
-                sip_status_code=500,
-                last_sip_event="BYE",
-            )
             await EndpointTerminationHandler(hass).terminate(
                 invite.call_id,
                 TerminationIntent.bye(
@@ -584,7 +566,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             remote_rtp_port=0,
         )
         registry = _call_registry(hass)
-        registry.upsert(
+        session = registry.upsert(
             call_id,
             state=CallState.RINGING.value,
             owner="ha_softphone",
@@ -613,19 +595,14 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         registry.add_leg(
             call_id, call_id, role="ha_softphone", state=CallState.REMOTE_RINGING.value
         )
-        _set_ha_softphone_call_state(
+        publish_call_projection(
             hass,
-            CallState.REMOTE_RINGING.value,
-            endpoint_id=endpoint_id,
-            session_device_id=endpoint_device_id,
-            caller=local_name,
-            callee=group_name,
-            peer_name=group_name,
-            direction="outgoing",
-            call_id=call_id,
-            route_kind=GROUP_TYPE_RING,
-            sip_status_code=180,
-            last_sip_event="LOCAL_RING_GROUP",
+            session,
+            CallProjectionEvent.phone(
+                session, endpoint_id, peer_name=group_name, direction="outgoing",
+                route_kind=GROUP_TYPE_RING, sip_status_code=180,
+                last_sip_event="LOCAL_RING_GROUP",
+            ),
         )
         try:
             peers = await _async_build_peer_snapshot(hass)
@@ -633,20 +610,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 hass, peers, _registered_roster_entries(hass)
             )
         except Exception:
-            _set_ha_softphone_call_state(
-                hass,
-                CallState.TRANSPORT_UNREACHABLE.value,
-                endpoint_id=endpoint_id,
-                session_device_id=endpoint_device_id,
-                call_id=call_id,
-                caller=local_name,
-                callee=group_name,
-                peer_name=group_name,
-                direction="outgoing",
-                reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-                route_kind=GROUP_TYPE_RING,
-                last_sip_event="PEER_SNAPSHOT_FAILED",
-            )
             await EndpointTerminationHandler(hass).terminate_reason(
                 call_id,
                 TerminalReason.TRANSPORT_UNREACHABLE.value,

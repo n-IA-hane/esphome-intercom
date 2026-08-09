@@ -7,6 +7,7 @@ import logging
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
+from .call_projection import CallProjectionEvent, publish_call_projection
 from .call_scope import endpoint_call_ids, pending_routes
 from .config import transport_config
 from .const import CONF_VIDEO_CAMERA_SEND
@@ -30,7 +31,6 @@ from .service_errors import service_error as _service_error
 from .sip_runtime import send_final_response
 from .softphone_commands import BrowserCallCommand, bind_service_call_controller
 from .core.video_rtp import RtpSenderState
-from .websocket_api import _set_ha_softphone_call_state
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -137,7 +137,7 @@ async def async_answer_browser_call(
             "endpoint_id": endpoint_id,
             "media_client_id": str(call.data.get("media_client_id") or ""),
         }
-        registry.upsert(
+        session = registry.upsert(
             call_id,
             state=CallState.IN_CALL.value,
             owner="ha_softphone",
@@ -145,6 +145,7 @@ async def async_answer_browser_call(
             callee=local_name,
             route_kind="conference",
             endpoint_id=endpoint_id,
+            session_device_id=endpoint_device_id,
         )
         registry.attach_media(call_id, conference_media)
         bind_service_call_controller(registry, call_id, call)
@@ -154,22 +155,17 @@ async def async_answer_browser_call(
             role="ha_softphone",
             state=CallState.IN_CALL.value,
         )
-        _set_ha_softphone_call_state(
+        publish_call_projection(
             hass,
-            CallState.IN_CALL.value,
-            endpoint_id=endpoint_id,
-            session_device_id=endpoint_device_id,
-            caller=room_name,
-            callee=local_name,
-            peer_name=room_name,
-            direction="incoming",
-            call_id=call_id,
-            sip_status_code=200,
-            last_sip_event="SIP_RESPONSE",
-            selected_tx_format="16000:s16le:1:20",
-            selected_rx_format="16000:s16le:1:20",
-            selected_tx_rtp_format="pt=96:L16/16000/1/20ms",
-            selected_rx_rtp_format="pt=96:L16/16000/1/20ms",
+            session,
+            CallProjectionEvent.phone(
+                session, endpoint_id, peer_name=room_name, direction="incoming",
+                sip_status_code=200, last_sip_event="SIP_RESPONSE",
+                selected_tx_format="16000:s16le:1:20",
+                selected_rx_format="16000:s16le:1:20",
+                selected_tx_rtp_format="pt=96:L16/16000/1/20ms",
+                selected_rx_rtp_format="pt=96:L16/16000/1/20ms",
+            ),
         )
         return
 
@@ -374,6 +370,7 @@ async def async_answer_browser_call(
             callee=resolved_callee,
             route_kind="ha_softphone",
             endpoint_id=endpoint_id,
+            session_device_id=endpoint_device_id,
             media_client_id=str(call.data.get("media_client_id") or ""),
             expected_generation=authoritative_session.generation,
         )
@@ -413,54 +410,32 @@ async def async_answer_browser_call(
         and local_video_rtp_port
         and video_direction != "inactive"
     )
-    _set_ha_softphone_call_state(
+    publish_call_projection(
         hass,
-        CallState.IN_CALL.value,
-        endpoint_id=endpoint_id,
-        session_device_id=endpoint_device_id,
-        caller=invite.caller,
-        callee=resolved_callee,
-        peer_name=invite.caller,
-        connected_party=invite.caller,
-        answered_by=invite.caller,
-        direction="incoming",
-        call_id=call_id,
-        dialed_target=invite.target,
-        sip_status_code=200,
-        last_sip_event="SIP_RESPONSE",
-        selected_tx_format=invite.send_format.audio_format.wire_token(),
-        selected_rx_format=invite.recv_format.audio_format.wire_token(),
-        selected_tx_rtp_format=invite.send_format.wire_token(),
-        selected_rx_rtp_format=invite.recv_format.wire_token(),
-        audio_direction=invite.local_audio_direction,
-        audio_connection_held=invite.remote_audio_connection_held,
-        video_active=video_active,
-        video_requested=bool(invite.video_format is not None),
-        video_negotiated=bool(invite.video_format is not None and local_video_rtp_port),
-        video_status=(
-            "degraded"
-            if video_failure_reason
-            else "active"
-            if video_active
-            else "rejected"
-            if invite.video_format is not None
-            else "inactive"
-        ),
-        video_failure_reason=video_failure_reason,
-        video_format=(invite.video_format.wire_token() if invite.video_format else ""),
-        video_send_format=(
-            invite.send_video_format.wire_token()
-            if invite.send_video_format is not None
-            else ""
-        ),
-        video_receive_format=(
-            invite.recv_video_format.wire_token()
-            if invite.recv_video_format is not None
-            else ""
-        ),
-        video_direction=(
-            video_direction
-            if invite.video_format is not None and local_video_rtp_port
-            else "inactive"
+        authoritative_session,
+        CallProjectionEvent.phone(
+            authoritative_session, endpoint_id,
+            peer_name=invite.caller, connected_party=invite.caller,
+            answered_by=invite.caller, direction="incoming",
+            dialed_target=invite.target, sip_status_code=200,
+            last_sip_event="SIP_RESPONSE",
+            selected_tx_format=invite.send_format.audio_format.wire_token(),
+            selected_rx_format=invite.recv_format.audio_format.wire_token(),
+            selected_tx_rtp_format=invite.send_format.wire_token(),
+            selected_rx_rtp_format=invite.recv_format.wire_token(),
+            audio_direction=invite.local_audio_direction,
+            audio_connection_held=invite.remote_audio_connection_held,
+            video_active=video_active, video_requested=invite.video_format is not None,
+            video_negotiated=bool(invite.video_format and local_video_rtp_port),
+            video_status="degraded" if video_failure_reason else "active" if video_active
+            else "rejected" if invite.video_format else "inactive",
+            video_failure_reason=video_failure_reason,
+            video_format=invite.video_format.wire_token() if invite.video_format else "",
+            video_send_format=invite.send_video_format.wire_token()
+            if invite.send_video_format else "",
+            video_receive_format=invite.recv_video_format.wire_token()
+            if invite.recv_video_format else "",
+            video_direction=video_direction
+            if invite.video_format and local_video_rtp_port else "inactive",
         ),
     )

@@ -9,8 +9,14 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 
+from .call_projection import CallProjectionEvent, publish_call_projection
 from .pbx_runtime import SipEndpointRuntime
-from .endpoint_session import EndpointCallSession, TerminationInitiator, TerminationIntent
+from .endpoint_session import (
+    EndpointCallSession,
+    SipTerminationDisposition,
+    TerminationInitiator,
+    TerminationIntent,
+)
 from .fsm import TerminalReason
 from .runtime_data import (
     require_runtime_data,
@@ -27,15 +33,16 @@ def project_session_termination(
 ) -> None:
     """Project one terminal session without taking lifecycle ownership."""
 
-    from .websocket_api import (
-        _set_ha_softphone_call_state,
-        _set_sip_bridge_call_state,
-    )
-
     metadata = session.metadata
     endpoint_id = str(metadata.get("endpoint_id") or "")
     remote = intent.initiator is TerminationInitiator.REMOTE_PEER
-    event = "CANCEL" if intent.reason == TerminalReason.CANCELLED.value else "BYE"
+    event = (
+        "SIP_RESPONSE"
+        if intent.sip_disposition is SipTerminationDisposition.FINAL_RESPONSE
+        else "CANCEL"
+        if intent.reason == TerminalReason.CANCELLED.value
+        else "BYE"
+    )
     common = {
         "call_id": session.call_id,
         "reason": intent.reason,
@@ -48,31 +55,33 @@ def project_session_termination(
     if intent.response_status:
         common["sip_status_code"] = intent.response_status
     if endpoint_id:
-        _set_ha_softphone_call_state(
+        publish_call_projection(
             hass,
-            intent.public_state,
-            endpoint_id=endpoint_id,
-            session_device_id=str(metadata.get("session_device_id") or ""),
-            caller=session.caller,
-            callee=session.callee,
-            peer_name=session.caller if remote else session.callee,
-            direction=str(metadata.get("direction") or ("incoming" if remote else "")),
-            **common,
+            session,
+            CallProjectionEvent.phone(
+                session,
+                endpoint_id,
+                intent=intent,
+                peer_name=session.caller if remote else session.callee,
+                direction=str(metadata.get("direction") or ("incoming" if remote else "")),
+                **common,
+            ),
         )
     if metadata.get("bridge_dest_call_id") or (
         not endpoint_id and session.route_kind
     ):
-        _set_sip_bridge_call_state(
+        publish_call_projection(
             hass,
-            intent.public_state,
-            dest_call_id=str(metadata.get("bridge_dest_call_id") or ""),
-            caller=session.caller,
-            callee=session.callee,
-            peer_name=session.callee,
-            target=session.callee,
-            terminal_reason=intent.reason,
-            route_kind=session.route_kind,
-            **common,
+            session,
+            CallProjectionEvent.bridge(
+                session,
+                intent=intent,
+                peer_name=session.callee,
+                target=session.callee,
+                terminal_reason=intent.reason,
+                route_kind=session.route_kind,
+                **common,
+            ),
         )
 
 

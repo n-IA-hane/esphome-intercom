@@ -8,6 +8,7 @@ import logging
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
+from .call_projection import CallProjectionEvent, publish_call_projection
 from .const import HA_PEER_FALLBACK_NAME
 from .endpoint_lifecycle import call_registry
 from .endpoint_termination import EndpointTerminationHandler
@@ -19,7 +20,7 @@ from .fsm import (
     sip_terminal_reason,
 )
 from .runtime_data import call_runtime_artifacts
-from .websocket_api import _ha_softphone_store, _set_ha_softphone_call_state
+from .websocket_api import _ha_softphone_store
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ def attach_outbound_connected_identity_state(
         session_id = registry.resolve_session_id(call_id)
         session = registry.sessions.get(session_id)
         if session is not None:
-            registry.upsert(
+            session = registry.upsert(
                 session_id,
                 state=session.state,
                 owner=session.owner,
@@ -66,21 +67,15 @@ def attach_outbound_connected_identity_state(
                 connected_party=connected_party,
                 connected_uri=connected_uri,
             )
-        _set_ha_softphone_call_state(
-            hass,
-            CallState.IN_CALL.value,
-            endpoint_id=endpoint_id,
-            session_device_id=str(store.get("session_device_id") or ""),
-            caller=str(store.get("caller") or ""),
-            callee=str(store.get("callee") or ""),
-            peer_name=connected_party,
-            connected_party=connected_party,
-            direction=str(store.get("direction") or "outgoing"),
-            call_id=call_id,
-            target_device_id=str(store.get("target_device_id") or ""),
-            remote_uri=connected_uri,
-            last_sip_event="UPDATE",
-        )
+            publish_call_projection(
+                hass, session, CallProjectionEvent.phone(
+                    session, endpoint_id, peer_name=connected_party,
+                    connected_party=connected_party,
+                    direction=str(store.get("direction") or "outgoing"),
+                    target_device_id=str(store.get("target_device_id") or ""),
+                    remote_uri=connected_uri, last_sip_event="UPDATE",
+                )
+            )
 
     client.on_connected_identity = _update
 
@@ -191,7 +186,7 @@ async def async_track_outbound_sip_client(
                 if video_requested and not video_active
                 else ""
             )
-            registry.upsert(
+            session = registry.upsert(
                 client.dialog_ids.call_id,
                 state=CallState.IN_CALL.value,
                 owner="ha_softphone",
@@ -206,17 +201,12 @@ async def async_track_outbound_sip_client(
                 role="ha_softphone",
                 state=CallState.IN_CALL.value,
             )
-            _set_ha_softphone_call_state(
+            publish_call_projection(
                 hass,
-                CallState.IN_CALL.value,
-                endpoint_id=endpoint_id,
-                session_device_id=session_device_id,
-                caller=local_name,
-                callee=target,
-                peer_name=connected_party,
-                connected_party=connected_party,
-                direction="outgoing",
-                call_id=client.dialog_ids.call_id,
+                session,
+                CallProjectionEvent.phone(
+                session, endpoint_id, peer_name=connected_party,
+                connected_party=connected_party, direction="outgoing",
                 target_device_id=target_device_id,
                 selected_tx_format=client.dialog.send_format.audio_format.wire_token(),
                 selected_rx_format=client.dialog.recv_format.audio_format.wire_token(),
@@ -248,6 +238,7 @@ async def async_track_outbound_sip_client(
                 sip_status_code=200,
                 last_sip_event="SIP_RESPONSE",
                 sip_uri=sip_uri,
+                ),
             )
         elif public_final not in {
             CallState.RINGING.value,

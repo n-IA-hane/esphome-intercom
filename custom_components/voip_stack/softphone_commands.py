@@ -28,10 +28,7 @@ from .fsm import TerminalReason
 from .media_ports import release_media_reservation
 from .route_decisions import set_pending_route_decision
 from .runtime_data import call_runtime_artifacts, conference_component
-from .websocket_api import (
-    _ha_softphone_store,
-    _set_ha_softphone_call_state,
-)
+from .websocket_api import _ha_softphone_store
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -190,16 +187,6 @@ async def async_decline_browser_call(
             call_id,
             app_reason,
         )
-        _set_ha_softphone_call_state(
-            hass,
-            "declined",
-            endpoint_id=endpoint_id,
-            session_device_id=command.device_id,
-            reason=app_reason,
-            call_id=call_id,
-            sip_status_code=status,
-            last_sip_event="BYE" if final_response_sent else "SIP_RESPONSE",
-        )
         await EndpointTerminationHandler(hass).terminate(
             call_id,
             TerminationIntent.bye(app_reason)
@@ -222,16 +209,6 @@ async def async_decline_browser_call(
         status,
         reason,
         app_reason,
-    )
-    _set_ha_softphone_call_state(
-        hass,
-        "declined",
-        endpoint_id=endpoint_id,
-        session_device_id=command.device_id,
-        reason=app_reason,
-        call_id=call_id,
-        sip_status_code=status,
-        last_sip_event="SIP_RESPONSE",
     )
     await EndpointTerminationHandler(hass).terminate(
         call_id,
