@@ -5,8 +5,14 @@
 
 script:
   - id: voip_ringing_loop
-    mode: restart
+    # This script owns both sides of the local ringtone lifecycle. A stop
+    # request must not cancel it between play_media and the source PLAYING
+    # callback, otherwise speaker_source cannot address a still-pending source.
+    mode: single
     then:
+      - globals.set:
+          id: g_voip_ringtone_stop_requested
+          value: "false"
       - globals.set:
           id: g_voip_ringtone_media_suppressed
           value: "true"
@@ -16,25 +22,59 @@ script:
       - globals.set:
           id: g_voip_ringtone_active
           value: "true"
+      # Every ringtone starts with the announcement path at its normal gain.
+      # Only this mixer source is ducked, never the VoIP source or hardware
+      # speaker volume.
+      - mixer_speaker.apply_ducking:
+          id: tts_mixer_input
+          decibel_reduction: 0
+          duration: 0ms
       - while:
           condition:
-            voip_stack.is_ringing:
+            and:
+              - voip_stack.is_ringing:
+              - lambda: 'return !id(g_voip_ringtone_stop_requested);'
           then:
             - media_player.play_media:
                 id: speaker_media_player
                 media_url: "audio-file://voip_ringing_sound"
                 announcement: true
+            # Wait for the source lifecycle, not the media-player projection.
+            # AudioFileMediaSource reports PLAYING only after its decoder is
+            # running and speaker_source has promoted it from pending to active.
             - wait_until:
                 condition:
-                  media_player.is_announcing:
-                    id: speaker_media_player
+                  lambda: |-
+                    return id(announcement_file_source).get_state() !=
+                           media_source::MediaSourceState::IDLE;
                 timeout: 2s
             - wait_until:
                 condition:
-                  not:
-                    media_player.is_announcing:
-                      id: speaker_media_player
+                  or:
+                    - lambda: 'return id(g_voip_ringtone_stop_requested);'
+                    - not:
+                        voip_stack.is_ringing:
+                    - lambda: |-
+                        return id(announcement_file_source).get_state() ==
+                               media_source::MediaSourceState::IDLE;
                 timeout: 5s
+            - if:
+                condition:
+                  or:
+                    - lambda: 'return id(g_voip_ringtone_stop_requested);'
+                    - not:
+                        voip_stack.is_ringing:
+                then:
+                  - wait_until:
+                      condition:
+                        lambda: |-
+                          return id(announcement_file_source).get_state() ==
+                                 media_source::MediaSourceState::IDLE;
+                      timeout: 4s
+      - mixer_speaker.apply_ducking:
+          id: tts_mixer_input
+          decibel_reduction: 0
+          duration: 0ms
       - globals.set:
           id: g_voip_ringtone_active
           value: "false"
@@ -44,35 +84,65 @@ script:
       - globals.set:
           id: g_voip_ringtone_restore_media
           value: "false"
+      - globals.set:
+          id: g_voip_ringtone_stop_requested
+          value: "false"
 
   - id: voip_stop_ringtone
-    mode: restart
+    # Runtime-controller can observe the same terminal transition through more
+    # than one callback turn. Ignore duplicates while the owner drains.
+    mode: single
     then:
-      - script.stop: voip_ringing_loop
-      # Stop the media player only if this package started the ringtone. Without
-      # this guard, ending a call could stop an unrelated announcement.
+      - globals.set:
+          id: g_voip_ringtone_stop_requested
+          value: "true"
       - if:
           condition:
             lambda: 'return id(g_voip_ringtone_active);'
           then:
-            - globals.set:
-                id: g_voip_ringtone_media_suppressed
-                value: "true"
-            - media_player.stop:
-                id: speaker_media_player
-                announcement: true
+            # Silencing only the announcement mixer input lets the FLAC source
+            # reach its normal end-of-stream teardown. Stopping an interrupted
+            # micro-decoder leaves its frame and transfer buffers allocated.
+            - mixer_speaker.apply_ducking:
+                id: tts_mixer_input
+                decibel_reduction: 51
+                duration: 0ms
+            # The ringing script performs the normal stop after the source has
+            # reaches IDLE naturally. This wait is asynchronous and bounded.
             - wait_until:
                 condition:
-                  not:
-                    media_player.is_announcing:
+                  lambda: 'return !id(g_voip_ringtone_active);'
+                timeout: 4s
+            - if:
+                condition:
+                  lambda: 'return id(g_voip_ringtone_active);'
+                then:
+                  # Last-resort cleanup must address the owned source directly,
+                  # then cancel the stalled script. It must never stop an
+                  # unrelated announcement when no ringtone is active.
+                  - logger.log:
+                      level: ERROR
+                      format: "Ringtone owner did not quiesce within 4 seconds"
+                  - lambda: |-
+                      id(announcement_file_source).handle_command(
+                          media_source::MediaSourceCommand::STOP);
+                  - media_player.stop:
                       id: speaker_media_player
-                timeout: 1500ms
+                      announcement: true
+                  - script.stop: voip_ringing_loop
+                  - globals.set:
+                      id: g_voip_ringtone_media_suppressed
+                      value: "false"
+                  - globals.set:
+                      id: g_voip_ringtone_active
+                      value: "false"
+                  - globals.set:
+                      id: g_voip_ringtone_restore_media
+                      value: "false"
+                  - mixer_speaker.apply_ducking:
+                      id: tts_mixer_input
+                      decibel_reduction: 0
+                      duration: 0ms
       - globals.set:
-          id: g_voip_ringtone_media_suppressed
-          value: "false"
-      - globals.set:
-          id: g_voip_ringtone_active
-          value: "false"
-      - globals.set:
-          id: g_voip_ringtone_restore_media
+          id: g_voip_ringtone_stop_requested
           value: "false"

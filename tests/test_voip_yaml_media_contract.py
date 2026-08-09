@@ -42,6 +42,13 @@ P4_VIDEOPHONE_BASE = (
     / "single-bus"
     / "waveshare-p4-touch-videophone-base.yaml"
 )
+RINGTONE_ORCHESTRATION = ROOT / "packages" / "runtime" / "voip_ringtone_orchestration.yaml"
+RUNTIME_MEDIA_PLAYER = (
+    ROOT
+    / "packages"
+    / "media_player"
+    / "runtime_controller_mono_media_player_48k.yaml"
+)
 
 
 def _voip_stack_block(text: str) -> str:
@@ -92,6 +99,38 @@ def test_physical_phone_presets_use_complete_ha_phone_package() -> None:
         assert "ha_integration:" not in text
         assert "ha_api:" not in text
         assert "phonebook_subscribe:" not in text
+
+
+def test_flac_ringtone_drains_naturally_behind_source_local_ducking() -> None:
+    """Answering must silence only the ringtone while FLAC reaches EOF."""
+    media = RUNTIME_MEDIA_PLAYER.read_text()
+    orchestration = RINGTONE_ORCHESTRATION.read_text()
+
+    assert "assets/sounds/ringtone.flac" in media
+    assert "assets/sounds/ringtone.wav" not in media
+    assert orchestration.count("mixer_speaker.apply_ducking:") >= 4
+    assert "id: tts_mixer_input" in orchestration
+    assert "decibel_reduction: 51" in orchestration
+    assert "id: voip_mixer_input" not in orchestration
+    assert "id: hw_speaker" not in orchestration
+    assert "media_source::MediaSourceState::IDLE" in orchestration
+
+
+def test_runtime_media_player_profiles_share_ringtone_lifecycle_owner() -> None:
+    missing: list[str] = []
+    for path in sorted(YAMLS.rglob("*.yaml")):
+        if ".esphome" in path.parts:
+            continue
+        text = path.read_text()
+        if "runtime_controller_mono_media_player_48k.yaml" not in text:
+            continue
+        if "full_voice_voip_runtime.yaml" not in text:
+            missing.append(str(path.relative_to(ROOT)))
+
+    assert not missing, (
+        "Profiles using the shared FLAC ringtone media source must also include "
+        "its shared lifecycle owner:\n" + "\n".join(missing)
+    )
 
 
 def test_resampling_profiles_accept_direct_esp_16khz_10ms() -> None:

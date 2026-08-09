@@ -97,6 +97,10 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+  - id: g_voip_ringtone_stop_requested
+    type: bool
+    restore_value: false
+    initial_value: "false"
   - id: g_voip_ringtone_restore_media
     type: bool
     restore_value: false

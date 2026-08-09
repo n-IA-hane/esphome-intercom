@@ -452,7 +452,7 @@ speaker:
     timeout: 1s
     buffer_duration: 128ms
 
-  # 3-source mixer: media (duckable) + TTS (never ducked) + VoIP
+  # 3-source mixer: media + announcements/ringtone + VoIP
   - platform: mixer
     id: audio_mixer
     output_speaker: hw_speaker
@@ -462,7 +462,7 @@ speaker:
       - id: media_mixer_input       # Music/radio streams (duckable)
         timeout: 10s
         buffer_duration: 100ms
-      - id: tts_mixer_input         # VA TTS announcements (never ducked)
+      - id: tts_mixer_input         # VA announcements and local ringtone
         timeout: 10s
         buffer_duration: 100ms
       - id: voip_mixer_input    # VoIP audio

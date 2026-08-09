@@ -18,18 +18,15 @@ voip_stack:
         id: ui_call_dest_ringing
         peer: !lambda 'return peer;'
   on_in_call:
-    - script.execute: voip_stop_ringtone
     - script.execute:
         id: ui_call_started
         peer: !lambda 'return peer;'
   on_hangup:
-    - script.execute: voip_stop_ringtone
     - script.execute:
         id: ui_call_ended
         peer: !lambda 'return peer;'
         reason: !lambda 'return reason;'
   on_call_failed:
-    - script.execute: voip_stop_ringtone
     - script.execute:
         id: ui_call_ended
         peer: !lambda 'return peer;'
