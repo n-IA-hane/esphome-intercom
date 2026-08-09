@@ -19,6 +19,73 @@ class DialplanUseCase:
     qualification: str
 
 
+@dataclass(frozen=True, slots=True)
+class QualificationClass:
+    """Executable evidence class, never an aspirational catalog label."""
+
+    level: str
+    executor: str
+
+
+QUALIFICATION_CLASSES = {
+    "browser-notification-ha": QualificationClass(
+        "browser-real", "scripts/run_lab_regression_gate.sh"
+    ),
+    "caller-filter-real-ha": QualificationClass(
+        "ha-peer-live", "scripts/run_ha_real_matrix.py"
+    ),
+    "conditional-route-real-ha": QualificationClass(
+        "ha-peer-live", "scripts/run_ha_real_matrix.py"
+    ),
+    "established-dtmf-live": QualificationClass(
+        "peer-live", "scripts/run_peer_live_qualification.sh"
+    ),
+    "event-entity-ha-runtime": QualificationClass(
+        "ha-runtime", "tests/test_endpoint_ha_entities.py"
+    ),
+    "forward-failure-ha-runtime": QualificationClass(
+        "ha-peer-live", "scripts/run_ha_real_matrix.py"
+    ),
+    "guarded-route-ha-runtime": QualificationClass(
+        "ha-runtime", "tests/test_automation_route_result.py"
+    ),
+    "ingress-filter-real-ha": QualificationClass(
+        "ha-peer-live", "scripts/run_ha_real_matrix.py"
+    ),
+    "p4-video-hil": QualificationClass("hil-p4", "scripts/run_hil_qualification.py"),
+    "phone-policy-ha-runtime": QualificationClass(
+        "ha-runtime", "tests/test_phone_control_ha.py"
+    ),
+    "refer-notify-real-sipp": QualificationClass(
+        "peer-live", "scripts/run_sipp_rfc_lab.py"
+    ),
+    "refer-replaces-ha-runtime": QualificationClass(
+        "ha-runtime", "tests/test_ha_call_transfer.py"
+    ),
+    "ringing-forward-assist-ha": QualificationClass(
+        "ha-runtime", "tests/test_assist_runtime.py"
+    ),
+    "ringing-forward-real-ha": QualificationClass(
+        "ha-peer-live", "scripts/run_ha_real_matrix.py"
+    ),
+    "ringing-forward-trunk-live": QualificationClass(
+        "peer-live", "scripts/run_peer_live_qualification.sh"
+    ),
+    "route-terminal-real-ha": QualificationClass(
+        "ha-peer-live", "scripts/run_ha_real_matrix.py"
+    ),
+    "sips-transfer-transport-lab": QualificationClass(
+        "peer-live", "scripts/run_sip_transport_lab.py"
+    ),
+    "state-projection-ha-runtime": QualificationClass(
+        "ha-runtime", "tests/test_endpoint_ha_entities.py"
+    ),
+    "trunk-dtmf-live": QualificationClass(
+        "peer-live", "scripts/run_peer_live_qualification.sh"
+    ),
+}
+
+
 def _case(
     id: str,
     intent: str,
@@ -323,6 +390,10 @@ def validate_use_cases() -> list[str]:
             errors.append(f"{case.id}: no false/failure outcome")
         if not case.qualification:
             errors.append(f"{case.id}: no qualification class")
+        elif case.qualification not in QUALIFICATION_CLASSES:
+            errors.append(
+                f"{case.id}: unknown qualification class {case.qualification}"
+            )
     required_operations = {
         "select_inbound_destination",
         "forward_resume",
