@@ -25,7 +25,11 @@ from .core.sip_auth import (
     build_digest_authorization,
 )
 from .core.sip_resolution import SipServerResolver
-from .core.sip_dialog import DialogSignalingState, build_dialog_request
+from .core.sip_dialog import (
+    DialogSignalingState,
+    apply_remote_offer_media,
+    build_dialog_request,
+)
 from .sip_tcp_io import (
     SipTcpWriter,
     read_sip_stream_message as _read_sip_stream_message,
@@ -1017,18 +1021,12 @@ class SipCallClient:
         if commit is None and not unchanged:
             self.bye()
             return "media_incompatible"
-        if commit is not None:
-            try:
-                await commit()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                _LOGGER.exception(
-                    "SIP delayed offer commit failed call_id=%s",
-                    self.dialog_ids.call_id,
-                )
-                self.bye()
-                return "media_update_failed"
+        if not await apply_remote_offer_media(commit):
+            _LOGGER.error(
+                "SIP delayed offer commit failed call_id=%s", self.dialog_ids.call_id
+            )
+            self.bye()
+            return "media_update_failed"
         requested_timer = sip.negotiate_uas_session_timer(delayed.request)
         if requested_timer is not None:
             updated.session_timer.configure(
@@ -2268,20 +2266,15 @@ class SipCallClient:
                 body=body,
             )
         if 200 <= status < 300 and updated is not None:
-            if commit is not None:
-                try:
-                    await commit()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    _LOGGER.exception(
-                        "SIP remote media update commit failed call_id=%s method=%s",
-                        self.dialog_ids.call_id,
-                        method,
-                    )
-                    self._uas_invite_2xx.cancel()
-                    self.bye()
-                    return "media_update_failed"
+            if not await apply_remote_offer_media(commit):
+                _LOGGER.error(
+                    "SIP remote media update commit failed call_id=%s method=%s",
+                    self.dialog_ids.call_id,
+                    method,
+                )
+                self._uas_invite_2xx.cancel()
+                self.bye()
+                return "media_update_failed"
             if self._uas_invite_ack_timeout.is_set() or self.dialog is None:
                 return "ack_timeout"
             self.dialog = updated

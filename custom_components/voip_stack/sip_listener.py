@@ -16,6 +16,7 @@ from .const import VOIP_STACK_RTP_PORT
 from .core import sdp, sip, sip_transfer
 from .core.sip_dialog import (
     DialogSignalingState,
+    apply_remote_offer_media,
     build_dialog_request,
     uas_request_matches_dialog,
 )
@@ -1277,20 +1278,11 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             await self._rollback_delayed_offer(delayed)
             await self._terminate_dialog(call_id, "media_incompatible")
             return False
-        if result.commit is not None:
-            try:
-                await result.commit()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                _LOGGER.exception(
-                    "SIP delayed offer media commit failed call_id=%s", call_id
-                )
-                if result.rollback is not None:
-                    await result.rollback()
-                await self._rollback_delayed_offer(delayed)
-                await self._terminate_dialog(call_id, "media_update_failed")
-                return False
+        if not await apply_remote_offer_media(result.commit, result.rollback):
+            _LOGGER.error("SIP delayed offer media commit failed call_id=%s", call_id)
+            await self._rollback_delayed_offer(delayed)
+            await self._terminate_dialog(call_id, "media_update_failed")
+            return False
         delayed.settled = True
         dialog.addr = addr
         if delayed.remote_target_uri:
@@ -1776,22 +1768,15 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 if prack_result is not None and prack_result.rollback is not None:
                     await prack_result.rollback()
                 return
-            if prack_result is not None and prack_result.commit is not None:
-                try:
-                    await prack_result.commit()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    _LOGGER.exception("SIP PRACK commit failed call_id=%s", call_id)
-                    if prack_result.rollback is not None:
-                        await prack_result.rollback()
-                    self._send_final_response_now(
-                        call_id,
-                        500,
-                        "Server Internal Error",
-                        decline_reason="media_update_failed",
-                    )
-                    return
+            if prack_result is not None and not await apply_remote_offer_media(
+                prack_result.commit, prack_result.rollback
+            ):
+                _LOGGER.error("SIP PRACK commit failed call_id=%s", call_id)
+                self._send_final_response_now(
+                    call_id, 500, "Server Internal Error",
+                    decline_reason="media_update_failed",
+                )
+                return
             if reliable.deferred_final is not None:
                 final = reliable.deferred_final
                 self._send_final_response_now(
@@ -2249,27 +2234,16 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                         reason,
                         answer_sdp,
                     )
-                    if result.commit is not None:
-                        try:
-                            await result.commit()
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception:
-                            _LOGGER.exception(
-                                "SIP in-dialog media commit failed after response call_id=%s method=%s",
-                                call_id,
-                                request.method,
-                            )
-                            if result.rollback is not None:
-                                await result.rollback()
-                            # The 2xx has committed the offer/answer exchange on
-                            # the wire. If the local media owner cannot commit,
-                            # terminate the now-confirmed dialog explicitly.
-                            await self._terminate_dialog(
-                                call_id,
-                                "media_update_failed",
-                            )
-                            return
+                    if not await apply_remote_offer_media(
+                        result.commit, result.rollback
+                    ):
+                        _LOGGER.error(
+                            "SIP in-dialog media commit failed call_id=%s method=%s",
+                            call_id,
+                            request.method,
+                        )
+                        await self._terminate_dialog(call_id, "media_update_failed")
+                        return
                     existing_dialog.addr = addr
                     if refreshed_remote_target:
                         existing_dialog.remote_target_uri = refreshed_remote_target

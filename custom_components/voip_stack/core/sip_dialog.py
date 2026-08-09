@@ -2,9 +2,27 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from . import sip
+
+
+async def apply_remote_offer_media(
+    commit: Callable[[], Awaitable[None]] | None,
+    rollback: Callable[[], Awaitable[None]] | None = None,
+) -> bool:
+    """Commit prepared media atomically, rolling it back on local failure."""
+
+    if commit is None:
+        return True
+    try:
+        await commit()
+    except Exception:
+        if rollback is not None:
+            await rollback()
+        return False
+    return True
 
 
 @dataclass(kw_only=True, slots=True)

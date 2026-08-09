@@ -48,6 +48,22 @@ sip_dialog = _load_module("sip_dialog")
 
 
 class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_remote_offer_media_commit_succeeds_without_rollback(self) -> None:
+        commit = AsyncMock()
+        rollback = AsyncMock()
+
+        assert await sip_dialog.apply_remote_offer_media(commit, rollback)
+        commit.assert_awaited_once_with()
+        rollback.assert_not_awaited()
+
+    async def test_remote_offer_media_commit_failure_rolls_back_once(self) -> None:
+        commit = AsyncMock(side_effect=RuntimeError("media owner failed"))
+        rollback = AsyncMock()
+
+        assert not await sip_dialog.apply_remote_offer_media(commit, rollback)
+        commit.assert_awaited_once_with()
+        rollback.assert_awaited_once_with()
+
     async def test_dialog_transaction_handles_requests_and_defers_other_responses(
         self,
     ) -> None:
