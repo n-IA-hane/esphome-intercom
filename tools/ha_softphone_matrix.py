@@ -410,7 +410,13 @@ def wait_card(
     deadline = time.monotonic() + timeout
     last: dict[str, Any] | None = None
     while time.monotonic() < deadline:
-        last = page.evaluate(CARD_STATE)
+        try:
+            last = page.evaluate(CARD_STATE)
+        except Exception as error:  # noqa: BLE001 - HA may reload the dashboard.
+            if "Execution context was destroyed" not in str(error):
+                raise
+            page.wait_for_load_state("domcontentloaded", timeout=5_000)
+            continue
         if last and predicate(last):
             return last
         page.wait_for_timeout(100)

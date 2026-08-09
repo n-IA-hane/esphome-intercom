@@ -119,6 +119,35 @@ def test_softphone_runner_accepts_an_isolated_inbound_peer() -> None:
     ]
 
 
+def test_softphone_wait_card_survives_one_dashboard_navigation() -> None:
+    runner = _load_softphone_tool()
+
+    class Page:
+        def __init__(self) -> None:
+            self.attempts = 0
+            self.load_waits = 0
+
+        def evaluate(self, _script: str) -> dict[str, bool]:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("Execution context was destroyed")
+            return {"ready": True}
+
+        def wait_for_load_state(self, state: str, *, timeout: int) -> None:
+            assert state == "domcontentloaded"
+            assert timeout == 5_000
+            self.load_waits += 1
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            pass
+
+    page = Page()
+    assert runner.wait_card(page, lambda item: item["ready"], 1, "ready") == {
+        "ready": True
+    }
+    assert page.load_waits == 1
+
+
 def test_softphone_runner_selects_dtmf_routed_trunk_destination(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
