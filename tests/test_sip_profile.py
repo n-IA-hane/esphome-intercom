@@ -558,8 +558,12 @@ class SipProfileTest(unittest.TestCase):
         self.assertEqual(ack.method, "ACK")
         self.assertIn("SIP/2.0/TCP 192.168.1.10:43123", ack.header("Via"))
 
+        async def start_bye() -> None:
+            self.assertTrue(client.bye())
+            await asyncio.sleep(0)
+
         sent.clear()
-        client.bye()
+        asyncio.run(start_bye())
         bye = sip.parse_message(bytes(sent))
         self.assertEqual(bye.method, "BYE")
         self.assertIn("SIP/2.0/TCP 192.168.1.10:43123", bye.header("Via"))

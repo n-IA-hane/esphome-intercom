@@ -170,6 +170,14 @@ class SipClientTransaction(Generic[_T]):
     def remaining(self) -> float:
         return max(0.0, self.deadline - asyncio.get_running_loop().time())
 
+    def reset_deadline(self, timeout: float) -> None:
+        """Start a new bounded wait window without changing transaction identity."""
+
+        if float(timeout) < 0:
+            raise ValueError("invalid SIP transaction timeout")
+        self.timeout = float(timeout)
+        self.deadline = asyncio.get_running_loop().time() + self.timeout
+
     def restart_retransmissions(self) -> None:
         """Restart Timer A/E after an authenticated request is rebuilt."""
 
@@ -208,6 +216,10 @@ class SipClientTransaction(Generic[_T]):
             self.retransmissions += 1
             self.interval = min(self.interval * 2.0, self.t2)
             self.next_retransmit = loop.time() + self.interval
+
+
+class _TransactionInactive(Exception):
+    """Stop a transaction whose owning dialog was retired while reading."""
 
 
 async def async_run_dialog_request_transaction(
@@ -252,7 +264,9 @@ async def async_run_dialog_request_transaction(
         return None
 
     async def retransmit() -> None:
-        if active() and send() is False:
+        if not active():
+            raise _TransactionInactive
+        if send() is False:
             raise ConnectionError("SIP signaling path is unavailable")
 
     if not active() or send() is False:
@@ -261,11 +275,14 @@ async def async_run_dialog_request_transaction(
         on_sent()
     received_provisional = False
     while active():
-        received = await transaction.receive(
-            receive,
-            retransmit,
-            retransmit_enabled=not received_provisional,
-        )
+        try:
+            received = await transaction.receive(
+                receive,
+                retransmit,
+                retransmit_enabled=not received_provisional,
+            )
+        except _TransactionInactive:
+            return None
         if received is None:
             return None
         response, context = received

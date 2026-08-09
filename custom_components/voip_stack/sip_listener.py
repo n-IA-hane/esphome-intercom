@@ -299,6 +299,7 @@ class _ActiveDialog(DialogSignalingState):
     update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     session_timer_task: asyncio.Task[None] | None = None
     refer_task: asyncio.Task[None] | None = None
+    termination_task: asyncio.Task[bool] | None = None
     delayed_offer: _PendingDelayedOffer | None = None
 
 
@@ -562,7 +563,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self._logged_incompatible_invites: set[str] = set()
         self._request_tasks: set[asyncio.Task[None]] = set()
         self._invite_tasks: set[asyncio.Task[None]] = set()
-        self._maintenance_tasks: set[asyncio.Task[None]] = set()
+        self._maintenance_tasks: set[asyncio.Task[Any]] = set()
         self._client_transaction_responses: dict[
             str, asyncio.Queue[tuple[sip.SipMessage, tuple[str, int]]]
         ] = {}
@@ -849,6 +850,13 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         self._cancel_connected_identity(current)
         self._cancel_session_timer(current)
         self._cancel_refer(current)
+        termination_task = current.termination_task
+        current.termination_task = None
+        if (
+            termination_task is not None
+            and termination_task is not asyncio.current_task()
+        ):
+            termination_task.cancel()
         delayed = current.delayed_offer
         current.delayed_offer = None
         self._remember_terminated_invite(current)
@@ -858,19 +866,71 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
     async def _terminate_dialog(self, call_id: str, reason: str) -> None:
         """Signal and retire a confirmed dialog, then notify its owner."""
 
-        if not self.send_bye(call_id):
-            delayed = self._retire_dialog(call_id)
-            if delayed is not None:
-                await self._rollback_delayed_offer(delayed)
+        await self.async_send_bye(
+            call_id,
+            timeout=min(1.5, _INVITE_2XX_TIMEOUT),
+        )
         if self.on_terminated is not None:
             await self.on_terminated(call_id, reason)
 
     def _activate_dialog(
         self,
         call_id: str,
-        dialog: _ActiveDialog,
+        pending: _PendingInvite,
         request: sip.SipMessage,
-    ) -> None:
+        addr: tuple[str, int],
+    ) -> _ActiveDialog:
+        """Build and activate one UAS dialog from its authoritative INVITE."""
+
+        invite = self._parse_invite(request, addr) if request.body else None
+        initial_invite = (
+            self._parse_initial_invite(request, addr) if not request.body else None
+        )
+        signaling_invite = invite or initial_invite
+        if signaling_invite is None:
+            raise sip.SipError("cannot activate dialog from invalid INVITE")
+        remote_target = (
+            sip.contact_target_uri(request)
+            or _uri_text_from_header(request.header("From"))
+        )
+        dialog = _ActiveDialog(
+            request=request,
+            addr=addr,
+            to_tag=pending.to_tag,
+            cseq=_cseq_number(request.header("CSeq")) + 1,
+            transport=pending.transport,
+            remote_target_uri=remote_target,
+            route_set=sip.record_route_set(request),
+            status=pending.status,
+            reason=pending.reason,
+            answer_sdp=pending.answer_sdp,
+            invite=invite,
+            last_request=request,
+            last_status=pending.status,
+            last_reason=pending.reason,
+            last_response_sdp=pending.answer_sdp,
+            local_sdp_session_id=pending.local_sdp_session_id,
+            local_sdp_session_version=pending.local_sdp_session_version,
+            connected_identity_name=(
+                pending.connected_identity_name or signaling_invite.target
+            ),
+            connected_identity_user=(
+                pending.connected_identity_user or signaling_invite.routing_target
+            ),
+            peer_supports_from_change=sip.supports_option(request, "from-change"),
+        )
+        plan = pending.delayed_offer_plan
+        if plan is not None:
+            dialog.delayed_offer = _PendingDelayedOffer(
+                request=request,
+                addr=addr,
+                offer_sdp=pending.answer_sdp,
+                previous_invite=None,
+                initial_invite=initial_invite,
+                remote_target_uri=remote_target,
+                accept_answer=plan.accept_answer,
+                rollback=plan.rollback,
+            )
         self.active_dialogs[call_id] = dialog
         self._arm_session_timer(
             call_id,
@@ -878,6 +938,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             sip.negotiate_uas_session_timer(request),
             local_role="uas",
         )
+        return dialog
 
     @staticmethod
     def _accept_remote_connected_identity(
@@ -963,6 +1024,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         extra_headers: tuple[tuple[str, str], ...] = (),
         body: bytes = b"",
         content_type: str = "",
+        timeout: float = _INVITE_2XX_TIMEOUT,
     ) -> sip.SipMessage | None:
         """Send one serialized non-INVITE request on an owned dialog."""
 
@@ -971,6 +1033,11 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 return None
             remote_uri = dialog.remote_uri or _uri_text_from_header(
                 dialog.request.header("From")
+            )
+            remote_target_uri = (
+                dialog.remote_target_uri
+                or _uri_text_from_header(dialog.request.header("Contact"))
+                or remote_uri
             )
             remote_tag = sip.extract_tag(dialog.request.header("From"))
             local_uri = local_uri or _uri_text_from_header(dialog.request.header("To"))
@@ -983,7 +1050,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     cseq=dialog.local_cseq,
                     local_uri=local_uri,
                     remote_uri=remote_uri,
-                    remote_target_uri=dialog.remote_target_uri,
+                    remote_target_uri=remote_target_uri,
                     route_set=dialog.route_set,
                     contact_uri=_response_contact_uri(
                         dialog.request,
@@ -1016,6 +1083,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 method=method,
                 transport=dialog.transport,
                 active=lambda: self.active_dialogs.get(call_id) is dialog,
+                timeout=timeout,
             )
 
     async def _run_client_transaction(
@@ -1027,6 +1095,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         method: str,
         transport: str,
         active: Callable[[], bool] = lambda: True,
+        timeout: float = _INVITE_2XX_TIMEOUT,
     ) -> sip.SipMessage | None:
         """Run the shared non-INVITE transaction for this listener transport."""
 
@@ -1046,7 +1115,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 ),
                 active=active,
                 transport=transport,
-                timeout=_INVITE_2XX_TIMEOUT,
+                timeout=timeout,
                 on_sent=lambda: sip.mark_sip_event(self, method),
             )
         finally:
@@ -2275,12 +2344,12 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
             return
         try:
-            initial_remote_target = sip.contact_target_uri(request)
+            sip.contact_target_uri(request)
         except sip.SipError:
             self._send_response(request, addr, 400, "Bad Request")
             return
         try:
-            initial_route_set = sip.record_route_set(request)
+            sip.record_route_set(request)
         except sip.SipError:
             self._send_response(request, addr, 400, "Bad Request")
             return
@@ -2333,52 +2402,12 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             if sent and existing_pending.status >= 200:
                 self.pending_invites.pop(call_id, None)
                 if existing_pending.status < 300:
-                    dialog = _ActiveDialog(
-                        request=request,
-                        addr=addr,
-                        to_tag=existing_pending.to_tag,
-                        cseq=_cseq_number(request.header("CSeq")) + 1,
-                        transport=existing_pending.transport,
-                        remote_target_uri=(
-                            initial_remote_target
-                            or _uri_text_from_header(request.header("From"))
-                        ),
-                        route_set=initial_route_set,
-                        status=existing_pending.status,
-                        reason=existing_pending.reason,
-                        answer_sdp=existing_pending.answer_sdp,
-                        invite=invite,
-                        last_request=request,
-                        last_status=existing_pending.status,
-                        last_reason=existing_pending.reason,
-                        last_response_sdp=existing_pending.answer_sdp,
-                        local_sdp_session_id=existing_pending.local_sdp_session_id,
-                        local_sdp_session_version=existing_pending.local_sdp_session_version,
-                        connected_identity_name=(
-                            existing_pending.connected_identity_name
-                            or signaling_invite.target
-                        ),
-                        connected_identity_user=(
-                            existing_pending.connected_identity_user
-                            or signaling_invite.routing_target
-                        ),
-                        peer_supports_from_change=sip.supports_option(
-                            request, "from-change"
-                        ),
+                    dialog = self._activate_dialog(
+                        call_id,
+                        existing_pending,
+                        request,
+                        addr,
                     )
-                    if existing_pending.delayed_offer_plan is not None:
-                        plan = existing_pending.delayed_offer_plan
-                        dialog.delayed_offer = _PendingDelayedOffer(
-                            request=request,
-                            addr=addr,
-                            offer_sdp=existing_pending.answer_sdp,
-                            previous_invite=None,
-                            initial_invite=initial_invite,
-                            remote_target_uri=initial_remote_target,
-                            accept_answer=plan.accept_answer,
-                            rollback=plan.rollback,
-                        )
-                    self._activate_dialog(call_id, dialog, request)
                     self._remember_dialog_response(
                         dialog,
                         request,
@@ -2515,49 +2544,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         if sent:
             self.pending_invites.pop(call_id, None)
         if sent and 200 <= int(result.status) < 300:
-            dialog = _ActiveDialog(
-                request=request,
-                addr=addr,
-                to_tag=to_tag,
-                cseq=_cseq_number(request.header("CSeq")) + 1,
-                transport=self.signaling_transport,
-                remote_target_uri=(
-                    initial_remote_target
-                    or _uri_text_from_header(request.header("From"))
-                ),
-                route_set=initial_route_set,
-                status=int(result.status),
-                reason=str(result.reason),
-                answer_sdp=answer_sdp,
-                invite=invite,
-                last_request=request,
-                last_status=int(result.status),
-                last_reason=str(result.reason),
-                last_response_sdp=answer_sdp,
-                local_sdp_session_id=pending.local_sdp_session_id,
-                local_sdp_session_version=pending.local_sdp_session_version,
-                connected_identity_name=(
-                    pending.connected_identity_name or signaling_invite.target
-                ),
-                connected_identity_user=(
-                    pending.connected_identity_user or signaling_invite.routing_target
-                ),
-                peer_supports_from_change=sip.supports_option(
-                    request, "from-change"
-                ),
-            )
-            if delayed_plan is not None:
-                dialog.delayed_offer = _PendingDelayedOffer(
-                    request=request,
-                    addr=addr,
-                    offer_sdp=answer_sdp,
-                    previous_invite=None,
-                    initial_invite=initial_invite,
-                    remote_target_uri=initial_remote_target,
-                    accept_answer=delayed_plan.accept_answer,
-                    rollback=delayed_plan.rollback,
-                )
-            self._activate_dialog(call_id, dialog, request)
+            dialog = self._activate_dialog(call_id, pending, request, addr)
             self._remember_dialog_response(
                 dialog,
                 request,
@@ -2665,41 +2652,12 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             return True
         self.pending_invites.pop(call_id, None)
         if int(status) < 300:
-            invite = self._parse_invite(pending.request, pending.addr)
-            dialog = _ActiveDialog(
-                request=pending.request,
-                addr=pending.addr,
-                to_tag=pending.to_tag,
-                cseq=_cseq_number(pending.request.header("CSeq")) + 1,
-                transport=pending.transport,
-                remote_target_uri=(
-                    sip.contact_target_uri(pending.request)
-                    or _uri_text_from_header(pending.request.header("From"))
-                ),
-                route_set=sip.record_route_set(pending.request),
-                status=int(status),
-                reason=str(reason),
-                answer_sdp=answer_sdp,
-                invite=invite,
-                last_request=pending.request,
-                last_status=int(status),
-                last_reason=str(reason),
-                last_response_sdp=answer_sdp,
-                local_sdp_session_id=pending.local_sdp_session_id,
-                local_sdp_session_version=pending.local_sdp_session_version,
-                connected_identity_name=(
-                    pending.connected_identity_name
-                    or (invite.target if invite is not None else "")
-                ),
-                connected_identity_user=(
-                    pending.connected_identity_user
-                    or (invite.routing_target if invite is not None else "")
-                ),
-                peer_supports_from_change=sip.supports_option(
-                    pending.request, "from-change"
-                ),
+            dialog = self._activate_dialog(
+                call_id,
+                pending,
+                pending.request,
+                pending.addr,
             )
-            self._activate_dialog(call_id, dialog, pending.request)
             self._remember_dialog_response(
                 dialog,
                 pending.request,
@@ -2721,61 +2679,58 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             self._arm_invite_non2xx(call_id, pending)
         return True
 
-    def send_bye(self, call_id: str = "") -> bool:
+    def _dialog_for_bye(self, call_id: str) -> tuple[str, _ActiveDialog] | None:
         if not call_id and len(self.active_dialogs) == 1:
             call_id = next(iter(self.active_dialogs))
         dialog = self.active_dialogs.get(call_id) if call_id else None
         if dialog is None:
+            return None
+        return call_id, dialog
+
+    async def async_send_bye(self, call_id: str = "", *, timeout: float = 1.5) -> bool:
+        """Run one owned BYE transaction, then retire the dialog exactly once."""
+
+        resolved = self._dialog_for_bye(call_id)
+        if resolved is None:
             return False
-        remote_uri = dialog.remote_uri or _uri_text_from_header(
-            dialog.request.header("From")
-        )
-        remote_target_uri = (
-            dialog.remote_target_uri
-            or _uri_text_from_header(dialog.request.header("Contact"))
-            or remote_uri
-        )
-        local_uri = _uri_text_from_header(dialog.request.header("To"))
-        if not remote_target_uri or not remote_uri or not local_uri:
-            return False
-        remote_tag = sip.extract_tag(dialog.request.header("From"))
+        call_id, dialog = resolved
+        current_task = asyncio.current_task()
+        owner = dialog.termination_task
+        if owner is not None and owner is not current_task:
+            return await asyncio.shield(owner)
+        if current_task is not None and owner is None:
+            dialog.termination_task = current_task  # type: ignore[assignment]
         try:
-            request = build_dialog_request(
+            response = await self._send_dialog_request(
+                call_id,
+                dialog,
                 "BYE",
-                call_id=call_id,
-                local_tag=dialog.to_tag,
-                remote_tag=remote_tag,
-                cseq=dialog.local_cseq,
-                local_uri=local_uri,
-                remote_uri=remote_uri,
-                remote_target_uri=remote_target_uri,
-                route_set=dialog.route_set,
-                transport=dialog.transport,
+                timeout=timeout,
             )
-        except (TypeError, ValueError, sip.SipError) as err:
-            _LOGGER.warning("SIP BYE routing rejected call_id=%s: %s", call_id, err)
+            if response is None:
+                _LOGGER.info("SIP BYE completed without final response call_id=%s", call_id)
+        finally:
+            delayed = self._retire_dialog(call_id)
+            if delayed is not None and not delayed.settled:
+                await self._rollback_delayed_offer(delayed)
+        return True
+
+    def send_bye(self, call_id: str = "") -> bool:
+        """Compatibility entry point backed by the asynchronous BYE owner."""
+
+        resolved = self._dialog_for_bye(call_id)
+        if resolved is None:
             return False
-        target_addr = dialog.addr
-        if dialog.transport == "UDP":
-            try:
-                target = sip.parse_sip_uri(request.routing.next_hop_uri)
-                target_addr = (target.host, int(target.port or 5060))
-            except (TypeError, ValueError, sip.SipError):
-                pass
-        if not self._send(request.raw, target_addr):
-            _LOGGER.warning("SIP TX BYE dropped call_id=%s", call_id)
-            return False
-        dialog.local_cseq += 1
-        delayed = self._retire_dialog(call_id)
-        if delayed is not None and not delayed.settled:
-            task = asyncio.create_task(
-                self._rollback_delayed_offer(delayed),
-                name=f"voip-sip-delayed-offer-rollback-{call_id}",
-            )
-            self._maintenance_tasks.add(task)
-            task.add_done_callback(self._maintenance_tasks.discard)
-        _LOGGER.info("SIP TX BYE call_id=%s to %s:%s", call_id, target_addr[0], target_addr[1])
-        sip.mark_sip_event(self, "BYE")
+        call_id, dialog = resolved
+        if dialog.termination_task is not None:
+            return True
+        task = asyncio.create_task(
+            self.async_send_bye(call_id),
+            name=f"voip-sip-listener-bye-{call_id}",
+        )
+        dialog.termination_task = task
+        self._maintenance_tasks.add(task)
+        task.add_done_callback(self._maintenance_tasks.discard)
         return True
 
     def snapshot(self) -> dict[str, Any]:
@@ -3126,6 +3081,11 @@ class SipUdpServer:
     def send_bye(self, call_id: str = "") -> bool:
         return self.endpoint is not None and self.endpoint.send_bye(call_id)
 
+    async def async_send_bye(self, call_id: str = "") -> bool:
+        return self.endpoint is not None and await self.endpoint.async_send_bye(
+            call_id
+        )
+
     async def stop(self) -> None:
         if self.transport is not None:
             endpoint = self.endpoint
@@ -3372,6 +3332,12 @@ class SipTcpServer:
     def send_bye(self, call_id: str = "") -> bool:
         for endpoint in tuple(self.endpoints):
             if endpoint.send_bye(call_id):
+                return True
+        return False
+
+    async def async_send_bye(self, call_id: str = "") -> bool:
+        for endpoint in tuple(self.endpoints):
+            if await endpoint.async_send_bye(call_id):
                 return True
         return False
 

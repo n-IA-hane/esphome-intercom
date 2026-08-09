@@ -431,6 +431,23 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(await asyncio.wait_for(invite_task, timeout=0.2), "ringing")
+        client.queue.put_nowait(
+            (
+                sip.build_response(
+                    487,
+                    "Request Terminated",
+                    [
+                        *(("Via", value) for value in invite.header_values("Via")),
+                        ("From", invite.header("From")),
+                        ("To", f"{invite.header('To')};tag=remote"),
+                        ("Call-ID", invite.header("Call-ID")),
+                        ("CSeq", invite.header("CSeq")),
+                    ],
+                ),
+                ("192.0.2.20", 5060),
+            )
+        )
+        self.assertNotEqual(await client.wait_for_final(timeout=0.2), "timeout")
         await client.close()
 
     async def test_reliable_early_answer_is_committed_by_bodyless_final(self) -> None:
@@ -518,6 +535,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await final_task, "in_call")
         self.assertIsNotNone(client.dialog)
         self.assertEqual(client.dialog.remote_rtp_port, 42000)
+        client.dialog = None
         await client.close()
 
     async def test_proxy_fork_commits_early_media_by_remote_dialog_tag(self) -> None:
@@ -629,6 +647,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.dialog_ids.remote_tag, "branch-b")
         self.assertEqual(client.dialog.remote_tag, "branch-b")
         self.assertEqual(client.dialog.remote_rtp_port, 43000)
+        client.dialog = None
         await client.close()
 
     async def test_listener_rejects_too_short_session_interval_before_routing(
@@ -2084,8 +2103,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await asyncio.wait_for(owner, timeout=1), "ringing")
 
         final_waiter = asyncio.create_task(client.wait_for_final(timeout=2))
-        while client._final_response_task is None:
-            await asyncio.sleep(0)
+        self.assertIsNotNone(client._invite_task)
+        assert client._invite_task is not None
+        self.assertFalse(client._invite_task.done())
         close_task = asyncio.create_task(client.close())
         while not any(
             sip.parse_message(raw).method == "CANCEL"
@@ -2461,7 +2481,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 (sdp.DEFAULT_H264_FORMAT.payload_type,),
             )
         finally:
-            client.bye()
+            self.assertEqual(await client.terminate(), "remote_hangup")
             await client.close()
             await server.stop()
 
@@ -2537,7 +2557,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 "42801f",
             )
         finally:
-            client.bye()
+            self.assertEqual(await client.terminate(), "remote_hangup")
             await client.close()
             await server.stop()
 
@@ -4045,7 +4065,11 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             "UDP",
         )
 
-        self.assertTrue(endpoint.send_bye("remote-target-call"))
+        self.assertTrue(
+            asyncio.run(
+                endpoint.async_send_bye("remote-target-call", timeout=0.001)
+            )
+        )
         bye = sip.parse_message(sent[0])
         self.assertEqual(bye.uri, "sip:dialog@192.168.1.48:5090;transport=udp")
         self.assertEqual(bye.header("To"), "<sip:desk@192.168.1.48>;tag=remote")
@@ -4115,7 +4139,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(ok.header_values("Record-Route"), [route_field])
 
-        self.assertTrue(endpoint.send_bye("routed-listener-call"))
+        self.assertTrue(
+            await endpoint.async_send_bye("routed-listener-call", timeout=0.001)
+        )
         bye_raw, bye_addr = sent[-1]
         bye = sip.parse_message(bye_raw)
         self.assertEqual(bye.uri, "sip:dialog@192.0.2.20:5090")
@@ -4174,7 +4200,11 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
         await endpoint._handle_datagram(update, ("192.168.1.48", 5060))
         self.assertEqual(sip.parse_message(sent[-1][0]).status_code, 200)
-        self.assertTrue(endpoint.send_bye("target-refresh-listener"))
+        self.assertTrue(
+            await endpoint.async_send_bye(
+                "target-refresh-listener", timeout=0.001
+            )
+        )
         bye, target = sent[-1]
         self.assertEqual(
             sip.parse_message(bye).uri,
@@ -4340,6 +4370,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             "sip:ESP@127.0.0.2:5090;transport=udp",
         )
         self.assertTrue(client.bye())
+        await asyncio.sleep(0)
         bye, target = transport.sent[-1]
         self.assertEqual(
             sip.parse_message(bye).uri,
@@ -4432,6 +4463,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             sip_transfer.SipReferTarget("sip:desk@example.test", replaces),
         )
         self.assertEqual(sip.parse_message(sent[-1][0]).status_code, 200)
+        client.dialog = None
         await client.close()
 
     async def test_call_client_reports_incoming_refer_result_with_notify(self) -> None:
@@ -4527,6 +4559,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         await client._incoming_refer_task
 
         self.assertEqual(handled, [sip_transfer.SipReferTarget("sip:desk@example.test")])
+        client.dialog = None
         await client.close()
 
     def test_decline_reason_header_overrides_generic_status(self) -> None:

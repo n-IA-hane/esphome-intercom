@@ -58,6 +58,7 @@ runtime_data.sip_endpoint_manager = lambda hass: hass.data.get(DOMAIN, {}).get(
 )
 runtime_data.sip_trunk = lambda hass: hass.data.get(DOMAIN, {}).get("sip_trunk")
 sys.modules[runtime_data.__name__] = runtime_data
+sys.modules.pop(f"{PKG_NAME}.sip_runtime", None)
 sip_runtime = _load_module("sip_runtime")
 enable_reused_tcp_connection = sip_runtime.enable_reused_tcp_connection
 send_bye = sip_runtime.send_bye

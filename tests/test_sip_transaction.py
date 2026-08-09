@@ -48,6 +48,42 @@ sip_dialog = _load_module("sip_dialog")
 
 
 class SipTransactionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_dialog_transaction_stops_when_request_retires_dialog(self) -> None:
+        active = True
+        sends = 0
+        request = sip_transaction.sip.parse_message(
+            b"UPDATE sip:local@example.test SIP/2.0\r\n"
+            b"Call-ID: call-1\r\nCSeq: 2 UPDATE\r\nContent-Length: 0\r\n\r\n"
+        )
+
+        def send() -> bool:
+            nonlocal sends
+            sends += 1
+            return True
+
+        async def read(_timeout: float):
+            return request, ("192.0.2.2", 5060)
+
+        async def retire(_message, _source) -> None:
+            nonlocal active
+            active = False
+
+        result = await asyncio.wait_for(
+            sip_transaction.async_run_dialog_request_transaction(
+                send=send,
+                read=read,
+                matches=lambda _message: False,
+                active=lambda: active,
+                transport="UDP",
+                timeout=1.0,
+                on_request=retire,
+            ),
+            timeout=0.05,
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(sends, 1)
+
     async def test_remote_offer_media_commit_succeeds_without_rollback(self) -> None:
         commit = AsyncMock()
         rollback = AsyncMock()

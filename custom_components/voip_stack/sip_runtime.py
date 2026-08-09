@@ -138,8 +138,15 @@ async def async_signal_termination(
     if disposition is SipTerminationDisposition.NONE:
         return
     if disposition in {SipTerminationDisposition.AUTO, SipTerminationDisposition.BYE}:
-        if send_bye(hass, call_id):
-            return
+        for server in sip_servers(hass):
+            async_send = getattr(server, "async_send_bye", None)
+            if callable(async_send):
+                if await async_send(call_id):
+                    return
+                continue
+            send = getattr(server, "send_bye", None)
+            if callable(send) and send(call_id):
+                return
         if disposition is SipTerminationDisposition.BYE:
             return
     if disposition is SipTerminationDisposition.CANCEL:

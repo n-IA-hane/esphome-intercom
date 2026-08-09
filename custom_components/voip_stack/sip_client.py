@@ -440,14 +440,16 @@ class SipCallClient:
         self._cancel_sent = False
         self._received_provisional = False
         self._invite_task: asyncio.Task[str] | None = None
-        self._final_response_task: asyncio.Task[str] | None = None
+        self._invite_progress: asyncio.Future[str] | None = None
+        self._invite_transaction: SipClientTransaction[
+            tuple[sip.SipMessage, tuple[str, int]]
+        ] | None = None
         self._start_lock = asyncio.Lock()
         self._close_task: asyncio.Task[None] | None = None
         self._deferred_close_task: asyncio.Task[None] | None = None
+        self._dialog_termination_task: asyncio.Task[str] | None = None
         self._closing = False
         self._closed = False
-        self._bye_cseq = 0
-        self._bye_branch = ""
         self._local_dialog_cseq = self._invite_cseq
         self._remote_cseq = 0
         self._in_dialog_responses: list[_InDialogResponse] = []
@@ -536,7 +538,7 @@ class SipCallClient:
         owned_signaling_task = next(
             (
                 task
-                for task in (self._final_response_task, self._invite_task)
+                for task in (self._dialog_termination_task, self._invite_task)
                 if task is not None
                 and task is not current_task
                 and not task.done()
@@ -578,7 +580,7 @@ class SipCallClient:
                 task
                 for task in (
                     owned_signaling_task,
-                    self._final_response_task,
+                    self._dialog_termination_task,
                     self._invite_task,
                     self._incoming_refer_task,
                 )
@@ -592,6 +594,9 @@ class SipCallClient:
         if lingering_tasks:
             await asyncio.gather(*lingering_tasks, return_exceptions=True)
         self._invite_transaction_active = False
+        self._invite_transaction = None
+        self._invite_progress = None
+        self._dialog_termination_task = None
         self.dialog = None
         self.early_dialogs.clear()
         self._terminated_invite_branches.clear()
@@ -808,7 +813,6 @@ class SipCallClient:
         self._local_dialog_cseq = max(
             self._local_dialog_cseq,
             self._invite_cseq,
-            self._bye_cseq,
         ) + 1
         return self._local_dialog_cseq
 
@@ -995,7 +999,7 @@ class SipCallClient:
             else None
         )
         if prepared is None or self.dialog is None:
-            self.bye()
+            await self._terminate_confirmed_dialog()
             return "media_incompatible"
         current = self.dialog
         updated, _offer = prepared
@@ -1016,16 +1020,16 @@ class SipCallClient:
                     "SIP delayed offer preparation failed call_id=%s",
                     self.dialog_ids.call_id,
                 )
-                self.bye()
+                await self._terminate_confirmed_dialog()
                 return "media_update_failed"
         if commit is None and not unchanged:
-            self.bye()
+            await self._terminate_confirmed_dialog()
             return "media_incompatible"
         if not await apply_remote_offer_media(commit):
             _LOGGER.error(
                 "SIP delayed offer commit failed call_id=%s", self.dialog_ids.call_id
             )
-            self.bye()
+            await self._terminate_confirmed_dialog()
             return "media_update_failed"
         requested_timer = sip.negotiate_uas_session_timer(delayed.request)
         if requested_timer is not None:
@@ -1594,6 +1598,8 @@ class SipCallClient:
             raise RuntimeError("SIP client is already closed")
         if self._invite_task is not None and not self._invite_task.done():
             raise RuntimeError("INVITE transaction already active")
+        progress = asyncio.get_running_loop().create_future()
+        self._invite_progress = progress
         task = asyncio.create_task(
             self._run_invite(
                 target=target,
@@ -1607,8 +1613,24 @@ class SipCallClient:
             name=f"voip-sip-client-invite-{self.dialog_ids.call_id}",
         )
         self._invite_task = task
+
+        def completed(done: asyncio.Task[str]) -> None:
+            if self._invite_task is done:
+                self._invite_transaction = None
+            if progress.done():
+                return
+            if done.cancelled():
+                progress.cancel()
+                return
+            error = done.exception()
+            if error is not None:
+                progress.set_exception(error)
+            else:
+                progress.set_result(done.result())
+
+        task.add_done_callback(completed)
         try:
-            return await asyncio.shield(task)
+            return await asyncio.shield(progress)
         except asyncio.CancelledError:
             self.request_cancel()
             raise
@@ -1784,6 +1806,7 @@ class SipCallClient:
             t1=SIP_T1,
             t2=SIP_T2,
         )
+        self._invite_transaction = transaction
         auth_challenges = DigestChallengeTracker()
         received_provisional = False
 
@@ -1804,6 +1827,7 @@ class SipCallClient:
                     t1=SIP_T1,
                     t2=SIP_T2,
                 )
+                self._invite_transaction = transaction
                 return True
             return False
 
@@ -1866,7 +1890,14 @@ class SipCallClient:
                 if _is_invite_progress_response(msg.status_code):
                     if self._cancel_requested:
                         continue
-                    return "ringing"
+                    transaction.reset_deadline(60.0)
+                    progress = self._invite_progress
+                    if progress is not None and not progress.done():
+                        progress.set_result("ringing")
+                # A peer or controlled test transport can deliver a burst of
+                # provisional responses without blocking. Yield so the caller
+                # can observe progress or request cancellation promptly.
+                await asyncio.sleep(0)
                 continue
             if msg.status_code and 200 <= msg.status_code < 300:
                 if not self._commit_200_ok(msg, target, remote_host, int(remote_sip_port), request_uri, local_uri, remote_uri):
@@ -1876,7 +1907,7 @@ class SipCallClient:
                         else "media_incompatible"
                     )
                 if self._cancel_requested:
-                    self.bye()
+                    await self._terminate_confirmed_dialog()
                     return "cancelled"
                 return "in_call"
             if msg.status_code in {401, 407} and self.password:
@@ -1940,146 +1971,26 @@ class SipCallClient:
                 return _sip_decline_reason(msg) or sip.sip_failure_reason(msg.status_code)
 
     async def wait_for_final(self, timeout: float = 60.0) -> str:
-        """Continue an INVITE through one owned final-response transaction."""
+        """Await the final result from the sole INVITE transaction owner."""
 
         if self._closing or self._closed:
             return "cancelled"
         if self.dialog is not None:
             return "in_call"
-        if (
-            self._final_response_task is not None
-            and not self._final_response_task.done()
-        ):
-            raise RuntimeError("final INVITE response waiter already active")
-        task = asyncio.create_task(
-            self._run_wait_for_final(timeout),
-            name=f"voip-sip-client-final-{self.dialog_ids.call_id}",
-        )
-        self._final_response_task = task
+        task = self._invite_task
+        if task is None:
+            raise RuntimeError("no INVITE transaction owner is active")
+        transaction = self._invite_transaction
+        if transaction is not None:
+            transaction.reset_deadline(timeout)
         try:
-            return await asyncio.shield(task)
+            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except TimeoutError:
+            self.request_cancel()
+            return "timeout"
         except asyncio.CancelledError:
             self.request_cancel()
             raise
-
-    async def _run_wait_for_final(self, timeout: float = 60.0) -> str:
-        """Own the response stream after provisional INVITE progress."""
-
-        if self.dialog is not None:
-            return "in_call"
-        deadline = asyncio.get_running_loop().time() + timeout
-        retry_transaction: SipClientTransaction[
-            tuple[sip.SipMessage, tuple[str, int]]
-        ] | None = None
-        retry_raw: bytes | None = None
-        retry_received_provisional = False
-        while True:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                return "timeout"
-            try:
-                if retry_transaction is None:
-                    received = await self._read_response(remaining)
-                else:
-                    retry_payload = retry_raw
-
-                    async def _retransmit_retry(
-                        payload: bytes | None = retry_payload,
-                    ) -> None:
-                        assert payload is not None
-                        await self._send_raw(
-                            payload,
-                            self._pending_remote_host,
-                            self._pending_remote_sip_port,
-                        )
-
-                    received = await retry_transaction.receive(
-                        self._read_response,
-                        _retransmit_retry,
-                        retransmit_enabled=not retry_received_provisional,
-                    )
-                if received is None:
-                    return "timeout"
-                msg, addr = received
-            except (ConnectionError, OSError, RuntimeError) as err:
-                return self._transport_failure(
-                    err,
-                    self._pending_target,
-                    self._pending_remote_host,
-                    self._pending_remote_sip_port,
-                )
-            except (TypeError, ValueError) as err:
-                _LOGGER.info("SIP RX malformed while waiting for final response: %s", err)
-                continue
-            if not msg.is_response or msg.status_code is None:
-                continue
-            if not matches_response(
-                msg,
-                method="INVITE",
-                cseq=self._invite_cseq,
-                branch=self.dialog_ids.branch,
-            ):
-                continue
-            sip.mark_sip_event(self, "SIP_RESPONSE", int(msg.status_code), msg.reason)
-            _LOGGER.info("SIP RX %s %s from %s:%s", msg.status_code, msg.reason, addr[0], addr[1])
-            if 100 <= msg.status_code < 200:
-                retry_received_provisional = True
-                self._received_provisional = True
-                if not await self._ack_reliable_provisional(msg, addr):
-                    self.request_cancel()
-                    return "prack_failed"
-                if self._cancel_requested and not self._cancel_sent:
-                    self._send_cancel()
-                continue
-            if 200 <= msg.status_code < 300:
-                if not self._commit_200_ok(
-                    msg,
-                    self._pending_target,
-                    self._pending_remote_host or addr[0],
-                    self._pending_remote_sip_port,
-                    self._pending_request_uri,
-                    self._pending_local_uri,
-                    self._pending_remote_uri,
-                ):
-                    return (
-                        "cancelled"
-                        if self._closing or self._closed
-                        else "media_incompatible"
-                    )
-                return "in_call"
-            if msg.status_code >= 300:
-                self._send_invite_error_ack(msg, addr[0], addr[1])
-                try:
-                    candidate = await self._retry_invite_after(
-                        msg,
-                        remote_host=self._pending_remote_host or addr[0],
-                        remote_sip_port=self._pending_remote_sip_port,
-                    )
-                except (ConnectionError, OSError, RuntimeError) as err:
-                    return self._transport_failure(
-                        err,
-                        self._pending_target,
-                        self._pending_remote_host or addr[0],
-                        self._pending_remote_sip_port,
-                    )
-                if candidate is not None:
-                    retry_raw = candidate
-                    retry_transaction = SipClientTransaction(
-                        transport=self.signaling_transport,
-                        timeout=max(
-                            0.05,
-                            deadline - asyncio.get_running_loop().time(),
-                        ),
-                        t1=SIP_T1,
-                        t2=SIP_T2,
-                    )
-                    retry_received_provisional = False
-                    self._reliable_rseq.clear()
-                    continue
-                self._invite_transaction_active = False
-                if self._cancel_requested or self._closing or self._closed:
-                    return "cancelled"
-                return _sip_decline_reason(msg) or sip.sip_failure_reason(msg.status_code)
 
     async def _handle_dialog_media_request(
         self,
@@ -2274,7 +2185,7 @@ class SipCallClient:
                     method,
                 )
                 self._uas_invite_2xx.cancel()
-                self.bye()
+                await self._terminate_confirmed_dialog()
                 return "media_update_failed"
             if self._uas_invite_ack_timeout.is_set() or self.dialog is None:
                 return "ack_timeout"
@@ -2388,10 +2299,13 @@ class SipCallClient:
                     matches=lambda response: sip.response_matches_dialog_transaction(
                         response, request.ids, method
                     ),
-                    active=lambda: self.dialog is dialog,
+                    active=lambda: self._dialog_is_current(dialog),
                     transport=self.signaling_transport,
                     timeout=timeout,
                     on_request=_handle_request,
+                    on_unmatched=lambda message, _source: (
+                        self._ack_retransmitted_invite_2xx(message)
+                    ),
                     on_sent=lambda: sip.mark_sip_event(self, method),
                 )
             except ConnectionAbortedError:
@@ -2399,6 +2313,19 @@ class SipCallClient:
             except (ConnectionError, OSError):
                 return None
         return None
+
+    def _dialog_is_current(self, expected: SipDialog) -> bool:
+        current = self.dialog
+        return bool(
+            current is not None
+            and (
+                current is expected
+                or (
+                    current.call_id == expected.call_id
+                    and current.remote_tag == expected.remote_tag
+                )
+            )
+        )
 
     async def refer(
         self,
@@ -2484,8 +2411,7 @@ class SipCallClient:
                     return str(err) or "remote_hangup"
                 if refresh_result == "refreshed":
                     continue
-                self.bye()
-                self.dialog = None
+                await self._terminate_confirmed_dialog()
                 return refresh_result
             read_task: asyncio.Task[
                 tuple[sip.SipMessage, tuple[str, int]] | None
@@ -3565,6 +3491,11 @@ class SipCallClient:
         now = asyncio.get_running_loop().time() if session_timer else 0.0
         if not provisional:
             self.dialog_ids.remote_tag = remote_tag
+            if (
+                self._dialog_termination_task is not None
+                and self._dialog_termination_task.done()
+            ):
+                self._dialog_termination_task = None
         candidate = SipDialog(
             target=target,
             remote_host=remote_host,
@@ -3834,24 +3765,55 @@ class SipCallClient:
         if not self._send_dialog_request(request.raw, next_host, next_port):
             _LOGGER.warning("SIP TX BYE dropped: signaling path unavailable")
             return False
-        self._bye_cseq = request.ids.cseq
-        self._bye_branch = request.ids.branch
         sip.mark_sip_event(self, "BYE")
         _LOGGER.info("SIP TX BYE %s:%s", next_host, next_port)
         return True
 
-    def bye(self) -> bool:
-        if self.dialog is None:
-            return False
+    async def _run_bye_transaction(self, dialog: SipDialog, timeout: float) -> str:
+        """Own the confirmed-dialog BYE transaction until its final response."""
+
+        if not self._dialog_is_current(dialog) or not self._has_signaling_path():
+            return "transport_unreachable"
         self._uas_invite_2xx.cancel()
-        return self._send_bye_request(
-            self.dialog.remote_host,
-            self.dialog.remote_sip_port,
-            self.dialog.remote_target_uri or self.dialog.remote_uri,
-            self.dialog.local_uri,
-            self.dialog.remote_uri,
-            route_set=self.dialog.route_set,
+        try:
+            response = await self._send_in_dialog_request("BYE", timeout=timeout)
+        except ConnectionAbortedError as err:
+            return str(err) or "remote_hangup"
+        finally:
+            if self._dialog_is_current(dialog):
+                self.dialog = None
+        if response is None:
+            return "timeout"
+        if 200 <= int(response.status_code or 0) < 300:
+            return "remote_hangup"
+        return "remote_hangup"
+
+    def _start_bye_transaction(self, timeout: float = 1.5) -> asyncio.Task[str] | None:
+        """Start exactly one BYE owner for the current confirmed dialog."""
+
+        task = self._dialog_termination_task
+        if task is not None:
+            return task
+        dialog = self.dialog
+        if dialog is None or not self._has_signaling_path():
+            return None
+        task = asyncio.create_task(
+            self._run_bye_transaction(dialog, timeout),
+            name=f"voip-sip-client-bye-{self.dialog_ids.call_id}",
         )
+        self._dialog_termination_task = task
+        return task
+
+    async def _terminate_confirmed_dialog(self, timeout: float = 1.5) -> str:
+        task = self._start_bye_transaction(timeout)
+        if task is None:
+            return "transport_unreachable"
+        return await asyncio.shield(task)
+
+    def bye(self) -> bool:
+        """Compatibility entry point that delegates to the single BYE owner."""
+
+        return self._start_bye_transaction() is not None
 
     def request_cancel(self) -> bool:
         """Request cancellation by the coroutine that owns the INVITE transaction."""
@@ -3953,39 +3915,8 @@ class SipCallClient:
         transaction is independent, so a final non-2xx INVITE response is
         sufficient to stop waiting once it has been ACKed.
         """
-        if self.dialog is not None:
-            if not self.bye():
-                return "transport_unreachable"
-            deadline = asyncio.get_running_loop().time() + timeout
-            while asyncio.get_running_loop().time() < deadline:
-                try:
-                    received = await self._read_response(max(0.05, deadline - asyncio.get_running_loop().time()))
-                except asyncio.TimeoutError:
-                    break
-                except sip.SipError as err:
-                    _LOGGER.debug(
-                        "Ignoring malformed SIP response while waiting for BYE: %s",
-                        err,
-                    )
-                    continue
-                if received is None:
-                    break
-                msg, addr = received
-                if not msg.is_response or msg.status_code is None:
-                    continue
-                sip.mark_sip_event(self, "SIP_RESPONSE", int(msg.status_code), msg.reason)
-                _LOGGER.info("SIP RX %s %s from %s:%s", msg.status_code, msg.reason, addr[0], addr[1])
-                if self._ack_retransmitted_invite_2xx(msg):
-                    continue
-                if matches_response(
-                    msg,
-                    method="BYE",
-                    cseq=self._bye_cseq,
-                    branch=self._bye_branch,
-                ) and 200 <= msg.status_code < 300:
-                    self.dialog = None
-                    return "remote_hangup"
-            return "timeout"
+        if self.dialog is not None or self._dialog_termination_task is not None:
+            return await self._terminate_confirmed_dialog(timeout)
 
         invite_task = self._invite_task
         if invite_task is not None and not invite_task.done():
@@ -3997,34 +3928,10 @@ class SipCallClient:
                 invite_task.add_done_callback(self._schedule_deferred_close)
                 return "cancel_pending"
 
-        final_response_task = self._final_response_task
-        if final_response_task is not None:
-            deadline = asyncio.get_running_loop().time() + timeout
-            if not final_response_task.done():
-                if not self.request_cancel():
-                    return "transport_unreachable"
-                try:
-                    await asyncio.wait_for(
-                        asyncio.shield(final_response_task),
-                        timeout=timeout,
-                    )
-                except asyncio.TimeoutError:
-                    return "cancel_pending"
-            if self.dialog is not None:
-                return await self.terminate(
-                    timeout=max(
-                        0.05,
-                        deadline - asyncio.get_running_loop().time(),
-                    )
-                )
-            if not self._invite_transaction_active:
-                return "cancelled"
-
         sent_cancel = self.cancel()
         if not sent_cancel:
             return "transport_unreachable"
         saw_cancel_ok = False
-        cancel_race_bye_sent = False
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
             try:
@@ -4054,14 +3961,6 @@ class SipCallClient:
             if cseq_method in {"CANCEL", "INVITE"}:
                 if cseq.number != self._invite_cseq or response_branch != self.dialog_ids.branch:
                     continue
-            elif cseq_method == "BYE":
-                if not matches_response(
-                    msg,
-                    method="BYE",
-                    cseq=self._bye_cseq,
-                    branch=self._bye_branch,
-                ):
-                    continue
             else:
                 continue
             if cseq_method == "CANCEL" and 200 <= msg.status_code < 300:
@@ -4079,8 +3978,12 @@ class SipCallClient:
                     self._pending_remote_uri,
                 )
                 if committed:
-                    self.bye()
-                cancel_race_bye_sent = True
+                    remaining = max(
+                        0.05,
+                        deadline - asyncio.get_running_loop().time(),
+                    )
+                    await self._terminate_confirmed_dialog(timeout=remaining)
+                return "cancelled"
             elif cseq_method == "INVITE" and msg.status_code >= 300:
                 self._send_invite_error_ack(msg, addr[0], addr[1])
                 self._invite_transaction_active = False
@@ -4089,10 +3992,7 @@ class SipCallClient:
                 # attempt is over even if the 200 to CANCEL was lost or was
                 # consumed by the transaction owner just before teardown.
                 return "cancelled"
-            elif cseq_method == "BYE" and cancel_race_bye_sent and 200 <= msg.status_code < 300:
-                self.dialog = None
-                return "cancelled"
-        if saw_cancel_ok or cancel_race_bye_sent:
+        if saw_cancel_ok:
             return "cancelled"
         return "timeout"
 

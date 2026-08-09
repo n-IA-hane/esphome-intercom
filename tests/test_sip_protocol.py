@@ -795,6 +795,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         response = sip.parse_message(transport.sent[-1][0])
         self.assertEqual(response.status_code, 200)
         self.assertTrue(client.bye())
+        await asyncio.sleep(0)
         bye = sip.parse_message(transport.sent[-1][0])
         self.assertEqual(
             sip.name_addr_identity(bye.header("To")),
@@ -1410,7 +1411,11 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 "<sip:core@127.0.0.3:5070;lr>",
             ),
         )
-        self.assertTrue(client.bye())
+        async def start_bye() -> None:
+            self.assertTrue(client.bye())
+            await asyncio.sleep(0)
+
+        asyncio.run(start_bye())
 
         messages = [sip.parse_message(raw) for raw, _addr in transport.sent]
         self.assertEqual([message.method for message in messages], ["ACK", "BYE"])
@@ -3025,12 +3030,12 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             local_rtp_port=41000,
         )
         client.dialog = types.SimpleNamespace()  # type: ignore[assignment]
-        client.bye = lambda: True  # type: ignore[method-assign]
+        client.transport = types.SimpleNamespace()  # type: ignore[assignment]
 
-        async def read_response(_timeout: float):
+        async def send_in_dialog_request(_method: str, *, timeout: float):
             raise RuntimeError("reader invariant")
 
-        client._read_response = read_response  # type: ignore[method-assign]
+        client._send_in_dialog_request = send_in_dialog_request  # type: ignore[method-assign]
 
         with self.assertRaisesRegex(RuntimeError, "reader invariant"):
             await client.terminate(timeout=0.1)
@@ -3139,13 +3144,6 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
         transport = FakeTransport()
         client.transport = transport  # type: ignore[assignment]
-        client._pending_remote_host = "127.0.0.2"
-        client._pending_remote_sip_port = 5060
-        client._pending_request_uri = "sip:ESP@127.0.0.2:5060"
-        client._pending_local_uri = "sip:HA@127.0.0.1:5060"
-        client._pending_remote_uri = "sip:ESP@127.0.0.2:5060"
-        client._invite_transaction_active = True
-        client._received_provisional = True
         response_ready = asyncio.Event()
         response_release = asyncio.Event()
         read_count = 0
@@ -3153,6 +3151,31 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         async def read_response(_timeout: float):
             nonlocal read_count
             read_count += 1
+            if read_count == 1:
+                return (
+                    sip.parse_message(
+                        sip.build_response(
+                            180,
+                            "Ringing",
+                            [
+                                (
+                                    "Via",
+                                    "SIP/2.0/UDP 127.0.0.1:5060;branch="
+                                    f"{client.dialog_ids.branch}",
+                                ),
+                                (
+                                    "From",
+                                    "<sip:HA@127.0.0.1>;tag="
+                                    f"{client.dialog_ids.local_tag}",
+                                ),
+                                ("To", "<sip:ESP@127.0.0.2>;tag=remote"),
+                                ("Call-ID", client.dialog_ids.call_id),
+                                ("CSeq", f"{client._invite_cseq} INVITE"),
+                            ],
+                        )
+                    ),
+                    ("127.0.0.2", 5060),
+                )
             response_ready.set()
             await response_release.wait()
             return (
@@ -3182,6 +3205,14 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
 
         client._read_response = read_response  # type: ignore[method-assign]
 
+        self.assertEqual(
+            await client.invite(
+                target="ESP",
+                remote_host="127.0.0.2",
+                remote_sip_port=5060,
+            ),
+            "ringing",
+        )
         waiter = asyncio.create_task(client.wait_for_final(timeout=10))
         await response_ready.wait()
         waiter.cancel()
@@ -3198,10 +3229,10 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             "cancelled",
         )
         await release
-        self.assertEqual(read_count, 1)
+        self.assertEqual(read_count, 2)
         self.assertEqual(
             [sip.parse_message(raw).method for raw, _addr in transport.sent],
-            ["CANCEL", "ACK"],
+            ["INVITE", "CANCEL", "ACK"],
         )
 
     async def test_cancel_race_accepts_the_separate_bye_transaction(self) -> None:
@@ -3250,8 +3281,15 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         terminating = asyncio.create_task(client.terminate(timeout=0.5))
         while not any(sip.parse_message(raw).method == "BYE" for raw, _addr in transport.sent):
             await asyncio.sleep(0)
+        bye = next(
+            sip.parse_message(raw)
+            for raw, _addr in transport.sent
+            if sip.parse_message(raw).method == "BYE"
+        )
+        bye_cseq = sip.parse_cseq(bye.header("CSeq"))
+        bye_branch = sip.parse_via(bye.header_values("Via")[0]).branch
         client.queue.put_nowait((
-            response(200, "OK", "BYE", client._bye_cseq, client._bye_branch),
+            response(200, "OK", "BYE", bye_cseq.number, bye_branch),
             ("127.0.0.2", 5060),
         ))
 
@@ -3928,7 +3966,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(dialog.delayed_offer)
         self.assertIsNotNone(dialog.invite)
         self.assertEqual(dialog.invite.remote_rtp_port, 42000)
-        endpoint.send_bye(call_id)
+        await endpoint.async_send_bye(call_id, timeout=0.001)
         await endpoint.wait_closed()
 
     async def test_inbound_initial_delayed_offer_requires_explicit_handler(self) -> None:
@@ -4031,16 +4069,22 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             "z9hG4bKack",
             to_tag=sip.extract_tag(final.header("To")),
         )
-        await endpoint._handle_datagram(ack, ("127.0.0.2", 5060))
-        await endpoint._handle_datagram(ack, ("127.0.0.2", 5060))
-        await endpoint.wait_closed()
+        with patch.object(sip_listener, "_INVITE_2XX_TIMEOUT", 0.02):
+            await endpoint._handle_datagram(ack, ("127.0.0.2", 5060))
+            await endpoint._handle_datagram(ack, ("127.0.0.2", 5060))
+            await endpoint.wait_closed()
 
         requests = [
-            message.method
+            message
             for raw in sent
             if (message := sip.parse_message(raw)).is_request
         ]
-        self.assertEqual(requests, ["BYE"])
+        self.assertTrue(requests)
+        self.assertEqual({message.method for message in requests}, {"BYE"})
+        self.assertEqual(
+            {(message.header("CSeq"), message.header("Via")) for message in requests},
+            {(requests[0].header("CSeq"), requests[0].header("Via"))},
+        )
         self.assertEqual(rollbacks, ["rollback"])
         self.assertEqual(terminated, [(call_id, "media_incompatible")])
         self.assertNotIn(call_id, endpoint.active_dialogs)
@@ -4140,54 +4184,118 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(await client._read_response(0.001))
 
-    async def test_final_response_waiter_stops_on_transport_failure(self) -> None:
+    async def test_invite_owner_stops_on_transport_failure_after_progress(self) -> None:
         client = sip_client.SipCallClient(
             local_ip="192.168.1.10",
             local_name="HA",
             local_sip_port=5060,
             local_rtp_port=41000,
         )
-        client._pending_target = "P4"
-        client._pending_remote_host = "192.0.2.10"
-        client._pending_remote_sip_port = 5060
-        client._invite_transaction_active = True
-        reads = 0
-
-        async def read_response(_timeout: float):
-            nonlocal reads
-            reads += 1
-            raise OSError("socket closed")
-
-        client._read_response = read_response  # type: ignore[method-assign]
-
-        self.assertEqual(
-            await client.wait_for_final(timeout=1),
-            "transport_unreachable",
-        )
-        self.assertEqual(reads, 1)
-        self.assertFalse(client._invite_transaction_active)
-        self.assertEqual(client.last_sip_event, "TRANSPORT_ERROR")
-
-    async def test_final_response_waiter_skips_one_malformed_message(self) -> None:
-        client = sip_client.SipCallClient(
-            local_ip="192.168.1.10",
-            local_name="HA",
-            local_sip_port=5060,
-            local_rtp_port=41000,
-        )
+        client.transport = types.SimpleNamespace(sendto=lambda _data, _addr: None)
         reads = 0
 
         async def read_response(_timeout: float):
             nonlocal reads
             reads += 1
             if reads == 1:
+                return (
+                    sip.parse_message(
+                        sip.build_response(
+                            180,
+                            "Ringing",
+                            [
+                                (
+                                    "Via",
+                                    "SIP/2.0/UDP 192.168.1.10:5060;branch="
+                                    f"{client.dialog_ids.branch}",
+                                ),
+                                (
+                                    "From",
+                                    "<sip:HA@192.168.1.10>;tag="
+                                    f"{client.dialog_ids.local_tag}",
+                                ),
+                                ("To", "<sip:P4@192.0.2.10>;tag=remote"),
+                                ("Call-ID", client.dialog_ids.call_id),
+                                ("CSeq", f"{client._invite_cseq} INVITE"),
+                            ],
+                        )
+                    ),
+                    ("192.0.2.10", 5060),
+                )
+            raise OSError("socket closed")
+
+        client._read_response = read_response  # type: ignore[method-assign]
+
+        self.assertEqual(
+            await client.invite(
+                target="P4",
+                remote_host="192.0.2.10",
+                remote_sip_port=5060,
+            ),
+            "ringing",
+        )
+        self.assertEqual(
+            await client.wait_for_final(timeout=1),
+            "transport_unreachable",
+        )
+        self.assertEqual(reads, 2)
+        self.assertFalse(client._invite_transaction_active)
+        self.assertEqual(client.last_sip_event, "TRANSPORT_ERROR")
+
+    async def test_invite_owner_skips_one_malformed_final_message(self) -> None:
+        client = sip_client.SipCallClient(
+            local_ip="192.168.1.10",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+        )
+        client.transport = types.SimpleNamespace(sendto=lambda _data, _addr: None)
+        reads = 0
+
+        async def read_response(_timeout: float):
+            nonlocal reads
+            reads += 1
+            if reads == 1:
+                return (
+                    sip.parse_message(
+                        sip.build_response(
+                            180,
+                            "Ringing",
+                            [
+                                (
+                                    "Via",
+                                    "SIP/2.0/UDP 192.168.1.10:5060;branch="
+                                    f"{client.dialog_ids.branch}",
+                                ),
+                                (
+                                    "From",
+                                    "<sip:HA@192.168.1.10>;tag="
+                                    f"{client.dialog_ids.local_tag}",
+                                ),
+                                ("To", "<sip:P4@192.0.2.10>;tag=remote"),
+                                ("Call-ID", client.dialog_ids.call_id),
+                                ("CSeq", f"{client._invite_cseq} INVITE"),
+                            ],
+                        )
+                    ),
+                    ("192.0.2.10", 5060),
+                )
+            if reads == 2:
                 raise sip.SipError("malformed packet")
             return None
 
         client._read_response = read_response  # type: ignore[method-assign]
 
+        self.assertEqual(
+            await client.invite(
+                target="P4",
+                remote_host="192.0.2.10",
+                remote_sip_port=5060,
+            ),
+            "ringing",
+        )
         self.assertEqual(await client.wait_for_final(timeout=1), "timeout")
-        self.assertEqual(reads, 2)
+        self.assertEqual(reads, 3)
 
     async def test_invite_honors_retry_after_once_as_a_new_transaction(self) -> None:
         class FakeTransport:
@@ -4346,6 +4454,106 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_auth["nc"], "00000001")
         self.assertEqual(retry_auth["nc"], "00000002")
         self.assertNotEqual(first_auth["cnonce"], retry_auth["cnonce"])
+
+    async def test_single_invite_owner_handles_auth_after_session_progress(self) -> None:
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+            def close(self) -> None:
+                return None
+
+        media_format = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        rtp_format = sdp.audio_format_to_rtp(media_format, 96)
+        client = sip_client.SipCallClient(
+            local_ip="192.168.1.10",
+            local_name="Casa",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            supported_formats=[media_format],
+            username="casa",
+            password="secret",
+        )
+        transport = FakeTransport()
+        client.transport = transport  # type: ignore[assignment]
+        response_count = 0
+
+        async def read_response(_timeout: float):
+            nonlocal response_count
+            response_count += 1
+            status, reason = (
+                (183, "Session Progress")
+                if response_count == 1
+                else (407, "Proxy Authentication Required")
+                if response_count == 2
+                else (200, "OK")
+            )
+            headers = [
+                (
+                    "Via",
+                    "SIP/2.0/UDP 192.168.1.10:5060;"
+                    f"branch={client.dialog_ids.branch}",
+                ),
+                (
+                    "From",
+                    "<sip:Casa@192.168.1.10:5060>;"
+                    f"tag={client.dialog_ids.local_tag}",
+                ),
+                ("To", "<sip:P4@192.0.2.10>;tag=remote"),
+                ("Contact", "<sip:P4@192.0.2.10:5060>"),
+                ("Call-ID", client.dialog_ids.call_id),
+                ("CSeq", f"{client._invite_cseq} INVITE"),
+            ]
+            body = b""
+            if status == 407:
+                headers.append(
+                    (
+                        "Proxy-Authenticate",
+                        'Digest realm="sip.example", nonce="after-progress", '
+                        'algorithm=SHA-256, qop="auth"',
+                    )
+                )
+            elif status == 200:
+                invite = next(
+                    sip.parse_message(raw)
+                    for raw, _addr in reversed(transport.sent)
+                    if sip.parse_message(raw).method == "INVITE"
+                )
+                body = sdp.build_answer_directional(
+                    "192.0.2.10",
+                    "192.0.2.10",
+                    42000,
+                    rtp_format,
+                    rtp_format,
+                    remote_sdp=invite.body.decode(),
+                ).encode()
+                headers.append(("Content-Type", "application/sdp"))
+            return (
+                sip.parse_message(sip.build_response(status, reason, headers, body)),
+                ("192.0.2.10", 5060),
+            )
+
+        client._read_response = read_response  # type: ignore[method-assign]
+        self.assertEqual(
+            await client.invite(
+                target="P4",
+                remote_host="192.0.2.10",
+                remote_sip_port=5060,
+            ),
+            "ringing",
+        )
+        self.assertEqual(await client.wait_for_final(), "in_call")
+        messages = [sip.parse_message(raw) for raw, _addr in transport.sent]
+        self.assertEqual(
+            [message.method for message in messages],
+            ["INVITE", "ACK", "INVITE", "ACK"],
+        )
+        self.assertTrue(messages[2].header("Proxy-Authorization").startswith("Digest "))
+        client.dialog = None
+        await client.close()
 
     async def test_initial_delayed_offer_is_answered_in_ack(self) -> None:
         class FakeTransport:
