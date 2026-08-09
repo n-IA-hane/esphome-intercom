@@ -39,6 +39,7 @@ class AutomationRoute:
     status: int = 0
     reason: str = ""
     decline_reason: str = ""
+    endpoint_id: str = ""
 
     @classmethod
     def from_payload(cls, payload: object) -> AutomationRoute:
@@ -50,6 +51,7 @@ class AutomationRoute:
             status=int(payload.get("status") or 0),
             reason=str(payload.get("reason") or "").strip(),
             decline_reason=str(payload.get("decline_reason") or "").strip(),
+            endpoint_id=str(payload.get("endpoint_id") or "").strip(),
         )
 
 

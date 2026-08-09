@@ -141,7 +141,7 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
             "status": int(data.get("status") or 0),
             "reason": str(data.get("reason") or "").strip(),
             "decline_reason": str(data.get("decline_reason") or "").strip(),
-            "endpoint_id": str(data.get("endpoint_id") or "").strip(),
+            "endpoint_id": endpoint_id,
             "media_client_id": str(data.get("media_client_id") or "").strip(),
             "send_video": bool(data.get("send_video", False)),
         }

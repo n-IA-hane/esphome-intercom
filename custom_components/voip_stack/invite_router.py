@@ -361,27 +361,37 @@ async def route_invite(
         fallback_destination,
     )
 
-    target_resolution = resolve_inbound_target(
-        invite=invite,
-        decision=decision,
-        endpoint_registry=endpoint_registry,
-        roster_entries=roster_entries,
-        route_resolver=_ha_router_decision,
-    )
-    if target_resolution.failure is not None:
-        return target_resolution.failure
-    decision = target_resolution.decision
-    target_endpoint = target_resolution.endpoint
-    resolved_callee = str(
-        (
-            decision.entry.display_name
-            if decision.entry is not None
-            else decision.target
-        )
-        or invite.target
-    ).strip()
-
     force_ha_softphone = route_action == "answer_ha"
+    if force_ha_softphone:
+        target_endpoint = (
+            endpoint_registry.get(automation_route.endpoint_id)
+            if automation_route.endpoint_id
+            else preferred_browser_phone(hass)
+        )
+        if target_endpoint is None:
+            return SipInviteResult(480, "Temporarily Unavailable", to_tag="")
+        resolved_callee = target_endpoint.name
+    else:
+        target_resolution = resolve_inbound_target(
+            invite=invite,
+            decision=decision,
+            endpoint_registry=endpoint_registry,
+            roster_entries=roster_entries,
+            route_resolver=_ha_router_decision,
+        )
+        if target_resolution.failure is not None:
+            return target_resolution.failure
+        decision = target_resolution.decision
+        target_endpoint = target_resolution.endpoint
+        resolved_callee = str(
+            (
+                decision.entry.display_name
+                if decision.entry is not None
+                else decision.target
+            )
+            or invite.target
+        ).strip()
+
     trunk_cfg = _get_trunk_config(hass)
     trunk = sip_trunk(hass)
     trunk_ready = _trunk_enabled(trunk_cfg) and bool(
