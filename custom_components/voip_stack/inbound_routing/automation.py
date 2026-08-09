@@ -14,7 +14,7 @@ from ..call_projection import publish_bridge_projection
 from ..call_scope import set_pending_route, take_pending_route
 from ..endpoint_lifecycle import call_registry
 from ..endpoint_session import TerminationIntent
-from ..fsm import TerminalReason
+from ..fsm import CallState, TerminalReason
 from ..sip_listener import SipInviteResult
 
 if TYPE_CHECKING:
@@ -87,6 +87,16 @@ async def request_route_override(
     loop = asyncio.get_running_loop()
     future: asyncio.Future = loop.create_future()
     expires_at = time.time() + SIP_ROUTE_DECISION_TIMEOUT
+    registry = call_registry(hass)
+    session = registry.upsert(
+        invite.call_id,
+        state=CallState.CONNECTING.value,
+        caller=invite.caller,
+        callee=decision.target or invite.target,
+        route_kind=decision.action.value,
+    )
+    if session is None:
+        return AutomationRoute()
     set_pending_route(hass, invite.call_id, {
         "future": future,
         "invite": invite,
@@ -96,8 +106,6 @@ async def request_route_override(
         "decision_deadline": expires_at,
         "fallback_destination": decision.target,
     })
-    session = call_registry(hass).get_session(invite.call_id)
-    assert session is not None
     publish_bridge_projection(
         hass,
         session,
