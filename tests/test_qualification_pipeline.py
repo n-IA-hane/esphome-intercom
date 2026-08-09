@@ -688,6 +688,7 @@ def test_workflow_wires_fail_closed_qualification_chain() -> None:
     assert "if-no-files-found: error" in workflow
     assert "yaml_paths.sh --local" in workflow
     assert "scripts/run_peer_live_qualification.sh" in workflow
+    assert "VOIP_QUALIFICATION_POLICY_ENDPOINT_ID" in workflow
     assert 'build_root="$RUNNER_TEMP/candidate"' in workflow
     assert (
         "working-directory: workspace/esphome-intercom\n        run: |\n          ./scripts/yaml_paths.sh --local"

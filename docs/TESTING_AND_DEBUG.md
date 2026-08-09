@@ -55,6 +55,24 @@ Some tests deliberately lock down source-level routing contracts; they catch
 accidental branch removal but do not prove a real SIP transaction, browser
 codec or RTP path. Release evidence must include the real matrix below.
 
+The peer-live runner also changes and restores DND and auto-answer on one real
+HA browser phone. Select that phone explicitly, either as argument 2 or through
+the self-hosted runner variable:
+
+```bash
+HA_PYTHON=/path/to/ha/.venv/bin/python \
+  ./scripts/run_peer_live_qualification.sh evidence/results <endpoint_id>
+
+VOIP_QUALIFICATION_POLICY_ENDPOINT_ID=<endpoint_id> \
+HA_PYTHON=/path/to/ha/.venv/bin/python \
+  ./scripts/run_peer_live_qualification.sh evidence/results
+```
+
+Configure the GitHub Actions repository variable
+`VOIP_QUALIFICATION_POLICY_ENDPOINT_ID` for the hardware runner. The command
+fails before testing when the selection is absent. It never assumes the
+historical `default` endpoint.
+
 Important groups:
 
 - `tests/test_voip_backend_route_contract.py`: static contracts for SIP route

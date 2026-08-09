@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -68,6 +69,101 @@ def test_matrix_declares_required_route_and_answer_cases() -> None:
         "registered_sip_peer_auto_answer_off_callee_bye",
         "initial_delayed_offer_caller_bye",
     )
+    assert runner.POLICY_CASES == (
+        "browser_phone_auto_answer_enabled_ha_runtime",
+        "browser_phone_auto_answer_disabled_ha_runtime",
+        "browser_phone_dnd_enabled",
+        "browser_phone_dnd_disabled",
+    )
+    assert runner.CONCURRENCY_CASES == (
+        "stale_route_sequence_is_rejected",
+        "concurrent_route_requests_remain_distinct",
+    )
+
+
+def test_external_dtmf_contracts_have_real_executors() -> None:
+    runner = load_runner()
+
+    for executor, case_name in runner.EXTERNAL_EXECUTABLE_CONTRACTS.values():
+        path = ROOT / executor
+        assert path.is_file()
+        assert case_name in path.read_text(encoding="utf-8")
+
+
+def test_phone_policy_helper_uses_public_service_and_restores_state() -> None:
+    runner = load_runner()
+    calls: list[tuple[str, str, dict[str, object]]] = []
+
+    class Api:
+        enabled = False
+
+        def state(self, _entity_id):
+            return {"state": "on" if self.enabled else "off"}
+
+        def service(self, domain, service, data):
+            calls.append((domain, service, data))
+            self.enabled = bool(data["auto_answer"])
+
+    api = Api()
+    result = runner._set_phone_policy(
+        api,
+        service="set_auto_answer",
+        field="auto_answer",
+        entity_id="switch.casa_auto_answer",
+        device_id="phone-device",
+        enabled=True,
+    )
+
+    assert result["observed"] == "on"
+    assert calls == [
+        (
+            "voip_stack",
+            "set_auto_answer",
+            {"device_id": "phone-device", "auto_answer": True},
+        ),
+        (
+            "voip_stack",
+            "set_auto_answer",
+            {"device_id": "phone-device", "auto_answer": False},
+        ),
+    ]
+
+
+def test_runner_resolves_phone_policy_entities_instead_of_naming_the_lab() -> None:
+    source = (ROOT / "scripts/run_ha_real_matrix.py").read_text(encoding="utf-8")
+
+    assert "config/entity_registry/list" in source
+    assert "config/device_registry/list" in source
+    assert 'endpoint_id="default"' not in source
+    assert "--policy-endpoint-id" in source
+    assert "switch.casa_auto_answer" not in source
+    assert "switch.voip_stack_lab_do_not_disturb" not in source
+
+
+def test_peer_live_wrapper_requires_explicit_policy_endpoint(
+    tmp_path: Path,
+) -> None:
+    environment = dict(os.environ)
+    environment["HA_PYTHON"] = "/bin/true"
+    environment.pop("VOIP_QUALIFICATION_POLICY_ENDPOINT_ID", None)
+
+    completed = subprocess.run(
+        [
+            str(ROOT / "scripts/run_peer_live_qualification.sh"),
+            str(tmp_path),
+        ],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "requires an explicit policy endpoint" in completed.stdout
+    wrapper = (ROOT / "scripts/run_peer_live_qualification.sh").read_text()
+    assert '--policy-endpoint-id "$policy_endpoint_id"' in wrapper
 
 
 def test_qualification_package_uses_public_selection_and_real_ring_delay() -> None:

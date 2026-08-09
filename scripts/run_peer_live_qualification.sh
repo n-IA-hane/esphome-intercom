@@ -6,10 +6,16 @@ cd "$repo_root"
 
 ha_python=${HA_PYTHON:?HA_PYTHON must select the Home Assistant test environment}
 evidence_root=${1:-evidence/results}
+policy_endpoint_id=${2:-${VOIP_QUALIFICATION_POLICY_ENDPOINT_ID:-}}
+[[ -n "$policy_endpoint_id" ]] || {
+  echo "peer-live requires an explicit policy endpoint as argument 2 or VOIP_QUALIFICATION_POLICY_ENDPOINT_ID" >&2
+  exit 2
+}
 mkdir -p "$evidence_root"
 
 "$ha_python" scripts/run_ha_real_matrix.py \
   --out-dir "$evidence_root/ha-real-matrix" \
+  --policy-endpoint-id "$policy_endpoint_id" \
   --summary-output "$evidence_root/peer-live.json"
 "$ha_python" scripts/run_sip_extensions_lab.py \
   --out-dir "$evidence_root/sip-extensions"
