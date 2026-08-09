@@ -334,7 +334,11 @@ class EspApi:
         await maybe_await(self.client.subscribe_states(self._on_state))
         self._unsubscribe_logs = self.client.subscribe_logs(
             self._on_log,
-            log_level=LogLevel.LOG_LEVEL_DEBUG,
+            # INFO signaling for every packet materially loads the same WiFi
+            # TX buffers being qualified. Keep the always-on observer at WARN;
+            # state, runtime and failure logs remain available without turning
+            # the test harness into a source of network backpressure.
+            log_level=LogLevel.LOG_LEVEL_WARN,
             dump_config=False,
         )
         await asyncio.sleep(0.6)
