@@ -273,16 +273,18 @@ This profile does not claim support for:
 - more than one browser owning the same active HA video stream;
 - SRTP, DTLS, ICE, STUN or TURN;
 - RTCP multiplexing, generic NACK retransmission or bandwidth adaptation;
-- recording, snapshots or a camera entity;
-- adding/removing video on an established SIP-to-SIP relay bridge, or changing
-  the codec contract of an established video stream;
-- locally initiated media renegotiation or REFER/NOTIFY transfer;
+- call recording or a call-snapshot service. Qualified P4 profiles may expose
+  their camera separately through the normal ESPHome camera entity;
+- arbitrary codec replacement on an established video stream. Compatible
+  audio-to-video add/remove is negotiated transactionally through re-INVITE;
 - IPv6 RTP media.
 
 Unsupported video is rejected in the SDP answer with a zero media port while
-a compatible audio section remains active. A direct HA-browser dialog can
-stage and commit a compatible peer-initiated video add/remove; rejected or
-stale updates preserve the previous media contract.
+a compatible audio section remains active. HA-owned dialogs stage and commit a
+compatible video add/remove only after every affected dialog accepts it;
+rejected or stale updates preserve the previous media contract. SIP REFER call
+transfer is independent of the video codec and uses the normal established-call
+service.
 
 ## Qualification
 

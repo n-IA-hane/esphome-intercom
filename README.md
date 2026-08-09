@@ -80,7 +80,9 @@ phones, Assist and a trunk are optional layers.
 | Native ESPHome mic/speaker paths | [`yamls/voip-only/esphome-native/`](yamls/voip-only/esphome-native/) |
 | New or unqualified hardware | [`yamls/experimental/`](yamls/experimental/) |
 
-The [deployment guide](docs/DEPLOYMENT_GUIDE.md) explains how to choose between
+The [user guide](docs/USER_GUIDE.md) continues from installation through cards,
+calls, SIP accounts, groups, Assist, trunks and diagnostics. The
+[deployment guide](docs/DEPLOYMENT_GUIDE.md) explains how to choose between
 single-bus, dual-bus, lightweight AEC and full AFE profiles.
 
 ## How it works
@@ -430,6 +432,13 @@ integration loaded successfully.
 - automatic Dahua `PCM/16000` interoperability for matching registered
   door-station profiles;
 - stronger SIP digest stale-nonce recovery and registered TCP-flow reuse;
+- RFC 7616/8760 Digest with MD5, SHA-256, SHA-512-256, `auth` and `auth-int`
+  across the HA registrar and trunk client;
+- reliable provisional responses with `100rel` and PRACK, shared RFC 4028
+  session refresh policy, initial and in-dialog delayed offers, remote SIP fork
+  settlement and standards-based REFER/NOTIFY call transfer;
+- RFC 3263 NAPTR/SRV discovery, IPv6 SIP addressing and verified SIP TLS on HA
+  SIP legs, including preserved `sips:` routing and transfer identities;
 - FRITZBox-compatible trunk REGISTER Request-URI handling and RTP reframing
   when a peer sends packets shorter than its negotiated `ptime`;
 - browser media preflight before Call or Answer, so a missing microphone API
@@ -437,10 +446,14 @@ integration loaded successfully.
   BYE;
 - one persisted preferred Home Assistant phone, selected by its real Device ID,
   so service calls remain deterministic with multiple browser phones;
+- one authoritative termination and cleanup path for browser, routed, trunk,
+  conference and forwarded calls, with stale-generation protection;
 - faster vectorized G.711 conversion on HA;
 - smaller call-routing orchestrators with the existing single authoritative
   call lifecycle preserved;
 - a substantially expanded, schema-checked automation cookbook.
+- fail-closed candidate qualification with real HA, browser, SIP peers,
+  maintained firmware builds and hardware-in-the-loop evidence.
 
 The complete delta is in the
 [`2026.8.1-dev` pre-release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.1-dev).
@@ -467,6 +480,12 @@ The complete hardware, memory and C6 firmware notes are in the
 [deployment guide](docs/DEPLOYMENT_GUIDE.md#esp-devices).
 
 ## Documentation
+
+Start with the practical [user guide](docs/USER_GUIDE.md) for normal setup and
+daily operation. Use the [automation cookbook](docs/AUTOMATION_DIALPLAN.md) for
+redirect, fallback, DTMF and guarded concurrent routing, and the
+[development feature guide](docs/WHATS_NEW_2026_8_1.md) for the new SIP and PBX
+capabilities.
 
 | Topic | Document |
 |---|---|

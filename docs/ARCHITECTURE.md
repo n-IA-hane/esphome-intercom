@@ -219,10 +219,12 @@ feeds continuous 16 kHz mono PCM to HA's selected pipeline, and encodes streamed
 TTS chunks back into the call's negotiated RTP format. The SIP Call-ID and HA
 conversation ID remain stable across repeated listen/reply turns until hangup.
 
-Current non-goals are RTCP, SRTP and SIP/TLS on ESP devices. The supported
-trust boundary is a local LAN/VPN plus Home Assistant and ESPHome API security.
-Codec-rich or encrypted external legs should terminate on Home Assistant, where
-the bridge can convert and route them to lightweight ESP PCM endpoints.
+Current non-goals are SRTP, DTLS, ICE, STUN, TURN and SIP/TLS on ESP devices.
+The supported ESP trust boundary is a local LAN/VPN plus Home Assistant and
+ESPHome API security. HA SIP legs can use verified TLS and the media runtime
+uses separate RTP/RTCP sockets where the negotiated profile requires them.
+Codec-rich or encrypted signaling legs should terminate on Home Assistant,
+where the bridge can convert and route them to lightweight ESP PCM endpoints.
 Because local SIP/RTP is plaintext and inbound calls are not phonebook-gated,
 deployments needing caller admission must enforce it at a firewall, VLAN, VPN
 or SBC boundary.

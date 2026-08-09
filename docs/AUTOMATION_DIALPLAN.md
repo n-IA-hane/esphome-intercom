@@ -100,6 +100,76 @@ existing credentials, target and timeout are preserved.
 
 ## Override the initial destination
 
+### Route a door phone to P4 when home, otherwise use the default phone
+
+Suppose `Front Door` normally calls `Casa`. When Daniele is home the call must
+ring `Waveshare P4 Touch`; when he is away it must ring the original `Casa`
+phone. The cleanest implementation selects the destination before either phone
+starts ringing:
+
+```yaml
+alias: VoIP - Front Door to P4 when home, otherwise Casa
+mode: parallel
+max: 10
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: event.voip_stack_call
+    options:
+      event_type:
+        - route_requested
+conditions:
+  - condition: state
+    entity_id: event.voip_stack_call
+    attribute: caller
+    state: Front Door
+actions:
+  - if:
+      - condition: state
+        entity_id: person.daniele
+        state: home
+    then:
+      - action: voip_stack.select_inbound_destination
+        data:
+          destination: Waveshare P4 Touch
+    else:
+      - action: voip_stack.select_inbound_destination
+        data:
+          destination: Casa
+```
+
+Replace the caller, destinations and person entity with values from the actual
+installation. If the automation does not match, the configured fallback route
+continues normally. Use this initial decision when Casa must not ring first.
+
+If Casa must ring before the call is moved, trigger on Casa's durable call-state
+sensor and use `voip_stack.forward` instead. With `on_failure: resume`, Casa
+resumes ringing if P4 is unavailable:
+
+```yaml
+alias: VoIP - Move Casa call to P4 when home
+mode: parallel
+max: 10
+triggers:
+  - trigger: state
+    entity_id: sensor.casa_call_state
+    to: ringing
+conditions:
+  - condition: state
+    entity_id: person.daniele
+    state: home
+  - condition: state
+    entity_id: sensor.casa_call_state
+    attribute: peer_name
+    state: Front Door
+actions:
+  - action: voip_stack.forward
+    data:
+      device_id: <casa_phone_device_id>
+      destination: Waveshare P4 Touch
+      on_failure: resume
+```
+
 This complete automation routes a trunk call to `Waveshare S3 Audio` before
 the fallback destination. It uses Home Assistant's native Event Entity trigger,
 so it needs no Jinja, Call-ID or helper timer:
