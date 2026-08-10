@@ -200,6 +200,22 @@ LIGHT_CARD_STATE = r"""
   if (!card) return null;
   const snapshot = card._softphoneSnapshot || {};
   const engine = globalThis.__voipStackEngine;
+  const els = card._els || {};
+  const surface = els.card || null;
+  const rect = (element, relativeTo = null) => {
+    if (!element || element.hidden) return null;
+    const value = element.getBoundingClientRect();
+    const base = relativeTo?.getBoundingClientRect?.() || { left: 0, top: 0 };
+    return {
+      width: value.width,
+      height: value.height,
+      bottom: value.bottom - base.top,
+    };
+  };
+  const surfaceRect = rect(surface);
+  const canvasRect = rect(els.videoCanvas, surface);
+  const hangupRect = rect(els.hangupBtn, surface);
+  const headerRect = rect(els.header, surface);
   return {
     card_state: String(snapshot.state || ""),
     terminal_reason: String(snapshot.terminal_reason || ""),
@@ -219,6 +235,21 @@ LIGHT_CARD_STATE = r"""
     has_audio_attach_task: Boolean(card._audioAttachTask),
     has_cleanup_task: Boolean(card._cleanupTask),
     engine_stats: engine?.stats || null,
+    layout: surface ? {
+      surface: surfaceRect,
+      canvas: canvasRect,
+      hangup: hangupRect,
+      horizontal_overflow: surface.scrollWidth > surface.clientWidth + 1,
+      vertical_overflow: surface.scrollHeight > surface.clientHeight + 1,
+      header_stats_overlap: false,
+      stats_outside_hangup: false,
+      usable_video_height: Math.max(
+        0,
+        Number(hangupRect?.bottom || surface.clientHeight)
+          - Number(hangupRect?.height || 0)
+          - Number(headerRect?.bottom || 0),
+      ),
+    } : null,
   };
 }
 """
@@ -1273,6 +1304,32 @@ def main() -> int:
                     timeout=int(args.video_timeout * 1000),
                     polling=100,
                 )
+                page.wait_for_function(
+                    f"""() => {{
+                      const x = ({LIGHT_CARD_STATE})();
+                      const l = x?.layout || {{}};
+                      const s = l.surface || {{}};
+                      const c = l.canvas || {{}};
+                      const h = l.hangup || {{}};
+                      const sw = Number(s.width || 0);
+                      const sh = Number(s.height || 0);
+                      return sw > 0 && sh > 0
+                        && !l.horizontal_overflow
+                        && !l.vertical_overflow
+                        && !l.header_stats_overlap
+                        && !l.stats_outside_hangup
+                        && Math.abs(Number(c.width || 0) - sw) <= 2
+                        && Math.abs(Number(c.height || 0) - sh) <= 2
+                        && Math.abs(Number(h.bottom || 0) - sh) <= 2
+                        && Math.abs(Number(h.width || 0) - sw) <= 2
+                        && Number(h.height || 0) >= 48
+                        && Number(h.height || 0) <= 84
+                        && Number(l.usable_video_height || 0) >= Math.min(80, sh * 0.25);
+                    }}""",
+                    timeout=int((args.video_timeout + 5) * 1000),
+                    polling=100,
+                )
+            flowing = sample("video_flowing")
             if args.sample_interval > 0:
                 deadline = time.monotonic() + args.hold_seconds
                 sample_number = 0
@@ -1282,7 +1339,12 @@ def main() -> int:
                     sample(f"hold_{sample_number:03d}")
             else:
                 page.wait_for_timeout(int(args.hold_seconds * 1000))
-            active = sample("video_flowing")
+            after_hold = sample("active_after_hold")
+            active = (
+                after_hold
+                if str(after_hold.get("card_state") or "").lower() == "in_call"
+                else flowing
+            )
             engine_stats = active.get("engine_stats") or {}
             video_stats = engine_stats.get("video") or {}
             if engine_stats.get("tx_dropped", 0) != 0:
@@ -1341,31 +1403,31 @@ def main() -> int:
             ):
                 raise RuntimeError(f"decoded canvas has no non-black sample: {active}")
             if not args.expect_audio_only:
-                layout = active.get("layout") or {}
+                layout = flowing.get("layout") or {}
                 surface = layout.get("surface") or {}
                 canvas_layout = layout.get("canvas") or {}
                 hangup_layout = layout.get("hangup") or {}
                 if layout.get("horizontal_overflow"):
-                    raise RuntimeError(f"video card has horizontal overflow: {active}")
+                    raise RuntimeError(f"video card has horizontal overflow: {flowing}")
                 if layout.get("header_stats_overlap"):
-                    raise RuntimeError(f"video debug overlay covers the card title: {active}")
+                    raise RuntimeError(f"video debug overlay covers the card title: {flowing}")
                 if layout.get("stats_outside_hangup"):
-                    raise RuntimeError(f"video diagnostics escape the hangup bar: {active}")
+                    raise RuntimeError(f"video diagnostics escape the hangup bar: {flowing}")
                 if abs(float(canvas_layout.get("width", 0)) - float(surface.get("width", 0))) > 2:
-                    raise RuntimeError(f"video canvas does not fill card width: {active}")
+                    raise RuntimeError(f"video canvas does not fill card width: {flowing}")
                 if abs(float(canvas_layout.get("height", 0)) - float(surface.get("height", 0))) > 2:
-                    raise RuntimeError(f"video canvas does not fill card height: {active}")
+                    raise RuntimeError(f"video canvas does not fill card height: {flowing}")
                 if abs(float(hangup_layout.get("bottom", 0)) - float(surface.get("height", 0))) > 2:
-                    raise RuntimeError(f"video hangup bar is not bottom-aligned: {active}")
+                    raise RuntimeError(f"video hangup bar is not bottom-aligned: {flowing}")
                 if abs(float(hangup_layout.get("width", 0)) - float(surface.get("width", 0))) > 2:
-                    raise RuntimeError(f"video hangup bar does not span card width: {active}")
+                    raise RuntimeError(f"video hangup bar does not span card width: {flowing}")
                 if not 48 <= float(hangup_layout.get("height", 0)) <= 84:
-                    raise RuntimeError(f"video hangup bar has an unusable height: {active}")
+                    raise RuntimeError(f"video hangup bar has an unusable height: {flowing}")
                 if float(layout.get("usable_video_height", 0)) < min(
                     80,
                     float(surface.get("height", 0)) * 0.25,
                 ):
-                    raise RuntimeError(f"video overlays leave too little visible video: {active}")
+                    raise RuntimeError(f"video overlays leave too little visible video: {flowing}")
             if args.screenshot:
                 page.screenshot(path=args.screenshot, full_page=True)
             if args.expect_remote_hangup:

@@ -72,6 +72,12 @@ def test_browser_probe_keeps_waits_light_and_bounded() -> None:
     assert "browser audio TX dropped frames" in source
     assert "browser audio playout dropped frames" in source
     assert "browser audio playout underrun" in source
+    assert 'flowing = sample("video_flowing")' in source
+    assert 'after_hold = sample("active_after_hold")' in source
+    assert 'else flowing' in source
+    assert 'layout = flowing.get("layout") or {}' in source
+    assert "Math.abs(Number(c.width || 0) - sw) <= 2" in source
+    assert "!l.vertical_overflow" in source
     start = source.split('START_OUTBOUND = r"""', 1)[1].split('"""', 1)[0]
     assert "Promise.resolve(card._startCall())" in start
     assert "await card._startCall()" not in start
