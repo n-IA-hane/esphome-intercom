@@ -165,19 +165,20 @@ ARTIFACT_SCENARIOS: dict[tuple[str, str], tuple[str, ...]] = {
         "in_call_rfc4733_dtmf_event",
     ),
     ("esp-to-ha-answer-hangup", "peer-live"): (
-        "esp_to_ha_answer_hangup_sip_trace",
+        "route_default",
     ),
     ("esp-to-ha-answer-hangup", "browser-real"): (
-        "esp_to_ha_answer_hangup_browser_state",
+        "manual_answer_from_card",
     ),
     ("registered-sip-to-esp-bidirectional-hangup", "peer-live"): (
-        "registered_sip_to_esp_bidirectional_hangup",
+        "registered_sip_peer_auto_answer_on_caller_bye",
+        "registered_sip_peer_auto_answer_off_callee_bye",
     ),
     ("p4-audio-to-bidirectional-video-reinvite", "peer-live"): (
-        "p4_audio_to_video_reinvite_sip_trace",
+        "initial_delayed_offer_caller_bye",
     ),
     ("p4-audio-to-bidirectional-video-reinvite", "browser-real"): (
-        "p4_audio_to_video_reinvite_browser",
+        "manual_answer_from_card",
     ),
 }
 
@@ -237,15 +238,20 @@ def _command_passed(payload: object, job: str) -> bool:
     )
 
 
-def _contains_passed_scenarios(payload: object, required: tuple[str, ...]) -> bool:
-    results = payload.get("results") if isinstance(payload, dict) else payload
-    if not isinstance(results, list):
-        return False
-    passed = {
-        str(result.get("name") or result.get("scenario") or "")
-        for result in results
-        if isinstance(result, dict) and result.get("status") in {"pass", "passed"}
-    }
+def _contains_passed_scenarios(
+    payloads: list[object], required: tuple[str, ...]
+) -> bool:
+    passed: set[str] = set()
+    for payload in payloads:
+        results = payload.get("results") if isinstance(payload, dict) else payload
+        if not isinstance(results, list):
+            continue
+        passed.update(
+            str(result.get("name") or result.get("scenario") or "")
+            for result in results
+            if isinstance(result, dict)
+            and result.get("status") in {"pass", "passed"}
+        )
     return set(required).issubset(passed)
 
 
@@ -303,9 +309,7 @@ def derive_scenario_evidence(
         if claim is None:
             continue
         required = ARTIFACT_SCENARIOS.get((scenario_id, job))
-        if required is not None and not any(
-            _contains_passed_scenarios(payload, required) for payload in payloads
-        ):
+        if required is not None and not _contains_passed_scenarios(payloads, required):
             raise EvidenceError(
                 f"{job} did not prove exact scenarios for {scenario_id}: "
                 f"{', '.join(required)}"

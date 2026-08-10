@@ -290,9 +290,10 @@ def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
                         "browser_phone_dnd_disabled",
                         "stale_route_sequence_is_rejected",
                         "concurrent_route_requests_remain_distinct",
-                        "esp_to_ha_answer_hangup_sip_trace",
-                        "registered_sip_to_esp_bidirectional_hangup",
-                        "p4_audio_to_video_reinvite_sip_trace",
+                        "route_default",
+                        "registered_sip_peer_auto_answer_on_caller_bye",
+                        "registered_sip_peer_auto_answer_off_callee_bye",
+                        "initial_delayed_offer_caller_bye",
                     )
                 ]
             }
@@ -312,17 +313,27 @@ def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
                         "name": "dtmf_secondary_extension_bypasses_automation",
                         "status": "pass",
                     },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    wildix = tmp_path / "wildix-dtmf.json"
+    wildix.write_text(
+        json.dumps(
+            {
+                "results": [
                     {
                         "name": "wildix_trunk_dtmf_route_to_esp",
                         "status": "pass",
-                    },
+                    }
                 ]
             }
         ),
         encoding="utf-8",
     )
 
-    claims = derive_scenario_evidence("peer-live", plan, [matrix, dtmf])
+    claims = derive_scenario_evidence("peer-live", plan, [matrix, dtmf, wildix])
 
     assert {
         claim["scenario_id"] for claim in claims
@@ -351,7 +362,7 @@ def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
         encoding="utf-8",
     )
     try:
-        derive_scenario_evidence("peer-live", plan, [matrix, dtmf])
+        derive_scenario_evidence("peer-live", plan, [matrix, dtmf, wildix])
     except EvidenceError as error:
         assert "did not prove exact scenarios" in str(error)
         assert "dtmf_secondary_extension_bypasses_automation" in str(error)

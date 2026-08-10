@@ -762,6 +762,10 @@ def main() -> int:
         "--out", default=str(ROOT / "test_runs" / "inbound_routing_matrix.json")
     )
     parser.add_argument("--only", action="append", default=[])
+    parser.add_argument(
+        "--result-name",
+        help="rename the single selected case in the evidence artifact",
+    )
     args = parser.parse_args()
     api = HomeAssistantApi()
     snapshot = FlowSnapshot.capture(api)
@@ -1165,6 +1169,11 @@ def main() -> int:
         for path in TEST_CAPTURE_DIR.glob("dump-sip:*.wav"):
             path.unlink(missing_ok=True)
 
+    if args.result_name:
+        if len(args.only) != 1 or len(results) != 1:
+            parser.error("--result-name requires exactly one selected and executed case")
+        results[0]["source_case"] = results[0]["name"]
+        results[0]["name"] = args.result_name
     Path(args.out).write_text(json.dumps(results, indent=2, ensure_ascii=False))
     print(json.dumps(results, indent=2, ensure_ascii=False))
     return 1 if any(item["status"] != "pass" for item in results) else 0
