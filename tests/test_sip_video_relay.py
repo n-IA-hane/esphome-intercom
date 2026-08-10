@@ -236,9 +236,7 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertEqual(self.relay.dropped, 1)
 
     def test_rtcp_feedback_must_target_observed_destination_ssrc(self) -> None:
-        packet = rtp.build_packet(
-            rtp.RtpPacket(102, 1, 1, 0x11223344, b"encoded")
-        )
+        packet = rtp.build_packet(rtp.RtpPacket(102, 1, 1, 0x11223344, b"encoded"))
         self.relay.handle_rtp("left", packet, ("10.0.0.1", 10000))
 
         wrong = build_pli(1, 0x55667788)
@@ -249,19 +247,19 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertEqual(self.left_rtcp.sent, [(correct, ("10.0.0.1", 10001))])
         self.assertEqual(self.relay.dropped, 1)
 
-    def test_transcoder_requests_negotiated_rtcp_fir_on_first_source_packet(self) -> None:
+    def test_transcoder_requests_negotiated_rtcp_fir_on_first_source_packet(
+        self,
+    ) -> None:
         self.right.local_video_format = RtpVideoFormat(
             payload_type=110,
             encoding="H264",
             transport_profile="RTP/AVPF",
             rtcp_feedback=("ccm fir",),
         )
-        self.relay._transcode_directions = {"right"}  # noqa: SLF001
+        self.relay._transcode.directions = {"right"}  # noqa: SLF001
 
         self.assertTrue(self.relay.arm_keyframe_request("right"))
-        packet = rtp.build_packet(
-            rtp.RtpPacket(110, 1, 1, 0x11223344, b"encoded")
-        )
+        packet = rtp.build_packet(rtp.RtpPacket(110, 1, 1, 0x11223344, b"encoded"))
         self.relay.handle_rtp("right", packet, (self.right.host, self.right.port))
 
         self.assertEqual(len(self.right_rtcp.sent), 1)
@@ -271,7 +269,7 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertEqual((feedback.packet_type, feedback.fmt), (206, 4))
 
     def test_avp_transcoder_does_not_emit_unnegotiated_rtcp_feedback(self) -> None:
-        self.relay._transcode_directions = {"right"}  # noqa: SLF001
+        self.relay._transcode.directions = {"right"}  # noqa: SLF001
 
         self.assertFalse(self.relay.arm_keyframe_request("right"))
 
@@ -321,9 +319,7 @@ class SipVideoRelayTests(unittest.TestCase):
         )
 
     def test_peer_reconfiguration_is_staged_until_commit(self) -> None:
-        replacement = VideoRtpPeer(
-            "10.0.0.9", 19000, 19001, _format(120)
-        )
+        replacement = VideoRtpPeer("10.0.0.9", 19000, 19001, _format(120))
 
         commit = self.relay.prepare_peer_reconfiguration("left", replacement)
 
@@ -352,9 +348,7 @@ class SipVideoRelayTests(unittest.TestCase):
             self.right.rtcp_port,
             _format(110, direction="sendrecv"),
         )
-        commit, _rollback = self.relay.stage_peer_reconfiguration(
-            "right", replacement
-        )
+        commit, _rollback = self.relay.stage_peer_reconfiguration("right", replacement)
         packet = rtp.build_packet(
             rtp.RtpPacket(
                 payload_type=110,
@@ -468,21 +462,15 @@ class SipVideoRelayTests(unittest.TestCase):
 
         left_transcoder = Transcoder()
         right_transcoder = Transcoder()
-        self.relay._transcoders = {  # noqa: SLF001
+        self.relay._transcode.transcoders = {  # noqa: SLF001
             "left": left_transcoder,
             "right": right_transcoder,
         }
-        left_packet = rtp.build_packet(
-            rtp.RtpPacket(26, 1, 9000, 0x1111, b"jpeg")
-        )
-        right_packet = rtp.build_packet(
-            rtp.RtpPacket(105, 2, 18000, 0x2222, b"h264")
-        )
+        left_packet = rtp.build_packet(rtp.RtpPacket(26, 1, 9000, 0x1111, b"jpeg"))
+        right_packet = rtp.build_packet(rtp.RtpPacket(105, 2, 18000, 0x2222, b"h264"))
 
         self.relay.handle_rtp("left", left_packet, (self.left.host, self.left.port))
-        self.relay.handle_rtp(
-            "right", right_packet, (self.right.host, self.right.port)
-        )
+        self.relay.handle_rtp("right", right_packet, (self.right.host, self.right.port))
 
         self.assertEqual(left_transcoder.received, [left_packet])
         self.assertEqual(right_transcoder.received, [right_packet])
@@ -514,7 +502,7 @@ class SipVideoRelayTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            self.relay._transcode_directions,  # noqa: SLF001
+            self.relay._transcode.directions,  # noqa: SLF001
             {"left", "right"},
         )
 
@@ -536,7 +524,9 @@ class SipVideoRelayTests(unittest.TestCase):
                 self.received.append(data)
 
         transcoder = Transcoder()
-        self.relay._transcoders = {"right": transcoder}  # noqa: SLF001
+        self.relay._transcode.transcoders = {  # noqa: SLF001
+            "right": transcoder
+        }
         parameter_set = rtp.build_packet(
             rtp.RtpPacket(105, 1, 9000, 0x2222, b"sps-pps")
         )
@@ -573,13 +563,13 @@ class SipVideoRelayTests(unittest.TestCase):
         self.right.video_format = h264
         self.right.local_video_format = h264
         self.relay.configure_transcoding(types.SimpleNamespace(data={}), "cross-codec")
-        output = rtp.build_packet(
-            rtp.RtpPacket(105, 1, 9000, 0x5566, b"encoded")
-        )
+        output = rtp.build_packet(rtp.RtpPacket(105, 1, 9000, 0x5566, b"encoded"))
 
         self.relay.handle_transcoded_rtp("left", output)
 
-        self.assertEqual(self.right_rtp.sent, [(output, (self.right.host, self.right.port))])
+        self.assertEqual(
+            self.right_rtp.sent, [(output, (self.right.host, self.right.port))]
+        )
         self.assertEqual(self.relay.transcoded_output_packets, 1)
         self.assertEqual(self.relay.right_tx_packets, 1)
 

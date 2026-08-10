@@ -181,12 +181,7 @@ class SipVideoRtpRelay:
             ("right", True): right_rtcp_socket,
         }
         self._transports: dict[tuple[str, bool], asyncio.DatagramTransport] = {}
-        self._transcode_sockets: dict[tuple[str, bool], socket.socket | None] = {}
-        self._transcode_transports: dict[
-            tuple[str, bool], asyncio.DatagramTransport
-        ] = {}
-        self._transcoders: dict[str, FfmpegVideoTranscoder] = {}
-        self._transcode_directions: set[str] = set()
+        self._transcode = _TranscodeGeneration(set(), {}, {}, {})
         self._transcode_hass: Any | None = None
         self._transcode_call_id = ""
         self._transcode_slot_claimed = False
@@ -260,8 +255,7 @@ class SipVideoRtpRelay:
                 if not (
                     rtp_socket.fileno() >= 0
                     and rtcp_socket.fileno() >= 0
-                    and rtp_socket.getsockname()[1] + 1
-                    == rtcp_socket.getsockname()[1]
+                    and rtp_socket.getsockname()[1] + 1 == rtcp_socket.getsockname()[1]
                 ):
                     rtp_socket.close()
                     rtcp_socket.close()
@@ -269,14 +263,14 @@ class SipVideoRtpRelay:
 
     @property
     def transcoding(self) -> bool:
-        return bool(self._transcode_directions)
+        return bool(self._transcode.directions)
 
     def transcodes_from(self, side: str) -> bool:
         """Return whether RTP sourced by this side uses its transcoder."""
 
         if side not in {"left", "right"}:
             raise ValueError(f"unknown video relay side: {side}")
-        return side in self._transcode_directions
+        return side in self._transcode.directions
 
     @staticmethod
     def transcode_directions_for(
@@ -361,7 +355,7 @@ class SipVideoRtpRelay:
             return
         self._transcode_hass = hass
         self._transcode_call_id = str(call_id or "sip-video")
-        self._transcode_directions = directions
+        self._transcode.directions = directions
 
     async def start(self) -> None:
         async with self._lifecycle_lock:
@@ -411,7 +405,7 @@ class SipVideoRtpRelay:
                     # close the pre-bound socket supplied by the port owner.
                     self._sockets[key] = None
                     self._transports[key] = transport
-            if self._transcode_directions:
+            if self._transcode.directions:
                 await self._start_transcoding(loop)
             self.started = True
         except BaseException:
@@ -435,28 +429,55 @@ class SipVideoRtpRelay:
         await _claim_transcoder_slot(hass, self)
         self._transcode_slot_claimed = True
         try:
-            for source_side in sorted(self._transcode_directions):
+            generation = await self._build_transcode_generation(
+                loop,
+                self.left,
+                self.right,
+            )
+            self._install_transcode_generation(generation)
+            self._flush_transcode_startup_rtp()
+        except BaseException:
+            await self._stop_transcoding()
+            raise
+
+    async def _build_transcode_generation(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        left: VideoRtpPeer,
+        right: VideoRtpPeer,
+        *,
+        suffix: str = "",
+    ) -> _TranscodeGeneration:
+        hass = self._transcode_hass
+        if hass is None:
+            raise RuntimeError("SIP video transcode has no Home Assistant owner")
+        generation = _TranscodeGeneration(
+            self.transcode_directions_for(left, right),
+            {},
+            {},
+            {},
+        )
+        try:
+            for source_side in sorted(generation.directions):
+                source, destination = (
+                    (left, right) if source_side == "left" else (right, left)
+                )
                 pair = self._loopback_socket_pair()
                 rtp_port = int(pair[0].getsockname()[1])
                 for rtcp, sock in ((False, pair[0]), (True, pair[1])):
                     key = (source_side, rtcp)
-                    self._transcode_sockets[key] = sock
+                    generation.sockets[key] = sock
                     transport, _ = await loop.create_datagram_endpoint(
                         lambda source_side=source_side, rtcp=rtcp: (
-                            _TranscodedOutputProtocol(
-                                self,
-                                source_side,
-                                rtcp=rtcp,
-                            )
+                            _TranscodedOutputProtocol(self, source_side, rtcp=rtcp)
                         ),
                         sock=sock,
                     )
-                    self._transcode_sockets[key] = None
-                    self._transcode_transports[key] = transport
-                source, destination = self._peers(source_side)
-                self._transcoders[source_side] = FfmpegVideoTranscoder(
+                    generation.sockets[key] = None
+                    generation.transports[key] = transport
+                generation.transcoders[source_side] = FfmpegVideoTranscoder(
                     hass=hass,
-                    call_id=f"{self._transcode_call_id}-{source_side}",
+                    call_id=(f"{self._transcode_call_id}-{source_side}{suffix}"),
                     input_format=source.recv_format,
                     output_format=destination.send_format,
                     output_port=rtp_port,
@@ -464,12 +485,18 @@ class SipVideoRtpRelay:
                     manage_slot=False,
                 )
             await asyncio.gather(
-                *(transcoder.async_start() for transcoder in self._transcoders.values())
+                *(item.async_start() for item in generation.transcoders.values())
             )
-            self._flush_transcode_startup_rtp()
         except BaseException:
-            await self._stop_transcoding()
+            await self._close_transcode_generation(generation)
             raise
+        return generation
+
+    def _install_transcode_generation(
+        self,
+        generation: _TranscodeGeneration,
+    ) -> None:
+        self._transcode = generation
 
     def _buffer_transcode_startup_rtp(self, side: str, data: bytes) -> bool:
         pending = self._transcode_startup_rtp[side]
@@ -491,7 +518,7 @@ class SipVideoRtpRelay:
             pending = self._transcode_startup_rtp[side]
             self._transcode_startup_rtp[side] = []
             self._transcode_startup_bytes[side] = 0
-            transcoder = self._transcoders.get(side)
+            transcoder = self._transcode.transcoders.get(side)
             if transcoder is None or not transcoder.ready:
                 self.dropped += len(pending)
                 self.transcode_startup_dropped += len(pending)
@@ -509,20 +536,9 @@ class SipVideoRtpRelay:
         for side in ("left", "right"):
             self._transcode_startup_rtp[side].clear()
             self._transcode_startup_bytes[side] = 0
-        transcoders = tuple(self._transcoders.values())
-        self._transcoders.clear()
-        if transcoders:
-            await asyncio.gather(
-                *(transcoder.async_close() for transcoder in transcoders),
-                return_exceptions=True,
-            )
-        for transport in self._transcode_transports.values():
-            transport.close()
-        self._transcode_transports.clear()
-        for sock in self._transcode_sockets.values():
-            if sock is not None:
-                sock.close()
-        self._transcode_sockets.clear()
+        generation = self._transcode
+        self._transcode = _TranscodeGeneration(set(), {}, {}, {})
+        await self._close_transcode_generation(generation)
         if self._transcode_slot_claimed and self._transcode_hass is not None:
             await _release_transcoder_slot(self._transcode_hass, self)
         self._transcode_slot_claimed = False
@@ -663,58 +679,20 @@ class SipVideoRtpRelay:
         staged_right = self._staged_peers.get("right")
         if staged_right is None or staged_right.peer is not right:
             raise RuntimeError("right video peer is not staged")
-        directions = self.transcode_directions_for(left, right)
         loop = asyncio.get_running_loop()
-        transcoders: dict[str, FfmpegVideoTranscoder] = {}
-        transports: dict[tuple[str, bool], asyncio.DatagramTransport] = {}
-        sockets: dict[tuple[str, bool], socket.socket | None] = {}
-        generation = _TranscodeGeneration(
-            directions,
-            transcoders,
-            transports,
-            sockets,
-        )
         claimed_slot = not self._transcode_slot_claimed
         try:
             await _claim_transcoder_slot(self._transcode_hass, self)
             self._transcode_slot_claimed = True
-            for source_side in sorted(directions):
-                source, destination = (
-                    (left, right) if source_side == "left" else (right, left)
-                )
-                pair = self._loopback_socket_pair()
-                rtp_port = int(pair[0].getsockname()[1])
-                for rtcp, sock in ((False, pair[0]), (True, pair[1])):
-                    key = (source_side, rtcp)
-                    sockets[key] = sock
-                    transport, _ = await loop.create_datagram_endpoint(
-                        lambda source_side=source_side, rtcp=rtcp: (
-                            _TranscodedOutputProtocol(
-                                self,
-                                source_side,
-                                rtcp=rtcp,
-                            )
-                        ),
-                        sock=sock,
-                    )
-                    sockets[key] = None
-                    transports[key] = transport
-                transcoders[source_side] = FfmpegVideoTranscoder(
-                    hass=self._transcode_hass,
-                    call_id=f"{self._transcode_call_id}-{source_side}-reoffer",
-                    input_format=source.recv_format,
-                    output_format=destination.send_format,
-                    output_port=rtp_port,
-                    slot_owner=self,
-                    manage_slot=False,
-                )
-            await asyncio.gather(
-                *(transcoder.async_start() for transcoder in transcoders.values())
+            generation = await self._build_transcode_generation(
+                loop,
+                left,
+                right,
+                suffix="-reoffer",
             )
         except BaseException:
             if self._staged_peers.get("right") is staged_right:
                 self._staged_peers.pop("right", None)
-            await self._close_transcode_generation(generation)
             if claimed_slot:
                 await _release_transcoder_slot(self._transcode_hass, self)
                 self._transcode_slot_claimed = False
@@ -751,18 +729,10 @@ class SipVideoRtpRelay:
             left.rtcp_source_port = None
             right.rx_ssrc = None
             right.rtcp_source_port = None
-            old = _TranscodeGeneration(
-                set(self._transcode_directions),
-                self._transcoders,
-                self._transcode_transports,
-                self._transcode_sockets,
-            )
+            old = self._transcode
             self.left = left
             self.right = right
-            self._transcode_directions = directions
-            self._transcoders = transcoders
-            self._transcode_transports = transports
-            self._transcode_sockets = sockets
+            self._install_transcode_generation(generation)
             self._keyframe_requests.clear()
             for side in ("left", "right"):
                 self._transcode_startup_rtp[side].clear()
@@ -770,7 +740,7 @@ class SipVideoRtpRelay:
             for data, addr in staged_right.packets:
                 self.handle_rtp("right", data, addr)
             await self._close_transcode_generation(old)
-            if not directions and self._transcode_slot_claimed:
+            if not generation.directions and self._transcode_slot_claimed:
                 await _release_transcoder_slot(self._transcode_hass, self)
                 self._transcode_slot_claimed = False
 
@@ -821,7 +791,7 @@ class SipVideoRtpRelay:
                 connection_held=destination.connection_held,
             ):
                 raise ValueError("RTP direction is not negotiated")
-            if side not in self._transcode_directions and not (
+            if side not in self._transcode.directions and not (
                 video_formats_passthrough_compatible(
                     source.recv_format,
                     destination.send_format,
@@ -840,8 +810,8 @@ class SipVideoRtpRelay:
                 self._send_armed_keyframe_request(side, source)
             source.host = str(addr[0])
             source.port = int(addr[1])
-            if side in self._transcode_directions:
-                transcoder = self._transcoders.get(side)
+            if side in self._transcode.directions:
+                transcoder = self._transcode.transcoders.get(side)
                 if transcoder is None or not getattr(transcoder, "ready", True):
                     if not self.started:
                         if self._buffer_transcode_startup_rtp(side, data):
@@ -934,7 +904,7 @@ class SipVideoRtpRelay:
         self.rtcp_forwarded += 1
 
     def handle_rtcp(self, side: str, data: bytes, addr) -> None:
-        if self._transcode_directions:
+        if self._transcode.directions:
             self.transcode_rtcp_dropped += 1
             return
         source, destination = self._peers(side)
@@ -952,7 +922,9 @@ class SipVideoRtpRelay:
                     if packet.packet_type != 206:
                         continue
                     if packet.fmt == 1:
-                        feedback_targets = (struct.unpack_from("!I", packet.payload, 4)[0],)
+                        feedback_targets = (
+                            struct.unpack_from("!I", packet.payload, 4)[0],
+                        )
                     elif packet.fmt == 4:
                         feedback_targets = tuple(
                             struct.unpack_from("!I", packet.payload, offset)[0]
@@ -961,7 +933,9 @@ class SipVideoRtpRelay:
                     else:
                         continue
                     if any(target != expected_ssrc for target in feedback_targets):
-                        raise ValueError("RTCP feedback targets an unexpected media SSRC")
+                        raise ValueError(
+                            "RTCP feedback targets an unexpected media SSRC"
+                        )
             source_port = int(addr[1])
             if (
                 source.rtcp_source_port is not None
@@ -1027,7 +1001,7 @@ class SipVideoRtpRelay:
             "right_tx_packets": self.right_tx_packets,
             "right_tx_bytes": self.right_tx_bytes,
             "transcoding": self.transcoding,
-            "transcode_directions": sorted(self._transcode_directions),
+            "transcode_directions": sorted(self._transcode.directions),
             "transcoded_input_packets": self.transcoded_input_packets,
             "transcoded_output_packets": self.transcoded_output_packets,
             "transcoded_rtcp_packets": self.transcoded_rtcp_packets,

@@ -183,7 +183,7 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(answer)
         self.assertTrue(relay.transcoding)
-        self.assertEqual(relay._transcode_directions, {"left", "right"})  # noqa: SLF001
+        self.assertEqual(relay._transcode.directions, {"left", "right"})  # noqa: SLF001
         self.assertEqual(answer.video_format.encoding, "JPEG")
 
     def test_source_peer_retains_committed_inverse_answer_direction(self) -> None:
