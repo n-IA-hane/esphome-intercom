@@ -82,7 +82,12 @@ def _run_case(
             caller.dial(f"sip:9999@{sip_host}:{sip_port}")
             caller.wait_for_dtmf_media(8)
             caller.digits(extension, interval=0.08)
-            event = wait_event_state(api, "ringing", 8, callee=callee)
+            event = wait_event_state(
+                api,
+                "ringing",
+                8,
+                expected_remote_party=callee,
+            )
             time.sleep(0.1)
         events = trace_types(trace, str(event.get("call_id") or ""))
         if "route_requested" in events:
