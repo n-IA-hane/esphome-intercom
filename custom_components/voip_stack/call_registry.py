@@ -509,6 +509,8 @@ class CallRuntimeApi:
         session = self.sessions.get(session_id)
         if session is None:
             return None
+        if not session.live:
+            return None
         if expected_revision is not None and session.revision != int(expected_revision):
             return None
         if expected_generation is not None and session.generation != int(

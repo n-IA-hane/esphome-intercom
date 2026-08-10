@@ -64,7 +64,7 @@ def publish_call_projection(
         event.token.call_id,
         generation=event.token.generation,
     )
-    live_projection = current is session and event.intent is None
+    live_projection = current is session and session.live and event.intent is None
     terminal_projection = bool(
         event.intent is not None
         and event.intent is session.termination_intent

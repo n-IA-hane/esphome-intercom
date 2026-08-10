@@ -52,6 +52,7 @@ from ..media_ports import (
 )
 from ..outbound_attempts import async_close_client_and_release
 from ..phone_endpoint import EndpointKind
+from ..peer import sip_uri_for_peer
 from ..runtime_data import call_runtime_artifacts
 from ..core.sdp import build_answer_directional, first_offered_dtmf_format
 from ..core.sip import parse_sip_uri, sip_endpoints_equal, sip_uri_targets_listener
@@ -108,15 +109,10 @@ def _resolve_bridge_uri(
             f"transport={str(trunk_config[CONF_TRUNK_TRANSPORT]).lower()}"
         )
     elif peer_target is not None and peer_target.host:
-        sip_transport = str(
-            (peer_target.device or {}).get("sip_transport") or "tcp"
-        ).lower()
-        if sip_transport not in {"tcp", "udp"}:
-            sip_transport = "tcp"
-        bridge_uri = parse_sip_uri(
-            f"sip:{peer_target.request_uri_user or decision.target or invite.routing_target}@{peer_target.host}:"
-            f"{peer_target.sip_port or default_sip_port};"
-            f"transport={sip_transport}"
+        bridge_uri = sip_uri_for_peer(
+            peer_target,
+            default_port=default_sip_port,
+            fallback_user=decision.target or invite.routing_target,
         )
     elif decision.entry is not None and decision.entry.sip_uri:
         bridge_uri = parse_sip_uri(decision.entry.sip_uri)

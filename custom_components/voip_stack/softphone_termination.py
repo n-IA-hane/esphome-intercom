@@ -22,6 +22,7 @@ async def async_terminate_sip_bridge_session(
     endpoint_id: str = "",
     session_device_id: str = "",
     terminal_reason: str = TerminalReason.LOCAL_HANGUP.value,
+    expected_generation: int | None = None,
 ) -> tuple[bool, str, str, bool, bool]:
     """Terminate one B2BUA bridge through the authoritative session owner."""
 
@@ -29,6 +30,11 @@ async def async_terminate_sip_bridge_session(
     registry = call_registry(hass)
     source_call_id, dest_call_id = registry.bridge_for(call_id)
     if not source_call_id:
+        return False, "", "", False, False
+    if expected_generation is not None and registry.get_session(
+        source_call_id,
+        generation=expected_generation,
+    ) is None:
         return False, "", "", False, False
     client_present = bool(dest_call_id and registry.sip_client_for(dest_call_id))
     terminated = await EndpointTerminationHandler(hass).terminate(

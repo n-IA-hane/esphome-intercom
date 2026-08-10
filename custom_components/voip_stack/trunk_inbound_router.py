@@ -53,6 +53,7 @@ from .outbound_bridge_commit import (
 from .pbx_routing import dtmf_extension_routes
 from .peer_snapshot import async_build_peer_snapshot
 from .phone_endpoint import EndpointKind
+from .peer import sip_uri_for_peer
 from .phonebook_runtime import registered_roster_entries
 from .router import CallContext, RouteAction, RouteReason, route_inbound_trunk
 from .runtime_data import call_runtime_artifacts, preferred_browser_phone
@@ -366,15 +367,10 @@ async def async_route_trunk_invite(
     bridge_uri = None
     try:
         if peer_target is not None and peer_target.host:
-            sip_transport = str(
-                (peer_target.device or {}).get("sip_transport") or "tcp"
-            ).lower()
-            if sip_transport not in {"tcp", "udp"}:
-                sip_transport = "tcp"
-            bridge_uri = parse_sip_uri(
-                f"sip:{peer_target.request_uri_user or decision.target or destination}@{peer_target.host}:"
-                f"{peer_target.sip_port or cfg['sip_port']};"
-                f"transport={sip_transport}"
+            bridge_uri = sip_uri_for_peer(
+                peer_target,
+                default_port=int(cfg["sip_port"]),
+                fallback_user=decision.target or destination,
             )
         elif decision.entry is not None and decision.entry.sip_uri:
             bridge_uri = parse_sip_uri(decision.entry.sip_uri)

@@ -448,6 +448,7 @@ class SipCallClient:
         self._close_task: asyncio.Task[None] | None = None
         self._deferred_close_task: asyncio.Task[None] | None = None
         self._dialog_termination_task: asyncio.Task[str] | None = None
+        self._exceptional_bye_tasks: set[asyncio.Task[None]] = set()
         self._closing = False
         self._closed = False
         self._local_dialog_cseq = self._invite_cseq
@@ -584,6 +585,7 @@ class SipCallClient:
                     self._dialog_termination_task,
                     self._invite_task,
                     self._incoming_refer_task,
+                    *self._exceptional_bye_tasks,
                 )
                 if task is not None
                 and task is not current_task
@@ -598,6 +600,7 @@ class SipCallClient:
         self._invite_transaction = None
         self._invite_progress = None
         self._dialog_termination_task = None
+        self._exceptional_bye_tasks.clear()
         self.dialog = None
         self.early_dialogs.clear()
         self._terminated_invite_branches.clear()
@@ -876,7 +879,7 @@ class SipCallClient:
         )
         if remote_tag not in self._terminated_invite_branches:
             self._terminated_invite_branches.add(remote_tag)
-            self._send_bye_request(
+            self._start_bye_request_transaction(
                 host,
                 port,
                 remote_target,
@@ -944,7 +947,7 @@ class SipCallClient:
             self._uas_invite_2xx.cancel()
             self._uas_delayed_offer = None
             if dialog is not None:
-                self._send_bye_request(
+                self._start_bye_request_transaction(
                     dialog.remote_host,
                     dialog.remote_sip_port,
                     dialog.remote_target_uri or dialog.remote_uri,
@@ -2283,37 +2286,56 @@ class SipCallClient:
                 )
             except (TypeError, ValueError, sip.SipError):
                 return None
-            async def _handle_request(
-                message: sip.SipMessage,
-                addr: tuple[str, int],
-            ) -> None:
-                terminal = await self._dispatch_in_dialog_request(message, addr)
-                if terminal is not None:
-                    raise ConnectionAbortedError(terminal)
-
             try:
-                return await async_run_dialog_request_transaction(
-                    send=lambda: self._send_dialog_request(
-                        request.raw, next_host, next_port
-                    ),
-                    read=self._read_response,
-                    matches=lambda response: sip.response_matches_dialog_transaction(
-                        response, request.ids, method
-                    ),
-                    active=lambda: self._dialog_is_current(dialog),
-                    transport=self.signaling_transport,
+                return await self._run_built_dialog_request(
+                    request,
+                    next_host,
+                    next_port,
+                    method=method,
                     timeout=timeout,
-                    on_request=_handle_request,
-                    on_unmatched=lambda message, _source: (
-                        self._ack_retransmitted_invite_2xx(message)
-                    ),
-                    on_sent=lambda: sip.mark_sip_event(self, method),
+                    active=lambda: self._dialog_is_current(dialog),
                 )
             except ConnectionAbortedError:
                 raise
             except (ConnectionError, OSError):
                 return None
         return None
+
+    async def _run_built_dialog_request(
+        self,
+        request,
+        host: str,
+        port: int,
+        *,
+        method: str,
+        timeout: float,
+        active: Callable[[], bool],
+    ) -> sip.SipMessage | None:
+        """Run one already-routed request through the common transaction owner."""
+
+        async def handle_request(
+            message: sip.SipMessage,
+            addr: tuple[str, int],
+        ) -> None:
+            terminal = await self._dispatch_in_dialog_request(message, addr)
+            if terminal is not None:
+                raise ConnectionAbortedError(terminal)
+
+        return await async_run_dialog_request_transaction(
+            send=lambda: self._send_dialog_request(request.raw, host, port),
+            read=self._read_response,
+            matches=lambda response: sip.response_matches_dialog_transaction(
+                response, request.ids, method
+            ),
+            active=active,
+            transport=self.signaling_transport,
+            timeout=timeout,
+            on_request=handle_request,
+            on_unmatched=lambda message, _source: (
+                self._ack_retransmitted_invite_2xx(message)
+            ),
+            on_sent=lambda: sip.mark_sip_event(self, method),
+        )
 
     @contextlib.asynccontextmanager
     async def _dialog_writer(self) -> AsyncIterator[None]:
@@ -3137,7 +3159,7 @@ class SipCallClient:
                 except (ConnectionAbortedError, ConnectionError, OSError):
                     return None
                 if message is None:
-                    self._send_bye_request(
+                    self._start_bye_request_transaction(
                         current.remote_host,
                         current.remote_sip_port,
                         current.remote_target_uri or current.remote_uri,
@@ -3184,7 +3206,7 @@ class SipCallClient:
                         remote_tag=remote_tag,
                     )
                     if candidate is None or not acked:
-                        self._send_bye_request(
+                        self._start_bye_request_transaction(
                             current.remote_host,
                             current.remote_sip_port,
                             ack_target,
@@ -3263,7 +3285,7 @@ class SipCallClient:
         ):
             return
         self._prepared_reinvite = None
-        self._send_bye_request(
+        self._start_bye_request_transaction(
             candidate.remote_host,
             candidate.remote_sip_port,
             candidate.remote_target_uri or candidate.remote_uri,
@@ -3660,7 +3682,7 @@ class SipCallClient:
             remote_uri,
             route_set=route_set,
         )
-        self._send_bye_request(
+        self._start_bye_request_transaction(
             remote_host,
             int(remote_sip_port),
             remote_target_uri,
@@ -3766,7 +3788,7 @@ class SipCallClient:
         sip.mark_sip_event(self, "ACK")
         _LOGGER.info("SIP TX ACK final INVITE error %s:%s", host, port)
 
-    def _send_bye_request(
+    def _start_bye_request_transaction(
         self,
         host: str,
         port: int,
@@ -3776,6 +3798,7 @@ class SipCallClient:
         *,
         route_set: tuple[str, ...] = (),
         remote_tag: str = "",
+        timeout: float = 1.5,
     ) -> bool:
         if not self._has_signaling_path() or not request_uri or not local_uri or not remote_uri:
             return False
@@ -3802,12 +3825,35 @@ class SipCallClient:
             host,
             int(port),
         )
-        if not self._send_dialog_request(request.raw, next_host, next_port):
-            _LOGGER.warning("SIP TX BYE dropped: signaling path unavailable")
-            return False
-        sip.mark_sip_event(self, "BYE")
-        _LOGGER.info("SIP TX BYE %s:%s", next_host, next_port)
+        async def run() -> None:
+            await self._run_built_dialog_request(
+                request,
+                next_host,
+                next_port,
+                method="BYE",
+                timeout=timeout,
+                active=lambda: self._has_signaling_path() and not self._closed,
+            )
+
+        task = asyncio.create_task(
+            run(),
+            name=f"voip-sip-client-exceptional-bye-{self.dialog_ids.call_id}",
+        )
+        self._exceptional_bye_tasks.add(task)
+        task.add_done_callback(self._exceptional_bye_done)
         return True
+
+    def _exceptional_bye_done(self, task: asyncio.Task[None]) -> None:
+        self._exceptional_bye_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            _LOGGER.warning(
+                "Exceptional SIP BYE failed call_id=%s error=%s",
+                self.dialog_ids.call_id,
+                error,
+            )
 
     async def _run_bye_transaction(self, dialog: SipDialog, timeout: float) -> str:
         """Own the confirmed-dialog BYE transaction until its final response."""

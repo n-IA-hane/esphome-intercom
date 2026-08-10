@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -17,6 +18,7 @@ from .const import (
     CONF_ASSIST_PIPELINE,
 )
 from .endpoint_lifecycle import call_registry
+from .endpoint_session import CallToken
 from .fsm import CallState, TerminalReason
 from .pbx_routing import roster_entry_for_target
 from .router import RouteAction
@@ -88,12 +90,20 @@ class AssistEndpoint:
             or ("trunk" if invite.received_via_trunk or source == "trunk" else source),
             existing_session.route_kind if existing_session is not None else "",
         )
+        completion_ready = asyncio.Event()
+        completion_token: CallToken | None = (
+            existing_session.token if existing_session is not None else None
+        )
 
         async def complete(reason: str) -> None:
+            await completion_ready.wait()
+            if completion_token is None:
+                return
             await self.terminate_sip_bridge(
                 self.hass,
                 invite.call_id,
                 terminal_reason=reason or TerminalReason.PROTOCOL_ERROR.value,
+                expected_generation=completion_token.generation,
             )
 
         media = AssistMediaSession(
@@ -117,6 +127,8 @@ class AssistEndpoint:
         try:
             await media.start()
         except BaseException:
+            completion_token = None
+            completion_ready.set()
             if release_reservation_on_failure:
                 reservation.release()
             raise
@@ -131,6 +143,8 @@ class AssistEndpoint:
             ingress=call_ingress,
             origin=call_ingress,
         )
+        completion_token = session.token
+        completion_ready.set()
         registry.set_bridge_link(invite.call_id, assist_leg_id)
         registry.attach_relay(invite.call_id, media)
         registry.add_leg(

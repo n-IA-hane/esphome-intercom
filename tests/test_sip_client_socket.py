@@ -162,7 +162,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
         raise AssertionError(f"SIP {method} was not sent")
 
-    def test_client_acks_and_terminates_each_losing_proxy_fork(self) -> None:
+    async def test_client_acks_and_terminates_each_losing_proxy_fork(self) -> None:
         class Transport:
             def __init__(self) -> None:
                 self.sent: list[tuple[bytes, tuple[str, int]]] = []
@@ -215,12 +215,43 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(client._ack_retransmitted_invite_2xx(losing))
         self.assertTrue(client._ack_retransmitted_invite_2xx(losing))
+        first_bye = await self._wait_for_sent_request(transport.sent, "BYE")
+        for _ in range(100):
+            byes = [
+                sip.parse_message(raw)
+                for raw, _addr in transport.sent
+                if sip.parse_message(raw).method == "BYE"
+            ]
+            if len(byes) >= 2:
+                break
+            await asyncio.sleep(0.01)
+        self.assertGreaterEqual(len(byes), 2)
+        client.queue.put_nowait(
+            (
+                sip.build_response(
+                    200,
+                    "OK",
+                    [
+                        *(("Via", value) for value in first_bye.header_values("Via")),
+                        ("From", first_bye.header("From")),
+                        ("To", first_bye.header("To")),
+                        ("Call-ID", first_bye.header("Call-ID")),
+                        ("CSeq", first_bye.header("CSeq")),
+                    ],
+                ),
+                ("192.0.2.22", 5080),
+            )
+        )
+        await asyncio.gather(*tuple(client._exceptional_bye_tasks))
 
         requests = [sip.parse_message(raw) for raw, _addr in transport.sent]
-        self.assertEqual([request.method for request in requests], ["ACK", "BYE", "ACK"])
+        self.assertEqual(
+            [request.method for request in requests],
+            ["ACK", "ACK", "BYE", "BYE"],
+        )
         self.assertEqual(
             [sip.extract_tag(request.header("To")) for request in requests],
-            ["loser", "loser", "loser"],
+            ["loser", "loser", "loser", "loser"],
         )
         self.assertEqual(client.dialog_ids.remote_tag, "winner")
 

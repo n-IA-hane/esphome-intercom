@@ -206,3 +206,16 @@ def test_terminal_projection_details_cannot_mutate_terminating_session(
         peer_name="late callback",
     )
     assert "terminal_phone_projections" not in session.metadata
+
+
+def test_live_projection_is_rejected_after_terminal_claim(monkeypatch) -> None:
+    runtime = _runtime(monkeypatch)
+    sink = Mock()
+    monkeypatch.setattr(websocket_api, "_set_sip_bridge_call_state", sink)
+    session = runtime.upsert("call-1", state="in_call")
+    session.claim_termination(TerminationIntent("remote_hangup"))
+
+    assert not call_projection.publish_bridge_projection(
+        object(), session, peer_name="late callback"
+    )
+    sink.assert_not_called()

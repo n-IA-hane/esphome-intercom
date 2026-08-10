@@ -762,6 +762,28 @@ class CallRegistryEventContextTest(unittest.TestCase):
         self.assertTrue(registry.is_terminated("call-1", generation=generation))
         self.assertFalse(registry.is_current("call-1", revision=session.revision))
 
+    def test_terminal_claim_closes_transition_mutations_immediately(self) -> None:
+        registry = _registry()
+        session = registry.upsert("call-1", state="in_call", owner="bridge")
+        self.assertTrue(
+            registry.begin_termination(
+                "call-1", pbx_runtime.TerminationIntent("remote_hangup")
+            )
+        )
+        revision = session.revision
+
+        self.assertIsNone(
+            registry.transition(
+                "call-1",
+                state="ringing",
+                owner="router",
+                expected_generation=session.generation,
+            )
+        )
+        self.assertEqual(session.state, "in_call")
+        self.assertEqual(session.owner, "bridge")
+        self.assertEqual(session.revision, revision)
+
     def test_terminal_pop_removes_event_context_and_pending_indexes(self) -> None:
         registry = _registry()
         registry.upsert("call-1", state="ringing", owner="ha_softphone")

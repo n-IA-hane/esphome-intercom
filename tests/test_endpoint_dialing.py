@@ -66,6 +66,29 @@ def test_registered_account_keeps_its_authenticated_sip_user(
     assert str(uri) == "sip:studio-phone@192.0.2.80:5060;transport=tcp"
 
 
+def test_peer_uri_preserves_tls_and_ipv6_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialer, _created, _reused = _dialer(monkeypatch)
+
+    uri, _peer, _entry = dialer.sip_uri_for_member(
+        "Secure",
+        [
+            Peer(
+                name="Secure",
+                host="2001:db8::80",
+                endpoint_kind="sip_account",
+                sip_uri_user="secure-phone",
+                sip_port=5061,
+                device={"sip_transport": "tls"},
+            )
+        ],
+        [],
+    )
+
+    assert str(uri) == "sips:secure-phone@[2001:db8::80]:5061;transport=tls"
+
+
 def _dialer(
     monkeypatch: pytest.MonkeyPatch,
     client_error: BaseException | None = None,

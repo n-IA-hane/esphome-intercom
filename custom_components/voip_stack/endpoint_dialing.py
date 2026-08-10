@@ -27,6 +27,7 @@ from .media_ports import (
 from .outbound_attempts import BrowserLeg, OutboundLeg
 from .pbx_routing import roster_entry_for_target
 from .phone_endpoint import EndpointKind
+from .peer import sip_uri_for_peer
 from .runtime_data import preferred_browser_phone
 from .core.sip import parse_sip_uri
 from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
@@ -75,16 +76,11 @@ class EndpointDialer:
 
         peer = peer_for_target(member, peers)
         if peer is not None and peer.host:
-            sip_transport = str(
-                (peer.device or {}).get("sip_transport") or "tcp"
-            ).lower()
-            if sip_transport not in {"tcp", "udp"}:
-                sip_transport = "tcp"
             return (
-                parse_sip_uri(
-                    f"sip:{peer.request_uri_user or member}@{peer.host}:"
-                    f"{peer.sip_port or self.config['sip_port']};"
-                    f"transport={sip_transport}"
+                sip_uri_for_peer(
+                    peer,
+                    default_port=int(self.config["sip_port"]),
+                    fallback_user=member,
                 ),
                 peer,
                 None,

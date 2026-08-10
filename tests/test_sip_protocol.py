@@ -1083,7 +1083,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         finally:
             blocker.close()
 
-    def test_incompatible_invite_200_is_acked_then_closed_with_bye(self) -> None:
+    async def test_incompatible_invite_200_is_acked_then_closed_with_bye(self) -> None:
         class FakeTransport:
             def __init__(self) -> None:
                 self.sent: list[tuple[bytes, tuple[str, int]]] = []
@@ -1124,6 +1124,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             "sip:HA@127.0.0.1:5060",
             "sip:ESP@127.0.0.2:5060",
         )
+        await asyncio.sleep(0)
 
         self.assertFalse(compatible)
         messages = [sip.parse_message(raw) for raw, _addr in transport.sent]
@@ -1134,8 +1135,12 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             [message.header("To") for message in messages],
             ["<sip:ESP@127.0.0.2:5060>;tag=remote"] * 2,
         )
+        bye_tasks = tuple(client._exceptional_bye_tasks)
+        for task in bye_tasks:
+            task.cancel()
+        await asyncio.gather(*bye_tasks, return_exceptions=True)
 
-    def test_invite_200_does_not_select_one_target_from_contact_list(self) -> None:
+    async def test_invite_200_does_not_select_one_target_from_contact_list(self) -> None:
         class FakeTransport:
             def __init__(self) -> None:
                 self.sent: list[tuple[bytes, tuple[str, int]]] = []
@@ -1183,10 +1188,15 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 request_uri,
             )
         )
+        await asyncio.sleep(0)
 
         messages = [sip.parse_message(raw) for raw, _addr in transport.sent]
         self.assertEqual([message.method for message in messages], ["ACK", "BYE"])
         self.assertEqual([message.uri for message in messages], [request_uri] * 2)
+        bye_tasks = tuple(client._exceptional_bye_tasks)
+        for task in bye_tasks:
+            task.cancel()
+        await asyncio.gather(*bye_tasks, return_exceptions=True)
 
     def test_invite_200_commits_directional_audio_and_dtmf_payloads(self) -> None:
         class FakeTransport:

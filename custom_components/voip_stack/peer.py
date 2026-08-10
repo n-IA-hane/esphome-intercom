@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from .core.sip import SipUri
+
 
 @dataclass(frozen=True)
 class Peer:
@@ -44,3 +46,23 @@ class Peer:
         if self.endpoint_kind == "esphome":
             return self.extension or self.sip_uri_user or self.name
         return self.sip_uri_user or self.extension or self.name
+
+
+def sip_uri_for_peer(
+    peer: Peer,
+    *,
+    default_port: int,
+    fallback_user: str = "",
+) -> SipUri:
+    """Build the canonical Request-URI for one resolved peer."""
+
+    transport = str((peer.device or {}).get("sip_transport") or "tcp").lower()
+    if transport not in {"tcp", "udp", "tls"}:
+        transport = "tcp"
+    return SipUri(
+        peer.request_uri_user or fallback_user,
+        peer.host,
+        peer.sip_port or int(default_port),
+        (("transport", transport),),
+        "sips" if transport == "tls" else "sip",
+    )

@@ -228,3 +228,26 @@ def test_bridge_termination_delegates_projection_to_session_owner(termination) -
     call_id, intent = termination.terminate.await_args.args
     assert call_id == "source-call"
     assert intent.reason == "local_hangup"
+
+
+def test_bridge_termination_rejects_stale_generation(termination) -> None:
+    hass = SimpleNamespace(data={})
+    registry = SimpleNamespace(
+        bridge_for=Mock(return_value=("source-call", "dest-call")),
+        get_session=Mock(return_value=None),
+        sip_client_for=Mock(),
+    )
+    termination.call_registry = Mock(return_value=registry)
+
+    result = asyncio.run(
+        termination.async_terminate_sip_bridge_session(
+            hass,
+            "source-call",
+            expected_generation=7,
+        )
+    )
+
+    assert result == (False, "", "", False, False)
+    registry.get_session.assert_called_once_with("source-call", generation=7)
+    registry.sip_client_for.assert_not_called()
+    termination.terminate.assert_not_awaited()
