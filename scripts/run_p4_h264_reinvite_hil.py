@@ -627,6 +627,11 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.cycles < 2:
         parser.error("--cycles must be at least 2 to prove redial and both BYE owners")
+    if args.duration <= args.video_hold_seconds + 1:
+        parser.error(
+            "--duration must exceed the one-second video activation delay plus "
+            "--video-hold-seconds"
+        )
     return args
 
 

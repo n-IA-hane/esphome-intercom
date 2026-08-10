@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +11,7 @@ from scripts.run_p4_h264_reinvite_hil import (
     _wait_ha_endpoint_ready,
     cleanup_evidence,
     parse_ffprobe,
+    parse_args,
     parse_serial_metrics,
     quiet_p4,
     validate_cycle,
@@ -29,6 +31,43 @@ COMPACT_SERIAL = """
 [I][p4_video_renderer]: H.264 RX evidence: admitted=19 rendered=17 presented=16 refresh_done=16
 [I][voip_stack.video]: Video session evidence: tx=50 rx=70 completed_au=18 dropped_au=0
 """
+
+
+def test_cli_rejects_peer_duration_shorter_than_local_hangup_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_p4_h264_reinvite_hil.py",
+            "--ha-url",
+            "http://ha.invalid",
+            "--sip-host",
+            "192.0.2.1",
+            "--sip-port",
+            "5060",
+            "--local-ip",
+            "192.0.2.2",
+            "--p4-host",
+            "192.0.2.3",
+            "--p4-extension",
+            "1000",
+            "--serial-port",
+            "/dev/null",
+            "--duration",
+            "3",
+            "--video-hold-seconds",
+            "4",
+            "--out-dir",
+            "captures",
+            "--output",
+            "result.json",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        parse_args()
 
 
 def _peer(*, remote_bye: bool = False) -> dict[str, object]:
