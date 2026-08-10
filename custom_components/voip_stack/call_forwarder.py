@@ -53,6 +53,7 @@ from .inbound_answer import (
     async_commit_runtime_answer,
 )
 from .media_ports import RtpPortReservation
+from .media_reservation import release_video_media_reservation
 from .outbound_attempts import (
     BrowserLeg,
 )
@@ -852,7 +853,8 @@ async def async_forward_existing_call(
                         remote_sdp=invite.remote_sdp,
                     )
                 registry.take_pending_invite(call_id)
-                registry.take_media(call_id, provisional=True)
+                transferred_media = registry.take_media(call_id, provisional=True)
+                release_video_media_reservation(transferred_media)
                 answer_result = await _commit_source_answer(
                     answer,
                     owner="assist",

@@ -440,6 +440,19 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertNotIn("ha_softphone_active", busy_guard)
         self.assertNotIn("if route_bucket or pending", busy_guard)
 
+    def test_forward_to_assist_releases_untransferred_video_media(self) -> None:
+        assist_branch = self.call_forwarder.split(
+            "if decision.action is RouteAction.ASSIST:", 1
+        )[1].split("bridge_to_trunk =", 1)[0]
+        self.assertIn(
+            "transferred_media = registry.take_media(call_id, provisional=True)",
+            assist_branch,
+        )
+        self.assertIn(
+            "release_video_media_reservation(transferred_media)",
+            assist_branch,
+        )
+
     def test_registered_sip_callers_bypass_route_requested(self) -> None:
         pre_route = self.invite_router
         registered_branch = self.inbound_automation
