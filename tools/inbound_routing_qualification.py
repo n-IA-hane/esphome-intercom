@@ -544,7 +544,11 @@ def wait_call_state(
         state = call_state(api)
         if state["state"] != expected:
             return None
-        if callee and str(state.get("callee") or "") != callee:
+        if callee and callee not in {
+            str(state.get("callee") or ""),
+            str(state.get("peer_name") or ""),
+            str(state.get("local_name") or ""),
+        }:
             return None
         return state
 
@@ -566,7 +570,11 @@ def wait_event_state(
         state = event_state(api)
         if str(state.get("state") or "") != expected:
             return None
-        if callee and str(state.get("callee") or "") != callee:
+        if callee and callee not in {
+            str(state.get("callee") or ""),
+            str(state.get("peer_name") or ""),
+            str(state.get("local_name") or ""),
+        }:
             return None
         return state
 

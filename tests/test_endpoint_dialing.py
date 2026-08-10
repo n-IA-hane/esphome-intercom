@@ -13,9 +13,57 @@ ha_exceptions.ConfigEntryError = getattr(
 )
 
 from custom_components.voip_stack import endpoint_dialing  # noqa: E402
+from custom_components.voip_stack.peer import Peer  # noqa: E402
 
 
 pytestmark = pytest.mark.ha
+
+
+def test_esphome_extension_is_the_authoritative_request_uri_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialer, _created, _reused = _dialer(monkeypatch)
+
+    uri, peer, entry = dialer.sip_uri_for_member(
+        "Waveshare P4 Touch",
+        [
+            Peer(
+                name="Waveshare P4 Touch",
+                host="192.0.2.57",
+                endpoint_kind="esphome",
+                sip_port=5060,
+                extension="1000",
+                sip_uri_user="Waveshare P4 Touch",
+            )
+        ],
+        [],
+    )
+
+    assert str(uri) == "sip:1000@192.0.2.57:5060;transport=tcp"
+    assert peer is not None
+    assert entry is None
+
+
+def test_registered_account_keeps_its_authenticated_sip_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialer, _created, _reused = _dialer(monkeypatch)
+
+    uri, _peer, _entry = dialer.sip_uri_for_member(
+        "Studio",
+        [
+            Peer(
+                name="Studio",
+                host="192.0.2.80",
+                endpoint_kind="sip_account",
+                extension="428",
+                sip_uri_user="studio-phone",
+            )
+        ],
+        [],
+    )
+
+    assert str(uri) == "sip:studio-phone@192.0.2.80:5060;transport=tcp"
 
 
 def _dialer(

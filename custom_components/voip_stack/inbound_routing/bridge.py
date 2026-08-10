@@ -114,7 +114,7 @@ def _resolve_bridge_uri(
         if sip_transport not in {"tcp", "udp"}:
             sip_transport = "tcp"
         bridge_uri = parse_sip_uri(
-            f"sip:{peer_target.sip_uri_user or peer_target.extension or decision.target or invite.routing_target}@{peer_target.host}:"
+            f"sip:{peer_target.request_uri_user or decision.target or invite.routing_target}@{peer_target.host}:"
             f"{peer_target.sip_port or default_sip_port};"
             f"transport={sip_transport}"
         )

@@ -372,7 +372,7 @@ async def async_route_trunk_invite(
             if sip_transport not in {"tcp", "udp"}:
                 sip_transport = "tcp"
             bridge_uri = parse_sip_uri(
-                f"sip:{decision.target or destination}@{peer_target.host}:"
+                f"sip:{peer_target.request_uri_user or decision.target or destination}@{peer_target.host}:"
                 f"{peer_target.sip_port or cfg['sip_port']};"
                 f"transport={sip_transport}"
             )

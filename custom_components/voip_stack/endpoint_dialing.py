@@ -82,7 +82,7 @@ class EndpointDialer:
                 sip_transport = "tcp"
             return (
                 parse_sip_uri(
-                    f"sip:{peer.sip_uri_user or peer.extension or member}@{peer.host}:"
+                    f"sip:{peer.request_uri_user or member}@{peer.host}:"
                     f"{peer.sip_port or self.config['sip_port']};"
                     f"transport={sip_transport}"
                 ),
