@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .registry import EXECUTOR_JOBS, SCENARIOS
+
 
 class EvidenceError(RuntimeError):
     """An artifact cannot support the claims assigned to its job."""
@@ -26,6 +28,16 @@ CLAIMS: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {
         "oracles": ("ha-state",),
         "postconditions": ("single-terminal",),
     },
+    ("esp-to-ha-answer-hangup", "peer-live"): {
+        "executors": ("ha-lab", "sipp"),
+        "oracles": ("sip-trace",),
+        "postconditions": (),
+    },
+    ("esp-to-ha-answer-hangup", "browser-real"): {
+        "executors": ("playwright",),
+        "oracles": ("browser-state",),
+        "postconditions": (),
+    },
     ("esp-to-ha-answer-hangup", "hil-s3"): {
         "executors": ("ws3",),
         "oracles": ("esp-state", "rtp-duplex"),
@@ -36,9 +48,17 @@ CLAIMS: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {
         ),
     },
     ("trunk-dtmf-routing-and-established-dtmf", "peer-live"): {
-        "executors": ("sipp",),
-        "oracles": ("sip-trace", "selected-destination"),
-        "postconditions": ("cleanup-barrier", "resources-at-baseline"),
+        "executors": ("home-ha", "wildix", "sipp"),
+        "oracles": (
+            "both-peer-dialogs",
+            "sip-trace",
+            "selected-destination",
+        ),
+        "postconditions": (
+            "digits-consumed-once",
+            "cleanup-barrier",
+            "resources-at-baseline",
+        ),
     },
     ("trunk-dtmf-routing-and-established-dtmf", "browser-real"): {
         "executors": (),
@@ -69,6 +89,41 @@ CLAIMS: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {
         "executors": ("software-replay",),
         "oracles": ("rtp-packetization", "assist-pcm-frames"),
         "postconditions": ("arbitrary-chunks-reframed",),
+    },
+    ("fritzbox-register-contract-replay", "software-full"): {
+        "executors": ("software-replay",),
+        "oracles": (
+            "register-request-uri",
+            "register-cseq",
+            "register-via-branch",
+            "register-refresh",
+        ),
+        "postconditions": ("timer-f-bounded",),
+    },
+    ("registered-sip-to-esp-bidirectional-hangup", "peer-live"): {
+        "executors": ("ha-lab", "baresip"),
+        "oracles": ("both-peer-dialogs", "sip-trace"),
+        "postconditions": (),
+    },
+    ("registered-sip-to-esp-bidirectional-hangup", "hil-s3"): {
+        "executors": ("ws3",),
+        "oracles": ("esp-state", "rtp-duplex"),
+        "postconditions": (
+            "single-terminal",
+            "cleanup-barrier",
+            "resources-at-baseline",
+            "immediate-redial",
+        ),
+    },
+    ("p4-audio-to-bidirectional-video-reinvite", "peer-live"): {
+        "executors": ("ha-lab",),
+        "oracles": ("sip-trace",),
+        "postconditions": (),
+    },
+    ("p4-audio-to-bidirectional-video-reinvite", "browser-real"): {
+        "executors": ("playwright",),
+        "oracles": (),
+        "postconditions": (),
     },
     ("p4-audio-to-bidirectional-video-reinvite", "hil-p4"): {
         "executors": ("p4",),
@@ -103,12 +158,58 @@ ARTIFACT_SCENARIOS: dict[tuple[str, str], tuple[str, ...]] = {
     ("trunk-dtmf-routing-and-established-dtmf", "peer-live"): (
         "dtmf_primary_extension_bypasses_automation",
         "dtmf_secondary_extension_bypasses_automation",
+        "wildix_trunk_dtmf_route_to_esp",
     ),
     ("trunk-dtmf-routing-and-established-dtmf", "browser-real"): (
         "in_call_registered_sip_info_dtmf_event",
         "in_call_rfc4733_dtmf_event",
     ),
+    ("esp-to-ha-answer-hangup", "peer-live"): (
+        "esp_to_ha_answer_hangup_sip_trace",
+    ),
+    ("esp-to-ha-answer-hangup", "browser-real"): (
+        "esp_to_ha_answer_hangup_browser_state",
+    ),
+    ("registered-sip-to-esp-bidirectional-hangup", "peer-live"): (
+        "registered_sip_to_esp_bidirectional_hangup",
+    ),
+    ("p4-audio-to-bidirectional-video-reinvite", "peer-live"): (
+        "p4_audio_to_video_reinvite_sip_trace",
+    ),
+    ("p4-audio-to-bidirectional-video-reinvite", "browser-real"): (
+        "p4_audio_to_video_reinvite_browser",
+    ),
 }
+
+
+def validate_claim_contracts() -> None:
+    """Fail when no combination of jobs can prove a declared contract."""
+
+    errors: list[str] = []
+    for scenario in SCENARIOS:
+        claims = [
+            (job, claim)
+            for (scenario_id, job), claim in CLAIMS.items()
+            if scenario_id == scenario.id
+        ]
+        for field in ("executors", "oracles", "postconditions"):
+            available = {
+                value
+                for _job, claim in claims
+                for value in claim.get(field, ())
+            }
+            missing = sorted(getattr(scenario, field) - available)
+            if missing:
+                errors.append(f"{scenario.id} missing {field}: {', '.join(missing)}")
+        for job, claim in claims:
+            for executor in claim.get("executors", ()):
+                owner = EXECUTOR_JOBS.get(executor)
+                if owner != job:
+                    errors.append(
+                        f"{scenario.id} executor {executor} belongs to {owner}, not {job}"
+                    )
+    if errors:
+        raise EvidenceError("; ".join(errors))
 
 
 def _load(path: Path) -> object:
@@ -123,6 +224,16 @@ def _all_passed(payload: object) -> bool:
     return bool(results) and isinstance(results, list) and all(
         isinstance(result, dict) and result.get("status") in {"pass", "passed"}
         for result in results
+    )
+
+
+def _command_passed(payload: object, job: str) -> bool:
+    return bool(
+        isinstance(payload, dict)
+        and payload.get("schema_version") == 1
+        and payload.get("job") == job
+        and payload.get("status") == "success"
+        and payload.get("returncode") == 0
     )
 
 
@@ -173,7 +284,7 @@ def derive_scenario_evidence(
         return []
     payloads = [_load(path) for path in artifacts if path.suffix == ".json"]
     if job in {"software-full", "ha-runtime"}:
-        supported = any(path.suffix == ".log" and path.stat().st_size for path in artifacts)
+        supported = any(_command_passed(payload, job) for payload in payloads)
     elif job in {"peer-live", "browser-real"}:
         supported = any(_all_passed(payload) for payload in payloads)
     elif job in {"hil-s3", "hil-p4"}:

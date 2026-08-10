@@ -538,24 +538,28 @@ def wait_call_state(
     expected: str,
     timeout: float = 15,
     *,
-    callee: str = "",
+    expected_remote_party: str = "",
+    expected_local_party: str = "",
 ) -> dict[str, Any]:
     def _match() -> dict[str, Any] | None:
         state = call_state(api)
         if state["state"] != expected:
             return None
-        if callee and callee not in {
+        if expected_remote_party and expected_remote_party not in {
             str(state.get("callee") or ""),
             str(state.get("peer_name") or ""),
-            str(state.get("local_name") or ""),
         }:
+            return None
+        if expected_local_party and expected_local_party != str(
+            state.get("local_name") or ""
+        ):
             return None
         return state
 
     return wait_for(
         _match,
         timeout,
-        f"{browser_call_state_entity(api)}={expected}/{callee}",
+        f"{browser_call_state_entity(api)}={expected}/{expected_remote_party}",
     )
 
 
@@ -564,21 +568,29 @@ def wait_event_state(
     expected: str,
     timeout: float = 15,
     *,
-    callee: str = "",
+    expected_remote_party: str = "",
+    expected_local_party: str = "",
 ) -> dict[str, Any]:
     def _match() -> dict[str, Any] | None:
         state = event_state(api)
         if str(state.get("state") or "") != expected:
             return None
-        if callee and callee not in {
+        if expected_remote_party and expected_remote_party not in {
             str(state.get("callee") or ""),
             str(state.get("peer_name") or ""),
-            str(state.get("local_name") or ""),
         }:
+            return None
+        if expected_local_party and expected_local_party != str(
+            state.get("local_name") or ""
+        ):
             return None
         return state
 
-    return wait_for(_match, timeout, f"{CALL_EVENT_ENTITY}={expected}/{callee}")
+    return wait_for(
+        _match,
+        timeout,
+        f"{CALL_EVENT_ENTITY}={expected}/{expected_remote_party}",
+    )
 
 
 @contextmanager
@@ -837,7 +849,12 @@ def main() -> int:
                 sip = caller()
                 with EventTrace(api) as trace:
                     sip.dial()
-                    ringing = wait_event_state(api, "ringing", 10, callee="RG Casa")
+                    ringing = wait_event_state(
+                        api,
+                        "ringing",
+                        10,
+                        expected_remote_party="RG Casa",
+                    )
                     # Reproduce issue #74 exactly: an immediate-mode trunk
                     # route must remain provisional until a group member
                     # explicitly answers.
@@ -888,7 +905,10 @@ def main() -> int:
                 with EventTrace(api) as trace:
                     sip.dial()
                     connected = wait_event_state(
-                        api, "in_call", 15, callee=ROUTE_DESTINATION
+                        api,
+                        "in_call",
+                        15,
+                        expected_remote_party=ROUTE_DESTINATION,
                     )
                     time.sleep(0.15)
             triggered = automation_last_triggered(api, ROUTE_AUTOMATION)
@@ -942,7 +962,10 @@ def main() -> int:
                 with EventTrace(api) as trace:
                     started = sip.dial()
                     connected = wait_event_state(
-                        api, "in_call", 15, callee=ROUTE_DESTINATION
+                        api,
+                        "in_call",
+                        15,
+                        expected_remote_party=ROUTE_DESTINATION,
                     )
                     elapsed = time.monotonic() - started
                     time.sleep(0.15)
@@ -977,7 +1000,10 @@ def main() -> int:
                     sip.wait_for_dtmf_media()
                     sip.digits(extension)
                     connected = wait_event_state(
-                        api, expected_state, 12, callee=callee
+                        api,
+                        expected_state,
+                        12,
+                        expected_remote_party=callee,
                     )
                     elapsed = time.monotonic() - started
                     time.sleep(0.15)
@@ -1058,7 +1084,12 @@ def main() -> int:
             with EventTrace(api) as trace:
                 sip.dial()
                 ringing = wait_call_state(api, "ringing", 10)
-                connected = wait_event_state(api, "in_call", 12, callee="Troiaio")
+                connected = wait_event_state(
+                    api,
+                    "in_call",
+                    12,
+                    expected_remote_party="Troiaio",
+                )
                 time.sleep(0.15)
             triggered = automation_last_triggered(api, TIMEOUT_AUTOMATION)
             if not triggered or triggered == previous:

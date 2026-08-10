@@ -121,7 +121,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        job: [static, qualification-selftest, software-full, ha-runtime, host-core]
+        job: [static, qualification-selftest, software-full, ha-runtime, cpp-contract]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
@@ -142,9 +142,9 @@ jobs:
         with:
           name: qualification-input-${{ github.sha }}
           path: evidence/input
-      - name: Resolve host-core source
-        if: matrix.job == 'host-core' && contains(needs.plan.outputs.required_jobs, '"host-core"')
-        id: host_core_ref
+      - name: Resolve C++ contract source
+        if: matrix.job == 'cpp-contract' && contains(needs.plan.outputs.required_jobs, '"cpp-contract"')
+        id: cpp_contract_ref
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -153,10 +153,10 @@ jobs:
           print("commit=" + repositories["esphome-voip-stack"]["commit"])
           PY
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        if: matrix.job == 'host-core' && contains(needs.plan.outputs.required_jobs, '"host-core"')
+        if: matrix.job == 'cpp-contract' && contains(needs.plan.outputs.required_jobs, '"cpp-contract"')
         with:
           repository: n-IA-hane/esphome-voip-stack
-          ref: ${{ steps.host_core_ref.outputs.commit }}
+          ref: ${{ steps.cpp_contract_ref.outputs.commit }}
           path: workspace/esphome-voip-stack
           persist-credentials: false
       - name: Install test environments
@@ -179,7 +179,7 @@ jobs:
             qualification-selftest) command=(.venv/bin/python -m pytest -q tests/test_qualification_pipeline.py) ;;
             software-full) command=(./scripts/test_suite.sh software-full) ;;
             ha-runtime) command=(./scripts/test_suite.sh ha) ;;
-            host-core) command=(.venv/bin/python -m pytest -q ../esphome-voip-stack/tests) ;;
+            cpp-contract) command=(.venv/bin/python -m pytest -q ../esphome-voip-stack/tests) ;;
             *) exit 2 ;;
           esac
           .venv/bin/python scripts/run_qualification_command.py \

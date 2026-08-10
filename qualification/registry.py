@@ -155,7 +155,14 @@ AREAS = (
             "custom_components/voip_stack/sip_*.py",
         ),
         frozenset(
-            {"static", "software-full", "host-core", "peer-live", "firmware", "hil-s3"}
+            {
+                "static",
+                "software-full",
+                "cpp-contract",
+                "peer-live",
+                "firmware",
+                "hil-s3",
+            }
         ),
     ),
     QualificationArea(
@@ -289,6 +296,21 @@ SCENARIOS = (
         frozenset({"rtp-packetization", "assist-pcm-frames"}),
         frozenset({"arbitrary-chunks-reframed"}),
         ("issue-94",),
+    ),
+    ScenarioContract(
+        "fritzbox-register-contract-replay",
+        frozenset({"sip_core"}),
+        frozenset({"software-replay"}),
+        frozenset(
+            {
+                "register-request-uri",
+                "register-cseq",
+                "register-via-branch",
+                "register-refresh",
+            }
+        ),
+        frozenset({"timer-f-bounded"}),
+        ("issue-95",),
     ),
     ScenarioContract(
         "p4-audio-to-bidirectional-video-reinvite",

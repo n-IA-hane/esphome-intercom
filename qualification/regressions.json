@@ -29,7 +29,10 @@
       "id": "issue-95",
       "issue": "https://github.com/n-IA-hane/esphome-intercom/issues/95",
       "protected_behavior": "FRITZBox registration uses a bare registrar URI and star dial strings reach the trunk unchanged",
-      "scenarios": ["trunk-dtmf-routing-and-established-dtmf"]
+      "scenarios": [
+        "fritzbox-register-contract-replay",
+        "trunk-dtmf-routing-and-established-dtmf"
+      ]
     }
   ]
 }

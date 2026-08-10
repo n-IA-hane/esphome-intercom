@@ -44,10 +44,26 @@ def main() -> int:
             stderr=subprocess.STDOUT,
             check=False,
         )
+    receipt = evidence_root / f"{args.job}-command.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "job": args.job,
+                "status": "success" if completed.returncode == 0 else "failure",
+                "returncode": completed.returncode,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    artifacts = [receipt, log, *args.artifact]
     result = build_result(
         args.job,
         "success" if completed.returncode == 0 else "failure",
-        [log, *args.artifact],
+        artifacts,
         evidence_root,
         plan_id=str(plan["plan_id"]),
         candidate_id=str(candidate["candidate_id"]),
@@ -57,7 +73,7 @@ def main() -> int:
                 "scenarios", []
             )
             if args.scenario_evidence
-            else derive_scenario_evidence(args.job, plan, [log, *args.artifact])
+            else derive_scenario_evidence(args.job, plan, artifacts)
             if completed.returncode == 0
             else []
         ),

@@ -6,10 +6,15 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
 import yaml
 
 from qualification.registry import FIRMWARE_PROFILES, regression_ledger
-from qualification.evidence import EvidenceError, derive_scenario_evidence
+from qualification.evidence import (
+    EvidenceError,
+    derive_scenario_evidence,
+    validate_claim_contracts,
+)
 from scripts.candidate_lock import build_lock, candidate_id
 from scripts.install_ha_qualification_package import install
 from scripts.qualification_plan import build_plan
@@ -41,6 +46,10 @@ def _results(plan: dict[str, object], jobs: dict[str, object]) -> dict[str, obje
         "head": plan["head"],
         "jobs": jobs,
     }
+
+
+def test_every_scenario_contract_is_producible_by_owned_executors() -> None:
+    validate_claim_contracts()
 
 
 def test_docs_only_plan_selects_economic_gate() -> None:
@@ -133,19 +142,45 @@ def test_software_evidence_claims_only_mapped_replay_contracts(
         full=False,
         event="pull-request",
     )
-    log = tmp_path / "software-full.log"
-    log.write_text("1498 passed\n", encoding="utf-8")
+    receipt = tmp_path / "software-full-command.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "job": "software-full",
+                "status": "success",
+                "returncode": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    claims = derive_scenario_evidence("software-full", plan, [log])
+    claims = derive_scenario_evidence("software-full", plan, [receipt])
 
     assert {claim["scenario_id"] for claim in claims} == {
         "dahua-interop-contract-replay",
+        "fritzbox-register-contract-replay",
         "fritzbox-pcma-to-assist-frame-reassembly",
     }
     assert not any(
         claim["scenario_id"] == "trunk-dtmf-routing-and-established-dtmf"
         for claim in claims
     )
+
+
+def test_nonempty_log_is_not_structured_software_evidence(tmp_path: Path) -> None:
+    plan = build_plan(
+        ["custom_components/voip_stack/sip_listener.py"],
+        base="base",
+        head="head",
+        full=False,
+        event="pull-request",
+    )
+    log = tmp_path / "software-full.log"
+    log.write_text("all tests passed\n", encoding="utf-8")
+
+    with pytest.raises(EvidenceError, match="no supported scenario artifact"):
+        derive_scenario_evidence("software-full", plan, [log])
 
 
 def test_hil_evidence_requires_exact_passed_scenario_and_quiescence(
@@ -176,6 +211,11 @@ def test_hil_evidence_requires_exact_passed_scenario_and_quiescence(
                                 "status": "passed",
                                 "snapshots": {"post": {"call_scoped_quiescent": True}},
                             },
+                            {
+                                "scenario": "registered-sip-to-esp-bidirectional-hangup",
+                                "status": "passed",
+                                "snapshots": {"post": {"call_scoped_quiescent": True}},
+                            },
                         ],
                     }
                 }
@@ -189,6 +229,7 @@ def test_hil_evidence_requires_exact_passed_scenario_and_quiescence(
     assert {claim["scenario_id"] for claim in claims} == {
         "esp-to-ha-answer-hangup",
         "esp-to-esp-watchdog-and-bidirectional-hangup",
+        "registered-sip-to-esp-bidirectional-hangup",
     }
 
     payload = json.loads(artifact.read_text(encoding="utf-8"))
@@ -249,6 +290,9 @@ def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
                         "browser_phone_dnd_disabled",
                         "stale_route_sequence_is_rejected",
                         "concurrent_route_requests_remain_distinct",
+                        "esp_to_ha_answer_hangup_sip_trace",
+                        "registered_sip_to_esp_bidirectional_hangup",
+                        "p4_audio_to_video_reinvite_sip_trace",
                     )
                 ]
             }
@@ -268,6 +312,10 @@ def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
                         "name": "dtmf_secondary_extension_bypasses_automation",
                         "status": "pass",
                     },
+                    {
+                        "name": "wildix_trunk_dtmf_route_to_esp",
+                        "status": "pass",
+                    },
                 ]
             }
         ),
@@ -282,7 +330,10 @@ def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
         {
             "ha-phone-policy-and-dnd-routing",
             "inbound-route-decision-guards",
+            "esp-to-ha-answer-hangup",
+            "registered-sip-to-esp-bidirectional-hangup",
             "trunk-dtmf-routing-and-established-dtmf",
+            "p4-audio-to-bidirectional-video-reinvite",
         }
     )
 
