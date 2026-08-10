@@ -218,10 +218,11 @@ def _outbound_contact(
     instance_id = _header_param(raw_contact, "+sip.instance").strip('"<>')
     raw_reg_id = _header_param(raw_contact, "reg-id")
     supports_outbound = "outbound" in sip.option_tags(request, "Supported")
-    if not supports_outbound:
+    if not supports_outbound or (not instance_id and not raw_reg_id):
         # +sip.instance is also used independently by GRUU-aware user agents.
-        # It becomes an RFC 5626 flow identity only when the UA explicitly
-        # negotiates outbound and supplies the paired reg-id.
+        # Supported: outbound advertises capability, it does not require every
+        # registration to use an outbound flow.  The Contact becomes an RFC
+        # 5626 flow identity only when the UA supplies the paired parameters.
         return "", 0, False
     if not instance_id or not raw_reg_id:
         raise ValueError("incomplete RFC 5626 Contact")
@@ -482,7 +483,7 @@ class SipRegistrar:
 
     @staticmethod
     def _modern_challenges(challenge: str) -> tuple[str, ...]:
-        """Offer RFC 8760 SHA-256 while retaining legacy MD5 interoperability."""
+        """Build opt-in RFC 8760 challenges without changing the legacy default."""
 
         return (challenge.replace("algorithm=MD5", "algorithm=SHA-256"), challenge)
 
@@ -610,19 +611,16 @@ class SipRegistrar:
             return self._result(
                 401,
                 "Unauthorized",
-                tuple(
-                    ("WWW-Authenticate", candidate)
-                    for candidate in self._modern_challenges(challenge)
-                ),
+                (("WWW-Authenticate", challenge),),
             )
 
         try:
             cseq = _register_cseq(request)
         except (TypeError, ValueError):
-            return self._result(400, "Bad Request")
+            return self._bad_request("invalid CSeq")
         call_id = request.header("Call-ID").strip()
         if not call_id:
-            return self._result(400, "Bad Request")
+            return self._bad_request("missing Call-ID")
 
         self.expire()
         raw_contacts = [
@@ -640,13 +638,13 @@ class SipRegistrar:
         # helper remains tolerant for phonebook parsing, but a REGISTER cannot
         # partially apply only its syntactically valid bindings.
         if not contacts or len(contacts) != len(raw_contacts):
-            return self._result(400, "Bad Request")
+            return self._bad_request("invalid Contact")
         wildcard = [contact for contact in contacts if contact[0] == "*"]
         if wildcard and (
             len(contacts) != 1
             or request.header("Expires").strip() != "0"
         ):
-            return self._result(400, "Bad Request")
+            return self._bad_request("invalid wildcard Contact")
 
         prepared: list[_PreparedContact] = []
         seen_contacts: set[str] = set()
@@ -669,15 +667,15 @@ class SipRegistrar:
                     if expires > 0
                     else ""
                 )
-            except (TypeError, ValueError, sip.SipError):
-                return self._result(400, "Bad Request")
+            except (TypeError, ValueError, sip.SipError) as err:
+                return self._bad_request(str(err) or "invalid Contact parameters")
             identity = (
                 f"{instance_id.casefold()}:{reg_id}"
                 if outbound
                 else advertised_contact_uri.casefold()
             )
             if identity in seen_contacts:
-                return self._result(400, "Bad Request")
+                return self._bad_request("duplicate Contact")
             seen_contacts.add(identity)
             prepared.append(
                 _PreparedContact(
@@ -825,6 +823,10 @@ class SipRegistrar:
         self.last_sip_status_code = int(status)
         self.last_sip_reason = reason
         return SipRegisterResult(status, reason, headers)
+
+    def _bad_request(self, detail: str) -> SipRegisterResult:
+        _LOGGER.warning("SIP registrar rejected REGISTER: %s", detail)
+        return self._result(400, "Bad Request")
 
     def expire(self) -> bool:
         now = time.time()

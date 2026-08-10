@@ -124,7 +124,7 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
                 for key, value in known.headers
                 if key == "WWW-Authenticate"
             ],
-            ["SHA-256", "MD5"],
+            ["MD5"],
         )
         known_nonce = sip_auth.parse_digest_challenge(
             dict(known.headers)["WWW-Authenticate"]
@@ -880,6 +880,37 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(contacts[0].source_port, 41000)
         self.assertTrue(contacts[0].outbound)
         self.assertEqual(contacts[0].instance_id, instance)
+
+    async def test_outbound_capability_does_not_require_flow_parameters(self) -> None:
+        registrar = sip_registrar.SipRegistrar(
+            enabled=True,
+            accounts=[sip_registrar.SipAccount("Phone", "Phone", "secret")],
+            local_ip="192.168.1.10",
+            local_sip_port=5060,
+        )
+        request = self._authorized_register(
+            registrar,
+            username="Phone",
+            password="secret",
+            call_id="outbound-capability",
+            cseq=1,
+            contacts=["<sip:Phone@192.0.2.50:40000;transport=tcp>;expires=120"],
+            host="192.0.2.50",
+            port=40000,
+            transport="TCP",
+            supported="outbound",
+        )
+
+        result = await registrar.handle_register(
+            request,
+            ("192.0.2.50", 40000),
+            "TCP",
+        )
+
+        self.assertEqual(result.status, 200)
+        registration = registrar.registered_contacts("Phone")[0]
+        self.assertFalse(registration.outbound)
+        self.assertNotIn("Require", dict(result.headers))
 
     async def test_instance_parameter_without_outbound_remains_an_ordinary_contact(
         self,
