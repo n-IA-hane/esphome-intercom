@@ -199,6 +199,7 @@ def test_softphone_runner_uses_registered_peer_for_isolated_browser_lab(
         def __init__(self, config, **kwargs) -> None:
             events.append(("config", config))
             events.append(("headless_audio", kwargs.get("headless_audio")))
+            events.append(("video_codec", kwargs.get("video_codec")))
 
         def dial(self, target, *, wait_for):
             events.append(("dial", (target, wait_for)))
@@ -210,12 +211,14 @@ def test_softphone_runner_uses_registered_peer_for_isolated_browser_lab(
     monkeypatch.setattr(runner, "BROWSER_INBOUND_MODE", "registered")
     monkeypatch.setattr(runner, "LOCAL_CONFIG", Path("/tmp/local-peer"))
     monkeypatch.setattr(runner, "LOCAL_SIP_TARGET", "sip:Casa@lab.invalid")
+    monkeypatch.setenv("EXPECT_VIDEO", "1")
 
     runner.dial_browser_inbound()
 
     assert events == [
         ("config", Path("/tmp/local-peer")),
         ("headless_audio", True),
+        ("video_codec", "VP8"),
         ("dial", ("sip:Casa@lab.invalid", "180 Ringing")),
     ]
 

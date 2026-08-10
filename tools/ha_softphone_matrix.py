@@ -473,7 +473,11 @@ def dial_browser_inbound() -> BareSip:
     if BROWSER_INBOUND_MODE == "trunk":
         return dial_trunk()
     if BROWSER_INBOUND_MODE == "registered":
-        caller = BareSip(LOCAL_CONFIG, headless_audio=True)
+        caller = BareSip(
+            LOCAL_CONFIG,
+            headless_audio=True,
+            video_codec="VP8" if os.environ.get("EXPECT_VIDEO", "") == "1" else "",
+        )
         try:
             caller.dial(LOCAL_SIP_TARGET, wait_for="180 Ringing")
         except BaseException:
