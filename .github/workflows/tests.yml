@@ -20,7 +20,11 @@ jobs:
         with:
           node-version: "24"
       - name: Install test deps
-        run: python -m pip install -r requirements-ha-test.txt
+        run: python -m pip install -r requirements-test.txt
+      - name: Create Home Assistant coverage environment
+        run: |
+          python -m venv --system-site-packages .ha-venv
+          .ha-venv/bin/python -m pip install -r requirements-ha-test.txt
       - name: Lint Python
         run: python -m ruff check custom_components esphome scripts tests tools
       - name: Lint shell
@@ -36,6 +40,8 @@ jobs:
       - name: Run isolated SIP peer regressions
         run: ./scripts/test_suite.sh peer
       - name: Measure runtime coverage
+        env:
+          HA_PYTHON: .ha-venv/bin/python
         run: ./scripts/test_suite.sh coverage
       - name: Upload coverage report
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
