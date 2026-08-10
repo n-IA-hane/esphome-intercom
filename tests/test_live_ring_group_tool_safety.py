@@ -196,8 +196,9 @@ def test_softphone_runner_uses_registered_peer_for_isolated_browser_lab(
     events: list[tuple[str, object]] = []
 
     class Peer:
-        def __init__(self, config, **_kwargs) -> None:
+        def __init__(self, config, **kwargs) -> None:
             events.append(("config", config))
+            events.append(("headless_audio", kwargs.get("headless_audio")))
 
         def dial(self, target, *, wait_for):
             events.append(("dial", (target, wait_for)))
@@ -214,6 +215,7 @@ def test_softphone_runner_uses_registered_peer_for_isolated_browser_lab(
 
     assert events == [
         ("config", Path("/tmp/local-peer")),
+        ("headless_audio", True),
         ("dial", ("sip:Casa@lab.invalid", "180 Ringing")),
     ]
 

@@ -473,7 +473,7 @@ def dial_browser_inbound() -> BareSip:
     if BROWSER_INBOUND_MODE == "trunk":
         return dial_trunk()
     if BROWSER_INBOUND_MODE == "registered":
-        caller = BareSip(LOCAL_CONFIG)
+        caller = BareSip(LOCAL_CONFIG, headless_audio=True)
         try:
             caller.dial(LOCAL_SIP_TARGET, wait_for="180 Ringing")
         except BaseException:
