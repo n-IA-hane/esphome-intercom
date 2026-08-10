@@ -152,6 +152,10 @@ def validate_cycle(
     rx = serial_metrics.get("rx") or {}
     tx = serial_metrics.get("tx") or {}
     session = serial_metrics.get("session") or {}
+    # completed_au counts accepted RX access units, while dropped_au is shared
+    # by RX reassembly and the bounded TX queue. Their ratio is not a loss
+    # metric. Presentation, returned-stream decode and send_fail are the
+    # independent end-to-end oracles below.
     checks.update(
         {
             "p4_presented": serial_metrics.get("first_keyframe") is True
@@ -163,7 +167,6 @@ def validate_cycle(
             "p4_video_session": int(session.get("tx", 0)) > 0
             and int(session.get("rx", 0)) > 0
             and int(session.get("completed_au", 0)) > 0
-            and int(session.get("completed_au", 0)) > int(session.get("dropped_au", 0))
             and int(session.get("send_fail", 0)) == 0,
             "serial_clean": not serial_metrics.get("fatal_errors"),
             "returned_h264": returned_video.get("frames", 0) >= 3,

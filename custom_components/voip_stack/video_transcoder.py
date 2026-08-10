@@ -364,7 +364,11 @@ def _output_command_args(video_format: RtpVideoFormat) -> list[str]:
         "-x264-params",
         (
             f"keyint={max(1, framerate)}:min-keyint={max(1, framerate)}:"
-            "scenecut=0:bframes=0:repeat-headers=1:slice-max-size=1100"
+            # Espressif's constrained-baseline decoder accepts one slice per
+            # picture.  MTU shaping belongs to RFC 6184 FU-A packetization,
+            # which FFmpeg already performs through pkt_size below, not to
+            # codec-level multi-slice output.
+            "scenecut=0:bframes=0:repeat-headers=1:slices=1"
         ),
     ]
 

@@ -135,6 +135,19 @@ class VideoTranscoderPolicyTests(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(video_transcoder.shutil, "which", return_value="/usr/bin/ffmpeg"):
             self.assertEqual(video_transcoder._ffmpeg_binary(hass), "/opt/ha/ffmpeg")
 
+    def test_h264_output_uses_one_slice_and_rtp_for_mtu_fragmentation(self) -> None:
+        output = sdp.RtpVideoFormat(
+            payload_type=105,
+            encoding="H264",
+            profile_level_id="42c00c",
+            packetization_mode=1,
+            max_framerate=10,
+        )
+        args = video_transcoder._output_command_args(output)
+        params = args[args.index("-x264-params") + 1]
+        self.assertIn("slices=1", params)
+        self.assertNotIn("slice-max-size", params)
+
     def test_ffmpeg_binary_falls_back_to_path_and_fails_cleanly(self) -> None:
         hass = _Hass()
         with mock.patch.object(video_transcoder.shutil, "which", return_value="/usr/bin/ffmpeg"):

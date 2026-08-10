@@ -177,7 +177,7 @@ def test_cycle_validation_rejects_video_without_prior_audio() -> None:
         )
 
 
-def test_cycle_validation_requires_more_completed_than_dropped_access_units() -> None:
+def test_cycle_validation_does_not_compare_rx_success_with_aggregate_drops() -> None:
     serial = SERIAL.replace(
         "completed_au=18 dropped_au=0", "completed_au=18 dropped_au=17"
     )
@@ -190,17 +190,17 @@ def test_cycle_validation_requires_more_completed_than_dropped_access_units() ->
         )["checks"].values()
     )
 
-    with pytest.raises(AssertionError, match="p4_video_session"):
-        validate_cycle(
-            _peer(),
-            parse_serial_metrics(
-                serial.replace(
-                    "completed_au=18 dropped_au=17", "completed_au=18 dropped_au=18"
-                )
-            ),
-            {"codec": "h264", "width": 352, "height": 288, "frames": 12},
-            termination_owner="peer",
-        )
+    result = validate_cycle(
+        _peer(),
+        parse_serial_metrics(
+            serial.replace(
+                "completed_au=18 dropped_au=17", "completed_au=18 dropped_au=18"
+            )
+        ),
+        {"codec": "h264", "width": 352, "height": 288, "frames": 12},
+        termination_owner="peer",
+    )
+    assert result["checks"]["p4_video_session"] is True
 
 
 def test_cleanup_requires_ha_and_p4_quiescence() -> None:
