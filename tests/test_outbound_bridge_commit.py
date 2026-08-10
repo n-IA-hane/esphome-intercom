@@ -115,6 +115,79 @@ async def test_commit_transfers_bridge_and_owns_destination_watcher(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_commit_atomically_transfers_provisional_video_owner(monkeypatch):
+    from custom_components.voip_stack import outbound_bridge_commit as module
+    from custom_components.voip_stack.inbound_answer import AnswerCommitResult
+
+    invite, winner, registry, relay = _fixture()
+    reservation = SimpleNamespace(release=MagicMock())
+    rtp_socket = SimpleNamespace(close=MagicMock())
+    rtcp_socket = SimpleNamespace(close=MagicMock())
+    pending_source = {
+        "video_rtp_reservation": reservation,
+        "video_rtp_socket": rtp_socket,
+        "video_rtcp_socket": rtcp_socket,
+    }
+    registry.take_media.return_value = pending_source
+    video_relay = object()
+    winner.video_relay = video_relay
+    relay.attach_video_relay.side_effect = lambda value: setattr(
+        relay, "video_relay", value
+    )
+    binder = SimpleNamespace(attach=MagicMock())
+    monkeypatch.setattr(module, "build_invite_client_relay", lambda **_: relay)
+    monkeypatch.setattr(
+        module,
+        "configure_answered_invite_video_relay",
+        lambda *_a, **_k: object(),
+    )
+    monkeypatch.setattr(module, "attach_dtmf_event_bridge", MagicMock())
+    monkeypatch.setattr(
+        module, "async_start_sip_bridge_media", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr(module, "build_answer_directional", lambda *_a, **_k: "")
+    monkeypatch.setattr(module, "BridgeMediaUpdateBinder", lambda _hass: binder)
+    monkeypatch.setattr(
+        module,
+        "async_commit_runtime_answer",
+        AsyncMock(return_value=AnswerCommitResult(True, True)),
+    )
+    monkeypatch.setattr(module, "async_watch_sip_bridge_destination", AsyncMock())
+
+    await module.async_commit_outbound_bridge(
+        MagicMock(),
+        registry,
+        module.BridgeCommitData(
+            invite=invite,
+            winner=winner,
+            source_relay_port=40000,
+            dest_relay_port=40002,
+            local_ip="127.0.0.1",
+            release_port_pairs=(winner.ports.ports,),
+            detach_reservations=(winner.ports,),
+        ),
+        module.BridgeCommitPolicy(
+            route_kind="trunk",
+            caller="provider",
+            callee="desk",
+            connected_party="desk",
+            response_already_sent=True,
+            consume_pending_source=True,
+        ),
+    )
+    await asyncio.sleep(0)
+
+    registry.attach_relay.assert_called_once_with("source-call", relay)
+    registry.take_media.assert_called_once_with("source-call", provisional=True)
+    assert pending_source == {}
+    reservation.release.assert_not_called()
+    rtp_socket.close.assert_not_called()
+    rtcp_socket.close.assert_not_called()
+    assert relay.video_relay is video_relay
+    assert not _pending_watchers()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["relay", "answer"])
 async def test_commit_failure_leaves_no_destination_watcher(monkeypatch, failure):
     from custom_components.voip_stack import outbound_bridge_commit as module

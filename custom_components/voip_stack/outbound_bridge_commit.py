@@ -238,9 +238,18 @@ async def async_commit_outbound_bridge(
         )
     elif policy.consume_pending_source:
         registry.take_pending_invite(invite.call_id)
-        release_video_media_reservation(
-            registry.take_media(invite.call_id, provisional=True)
-        )
+        pending_source = registry.take_media(invite.call_id, provisional=True)
+        if pending_source is not None and relay.video_relay is not None:
+            # The live relay now owns the source video sockets and reservation.
+            # Detach those handles from the provisional owner without closing
+            # them, then release only media that was not transferred.
+            for key in (
+                "video_rtp_reservation",
+                "video_rtp_socket",
+                "video_rtcp_socket",
+            ):
+                pending_source.pop(key, None)
+        release_video_media_reservation(pending_source)
 
     try:
         answer = ""

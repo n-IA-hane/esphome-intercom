@@ -361,8 +361,7 @@ async def async_route_trunk_invite(
             answered=True,
         )
         return
-    registry.take_pending_invite(invite.call_id)
-    preanswered = registry.take_media(invite.call_id, provisional=True)
+    preanswered = registry.resource_for(invite.call_id, "preanswered")
     peer_target = peer_for_target(decision.target or destination, peers)
     bridge_uri = None
     try:
@@ -426,17 +425,17 @@ async def async_route_trunk_invite(
         target=destination,
     )
     source_video_reservation = (
-        preanswered.pop("video_rtp_reservation", None)
+        preanswered.get("video_rtp_reservation")
         if isinstance(preanswered, dict)
         else None
     )
     source_video_rtp_socket = (
-        preanswered.pop("video_rtp_socket", None)
+        preanswered.get("video_rtp_socket")
         if isinstance(preanswered, dict)
         else None
     )
     source_video_rtcp_socket = (
-        preanswered.pop("video_rtcp_socket", None)
+        preanswered.get("video_rtcp_socket")
         if isinstance(preanswered, dict)
         else None
     )
@@ -622,7 +621,7 @@ async def async_route_trunk_invite(
                 response_already_sent=bool(
                     (preanswered or {}).get("final_response_sent", True)
                 ),
-                consume_pending_source=False,
+                consume_pending_source=True,
             ),
         )
     except Exception as err:

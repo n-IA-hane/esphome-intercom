@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -11,6 +12,16 @@ from custom_components.voip_stack import trunk_inbound_router
 
 
 pytestmark = pytest.mark.ha
+
+
+def test_dtmf_route_keeps_provisional_owner_until_bridge_commit() -> None:
+    source = Path(trunk_inbound_router.__file__).read_text()
+    direct_route = source.rsplit(
+        'preanswered = registry.resource_for(invite.call_id, "preanswered")', 1
+    )[1]
+    before_commit = direct_route.split("async_commit_outbound_bridge(", 1)[0]
+    assert "take_media(invite.call_id, provisional=True)" not in before_commit
+    assert "consume_pending_source=True" in direct_route
 
 
 def _runtime() -> trunk_inbound_router.TrunkInboundRuntime:
