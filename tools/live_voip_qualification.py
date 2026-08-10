@@ -786,6 +786,31 @@ async def scenario_ha_to_esp_extension_answer_hangup(ctx: LiveContext) -> None:
     ctx.capture("ha_to_esp_extension_answer_hangup")
 
 
+async def scenario_ha_to_esp_cancel_reuse(ctx: LiveContext) -> None:
+    """Prove a cancelled incoming INVITE cannot strand the ESP lifecycle."""
+    await ctx.cleanup()
+    await ctx.esp.switch("auto_answer", False)
+
+    await ctx.ha.service("voip_stack", "call", {"destination": ctx.args.esp_extension})
+    await wait_esp_voip_state(ctx, {"ringing", "incoming"}, timeout=12)
+    await ctx.ha.service("voip_stack", "hangup", {})
+    await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
+    await wait_softphone_state(ctx, {"idle"}, timeout=8)
+
+    # Reuse is part of termination correctness. A terminal state is not enough
+    # unless the same endpoint accepts the very next INVITE without a reboot or
+    # an arbitrary settling delay.
+    await ctx.ha.service("voip_stack", "call", {"destination": ctx.args.esp_extension})
+    await wait_esp_voip_state(ctx, {"ringing", "incoming"}, timeout=12)
+    await ctx.esp.button("call")
+    await wait_esp_voip_state(ctx, {"in_call"}, timeout=12)
+    await wait_softphone_state(ctx, {"in_call"}, timeout=8)
+    await ctx.ha.service("voip_stack", "hangup", {})
+    await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
+    await wait_softphone_state(ctx, {"idle"}, timeout=8)
+    ctx.capture("ha_to_esp_cancel_reuse")
+
+
 async def scenario_ha_to_esp_api_answer_hangup(ctx: LiveContext) -> None:
     """Prove the native ESPHome answer and hangup actions execute on-device."""
     await ctx.cleanup()
@@ -1198,6 +1223,21 @@ async def scenario_esp_to_trunk_cancel(ctx: LiveContext) -> None:
 
 
 SCENARIOS: dict[str, Scenario] = {
+    "ha_to_esp_cancel_reuse": Scenario(
+        "ha_to_esp_cancel_reuse",
+        "HA cancels while ESP rings; the same ESP immediately accepts and completes the next call",
+        frozenset({"ha", "esp", "cancel", "immediate_reuse", "extension"}),
+        frozenset(
+            {
+                "first_ringing",
+                "cancelled_idle",
+                "second_ringing",
+                "second_answer",
+                "both_idle",
+            }
+        ),
+        scenario_ha_to_esp_cancel_reuse,
+    ),
     "ha_to_esp_auto_answer": Scenario(
         "ha_to_esp_auto_answer",
         "HA calls ESP with auto-answer off and on; ringtone internals are checked when exposed",
