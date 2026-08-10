@@ -58,6 +58,23 @@ if [[ $PYTHON != */* ]]; then
 fi
 [[ -x "$PYTHON" ]] || { printf 'Python not found: %s\n' "$PYTHON" >&2; exit 2; }
 
+resolve_ha_python() {
+  if [[ -z $HA_PYTHON ]]; then
+    if [[ -x "$ROOT/../ha-voip-lab/.venv/bin/python" ]]; then
+      HA_PYTHON="$ROOT/../ha-voip-lab/.venv/bin/python"
+    elif "$PYTHON" -c 'import homeassistant' >/dev/null 2>&1; then
+      HA_PYTHON=$PYTHON
+    fi
+  elif [[ $HA_PYTHON != */* ]]; then
+    HA_PYTHON=$(command -v "$HA_PYTHON" || true)
+  fi
+  [[ -n $HA_PYTHON && -x $HA_PYTHON ]] || {
+    printf '%s\n' \
+      "Home Assistant test Python not found; set HA_PYTHON or install requirements-ha-test.txt" >&2
+    exit 2
+  }
+}
+
 cd "$ROOT"
 path_mode=$(
   ./scripts/yaml_paths.sh status |
@@ -133,16 +150,7 @@ case "$MODE" in
     exit "$status"
     ;;
   coverage)
-    if [[ -z $HA_PYTHON ]]; then
-      HA_PYTHON="$ROOT/../ha-voip-lab/.venv/bin/python"
-    fi
-    if [[ $HA_PYTHON != */* ]]; then
-      HA_PYTHON=$(command -v "$HA_PYTHON" || true)
-    fi
-    [[ -x $HA_PYTHON ]] || {
-      printf 'HA test Python not found: %s\n' "$HA_PYTHON" >&2
-      exit 2
-    }
+    resolve_ha_python
 
     coverage_file="$ROOT/.coverage"
     rm -f "$coverage_file" "$ROOT"/.coverage.*
@@ -181,20 +189,7 @@ case "$MODE" in
     exec "$PYTHON" -m coverage xml
     ;;
   ha)
-    if [[ -z $HA_PYTHON ]]; then
-      if [[ -x "$ROOT/../ha-voip-lab/.venv/bin/python" ]]; then
-        HA_PYTHON="$ROOT/../ha-voip-lab/.venv/bin/python"
-      else
-        HA_PYTHON="$PYTHON"
-      fi
-    fi
-    if [[ $HA_PYTHON != */* ]]; then
-      HA_PYTHON=$(command -v "$HA_PYTHON" || true)
-    fi
-    [[ -x "$HA_PYTHON" ]] || {
-      printf 'HA test Python not found: %s\n' "$HA_PYTHON" >&2
-      exit 2
-    }
+    resolve_ha_python
     PYTHON=$HA_PYTHON
     pytest_args=(
       "${ha_tests[@]}"
