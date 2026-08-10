@@ -457,6 +457,34 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertFalse(self.right_rtp.sent)
         self.assertEqual(self.relay.transcoded_input_packets, 2)
 
+    def test_cross_codec_recvonly_provisions_later_send_direction(self) -> None:
+        """An RFC 3264 direction update must not create a second relay lifecycle."""
+
+        vp8 = RtpVideoFormat(
+            payload_type=104,
+            encoding="VP8",
+            direction="recvonly",
+        )
+        jpeg = RtpVideoFormat(
+            payload_type=26,
+            encoding="JPEG",
+            direction="sendonly",
+        )
+        self.left.video_format = vp8
+        self.left.local_video_format = vp8
+        self.right.video_format = jpeg
+        self.right.local_video_format = jpeg
+
+        self.relay.configure_transcoding(
+            types.SimpleNamespace(data={}),
+            "direction-update",
+        )
+
+        self.assertEqual(
+            self.relay._transcode_directions,  # noqa: SLF001
+            {"left", "right"},
+        )
+
     def test_cross_codec_startup_packets_wait_for_ffmpeg_input(self) -> None:
         jpeg = RtpVideoFormat(payload_type=26, encoding="JPEG")
         h264 = _format(105, profile="42c00c")

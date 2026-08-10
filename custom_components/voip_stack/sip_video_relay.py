@@ -302,18 +302,19 @@ class SipVideoRtpRelay:
         return self._stop_requested or self._released
 
     def configure_transcoding(self, hass: Any, call_id: str) -> None:
-        """Configure only the incompatible active directions for FFmpeg."""
+        """Configure every incompatible negotiated direction for FFmpeg.
+
+        A later RFC 3264 offer may change ``recvonly`` or ``sendonly`` to
+        ``sendrecv`` without changing codecs.  Provision both codec paths at
+        bridge creation so that such a direction change is an atomic peer
+        update, not a second media lifecycle.
+        """
 
         if self.started or self._start_task is not None:
             raise RuntimeError("cannot configure transcoding after relay start")
         directions: set[str] = set()
         for side in ("left", "right"):
             source, destination = self._peers(side)
-            if not remote_can_send(source.video_format) or not remote_can_receive(
-                destination.video_format,
-                connection_held=destination.connection_held,
-            ):
-                continue
             if video_formats_passthrough_compatible(
                 source.recv_format,
                 destination.send_format,
