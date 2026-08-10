@@ -620,9 +620,8 @@ class VoipStackCard extends HTMLElement {
 
   setConfig(config) {
     const oldSelector = this.config?.entity_id || this.config?.device_id || "";
-    const oldEndpointId = this._getSoftphoneEndpointId();
-    const oldDeviceId = String(this.config?.device_id || "");
     const oldMode = this.config?.mode || this.config?.card_mode || "esp_mirror";
+    const oldRuntimeKey = this._softphoneRuntimeKey();
     const normalised = normaliseCardConfig(config);
     this.config = normalised.config;
     const newSelector = this.config?.entity_id || this.config?.device_id || "";
@@ -635,20 +634,14 @@ class VoipStackCard extends HTMLElement {
         this._unsubSoftphoneState = null;
       }
       voipStackEngine.releaseVideoCanvas(this);
-      voipStackEngine.releaseSoftphoneController(
-        this,
-        oldEndpointId || (oldDeviceId ? `device:${oldDeviceId}` : "preferred"),
-      );
+      voipStackEngine.releaseSoftphoneController(this, oldRuntimeKey);
     }
     if (oldSelector !== newSelector || oldMode !== newMode) {
       if (this._unsubSoftphoneState) {
         this._unsubSoftphoneState();
         this._unsubSoftphoneState = null;
       }
-      voipStackEngine.releaseSoftphoneController(
-        this,
-        oldEndpointId || (oldDeviceId ? `device:${oldDeviceId}` : "preferred"),
-      );
+      voipStackEngine.releaseSoftphoneController(this, oldRuntimeKey);
       this._resetDeviceBindings();
       this._softphoneStateLoaded = false;
       this._softphoneSnapshot = null;
@@ -2331,6 +2324,12 @@ class VoipStackCard extends HTMLElement {
           send_video: sendVideo,
           media_client_id: voipStackEngine.mediaClientId,
         });
+        // The backend can commit a local or SIP answer and publish in_call
+        // before the service promise resolves. While this operation owns the
+        // start gate those events deliberately cannot attach media, so refresh
+        // the authoritative snapshot once and let the finally block reconcile
+        // the selected media path.
+        await this._loadSoftphoneState();
         // The page-level engine, not this transient Lovelace element, owns
         // the media session.  If HA recreates the card while the service call
         // is in flight, the replacement adopts the authoritative backend

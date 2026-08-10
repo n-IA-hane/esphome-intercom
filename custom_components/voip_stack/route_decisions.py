@@ -178,7 +178,11 @@ def set_pending_route_decision(hass: HomeAssistant, data: dict) -> None:
     )
     invite = route.get("invite")
     session = registry.get_session(call_id)
-    if action == "answer_ha" and invite is not None:
+    if (
+        action == "answer_ha"
+        and invite is not None
+        and not route.get("defer_answer_projection", False)
+    ):
         if session is not None:
             session = registry.transition(
                 call_id, state=CallState.CONNECTING.value,

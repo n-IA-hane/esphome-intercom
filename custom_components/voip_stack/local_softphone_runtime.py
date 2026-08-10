@@ -55,6 +55,7 @@ def start_local_softphone_call(
     enable_caller_video_send: bool = False,
     caller_owner_id: str = "",
     context: object | None = None,
+    preserve_controller: bool = False,
 ) -> LocalCallSnapshot:
     """Create one local call with HA provenance bound before its first event."""
     bridge = local_softphone_bridge(hass)
@@ -71,11 +72,12 @@ def start_local_softphone_call(
         dest_endpoint_id=callee_endpoint_id,
         local_bridge=True,
     )
-    registry.bind_controller(
-        call_id,
-        context=context,
-        endpoint_id=caller_endpoint_id,
-    )
+    if not preserve_controller:
+        registry.bind_controller(
+            call_id,
+            context=context,
+            endpoint_id=caller_endpoint_id,
+        )
     try:
         return bridge.start_call(
             caller_endpoint_id,

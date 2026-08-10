@@ -1528,15 +1528,25 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         )
         self.assertIn("endpoint.kind is not EndpointKind.BROWSER", target_checks)
 
-    def test_video_invites_preserve_video_during_dtmf_preanswer(self) -> None:
+    def test_video_invites_stage_video_until_dtmf_selects_a_peer(self) -> None:
         trunk_branch = self.inbound_trunk
         self.assertNotIn("and invite.video_format is None", trunk_branch)
         self.assertIn("reserve_sip_video_media(hass)", trunk_branch)
         self.assertIn('"local_video_rtp_port": source_video_port', trunk_branch)
         self.assertIn("video_port=source_video_port", trunk_branch)
-        self.assertIn("preanswer_video_direction = (", trunk_branch)
-        self.assertIn("allow_send=True", trunk_branch)
+        self.assertIn(
+            'preanswer_video_direction = "recvonly" if source_video_port else "inactive"',
+            trunk_branch,
+        )
         self.assertIn("video_direction=preanswer_video_direction", trunk_branch)
+        self.assertIn(
+            "async_activate_video_reinvite(",
+            self.outbound_bridge_commit,
+        )
+        self.assertIn(
+            "async_activate_video_reinvite(",
+            self.softphone_answer,
+        )
 
     def test_dtmf_can_route_to_an_additional_ha_softphone(self) -> None:
         runner = self.trunk_inbound_router

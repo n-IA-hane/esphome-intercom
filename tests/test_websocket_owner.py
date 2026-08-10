@@ -227,6 +227,40 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
             "available",
         )
 
+    def test_local_bridge_media_status_is_scoped_to_each_endpoint(self) -> None:
+        bucket = _MediaRuntime()
+        registry = _CallRegistry("caller-document")
+        snapshot = types.SimpleNamespace(
+            caller_endpoint_id="office",
+            callee_endpoint_id="kitchen",
+            caller_media_owner_id="caller-document",
+            callee_media_owner_id="callee-document",
+        )
+        bridge = types.SimpleNamespace(get_call=lambda _call_id: snapshot)
+
+        self.assertEqual(
+            media_websocket_owner_status(
+                bucket,
+                registry,
+                "call-1",
+                "kitchen",
+                "callee-document",
+                local_bridge=bridge,
+            ),
+            "available",
+        )
+        self.assertEqual(
+            media_websocket_owner_status(
+                bucket,
+                registry,
+                "call-1",
+                "kitchen",
+                "caller-document",
+                local_bridge=bridge,
+            ),
+            "other",
+        )
+
     async def test_disconnected_other_document_cannot_rebind_call_identity(
         self,
     ) -> None:

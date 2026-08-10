@@ -6,6 +6,9 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 import logging
+from typing import Any
+
+from .core import sdp
 from .core.audio_format import AudioFormat
 from .session_cleanup import async_wait_for_cleanup
 from .sip_listener import (
@@ -17,6 +20,7 @@ from .sip_listener import (
     ReferHandler,
     RegisterHandler,
     SipTcpServer,
+    SipInvite,
     SipUdpServer,
     TerminateHandler,
 )
@@ -40,6 +44,57 @@ class SipEndpointSnapshot:
     @property
     def pending_invites(self) -> int:
         return self.pending_transactions
+
+
+@dataclass(slots=True)
+class PreparedEndpointVideoReinvite:
+    """Locally accepted offer awaiting the bridge-wide commit decision."""
+
+    endpoint: Any
+    call_id: str
+    previous: SipInvite
+    candidate: SipInvite
+    committed: bool = False
+
+    def commit(self) -> bool:
+        if self.committed:
+            return True
+        self.committed = self.endpoint.commit_prepared_reinvite(
+            self.call_id, self.previous, self.candidate
+        )
+        return self.committed
+
+    async def restore(
+        self,
+        *,
+        local_video_rtp_port: int,
+        video_formats: tuple[sdp.RtpVideoFormat, ...],
+    ) -> bool:
+        """Compensate an accepted offer with the previous video topology."""
+
+        if not self.commit():
+            return False
+        restoring_video = self.previous.video_format is not None
+        restored = await self.endpoint.async_prepare_video_reinvite(
+            self.call_id,
+            local_video_rtp_port=(
+                int(local_video_rtp_port) if restoring_video else 0
+            ),
+            video_formats=video_formats,
+            video_direction=(
+                self.previous.video_format.direction
+                if restoring_video
+                else "inactive"
+            ),
+        )
+        return bool(
+            restored is not None
+            and self.endpoint.commit_prepared_reinvite(
+                self.call_id,
+                self.candidate,
+                restored,
+            )
+        )
 
 
 class SipEndpointManager:
@@ -105,6 +160,7 @@ class SipEndpointManager:
         self._stop_task: asyncio.Task[None] | None = None
         self._stopping = False
         self._stopped = False
+        self._attached_dialog_endpoints: set[Any] = set()
 
     async def start(self) -> bool:
         async with self._lifecycle_lock:
@@ -304,6 +360,66 @@ class SipEndpointManager:
             if callable(send) and send(call_id):
                 return True
         return False
+
+    def _dialog_endpoints(self):
+        for server in self.servers:
+            endpoint = getattr(server, "endpoint", None)
+            if endpoint is not None:
+                yield endpoint
+            endpoints = getattr(server, "endpoints", None)
+            if isinstance(endpoints, set):
+                yield from endpoints
+        yield from tuple(self._attached_dialog_endpoints)
+
+    def attach_dialog_endpoint(self, endpoint: Any) -> None:
+        """Expose a transport-owned endpoint through common dialog control."""
+
+        self._attached_dialog_endpoints.add(endpoint)
+
+    def detach_dialog_endpoint(self, endpoint: Any) -> None:
+        """Remove a transport endpoint after its flow is closed."""
+
+        self._attached_dialog_endpoints.discard(endpoint)
+
+    async def async_prepare_video_reinvite(
+        self,
+        call_id: str,
+        **kwargs,
+    ) -> PreparedEndpointVideoReinvite | None:
+        """Stage a local video offer on the transport owning the dialog."""
+
+        for endpoint in self._dialog_endpoints():
+            dialog = endpoint.active_dialogs.get(call_id)
+            if dialog is None or dialog.invite is None:
+                continue
+            previous = dialog.invite
+            candidate = await endpoint.async_prepare_video_reinvite(
+                call_id, **kwargs
+            )
+            if candidate is None:
+                return None
+            return PreparedEndpointVideoReinvite(
+                endpoint, call_id, previous, candidate
+            )
+        return None
+
+    async def async_activate_video_reinvite(
+        self,
+        call_id: str,
+        *,
+        local_video_rtp_port: int,
+        video_formats: tuple[sdp.RtpVideoFormat, ...],
+        video_direction: str,
+    ) -> bool:
+        """Negotiate and commit one local video direction change."""
+
+        prepared = await self.async_prepare_video_reinvite(
+            call_id,
+            local_video_rtp_port=local_video_rtp_port,
+            video_formats=video_formats,
+            video_direction=video_direction,
+        )
+        return bool(prepared is not None and prepared.commit())
 
     def _active_dialog_count_for(self, server: object) -> int:
         endpoint = getattr(server, "endpoint", None)

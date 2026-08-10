@@ -19,6 +19,7 @@ from .fsm import CallState, TerminalReason
 from .inbound_answer import async_commit_runtime_answer
 from .media_ports import release_sip_rtp_port_pair, release_video_media_reservation
 from .outbound_attempts import OutboundLeg, async_apply_outbound_video_answer
+from .runtime_data import sip_endpoint_manager
 from .core.sdp import build_answer_directional, first_offered_dtmf_format
 from .sip_bridge import (
     async_request_sip_bridge_keyframe,
@@ -199,6 +200,28 @@ async def async_commit_outbound_bridge(
         if winner.video_relay is not None:
             relay.attach_video_relay(winner.video_relay)
         request_video_keyframe = await async_start_sip_bridge_media(relay)
+        if (
+            policy.response_already_sent
+            and video_answer is not None
+            and relay.video_relay is not None
+            and (
+                (endpoint := sip_endpoint_manager(hass)) is None
+                or not await endpoint.async_activate_video_reinvite(
+                    invite.call_id,
+                    local_video_rtp_port=int(relay.video_relay.left_port),
+                    video_formats=tuple(
+                        dict.fromkeys(
+                            (
+                                relay.video_relay.left.recv_format,
+                                relay.video_relay.left.send_format,
+                            )
+                        )
+                    ),
+                    video_direction=video_answer.direction,
+                )
+            )
+        ):
+            raise RuntimeError("preanswered source rejected video activation")
     except BaseException:
         await _cancel_watcher()
         registry.forget_bridge_link(invite.call_id)

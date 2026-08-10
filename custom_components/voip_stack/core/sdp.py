@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import ipaddress
+import re
 from dataclasses import dataclass, replace
 from fractions import Fraction
 
@@ -1425,7 +1426,7 @@ def build_offer_directional(
     lines.append(f"a=ptime:{rtp_formats[0].frame_ms}")
     lines.append(f"a=maxptime:{rtp_formats[0].frame_ms}")
     lines.append(f"a={audio_direction}")
-    offered_video = tuple(
+    offered_video = _unique_video_payloads(
         video_formats or (() if video_format is None else (video_format,))
     )
     if offered_video:
@@ -1435,6 +1436,17 @@ def build_offer_directional(
             )
         )
     return "\r\n".join(lines) + "\r\n"
+
+
+def _unique_video_payloads(
+    formats: tuple[RtpVideoFormat, ...] | list[RtpVideoFormat],
+) -> tuple[RtpVideoFormat, ...]:
+    """Keep one deterministic RTP mapping for each video payload type."""
+
+    selected: dict[int, RtpVideoFormat] = {}
+    for fmt in formats:
+        selected.setdefault(int(fmt.payload_type), fmt)
+    return tuple(selected.values())
 
 
 def _common_codec_offer_formats(
@@ -2915,6 +2927,14 @@ def negotiate_answer_directional(
         allow_dahua_pcm=allow_dahua_pcm,
     )
     if local_offer_sdp is not None:
+        explicit = _negotiate_answer_flow_attributes(
+            remote_sdp,
+            answered_formats,
+            local_send_preferred,
+            local_recv_preferred,
+        )
+        if explicit is not None:
+            return explicit
         return _negotiate_answer_with_offer_payloads(
             answered_formats,
             offered_pcm_formats(
@@ -2932,6 +2952,54 @@ def negotiate_answer_directional(
         format_direction,
         prefer_offer_order=True,
     )
+
+
+def _negotiate_answer_flow_attributes(
+    remote_sdp: str | bytes,
+    answered: list[RtpPcmFormat],
+    local_send_preferred: list[AudioFormat],
+    local_recv_preferred: list[AudioFormat],
+) -> RtpPcmDirection | None:
+    """Apply the ESPHome directional payload extension when both flows exist."""
+
+    text = (
+        remote_sdp.decode("utf-8", errors="strict")
+        if isinstance(remote_sdp, bytes)
+        else remote_sdp
+    )
+    flows: dict[str, int] = {}
+    for raw in text.replace("\r\n", "\n").split("\n"):
+        match = re.fullmatch(
+            r"a=x-voip-stack-flow:(\d+)\s+(send|recv)",
+            raw.strip(),
+            flags=re.IGNORECASE,
+        )
+        if match is not None:
+            flows[match.group(2).lower()] = int(match.group(1))
+    if set(flows) != {"send", "recv"}:
+        return None
+    by_payload = {item.payload_type: item for item in answered}
+    remote_recv = by_payload.get(flows["recv"])
+    remote_send = by_payload.get(flows["send"])
+    if remote_recv is None or remote_send is None:
+        return None
+    send = next(
+        (
+            selected
+            for local in local_send_preferred
+            if (selected := _rtp_compatible_audio(remote_recv, local)) is not None
+        ),
+        None,
+    )
+    recv = next(
+        (
+            selected
+            for local in local_recv_preferred
+            if (selected := _rtp_compatible_audio(remote_send, local)) is not None
+        ),
+        None,
+    )
+    return RtpPcmDirection(send, recv) if send is not None and recv is not None else None
 
 
 def build_answer_directional(

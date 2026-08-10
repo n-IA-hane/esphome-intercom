@@ -503,9 +503,25 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         snapshot = ring_start.index("peers = await _async_build_peer_snapshot(hass)")
         self.assertLess(upsert, publish)
         self.assertLess(publish, snapshot)
+        self.assertIn("state=CallState.REMOTE_RINGING.value", ring_start)
+        self.assertIn('origin_leg_id = f"browser-origin:{endpoint_id}"', ring_start)
+        self.assertIn("leg_id=origin_leg_id", ring_start)
         self.assertNotIn("CallProjectionEvent.phone(", ring_start)
         self.assertIn("TerminalReason.TRANSPORT_UNREACHABLE.value", ring_start)
         self.assertIn("EndpointTerminationHandler(hass).terminate_reason(", ring_start)
+
+        orchestrator = RING_GROUP_ORCHESTRATOR.read_text()
+        self.assertNotIn('"local_group_selected"', orchestrator)
+        self.assertIn(
+            "registry.release_endpoint_claim(\n"
+            "                    invite.call_id, origin_endpoint_id",
+            orchestrator,
+        )
+        self.assertIn(
+            "registry.release_endpoint_claim(\n"
+            "                    invite.call_id, winner.endpoint_id",
+            orchestrator,
+        )
 
     def test_initial_outbound_state_precedes_final_response_watcher(self) -> None:
         """A queued 200 OK must not be overwritten by the earlier 180 result."""

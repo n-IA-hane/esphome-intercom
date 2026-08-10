@@ -1691,6 +1691,7 @@ async def websocket_ha_softphone_state(
             str(state.get("call_id") or ""),
             endpoint_id,
             media_client_id,
+            local_bridge=require_runtime_data(hass).local_bridge,
         )
         controller_status = media_controller_status(
             call_registry(hass),

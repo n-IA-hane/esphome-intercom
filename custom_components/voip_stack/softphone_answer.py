@@ -24,6 +24,7 @@ from .peer_snapshot import async_advertise_host
 from .runtime_data import (
     call_runtime_artifacts,
     conference_component,
+    sip_endpoint_manager,
     sip_endpoint_runtime,
 )
 from .route_decisions import set_pending_route_decision
@@ -222,7 +223,7 @@ async def async_answer_browser_call(
         and bool(transport_config(hass).get(CONF_VIDEO_CAMERA_SEND, False))
         and bool(call.data.get("send_video", False))
     )
-    video_direction = (
+    desired_video_direction = (
         constrained_video_direction(
             invite.video_format.direction,
             allow_send=(
@@ -234,17 +235,13 @@ async def async_answer_browser_call(
         if invite.video_format is not None and endpoint_video_enabled
         else "inactive"
     )
+    video_direction = desired_video_direction
     if preanswered is not None and preanswered.get("final_response_sent", True):
-        negotiated_video_direction = str(
+        # This is the already negotiated local direction, not a new remote
+        # offer. A different browser answer policy requires an in-dialog
+        # offer after the media owner has been committed.
+        video_direction = str(
             preanswered.get("video_direction") or "inactive"
-        )
-        video_direction = constrained_video_direction(
-            negotiated_video_direction,
-            allow_send=(
-                camera_send_enabled
-                and browser_video_send_supported(invite.video_format)
-                and not invite.remote_video_connection_held
-            ),
         )
 
     answer_sdp = ""
@@ -396,6 +393,45 @@ async def async_answer_browser_call(
         )
 
     registry.attach_media(call_id, softphone_media)
+    if (
+        response_already_sent
+        and invite.video_format is not None
+        and local_video_rtp_port
+        and desired_video_direction != video_direction
+    ):
+        endpoint = sip_endpoint_manager(hass)
+        activated = bool(
+            endpoint is not None
+            and await endpoint.async_activate_video_reinvite(
+                call_id,
+                local_video_rtp_port=local_video_rtp_port,
+                video_formats=tuple(
+                    dict.fromkeys(
+                        video_format
+                        for video_format in (
+                            invite.answer_video_format,
+                            invite.send_video_format,
+                            invite.recv_video_format,
+                        )
+                        if video_format is not None
+                    )
+                ),
+                video_direction=desired_video_direction,
+            )
+        )
+        if activated:
+            video_direction = desired_video_direction
+            softphone_media["video_direction"] = video_direction
+            registry.update_media(call_id, video_direction=video_direction)
+        else:
+            video_failure_reason = "video_renegotiation_failed"
+            softphone_media["video_failure_reason"] = video_failure_reason
+            _LOGGER.warning(
+                "SIP preanswered browser video activation failed call_id=%s "
+                "direction=%s",
+                call_id,
+                desired_video_direction,
+            )
     registry.add_leg(
         call_id,
         call_id,

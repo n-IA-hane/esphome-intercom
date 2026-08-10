@@ -27,7 +27,7 @@ from ..media_ports import (
     take_delayed_offer_ports,
 )
 from ..runtime_data import call_runtime_artifacts
-from ..core.sdp import build_answer_directional, constrained_video_direction
+from ..core.sdp import build_answer_directional
 from ..sip_listener import SipInviteResult
 
 if TYPE_CHECKING:
@@ -143,14 +143,10 @@ def prepare_trunk_preanswer(
     # compatibility transport, so only its branch receives an immediate 2xx.
     confirm_for_sip_info = dtmf_format is None
     preanswered_media["final_response_sent"] = confirm_for_sip_info
-    preanswer_video_direction = (
-        constrained_video_direction(
-            invite.video_format.direction,
-            allow_send=True,
-        )
-        if source_video_port and invite.video_format is not None
-        else "inactive"
-    )
+    # Digit collection precedes destination selection. Anchor incoming video
+    # on the pre-bound socket without advertising an outgoing source. This is
+    # the RFC 3264 recvonly role until the winning leg and relay are committed.
+    preanswer_video_direction = "recvonly" if source_video_port else "inactive"
     answer = build_answer_directional(
         local_ip,
         local_ip,

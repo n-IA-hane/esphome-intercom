@@ -49,6 +49,10 @@ ROUTE_DESTINATION = "Waveshare S3 Audio"
 ASSIST_EXTENSION = "1666"
 SECONDARY_EXTENSION = os.environ.get("VOIP_SECONDARY_EXTENSION", "667")
 SECONDARY_CALLEE = os.environ.get("VOIP_SECONDARY_CALLEE", "Test")
+SECONDARY_EXPECTED_STATE = os.environ.get(
+    "VOIP_SECONDARY_EXPECTED_STATE", "ringing"
+)
+SECONDARY_HOLD_SECONDS = float(os.environ.get("VOIP_SECONDARY_HOLD_SECONDS", "0"))
 
 
 class HomeAssistantApi:
@@ -1010,6 +1014,8 @@ def main() -> int:
                         expected_remote_party=callee,
                     )
                     elapsed = time.monotonic() - started
+                    if SECONDARY_HOLD_SECONDS > 0:
+                        time.sleep(SECONDARY_HOLD_SECONDS)
                     time.sleep(0.15)
                 triggered = automation_last_triggered(api, ROUTE_AUTOMATION)
                 if triggered != previous:
@@ -1036,7 +1042,11 @@ def main() -> int:
         )
         case(
             "dtmf_secondary_extension_bypasses_automation",
-            exact_dtmf_route(SECONDARY_EXTENSION, SECONDARY_CALLEE, "ringing"),
+            exact_dtmf_route(
+                SECONDARY_EXTENSION,
+                SECONDARY_CALLEE,
+                SECONDARY_EXPECTED_STATE,
+            ),
         )
 
         def dtmf_invalid_digits() -> dict[str, Any]:

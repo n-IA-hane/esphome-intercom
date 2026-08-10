@@ -213,6 +213,25 @@ class EspHomePhoneAdapter:
         call: ServiceCall,
     ) -> PhoneActionResult:
         device = phone.transport_data
+        if operation is PhoneOperation.HANGUP and request.call_id:
+            from .endpoint_lifecycle import call_registry
+            from .endpoint_session import TerminationIntent
+            from .endpoint_termination import EndpointTerminationHandler
+
+            registry = call_registry(call.hass)
+            session = registry.sessions.get(
+                registry.resolve_session_id(request.call_id)
+            )
+            if session is not None and session.live:
+                await EndpointTerminationHandler(call.hass).terminate(
+                    session.call_id,
+                    TerminationIntent.bye(request.reason or "local_hangup"),
+                )
+                return PhoneActionResult(
+                    operation=operation,
+                    phone=phone,
+                    call_id=session.call_id,
+                )
         action = {
             PhoneOperation.ANSWER: "answer_call",
             PhoneOperation.DECLINE: "decline_call",

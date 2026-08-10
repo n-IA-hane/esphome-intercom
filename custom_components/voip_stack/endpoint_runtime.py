@@ -555,7 +555,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         registry = _call_registry(hass)
         session = registry.upsert(
             call_id,
-            state=CallState.RINGING.value,
+            state=CallState.REMOTE_RINGING.value,
             owner="ha_softphone",
             caller=local_name,
             callee=group_name,
@@ -579,15 +579,25 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             context=context,
             endpoint_id=endpoint_id,
         )
+        registry.scope_controllers_by_endpoint(call_id, endpoint_id)
+        origin_leg_id = f"browser-origin:{endpoint_id}"
         registry.add_leg(
-            call_id, call_id, role="ha_softphone", state=CallState.REMOTE_RINGING.value
+            call_id,
+            origin_leg_id,
+            role="ha_softphone",
+            state=CallState.REMOTE_RINGING.value,
+            endpoint_id=endpoint_id,
         )
         publish_phone_projection(
             hass,
             session,
-            endpoint_id, peer_name=group_name, direction="outgoing",
-                route_kind=GROUP_TYPE_RING, sip_status_code=180,
-                last_sip_event="LOCAL_RING_GROUP",
+            endpoint_id,
+            leg_id=origin_leg_id,
+            peer_name=group_name,
+            direction="outgoing",
+            route_kind=GROUP_TYPE_RING,
+            sip_status_code=180,
+            last_sip_event="LOCAL_RING_GROUP",
         )
         try:
             peers = await _async_build_peer_snapshot(hass)

@@ -928,6 +928,21 @@ class CallRegistryEventContextTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "endpoint kitchen"):
             registry.bind_controller("call-1", user_id="user-c", endpoint_id="kitchen")
 
+    def test_existing_controller_transfers_to_endpoint_scope(self) -> None:
+        registry = _registry()
+        registry.upsert("call-1", state="ringing", owner="ha_softphone")
+        registry.bind_controller("call-1", user_id="user-a")
+
+        session = registry.scope_controllers_by_endpoint("call-1", "kitchen")
+        registry.bind_controller("call-1", user_id="user-b", endpoint_id="office")
+
+        self.assertTrue(session.metadata["local_bridge"])
+        self.assertNotIn("controller_user_id", session.metadata)
+        self.assertEqual(
+            session.metadata["controller_user_ids"],
+            {"kitchen": "user-a", "office": "user-b"},
+        )
+
     def test_internal_context_survives_later_admin_media_binding(self) -> None:
         registry = _registry()
         registry.upsert("call-1", state="in_call", owner="ha_softphone")

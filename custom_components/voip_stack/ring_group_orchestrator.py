@@ -28,7 +28,7 @@ from .dial_fork import (
 from .dial_plan import RingPolicy
 from .endpoint_lifecycle import call_registry as _call_registry
 from .endpoint_termination import EndpointTerminationHandler
-from .endpoint_session import TerminationInitiator, TerminationIntent
+from .endpoint_session import TerminationIntent
 from .runtime_data import endpoint_directory, sip_endpoint_runtime
 from .fsm import (
     CallState,
@@ -268,6 +268,11 @@ async def run_ring_group_call(
             "future": route_future,
             "ring_group_endpoint_ids": tuple(leg.endpoint_id for leg in browser_legs),
             "declined_endpoint_ids": set(),
+            # A browser-origin group winner is committed into the local
+            # bridge. Keep the answering card ringing until that bridge emits
+            # its authoritative LOCAL_INVITE/LOCAL_ANSWER sequence, otherwise
+            # the generic SIP connecting state starts the wrong media owner.
+            "defer_answer_projection": ha_origin,
         },
     )
     try:
@@ -456,13 +461,23 @@ async def run_ring_group_call(
                     start_local_softphone_call,
                 )
 
-                original_context = registry.ha_context(invite.call_id)
                 if await _abort_stale_ring_group():
                     return
-                await EndpointTerminationHandler(hass).terminate_reason(
-                    invite.call_id,
-                    "local_group_selected",
-                    TerminationInitiator.ROUTING,
+                # Transfer the two winning endpoint claims to the local
+                # bridge without terminating and recreating the logical call.
+                # A terminal projection here would make the caller card idle
+                # while the replacement bridge is already established.
+                registry.release_endpoint_claim(
+                    invite.call_id, origin_endpoint_id
+                )
+                registry.release_endpoint_claim(
+                    invite.call_id, winner.endpoint_id
+                )
+                registry.remove_leg(
+                    invite.call_id, f"browser-origin:{origin_endpoint_id}"
+                )
+                registry.remove_leg(
+                    invite.call_id, f"browser:{winner.endpoint_id}"
                 )
                 snapshot = start_local_softphone_call(
                     hass,
@@ -472,7 +487,7 @@ async def run_ring_group_call(
                     request_video=request_video,
                     enable_caller_video_send=enable_caller_video_send,
                     caller_owner_id=origin_media_client_id,
-                    context=original_context,
+                    preserve_controller=True,
                 )
                 bridge = local_softphone_bridge(hass)
                 if bridge is None:

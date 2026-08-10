@@ -66,8 +66,6 @@ def validate_bridged_video_reoffer(
 ) -> VideoOfferDecision:
     """Validate only RTP paths active on both sides of a bridged call leg."""
 
-    if (previous_send is None) != (updated_send is None):
-        return VideoOfferDecision(False, "video_stream_presence_changed")
     if updated_send is None:
         return VideoOfferDecision(True)
     if peer_direction is None:

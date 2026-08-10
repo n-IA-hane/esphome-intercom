@@ -39,6 +39,23 @@ SET_TARGET = r"""
 }
 """
 
+SET_MANUAL_TARGET = r"""
+(name) => {
+  const deep = (selector, root = document) => {
+    const found = [...root.querySelectorAll(selector)];
+    for (const node of root.querySelectorAll("*")) if (node.shadowRoot) found.push(...deep(selector, node.shadowRoot));
+    return found;
+  };
+  const card = deep("voip-stack-card, intercom-card")
+    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
+  if (!card) return false;
+  card._softphoneKeypadOpen = true;
+  card._setManualTarget(name);
+  card._render();
+  return card._manualTarget() === name;
+}
+"""
+
 ENGINE_STATS = """() => ({
   state: String(globalThis.__voipStackEngine?.state || ""),
   call_id: String(globalThis.__voipStackEngine?.callId || ""),
@@ -164,6 +181,21 @@ def _state(page: Any, expected: str, label: str, timeout: float = 12) -> dict[st
     )
 
 
+def _quiescent(page: Any, label: str, timeout: float = 12) -> dict[str, Any]:
+    return wait_card(
+        page,
+        lambda item: (
+            item["backend"]["state"] == "idle"
+            and item["backend"].get("runtime_resources", {}).get(
+                "call_scoped_quiescent"
+            )
+            is True
+        ),
+        timeout,
+        label,
+    )
+
+
 def _wait_video(page: Any, label: str) -> dict[str, Any]:
     deadline = time.monotonic() + 12
     last: dict[str, Any] = {}
@@ -234,13 +266,15 @@ def main() -> int:
             hangup: Any,
             auto_answer: bool = False,
             target_name: str = "",
+            manual_target: bool = False,
         ) -> None:
             started = time.monotonic()
             try:
                 if auto_answer and not callee.evaluate(SET_AUTO_ANSWER, True):
                     raise RuntimeError(f"failed to enable Auto Answer on {callee_name}")
                 selected_target = target_name or callee_name
-                if not caller.evaluate(SET_TARGET, selected_target):
+                selector = SET_MANUAL_TARGET if manual_target else SET_TARGET
+                if not caller.evaluate(selector, selected_target):
                     raise RuntimeError(
                         f"{selected_target} is not selectable from {caller_name}"
                     )
@@ -284,6 +318,7 @@ def main() -> int:
                     raise RuntimeError("Hangup unavailable")
                 _state(caller, "idle", f"{name}: caller idle")
                 _state(callee, "idle", f"{name}: callee idle")
+                _quiescent(caller, f"{name}: runtime quiescent")
                 if auto_answer:
                     callee.evaluate(SET_AUTO_ANSWER, False)
                 results.append(
@@ -302,6 +337,8 @@ def main() -> int:
                         "status": "fail",
                         "seconds": round(time.monotonic() - started, 3),
                         "error": str(err),
+                        "caller_engine": caller.evaluate(ENGINE_STATS),
+                        "callee_engine": callee.evaluate(ENGINE_STATS),
                     }
                 )
                 for page in (caller, callee):
@@ -338,6 +375,7 @@ def main() -> int:
                 "Test",
                 hangup=test,
                 target_name=arguments.ring_group,
+                manual_target=True,
             )
 
         started = time.monotonic()

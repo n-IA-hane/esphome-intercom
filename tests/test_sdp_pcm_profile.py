@@ -17,6 +17,33 @@ from .voip_phase1_support import (
 
 
 class SdpPcmProfileTest(unittest.TestCase):
+    def test_video_offer_has_one_mapping_per_payload_type(self) -> None:
+        local = [audio_format.AudioFormat(16000, "s16le", 1, 20)]
+        offer = sdp.build_offer_directional(
+            "192.0.2.20",
+            "192.0.2.20",
+            40000,
+            local,
+            local,
+            video_port=40002,
+            video_formats=(
+                sdp.RtpVideoFormat(
+                    payload_type=103,
+                    encoding="H264",
+                    fmtp="profile-level-id=42c00c;packetization-mode=1",
+                ),
+                sdp.RtpVideoFormat(
+                    payload_type=103,
+                    encoding="H264",
+                    fmtp="profile-level-id=42c01f;packetization-mode=1",
+                ),
+            ),
+        )
+
+        self.assertIn("m=video 40002 RTP/AVP 103\r\n", offer)
+        self.assertEqual(offer.count("a=rtpmap:103 H264/90000\r\n"), 1)
+        self.assertEqual(offer.count("a=fmtp:103 "), 1)
+
     def test_ipv6_offer_and_answer_preserve_address_family(self) -> None:
         local = [audio_format.AudioFormat(16000, "s16le", 1, 20)]
         offer = sdp.build_offer_directional(
@@ -1279,3 +1306,30 @@ class SdpPcmProfileTest(unittest.TestCase):
         )
         self.assertIsNotNone(selected)
         self.assertEqual(selected.send.audio_format, baseline)
+
+    def test_esphome_answer_flow_attributes_keep_asymmetric_payloads(self) -> None:
+        wide = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
+        narrow = sdp.RtpPcmFormat(98, "L16", 16000, 1, 10)
+        offer = sdp.build_offer_directional(
+            "192.0.2.10",
+            "192.0.2.10",
+            40000,
+            [wide.audio_format],
+            [narrow.audio_format],
+            audio_rtp_formats=(wide, narrow),
+        )
+        answer = offer + (
+            "a=x-voip-stack-flow:96 recv\r\n"
+            "a=x-voip-stack-flow:98 send\r\n"
+        )
+
+        selected = sdp.negotiate_answer_directional(
+            answer,
+            [wide.audio_format],
+            [narrow.audio_format],
+            local_offer_sdp=offer,
+        )
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.send.payload_type, 96)
+        self.assertEqual(selected.recv.payload_type, 98)

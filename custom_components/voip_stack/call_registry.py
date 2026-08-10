@@ -865,6 +865,37 @@ class CallRuntimeApi:
             session.revision += 1
         return session
 
+    def scope_controllers_by_endpoint(
+        self,
+        call_id: str,
+        source_endpoint_id: str,
+    ) -> EndpointCallSession:
+        """Transfer a single-phone controller into endpoint-scoped ownership."""
+
+        session_id = self.resolve_session_id(str(call_id or "").strip())
+        session = self.sessions.get(session_id)
+        if session is None:
+            raise ValueError(f"unknown call_id {call_id!r}")
+        endpoint_id = str(source_endpoint_id or "").strip()
+        if not endpoint_id:
+            raise ValueError("source_endpoint_id must not be empty")
+        controllers = session.metadata.setdefault("controller_user_ids", {})
+        controller_user_id = str(
+            session.metadata.pop("controller_user_id", "") or ""
+        ).strip()
+        current = str(controllers.get(endpoint_id) or "").strip()
+        if controller_user_id and current and current != controller_user_id:
+            raise ValueError(
+                f"call_id {session_id} endpoint {endpoint_id} "
+                "is already controlled by another HA user"
+            )
+        if controller_user_id:
+            controllers[endpoint_id] = controller_user_id
+        if not session.metadata.get("local_bridge"):
+            session.metadata["local_bridge"] = True
+        session.revision += 1
+        return session
+
     def ha_context(self, call_id: str) -> Any | None:
         """Return the original HA Context for a call or one of its legs."""
 

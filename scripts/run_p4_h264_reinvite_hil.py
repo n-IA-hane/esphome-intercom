@@ -264,7 +264,7 @@ async def _wait_api_ready(host: str, port: int, timeout: float = 60.0) -> None:
 async def _wait_ha_endpoint_ready(
     ws: HaWs, extension: str, host: str, *, timeout: float = 30.0
 ) -> dict[str, object]:
-    """Wait until HA has rediscovered the P4 after serial-open reboot."""
+    """Wait until HA resolves the P4 through discovery or a lab contact."""
 
     deadline = time.monotonic() + timeout
     last: list[object] = []
@@ -297,6 +297,38 @@ async def _wait_ha_endpoint_ready(
                     "extension": endpoint.get("extension"),
                     "resolved": True,
                 }
+        states = await ws.command({"type": "get_states"})
+        phonebook = next(
+            (
+                state
+                for state in states.get("result") or []
+                if isinstance(state, dict)
+                and state.get("entity_id") == "sensor.voip_phonebook"
+            ),
+            None,
+        )
+        try:
+            contacts = json.loads(
+                str((phonebook or {}).get("attributes", {}).get("roster_json") or "{}")
+            ).get("contacts", [])
+        except (AttributeError, TypeError, ValueError):
+            contacts = []
+        contact = next(
+            (
+                item
+                for item in contacts
+                if isinstance(item, dict)
+                and str(item.get("extension") or "") == extension
+                and host in str(item.get("sip_uri") or "")
+            ),
+            None,
+        )
+        if contact is not None:
+            return {
+                "endpoint_type": "phonebook",
+                "extension": extension,
+                "resolved": True,
+            }
         await asyncio.sleep(0.25)
     raise AssertionError(
         f"HA did not expose available P4 extension {extension!r}; devices={last}"

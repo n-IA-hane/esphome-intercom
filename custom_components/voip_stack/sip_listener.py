@@ -301,6 +301,8 @@ class _ActiveDialog(DialogSignalingState):
     refer_task: asyncio.Task[None] | None = None
     termination_task: asyncio.Task[bool] | None = None
     delayed_offer: _PendingDelayedOffer | None = None
+    prepared_video_reinvite: tuple[SipInvite, SipInvite, str] | None = None
+    local_offer_in_progress: bool = False
 
 
 @dataclass(slots=True)
@@ -1076,7 +1078,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 return None
 
             dialog.local_cseq += 1
-            return await self._run_client_transaction(
+            response = await self._run_client_transaction(
                 raw=request.raw,
                 addr=target_addr,
                 ids=request.ids,
@@ -1085,6 +1087,16 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 active=lambda: self.active_dialogs.get(call_id) is dialog,
                 timeout=timeout,
             )
+            if method == "INVITE" and response is not None:
+                self._send_dialog_invite_ack(
+                    dialog,
+                    request,
+                    response,
+                    target_addr,
+                    local_uri=local_uri,
+                    remote_uri=remote_uri,
+                )
+            return response
 
     async def _run_client_transaction(
         self,
@@ -1198,6 +1210,249 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             method=follow_up.method,
             transport=self.signaling_transport,
         )
+
+    def _send_dialog_invite_ack(
+        self,
+        dialog: _ActiveDialog,
+        request,
+        response: sip.SipMessage,
+        target_addr: tuple[str, int],
+        *,
+        local_uri: str,
+        remote_uri: str,
+    ) -> bool:
+        """ACK one final response to a locally initiated in-dialog INVITE."""
+
+        status = int(response.status_code or 0)
+        remote_tag = sip.extract_tag(response.header("To"))
+        try:
+            if 200 <= status < 300:
+                remote_target = (
+                    sip.contact_target_uri(response)
+                    or dialog.remote_target_uri
+                    or remote_uri
+                )
+                ack = build_dialog_request(
+                    "ACK",
+                    call_id=request.ids.call_id,
+                    local_tag=request.ids.local_tag,
+                    remote_tag=remote_tag,
+                    cseq=request.ids.cseq,
+                    local_uri=local_uri,
+                    remote_uri=remote_uri,
+                    remote_target_uri=remote_target,
+                    route_set=dialog.route_set,
+                    contact_uri=local_uri,
+                    transport=dialog.transport,
+                )
+                if dialog.transport == "UDP":
+                    next_hop = sip.parse_sip_uri(ack.routing.next_hop_uri)
+                    target_addr = (next_hop.host, int(next_hop.port or 5060))
+                raw = ack.raw
+            else:
+                ids = sip.SipDialogIds(
+                    call_id=request.ids.call_id,
+                    local_tag=request.ids.local_tag,
+                    remote_tag=remote_tag,
+                    cseq=request.ids.cseq,
+                    branch=request.ids.branch,
+                )
+                headers = sip.dialog_headers(
+                    request_uri=request.routing.request_uri,
+                    local_uri=local_uri,
+                    remote_uri=remote_uri,
+                    dialog=ids,
+                    method="ACK",
+                    contact_uri=local_uri,
+                    transport=dialog.transport,
+                )
+                headers.extend(
+                    ("Route", value) for value in request.routing.route_headers
+                )
+                raw = sip.build_request(
+                    "ACK", request.routing.request_uri, headers, b""
+                )
+        except (TypeError, ValueError, sip.SipError):
+            return False
+        return self._send(raw, target_addr) is not False
+
+    async def async_prepare_video_reinvite(
+        self,
+        call_id: str,
+        *,
+        local_video_rtp_port: int,
+        video_formats: tuple[sdp.RtpVideoFormat, ...],
+        video_direction: str = "sendrecv",
+        timeout: float = 8.0,
+    ) -> SipInvite | None:
+        """Negotiate one local video offer without publishing its media state."""
+
+        dialog = self.active_dialogs.get(call_id)
+        if (
+            dialog is None
+            or dialog.invite is None
+            or dialog.prepared_video_reinvite is not None
+            or not video_formats
+            or int(local_video_rtp_port) < 0
+        ):
+            return None
+        previous = dialog.invite
+        direction = (
+            "inactive" if int(local_video_rtp_port) == 0 else video_direction
+        )
+        prepared = False
+        dialog.local_offer_in_progress = True
+        try:
+            current_local_sdp = dialog.local_sdp_body or dialog.answer_sdp
+            current_local = sdp.parse_sdp(current_local_sdp)
+            current_audio_formats = tuple(
+                sdp.offered_pcm_formats(
+                    current_local_sdp,
+                    allow_dahua_pcm=previous.peer_profile == "dahua",
+                )
+            )
+            if not current_audio_formats:
+                return None
+            offer = sdp.build_offer_directional(
+                self.local_ip,
+                self.local_ip,
+                int(current_local["media_port"]),
+                [previous.send_format.audio_format],
+                [previous.recv_format.audio_format],
+                video_port=int(local_video_rtp_port),
+                video_formats=video_formats,
+                audio_direction=previous.local_audio_direction,
+                video_direction=direction,
+                # A video-only renegotiation preserves the audio mapping from
+                # the local SDP that this UAS already committed.  Rebuilding
+                # it from directional runtime fields can select the opposite
+                # wire format on asymmetric ESP endpoints.
+                audio_rtp_formats=current_audio_formats,
+            )
+            next_version = int(dialog.local_sdp_session_version)
+            offer = sdp.rewrite_sdp_origin(
+                offer, dialog.local_sdp_session_id, next_version
+            )
+            if sdp.sdp_description_changed(dialog.local_sdp_body, offer):
+                next_version += 1
+                offer = sdp.rewrite_sdp_origin(
+                    offer, dialog.local_sdp_session_id, next_version
+                )
+            response = await self._send_dialog_request(
+                call_id,
+                dialog,
+                "INVITE",
+                body=offer.encode(),
+                content_type="application/sdp",
+                timeout=timeout,
+            )
+            if (
+                response is None
+                or not 200 <= int(response.status_code or 0) < 300
+                or not response.body
+            ):
+                return None
+            sdp.validate_sdp_answer(
+                offer,
+                response.body,
+                allow_inactive_rejected_media_port=int(local_video_rtp_port) == 0,
+            )
+            audio = sdp.negotiate_answer_directional(
+                response.body,
+                [previous.send_format.audio_format],
+                [previous.recv_format.audio_format],
+                local_offer_direction=previous.local_audio_direction,
+                local_offer_sdp=offer,
+                allow_dahua_pcm=previous.peer_profile == "dahua",
+            )
+            if audio is None:
+                return None
+            parsed = sdp.parse_sdp(response.body)
+            video_pair = (
+                sdp.negotiate_video_answer_directional(
+                    response.body, video_formats
+                )
+                if int(local_video_rtp_port) > 0
+                else None
+            )
+            video_send = video_pair.send if video_pair is not None else None
+            video_recv = video_pair.recv if video_pair is not None else None
+            remote_video = (
+                sdp.parse_video_sdp(response.body)
+                if video_send is not None
+                else None
+            )
+            if int(local_video_rtp_port) > 0 and remote_video is None:
+                return None
+            candidate = replace(
+                previous,
+                remote_sdp=response.body,
+                send_format=audio.send,
+                recv_format=audio.recv,
+                remote_rtp_host=str(parsed["connection_ip"]),
+                remote_rtp_port=int(parsed["media_port"]),
+                remote_audio_direction=str(parsed["direction"]),
+                local_audio_direction=sdp.local_direction_for_offer(
+                    str(parsed["direction"]),
+                    remote_connection_held=bool(parsed["connection_held"]),
+                ),
+                remote_audio_connection_held=bool(parsed["connection_held"]),
+                video_format=video_send,
+                local_video_format=video_recv,
+                video_answer_format=video_recv,
+                **sdp.RemoteMediaTarget.from_section(
+                    remote_video, rtcp_mux=False
+                ).as_remote_video_fields(),
+            )
+            dialog.prepared_video_reinvite = (previous, candidate, offer)
+            dialog.local_sdp_session_version = next_version
+            prepared = True
+            return candidate
+        except (TypeError, ValueError, sdp.SdpError, sip.SipError):
+            return None
+        finally:
+            if not prepared:
+                dialog.local_offer_in_progress = False
+
+    def commit_prepared_reinvite(
+        self,
+        call_id: str,
+        previous: SipInvite,
+        candidate: SipInvite,
+    ) -> bool:
+        """Publish exactly one locally negotiated UAS dialog generation."""
+
+        dialog = self.active_dialogs.get(call_id)
+        if (
+            dialog is None
+            or dialog.invite is not previous
+            or dialog.prepared_video_reinvite is None
+            or dialog.prepared_video_reinvite[:2] != (previous, candidate)
+        ):
+            return False
+        dialog.invite = candidate
+        dialog.local_sdp_body = dialog.prepared_video_reinvite[2]
+        dialog.prepared_video_reinvite = None
+        dialog.local_offer_in_progress = False
+        dialog.renegotiations += 1
+        return True
+
+    def abort_prepared_reinvite(
+        self,
+        call_id: str,
+        previous: SipInvite,
+        candidate: SipInvite,
+    ) -> None:
+        """Retire a dialog whose accepted local offer cannot be committed."""
+
+        dialog = self.active_dialogs.get(call_id)
+        if dialog is None or dialog.prepared_video_reinvite is None:
+            return
+        if dialog.prepared_video_reinvite[:2] != (previous, candidate):
+            return
+        dialog.prepared_video_reinvite = None
+        dialog.local_offer_in_progress = False
+        self.send_bye(call_id)
 
     async def _handle_dialog_refer(
         self,
@@ -2035,6 +2290,15 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                     "Server Internal Error",
                     to_tag=existing_dialog.to_tag,
                     extra_headers=(("Retry-After", "1"),),
+                )
+                return
+            if existing_dialog.local_offer_in_progress:
+                self._send_response(
+                    request,
+                    addr,
+                    491,
+                    "Request Pending",
+                    to_tag=existing_dialog.to_tag,
                 )
                 return
 

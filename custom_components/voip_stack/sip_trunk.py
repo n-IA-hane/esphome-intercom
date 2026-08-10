@@ -116,6 +116,7 @@ class SipTrunkClient:
         self._stop_task: asyncio.Task[None] | None = None
         self.request_handler: TrunkRequestHandler | None = None
         self.inbound_endpoint: Any | None = None
+        self._endpoint_manager: Any | None = None
         self._trusted_udp_hosts: frozenset[str] = frozenset()
         self.target_resolver = target_resolver or SipServerResolver()
         self.tls_context = tls_context
@@ -303,6 +304,16 @@ class SipTrunkClient:
             self._receive_task = None
         await self._cancel_request_tasks()
         await self._close_inbound_transactions("local_hangup")
+        if (
+            self._endpoint_manager is not None
+            and self.inbound_endpoint is not None
+        ):
+            detach = getattr(
+                self._endpoint_manager, "detach_dialog_endpoint", None
+            )
+            if callable(detach):
+                detach(self.inbound_endpoint)
+        self._endpoint_manager = None
         self.request_handler = None
         self.inbound_endpoint = None
         if self.transport is not None:
@@ -583,6 +594,15 @@ class SipTrunkClient:
             bool(getattr(manager, "prefer_browser_video_send", False)),
         )
 
+        if (
+            self._endpoint_manager is not None
+            and self.inbound_endpoint is not None
+        ):
+            detach = getattr(
+                self._endpoint_manager, "detach_dialog_endpoint", None
+            )
+            if callable(detach):
+                detach(self.inbound_endpoint)
         endpoint = SipUdpEndpoint(
             local_ip=manager.local_ip,
             local_sip_port=manager.port,
@@ -614,6 +634,10 @@ class SipTrunkClient:
             ),
             trusted_trunk=True,
         )
+        attach = getattr(manager, "attach_dialog_endpoint", None)
+        if callable(attach):
+            attach(endpoint)
+        self._endpoint_manager = manager
         self.inbound_endpoint = endpoint
         self.set_request_handler(endpoint._handle_datagram)
 

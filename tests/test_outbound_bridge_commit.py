@@ -129,7 +129,10 @@ async def test_commit_atomically_transfers_provisional_video_owner(monkeypatch):
         "video_rtcp_socket": rtcp_socket,
     }
     registry.take_media.return_value = pending_source
-    video_relay = object()
+    video_relay = SimpleNamespace(
+        left=SimpleNamespace(send_format=object(), recv_format=object()),
+        left_port=40008,
+    )
     winner.video_relay = video_relay
     relay.attach_video_relay.side_effect = lambda value: setattr(
         relay, "video_relay", value
@@ -139,11 +142,19 @@ async def test_commit_atomically_transfers_provisional_video_owner(monkeypatch):
     monkeypatch.setattr(
         module,
         "configure_answered_invite_video_relay",
-        lambda *_a, **_k: object(),
+        lambda *_a, **_k: SimpleNamespace(direction="sendrecv"),
     )
     monkeypatch.setattr(module, "attach_dtmf_event_bridge", MagicMock())
     monkeypatch.setattr(
         module, "async_start_sip_bridge_media", AsyncMock(return_value=False)
+    )
+    activate_source = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        module,
+        "sip_endpoint_manager",
+        lambda _hass: SimpleNamespace(
+            async_activate_video_reinvite=activate_source
+        ),
     )
     monkeypatch.setattr(module, "build_answer_directional", lambda *_a, **_k: "")
     monkeypatch.setattr(module, "BridgeMediaUpdateBinder", lambda _hass: binder)
@@ -184,7 +195,43 @@ async def test_commit_atomically_transfers_provisional_video_owner(monkeypatch):
     rtp_socket.close.assert_not_called()
     rtcp_socket.close.assert_not_called()
     assert relay.video_relay is video_relay
+    activate_source.assert_awaited_once_with(
+        "source-call",
+        local_video_rtp_port=relay.video_relay.left_port,
+        video_formats=(
+            relay.video_relay.left.recv_format,
+            relay.video_relay.left.send_format,
+        ),
+        video_direction="sendrecv",
+    )
     assert not _pending_watchers()
+
+
+@pytest.mark.asyncio
+async def test_preanswered_video_activation_uses_source_dialog(monkeypatch):
+    from custom_components.voip_stack.sip_endpoint import SipEndpointManager
+
+    send = object()
+    receive = object()
+    prepared = SimpleNamespace(commit=MagicMock(return_value=True))
+    endpoint = SimpleNamespace(
+        async_prepare_video_reinvite=AsyncMock(return_value=prepared)
+    )
+
+    assert await SipEndpointManager.async_activate_video_reinvite(
+        endpoint,
+        "source-call",
+        local_video_rtp_port=40008,
+        video_formats=(receive, send),
+        video_direction="sendrecv",
+    )
+    endpoint.async_prepare_video_reinvite.assert_awaited_once_with(
+        "source-call",
+        local_video_rtp_port=40008,
+        video_formats=(receive, send),
+        video_direction="sendrecv",
+    )
+    prepared.commit.assert_called_once_with()
 
 
 @pytest.mark.asyncio

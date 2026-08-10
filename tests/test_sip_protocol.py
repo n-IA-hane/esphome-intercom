@@ -2040,6 +2040,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             enable_video=True,
             enable_video_transcoding=False,
             prefer_browser_video_send=True,
+            attach_dialog_endpoint=unittest.mock.Mock(),
+            detach_dialog_endpoint=unittest.mock.Mock(),
         )
 
         with self.assertRaisesRegex(ValueError, "media-update handler"):
@@ -2091,9 +2093,12 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             enable_video=True,
             enable_video_transcoding=True,
             prefer_browser_video_send=True,
+            attach_dialog_endpoint=unittest.mock.Mock(),
+            detach_dialog_endpoint=unittest.mock.Mock(),
         )
 
         trunk.attach_endpoint_manager(manager)
+        manager.attach_dialog_endpoint.assert_called_once_with(trunk.inbound_endpoint)
 
         endpoint = trunk.inbound_endpoint
         self.assertIsNotNone(endpoint)
@@ -2263,6 +2268,43 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await watcher, "remote_hangup")
         methods = [sip.parse_message(raw).method for raw, _addr in sent]
         self.assertIn("ACK", methods)
+
+    async def test_local_video_reinvite_preserves_full_audio_payload_space(self) -> None:
+        client, current, sent, negotiated = self._confirmed_audio_client()
+        wideband = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
+        narrowband = sdp.RtpPcmFormat(98, "L16", 16000, 1, 10)
+        current.local_sdp_body = sdp.build_offer_directional(
+            "127.0.0.1",
+            "127.0.0.1",
+            41000,
+            [wideband.audio_format],
+            [narrowband.audio_format],
+            audio_rtp_formats=(wideband, narrowband),
+        )
+        current.send_format = wideband
+        current.recv_format = wideband
+        prepared = asyncio.create_task(
+            client.async_prepare_video_reinvite(
+                local_video_rtp_port=43000,
+                video_formats=(sdp.DEFAULT_VIDEO_FORMATS[3],),
+            )
+        )
+
+        request = await self._wait_for_sent_request(sent, "INVITE")
+        offered = sdp.offered_pcm_formats(request.body)
+        self.assertEqual(
+            [(item.payload_type, item.sample_rate) for item in offered],
+            [(96, 48000), (98, 16000)],
+        )
+        client.queue.put_nowait(
+            (
+                self._response_to_request(request, 488, "Not Acceptable Here"),
+                ("127.0.0.2", 5060),
+            )
+        )
+        self.assertIsNone(await asyncio.wait_for(prepared, timeout=0.2))
+        self.assertIs(client.dialog, current)
+        self.assertEqual(negotiated.sample_rate, 16000)
 
     async def test_local_reinvite_pracks_reliable_early_video_answer(self) -> None:
         client, current, sent, negotiated = self._confirmed_audio_client()

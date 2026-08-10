@@ -526,6 +526,49 @@ class GroupCallMatrixTest(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_browser_origin_group_defers_generic_answer_projection(self) -> None:
+        hass = _FakeHass()
+        registry = websocket_api.call_registry(hass)
+        registry.upsert(
+            "group-call",
+            state="ringing",
+            owner="router",
+            caller="Casa",
+            callee="RG Casa",
+            route_kind="ring",
+        )
+        future = asyncio.new_event_loop().create_future()
+        registry.set_pending_route(
+            "group-call",
+            {
+                "future": future,
+                "invite": types.SimpleNamespace(
+                    caller="Casa",
+                    target="RG Casa",
+                    send_format=conference.CONFERENCE_RTP_FORMAT,
+                    recv_format=conference.CONFERENCE_RTP_FORMAT,
+                ),
+                "ring_group_endpoint_ids": ("test",),
+                "declined_endpoint_ids": set(),
+                "defer_answer_projection": True,
+            },
+        )
+
+        with patch.object(route_decisions, "publish_phone_projection") as publish:
+            route_decisions.set_pending_route_decision(
+                hass,
+                {
+                    "call_id": "group-call",
+                    "action": "answer_ha",
+                    "endpoint_id": "test",
+                    "media_client_id": "test-card",
+                },
+            )
+
+        self.assertEqual(registry.get_session("group-call").state, "ringing")
+        self.assertEqual(future.result()["endpoint_id"], "test")
+        publish.assert_not_called()
+
     def test_call_and_softphone_events_preserve_the_initiating_ha_context(self) -> None:
         hass = _FakeHass()
         registry = websocket_api.call_registry(hass)

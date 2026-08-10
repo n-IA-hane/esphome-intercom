@@ -282,9 +282,20 @@ class _DelayedRemoteOffer:
 
 
 DialogMediaCommit = Callable[[], Awaitable[None]]
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedDialogMediaUpdate:
+    """Two-phase media update owned until its SIP response is committed."""
+
+    commit: DialogMediaCommit
+    rollback: DialogMediaCommit | None = None
+    answer_video_format: sdp.RtpVideoFormat | None = None
+
+
 DialogMediaUpdateHandler = Callable[
     [SipDialog, SipDialog, str],
-    Awaitable[DialogMediaCommit | None],
+    Awaitable[DialogMediaCommit | PreparedDialogMediaUpdate | None],
 ]
 ReferHandler = Callable[[sip_transfer.SipReferTarget], Awaitable[int]]
 
@@ -2064,6 +2075,7 @@ class SipCallClient:
         body = b""
         updated: SipDialog | None = None
         commit: DialogMediaCommit | None = None
+        rollback: DialogMediaCommit | None = None
         if not request.body:
             if method == "UPDATE":
                 status = 200
@@ -2108,7 +2120,53 @@ class SipCallClient:
                     if method == "INVITE":
                         self._send_response_to_request(request, host, port, 100, "Trying")
                     try:
-                        commit = await self.on_media_update(self.dialog, updated, method)
+                        prepared_update = await self.on_media_update(
+                            self.dialog, updated, method
+                        )
+                        if isinstance(prepared_update, PreparedDialogMediaUpdate):
+                            commit = prepared_update.commit
+                            rollback = prepared_update.rollback
+                            answer_video_format = (
+                                prepared_update.answer_video_format
+                            )
+                            if answer_video_format is not None:
+                                video_pair = sdp.video_offer_answer_directional(
+                                    updated.video_format,
+                                    answer_video_format,
+                                )
+                                if video_pair is None:
+                                    commit = None
+                                else:
+                                    answer = sdp.build_answer_directional(
+                                        self.local_ip,
+                                        self.local_ip,
+                                        updated.local_rtp_port,
+                                        updated.send_format,
+                                        updated.recv_format,
+                                        dtmf=(
+                                            sdp.offered_dtmf_formats(request.body)[0]
+                                            if sdp.offered_dtmf_formats(request.body)
+                                            else None
+                                        ),
+                                        remote_sdp=request.body,
+                                        video_port=updated.local_video_rtp_port,
+                                        video_format=answer_video_format,
+                                        audio_direction=updated.local_audio_direction,
+                                        video_direction=updated.local_video_direction,
+                                    )
+                                    answer = sdp.rewrite_sdp_origin(
+                                        answer,
+                                        updated.local_sdp_session_id,
+                                        updated.local_sdp_session_version,
+                                    )
+                                    updated = replace(
+                                        updated,
+                                        video_format=video_pair.send,
+                                        local_video_format=video_pair.recv,
+                                        local_sdp_body=answer,
+                                    )
+                        else:
+                            commit = prepared_update
                     except asyncio.CancelledError:
                         raise
                     except Exception:
@@ -2155,6 +2213,8 @@ class SipCallClient:
         )
         if not sent:
             self._uas_delayed_offer = None
+            if rollback is not None:
+                await rollback()
             return "transport_unreachable"
         if self._uas_delayed_offer is not None and self.dialog is not None:
             self.dialog.local_sdp_session_version = (
@@ -2182,7 +2242,7 @@ class SipCallClient:
                 body=body,
             )
         if 200 <= status < 300 and updated is not None:
-            if not await apply_remote_offer_media(commit):
+            if not await apply_remote_offer_media(commit, rollback):
                 _LOGGER.error(
                     "SIP remote media update commit failed call_id=%s method=%s",
                     self.dialog_ids.call_id,
@@ -3025,6 +3085,14 @@ class SipCallClient:
                     current.local_sdp_session_id or self._sdp_session_id
                 )
                 session_version = int(current.local_sdp_session_version)
+                current_audio_formats = tuple(
+                    sdp.offered_pcm_formats(
+                        current.local_sdp_body,
+                        allow_dahua_pcm=self.include_dahua_pcm,
+                    )
+                )
+                if not current_audio_formats:
+                    return None
                 offer = sdp.build_offer_directional(
                     self.local_ip,
                     self.local_ip,
@@ -3042,9 +3110,7 @@ class SipCallClient:
                     # Opus back through their decoded PCM shape would turn
                     # them into L16 and can make a standards-compliant peer
                     # reject an otherwise valid video-only session update.
-                    audio_rtp_formats=tuple(
-                        dict.fromkeys((current.send_format, current.recv_format))
-                    ),
+                    audio_rtp_formats=current_audio_formats,
                 )
                 offer = sdp.rewrite_sdp_origin(
                     offer, session_id, session_version

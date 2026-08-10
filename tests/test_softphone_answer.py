@@ -83,11 +83,12 @@ def softphone_answer(monkeypatch):
         },
         "peer_snapshot": {"async_advertise_host": AsyncMock(return_value="127.0.0.1")},
         "route_decisions": {"set_pending_route_decision": Mock()},
-        "runtime_data": {
-            "call_runtime_artifacts": lambda hass: hass.artifacts,
-            "conference_component": Mock(return_value=None),
-            "sip_endpoint_runtime": Mock(return_value=None),
-        },
+            "runtime_data": {
+                "call_runtime_artifacts": lambda hass: hass.artifacts,
+                "conference_component": Mock(return_value=None),
+                "sip_endpoint_manager": Mock(return_value=None),
+                "sip_endpoint_runtime": Mock(return_value=None),
+            },
         "sip_runtime": {
             "send_bye": Mock(return_value=True),
             "send_final_response": Mock(return_value=True),

@@ -92,10 +92,20 @@ def media_websocket_owner_status(
     call_id: str,
     endpoint_id: str,
     client_id: str,
+    *,
+    local_bridge: Any | None = None,
 ) -> str:
     """Return whether this browser owns, may claim, or must observe media."""
 
-    expected_client_id = _call_media_client_id(registry, call_id)
+    local_call = local_bridge.get_call(call_id) if local_bridge is not None else None
+    if local_call is None:
+        expected_client_id = _call_media_client_id(registry, call_id)
+    elif endpoint_id == local_call.caller_endpoint_id:
+        expected_client_id = str(local_call.caller_media_owner_id or "")
+    elif endpoint_id == local_call.callee_endpoint_id:
+        expected_client_id = str(local_call.callee_media_owner_id or "")
+    else:
+        return "other"
     if expected_client_id and expected_client_id != client_id:
         return "other"
     owner_key = (

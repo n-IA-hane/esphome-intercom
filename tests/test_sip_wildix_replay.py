@@ -130,6 +130,29 @@ class VideoOfferPolicyTest(unittest.TestCase):
         self.assertFalse(rejected.accepted)
         self.assertTrue(accepted.accepted)
 
+    def test_bridge_projects_p4_h264_level_into_wildix_answer(self) -> None:
+        wildix_offer = sdp.RtpVideoFormat(
+            payload_type=103,
+            encoding="H264",
+            profile_level_id="42e01f",
+            packetization_mode=1,
+            level_asymmetry_allowed=False,
+        )
+        p4_answer = sdp.RtpVideoFormat(
+            payload_type=103,
+            encoding="H264",
+            profile_level_id="42c00c",
+            packetization_mode=1,
+            level_asymmetry_allowed=True,
+        )
+
+        projected = sdp.video_answer_contract(wildix_offer, p4_answer)
+
+        self.assertIsNotNone(projected)
+        self.assertEqual(projected.payload_type, 103)
+        self.assertEqual(projected.profile_level_id, "42e00c")
+        self.assertFalse(projected.level_asymmetry_allowed)
+
 
 class WildixVideoReinviteReplayTest(unittest.IsolatedAsyncioTestCase):
     async def test_recvonly_sendrecv_reinvite_storm_and_bye(self) -> None:

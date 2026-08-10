@@ -309,6 +309,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn('"voip_stack", "answer"', ha_answer)
         self.assertIn("...this._softphoneServiceScope()", ha_answer)
         self.assertIn("call_id: callId", ha_answer)
+        self.assertIn("await this._loadSoftphoneState()", ha_answer)
         self.assertNotIn('type: "voip_stack/answer"', ha_answer)
         self.assertNotIn("voipStackEngine.resumeSession(sessionInfo, HA_SOFTPHONE_DEVICE_ID", ha_answer)
         self.assertNotIn("this._sessionDeviceId()", ha_answer)
@@ -566,6 +567,12 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this.isConnected", controller)
         self.assertIn('oldMode === "ha_softphone" && newMode !== "ha_softphone"', config)
         self.assertIn("voipStackEngine.releaseSoftphoneController(", config)
+        self.assertIn("const oldRuntimeKey = this._softphoneRuntimeKey()", config)
+        self.assertEqual(
+            config.count("releaseSoftphoneController(this, oldRuntimeKey)"),
+            2,
+        )
+        self.assertNotIn("oldEndpointId", config)
         self.assertIn("voipStackEngine.releaseVideoCanvas(this)", config)
         self.assertIn("this._unsubSoftphoneState()", config)
         start = _method_body(self.source, "async _startHaSoftphoneCall")

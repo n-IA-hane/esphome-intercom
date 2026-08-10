@@ -317,3 +317,68 @@ async def test_esphome_control_requires_the_explicit_native_action(
         )
 
     assert raised.value.translation_key == "phone_operation_not_supported"
+
+
+async def test_esphome_hangup_terminates_owned_pbx_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.voip_stack import (
+        endpoint_lifecycle,
+        endpoint_termination,
+        phone_control,
+    )
+
+    endpoint = _endpoint(
+        endpoint_id="esphome:p4",
+        device_id="device-p4",
+        name="P4",
+        kind=EndpointKind.ESPHOME,
+    )
+    endpoints = EndpointRegistry()
+    endpoints.register(endpoint)
+    device = {
+        "endpoint_id": endpoint.endpoint_id,
+        "device_id": endpoint.device_id,
+        "name": endpoint.name,
+        "entities": {"decline": "button.p4_hangup"},
+    }
+    session = SimpleNamespace(call_id="p4-call", live=True)
+    registry = SimpleNamespace(
+        sessions={"p4-call": session},
+        resolve_session_id=lambda call_id: call_id,
+    )
+    termination = SimpleNamespace(terminate=AsyncMock(return_value=True))
+    invoke = AsyncMock()
+    monkeypatch.setattr(
+        phone_control,
+        "async_resolve_source_device",
+        AsyncMock(return_value=device),
+    )
+    monkeypatch.setattr(
+        phone_control,
+        "async_require_phone_service_control",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(phone_control, "has_action", lambda *_args: True)
+    monkeypatch.setattr(phone_control, "async_call_action", invoke)
+    monkeypatch.setattr(endpoint_lifecycle, "call_registry", lambda _hass: registry)
+    monkeypatch.setattr(
+        endpoint_termination,
+        "EndpointTerminationHandler",
+        lambda _hass: termination,
+    )
+    call = _call(MagicMock(), device_id=endpoint.device_id)
+
+    result = await PhoneAdapterRegistry(call.hass, endpoints).control(
+        call,
+        PhoneOperation.HANGUP,
+        CallControlRequest(
+            call_id="p4-call",
+            reason="local_hangup",
+            context=call.context,
+        ),
+    )
+
+    assert result.call_id == "p4-call"
+    termination.terminate.assert_awaited_once()
+    invoke.assert_not_awaited()
