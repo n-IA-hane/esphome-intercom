@@ -8,7 +8,7 @@ import logging
 import secrets
 import socket
 import struct
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from .core import rtp
 from .core.sdp import (
@@ -37,6 +37,8 @@ _LOGGER = logging.getLogger(__name__)
 _RTP_IP_TOS = 0x88
 _TRANSCODE_STARTUP_MAX_PACKETS = 64
 _TRANSCODE_STARTUP_MAX_BYTES = 256 * 1024
+_REOFFER_STAGE_MAX_PACKETS = 256
+_REOFFER_STAGE_MAX_BYTES = 1024 * 1024
 
 
 @dataclass(slots=True)
@@ -94,6 +96,21 @@ class VideoRtpPeer:
             self.advertised_host,
             self.signaling_host,
         }
+
+
+@dataclass(slots=True)
+class _StagedVideoPeer:
+    peer: VideoRtpPeer
+    packets: list[tuple[bytes, tuple[Any, ...]]]
+    byte_count: int = 0
+
+
+@dataclass(slots=True)
+class _TranscodeGeneration:
+    directions: set[str]
+    transcoders: dict[str, FfmpegVideoTranscoder]
+    transports: dict[tuple[str, bool], asyncio.DatagramTransport]
+    sockets: dict[tuple[str, bool], socket.socket | None]
 
 
 class _VideoRelayProtocol(asyncio.DatagramProtocol):
@@ -179,6 +196,7 @@ class SipVideoRtpRelay:
         }
         self._transcode_startup_bytes = {"left": 0, "right": 0}
         self._keyframe_requests: set[str] = set()
+        self._staged_peers: dict[str, _StagedVideoPeer] = {}
         self._rtcp_ssrc = secrets.randbelow(0xFFFFFFFF) + 1
         self._fir_sequence = 0
         self._on_release = on_release
@@ -260,6 +278,32 @@ class SipVideoRtpRelay:
             raise ValueError(f"unknown video relay side: {side}")
         return side in self._transcode_directions
 
+    @staticmethod
+    def transcode_directions_for(
+        left: VideoRtpPeer,
+        right: VideoRtpPeer,
+    ) -> set[str]:
+        directions: set[str] = set()
+        for side, source, destination in (
+            ("left", left, right),
+            ("right", right, left),
+        ):
+            if video_formats_passthrough_compatible(
+                source.recv_format,
+                destination.send_format,
+            ):
+                continue
+            if not video_transcode_supported(
+                source.recv_format,
+                destination.send_format,
+            ):
+                raise ValueError(
+                    "unsupported directional SIP video transcode "
+                    f"{source.recv_format.encoding}->{destination.send_format.encoding}"
+                )
+            directions.add(side)
+        return directions
+
     def arm_keyframe_request(self, side: str) -> bool:
         """Arm negotiated RTCP feedback for the first RTP source SSRC."""
 
@@ -312,23 +356,7 @@ class SipVideoRtpRelay:
 
         if self.started or self._start_task is not None:
             raise RuntimeError("cannot configure transcoding after relay start")
-        directions: set[str] = set()
-        for side in ("left", "right"):
-            source, destination = self._peers(side)
-            if video_formats_passthrough_compatible(
-                source.recv_format,
-                destination.send_format,
-            ):
-                continue
-            if not video_transcode_supported(
-                source.recv_format,
-                destination.send_format,
-            ):
-                raise ValueError(
-                    "unsupported directional SIP video transcode "
-                    f"{source.recv_format.encoding}->{destination.send_format.encoding}"
-                )
-            directions.add(side)
+        directions = self.transcode_directions_for(self.left, self.right)
         if not directions:
             return
         self._transcode_hass = hass
@@ -528,6 +556,7 @@ class SipVideoRtpRelay:
     def _close_resources(self) -> None:
         """Synchronously detach every socket/transport from the relay."""
 
+        self._staged_peers.clear()
         for transport in self._transports.values():
             transport.close()
         self._transports.clear()
@@ -539,10 +568,13 @@ class SipVideoRtpRelay:
         self.started = False
         if was_started:
             _LOGGER.info(
-                "SIP video relay stopped forwarded=%d rtcp=%d dropped=%d",
+                "SIP video relay stopped forwarded=%d rtcp=%d dropped=%d "
+                "transcoded_in=%d transcoded_out=%d",
                 self.forwarded,
                 self.rtcp_forwarded,
                 self.dropped,
+                self.transcoded_input_packets,
+                self.transcoded_output_packets,
             )
 
     def _release_ports(self) -> None:
@@ -577,6 +609,187 @@ class SipVideoRtpRelay:
 
         return _commit
 
+    def stage_peer_reconfiguration(
+        self, side: str, peer: VideoRtpPeer
+    ) -> tuple[Callable[[], None], Callable[[], None]]:
+        """Buffer bounded RTP for a pending SDP peer contract.
+
+        An offerer may switch to a newly offered receive path before the
+        answer transaction completes.  Preserve only packets matching the
+        pending authenticated peer, then replay them after the same atomic
+        peer commit so in-band H.264 SPS/PPS are not lost.
+        """
+
+        if side not in {"left", "right"}:
+            raise ValueError(f"unknown video relay side: {side}")
+        if side in self._staged_peers:
+            raise RuntimeError(f"video relay already stages {side} peer")
+        staged = _StagedVideoPeer(peer, [])
+        self._staged_peers[side] = staged
+        commit_peer = self.prepare_peer_reconfiguration(side, peer)
+
+        def rollback() -> None:
+            if self._staged_peers.get(side) is staged:
+                self._staged_peers.pop(side, None)
+
+        def commit() -> None:
+            if self._staged_peers.get(side) is not staged:
+                raise RuntimeError(f"video relay staged {side} peer expired")
+            self._staged_peers.pop(side, None)
+            commit_peer()
+            _LOGGER.debug(
+                "SIP video peer stage committed side=%s packets=%d bytes=%d",
+                side,
+                len(staged.packets),
+                staged.byte_count,
+            )
+            for data, addr in staged.packets:
+                self.handle_rtp(side, data, addr)
+
+        return commit, rollback
+
+    async def async_prepare_peer_generation(
+        self,
+        *,
+        left: VideoRtpPeer,
+        right: VideoRtpPeer,
+    ) -> tuple[Callable[[], Awaitable[None]], Callable[[], Awaitable[None]]]:
+        """Prepare one complete peer and transcoder generation atomically."""
+
+        if not self.started or self._transcode_hass is None:
+            raise RuntimeError("video relay transcoding is not active")
+        previous_left = self.left
+        previous_right = self.right
+        staged_right = self._staged_peers.get("right")
+        if staged_right is None or staged_right.peer is not right:
+            raise RuntimeError("right video peer is not staged")
+        directions = self.transcode_directions_for(left, right)
+        loop = asyncio.get_running_loop()
+        transcoders: dict[str, FfmpegVideoTranscoder] = {}
+        transports: dict[tuple[str, bool], asyncio.DatagramTransport] = {}
+        sockets: dict[tuple[str, bool], socket.socket | None] = {}
+        generation = _TranscodeGeneration(
+            directions,
+            transcoders,
+            transports,
+            sockets,
+        )
+        claimed_slot = not self._transcode_slot_claimed
+        try:
+            await _claim_transcoder_slot(self._transcode_hass, self)
+            self._transcode_slot_claimed = True
+            for source_side in sorted(directions):
+                source, destination = (
+                    (left, right) if source_side == "left" else (right, left)
+                )
+                pair = self._loopback_socket_pair()
+                rtp_port = int(pair[0].getsockname()[1])
+                for rtcp, sock in ((False, pair[0]), (True, pair[1])):
+                    key = (source_side, rtcp)
+                    sockets[key] = sock
+                    transport, _ = await loop.create_datagram_endpoint(
+                        lambda source_side=source_side, rtcp=rtcp: (
+                            _TranscodedOutputProtocol(
+                                self,
+                                source_side,
+                                rtcp=rtcp,
+                            )
+                        ),
+                        sock=sock,
+                    )
+                    sockets[key] = None
+                    transports[key] = transport
+                transcoders[source_side] = FfmpegVideoTranscoder(
+                    hass=self._transcode_hass,
+                    call_id=f"{self._transcode_call_id}-{source_side}-reoffer",
+                    input_format=source.recv_format,
+                    output_format=destination.send_format,
+                    output_port=rtp_port,
+                    slot_owner=self,
+                    manage_slot=False,
+                )
+            await asyncio.gather(
+                *(transcoder.async_start() for transcoder in transcoders.values())
+            )
+        except BaseException:
+            if self._staged_peers.get("right") is staged_right:
+                self._staged_peers.pop("right", None)
+            await self._close_transcode_generation(generation)
+            if claimed_slot:
+                await _release_transcoder_slot(self._transcode_hass, self)
+                self._transcode_slot_claimed = False
+            raise
+
+        settled = False
+
+        async def rollback() -> None:
+            nonlocal settled
+            if settled:
+                return
+            settled = True
+            if self._staged_peers.get("right") is staged_right:
+                self._staged_peers.pop("right", None)
+            await self._close_transcode_generation(generation)
+            if claimed_slot:
+                await _release_transcoder_slot(self._transcode_hass, self)
+                self._transcode_slot_claimed = False
+
+        async def commit() -> None:
+            nonlocal settled
+            if settled:
+                raise RuntimeError("video peer generation already settled")
+            if (
+                self.left is not previous_left
+                or self.right is not previous_right
+                or self._staged_peers.get("right") is not staged_right
+            ):
+                await rollback()
+                raise RuntimeError("video relay peer changed before generation commit")
+            settled = True
+            self._staged_peers.pop("right", None)
+            left.rx_ssrc = None
+            left.rtcp_source_port = None
+            right.rx_ssrc = None
+            right.rtcp_source_port = None
+            old = _TranscodeGeneration(
+                set(self._transcode_directions),
+                self._transcoders,
+                self._transcode_transports,
+                self._transcode_sockets,
+            )
+            self.left = left
+            self.right = right
+            self._transcode_directions = directions
+            self._transcoders = transcoders
+            self._transcode_transports = transports
+            self._transcode_sockets = sockets
+            self._keyframe_requests.clear()
+            for side in ("left", "right"):
+                self._transcode_startup_rtp[side].clear()
+                self._transcode_startup_bytes[side] = 0
+            for data, addr in staged_right.packets:
+                self.handle_rtp("right", data, addr)
+            await self._close_transcode_generation(old)
+            if not directions and self._transcode_slot_claimed:
+                await _release_transcoder_slot(self._transcode_hass, self)
+                self._transcode_slot_claimed = False
+
+        return commit, rollback
+
+    @staticmethod
+    async def _close_transcode_generation(
+        generation: _TranscodeGeneration,
+    ) -> None:
+        await asyncio.gather(
+            *(item.async_close() for item in generation.transcoders.values()),
+            return_exceptions=True,
+        )
+        for transport in generation.transports.values():
+            transport.close()
+        for sock in generation.sockets.values():
+            if sock is not None:
+                sock.close()
+
     def reconfigure_peer(self, side: str, peer: VideoRtpPeer) -> None:
         """Atomically replace one negotiated video peer and reset its latch."""
 
@@ -587,6 +800,17 @@ class SipVideoRtpRelay:
             self.ignored_after_stop += 1
             return
         source, destination = self._peers(side)
+        staged = self._staged_peers.get(side)
+        if staged is not None and self._matches_staged_rtp(staged.peer, data, addr):
+            if (
+                len(staged.packets) >= _REOFFER_STAGE_MAX_PACKETS
+                or staged.byte_count + len(data) > _REOFFER_STAGE_MAX_BYTES
+            ):
+                self.dropped += 1
+                return
+            staged.packets.append((data, tuple(addr)))
+            staged.byte_count += len(data)
+            return
         output = self._transports.get(("right" if side == "left" else "left", False))
         try:
             if destination.connection_held:
@@ -645,6 +869,24 @@ class SipVideoRtpRelay:
             return
         self._account(side, len(data), len(outgoing))
         self.forwarded += 1
+
+    @staticmethod
+    def _matches_staged_rtp(
+        candidate: VideoRtpPeer,
+        data: bytes,
+        addr,
+    ) -> bool:
+        """Return whether RTP belongs only to the pending peer contract."""
+
+        if not remote_can_send(candidate.video_format):
+            return False
+        if not candidate.accepts_rtp_source_host(str(addr[0])):
+            return False
+        try:
+            packet = rtp.parse_packet(data)
+        except ValueError:
+            return False
+        return packet.payload_type == int(candidate.recv_format.payload_type)
 
     def handle_transcoded_rtp(self, source_side: str, data: bytes) -> None:
         _source, destination = self._peers(source_side)

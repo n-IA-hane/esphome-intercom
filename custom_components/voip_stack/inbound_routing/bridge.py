@@ -295,6 +295,7 @@ async def route_sip_bridge(
             invite.video_format.direction if video_bridge_ports else "inactive"
         ),
         generic_video_relay=bool(video_bridge_ports),
+        allow_video_transcoding=video_transcoding_enabled,
     )
     if not bridge_to_trunk:
         runtime.enable_reused_sip_tcp_connection(

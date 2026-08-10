@@ -529,6 +529,7 @@ async def async_route_trunk_invite(
             invite.video_format.direction if video_relay is not None else "inactive"
         ),
         generic_video_relay=video_relay is not None,
+        allow_video_transcoding=bool(cfg.get(CONF_VIDEO_TRANSCODING, False)),
     )
     enable_reused_tcp_connection(
         hass,

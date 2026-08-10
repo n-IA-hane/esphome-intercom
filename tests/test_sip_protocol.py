@@ -440,6 +440,85 @@ class SipProtocolBugFixTest(unittest.TestCase):
         self.assertEqual(resumed.recv_video_format.profile_level_id, "42801f")
         self.assertIn("a=sendrecv", resumed_answer)
 
+    def test_transcoding_dialog_accepts_new_remote_video_contract(self) -> None:
+        """A B2BUA leg negotiates the caller codec before bridge transcoding."""
+
+        pcm = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        negotiated = sdp.audio_format_to_rtp(pcm, 96)
+        baseline = sdp.RtpVideoFormat(
+            payload_type=103,
+            profile_level_id="42c01f",
+            level_asymmetry_allowed=True,
+        )
+        remote_high = sdp.RtpVideoFormat(
+            payload_type=100,
+            profile_level_id="640c1f",
+            level_asymmetry_allowed=True,
+        )
+        client = sip_client.SipCallClient(
+            local_ip="192.0.2.10",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            supported_formats=[pcm],
+            local_video_rtp_port=41002,
+            video_formats=(baseline,),
+            video_direction="sendrecv",
+            generic_video_relay=True,
+            allow_video_transcoding=True,
+        )
+        client.dialog = sip_client.SipDialog(
+            target="Wildix",
+            remote_host="192.0.2.20",
+            remote_sip_port=5060,
+            remote_rtp_host="192.0.2.20",
+            remote_rtp_port=42000,
+            local_rtp_port=41000,
+            call_id=client.dialog_ids.call_id,
+            local_uri="sip:HA@192.0.2.10:5060",
+            remote_uri="sip:Wildix@192.0.2.20:5060",
+            send_format=negotiated,
+            recv_format=negotiated,
+            video_format=baseline,
+            local_video_format=baseline,
+            local_video_rtp_port=41002,
+            local_video_direction="sendrecv",
+        )
+        body = sdp.build_offer_directional(
+            "192.0.2.20",
+            "192.0.2.20",
+            42000,
+            [pcm],
+            [pcm],
+            video_port=42002,
+            video_formats=(remote_high,),
+            video_direction="sendrecv",
+        )
+        request = sip.parse_message(
+            sip.build_request(
+                "INVITE",
+                "sip:HA@192.0.2.10:5060",
+                [
+                    ("From", "<sip:Wildix@192.0.2.20>;tag=remote"),
+                    ("To", f"<sip:HA@192.0.2.10>;tag={client.dialog_ids.local_tag}"),
+                    ("Call-ID", client.dialog_ids.call_id),
+                    ("CSeq", "2 INVITE"),
+                    ("Content-Type", "application/sdp"),
+                ],
+                body.encode(),
+            )
+        )
+
+        result = client._answer_remote_offer(request)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        updated, answer = result
+        self.assertEqual(updated.video_format.encoding, "H264")
+        self.assertEqual(updated.video_format.profile_level_id, "640c1f")
+        self.assertIn("m=video 41002 RTP/AVP 100", answer)
+        self.assertIn("profile-level-id=640c1f", answer)
+
 
 class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
     async def test_trunk_start_schedules_rfc_registration_without_blocking_setup(

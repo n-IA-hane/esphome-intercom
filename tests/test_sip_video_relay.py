@@ -344,6 +344,39 @@ class SipVideoRelayTests(unittest.TestCase):
             stale_commit()
         self.assertIs(self.relay.left, second)
 
+    def test_direction_reoffer_stages_in_band_headers_until_commit(self) -> None:
+        self.right.video_format = _format(110, direction="recvonly")
+        replacement = VideoRtpPeer(
+            self.right.host,
+            self.right.port,
+            self.right.rtcp_port,
+            _format(110, direction="sendrecv"),
+        )
+        commit, _rollback = self.relay.stage_peer_reconfiguration(
+            "right", replacement
+        )
+        packet = rtp.build_packet(
+            rtp.RtpPacket(
+                payload_type=110,
+                sequence=1,
+                timestamp=90_000,
+                ssrc=123,
+                marker=True,
+                payload=b"sps-pps-idr",
+            )
+        )
+
+        self.relay.handle_rtp("right", packet, (self.right.host, self.right.port))
+
+        self.assertEqual(self.left_rtp.sent, [])
+        self.assertEqual(self.relay.dropped, 0)
+        commit()
+        self.assertEqual(len(self.left_rtp.sent), 1)
+        forwarded, target = self.left_rtp.sent[0]
+        self.assertEqual(target, (self.left.host, self.left.port))
+        self.assertEqual(rtp.parse_packet(forwarded).payload, b"sps-pps-idr")
+        self.assertEqual(rtp.parse_packet(forwarded).payload_type, 102)
+
     def test_opposite_side_staged_reconfigurations_commit_independently(self) -> None:
         left = VideoRtpPeer("10.0.0.9", 19000, 19001, _format(120))
         right = VideoRtpPeer("10.0.0.10", 20000, 20001, _format(121))

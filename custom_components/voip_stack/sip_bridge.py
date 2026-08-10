@@ -230,19 +230,28 @@ def configure_answered_invite_video_relay(
 
     assert source_video is not None
     assert remote_video is not None
+    answer_direction = sdp.constrained_video_direction(
+        invite.video_format.direction,
+        allow_send=(
+            remote_can_send(remote_video)
+            and not invite.remote_video_connection_held
+        ),
+        allow_receive=remote_can_receive(
+            remote_video,
+            connection_held=dialog.remote_video_connection_held,
+        ),
+    )
+    # VideoRtpPeer describes the remote endpoint. Once the source answer is
+    # selected, retain the inverse of that answer direction in the relay so a
+    # later offer can determine whether the source dialog already satisfies
+    # the requested paths or really needs a re-INVITE.
+    relay.left.video_format = replace(
+        relay.left.video_format,
+        direction=sdp.local_direction_for_remote(answer_direction),
+    )
     return VideoBridgeAnswer(
         video_format=source_video,
-        direction=sdp.constrained_video_direction(
-            invite.video_format.direction,
-            allow_send=(
-                remote_can_send(remote_video)
-                and not invite.remote_video_connection_held
-            ),
-            allow_receive=remote_can_receive(
-                remote_video,
-                connection_held=dialog.remote_video_connection_held,
-            ),
-        ),
+        direction=answer_direction,
     )
 
 

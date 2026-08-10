@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from unittest.mock import AsyncMock
 
 from .voip_phase1_support import (
@@ -184,6 +185,25 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(relay.transcoding)
         self.assertEqual(relay._transcode_directions, {"left", "right"})  # noqa: SLF001
         self.assertEqual(answer.video_format.encoding, "JPEG")
+
+    def test_source_peer_retains_committed_inverse_answer_direction(self) -> None:
+        invite, dialog, relay = self._cross_codec_video_fixture()
+        dialog.video_format = dataclasses.replace(
+            dialog.video_format,
+            direction="recvonly",
+        )
+
+        answer = sip_bridge.configure_answered_invite_video_relay(
+            invite,
+            dialog,
+            relay,
+            hass=types.SimpleNamespace(data={}),
+            enable_transcoding=True,
+        )
+
+        self.assertIsNotNone(answer)
+        self.assertEqual(answer.direction, "recvonly")
+        self.assertEqual(relay.left.video_format.direction, "sendonly")
 
     async def test_cross_codec_h264_start_requests_rfc5168_keyframe(self) -> None:
         invite, dialog, video_relay = self._cross_codec_video_fixture()

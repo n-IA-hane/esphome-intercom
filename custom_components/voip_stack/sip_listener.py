@@ -1351,6 +1351,13 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 or not 200 <= int(response.status_code or 0) < 300
                 or not response.body
             ):
+                _LOGGER.warning(
+                    "SIP local video re-INVITE missing final answer call_id=%s "
+                    "status=%s body=%s",
+                    call_id,
+                    response.status_code if response is not None else None,
+                    bool(response is not None and response.body),
+                )
                 return None
             sdp.validate_sdp_answer(
                 offer,
@@ -1359,13 +1366,23 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             )
             audio = sdp.negotiate_answer_directional(
                 response.body,
-                [previous.send_format.audio_format],
-                [previous.recv_format.audio_format],
+                [fmt.audio_format for fmt in current_audio_formats],
+                [fmt.audio_format for fmt in current_audio_formats],
                 local_offer_direction=previous.local_audio_direction,
                 local_offer_sdp=offer,
                 allow_dahua_pcm=previous.peer_profile == "dahua",
             )
             if audio is None:
+                _LOGGER.warning(
+                    "SIP local video re-INVITE audio answer incompatible call_id=%s "
+                    "offer=[%s] answer=[%s] expected_tx=%s expected_rx=%s direction=%s",
+                    call_id,
+                    ", ".join(sdp.offered_media_descriptions(offer)),
+                    ", ".join(sdp.offered_media_descriptions(response.body)),
+                    ",".join(fmt.wire_token() for fmt in current_audio_formats),
+                    ",".join(fmt.wire_token() for fmt in current_audio_formats),
+                    previous.local_audio_direction,
+                )
                 return None
             parsed = sdp.parse_sdp(response.body)
             video_pair = (
@@ -1383,6 +1400,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 else None
             )
             if int(local_video_rtp_port) > 0 and remote_video is None:
+                _LOGGER.warning(
+                    "SIP local video re-INVITE video answer incompatible call_id=%s",
+                    call_id,
+                )
                 return None
             candidate = replace(
                 previous,
@@ -1409,6 +1430,10 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             prepared = True
             return candidate
         except (TypeError, ValueError, sdp.SdpError, sip.SipError):
+            _LOGGER.exception(
+                "SIP local video re-INVITE answer rejected call_id=%s",
+                call_id,
+            )
             return None
         finally:
             if not prepared:

@@ -42,7 +42,6 @@ class _Relay:
 
         return commit
 
-
 class _VideoRelay:
     def __init__(
         self,
@@ -56,17 +55,55 @@ class _VideoRelay:
         self.left_port = 43000
         self._transcode_from = transcode_from
         self.staged: list[tuple[str, object]] = []
+        self.commits: list[str] = []
 
     def transcodes_from(self, side: str) -> bool:
         return side in self._transcode_from
+
+    def transcode_directions_for(self, _left: object, _right: object) -> set[str]:
+        return set(self._transcode_from)
 
     def prepare_peer_reconfiguration(self, side: str, peer: object):
         self.staged.append((side, peer))
 
         def commit() -> None:
+            self.commits.append(side)
             setattr(self, side, peer)
 
         return commit
+
+    def stage_peer_reconfiguration(self, side: str, peer: object):
+        commit = self.prepare_peer_reconfiguration(side, peer)
+        return commit, lambda: None
+
+    async def async_prepare_peer_generation(
+        self,
+        *,
+        left: object,
+        right: object,
+    ):
+        previous_left = self.left
+        previous_right = self.right
+        settled = False
+
+        async def commit() -> None:
+            nonlocal settled
+            if settled:
+                raise RuntimeError("video peer generation already settled")
+            settled = True
+            self.commits.extend(("left", "right"))
+            self.left = left
+            self.right = right
+
+        async def rollback() -> None:
+            nonlocal settled
+            if settled:
+                return
+            settled = True
+            self.left = previous_left
+            self.right = previous_right
+
+        return commit, rollback
 
 
 class _PreparedSource:
@@ -151,6 +188,10 @@ def bridge_media_updates(monkeypatch):
         },
         "core.sdp": {
             "video_answer_contract": lambda offered, answered: answered,
+            "remote_can_send": lambda fmt: fmt.direction in {"sendrecv", "sendonly"},
+            "remote_can_receive": lambda fmt, connection_held=False: (
+                not connection_held and fmt.direction in {"sendrecv", "recvonly"}
+            ),
         },
         "sip_bridge": {
             "dialog_rtp_peer": lambda updated: updated.audio_peer,
@@ -240,7 +281,7 @@ def test_audio_and_video_commit_share_one_owner_check(
     source_peer = SimpleNamespace(
         send_format="peer-send",
         recv_format="peer-recv",
-        video_format=SimpleNamespace(direction="sendrecv"),
+        video_format=SimpleNamespace(direction="recvonly"),
         connection_held=False,
     )
     hass = SimpleNamespace(
@@ -260,7 +301,7 @@ def test_audio_and_video_commit_share_one_owner_check(
         SimpleNamespace(
             recv_format="peer-recv",
             send_format="peer-send",
-            video_format=video_format,
+            video_format=SimpleNamespace(direction="recvonly"),
             connection_held=False,
         ),
         old_video,
@@ -299,6 +340,7 @@ def test_audio_and_video_commit_share_one_owner_check(
     asyncio.run(commit.commit())
     assert relay.right is new_audio
     assert relay.video_relay.right is new_video
+    assert relay.video_relay.commits == ["left", "right"]
 
 
 def test_cross_codec_video_direction_change_uses_owned_transcoders(
@@ -381,6 +423,9 @@ def test_cross_codec_video_direction_change_uses_owned_transcoders(
     assert validation["peer_send"] == "h264-tx"
     assert validation["peer_recv"] == "h264-rx"
     assert validation["updated_recv"] == "vp8-tx"
+    assert commit.answer_video_format is None
+    assert hass.endpoint.calls == []
+    assert hass.endpoint.prepared.committed is False
     assert relay.video_relay.right is old_video
     asyncio.run(commit.commit())
     assert relay.video_relay.right is new_video

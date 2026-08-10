@@ -281,6 +281,9 @@ class EndpointDialer:
                     else "inactive"
                 ),
                 generic_video_relay=video_relay is not None,
+                allow_video_transcoding=bool(
+                    self.config.get(CONF_VIDEO_TRANSCODING, False)
+                ),
             )
             if policy.reuse_registered_flow:
                 self.enable_reused_tcp_connection(

@@ -638,6 +638,11 @@ _H264_SUBPROFILE_PATTERNS = (
     ("baseline", 0x58, 0xCF, 0x80),
     ("main", 0x4D, 0xAF, 0x00),
     ("extended", 0x58, 0xCF, 0x00),
+    # H.264 constraint_set4_flag + constraint_set5_flag identify the
+    # Constrained High subset used by WebRTC endpoints (for example 640c1f).
+    # Keep it distinct from unconstrained High so passthrough matching cannot
+    # silently claim compatibility between the two decoder contracts.
+    ("constrained-high", 0x64, 0x0C, 0x0C),
     ("high", 0x64, 0xFF, 0x00),
     ("high-10", 0x6E, 0xFF, 0x00),
     ("high-4:2:2", 0x7A, 0xFF, 0x00),

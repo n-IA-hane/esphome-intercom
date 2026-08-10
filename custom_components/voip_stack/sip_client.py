@@ -353,6 +353,7 @@ class SipCallClient:
         video_formats: tuple[sdp.RtpVideoFormat, ...] | list[sdp.RtpVideoFormat] | None = None,
         video_direction: str = "sendrecv",
         generic_video_relay: bool = False,
+        allow_video_transcoding: bool = False,
         media_reservation=None,
         video_rtp_socket: socket.socket | None = None,
         video_rtcp_socket: socket.socket | None = None,
@@ -397,6 +398,7 @@ class SipCallClient:
         self.video_format = self.video_formats[0] if self.video_formats else None
         self.video_direction = str(video_direction or "sendrecv")
         self.generic_video_relay = bool(generic_video_relay)
+        self.allow_video_transcoding = bool(allow_video_transcoding)
         self.media_reservation = media_reservation
         self.video_rtp_socket = video_rtp_socket
         self.video_rtcp_socket = video_rtcp_socket
@@ -1161,7 +1163,14 @@ class SipCallClient:
             if selected is None:
                 return None
             parsed = sdp.parse_sdp(request.body)
-            accepted_video = tuple(dict.fromkeys(fmt.encoding for fmt in self.video_formats))
+            accepted_video = tuple(
+                dict.fromkeys(
+                    (
+                        *(fmt.encoding for fmt in self.video_formats),
+                        *(("H264", "VP8", "JPEG") if self.allow_video_transcoding else ()),
+                    )
+                )
+            )
             video_directional = (
                 (
                     sdp.negotiate_video_answer_directional(
@@ -1175,6 +1184,7 @@ class SipCallClient:
                         accepted_encodings=accepted_video,
                         prefer_browser_send=self.video_direction
                         in {"sendonly", "sendrecv"},
+                        allow_passthrough_fallback=self.allow_video_transcoding,
                     )
                 )
                 if accepted_video and self.local_video_rtp_port
@@ -2956,8 +2966,8 @@ class SipCallClient:
             )
             audio = sdp.negotiate_answer_directional(
                 answer.body,
-                [current.send_format.audio_format],
-                [current.recv_format.audio_format],
+                [fmt.audio_format for fmt in sdp.offered_pcm_formats(offer)],
+                [fmt.audio_format for fmt in sdp.offered_pcm_formats(offer)],
                 local_offer_direction=current.local_audio_direction,
                 local_offer_sdp=offer,
                 allow_dahua_pcm=self.include_dahua_pcm,
