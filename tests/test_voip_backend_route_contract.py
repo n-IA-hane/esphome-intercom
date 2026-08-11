@@ -376,8 +376,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             + self.call_forwarder.count("_attach_dtmf_event_bridge(")
             + self.ring_group.count("_attach_dtmf_event_bridge(")
             + self.outbound_bridge_commit.count("attach_dtmf_event_bridge("),
-            2,
+            1,
         )
+        self.assertNotIn("attach_dtmf_event_bridge(", self.inbound_bridge)
         self.assertEqual(
             self.outbound_bridge_commit.count("attach_dtmf_event_bridge("), 1
         )
@@ -675,7 +676,11 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "for reservation in data.detach_reservations:",
             self.outbound_bridge_commit,
         )
-        self.assertIn("bridge_ports.detach()", routing_sources)
+        self.assertIn(
+            "detach_reservations=reservations",
+            self.inbound_bridge,
+        )
+        self.assertNotIn("bridge_ports.detach()", self.inbound_bridge)
         self.assertNotIn(
             "await client.close()\n            bridge_ports.release()", routing_sources
         )

@@ -70,6 +70,7 @@ async def _prepare_bridge_video_contract_change(
         configure_answered_invite_video_relay,
         dialog_rtp_peer,
         dialog_video_rtp_peer,
+        invite_rtp_peer,
         video_bridge_offer_formats,
     )
 
@@ -213,7 +214,7 @@ async def _prepare_bridge_video_contract_change(
                     connection_held=candidate.remote_video_connection_held,
                 ),
             )
-        next_left = invite_rtp_peer(updated)
+        next_left = invite_rtp_peer(updated, established=relay.left)
         next_right = dialog_rtp_peer(candidate)
         previous_left = relay.left
         previous_right = relay.right
@@ -223,8 +224,8 @@ async def _prepare_bridge_video_contract_change(
             local_ip,
             local_ip,
             int(relay.left_port),
-            updated.send_format,
-            updated.recv_format,
+            next_left.outbound_rtp_format,
+            next_left.inbound_rtp_format,
             dtmf=first_offered_dtmf_format(updated.remote_sdp),
             remote_sdp=updated.remote_sdp,
             audio_direction=constrained_media_direction(

@@ -85,9 +85,6 @@ class TrunkInboundRuntime:
     forward_existing_call: Callable[..., Awaitable[None]]
     defer_invite_to_softphone: Callable[..., None]
     start_local_assist_bridge: Callable[..., Awaitable[Any]]
-    attach_client_media_update: Callable[..., None]
-    attach_dtmf_event_bridge: Callable[..., None]
-    terminate_sip_bridge: Callable[..., Awaitable[Any]]
 
 
 async def async_route_trunk_invite(

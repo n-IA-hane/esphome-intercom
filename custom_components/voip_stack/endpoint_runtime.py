@@ -25,7 +25,6 @@ from .core.audio_format import (
     HA_SIP_PCM_TX_FORMATS,
 )
 from .assist_endpoint import AssistEndpoint
-from .bridge_media_updates import BridgeMediaUpdateBinder
 from .call_forwarder import ForwardRuntime, async_forward_existing_call
 from .config_entry_runtime import (
     async_refresh_and_push_phonebook as _refresh_and_push_phonebook,
@@ -42,10 +41,7 @@ from .endpoint_lifecycle import (
     create_runtime_task,
 )
 from .endpoint_dialing import EndpointDialer
-from .dtmf_events import (
-    attach_dtmf_event_bridge as _attach_dtmf_event_bridge,
-    handle_sip_info,
-)
+from .dtmf_events import handle_sip_info
 from .endpoint_routing import (
     EndpointRouteResolver,
     roster_from_peers as _roster_from_peers,
@@ -183,9 +179,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     _is_ha_target = route_resolver.is_ha_target
     _ha_router_decision = route_resolver.route
     _logical_endpoint_for_member = route_resolver.logical_endpoint
-
-    bridge_media_updates = BridgeMediaUpdateBinder(hass)
-    _attach_client_media_update = bridge_media_updates.attach
 
     async def _on_register(request, addr, transport):
         result = await registrar.handle_register(request, addr, transport)
@@ -402,9 +395,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                     forward_existing_call=_async_forward_existing_call,
                     defer_invite_to_softphone=_defer_invite_to_ha_softphone,
                     start_local_assist_bridge=_start_local_assist_bridge,
-                    attach_client_media_update=_attach_client_media_update,
-                    attach_dtmf_event_bridge=_attach_dtmf_event_bridge,
-                    terminate_sip_bridge=_terminate_sip_bridge,
                 ),
                 invite,
                 bridge_ports=bridge_ports,
@@ -644,7 +634,6 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
                 ha_router_decision=_ha_router_decision,
                 inbound_route_decision=_inbound_route_decision,
                 build_peer_snapshot=_async_build_peer_snapshot,
-                attach_client_media_update=_attach_client_media_update,
                 browser_leg_for_member=_browser_leg_for_member,
                 defer_invite_to_softphone=_defer_invite_to_ha_softphone,
                 enable_reused_sip_tcp_connection=_enable_reused_sip_tcp_connection,

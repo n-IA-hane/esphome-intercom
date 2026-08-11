@@ -34,9 +34,6 @@ def _runtime() -> trunk_inbound_router.TrunkInboundRuntime:
         forward_existing_call=AsyncMock(),
         defer_invite_to_softphone=Mock(),
         start_local_assist_bridge=AsyncMock(),
-        attach_client_media_update=Mock(),
-        attach_dtmf_event_bridge=Mock(),
-        terminate_sip_bridge=AsyncMock(),
     )
 
 

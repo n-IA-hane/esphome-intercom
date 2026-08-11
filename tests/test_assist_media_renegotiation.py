@@ -101,10 +101,16 @@ def _load_module(registry, answer_calls: list[dict]):
         remote_can_receive=lambda *_args, **_kwargs: False,
         remote_can_send=lambda *_args, **_kwargs: False,
     )
+    def invite_rtp_peer(invite, *, established=None):
+        if not hasattr(invite, "outbound_rtp_format"):
+            invite.outbound_rtp_format = invite.send_format
+            invite.inbound_rtp_format = invite.recv_format
+        return invite
+
     _module(
         "sip_bridge",
         dialog_video_rtp_peer=lambda dialog: dialog,
-        invite_rtp_peer=lambda invite: invite,
+        invite_rtp_peer=invite_rtp_peer,
         invite_video_rtp_peer=lambda invite: invite,
     )
 
@@ -432,7 +438,11 @@ def test_bridge_activates_video_when_initial_offer_was_recvonly() -> None:
     old_audio_right = types.SimpleNamespace(
         name="old-audio-right", can_send=True, can_receive=True
     )
-    new_audio_left = types.SimpleNamespace(name="new-audio-left")
+    new_audio_left = types.SimpleNamespace(
+        name="new-audio-left",
+        outbound_rtp_format="audio-send",
+        inbound_rtp_format="audio-receive",
+    )
     new_audio_right = types.SimpleNamespace(
         name="new-audio-right", can_send=True, can_receive=True
     )
@@ -518,6 +528,7 @@ def test_bridge_activates_video_when_initial_offer_was_recvonly() -> None:
         )
     )
     sip_bridge.dialog_rtp_peer = lambda _dialog: new_audio_right
+    sip_bridge.invite_rtp_peer = lambda _invite, **_kwargs: new_audio_left
     sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: ("jpeg",)
     module.invite_rtp_peer = lambda _invite: new_audio_left
     module.invite_video_rtp_peer = lambda _invite: new_video_left
@@ -728,7 +739,11 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically() -> None:
     old_audio_right = types.SimpleNamespace(
         name="old-audio-right", can_send=True, can_receive=True
     )
-    new_audio_left = types.SimpleNamespace(name="new-audio-left")
+    new_audio_left = types.SimpleNamespace(
+        name="new-audio-left",
+        outbound_rtp_format="audio-send",
+        inbound_rtp_format="audio-receive",
+    )
     new_audio_right = types.SimpleNamespace(
         name="new-audio-right", can_send=True, can_receive=True
     )
@@ -820,6 +835,7 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically() -> None:
     sip_bridge.build_pending_invite_video_relay = lambda *_args, **_kwargs: None
     sip_bridge.configure_answered_invite_video_relay = lambda *_args, **_kwargs: None
     sip_bridge.dialog_rtp_peer = lambda _dialog: new_audio_right
+    sip_bridge.invite_rtp_peer = lambda _invite, **_kwargs: new_audio_left
     sip_bridge.dialog_video_rtp_peer = lambda _dialog: new_video_right
     sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: ()
     module.invite_rtp_peer = lambda _invite: new_audio_left

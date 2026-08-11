@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import secrets
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
 
@@ -30,6 +30,9 @@ from .sip_bridge import (
 )
 from .sip_runtime import send_final_response
 from .softphone_termination import async_terminate_sip_bridge_session
+
+if TYPE_CHECKING:
+    from .endpoint_session import EndpointCallSession
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -87,16 +90,20 @@ async def async_commit_outbound_bridge(
     registry: Any,
     data: BridgeCommitData,
     policy: BridgeCommitPolicy,
+    *,
+    session: EndpointCallSession | None = None,
 ) -> BridgeCommitResult | None:
-    """Commit one winning leg, transfer its resources and watch its dialog."""
+    """Commit one winning leg into a new or already registered session."""
 
     invite = data.invite
     winner = data.winner
     client = winner.client
     dest_call_id = client.dialog_ids.call_id
-    watcher_ready = asyncio.Event()
+    watcher_ready: asyncio.Event | None = None
+    watcher: asyncio.Task[None] | None = None
 
     async def _watch_destination() -> None:
+        assert watcher_ready is not None
         await watcher_ready.wait()
         await async_watch_sip_bridge_destination(
             hass,
@@ -105,12 +112,9 @@ async def async_commit_outbound_bridge(
             terminate_sip_bridge=async_terminate_sip_bridge_session,
         )
 
-    watcher = asyncio.create_task(
-        _watch_destination(),
-        name=f"voip-bridge-destination-{dest_call_id}",
-    )
-
     async def _cancel_watcher() -> None:
+        if watcher is None:
+            return
         watcher.cancel()
         await asyncio.gather(watcher, return_exceptions=True)
 
@@ -121,30 +125,38 @@ async def async_commit_outbound_bridge(
             TerminationIntent(reason),
         )
 
-    session = registry.register_bridge(
-        source_call_id=invite.call_id,
-        dest_call_id=dest_call_id,
-        client=client,
-        lifecycle_task=watcher,
-        state=policy.bridge_state,
-        caller=policy.caller,
-        callee=policy.callee,
-        route_kind=policy.route_kind,
-        ingress=policy.ingress,
-        origin=policy.origin,
-        source_role=policy.source_role,
-        source_state=policy.source_state,
-        dest_state=policy.dest_state,
-        expected_generation=policy.expected_generation,
-    )
     if session is None:
-        await _cancel_watcher()
-        return None
-    if policy.dest_state == CallState.RINGING.value:
-        final = await client.wait_for_final()
-        if final != CallState.IN_CALL.value or client.dialog is None:
+        watcher_ready = asyncio.Event()
+        watcher = asyncio.create_task(
+            _watch_destination(),
+            name=f"voip-bridge-destination-{dest_call_id}",
+        )
+        session = registry.register_bridge(
+            source_call_id=invite.call_id,
+            dest_call_id=dest_call_id,
+            client=client,
+            lifecycle_task=watcher,
+            state=policy.bridge_state,
+            caller=policy.caller,
+            callee=policy.callee,
+            route_kind=policy.route_kind,
+            ingress=policy.ingress,
+            origin=policy.origin,
+            source_role=policy.source_role,
+            source_state=policy.source_state,
+            dest_state=policy.dest_state,
+            expected_generation=policy.expected_generation,
+        )
+        if session is None:
             await _cancel_watcher()
-            raise RuntimeError(final)
+            return None
+        if policy.dest_state == CallState.RINGING.value:
+            final = await client.wait_for_final()
+            if final != CallState.IN_CALL.value or client.dialog is None:
+                await _cancel_watcher()
+                raise RuntimeError(final)
+    elif not registry.is_generation_current(invite.call_id, session.generation):
+        return None
 
     video_answer = None
     try:
@@ -335,5 +347,6 @@ async def async_commit_outbound_bridge(
         video_answer,
         winner.video_failure_reason,
     )
-    watcher_ready.set()
+    if watcher_ready is not None:
+        watcher_ready.set()
     return result

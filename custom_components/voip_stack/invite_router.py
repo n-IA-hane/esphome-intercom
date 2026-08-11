@@ -79,7 +79,6 @@ class InviteRuntime:
     ha_router_decision: Callable[..., Any]
     inbound_route_decision: Callable[..., Any]
     build_peer_snapshot: Callable[..., Any]
-    attach_client_media_update: Callable[..., None]
     browser_leg_for_member: Callable[..., Any]
     defer_invite_to_softphone: Callable[..., None]
     enable_reused_sip_tcp_connection: Callable[..., Any]

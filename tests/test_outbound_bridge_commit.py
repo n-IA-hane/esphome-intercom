@@ -37,8 +37,9 @@ def _fixture():
             "m=audio 5000 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000\r\n"
         ),
     )
+    session = SimpleNamespace(create_task=asyncio.create_task)
     registry = SimpleNamespace(
-        register_bridge=MagicMock(return_value=object()),
+        register_bridge=MagicMock(return_value=session),
         forget_bridge_link=MagicMock(),
         close_leg=AsyncMock(return_value=True),
         attach_relay=MagicMock(),
@@ -111,6 +112,57 @@ async def test_commit_transfers_bridge_and_owns_destination_watcher(monkeypatch)
     winner.ports.detach.assert_called_once()
     registry.attach_relay.assert_called_once_with("source-call", relay)
     binder.attach.assert_called_once()
+    assert not _pending_watchers()
+
+
+@pytest.mark.asyncio
+async def test_commit_reuses_registered_session_without_second_watcher(monkeypatch):
+    from custom_components.voip_stack import outbound_bridge_commit as module
+    from custom_components.voip_stack.inbound_answer import AnswerCommitResult
+
+    invite, winner, registry, relay = _fixture()
+    session = SimpleNamespace(generation=7, create_task=asyncio.create_task)
+    registry.is_generation_current = MagicMock(return_value=True)
+    registry.register_bridge.side_effect = AssertionError("duplicate bridge owner")
+    monkeypatch.setattr(module, "build_invite_client_relay", lambda **_: relay)
+    monkeypatch.setattr(module, "attach_dtmf_event_bridge", MagicMock())
+    monkeypatch.setattr(module, "build_answer_directional", lambda *_a, **_k: "sdp")
+    monkeypatch.setattr(
+        module,
+        "BridgeMediaUpdateBinder",
+        lambda _hass: SimpleNamespace(attach=MagicMock()),
+    )
+    monkeypatch.setattr(
+        module,
+        "async_commit_runtime_answer",
+        AsyncMock(return_value=AnswerCommitResult(True, True)),
+    )
+
+    result = await module.async_commit_outbound_bridge(
+        MagicMock(),
+        registry,
+        module.BridgeCommitData(
+            invite=invite,
+            winner=winner,
+            source_relay_port=40000,
+            dest_relay_port=40002,
+            local_ip="127.0.0.1",
+            release_port_pairs=(winner.ports.ports,),
+            detach_reservations=(winner.ports,),
+        ),
+        module.BridgeCommitPolicy(
+            route_kind="direct",
+            caller="door",
+            callee="desk",
+            connected_party="desk",
+        ),
+        session=session,
+    )
+    await asyncio.sleep(0)
+
+    assert result is not None
+    registry.is_generation_current.assert_called_once_with("source-call", 7)
+    registry.register_bridge.assert_not_called()
     assert not _pending_watchers()
 
 

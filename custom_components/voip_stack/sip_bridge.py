@@ -255,11 +255,15 @@ def configure_answered_invite_video_relay(
     )
 
 
-def invite_rtp_peer(invite: SipInvite) -> RtpPeer:
-    """Build the relay peer represented by one inbound offer."""
+def invite_rtp_peer(
+    invite: SipInvite,
+    *,
+    established: RtpPeer | None = None,
+) -> RtpPeer:
+    """Build one inbound peer, retaining an offered established audio mapping."""
 
     dtmf = sdp.first_offered_dtmf_format(invite.remote_sdp)
-    return RtpPeer(
+    updated = RtpPeer(
         host=invite.remote_rtp_host,
         port=invite.remote_rtp_port,
         payload_type=invite.recv_format.payload_type,
@@ -278,6 +282,42 @@ def invite_rtp_peer(invite: SipInvite) -> RtpPeer:
         ),
         connection_held=invite.remote_audio_connection_held,
         signaling_host=invite.source_host,
+    )
+    if established is None:
+        return updated
+    offered = {
+        (
+            item.payload_type,
+            item.encoding,
+            item.sample_rate,
+            item.channels,
+        )
+        for item in sdp.offered_pcm_formats(
+            invite.remote_sdp,
+            allow_dahua_pcm=invite.peer_profile == "dahua",
+        )
+    }
+
+    def is_offered(item: sdp.RtpPcmFormat) -> bool:
+        return (
+            item.payload_type,
+            item.encoding,
+            item.sample_rate,
+            item.channels,
+        ) in offered
+
+    inbound = established.inbound_rtp_format
+    outbound = established.outbound_rtp_format
+    if not (is_offered(inbound) and is_offered(outbound)):
+        return updated
+    return replace(
+        updated,
+        payload_type=inbound.payload_type,
+        audio_format=inbound.audio_format,
+        rtp_format=inbound,
+        send_payload_type=outbound.payload_type,
+        send_audio_format=outbound.audio_format,
+        send_rtp_format=outbound,
     )
 
 

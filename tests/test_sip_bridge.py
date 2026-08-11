@@ -25,6 +25,77 @@ from .voip_phase1_support import (
 
 
 class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
+    def test_video_reoffer_preserves_established_audio_payload(self):
+        """A video-only re-offer must retain its accepted audio mapping."""
+
+        pcm_48k = sdp.RtpPcmFormat(96, "L16", 48000, 1, 20)
+        pcm_16k = sdp.RtpPcmFormat(97, "L16", 16000, 1, 20)
+        invite = sip_listener.SipInvite(
+            source_host="192.0.2.10",
+            source_port=5060,
+            request_uri=sip.parse_sip_uri("sip:418@192.0.2.1"),
+            caller_uri=sip.parse_sip_uri("sip:P4@192.0.2.10"),
+            target="418",
+            caller="P4",
+            call_id="video-only-reoffer",
+            cseq="2 INVITE",
+            remote_sdp=(
+                b"v=0\r\n"
+                b"c=IN IP4 192.0.2.10\r\n"
+                b"m=audio 40000 RTP/AVP 96 97\r\n"
+                b"a=rtpmap:96 L16/48000/1\r\n"
+                b"a=rtpmap:97 L16/16000/1\r\n"
+                b"a=sendrecv\r\n"
+                b"m=video 41000 RTP/AVP 105\r\n"
+                b"a=rtpmap:105 H264/90000\r\n"
+                b"a=recvonly\r\n"
+            ),
+            send_format=pcm_48k,
+            recv_format=pcm_48k,
+            remote_rtp_host="192.0.2.10",
+            remote_rtp_port=40000,
+        )
+        established = sip_rtp_bridge.RtpPeer(
+            host="192.0.2.10",
+            port=40000,
+            payload_type=97,
+            audio_format=pcm_16k.audio_format,
+            rtp_format=pcm_16k,
+            send_payload_type=97,
+            send_audio_format=pcm_16k.audio_format,
+            send_rtp_format=pcm_16k,
+        )
+
+        updated = sip_bridge.invite_rtp_peer(invite, established=established)
+
+        self.assertEqual(updated.inbound_rtp_format, pcm_16k)
+        self.assertEqual(updated.outbound_rtp_format, pcm_16k)
+
+    def test_audio_contract_is_renegotiated_when_removed_from_reoffer(self):
+        pcm_48k = sdp.RtpPcmFormat(96, "L16", 48000, 1, 20)
+        invite, _dialog, _relay = self._cross_codec_video_fixture()
+        invite = dataclasses.replace(
+            invite,
+            remote_sdp=(
+                b"v=0\r\nc=IN IP4 192.0.2.10\r\n"
+                b"m=audio 40000 RTP/AVP 96\r\n"
+                b"a=rtpmap:96 L16/48000/1\r\na=sendrecv\r\n"
+            ),
+            send_format=pcm_48k,
+            recv_format=pcm_48k,
+        )
+        established = sip_rtp_bridge.RtpPeer(
+            host="192.0.2.10",
+            port=40000,
+            payload_type=97,
+            audio_format=sdp.RtpPcmFormat(97, "L16", 16000, 1, 20).audio_format,
+            rtp_format=sdp.RtpPcmFormat(97, "L16", 16000, 1, 20),
+        )
+
+        updated = sip_bridge.invite_rtp_peer(invite, established=established)
+
+        self.assertEqual(updated.inbound_rtp_format, pcm_48k)
+
     @staticmethod
     def _cross_codec_video_fixture():
         audio = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)

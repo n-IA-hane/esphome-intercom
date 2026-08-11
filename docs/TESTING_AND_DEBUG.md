@@ -227,6 +227,38 @@ Wait for `READY_FOR_VIDEO_CALL`, then start a deterministic audio/video caller:
 See [SIP Video](SIP_VIDEO.md) for an outgoing probe,
 the current codec profile and deliberate limitations.
 
+### P4 to trunk media gate with PCAP
+
+For changes to RTP framing, pacing, codec conversion, trunk bridging or
+audio-to-video re-INVITE, run the physical P4 against a real Wildix endpoint
+and collect the packet capture from the HA host:
+
+```bash
+out="test_captures/p4-wildix-$(date -u +%Y%m%dT%H%M%SZ)"
+./scripts/run_p4_wildix_pcap_gate.sh "$out" --audio-only
+
+out="test_captures/p4-wildix-video-$(date -u +%Y%m%dT%H%M%SZ)"
+./scripts/run_p4_wildix_pcap_gate.sh "$out"
+```
+
+The first command qualifies bidirectional audio without renegotiation. The
+second starts with audio and adds bidirectional video through re-INVITE. The
+gate fails unless the call runner succeeds, the capture is readable, at least
+four RTP streams are observed and every audio stream has zero sequence loss.
+Audio streams must also remain within 25 percent of the RTP cadence declared
+by their SDP clock and timestamp progression. Video sequence gaps are reported
+but are not a default failure across direction-changing re-INVITEs, because RTP
+produced while a destination leg is inactive is intentionally not forwarded.
+Use `tools/rtp_pcap_evidence.py --max-video-loss N` for a call interval whose
+video direction is continuously active. The gate stores
+`summary.json`, `ha-full.pcap`, `capinfos.txt`,
+`tcpdump.log` and `rtp-evidence.json` under the selected directory.
+
+PCAP is required for tests whose oracle is SIP transaction order, RTP
+direction, sequence continuity, timestamp cadence or packet loss. It is not a
+substitute for browser rendering counters, decoded media, physical audio or
+post-call resource quiescence, which remain separate required oracles.
+
 ## Service matrix
 
 Exercise all public services with temporary data:

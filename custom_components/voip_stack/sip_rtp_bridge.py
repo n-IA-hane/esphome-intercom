@@ -605,10 +605,14 @@ class SipRtpRelay:
     def _reconfigure_audio_pacers(self) -> None:
         self._audio_pacing_generation += 1
         self._audio_pacing_required = {
+            # A shorter source frame is accumulated by PcmFrameConverter and
+            # already emerges on the source packet clock.  Only splitting one
+            # longer source frame into multiple destination frames creates a
+            # burst that needs a destination-side playout clock.
             "left": self.right.audio_format.frame_ms
-            != self.left.outbound_audio_format.frame_ms,
+            > self.left.outbound_audio_format.frame_ms,
             "right": self.left.audio_format.frame_ms
-            != self.right.outbound_audio_format.frame_ms,
+            > self.right.outbound_audio_format.frame_ms,
         }
         dropped = sum(drain_queue(queue) for queue in self._audio_queues.values())
         self.pacing_dropped_packets += dropped
@@ -650,8 +654,8 @@ class SipRtpRelay:
                 destination.outbound_rtp_format.frame_ms / 1000,
             )
             now = loop.time()
-            if next_send <= 0 or now > next_send + frame_delay:
-                next_send = now + frame_delay
+            if next_send <= 0:
+                next_send = now
             await asyncio.sleep(max(0.0, next_send - now))
             if packet_generation != self._audio_pacing_generation:
                 next_send = 0.0
@@ -660,8 +664,6 @@ class SipRtpRelay:
                 continue
             self._send_audio_packet(destination_side, packet)
             next_send += frame_delay
-            if next_send <= loop.time():
-                next_send = loop.time() + frame_delay
 
     def _send_audio_packet(self, destination_side: str, packet: bytes) -> bool:
         destination = self.left if destination_side == "left" else self.right

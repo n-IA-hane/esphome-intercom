@@ -220,6 +220,11 @@ class SipVideoRtpRelay:
         self.transcode_startup_buffered = 0
         self.transcode_startup_dropped = 0
         self.ignored_after_stop = 0
+        self.rtp_drop_reasons: dict[str, int] = {}
+
+    def _record_rtp_drop(self, error: BaseException) -> None:
+        reason = str(error) or type(error).__name__
+        self.rtp_drop_reasons[reason] = self.rtp_drop_reasons.get(reason, 0) + 1
 
     @staticmethod
     def _socket(port: int) -> socket.socket:
@@ -835,6 +840,7 @@ class SipVideoRtpRelay:
             output.sendto(outgoing, (destination.host, int(destination.port)))
         except (OSError, RuntimeError, ValueError) as err:
             self.dropped += 1
+            self._record_rtp_drop(err)
             _LOGGER.debug("SIP video RTP relay drop side=%s: %s", side, err)
             return
         self._account(side, len(data), len(outgoing))
@@ -1008,5 +1014,18 @@ class SipVideoRtpRelay:
             "transcode_rtcp_dropped": self.transcode_rtcp_dropped,
             "transcode_startup_buffered": self.transcode_startup_buffered,
             "transcode_startup_dropped": self.transcode_startup_dropped,
+            "rtp_drop_reasons": dict(sorted(self.rtp_drop_reasons.items())),
+            "transcoder_status": {
+                side: {
+                    "ready": transcoder.ready,
+                    "returncode": (
+                        transcoder.process.returncode
+                        if transcoder.process is not None
+                        else None
+                    ),
+                    "stderr_tail": list(transcoder.stderr_tail),
+                }
+                for side, transcoder in sorted(self._transcode.transcoders.items())
+            },
             "ignored_after_stop": self.ignored_after_stop,
         }

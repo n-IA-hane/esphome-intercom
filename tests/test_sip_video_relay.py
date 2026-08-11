@@ -596,6 +596,10 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertFalse(self.left_rtp.sent)
         self.assertEqual(len(self.right_rtp.sent), 1)
         self.assertEqual(self.relay.dropped, 1)
+        self.assertEqual(
+            self.relay.snapshot()["rtp_drop_reasons"],
+            {"directional RTP codec contracts are incompatible": 1},
+        )
 
 
 class SipVideoRelayLifecycleTests(unittest.IsolatedAsyncioTestCase):

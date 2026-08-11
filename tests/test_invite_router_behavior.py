@@ -52,7 +52,6 @@ def _runtime() -> invite_router.InviteRuntime:
             return_value=RouteDecision(RouteAction.ANSWER_HA, target="Casa")
         ),
         build_peer_snapshot=AsyncMock(return_value=[]),
-        attach_client_media_update=Mock(),
         browser_leg_for_member=Mock(),
         defer_invite_to_softphone=Mock(),
         enable_reused_sip_tcp_connection=Mock(),

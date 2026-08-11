@@ -10,7 +10,6 @@ from homeassistant.core import HomeAssistant
 from ..bridge_manager import async_watch_sip_bridge_destination
 from ..call_projection import publish_bridge_projection
 from ..core.audio_format import HA_TRUNK_AUDIO_FORMATS
-from ..config import media_capture_enabled
 from ..const import (
     CONF_SIP_VIDEO,
     CONF_VIDEO_TRANSCODING,
@@ -22,11 +21,9 @@ from ..const import (
     CONF_TRUNK_TRANSPORT,
     CONF_TRUNK_USERNAME,
 )
-from ..dtmf_events import attach_dtmf_event_bridge
 from ..endpoint_registry import EndpointBusyError
 from ..endpoint_termination import EndpointTerminationHandler
 from ..endpoint_session import (
-    CleanupStage,
     SipTerminationDisposition,
     TerminationInitiator,
     TerminationIntent,
@@ -43,25 +40,24 @@ from ..fsm import (
     TerminalReason,
     sip_failure_response,
 )
-from ..inbound_answer import AnswerTransaction, bind_final_response
 from ..media_ports import (
     RtpPortReservation,
     release_sip_rtp_port_pair,
     reserve_sip_video_relay_media,
     take_delayed_offer_ports,
 )
-from ..outbound_attempts import async_close_client_and_release
+from ..outbound_attempts import OutboundLeg, async_close_client_and_release
+from ..outbound_bridge_commit import (
+    BridgeCommitData,
+    BridgeCommitPolicy,
+    async_commit_outbound_bridge,
+)
 from ..phone_endpoint import EndpointKind
 from ..peer import sip_uri_for_peer
 from ..runtime_data import call_runtime_artifacts
-from ..core.sdp import build_answer_directional, first_offered_dtmf_format
 from ..core.sip import parse_sip_uri, sip_endpoints_equal, sip_uri_targets_listener
 from ..sip_bridge import (
-    async_request_sip_bridge_keyframe,
-    async_start_sip_bridge_media,
-    build_invite_client_relay,
     build_pending_invite_video_relay,
-    configure_answered_invite_video_relay,
     video_bridge_offer_formats,
 )
 from ..sip_client import SIP_TIMER_B, SipCallClient
@@ -83,7 +79,6 @@ class BridgeRuntime(Protocol):
     config: dict[str, Any]
     local_ip: str
     ha_peer_name: Callable[..., str]
-    attach_client_media_update: Callable[..., None]
     enable_reused_sip_tcp_connection: Callable[..., Any]
     send_final_response: Callable[..., Any]
     sip_uri_transport: Callable[..., Any]
@@ -466,137 +461,72 @@ async def route_sip_bridge(
             )
             return
 
-        selected_video = None
-        if video_relay is not None:
-            video_answer = configure_answered_invite_video_relay(
-                invite,
-                client.dialog,
-                video_relay,
-                hass=hass,
-                enable_transcoding=video_transcoding_enabled,
-            )
-            if video_answer is None:
-                _LOGGER.info(
-                    "SIP bridge video rejected: no direct or transcoded codec call_id=%s source=%s destination=%s",
-                    invite.call_id,
-                    invite.video_format.wire_token() if invite.video_format else "none",
-                    client.dialog.video_format.wire_token()
-                    if client.dialog.video_format
-                    else "none",
-                )
-                await video_relay.stop()
-                video_relay = None
-                video_failure_reason = "remote_video_rejected"
-            else:
-                selected_video = video_answer.video_format
-        try:
-            relay = build_invite_client_relay(
-                invite=invite,
-                client=client,
-                source_relay_port=source_relay_port,
-                dest_relay_port=dest_relay_port,
-                debug_capture=media_capture_enabled(hass),
-                on_release=lambda ports: release_sip_rtp_port_pair(hass, ports),
-            )
-            attach_dtmf_event_bridge(
-                hass,
-                relay,
-                call_id=invite.call_id,
-                dest_call_id=client.dialog_ids.call_id,
-                caller=invite.caller,
-                callee=(
-                    decision.entry.display_name
-                    if decision.entry is not None
-                    else decision.target or invite.target
-                ),
-                client=client,
-            )
-            if video_relay is not None:
-                if video_bridge_ports is not None:
-                    video_bridge_ports.detach()
-                relay.attach_video_relay(video_relay)
-            request_video_keyframe = await async_start_sip_bridge_media(relay)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("SIP RTP bridge media conversion unavailable: %s", err)
-            await registry.close_leg(
-                invite.call_id,
-                client.dialog_ids.call_id,
-                reason=TerminalReason.MEDIA_INCOMPATIBLE.value,
-            )
+        session = registry.get_session(invite.call_id)
+        if session is None:
             bridge_ports.release()
             if video_relay is not None:
                 await video_relay.stop()
-                video_relay = None
-            await EndpointTerminationHandler(hass).terminate(
-                invite.call_id,
-                TerminationIntent.final_response(
-                    TerminalReason.MEDIA_INCOMPATIBLE.value, 488
-                ),
-            )
             return
-
-        session = registry.get_session(invite.call_id)
-        if session is None:
-            await relay.stop()
-            return
-        bridge_ports.detach()
-        runtime.attach_client_media_update(
-            client,
-            relay,
-            source_call_id=invite.call_id,
-        )
-        answer = build_answer_directional(
-            local_ip,
-            local_ip,
-            source_relay_port,
-            invite.send_format,
-            invite.recv_format,
-            dtmf=first_offered_dtmf_format(invite.remote_sdp),
-            remote_sdp=invite.remote_sdp,
-            video_port=video_relay.left_port if video_relay is not None else 0,
-            video_format=selected_video,
-            video_direction=(
-                video_answer.direction if video_relay is not None else "inactive"
+        winner = OutboundLeg(
+            member=resolved_callee,
+            uri=decision_uri,
+            client=client,
+            ports=bridge_ports,
+            endpoint_id=(
+                logical_target_endpoint.endpoint_id
+                if logical_target_endpoint is not None
+                else ""
             ),
+            video_relay=video_relay,
+            video_failure_reason=video_failure_reason,
         )
-        send_answer = (
-            (lambda _status, _reason, _sdp: True)
-            if invite.initial_response_sent
-            else bind_final_response(
-                runtime.send_final_response,
+        reservations = tuple(
+            item for item in (bridge_ports, video_bridge_ports) if item is not None
+        )
+        try:
+            committed = await async_commit_outbound_bridge(
                 hass,
-                session.token,
-            )
-        )
-        transaction = AnswerTransaction(session, send_answer)
-        transaction.add_resource(
-            f"relay:{invite.call_id}",
-            relay,
-            lambda _reason: relay.stop(),
-            stage=CleanupStage.MEDIA,
-        )
-
-        def _claim_answer() -> bool:
-            return (
-                registry.transition(
-                    invite.call_id,
-                    state=CallState.IN_CALL.value,
-                    owner="bridge",
+                registry,
+                BridgeCommitData(
+                    invite=invite,
+                    winner=winner,
+                    source_relay_port=source_relay_port,
+                    dest_relay_port=dest_relay_port,
+                    local_ip=local_ip,
+                    release_port_pairs=(bridge_ports.ports,),
+                    detach_reservations=reservations,
+                    enable_video_transcoding=video_transcoding_enabled,
+                ),
+                BridgeCommitPolicy(
+                    route_kind=decision.action.value,
                     caller=invite.caller,
                     callee=resolved_callee,
-                    route_kind=decision.action.value,
+                    connected_party=resolved_callee,
+                    ingress="trunk" if trunk_invite else "extension",
+                    origin="trunk" if trunk_invite else "extension",
                     expected_generation=session.generation,
-                )
-                is not None
+                    response_already_sent=invite.initial_response_sent,
+                    source_endpoint_id=(
+                        logical_source_endpoint.endpoint_id
+                        if logical_source_endpoint is not None
+                        else ""
+                    ),
+                    dest_endpoint_id=winner.endpoint_id,
+                ),
+                session=session,
             )
-
-        if not (await transaction.commit(answer, claim=_claim_answer)).committed:
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("SIP RTP bridge media conversion unavailable: %s", err)
             return
-        if request_video_keyframe:
-            session.create_task(
-                async_request_sip_bridge_keyframe(client),
-                name=f"voip-keyframe-{client.dialog_ids.call_id}",
-            )
+        if committed is None:
+            return
+        relay = committed.relay
+        selected_video = (
+            committed.video_answer.video_format
+            if committed.video_answer is not None
+            else None
+        )
+        video_failure_reason = committed.video_failure_reason
         publish_bridge_projection(
             hass,
             session,
@@ -610,16 +540,16 @@ async def route_sip_bridge(
             last_sip_event="SIP_RESPONSE",
             route_kind=decision.action.value,
             sip_uri=str(decision_uri),
-            video_active=bool(video_relay is not None),
+            video_active=bool(relay.video_relay is not None),
             video_requested=bool(invite.video_format is not None),
-            video_negotiated=bool(video_relay is not None),
+            video_negotiated=bool(relay.video_relay is not None),
             video_status=(
                 "degraded"
                 if video_failure_reason == "local_video_resources_unavailable"
                 else "rejected"
                 if video_failure_reason
                 else "active"
-                if video_relay is not None
+                if relay.video_relay is not None
                 else "inactive"
             ),
             video_failure_reason=video_failure_reason,
