@@ -20,6 +20,12 @@ CRLF = "\r\n"
 SIP_VERSION = "SIP/2.0"
 MAX_SIP_MESSAGE_BYTES = 8192
 MAX_SIP_BODY_BYTES = 4096
+RFC5168_PICTURE_FAST_UPDATE_BODY = (
+    b'<?xml version="1.0" encoding="utf-8"?>\r\n'
+    b"<media_control><vc_primitive><to_encoder>"
+    b"<picture_fast_update/>"
+    b"</to_encoder></vc_primitive></media_control>\r\n"
+)
 SUPPORTED_METHODS = frozenset(
     {
         "INVITE",

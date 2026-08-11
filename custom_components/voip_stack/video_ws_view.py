@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 import contextlib
 from dataclasses import dataclass, field
 import json
@@ -28,7 +28,12 @@ from .media_ws_session import (
     async_prepare_media_websocket_request,
 )
 from .queue_utils import drain_queue
-from .runtime_data import call_projection, registration_data, require_runtime_data
+from .runtime_data import (
+    call_projection,
+    registration_data,
+    require_runtime_data,
+    sip_endpoint_manager,
+)
 from .session_cleanup import async_wait_for_cleanup
 from .core.video_rtcp import (
     RtcpError,
@@ -96,6 +101,14 @@ _SYMMETRIC_RTP_REFRESH_INTERVAL = 15.0
 _VIDEO_PACKETIZE_SEMAPHORE = asyncio.Semaphore(1)
 
 
+def _video_loss_requires_key_frame(
+    encoding: str, *, receive_transcoding: bool
+) -> bool:
+    """Return whether loss invalidates every following decoder input."""
+
+    return encoding.upper() == "H264" or receive_transcoding
+
+
 @dataclass(slots=True)
 class _VideoMediaSession:
     call_id: str
@@ -119,6 +132,7 @@ class _VideoMediaSession:
     rtp_source: RtpSenderState | None = None
     rtp_socket: socket.socket | None = None
     rtcp_socket: socket.socket | None = None
+    request_remote_keyframe: Callable[[], Awaitable[bool]] | None = None
     media_generation: int = 0
     removed: bool = False
     update_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -496,6 +510,7 @@ def _active_video_session(
     config = transport_config(hass)
     transcode = bool(config.get(CONF_VIDEO_TRANSCODING, False))
     debug = debug_mode(hass)
+    endpoint = sip_endpoint_manager(hass)
 
     item = registry.resource_for(call_id, "softphone_media")
     if item is not None:
@@ -539,6 +554,11 @@ def _active_video_session(
                 rtp_source=rtp_source,
                 rtp_socket=item.get("video_rtp_socket"),
                 rtcp_socket=item.get("video_rtcp_socket"),
+                request_remote_keyframe=(
+                    (lambda: endpoint.async_request_video_keyframe(call_id))
+                    if endpoint is not None
+                    else None
+                ),
             )
     client = registry.sip_client_for(call_id)
     dialog = client.dialog if client is not None else None
@@ -575,6 +595,7 @@ def _active_video_session(
         rtp_source=rtp_source,
         rtp_socket=client.video_rtp_socket,
         rtcp_socket=client.video_rtcp_socket,
+        request_remote_keyframe=client.request_video_keyframe,
     )
 
 
@@ -1211,6 +1232,7 @@ async def _run_video_session(
     extended_sequence = RtpExtendedSequenceTracker()
     highest_sequence = 0
     last_keyframe_feedback = 0.0
+    keyframe_task: asyncio.Task[bool] | None = None
     rtcp_transport: asyncio.DatagramTransport | None = None
     rtcp_queue = _ByteBudgetQueue(
         maxsize=_VIDEO_RTCP_PACKET_QUEUE,
@@ -1250,6 +1272,8 @@ async def _run_video_session(
         "video_lost_packets": 0,
         "video_duplicate_packets": 0,
         "video_keyframe_requests": 0,
+        "video_sip_keyframe_requests": 0,
+        "video_sip_keyframe_accepted": 0,
         "video_symmetric_rtp_keepalives": int(rtp_source.keepalives),
         "video_symmetric_rtp_keepalive_payload_type": 0,
         "video_access_unit_queue_max": 0,
@@ -1466,20 +1490,17 @@ async def _run_video_session(
             counters["video_access_unit_queue_drops"] += dropped
             counters["video_drop_error"] += dropped
             if not access_unit.key_frame:
-                # Dropping one encoded delta invalidates the rest of its GOP.
-                # Resume only from a key frame instead of forwarding a broken
-                # dependency chain to the browser decoder.
-                needs_key_frame = True
+                # VP8 decoders can conceal loss from later complete frames.
+                # H264 and decoded/transcoded input still require a clean IDR.
                 counters["video_access_unit_queue_drops"] += 1
                 counters["video_drop_error"] += 1
-                request_key_frame(now)
+                recover_from_video_loss(now)
                 return
             needs_key_frame = False
         if not access_units.can_fit(access_unit):
             counters["video_access_unit_queue_drops"] += 1
             counters["video_drop_error"] += 1
-            needs_key_frame = True
-            request_key_frame(now)
+            recover_from_video_loss(now)
             return
         access_units.put_nowait(access_unit)
         counters["video_access_unit_queue_max"] = max(
@@ -1487,10 +1508,9 @@ async def _run_video_session(
         )
 
     def request_key_frame(now: float) -> None:
-        nonlocal last_keyframe_feedback
+        nonlocal keyframe_task, last_keyframe_feedback
         if (
             session.remote_connection_held
-            or rtcp_transport is None
             or latched_ssrc is None
             or now - last_keyframe_feedback < _KEYFRAME_FEEDBACK_INTERVAL
         ):
@@ -1506,6 +1526,39 @@ async def _run_video_session(
                 counters["video_keyframe_requests"] + 1,
             )
         if feedback_packet is None:
+            request = session.request_remote_keyframe
+            if request is None or (
+                keyframe_task is not None and not keyframe_task.done()
+            ):
+                return
+            last_keyframe_feedback = now
+            counters["video_keyframe_requests"] += 1
+
+            async def request_intra_frame() -> bool:
+                counters["video_sip_keyframe_requests"] += 1
+                try:
+                    accepted = await request()
+                except asyncio.CancelledError:
+                    raise
+                except (ConnectionError, OSError, RuntimeError, ValueError) as err:
+                    _LOGGER.info(
+                        "SIP video keyframe request failed call_id=%s error=%s",
+                        session.call_id,
+                        err,
+                    )
+                    store_counters()
+                    return False
+                if accepted:
+                    counters["video_sip_keyframe_accepted"] += 1
+                store_counters()
+                return accepted
+
+            keyframe_task = asyncio.create_task(
+                request_intra_frame(),
+                name=f"voip-video-keyframe-{session.call_id}",
+            )
+            return
+        if rtcp_transport is None:
             return
         raw = build_receiver_compound(
             ssrc,
@@ -1531,6 +1584,18 @@ async def _run_video_session(
         last_keyframe_feedback = now
         counters["video_keyframe_requests"] += 1
 
+    def recover_from_video_loss(now: float) -> None:
+        """Request recovery while preserving VP8 decoder error concealment."""
+
+        nonlocal needs_key_frame
+        needs_key_frame = needs_key_frame or bool(
+            _video_loss_requires_key_frame(
+                browser_format.encoding,
+                receive_transcoding=session.requires_receive_transcoding,
+            )
+        )
+        request_key_frame(now)
+
     def consume_ordered(packet: rtp.RtpPacket, now: float) -> None:
         nonlocal needs_key_frame, highest_sequence
         if not session.requires_receive_transcoding:
@@ -1541,8 +1606,7 @@ async def _run_video_session(
         before = int(getattr(depacketizer, "dropped_access_units", 0))
         result = depacketizer.push(packet)
         if int(getattr(depacketizer, "dropped_access_units", 0)) > before:
-            needs_key_frame = True
-            request_key_frame(now)
+            recover_from_video_loss(now)
         if result is None:
             return
         access_unit = (
@@ -1602,8 +1666,7 @@ async def _run_video_session(
                 for ordered in input_reorder.flush(local_loop.time()):
                     forward_ordered_to_transcoder(ordered)
                 if input_reorder.lost > lost_before:
-                    needs_key_frame = True
-                    request_key_frame(local_loop.time())
+                    recover_from_video_loss(local_loop.time())
                 _sync_video_reorder_counters(counters, session, reorder, input_reorder)
                 continue
             dequeued_in_burst += 1
@@ -1653,8 +1716,7 @@ async def _run_video_session(
                 ):
                     forward_ordered_to_transcoder(ordered)
                 if input_reorder.lost > lost_before:
-                    needs_key_frame = True
-                    request_key_frame(local_loop.time())
+                    recover_from_video_loss(local_loop.time())
                 _sync_video_reorder_counters(counters, session, reorder, input_reorder)
             except (OSError, RuntimeError, ValueError) as err:
                 counters["video_drop_error"] += 1
@@ -1687,8 +1749,7 @@ async def _run_video_session(
                 for ordered in reorder.flush(loop.time()):
                     consume_ordered(ordered, loop.time())
                 if reorder.lost > lost_before:
-                    needs_key_frame = True
-                    request_key_frame(loop.time())
+                    recover_from_video_loss(loop.time())
                 _sync_video_reorder_counters(counters, session, reorder, input_reorder)
                 continue
             dequeued_in_burst += 1
@@ -1712,7 +1773,7 @@ async def _run_video_session(
                     for ordered in reorder.push(packet.sequence, packet, loop.time()):
                         consume_ordered(ordered, loop.time())
                     if reorder.lost > lost_before:
-                        needs_key_frame = True
+                        recover_from_video_loss(loop.time())
                     continue
                 if str(addr[0]) not in {
                     session.remote_rtp_host,
@@ -1752,8 +1813,7 @@ async def _run_video_session(
                 for ordered in reorder.push(packet.sequence, packet, loop.time()):
                     consume_ordered(ordered, loop.time())
                 if reorder.lost > lost_before:
-                    needs_key_frame = True
-                    request_key_frame(loop.time())
+                    recover_from_video_loss(loop.time())
                 _sync_video_reorder_counters(counters, session, reorder, input_reorder)
             except Exception as err:  # noqa: BLE001 - a bad frame must not stop audio/call control.
                 counters["video_drop_error"] += 1
@@ -2335,6 +2395,8 @@ async def _run_video_session(
         ]
         if transcode_input_task is not None:
             tasks.append(transcode_input_task)
+        if keyframe_task is not None:
+            tasks.append(keyframe_task)
         for task in tasks:
             task.cancel()
         transport.close()

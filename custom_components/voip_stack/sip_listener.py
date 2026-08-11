@@ -3004,6 +3004,27 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 await self._rollback_delayed_offer(delayed)
         return True
 
+    async def request_video_keyframe(
+        self, call_id: str, *, timeout: float = 3.0
+    ) -> bool:
+        """Request a full intra frame with RFC 5168 media control."""
+
+        dialog = self.active_dialogs.get(call_id)
+        if dialog is None:
+            return False
+        response = await self._send_dialog_request(
+            call_id,
+            dialog,
+            "INFO",
+            body=sip.RFC5168_PICTURE_FAST_UPDATE_BODY,
+            content_type="application/media_control+xml",
+            timeout=timeout,
+        )
+        return bool(
+            response is not None
+            and 200 <= int(response.status_code or 0) < 300
+        )
+
     def send_bye(self, call_id: str = "") -> bool:
         """Compatibility entry point backed by the asynchronous BYE owner."""
 

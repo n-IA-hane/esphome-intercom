@@ -2432,12 +2432,7 @@ class SipCallClient:
 
         response = await self._send_in_dialog_request(
             "INFO",
-            body=(
-                b'<?xml version="1.0" encoding="utf-8"?>\r\n'
-                b"<media_control><vc_primitive><to_encoder>"
-                b"<picture_fast_update/>"
-                b"</to_encoder></vc_primitive></media_control>\r\n"
-            ),
+            body=sip.RFC5168_PICTURE_FAST_UPDATE_BODY,
             content_type="application/media_control+xml",
             timeout=timeout,
         )

@@ -34,6 +34,25 @@ from .voip_phase1_support import (
 
 
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
+    def test_vp8_loss_keeps_complete_frames_flowing(self) -> None:
+        video = _load_video_ws_runtime_module()
+
+        self.assertFalse(
+            video._video_loss_requires_key_frame(  # noqa: SLF001
+                "VP8", receive_transcoding=False
+            )
+        )
+        self.assertTrue(
+            video._video_loss_requires_key_frame(  # noqa: SLF001
+                "H264", receive_transcoding=False
+            )
+        )
+        self.assertTrue(
+            video._video_loss_requires_key_frame(  # noqa: SLF001
+                "VP8", receive_transcoding=True
+            )
+        )
+
     async def test_dialog_writer_wakeup_survives_queued_writer(self) -> None:
         client = object.__new__(sip_client.SipCallClient)
         client._dialog_read_lock = asyncio.Lock()  # noqa: SLF001
@@ -90,6 +109,40 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertFalse(await client.request_video_keyframe())
+
+    async def test_listener_rfc5168_keyframe_request_uses_dialog_info(self) -> None:
+        endpoint = object.__new__(sip_listener.SipUdpEndpoint)
+        endpoint.active_dialogs = {"incoming": object()}
+        response = sip.SipMessage(status_code=200, reason="OK")
+        endpoint._send_dialog_request = unittest.mock.AsyncMock(  # type: ignore[method-assign] # noqa: SLF001
+            return_value=response
+        )
+
+        accepted = await endpoint.request_video_keyframe("incoming")
+
+        self.assertTrue(accepted)
+        request = endpoint._send_dialog_request.await_args  # type: ignore[attr-defined] # noqa: SLF001
+        self.assertEqual(
+            request.args[:3],
+            ("incoming", endpoint.active_dialogs["incoming"], "INFO"),
+        )
+        self.assertEqual(
+            request.kwargs["content_type"], "application/media_control+xml"
+        )
+        self.assertEqual(
+            request.kwargs["body"], sip.RFC5168_PICTURE_FAST_UPDATE_BODY
+        )
+
+    async def test_endpoint_manager_routes_keyframe_request_to_dialog_owner(self) -> None:
+        owner = types.SimpleNamespace(
+            active_dialogs={"incoming": object()},
+            request_video_keyframe=unittest.mock.AsyncMock(return_value=True),
+        )
+        manager = object.__new__(sip_endpoint.SipEndpointManager)
+        manager._dialog_endpoints = lambda: iter((owner,))  # type: ignore[method-assign] # noqa: SLF001
+
+        self.assertTrue(await manager.async_request_video_keyframe("incoming"))
+        owner.request_video_keyframe.assert_awaited_once_with("incoming")
 
     async def test_rfc5168_keyframe_request_uses_dialog_route_and_cseq(self) -> None:
         sent: list[tuple[bytes, tuple[str, int]]] = []

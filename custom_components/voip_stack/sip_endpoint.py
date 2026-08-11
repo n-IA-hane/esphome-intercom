@@ -421,6 +421,16 @@ class SipEndpointManager:
         )
         return bool(prepared is not None and prepared.commit())
 
+    async def async_request_video_keyframe(self, call_id: str) -> bool:
+        """Ask the transport owning an inbound dialog for a decoder refresh."""
+
+        for endpoint in self._dialog_endpoints():
+            if call_id not in endpoint.active_dialogs:
+                continue
+            request = getattr(endpoint, "request_video_keyframe", None)
+            return bool(callable(request) and await request(call_id))
+        return False
+
     def _active_dialog_count_for(self, server: object) -> int:
         endpoint = getattr(server, "endpoint", None)
         active = getattr(endpoint, "active_dialogs", None)
