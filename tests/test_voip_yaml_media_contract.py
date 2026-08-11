@@ -747,11 +747,14 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert renderer_loop.index("const bool page_active") < (
         renderer_loop.index("this->commit_direct_surface_(pending)")
     )
-    video_ended = renderer_loop[
-        renderer_loop.index("this->video_ended_trigger_.trigger()") :
-        renderer_loop.index("this->refresh_direct_display_layout_()")
+    ui = (ROOT / "packages/lvgl/p4_videophone_ui.yaml").read_text()
+    show_phone = ui[
+        ui.index("  - id: show_phone_page") : ui.index("  - id: show_video_page")
     ]
-    assert "lv_obj_invalidate(lv_screen_active())" in video_ended
+    assert show_phone.index("lvgl.page.show: videophone_page") < (
+        show_phone.index("lv_obj_invalidate(screen)")
+    )
+    assert "lv_refr_now(lv_obj_get_display(screen))" in show_phone
     attach_container = renderer_cpp[
         renderer_cpp.index("void P4VideoRenderer::attach_video_container(") :
         renderer_cpp.index(

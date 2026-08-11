@@ -146,15 +146,8 @@ void P4VideoRenderer::loop() {
   // display callbacks run concurrently and may publish the next edge while
   // this function is active; disabling at the end would erase that wake-up.
   this->disable_loop();
-  if (this->video_ended_pending_.exchange(false, std::memory_order_acq_rel)) {
+  if (this->video_ended_pending_.exchange(false, std::memory_order_acq_rel))
     this->video_ended_trigger_.trigger();
-#ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
-    // Direct video writes bypass LVGL's invalidation tracking. The end
-    // automation normally changes page, so redraw that resulting screen in
-    // full instead of leaving video pixels beneath partially updated widgets.
-    lv_obj_invalidate(lv_screen_active());
-#endif
-  }
 
 #if defined(USE_P4_VIDEO_RENDERER_H264) &&                                  \
     defined(USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY)
