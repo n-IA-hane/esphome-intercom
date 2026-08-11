@@ -191,6 +191,91 @@ def test_assist_reinvite_returns_audio_answer_and_declines_video() -> None:
     assert owner.committed is True
 
 
+def test_bridged_audio_refresh_preserves_owned_video_transcoding() -> None:
+    """An unchanged transcoded video m-line must survive an audio refresh."""
+
+    answer_calls: list[dict] = []
+    registry = types.SimpleNamespace(
+        preanswered={},
+        softphone_media={},
+        relays={},
+        sip_clients={},
+        sessions={"call": types.SimpleNamespace(generation=7)},
+        resolve_session_id=lambda call_id: call_id,
+        is_generation_current=lambda *_args: True,
+    )
+    module, _assist = _load_module(registry, answer_calls)
+    validation: dict[str, object] = {}
+
+    def validate(*_args, **kwargs):
+        validation.update(kwargs)
+        return types.SimpleNamespace(accepted=True, reason="")
+
+    module.validate_bridged_video_reoffer = validate
+    module.remote_can_send = lambda *_args: True
+    module.remote_can_receive = lambda *_args, **_kwargs: True
+    module.constrained_video_direction = lambda *_args, **_kwargs: "recvonly"
+    module.invite_rtp_peer = lambda invite: invite.audio_peer
+    module.invite_video_rtp_peer = lambda invite: invite.video_peer
+
+    class PeerOwner:
+        def __init__(self, left, right) -> None:
+            self.left = left
+            self.right = right
+
+        def prepare_peer_reconfiguration(self, side, peer):
+            return lambda: setattr(self, side, peer)
+
+    video = types.SimpleNamespace(direction="recvonly")
+    video_relay = PeerOwner(
+        object(),
+        types.SimpleNamespace(
+            send_format="h264-send",
+            recv_format="h264-recv",
+            video_format=types.SimpleNamespace(direction="sendonly"),
+            connection_held=False,
+        ),
+    )
+    video_relay.left_port = 43000
+    video_relay.transcodes_from = lambda side: side in {"left", "right"}
+    relay = PeerOwner(
+        object(),
+        types.SimpleNamespace(can_send=True, can_receive=True),
+    )
+    relay.left_port = 41000
+    relay.video_relay = video_relay
+    registry.relays["call"] = relay
+    previous = types.SimpleNamespace(
+        call_id="call",
+        video_format=video,
+        remote_video_connection_held=False,
+    )
+    updated = types.SimpleNamespace(
+        call_id="call",
+        send_format="opus-send",
+        recv_format="opus-recv",
+        audio_peer=object(),
+        video_peer=object(),
+        remote_sdp=b"audio-refresh-with-unchanged-video",
+        remote_audio_direction="sendrecv",
+        remote_audio_connection_held=False,
+        video_format=video,
+        recv_video_format=video,
+        answer_video_format=video,
+        remote_video_connection_held=False,
+    )
+
+    result = asyncio.run(
+        module.async_prepare_media_update(
+            types.SimpleNamespace(), "192.0.2.10", previous, updated, "INVITE"
+        )
+    )
+
+    assert result.status == 200
+    assert validation["caller_to_peer_transcoding"] is True
+    assert validation["peer_to_caller_transcoding"] is True
+
+
 def test_bridge_video_addition_cancellation_releases_staged_media() -> None:
     answer_calls: list[dict] = []
     session = types.SimpleNamespace(generation=9)

@@ -822,6 +822,8 @@ async def async_prepare_media_update(
             peer_direction=video_relay.right.video_format,
             peer_held=video_relay.right.connection_held,
             updated_held=updated.remote_video_connection_held,
+            caller_to_peer_transcoding=video_relay.transcodes_from("left"),
+            peer_to_caller_transcoding=video_relay.transcodes_from("right"),
         )
         if not video_offer.accepted:
             _LOGGER.warning(
