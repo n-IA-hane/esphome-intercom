@@ -747,6 +747,11 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert renderer_loop.index("const bool page_active") < (
         renderer_loop.index("this->commit_direct_surface_(pending)")
     )
+    video_ended = renderer_loop[
+        renderer_loop.index("this->video_ended_trigger_.trigger()") :
+        renderer_loop.index("this->refresh_direct_display_layout_()")
+    ]
+    assert "lv_obj_invalidate(lv_screen_active())" in video_ended
     attach_container = renderer_cpp[
         renderer_cpp.index("void P4VideoRenderer::attach_video_container(") :
         renderer_cpp.index(
