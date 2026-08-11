@@ -118,10 +118,6 @@ script:
     mode: restart
     then:
       - lvgl.page.show: videophone_page
-      - lambda: |-
-          auto *screen = lv_screen_active();
-          lv_obj_invalidate(screen);
-          lv_refr_now(lv_obj_get_display(screen));
       - script.execute: update_status
 
   - id: show_video_page
