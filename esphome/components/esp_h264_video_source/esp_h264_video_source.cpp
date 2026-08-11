@@ -1,5 +1,5 @@
 #include "esp_h264_video_source.h"
-#include "esphome/components/p4_video_renderer/video_workload.h"
+#include "esphome/components/p4_video_renderer/video_ppa.h"
 
 #if defined(USE_ESP_IDF) && defined(USE_ESPHOME_VOIP_STACK_VIDEO) && \
     defined(USE_ESPHOME_VOIP_STACK_VIDEO_H264)
@@ -499,6 +499,7 @@ bool EspH264VideoSource::transform_to_encoder_yuv_(
   config.rgb_swap = false;
   config.byte_swap = false;
   config.mode = PPA_TRANS_MODE_BLOCKING;
+  p4_video_ppa::Guard ppa_guard;
   return ppa_do_scale_rotate_mirror(this->ppa_, &config) == ESP_OK;
 }
 
@@ -622,7 +623,6 @@ void EspH264VideoSource::consume_raw_video_frame(
 
   const uint32_t generation =
       this->tx_generation_.load(std::memory_order_acquire);
-  p4_video_workload::Guard video_workload(p4_video_workload::Role::TX);
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   const int64_t conversion_started_us = esp_timer_get_time();
 #endif

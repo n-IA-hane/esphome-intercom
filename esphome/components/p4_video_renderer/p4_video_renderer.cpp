@@ -1,7 +1,5 @@
 #include "p4_video_renderer.h"
-#ifdef USE_P4_VIDEO_RENDERER_H264
-#include "video_workload.h"
-#endif
+#include "video_ppa.h"
 
 #if defined(USE_ESP_IDF) && defined(USE_ESPHOME_VOIP_STACK_VIDEO)
 
@@ -174,20 +172,19 @@ void P4VideoRenderer::loop() {
       const bool page_active =
           lv_obj_get_screen(this->video_container_) ==
           lv_disp_get_scr_act(nullptr);
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
-      const uint32_t presentation_started_ms = millis();
-#endif
+#ifdef USE_P4_VIDEO_RENDERER_H264
+      this->direct_page_active_.store(page_active, std::memory_order_release);
+      const bool presented =
+          page_active && this->commit_direct_surface_(pending);
+#else
       const bool presented =
           page_active && this->present_surface_direct_(pending);
       if (presented) {
         this->surface_ever_presented_.store(true, std::memory_order_release);
         this->rx_presented_frames_.fetch_add(1, std::memory_order_relaxed);
         this->rx_refresh_completed_.fetch_add(1, std::memory_order_relaxed);
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
-        update_max(this->rx_refresh_max_ms_,
-                   millis() - presentation_started_ms);
-#endif
       }
+#endif
       if (!presented) {
         // A hidden page or failed presentation consumed no pixels. Release
         // only the surface observed above; never erase a newer publication.
@@ -644,6 +641,7 @@ bool P4VideoRenderer::present_surface_direct_(int index) {
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   const uint32_t ppa_started_us = micros();
 #endif
+  p4_video_ppa::Guard ppa_guard;
   const esp_err_t error =
       ppa_do_scale_rotate_mirror(this->direct_display_ppa_, &config);
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
@@ -672,6 +670,23 @@ bool P4VideoRenderer::present_surface_direct_(int index) {
   return true;
 #endif
 }
+
+#ifdef USE_P4_VIDEO_RENDERER_H264
+bool P4VideoRenderer::commit_direct_surface_(int index) {
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
+  const uint32_t started_ms = millis();
+#endif
+  if (!this->present_surface_direct_(index))
+    return false;
+  this->surface_ever_presented_.store(true, std::memory_order_release);
+  this->rx_presented_frames_.fetch_add(1, std::memory_order_relaxed);
+  this->rx_refresh_completed_.fetch_add(1, std::memory_order_relaxed);
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
+  update_max(this->rx_refresh_max_ms_, millis() - started_ms);
+#endif
+  return true;
+}
+#endif
 #endif
 
 #ifdef USE_P4_VIDEO_RENDERER_JPEG
@@ -1159,7 +1174,6 @@ bool P4VideoRenderer::decode_h264_access_unit_(const uint8_t *data, size_t size,
                                                bool key_frame,
                                                uint32_t session_generation,
                                                uint32_t loss_generation) {
-  p4_video_workload::Guard video_workload(p4_video_workload::Role::RX);
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   const uint32_t au_started_us = micros();
 #endif
@@ -1665,16 +1679,28 @@ bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   const uint32_t ppa_started_us = micros();
 #endif
-  const esp_err_t ppa_error = ppa_do_scale_rotate_mirror(this->ppa_, &config);
+  this->direct_mipi_display_->lock_frame_buffer();
+  esp_err_t ppa_error;
+  {
+    p4_video_ppa::Guard ppa_guard;
+    ppa_error = ppa_do_scale_rotate_mirror(this->ppa_, &config);
+  }
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   update_max(this->rx_ppa_max_us_, micros() - ppa_started_us);
 #endif
   if (ppa_error != ESP_OK ||
       !this->rx_active_.load(std::memory_order_acquire)) {
+    this->direct_mipi_display_->unlock_frame_buffer();
     return false;
   }
   this->prepare_surface_(output_index, geometry);
   this->pending_surface_.store(output_index, std::memory_order_release);
+  const bool presented =
+      this->direct_page_active_.load(std::memory_order_acquire) &&
+      this->commit_direct_surface_(output_index);
+  this->direct_mipi_display_->unlock_frame_buffer();
+  if (presented)
+    return true;
   this->enable_loop_soon_any_context();
   return true;
 }

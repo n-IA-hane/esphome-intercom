@@ -180,8 +180,10 @@ void MipiDsi::setup() {
     }
   }
   this->io_lock_ = xSemaphoreCreateBinaryStatic(&this->io_lock_storage_);
-  if (this->io_lock_ == nullptr) {
-    this->mark_failed(LOG_STR("Failed to create display transfer semaphore"));
+  this->frame_buffer_mutex_ =
+      xSemaphoreCreateRecursiveMutexStatic(&this->frame_buffer_mutex_storage_);
+  if (this->io_lock_ == nullptr || this->frame_buffer_mutex_ == nullptr) {
+    this->mark_failed(LOG_STR("Failed to create display synchronization"));
     return;
   }
   esp_lcd_dpi_panel_event_callbacks_t cbs = {
@@ -275,12 +277,14 @@ void MipiDsi::draw_pixels_at(int x_start, int y_start, int w, int h, const uint8
 bool MipiDsi::submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
                              const uint8_t *ptr) {
   if (this->is_failed() || this->handle_ == nullptr ||
-      this->io_lock_ == nullptr) {
+      this->io_lock_ == nullptr || this->frame_buffer_mutex_ == nullptr) {
     return false;
   }
+  this->lock_frame_buffer();
   const esp_err_t err = esp_lcd_panel_draw_bitmap(
       this->handle_, x_start, y_start, x_end, y_end, ptr);
   if (err != ESP_OK) {
+    this->unlock_frame_buffer();
     this->smark_failed(LOG_STR("lcd_panel_draw_bitmap failed"), err);
     return false;
   }
@@ -289,6 +293,7 @@ bool MipiDsi::submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
   // path above must return before waiting because no callback is guaranteed
   // when the driver rejects the submit.
   xSemaphoreTake(this->io_lock_, portMAX_DELAY);
+  this->unlock_frame_buffer();
   return true;
 }
 

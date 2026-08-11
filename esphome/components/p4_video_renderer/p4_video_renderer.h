@@ -126,6 +126,9 @@ protected:
 #endif
 #ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
   bool present_surface_direct_(int index);
+#ifdef USE_P4_VIDEO_RENDERER_H264
+  bool commit_direct_surface_(int index);
+#endif
 #endif
 #if defined(USE_P4_VIDEO_RENDERER_JPEG) &&                                  \
     defined(USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY)
@@ -227,6 +230,7 @@ protected:
   mipi_dsi::MipiDsi *direct_mipi_display_{nullptr};
   std::atomic<uint64_t> direct_layout_area_{0};
   std::atomic<uint32_t> direct_layout_native_size_{0};
+  std::atomic<bool> direct_page_active_{false};
 #endif
 #ifdef USE_P4_VIDEO_RENDERER_JPEG
   ppa_client_handle_t direct_display_ppa_{nullptr};

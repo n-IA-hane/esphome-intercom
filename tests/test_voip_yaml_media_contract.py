@@ -738,18 +738,14 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         renderer_cpp.index("void P4VideoRenderer::loop()") :
         renderer_cpp.index("void P4VideoRenderer::dump_config()")
     ]
-    direct_display = renderer_loop[
-        renderer_loop.index("#ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY") :
-        renderer_loop.index("#else")
-    ]
-    assert direct_display.index("this->present_surface_direct_(pending)") < (
-        direct_display.index("this->pending_surface_.compare_exchange_strong(")
+    assert renderer_loop.index("this->commit_direct_surface_(pending)") < (
+        renderer_loop.index("this->pending_surface_.compare_exchange_strong(")
     )
-    assert direct_display.index("this->remote_frame_visible_.exchange(") < (
-        direct_display.index("const bool page_active")
+    assert renderer_loop.index("this->remote_frame_visible_.exchange(") < (
+        renderer_loop.index("const bool page_active")
     )
-    assert direct_display.index("const bool page_active") < (
-        direct_display.index("this->present_surface_direct_(pending)")
+    assert renderer_loop.index("const bool page_active") < (
+        renderer_loop.index("this->commit_direct_surface_(pending)")
     )
     attach_container = renderer_cpp[
         renderer_cpp.index("void P4VideoRenderer::attach_video_container(") :
@@ -961,8 +957,10 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         consume_start : source_cpp.index("\n}  // namespace", consume_start)
     ]
     assert "this->init_ppa_()" in source_consume
-    assert "p4_video_workload::Role::TX" in source_consume
-    assert "p4_video_workload::Role::RX" in renderer_cpp
+    assert "p4_video_workload" not in source_consume
+    assert "p4_video_workload" not in renderer_cpp
+    assert source_cpp.count("p4_video_ppa::Guard") == 1
+    assert renderer_cpp.count("p4_video_ppa::Guard") == 2
     assert "Unable to register runtime H.264 PPA client" in source_consume
     assert "ppa_rotation_for_clockwise(frame.rotation_degrees)" in source_cpp
     assert "this->h264_optimized_yuv_bytes_()" in renderer_cpp
