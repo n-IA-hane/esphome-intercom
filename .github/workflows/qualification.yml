@@ -73,7 +73,8 @@ jobs:
           MANUAL_FULL: ${{ inputs.full }}
         run: |
           python -m venv .venv
-          .venv/bin/pip install -r requirements-test.txt -r requirements-firmware-test.txt
+          .venv/bin/pip install -r requirements-test.txt
+          .venv/bin/pip install -r requirements-firmware-test.txt
           python -m venv .ha-venv
           .ha-venv/bin/pip install -r requirements-ha-test.txt
           mkdir -p evidence
@@ -169,6 +170,9 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install -r requirements-test.txt
+          if [ "${{ matrix.job }}" = cpp-contract ]; then
+            .venv/bin/pip install -r requirements-firmware-test.txt
+          fi
           python -m venv .ha-venv
           .ha-venv/bin/pip install -r requirements-ha-test.txt
       - name: Execute ${{ matrix.job }}
@@ -192,7 +196,7 @@ jobs:
               ;;
             release-package)
               command=(
-                .venv/bin/python scripts/package_release_candidate.py
+                .venv/bin/python -m scripts.package_release_candidate
                 --source custom_components/voip_stack
                 --archive "$GITHUB_WORKSPACE/evidence/results/voip_stack.zip"
                 --candidate "$GITHUB_WORKSPACE/evidence/input/candidate-lock.json"

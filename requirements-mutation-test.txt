@@ -1,3 +1,2 @@
--r requirements-test.txt
+-r requirements-ha-test.txt
 mutmut==3.7.0
-
