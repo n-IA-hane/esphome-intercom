@@ -208,9 +208,24 @@ def _prepare_firmware(
     ]
     if not profile or len(matches) != 1:
         raise HilError(f"device {device_name} firmware profile is not unique")
-    artifact = matches[0].get("artifact")
+    artifact_kind = str(config.get("artifact_kind") or "factory")
+    if artifact_kind == "factory":
+        artifact = matches[0].get("artifact")
+    else:
+        suffix = f"firmware.{artifact_kind}.bin"
+        artifact = next(
+            (
+                item
+                for item in matches[0].get("artifacts", [])
+                if isinstance(item, dict)
+                and str(item.get("path") or "").endswith(suffix)
+            ),
+            None,
+        )
     if not isinstance(artifact, dict):
-        raise HilError(f"profile {profile} has no candidate artifact")
+        raise HilError(
+            f"profile {profile} has no candidate {artifact_kind} artifact"
+        )
     path = (firmware_root / str(artifact.get("path") or "")).resolve()
     try:
         path.relative_to(firmware_root.resolve())

@@ -169,10 +169,25 @@ def bind_candidate(
         target = bundle / profile.id / "firmware.factory.bin"
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+        staged_artifacts: list[dict[str, object]] = []
+        for artifact in record.get("artifacts", []):
+            artifact_source = root / str(artifact.get("path") or "")
+            if not artifact_source.is_file():
+                continue
+            artifact_target = target.parent / artifact_source.name
+            shutil.copy2(artifact_source, artifact_target)
+            staged_artifacts.append(
+                {
+                    "path": str(artifact_target.relative_to(bundle.parent)),
+                    "bytes": artifact_target.stat().st_size,
+                    "sha256": sha256(artifact_target),
+                }
+            )
         firmware.append(
             {
                 **record,
                 "profile": profile.id,
+                "artifacts": staged_artifacts,
                 "artifact": {
                     "path": str(target.relative_to(bundle.parent)),
                     "bytes": target.stat().st_size,

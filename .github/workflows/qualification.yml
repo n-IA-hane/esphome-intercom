@@ -455,7 +455,7 @@ jobs:
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         run: |
           python -m venv .venv
-          .venv/bin/pip install -r requirements-test.txt
+          .venv/bin/pip install -r requirements-test.txt -r requirements-firmware-test.txt
       - name: Execute ${{ matrix.job }}
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         env:

@@ -155,6 +155,40 @@ def test_required_scenario_collects_pre_peak_post_evidence(tmp_path: Path) -> No
     assert "private output" not in json.dumps(artifact)
 
 
+def test_hardware_variant_can_install_attested_ota_artifact(tmp_path: Path) -> None:
+    scenario = tmp_path / "scenario.py"
+    scenario.write_text("pass\n", encoding="utf-8")
+    hardware = _hardware(tmp_path, scenario)
+    firmware = hardware["devices"]["ws3"]["firmware"]
+    firmware["artifact_kind"] = "ota"
+    firmware["command"] = [
+        sys.executable,
+        "-c",
+        "import os; assert os.environ['HIL_FIRMWARE_PATH'].endswith('firmware.ota.bin')",
+    ]
+    evidence = _evidence(tmp_path)
+    ota = tmp_path / "firmware/waveshare-s3-full/firmware.ota.bin"
+    ota.write_bytes(b"candidate ota firmware")
+    evidence["firmware_manifest"]["firmware"][0]["artifacts"] = [
+        {
+            "path": "firmware/waveshare-s3-full/firmware.ota.bin",
+            "sha256": hashlib.sha256(ota.read_bytes()).hexdigest(),
+        }
+    ]
+
+    artifact = run_hil(
+        _plan("hil-s3"),
+        hardware,
+        environment=dict(os.environ),
+        **evidence,
+    )
+
+    assert artifact["status"] == "passed"
+    assert artifact["jobs"]["hil-s3"]["firmware"][0]["sha256"] == hashlib.sha256(
+        ota.read_bytes()
+    ).hexdigest()
+
+
 def test_selected_hardware_job_does_not_execute_other_required_jobs(
     tmp_path: Path,
 ) -> None:

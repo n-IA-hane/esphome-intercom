@@ -85,10 +85,25 @@ def main() -> int:
             target = args.index.parent / "firmware-staging" / profile.id / source.name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+            staged_artifacts: list[dict[str, object]] = []
+            for artifact in record.get("artifacts", []):
+                artifact_source = ROOT / str(artifact.get("path") or "")
+                if not artifact_source.is_file():
+                    continue
+                artifact_target = target.parent / artifact_source.name
+                shutil.copy2(artifact_source, artifact_target)
+                staged_artifacts.append(
+                    {
+                        "path": str(artifact_target.relative_to(args.index.parent)),
+                        "bytes": artifact_target.stat().st_size,
+                        "sha256": sha256(artifact_target),
+                    }
+                )
             staged.append(
                 {
                     **record,
                     "profile": profile.id,
+                    "artifacts": staged_artifacts,
                     "artifact": {
                         "path": str(target.relative_to(args.index.parent)),
                         "bytes": target.stat().st_size,

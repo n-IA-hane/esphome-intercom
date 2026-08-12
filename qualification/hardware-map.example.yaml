@@ -16,14 +16,13 @@ devices:
     doctor: [nc, -z, "${WS3_HOST}", "${WS3_API_PORT}"]
     firmware:
       profile: waveshare-s3-full
+      artifact_kind: ota
       mode: install
       command:
-        - esptool
-        - --port
-        - "${WS3_SERIAL_PORT}"
-        - write-flash
-        - "0x0"
-        - "${HIL_FIRMWARE_PATH}"
+        - .venv/bin/python
+        - scripts/install_esphome_ota.py
+        - --host
+        - "${WS3_HOST}"
     scenarios:
       esp-to-ha-answer-hangup:
         command:
