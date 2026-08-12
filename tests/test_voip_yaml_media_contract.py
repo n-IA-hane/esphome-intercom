@@ -738,10 +738,6 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         renderer_cpp.index("void P4VideoRenderer::loop()") :
         renderer_cpp.index("void P4VideoRenderer::dump_config()")
     ]
-    direct_display = renderer_loop[
-        renderer_loop.index("#ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY") :
-        renderer_loop.index("#else")
-    ]
     assert renderer_loop.index("this->commit_direct_surface_(pending)") < (
         renderer_loop.index("this->pending_surface_.compare_exchange_strong(")
     )

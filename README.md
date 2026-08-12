@@ -4,14 +4,34 @@
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-native-blue.svg)](https://www.home-assistant.io)
 [![ESPHome](https://img.shields.io/badge/ESPHome-2026.6.5%2B-18bcf2.svg)](https://esphome.io)
 
-Turn ESPHome audio devices and Home Assistant into a local SIP phone system.
+Turn ESPHome audio devices and Home Assistant into a local SIP phone system,
+or use the maintained full-experience firmware to combine VoIP with a complete
+ESPHome voice satellite.
 
-ESP devices become standards-based audio phones. Home Assistant can be a SIP
-video softphone, call router, RTP bridge, local registrar, conference focus,
-Assist destination and optional trunk endpoint. Browser phones, wall tablets,
-ESP room stations, standard SIP clients and an external PBX can share one
-phonebook without requiring a separate Asterisk or FreeSWITCH server for the
-normal home use case.
+ESP devices become standards-based SIP phones, with audio on every maintained
+VoIP profile and optional video on qualified ESP32-P4 profiles. Home Assistant
+can be a SIP video softphone, call router, RTP bridge, local registrar,
+conference focus, callable Assist destination and optional trunk endpoint.
+Browser phones, wall tablets, ESP room stations, standard SIP clients and an
+external PBX can share one phonebook without requiring a separate Asterisk or
+FreeSWITCH server for the normal home use case.
+
+VoIP is only one part of the project. The optional full-experience ESP YAMLs
+also provide an independent on-device Voice Assistant, Micro Wake Word, media
+playback, TTS, Sendspin support, runtime audio controls and touch interfaces.
+That local assistant is not created or controlled by calling Assist over SIP.
+
+The project therefore has three cooperating, independently useful surfaces:
+
+| Surface | Runs on | Purpose |
+|---|---|---|
+| ESP VoIP endpoint | ESPHome device | A standards-based SIP/RTP phone, with audio and optional qualified P4 video. |
+| Home Assistant VoIP Stack | Home Assistant | Browser phones, PBX routing, registrar, bridges, groups, conferences, callable Assist and an optional trunk. |
+| Full ESP experience | ESPHome device | A local voice satellite with wake word, Voice Assistant, media, TTS, optional Sendspin, runtime UI and VoIP. |
+
+Install only the surfaces you need. A VoIP-only ESP does not require the local
+Voice Assistant, and a full-experience ESP keeps its local assistant even when
+no SIP Assist extension is configured.
 
 ![VoIP Stack dashboard and central phonebook](docs/images/voip-dashboard-phonebook.png)
 
@@ -24,8 +44,9 @@ phonebook. Each room phone still has its own identity and call state._
   <tr>
     <td align="center"><img src="docs/images/call-from-esp-to-homeassistant.gif" width="180"/><br/><b>ESP to HA</b></td>
     <td align="center"><img src="docs/images/ha-sip-video-call.gif" width="180"/><br/><b>SIP video</b></td>
-    <td align="center"><img src="docs/images/assistant-animated.gif" width="180"/><br/><b>Assist extension</b></td>
-    <td align="center"><img src="docs/images/lvgl-audio-volume.jpg" width="180"/><br/><b>ESP controls</b></td>
+    <td align="center"><img src="docs/images/assistant-animated.gif" width="180"/><br/><b>ESP Voice Assistant</b></td>
+    <td align="center"><img src="docs/images/assistant-speaking.jpg" width="180"/><br/><b>ESP TTS response</b></td>
+    <td align="center"><img src="docs/images/lvgl-audio-volume.jpg" width="180"/><br/><b>Runtime audio controls</b></td>
   </tr>
 </table>
 
@@ -52,6 +73,7 @@ phonebook. Each room phone still has its own identity and call state._
 | Video doorbell | A SIP video door station can ring a browser phone in a dashboard or Companion app. Standard ESP profiles remain audio-only; qualified ESP32-P4 profiles can also send and receive SIP video. | [SIP video](docs/SIP_VIDEO.md) · [door-station recipe](#door-station-and-unanswered-calls) |
 | Room-to-room calls | Create a logical HA phone and dedicated dashboard view for each kiosk or tablet. Calls may be private audio or video. | [Logical phones](#logical-home-assistant-phones) |
 | ESP room phones | Flash one maintained VoIP YAML per room. ESPs can call names and extensions from the shared phonebook. | [Deployment guide](docs/DEPLOYMENT_GUIDE.md) |
+| Full ESP voice device | Flash a maintained full-experience YAML to combine a local Voice Assistant, Micro Wake Word, media, TTS, optional Sendspin and VoIP on one device. | [Full ESP experience](#full-esp-voice-experience) |
 | Existing SIP equipment | Register Zoiper, Linphone, baresip, an IP phone or an ATA directly to HA. | [Local accounts](docs/SERVICES.md#local-sip-endpoint-account-services) |
 | Ring groups | Ring several eligible endpoints; the first answer wins and the losing branches are cancelled. | [Groups](docs/GROUPS.md#ring-group) |
 | Audio conferences | Host a local audio conference in HA and optionally ring its members. | [Groups](docs/GROUPS.md#conference-group) |
@@ -71,12 +93,13 @@ phonebook. Each room phone still has its own identity and call state._
 7. Call the phonebook name shown by the card or ESP.
 
 For one ESP intercom, that is enough. Local SIP accounts, multiple browser
-phones, Assist and a trunk are optional layers.
+phones, callable Assist and a trunk are optional PBX layers. The full ESP
+experience is a separate firmware choice, not another PBX requirement.
 
 | Device goal | Maintained starting point |
 |---|---|
 | ESP VoIP only | [`yamls/voip-only/`](yamls/voip-only/) |
-| Voice Assistant + MWW + media + VoIP | [`yamls/full-experience/`](yamls/full-experience/) |
+| Local Voice Assistant + MWW + media + TTS + optional Sendspin + VoIP | [`yamls/full-experience/`](yamls/full-experience/) |
 | Native ESPHome mic/speaker paths | [`yamls/voip-only/esphome-native/`](yamls/voip-only/esphome-native/) |
 | New or unqualified hardware | [`yamls/experimental/`](yamls/experimental/) |
 
@@ -174,13 +197,6 @@ HA performs format conversion when a standard SIP peer negotiates another
 supported audio codec; ESP firmware is not downgraded to a telephone codec for
 that purpose.
 
-The maintained full-experience profiles share one processed post-AEC microphone
-surface between VoIP, Micro Wake Word and Voice Assistant. Music, TTS, ringtone
-and optional Sendspin playback feed the same speaker-reference path, so those
-consumers receive cleaned microphone audio rather than competing raw streams.
-
-![Shared music, TTS, wake word, Voice Assistant and VoIP audio pipeline](docs/images/shared-audio-aec-pipeline.png)
-
 Audio component details live in the companion projects:
 
 - [`esp_audio_stack`](https://github.com/n-IA-hane/esphome-audio-stack)
@@ -188,6 +204,82 @@ Audio component details live in the companion projects:
 - [`esp_afe`](https://github.com/n-IA-hane/esphome-audio-stack/tree/main/esphome/components/esp_afe)
 - [`voip_stack`](https://github.com/n-IA-hane/esphome-voip-stack)
 - [`runtime_controller`](https://github.com/n-IA-hane/esphome-runtime-controller)
+
+## Full ESP voice experience
+
+The [`yamls/full-experience/`](yamls/full-experience/) profiles are complete
+ESPHome voice devices, not merely larger SIP configurations. They combine the
+VoIP endpoint with an independent local Voice Assistant stack and coordinate
+all realtime consumers through one audio and runtime ownership model.
+
+The underlying audio stack is also reusable without VoIP. Custom ESPHome voice
+devices can use it to share codec or I2S ownership, speaker reference, AEC/AFE
+processing and a cleaned microphone stream between their own consumers.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/assistant-animated.gif" width="220"/><br/><b>Animated assistant</b></td>
+    <td align="center"><img src="docs/images/assistant-speaking.jpg" width="220"/><br/><b>Assistant response</b></td>
+    <td align="center"><img src="docs/images/lvgl-audio-volume.jpg" width="220"/><br/><b>Runtime audio controls</b></td>
+    <td align="center"><img src="docs/images/lvgl-hangup-reason.jpg" width="220"/><br/><b>Call end reason</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/assistant-happy.jpg" width="220"/><br/><b>Positive mood</b></td>
+    <td align="center"><img src="docs/images/assistant-neutral.jpg" width="220"/><br/><b>Neutral mood</b></td>
+    <td align="center"><img src="docs/images/assistant-angry.jpg" width="220"/><br/><b>Negative mood</b></td>
+    <td align="center"><img src="docs/images/afe-controls.png" width="220"/><br/><b>AFE controls in HA</b></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/p4-touch-overview.jpg" width="640" style="max-width: 100%; height: auto;"/><br/><b>P4 weather, Voice Assistant and VoIP controls</b></td>
+    <td align="center"><img src="docs/images/ducking-barge-in.gif" width="260"/><br/><b>Ducking and barge-in</b></td>
+  </tr>
+</table>
+
+The full profiles provide:
+
+- continuous Micro Wake Word on the cleaned post-AEC microphone stream;
+- a native ESPHome Voice Assistant started by wake word or touch;
+- media playback, announcements, TTS, ringtones and optional Sendspin through
+  one shared speaker path;
+- ducking and barge-in, including interruption of a current assistant reply;
+- VoIP calls that coexist with the assistant instead of creating a second
+  microphone or speaker owner;
+- AEC or AFE processing, with runtime controls and diagnostics where supported;
+- coordinated LEDs, display pages, timers, call state and media activity
+  through `runtime_controller`;
+- headless operation on audio boards, plus full LVGL interfaces on supported
+  displays;
+- optional animated and mood-aware assistant artwork on display profiles.
+
+The shared pipeline matters because Micro Wake Word, Voice Assistant and VoIP
+all need the same cleaned user speech while music, TTS or a ringtone may still
+be playing. Speaker output also supplies the phase-coherent reference used by
+AEC instead of letting each feature open its own audio path.
+
+![Shared music, TTS, wake word, Voice Assistant and VoIP audio pipeline](docs/images/shared-audio-aec-pipeline.png)
+
+### Assistant artwork and avatars
+
+Display profiles can select an assistant avatar with the `ai_avatar`
+substitution. Each avatar directory may provide idle animation frames plus
+listening, thinking, loading, error, timer and mood images. The selected assets
+are resized for the target display during the build.
+
+```yaml
+substitutions:
+  ai_avatar: my_assistant
+```
+
+This artwork represents the ESP device's own Voice Assistant state. It is
+unrelated to the optional HA Assist pipeline that SIP callers can dial as an
+extension.
+
+See the [deployment guide](docs/DEPLOYMENT_GUIDE.md) for profile selection and
+the companion [audio stack documentation](https://github.com/n-IA-hane/esphome-audio-stack)
+for AEC, AFE, I2S and codec topology details.
 
 ## Home Assistant as a SIP video phone
 
@@ -263,9 +355,20 @@ disappears when no current endpoint declares it. See
 
 ## Assist as a phone extension
 
+There are two separate Assist-related features:
+
+| Feature | Where it runs | How it starts |
+|---|---|---|
+| ESP Voice Assistant | On a full-experience ESP device | Local wake word, touch control or an ESPHome action. |
+| Callable HA Assist | In Home Assistant through VoIP Stack | A SIP caller dials its phonebook name or extension. |
+
 Enable **Include voice assistant** while configuring VoIP Stack, choose the
 pipeline and assign an extension. ESPs, registered SIP phones, browser phones
 and trunk callers can then call that Assist pipeline like any other contact.
+
+This is a Home Assistant PBX feature. The SIP caller talks to the selected HA
+Assist pipeline over the call. It does not start, replace or change the local
+Voice Assistant running on a full-experience ESP device.
 
 VoIP Stack sends one initial user message such as
 `Incoming SIP call from "Daniele".` and then streams the selected pipeline's
@@ -279,15 +382,6 @@ authentication.
 
 Voice intents may also resolve commands such as "Call Kitchen", "Answer" and
 "Hang up" against the live phonebook and the satellite's selected phone.
-
-<table>
-  <tr>
-    <td align="center"><img src="docs/images/assistant-neutral.jpg" width="180" alt="Assist idle"/><br/><b>Idle</b></td>
-    <td align="center"><img src="docs/images/assistant-speaking.jpg" width="180" alt="Assist speaking"/><br/><b>Speaking</b></td>
-    <td align="center"><img src="docs/images/assistant-happy.jpg" width="180" alt="Assist happy"/><br/><b>Happy</b></td>
-    <td align="center"><img src="docs/images/assistant-angry.jpg" width="180" alt="Assist angry"/><br/><b>Your prompt did this</b></td>
-  </tr>
-</table>
 
 ## Door station and unanswered calls
 
