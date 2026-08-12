@@ -40,6 +40,15 @@ def test_browser_live_job_installs_browser_environment() -> None:
     assert ".venv/bin/pip install -r requirements-browser-test.txt" in workflow
 
 
+def test_browser_gate_sanitizes_baresip_artifact_names() -> None:
+    gate = (
+        Path(__file__).parents[1] / "scripts/run_lab_regression_gate.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "find \"$CAPTURE_DIR\" -type f -name '*:*' -print0" in gate
+    assert '"${artifact//:/_}"' in gate
+
+
 def _candidate(head: str) -> dict[str, object]:
     payload = {
         "schema_version": 1,

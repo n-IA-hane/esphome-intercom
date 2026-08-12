@@ -83,4 +83,7 @@ FORWARD_SUCCESS_CALLEE=video_sink \
 cleanup
 SINK_PID=
 .venv/bin/python scripts/run_answered_sipp_lab.py --quiescence-only >/dev/null
+while IFS= read -r -d '' artifact; do
+  mv -- "$artifact" "${artifact//:/_}"
+done < <(find "$CAPTURE_DIR" -type f -name '*:*' -print0)
 printf '%s\n' "lab_regression_gate=passed"
