@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      actions: read
       contents: write
     env:
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
@@ -37,10 +38,37 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.14.2"
-      - name: Build deterministic HACS archive
-        run: python scripts/build_hacs_zip.py
-      - name: Verify archive integrity
+      - name: Resolve successful qualification for tag commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          tag_sha=$(git rev-parse HEAD)
+          run_id=$(
+            gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "/repos/$GITHUB_REPOSITORY/actions/workflows/qualification.yml/runs?head_sha=$tag_sha&status=success&per_page=20" \
+              --jq '.workflow_runs | map(select(.event == "push" or .event == "workflow_dispatch")) | first | .id // empty'
+          )
+          test -n "$run_id"
+          printf 'TAG_SHA=%s\nQUALIFICATION_RUN_ID=%s\n' "$tag_sha" "$run_id" >> "$GITHUB_ENV"
+      - name: Download qualified archive and manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run download "$QUALIFICATION_RUN_ID" \
+            --name "qualification-result-release-package-$TAG_SHA" \
+            --dir release-evidence
+          gh run download "$QUALIFICATION_RUN_ID" \
+            --name "qualification-summary-$TAG_SHA" \
+            --dir qualification-evidence
+          cp release-evidence/voip_stack.zip voip_stack.zip
+      - name: Verify exact qualified artifact
+        run: |
+          python scripts/verify_release_candidate.py \
+            --tag-sha "$TAG_SHA" \
+            --package release-evidence/release-package.json \
+            --qualification qualification-evidence/qualification-manifest.json \
+            --archive voip_stack.zip
           python -m zipfile -t voip_stack.zip
           sha256sum voip_stack.zip
       - name: Upload new release asset

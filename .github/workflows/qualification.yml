@@ -121,7 +121,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        job: [static, qualification-selftest, software-full, ha-runtime, cpp-contract]
+        job: [static, qualification-selftest, software-full, ha-runtime, cpp-contract, coverage, release-package]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
@@ -180,13 +180,41 @@ jobs:
             software-full) command=(./scripts/test_suite.sh software-full) ;;
             ha-runtime) command=(./scripts/test_suite.sh ha) ;;
             cpp-contract) command=(.venv/bin/python -m pytest -q ../esphome-voip-stack/tests) ;;
+            coverage)
+              command=(
+                bash -lc
+                './scripts/test_suite.sh coverage && cp coverage.xml "$GITHUB_WORKSPACE/evidence/results/coverage.xml"'
+              )
+              ;;
+            release-package)
+              command=(
+                .venv/bin/python scripts/package_release_candidate.py
+                --source custom_components/voip_stack
+                --archive "$GITHUB_WORKSPACE/evidence/results/voip_stack.zip"
+                --candidate "$GITHUB_WORKSPACE/evidence/input/candidate-lock.json"
+                --plan "$GITHUB_WORKSPACE/evidence/input/qualification-plan.json"
+                --output "$GITHUB_WORKSPACE/evidence/results/release-package.json"
+              )
+              ;;
             *) exit 2 ;;
           esac
+          artifacts=()
+          if [ "$JOB" = release-package ]; then
+            artifacts=(
+              --artifact "$GITHUB_WORKSPACE/evidence/results/voip_stack.zip"
+              --artifact "$GITHUB_WORKSPACE/evidence/results/release-package.json"
+            )
+          elif [ "$JOB" = coverage ]; then
+            artifacts=(
+              --artifact "$GITHUB_WORKSPACE/evidence/results/coverage.xml"
+            )
+          fi
           .venv/bin/python scripts/run_qualification_command.py \
             --job "$JOB" \
             --plan "$GITHUB_WORKSPACE/evidence/input/qualification-plan.json" \
             --candidate "$GITHUB_WORKSPACE/evidence/input/candidate-lock.json" \
             --evidence-root "$GITHUB_WORKSPACE/evidence/results" \
+            "${artifacts[@]}" \
             -- "${command[@]}"
       - name: Upload ${{ matrix.job }} evidence
         if: always() && contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
@@ -284,6 +312,46 @@ jobs:
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
           name: qualification-result-firmware-${{ github.sha }}
+          path: evidence/results/
+          if-no-files-found: error
+
+  mutation:
+    needs: plan
+    if: contains(needs.plan.outputs.required_jobs, '"mutation"')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14.2"
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: qualification-input-${{ github.sha }}
+          path: evidence/input
+      - name: Create disposable mutation checkout
+        run: |
+          python -m venv .mutation-venv
+          .mutation-venv/bin/pip install -r requirements-mutation-test.txt
+          git worktree add --detach "$RUNNER_TEMP/mutation-worktree" HEAD
+          ln -s "$GITHUB_WORKSPACE/.mutation-venv" "$RUNNER_TEMP/mutation-worktree/.venv"
+      - name: Execute mutation gate
+        run: |
+          .mutation-venv/bin/python scripts/run_qualification_command.py \
+            --job mutation \
+            --plan evidence/input/qualification-plan.json \
+            --candidate evidence/input/candidate-lock.json \
+            --evidence-root evidence/results \
+            -- bash -lc \
+              "cd '$RUNNER_TEMP/mutation-worktree' && .venv/bin/python -m mutmut run && .venv/bin/python -m mutmut export-cicd-stats && .venv/bin/python scripts/check_mutation_score.py mutants/mutmut-cicd-stats.json"
+      - name: Upload mutation evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: qualification-result-mutation-${{ github.sha }}
           path: evidence/results/
           if-no-files-found: error
 
@@ -414,7 +482,7 @@ jobs:
 
   qualification-summary:
     if: always()
-    needs: [plan, software, firmware, live, hil]
+    needs: [plan, software, firmware, mutation, live, hil]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

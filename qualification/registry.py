@@ -336,10 +336,30 @@ SCENARIOS = (
             }
         ),
     ),
+    ScenarioContract(
+        "p4-full-landscape-jpeg-call-lifecycle",
+        frozenset(
+            {"ha_lifecycle", "sip_core", "browser_media", "esp_control", "video"}
+        ),
+        frozenset({"p4"}),
+        frozenset({"sip-trace", "rtp-duplex", "decoded-video", "esp-runtime"}),
+        frozenset(
+            {
+                "single-terminal",
+                "cleanup-barrier",
+                "resources-at-baseline",
+                "immediate-redial",
+            }
+        ),
+    ),
 )
 
 
-ALL_JOBS = frozenset(job for area in AREAS for job in area.jobs)
+ALL_JOBS = frozenset(job for area in AREAS for job in area.jobs) | {
+    "coverage",
+    "mutation",
+    "release-package"
+}
 
 
 def regression_ledger() -> tuple[dict[str, object], ...]:

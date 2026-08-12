@@ -173,6 +173,67 @@ def test_selected_hardware_job_does_not_execute_other_required_jobs(
     assert set(artifact["jobs"]) == {"hil-s3"}
 
 
+def test_one_device_runs_required_scenarios_on_sequential_firmware_variants(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.py"
+    second = tmp_path / "second.py"
+    first.write_text("pass\n", encoding="utf-8")
+    second.write_text("pass\n", encoding="utf-8")
+    hardware = _hardware(tmp_path, first)
+    device = hardware["devices"]["ws3"]
+    install = device.pop("firmware")
+    device.pop("scenarios")
+    device["firmware_variants"] = [
+        {
+            **install,
+            "scenarios": {
+                "esp-to-ha-answer-hangup": {
+                    "command": [sys.executable, str(first)]
+                }
+            },
+        },
+        {
+            **install,
+            "profile": "waveshare-s3-second",
+            "scenarios": {"second-scenario": {"command": [sys.executable, str(second)]}},
+        },
+    ]
+    evidence = _evidence(tmp_path)
+    second_firmware = tmp_path / "firmware/waveshare-s3-second/firmware.factory.bin"
+    second_firmware.parent.mkdir(parents=True)
+    second_firmware.write_bytes(b"second candidate firmware")
+    evidence["firmware_manifest"]["firmware"].append(
+        {
+            "profile": "waveshare-s3-second",
+            "artifact": {
+                "path": "firmware/waveshare-s3-second/firmware.factory.bin",
+                "sha256": hashlib.sha256(second_firmware.read_bytes()).hexdigest(),
+            },
+        }
+    )
+    plan = _plan("hil-s3")
+    plan["scenarios"].append({"id": "second-scenario", "executors": ["ws3"]})
+
+    artifact = run_hil(
+        plan,
+        hardware,
+        environment=dict(os.environ),
+        **evidence,
+    )
+
+    job = artifact["jobs"]["hil-s3"]
+    assert artifact["status"] == "passed"
+    assert [item["profile"] for item in job["firmware"]] == [
+        "waveshare-s3-full",
+        "waveshare-s3-second",
+    ]
+    assert [item["firmware_profile"] for item in job["results"]] == [
+        "waveshare-s3-full",
+        "waveshare-s3-second",
+    ]
+
+
 def test_non_hardware_scenario_has_explicit_skip_reason(tmp_path: Path) -> None:
     scenario = tmp_path / "scenario.py"
     scenario.write_text("pass\n", encoding="utf-8")

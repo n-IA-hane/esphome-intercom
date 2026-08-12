@@ -41,42 +41,72 @@ devices:
     capabilities: [hil-p4, p4, audio, video]
     volume_percent: 1
     doctor: [nc, -z, "${P4_HOST}", "${P4_API_PORT}"]
-    firmware:
-      profile: waveshare-p4-h264
-      mode: install
-      command:
-        - esptool
-        - --port
-        - "${P4_SERIAL_PORT}"
-        - write-flash
-        - "0x0"
-        - "${HIL_FIRMWARE_PATH}"
-    scenarios:
-      p4-audio-to-bidirectional-video-reinvite:
+    firmware_variants:
+      - profile: waveshare-p4-h264
+        mode: install
         command:
-          - .venv/bin/python
-          - scripts/run_p4_h264_reinvite_hil.py
-          - --ha-url
-          - "${HA_LAB_URL}"
-          - --token-file
-          - "${HA_LAB_TOKEN_FILE}"
-          - --sip-host
-          - "${HA_LAB_SIP_HOST}"
-          - --sip-port
-          - "${HA_LAB_SIP_PORT}"
-          - --local-ip
-          - "${HIL_RUNNER_HOST}"
-          - --p4-host
-          - "${P4_HOST}"
-          - --p4-api-port
-          - "${P4_API_PORT}"
-          - --p4-extension
-          - "${P4_EXTENSION}"
-          - --serial-port
+          - esptool
+          - --port
           - "${P4_SERIAL_PORT}"
-          - --cycles
-          - "2"
-          - --out-dir
-          - "${HIL_ARTIFACT_DIR}/p4-h264-reinvite"
-          - --output
-          - "${HIL_ARTIFACT_DIR}/p4-h264-reinvite/result.json"
+          - write-flash
+          - "0x0"
+          - "${HIL_FIRMWARE_PATH}"
+        scenarios:
+          p4-audio-to-bidirectional-video-reinvite:
+            command:
+              - .venv/bin/python
+              - scripts/run_p4_h264_reinvite_hil.py
+              - --ha-url
+              - "${HA_LAB_URL}"
+              - --token-file
+              - "${HA_LAB_TOKEN_FILE}"
+              - --sip-host
+              - "${HA_LAB_SIP_HOST}"
+              - --sip-port
+              - "${HA_LAB_SIP_PORT}"
+              - --local-ip
+              - "${HIL_RUNNER_HOST}"
+              - --p4-host
+              - "${P4_HOST}"
+              - --p4-api-port
+              - "${P4_API_PORT}"
+              - --p4-extension
+              - "${P4_EXTENSION}"
+              - --serial-port
+              - "${P4_SERIAL_PORT}"
+              - --cycles
+              - "2"
+              - --out-dir
+              - "${HIL_ARTIFACT_DIR}/p4-h264-reinvite"
+              - --output
+              - "${HIL_ARTIFACT_DIR}/p4-h264-reinvite/result.json"
+      - profile: waveshare-p4-full-landscape
+        mode: install
+        command:
+          - esptool
+          - --port
+          - "${P4_SERIAL_PORT}"
+          - write-flash
+          - "0x0"
+          - "${HIL_FIRMWARE_PATH}"
+        scenarios:
+          p4-full-landscape-jpeg-call-lifecycle:
+            command:
+              - .venv/bin/python
+              - scripts/run_p4_video_hil.py
+              - --sip-host
+              - "${HA_LAB_SIP_HOST}"
+              - --sip-port
+              - "${HA_LAB_SIP_PORT}"
+              - --local-ip
+              - "${HIL_RUNNER_HOST}"
+              - --esp-host
+              - "${P4_HOST}"
+              - --target
+              - "${P4_EXTENSION}"
+              - --codec
+              - jpeg
+              - --duration
+              - "10"
+              - --output
+              - "${HIL_ARTIFACT_DIR}/p4-full-jpeg/result.json"

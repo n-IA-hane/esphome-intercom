@@ -45,14 +45,17 @@ def test_hacs_and_manifest_names_match_current_domain() -> None:
     assert manifest["name"] == "VoIP Stack"
 
 
-def test_release_workflow_builds_and_uploads_the_hacs_asset() -> None:
+def test_release_workflow_promotes_the_exact_qualified_hacs_asset() -> None:
     workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
 
     assert "release:" in workflow
     assert "types: [published]" in workflow
     assert "workflow_dispatch:" in workflow
     assert "contents: write" in workflow
-    assert "python scripts/build_hacs_zip.py" in workflow
+    assert "python scripts/build_hacs_zip.py" not in workflow
+    assert "scripts/verify_release_candidate.py" in workflow
+    assert 'qualification-summary-$TAG_SHA' in workflow
+    assert 'qualification-result-release-package-$TAG_SHA' in workflow
     assert 'gh release upload "$RELEASE_TAG" voip_stack.zip' in workflow
     assert "--clobber" in workflow
     assert "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in workflow

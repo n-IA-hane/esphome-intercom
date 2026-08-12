@@ -182,7 +182,7 @@ def _file_digest(path: Path) -> str:
 
 def _prepare_firmware(
     device_name: str,
-    device: dict[str, object],
+    config: dict[str, object],
     manifest: dict[str, object],
     candidate: dict[str, object],
     *,
@@ -200,9 +200,6 @@ def _prepare_firmware(
         raise HilError("firmware manifest does not match candidate")
     if manifest.get("source_lock_sha256") != source_lock_sha256:
         raise HilError("firmware manifest does not match source lock")
-    config = device.get("firmware")
-    if not isinstance(config, dict):
-        raise HilError(f"device {device_name} does not define firmware attestation")
     profile = str(config.get("profile") or "")
     matches = [
         item
@@ -409,27 +406,6 @@ def run_hil(
                 )
             child_environment = dict(environment)
             child_environment["VOIP_TEST_VOLUME_PERCENT"] = str(volume)
-            firmware = _prepare_firmware(
-                device_name,
-                device,
-                firmware_manifest,
-                candidate,
-                source_lock_sha256=source_lock_sha256,
-                firmware_root=firmware_root,
-                environment=child_environment,
-                timeout=timeout,
-            )
-            doctor = subprocess.run(
-                _command(device.get("doctor"), child_environment),
-                cwd=ROOT,
-                env=child_environment,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-                timeout=timeout,
-            )
-            if doctor.returncode:
-                raise HilError(f"doctor failed for required device {device_name}")
             scenario_ids = _scenario_ids(plan, executor)
             if not scenario_ids:
                 raise HilError(
@@ -441,18 +417,64 @@ def run_hil(
                 if isinstance(scenario, dict)
                 and executor not in scenario.get("executors", [])
             }
-            configured = device.get("scenarios")
-            if not isinstance(configured, dict):
-                raise HilError(f"device {device_name} has no scenario commands")
-            results: list[dict[str, object]] = []
-            for scenario_id in scenario_ids:
-                scenario = configured.get(scenario_id)
-                if not isinstance(scenario, dict):
+            variants = device.get("firmware_variants")
+            if variants is None:
+                firmware = device.get("firmware")
+                configured = device.get("scenarios")
+                if not isinstance(firmware, dict) or not isinstance(configured, dict):
                     raise HilError(
-                        f"required scenario {scenario_id} is not configured for {device_name}"
+                        f"device {device_name} does not define firmware and scenarios"
                     )
-                results.append(
-                    _run_scenario(
+                variants = [{**firmware, "scenarios": configured}]
+            if not isinstance(variants, list) or not variants:
+                raise HilError(f"device {device_name} has no firmware variants")
+            results: list[dict[str, object]] = []
+            firmwares: list[dict[str, str]] = []
+            covered: set[str] = set()
+            for variant in variants:
+                if not isinstance(variant, dict):
+                    raise HilError(f"device {device_name} firmware variant is invalid")
+                configured = variant.get("scenarios")
+                if not isinstance(configured, dict):
+                    raise HilError(
+                        f"device {device_name} firmware variant has no scenarios"
+                    )
+                selected = [item for item in scenario_ids if item in configured]
+                if not selected:
+                    continue
+                firmware = _prepare_firmware(
+                    device_name,
+                    variant,
+                    firmware_manifest,
+                    candidate,
+                    source_lock_sha256=source_lock_sha256,
+                    firmware_root=firmware_root,
+                    environment=child_environment,
+                    timeout=timeout,
+                )
+                firmwares.append(firmware)
+                doctor = subprocess.run(
+                    _command(device.get("doctor"), child_environment),
+                    cwd=ROOT,
+                    env=child_environment,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=timeout,
+                )
+                if doctor.returncode:
+                    raise HilError(f"doctor failed for required device {device_name}")
+                for scenario_id in selected:
+                    if scenario_id in covered:
+                        raise HilError(
+                            f"required scenario {scenario_id} has multiple firmware owners"
+                        )
+                    scenario = configured[scenario_id]
+                    if not isinstance(scenario, dict):
+                        raise HilError(
+                            f"required scenario {scenario_id} is invalid for {device_name}"
+                        )
+                    result = _run_scenario(
                         scenario_id,
                         _command(scenario.get("command"), child_environment),
                         snapshot_command,
@@ -461,12 +483,20 @@ def run_hil(
                         timeout,
                         float(scenario.get("timeout_seconds", 180)),
                     )
+                    result["firmware_profile"] = firmware["profile"]
+                    results.append(result)
+                    covered.add(scenario_id)
+            missing = sorted(set(scenario_ids).difference(covered))
+            if missing:
+                raise HilError(
+                    f"required scenarios are not configured for {device_name}: "
+                    + ", ".join(missing)
                 )
             job_passed = all(result["status"] == "passed" for result in results)
             artifact["jobs"][job] = {
                 "status": "passed" if job_passed else "failed",
                 "doctor": "passed",
-                "firmware": firmware,
+                "firmware": firmwares,
                 "device": device_name,
                 "capabilities": sorted(
                     str(item) for item in device.get("capabilities", [])

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qualify a real P4 audio call upgraded to bidirectional H.264 video."""
+"""Qualify a real P4 audio call upgraded to bidirectional SIP video."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 from live_voip_qualification import DEFAULT_ESPS, EspApi, norm  # noqa: E402
 
 
-def validate_peer_result(result: object) -> dict[str, object]:
+def validate_peer_result(result: object, codec: str) -> dict[str, object]:
     """Require signaling and media evidence from both directions."""
 
     if not isinstance(result, dict):
@@ -27,6 +27,8 @@ def validate_peer_result(result: object) -> dict[str, object]:
         "initial answer": 200 in result.get("sip_statuses", []),
         "re-INVITE answer": result.get("reinvite_status") == 200,
         "bidirectional video": result.get("reinvite_video_direction") == "sendrecv",
+        "selected codec": codec.upper()
+        in str(result.get("reinvite_negotiated_video") or "").upper(),
         "local BYE answer": result.get("bye_response_status") == 200,
         "audio transmit": int(result.get("audio_tx_packets") or 0) > 0,
         "audio receive": int(result.get("audio_rx_packets") or 0) > 0,
@@ -89,7 +91,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             "--local-ip",
             args.local_ip,
             "--codec",
-            "h264",
+            args.codec,
             "--direction",
             "sendrecv",
             "--add-video-after",
@@ -119,13 +121,15 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     f"{stderr.decode(errors='replace')[-1000:]}"
                 )
             await wait_state(esp, {"idle"}, 15)
-            evidence = validate_peer_result(json.loads(peer_output.read_text()))
+            evidence = validate_peer_result(
+                json.loads(peer_output.read_text()), args.codec
+            )
             result: dict[str, object] = {
                 "schema_version": 1,
                 "status": "passed",
                 "duration_seconds": round(time.monotonic() - started, 3),
                 "device": "p4",
-                "codec": "h264",
+                "codec": args.codec,
                 "volume_percent": current_volume,
                 "media": evidence,
             }
@@ -143,6 +147,7 @@ def main() -> int:
     parser.add_argument("--sip-host", required=True)
     parser.add_argument("--sip-port", type=int, default=5060)
     parser.add_argument("--local-ip", required=True)
+    parser.add_argument("--codec", choices=("h264", "jpeg"), default="h264")
     parser.add_argument("--target", default="Waveshare P4 Touch")
     parser.add_argument("--esp-host")
     parser.add_argument("--duration", type=float, default=8)

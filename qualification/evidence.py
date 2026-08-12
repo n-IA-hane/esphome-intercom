@@ -141,6 +141,16 @@ CLAIMS: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {
             "immediate-redial",
         ),
     },
+    ("p4-full-landscape-jpeg-call-lifecycle", "hil-p4"): {
+        "executors": ("p4",),
+        "oracles": ("sip-trace", "rtp-duplex", "decoded-video", "esp-runtime"),
+        "postconditions": (
+            "single-terminal",
+            "cleanup-barrier",
+            "resources-at-baseline",
+            "immediate-redial",
+        ),
+    },
 }
 
 

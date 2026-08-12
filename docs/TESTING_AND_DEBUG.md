@@ -39,12 +39,13 @@ them in `candidate-lock.json`, and switches every maintained YAML to those
 local checkouts. No firmware build reads a moving remote component branch after
 the lock has been created.
 
-The single summary job then runs `software-full`, isolated peer tests, the real
-Home Assistant runtime suite and coverage before compiling all six maintained
-S3 and P4 profiles sequentially. Its artifact contains the source lock,
-coverage report, firmware binaries and their SHA-256 hashes. A failed or
-cancelled step fails the one summary check, so a partial matrix cannot be
-reported as a qualified candidate.
+Every push to `dev` selects the complete plan. The summary requires
+`software-full`, the real Home Assistant runtime, coverage, mutation, isolated
+peers, a real browser, firmware compilation and the selected S3/P4 hardware
+jobs. It also builds the deterministic HACS archive. The evidence records the
+exact commits resolved from the four `dev` branches, but maintained YAMLs stay
+readable and continue to reference `@dev` rather than embedding commit hashes.
+A failed, skipped or cancelled required job fails the summary.
 
 This software and compile gate still does not claim physical interoperability.
 A release candidate also needs the applicable live browser, SIP peer and ESP
@@ -103,7 +104,7 @@ for a terminal service state. Environment overrides are documented by
 
 ## HACS release archive
 
-Build the release asset from the repository root:
+For local inspection, build the release asset from the repository root:
 
 ```bash
 ./.venv/bin/python scripts/build_hacs_zip.py
@@ -120,12 +121,11 @@ an asset named exactly `voip_stack.zip`. Publish or backfill that flat asset
 before making the setting visible on the default branch; a differently named
 or nested ZIP is not a HACS release asset.
 
-`.github/workflows/release.yml` builds and uploads the archive when a GitHub
-release is published. It can also target an existing tag through a manual
-dispatch. Manual dispatch preserves an existing asset by default; enable its
-explicit replacement input only after the locally built ZIP has passed the
-contract test, because GitHub CLI replacement deletes the old asset before
-uploading the new one.
+`.github/workflows/release.yml` never rebuilds the public archive. It finds a
+successful Qualification run for the exact tag commit, downloads the archive
+created by that run and verifies its candidate ID, commit, size and SHA-256
+against the final qualification manifest. A tag without matching complete
+evidence cannot receive a release asset.
 
 For a manual installation of this same flat archive, extract it into the
 integration directory rather than directly into `/config`:

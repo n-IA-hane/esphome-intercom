@@ -3,7 +3,7 @@ branch = true
 source = ["custom_components/voip_stack"]
 
 [tool.coverage.report]
-fail_under = 60
+fail_under = 66.9
 show_missing = true
 skip_empty = true
 
