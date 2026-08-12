@@ -21,6 +21,7 @@ def valid_result() -> dict[str, object]:
         "sip_statuses": [100, 180, 200],
         "reinvite_status": 200,
         "reinvite_video_direction": "sendrecv",
+        "reinvite_negotiated_video": "H264/90000",
         "bye_response_status": 200,
         "audio_tx_packets": 20,
         "audio_rx_packets": 19,
