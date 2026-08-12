@@ -39,8 +39,8 @@ restart_ha() {
   tmux kill-session -t "$session_name" 2>/dev/null || true
   local -a pids=()
   mapfile -t pids < <(
-    ps -eo pid=,args= | awk -v config="$config_dir" \
-      'index($0, config) && ($0 ~ /\/bin\/hass -c / || $0 ~ /\/bin\/python .*\/bin\/hass -c /) {print $1}'
+    ps -eo pid=,comm=,args= | awk -v config="$config_dir" \
+      'index($0, config) && ($2 == "hass" || $2 ~ /^python/) {print $1}'
   )
   if ((${#pids[@]})); then
     kill "${pids[@]}" 2>/dev/null || true

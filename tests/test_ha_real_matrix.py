@@ -125,6 +125,8 @@ def test_lab_wrapper_stops_tmux_before_collecting_processes() -> None:
     source = (ROOT / "scripts/with_ha_lab_candidate.sh").read_text()
 
     assert source.index("tmux kill-session") < source.index("mapfile -t pids")
+    assert "ps -eo pid=,comm=,args=" in source
+    assert '$2 == "hass" || $2 ~ /^python/' in source
     assert 'kill -KILL "${pids[@]}"' in source
 
 
