@@ -114,6 +114,10 @@ def test_flac_ringtone_drains_naturally_behind_source_local_ducking() -> None:
     assert "id: voip_mixer_input" not in orchestration
     assert "id: hw_speaker" not in orchestration
     assert "media_source::MediaSourceState::IDLE" in orchestration
+    assert orchestration.count("media_source::MediaSourceCommand::STOP") == 2
+    assert orchestration.index("media_source::MediaSourceState::IDLE") < orchestration.index(
+        "media_source::MediaSourceCommand::STOP"
+    )
 
 
 def test_runtime_media_player_profiles_share_ringtone_lifecycle_owner() -> None:

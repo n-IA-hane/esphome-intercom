@@ -71,6 +71,13 @@ script:
                           return id(announcement_file_source).get_state() ==
                                  media_source::MediaSourceState::IDLE;
                       timeout: 4s
+      # EOF makes the source idle, but micro-decoder keeps the completed
+      # std::thread joinable until stop() or the next playback. Join it now,
+      # after natural FLAC teardown, so its task bookkeeping cannot consume
+      # the API reconnect headroom for the lifetime of the firmware.
+      - lambda: |-
+          id(announcement_file_source).handle_command(
+              media_source::MediaSourceCommand::STOP);
       - mixer_speaker.apply_ducking:
           id: tts_mixer_input
           decibel_reduction: 0
