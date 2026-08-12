@@ -180,8 +180,10 @@ void MipiDsi::setup() {
     }
   }
   this->io_lock_ = xSemaphoreCreateBinaryStatic(&this->io_lock_storage_);
-  if (this->io_lock_ == nullptr) {
-    this->mark_failed(LOG_STR("Failed to create display transfer semaphore"));
+  this->submit_mutex_ =
+      xSemaphoreCreateMutexStatic(&this->submit_mutex_storage_);
+  if (this->io_lock_ == nullptr || this->submit_mutex_ == nullptr) {
+    this->mark_failed(LOG_STR("Failed to create display transfer locks"));
     return;
   }
   esp_lcd_dpi_panel_event_callbacks_t cbs = {
@@ -275,12 +277,17 @@ void MipiDsi::draw_pixels_at(int x_start, int y_start, int w, int h, const uint8
 bool MipiDsi::submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
                              const uint8_t *ptr) {
   if (this->is_failed() || this->handle_ == nullptr ||
-      this->io_lock_ == nullptr) {
+      this->io_lock_ == nullptr || this->submit_mutex_ == nullptr) {
     return false;
   }
+  // esp_lcd exposes one panel transfer completion callback. Serialize the
+  // complete submit-and-wait transaction so LVGL and direct video cannot
+  // consume each other's completion token.
+  xSemaphoreTake(this->submit_mutex_, portMAX_DELAY);
   const esp_err_t err = esp_lcd_panel_draw_bitmap(
       this->handle_, x_start, y_start, x_end, y_end, ptr);
   if (err != ESP_OK) {
+    xSemaphoreGive(this->submit_mutex_);
     this->smark_failed(LOG_STR("lcd_panel_draw_bitmap failed"), err);
     return false;
   }
@@ -289,6 +296,7 @@ bool MipiDsi::submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
   // path above must return before waiting because no callback is guaranteed
   // when the driver rejects the submit.
   xSemaphoreTake(this->io_lock_, portMAX_DELAY);
+  xSemaphoreGive(this->submit_mutex_);
   return true;
 }
 
@@ -296,8 +304,15 @@ bool MipiDsi::present_frame_buffer_region(int x, int y, int width,
                                           int height) {
   if (this->frame_buffer_ == nullptr || width <= 0 || height <= 0)
     return false;
-  return this->submit_bitmap_(x, y, x + width, y + height,
-                              this->frame_buffer_);
+  return this->present_buffer_region(this->frame_buffer_, x, y, width,
+                                     height);
+}
+
+bool MipiDsi::present_buffer_region(const uint8_t *buffer, int x, int y,
+                                    int width, int height) {
+  if (buffer == nullptr || width <= 0 || height <= 0)
+    return false;
+  return this->submit_bitmap_(x, y, x + width, y + height, buffer);
 }
 
 void MipiDsi::write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,

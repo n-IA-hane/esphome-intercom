@@ -742,14 +742,14 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         renderer_loop.index("#ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY") :
         renderer_loop.index("#else")
     ]
-    assert direct_display.index("this->present_surface_direct_(pending)") < (
-        direct_display.index("this->pending_surface_.compare_exchange_strong(")
+    assert renderer_loop.index("this->commit_direct_surface_(pending)") < (
+        renderer_loop.index("this->pending_surface_.compare_exchange_strong(")
     )
-    assert direct_display.index("this->remote_frame_visible_.exchange(") < (
-        direct_display.index("const bool page_active")
+    assert renderer_loop.index("this->remote_frame_visible_.exchange(") < (
+        renderer_loop.index("const bool page_active")
     )
-    assert direct_display.index("const bool page_active") < (
-        direct_display.index("this->present_surface_direct_(pending)")
+    assert renderer_loop.index("const bool page_active") < (
+        renderer_loop.index("this->commit_direct_surface_(pending)")
     )
     attach_container = renderer_cpp[
         renderer_cpp.index("void P4VideoRenderer::attach_video_container(") :
@@ -861,14 +861,18 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         in renderer_cpp
     )
     assert "this->compute_h264_surface_geometry_(" in render_i420
-    assert "this->direct_mipi_display_->get_native_width()" in render_i420
-    assert "this->direct_mipi_display_->get_native_height()" in render_i420
+    assert "config.out.pic_w = geometry.surface_width;" in render_i420
+    assert "config.out.pic_h = geometry.surface_height;" in render_i420
     assert "geometry.scale_units" in render_i420
     assert "config.scale_x = scale;" in render_i420
     assert "config.scale_y = scale;" in render_i420
+    assert "session_generation !=" in render_i420
+    assert "xSemaphoreTake(this->presentation_mutex_, portMAX_DELAY);" in (
+        render_i420
+    )
     assert "kH264SurfaceWidth) / width" not in render_i420
-    assert "config.out.block_offset_x = geometry.native_x;" in render_i420
-    assert "config.out.block_offset_y = geometry.native_y;" in render_i420
+    assert "config.out.block_offset_x" not in render_i420
+    assert "config.out.block_offset_y" not in render_i420
     assert "memset(this->surfaces_[output_index], 0, kSurfaceBytes)" not in (
         render_i420
     )
@@ -886,7 +890,8 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "expected_bytes > this->surface_capacity_bytes_" in direct_present
     assert "this->surface_content_width_[index]" in direct_present
     assert "this->surface_content_height_[index]" in direct_present
-    assert "present_frame_buffer_region(" in direct_present
+    assert "present_buffer_region(" in direct_present
+    assert "this->surfaces_[index]" in direct_present
     assert "const int content_width = kH264SurfaceWidth;" not in (
         direct_present
     )
@@ -958,16 +963,20 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         "void EspH264VideoSource::consume_raw_video_frame("
     )
     source_consume = source_cpp[
-        consume_start : source_cpp.index("\n}  // namespace", consume_start)
+        consume_start : source_cpp.index(
+            "bool EspH264VideoSource::start_tx_task_()", consume_start
+        )
     ]
     assert "this->init_ppa_()" in source_consume
-    assert "p4_video_workload::Role::TX" in source_consume
-    assert "p4_video_workload::Role::RX" in renderer_cpp
+    assert "p4_video_ppa::Guard" not in source_cpp
+    assert "p4_video_ppa::Guard" not in renderer_cpp
+    assert "p4_video_workload" not in source_cpp
+    assert "p4_video_workload" not in renderer_cpp
     assert "Unable to register runtime H.264 PPA client" in source_consume
     assert "ppa_rotation_for_clockwise(frame.rotation_degrees)" in source_cpp
     assert "this->h264_optimized_yuv_bytes_()" in renderer_cpp
     assert "H.264 decode failure: error=%d" in renderer_cpp
-    assert "ulTaskNotifyTake" not in source_cpp
+    assert "ulTaskNotifyTake(pdTRUE, portMAX_DELAY);" in source_cpp
     assert "vTaskDelay" not in source_cpp
     assert "request_key_frame()" in source_cpp
     assert "next_admit_timestamp_" in source_header
@@ -975,10 +984,13 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "static constexpr size_t kEncodedBufferBytes = 64 * 1024;" in (
         source_header
     )
-    assert "uint8_t *tx_yuv_{nullptr};" in source_header
-    assert "FrameSlot" not in source_header
+    assert "struct TxSlot" in source_header
+    assert "TxSlot tx_slots_[2]{};" in source_header
+    assert "uint32_t sequence{0};" in source_header
     assert "frame_queue_" not in source_cpp
-    assert "tx_task_" not in source_cpp
+    assert "void EspH264VideoSource::tx_task_()" in source_cpp
+    assert "start_managed_pinned_task(" in source_cpp
+    assert "candidate.sequence - oldest_sequence" in source_cpp
     assert source_consume.index("this->next_admit_timestamp_.store(") < (
         source_consume.index("this->transform_to_encoder_yuv_(")
     )
@@ -997,7 +1009,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     ]
     assert "xSemaphoreTake" not in encode_frame
     assert "this->tx_active_.load(std::memory_order_acquire)" in encode_frame
-    assert "xSemaphoreTake(this->control_mutex_, portMAX_DELAY);" in source_consume
+    assert "slot->state.store(2, std::memory_order_release);" in source_consume
     assert "PPA_TRANS_MODE_BLOCKING" in source_cpp
     assert "PPA_TRANS_MODE_NON_BLOCKING" not in source_cpp
     assert "ppa_done_" not in source_header
@@ -1012,9 +1024,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         "      generation, std::memory_order_release);"
         in source_start
     )
-    assert source_consume.index(
-        "this->transform_to_encoder_yuv_("
-    ) < source_consume.index("this->encode_frame_(")
+    assert "this->encode_frame_(" not in source_consume
     assert "generation ==" in encode_frame
     assert "this->tx_generation_.load(std::memory_order_acquire)" in encode_frame
     assert "start_tx_task_" not in source_setup
@@ -1026,15 +1036,17 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "this->close_encoder_();" not in source_stop
     assert "ppa_unregister_client(this->ppa_)" not in source_stop
     assert "this->callback_(this->callback_ctx_, access_unit);" in encode_frame
-    assert source_consume.index(
-        "xSemaphoreTake(this->control_mutex_, portMAX_DELAY);"
-    ) < source_consume.index("this->encode_frame_(") < source_consume.rindex(
-        "xSemaphoreGive(this->control_mutex_);"
+    tx_task_start = source_cpp.index("void EspH264VideoSource::tx_task_()")
+    tx_task = source_cpp[
+        tx_task_start : source_cpp.index("\n}  // namespace", tx_task_start)
+    ]
+    assert "xSemaphoreTake(this->control_mutex_" not in tx_task
+    assert "this->encode_frame_(" in tx_task
+    assert source_stop.index("this->tx_active_.exchange(false") < (
+        source_stop.index("this->stop_tx_task_()")
     )
     callback_revoke = source_stop.index("this->callback_ = nullptr;")
-    assert callback_revoke < source_stop.index(
-        "xSemaphoreGive(this->control_mutex_)"
-    )
+    assert source_stop.index("this->stop_tx_task_()") < callback_revoke
     assert "this->callback_ctx_ = nullptr;" in source_stop
     shutdown = source_cpp[
         source_cpp.index("void EspH264VideoSource::on_shutdown()") :
@@ -1088,7 +1100,17 @@ def test_p4_video_boundaries_fail_closed() -> None:
     ]
     assert "xSemaphoreCreateBinaryStatic(&this->io_lock_storage_)" in dsi_cpp
     assert "StaticSemaphore_t io_lock_storage_{};" in dsi_header
-    assert submit.index("if (err != ESP_OK)") < submit.index("xSemaphoreTake(")
+    assert "xSemaphoreCreateMutexStatic(&this->submit_mutex_storage_)" in dsi_cpp
+    assert "StaticSemaphore_t submit_mutex_storage_{};" in dsi_header
+    assert submit.index("xSemaphoreTake(this->submit_mutex_") < submit.index(
+        "esp_lcd_panel_draw_bitmap("
+    )
+    assert submit.index("xSemaphoreTake(this->io_lock_") < submit.rindex(
+        "xSemaphoreGive(this->submit_mutex_)"
+    )
+    assert submit.index("if (err != ESP_OK)") < submit.index(
+        "xSemaphoreTake(this->io_lock_"
+    )
     assert "portMAX_DELAY" in submit
     assert "capability.width == this->width_" in jpeg_source
     assert "capability.height == this->height_" in jpeg_source

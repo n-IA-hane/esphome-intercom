@@ -1,10 +1,10 @@
 #include "esp_h264_video_source.h"
-#include "esphome/components/p4_video_renderer/video_workload.h"
 
 #if defined(USE_ESP_IDF) && defined(USE_ESPHOME_VOIP_STACK_VIDEO) && \
     defined(USE_ESPHOME_VOIP_STACK_VIDEO_H264)
 
 #include "esphome/core/log.h"
+#include "esphome/components/voip_stack/audio_core_task_utils.h"
 
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
@@ -83,7 +83,9 @@ template<typename T> void update_max(std::atomic<T> &target, T value) {
 void EspH264VideoSource::setup() {
   this->control_mutex_ =
       xSemaphoreCreateMutexStatic(&this->control_mutex_storage_);
+  this->tx_done_ = xSemaphoreCreateBinaryStatic(&this->tx_done_storage_);
   if (this->camera_ == nullptr || this->control_mutex_ == nullptr ||
+      this->tx_done_ == nullptr ||
       (this->width_ & 15U) != 0 ||
       (this->height_ & 15U) != 0 || !this->init_ppa_() ||
       !this->init_encoder_and_probe_() ||
@@ -190,9 +192,12 @@ bool EspH264VideoSource::start_video(
       negotiated_bitrate, std::memory_order_release);
   this->timestamp_seen_.store(false, std::memory_order_release);
   this->next_admit_timestamp_.store(0, std::memory_order_release);
+  this->next_tx_sequence_ = 0;
   this->force_idr_generation_.store(
       generation, std::memory_order_release);
   this->raw_frames_.store(0, std::memory_order_release);
+  this->queued_frames_.store(0, std::memory_order_release);
+  this->queue_drops_.store(0, std::memory_order_release);
   this->encoded_frames_.store(0, std::memory_order_release);
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   this->converted_frames_.store(0, std::memory_order_release);
@@ -202,6 +207,12 @@ bool EspH264VideoSource::start_video(
   this->encode_total_us_.store(0, std::memory_order_release);
   this->encoded_max_bytes_.store(0, std::memory_order_release);
 #endif
+  if (!this->start_tx_task_()) {
+    this->callback_ = nullptr;
+    this->callback_ctx_ = nullptr;
+    xSemaphoreGive(this->control_mutex_);
+    return false;
+  }
   this->tx_active_.store(true, std::memory_order_release);
   xSemaphoreGive(this->control_mutex_);
 
@@ -211,9 +222,13 @@ bool EspH264VideoSource::start_video(
       this->tx_active_.store(false, std::memory_order_release);
       this->tx_generation_.fetch_add(1, std::memory_order_acq_rel);
     }
-    this->callback_ = nullptr;
-    this->callback_ctx_ = nullptr;
     xSemaphoreGive(this->control_mutex_);
+    if (this->stop_tx_task_()) {
+      xSemaphoreTake(this->control_mutex_, portMAX_DELAY);
+      this->callback_ = nullptr;
+      this->callback_ctx_ = nullptr;
+      xSemaphoreGive(this->control_mutex_);
+    }
     return false;
   }
   ESP_LOGI(TAG, "P4 hardware H.264 source started at %u bit/s",
@@ -229,13 +244,19 @@ void EspH264VideoSource::stop_video() {
       this->tx_active_.exchange(false, std::memory_order_acq_rel);
   if (was_active)
     this->tx_generation_.fetch_add(1, std::memory_order_acq_rel);
-  this->callback_ = nullptr;
-  this->callback_ctx_ = nullptr;
   this->force_idr_generation_.store(0, std::memory_order_release);
   xSemaphoreGive(this->control_mutex_);
+  if (this->stop_tx_task_()) {
+    xSemaphoreTake(this->control_mutex_, portMAX_DELAY);
+    this->callback_ = nullptr;
+    this->callback_ctx_ = nullptr;
+    xSemaphoreGive(this->control_mutex_);
+  }
   if (was_active) {
-    ESP_LOGI(TAG, "H.264 TX evidence: raw=%u encoded=%u",
+    ESP_LOGI(TAG, "H.264 TX evidence: raw=%u queued=%u dropped=%u encoded=%u",
              (unsigned) this->raw_frames_.load(std::memory_order_relaxed),
+             (unsigned) this->queued_frames_.load(std::memory_order_relaxed),
+             (unsigned) this->queue_drops_.load(std::memory_order_relaxed),
              (unsigned) this->encoded_frames_.load(std::memory_order_relaxed));
   }
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
@@ -267,7 +288,7 @@ void EspH264VideoSource::stop_video() {
 }
 
 void EspH264VideoSource::request_key_frame() {
-  // The request is consumed by the next synchronously owned camera frame.
+  // The request is consumed by the next queued frame of this call generation.
   if (this->tx_active_.load(std::memory_order_acquire)) {
     this->force_idr_generation_.store(
         this->tx_generation_.load(std::memory_order_acquire),
@@ -289,19 +310,25 @@ bool EspH264VideoSource::init_ppa_() {
 }
 
 bool EspH264VideoSource::allocate_resources_() {
-  if (this->tx_yuv_ == nullptr)
-    this->tx_yuv_ =
-        static_cast<uint8_t *>(alloc_psram_dma(this->yuv_bytes_()));
+  for (auto &slot : this->tx_slots_) {
+    if (slot.yuv == nullptr)
+      slot.yuv = static_cast<uint8_t *>(alloc_psram_dma(this->yuv_bytes_()));
+  }
   if (this->tx_encoded_ == nullptr)
     this->tx_encoded_ =
         static_cast<uint8_t *>(alloc_psram_dma(kEncodedBufferBytes));
-  return this->tx_yuv_ != nullptr && this->tx_encoded_ != nullptr;
+  return this->tx_slots_[0].yuv != nullptr &&
+         this->tx_slots_[1].yuv != nullptr && this->tx_encoded_ != nullptr;
 }
 
 void EspH264VideoSource::free_resources_() {
-  if (this->tx_yuv_ != nullptr) heap_caps_free(this->tx_yuv_);
+  for (auto &slot : this->tx_slots_) {
+    if (slot.yuv != nullptr)
+      heap_caps_free(slot.yuv);
+    slot.yuv = nullptr;
+    slot.state.store(0, std::memory_order_release);
+  }
   if (this->tx_encoded_ != nullptr) heap_caps_free(this->tx_encoded_);
-  this->tx_yuv_ = nullptr;
   this->tx_encoded_ = nullptr;
 }
 
@@ -328,10 +355,10 @@ bool EspH264VideoSource::init_encoder_and_probe_() {
       static_cast<uint16_t>(this->width_ * 2), 0, 0};
   const bool converted =
       this->transform_to_encoder_yuv_(
-          probe, this->tx_yuv_);
+          probe, this->tx_slots_[0].yuv);
   heap_caps_free(probe_rgb);
   if (!converted ||
-      !this->encode_frame_(this->tx_yuv_, 0, false) ||
+      !this->encode_frame_(this->tx_slots_[0].yuv, 0, false) ||
       this->profile_level_id_.empty() ||
       !voip_stack::h264_same_subprofile(
           this->profile_level_id_, "42c01e")) {
@@ -553,9 +580,9 @@ bool EspH264VideoSource::encode_frame_(
   }
 
   if (publish) {
-    // The camera callback owns control_mutex_ across conversion, encoding and
-    // publication. stop_video() therefore cannot revoke or destroy the RTP
-    // callback while this borrowed camera frame is still in flight.
+    // stop_video() first revokes this generation, then joins the TX worker,
+    // and only then clears the callback. The callback therefore remains owned
+    // for this entire operation without a lock spanning RTP publication.
     if (this->tx_active_.load(std::memory_order_acquire) &&
         generation ==
             this->tx_generation_.load(std::memory_order_acquire) &&
@@ -571,9 +598,7 @@ bool EspH264VideoSource::encode_frame_(
 
 void EspH264VideoSource::consume_raw_video_frame(
     const esp_video_camera::RawVideoFrame &frame) {
-  xSemaphoreTake(this->control_mutex_, portMAX_DELAY);
   if (!this->tx_active_.load(std::memory_order_acquire)) {
-    xSemaphoreGive(this->control_mutex_);
     return;
   }
   // This callback executes on the camera capture task. Registering the
@@ -581,10 +606,13 @@ void EspH264VideoSource::consume_raw_video_frame(
   // released a separate client for the deterministic encoder probe.
   if (this->ppa_ == nullptr && !this->init_ppa_()) {
     ESP_LOGE(TAG, "Unable to register runtime H.264 PPA client");
+    xSemaphoreTake(this->control_mutex_, portMAX_DELAY);
     this->tx_active_.store(false, std::memory_order_release);
     this->callback_ = nullptr;
     this->callback_ctx_ = nullptr;
     xSemaphoreGive(this->control_mutex_);
+    if (this->tx_task_handle_ != nullptr)
+      xTaskNotifyGive(this->tx_task_handle_);
     return;
   }
   this->raw_frames_.fetch_add(1, std::memory_order_relaxed);
@@ -602,7 +630,6 @@ void EspH264VideoSource::consume_raw_video_frame(
     const int32_t schedule_delta =
         static_cast<int32_t>(frame.timestamp_90khz - next_timestamp);
     if (schedule_delta < 0) {
-      xSemaphoreGive(this->control_mutex_);
       return;
     }
     // Preserve the ideal RTP clock instead of restarting the interval from
@@ -613,23 +640,35 @@ void EspH264VideoSource::consume_raw_video_frame(
     next_timestamp +=
         (elapsed / minimum_delta + 1U) * minimum_delta;
   }
-  // Advance the ideal clock before doing any work. The borrowed camera buffer
-  // remains owned until conversion and encoding finish. Keeping PPA and H.264
-  // sequential avoids concurrent DMA/cache traffic over the same PSRAM bus.
+  // Advance the ideal clock before doing any work. PPA copies the borrowed
+  // camera frame into an owned bounded slot. Encoding then runs independently,
+  // so capture never retains a CSI buffer for the full encoder latency.
   this->next_admit_timestamp_.store(
       next_timestamp, std::memory_order_relaxed);
   this->timestamp_seen_.store(true, std::memory_order_release);
 
   const uint32_t generation =
       this->tx_generation_.load(std::memory_order_acquire);
-  p4_video_workload::Guard video_workload(p4_video_workload::Role::TX);
+  TxSlot *slot = nullptr;
+  for (auto &candidate : this->tx_slots_) {
+    uint8_t free = 0;
+    if (candidate.state.compare_exchange_strong(
+            free, 1, std::memory_order_acq_rel)) {
+      slot = &candidate;
+      break;
+    }
+  }
+  if (slot == nullptr) {
+    this->queue_drops_.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   const int64_t conversion_started_us = esp_timer_get_time();
 #endif
   if (!this->transform_to_encoder_yuv_(
-          frame, this->tx_yuv_)) {
+          frame, slot->yuv)) {
     ESP_LOGE(TAG, "Unable to transform H.264 camera frame");
-    xSemaphoreGive(this->control_mutex_);
+    slot->state.store(0, std::memory_order_release);
     return;
   }
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
@@ -641,31 +680,118 @@ void EspH264VideoSource::consume_raw_video_frame(
       conversion_us, std::memory_order_relaxed);
   update_max(this->conversion_max_us_, conversion_us);
 #endif
-  const uint32_t requested_bitrate =
-      this->requested_bitrate_.load(std::memory_order_acquire);
-  if (requested_bitrate !=
-      this->active_bitrate_.load(std::memory_order_acquire)) {
-    if (this->set_encoder_bitrate_(requested_bitrate)) {
-      this->active_bitrate_.store(
-          requested_bitrate, std::memory_order_release);
-    } else {
-      ESP_LOGE(TAG, "Unable to apply negotiated H.264 bitrate %u",
-               (unsigned) requested_bitrate);
+  if (!this->tx_active_.load(std::memory_order_acquire) ||
+      generation != this->tx_generation_.load(std::memory_order_acquire)) {
+    slot->state.store(0, std::memory_order_release);
+    return;
+  }
+  slot->timestamp_90khz = frame.timestamp_90khz;
+  slot->generation = generation;
+  slot->sequence = this->next_tx_sequence_++;
+  slot->state.store(2, std::memory_order_release);
+  this->queued_frames_.fetch_add(1, std::memory_order_relaxed);
+  if (this->tx_task_handle_ != nullptr)
+    xTaskNotifyGive(this->tx_task_handle_);
+}
+
+bool EspH264VideoSource::start_tx_task_() {
+  if (this->tx_task_handle_ != nullptr)
+    return false;
+  for (auto &slot : this->tx_slots_)
+    slot.state.store(0, std::memory_order_release);
+  xSemaphoreTake(this->tx_done_, 0);
+  this->tx_task_running_.store(true, std::memory_order_release);
+  if (voip_audio_core::start_managed_pinned_task(
+          EspH264VideoSource::tx_task_trampoline_, "p4_video_tx", 8192,
+          this, 16, 0, true, TAG, &this->tx_task_handle_,
+          &this->tx_task_tcb_, &this->tx_task_stack_,
+          &this->tx_task_with_caps_)) {
+    return true;
+  }
+  this->tx_task_running_.store(false, std::memory_order_release);
+  return false;
+}
+
+bool EspH264VideoSource::stop_tx_task_() {
+  if (this->tx_task_handle_ == nullptr)
+    return true;
+  this->tx_task_running_.store(false, std::memory_order_release);
+  xTaskNotifyGive(this->tx_task_handle_);
+  if (xSemaphoreTake(this->tx_done_, pdMS_TO_TICKS(3000)) != pdTRUE) {
+    ESP_LOGE(TAG, "H.264 TX worker did not stop; retaining owned resources");
+    return false;
+  }
+  voip_audio_core::cleanup_managed_pinned_task(
+      &this->tx_task_handle_, &this->tx_task_stack_, 8192,
+      this->tx_task_with_caps_);
+  this->tx_task_with_caps_ = false;
+  for (auto &slot : this->tx_slots_)
+    slot.state.store(0, std::memory_order_release);
+  return true;
+}
+
+void EspH264VideoSource::tx_task_trampoline_(void *ctx) {
+  static_cast<EspH264VideoSource *>(ctx)->tx_task_();
+}
+
+void EspH264VideoSource::tx_task_() {
+  while (this->tx_task_running_.load(std::memory_order_acquire)) {
+    TxSlot *slot = nullptr;
+    uint32_t oldest_sequence = 0;
+    for (auto &candidate : this->tx_slots_) {
+      if (candidate.state.load(std::memory_order_acquire) != 2)
+        continue;
+      if (slot == nullptr ||
+          static_cast<int32_t>(candidate.sequence - oldest_sequence) < 0) {
+        slot = &candidate;
+        oldest_sequence = candidate.sequence;
+      }
     }
+    if (slot != nullptr) {
+      uint8_t ready = 2;
+      if (!slot->state.compare_exchange_strong(
+              ready, 3, std::memory_order_acq_rel))
+        continue;
+    }
+    if (slot == nullptr) {
+      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+      continue;
+    }
+    const uint32_t generation = slot->generation;
+    if (!this->tx_active_.load(std::memory_order_acquire) ||
+        generation != this->tx_generation_.load(std::memory_order_acquire)) {
+      slot->state.store(0, std::memory_order_release);
+      continue;
+    }
+    const uint32_t requested_bitrate =
+        this->requested_bitrate_.load(std::memory_order_acquire);
+    if (requested_bitrate !=
+        this->active_bitrate_.load(std::memory_order_acquire)) {
+      if (this->set_encoder_bitrate_(requested_bitrate)) {
+        this->active_bitrate_.store(
+            requested_bitrate, std::memory_order_release);
+      } else {
+        ESP_LOGE(TAG, "Unable to apply negotiated H.264 bitrate %u",
+                 (unsigned) requested_bitrate);
+      }
+    }
+    uint32_t requested_idr_generation = generation;
+    const bool force_idr =
+        this->force_idr_generation_.compare_exchange_strong(
+            requested_idr_generation, 0, std::memory_order_acq_rel);
+    if (force_idr && !this->set_encoder_gop_(1))
+      ESP_LOGE(TAG, "Unable to request H.264 IDR");
+    if (this->encode_frame_(
+            slot->yuv, slot->timestamp_90khz, true, generation)) {
+      this->encoded_frames_.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (force_idr && !this->set_encoder_gop_(this->gop_))
+      ESP_LOGE(TAG, "Unable to restore H.264 GOP");
+    slot->state.store(0, std::memory_order_release);
   }
-  uint32_t requested_idr_generation = generation;
-  const bool force_idr =
-      this->force_idr_generation_.compare_exchange_strong(
-          requested_idr_generation, 0, std::memory_order_acq_rel);
-  if (force_idr && !this->set_encoder_gop_(1))
-    ESP_LOGE(TAG, "Unable to request H.264 IDR");
-  if (this->encode_frame_(
-          this->tx_yuv_, frame.timestamp_90khz, true, generation)) {
-    this->encoded_frames_.fetch_add(1, std::memory_order_relaxed);
-  }
-  if (force_idr && !this->set_encoder_gop_(this->gop_))
-    ESP_LOGE(TAG, "Unable to restore H.264 GOP");
-  xSemaphoreGive(this->control_mutex_);
+  for (auto &slot : this->tx_slots_)
+    slot.state.store(0, std::memory_order_release);
+  voip_audio_core::finish_managed_pinned_task(this->tx_done_);
 }
 
 }  // namespace esphome::esp_h264_video_source

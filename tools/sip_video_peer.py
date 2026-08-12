@@ -697,6 +697,7 @@ async def _start_video_sender(
     codec: str,
     destination: tuple[str, int],
     duration: float,
+    framerate: int,
     video_file: str = "",
 ):
     ffmpeg = shutil.which("ffmpeg")
@@ -706,7 +707,12 @@ async def _start_video_sender(
     source = (
         ["-stream_loop", "-1", "-i", video_file]
         if video_file
-        else ["-f", "lavfi", "-i", f"testsrc2=size={profile['size']}:rate=15"]
+        else [
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc2=size={profile['size']}:rate={framerate}",
+        ]
     )
     command = [
         ffmpeg,
@@ -725,7 +731,7 @@ async def _start_video_sender(
         "-pix_fmt",
         "yuv420p",
         "-g",
-        "15",
+        str(framerate),
         "-f",
         "rtp",
         "-payload_type",
@@ -1152,6 +1158,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     codec=args.codec,
                     destination=(local_ip, video_port),
                     duration=args.duration,
+                    framerate=args.video_fps,
                     video_file=args.video_file,
                 )
                 video_tasks.append(
@@ -1749,6 +1756,7 @@ def main() -> int:
         help="optional looping audio source; defaults to a generated 440 Hz qualification tone",
     )
     parser.add_argument("--video-file", default="")
+    parser.add_argument("--video-fps", type=int, choices=range(1, 31), default=15)
     parser.add_argument(
         "--video-rx-file", default="",
         help="record video returned by the HA browser to this media file",

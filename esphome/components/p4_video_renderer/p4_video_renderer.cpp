@@ -1,7 +1,4 @@
 #include "p4_video_renderer.h"
-#ifdef USE_P4_VIDEO_RENDERER_H264
-#include "video_workload.h"
-#endif
 
 #if defined(USE_ESP_IDF) && defined(USE_ESPHOME_VOIP_STACK_VIDEO)
 
@@ -20,7 +17,6 @@ static const char *const TAG = "p4_video_renderer";
 
 namespace {
 
-#ifdef USE_P4_VIDEO_RENDERER_JPEG
 void *alloc_surface(size_t bytes, size_t reserve_after) {
   const size_t free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
   const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
@@ -29,7 +25,6 @@ void *alloc_surface(size_t bytes, size_t reserve_after) {
   return heap_caps_aligned_alloc(
       64, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
 }
-#endif
 
 #ifdef USE_P4_VIDEO_RENDERER_H264
 void *alloc_psram_dma(size_t bytes) {
@@ -148,8 +143,20 @@ void P4VideoRenderer::loop() {
   // display callbacks run concurrently and may publish the next edge while
   // this function is active; disabling at the end would erase that wake-up.
   this->disable_loop();
-  if (this->video_ended_pending_.exchange(false, std::memory_order_acq_rel))
+  if (this->video_ended_pending_.exchange(false, std::memory_order_acq_rel)) {
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
+    ESP_LOGI(TAG, "Video presentation ended; dispatching UI trigger");
+#endif
     this->video_ended_trigger_.trigger();
+#ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
+    // Direct presentation bypasses LVGL's invalidation tracking. The teardown
+    // trigger selects the final page, then this full invalidation makes LVGL
+    // repaint every panel pixel overwritten by the direct video writer.
+    auto *screen = lv_screen_active();
+    lv_obj_invalidate(screen);
+    lv_refr_now(lv_obj_get_display(screen));
+#endif
+  }
 
 #if defined(USE_P4_VIDEO_RENDERER_H264) &&                                  \
     defined(USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY)
@@ -174,20 +181,12 @@ void P4VideoRenderer::loop() {
       const bool page_active =
           lv_obj_get_screen(this->video_container_) ==
           lv_disp_get_scr_act(nullptr);
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
-      const uint32_t presentation_started_ms = millis();
+#ifdef USE_P4_VIDEO_RENDERER_H264
+      this->direct_page_active_.store(page_active, std::memory_order_release);
+      const bool presented = page_active && this->commit_direct_surface_(pending);
+#else
+      const bool presented = page_active && this->present_surface_direct_(pending);
 #endif
-      const bool presented =
-          page_active && this->present_surface_direct_(pending);
-      if (presented) {
-        this->surface_ever_presented_.store(true, std::memory_order_release);
-        this->rx_presented_frames_.fetch_add(1, std::memory_order_relaxed);
-        this->rx_refresh_completed_.fetch_add(1, std::memory_order_relaxed);
-#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
-        update_max(this->rx_refresh_max_ms_,
-                   millis() - presentation_started_ms);
-#endif
-      }
       if (!presented) {
         // A hidden page or failed presentation consumed no pixels. Release
         // only the surface observed above; never erase a newer publication.
@@ -501,8 +500,9 @@ bool P4VideoRenderer::present_surface_direct_(int index) {
     return false;
   }
   this->front_surface_.store(index, std::memory_order_release);
-  return this->direct_mipi_display_->present_frame_buffer_region(
-      native_x, native_y, output_width, output_height);
+  return this->direct_mipi_display_->present_buffer_region(
+      this->surfaces_[index], native_x, native_y, output_width,
+      output_height);
 #else
   if (index < 0 || index > 1 || this->direct_display_ == nullptr ||
       this->direct_display_ppa_ == nullptr ||
@@ -672,6 +672,23 @@ bool P4VideoRenderer::present_surface_direct_(int index) {
   return true;
 #endif
 }
+
+#ifdef USE_P4_VIDEO_RENDERER_H264
+bool P4VideoRenderer::commit_direct_surface_(int index) {
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
+  const uint32_t started_ms = millis();
+#endif
+  if (!this->present_surface_direct_(index))
+    return false;
+  this->surface_ever_presented_.store(true, std::memory_order_release);
+  this->rx_presented_frames_.fetch_add(1, std::memory_order_relaxed);
+  this->rx_refresh_completed_.fetch_add(1, std::memory_order_relaxed);
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
+  update_max(this->rx_refresh_max_ms_, millis() - started_ms);
+#endif
+  return true;
+}
+#endif
 #endif
 
 #ifdef USE_P4_VIDEO_RENDERER_JPEG
@@ -774,20 +791,15 @@ bool P4VideoRenderer::allocate_session_resources_() {
     this->free_unpublished_surfaces_();
     return false;
   }
-  uint8_t *frame_buffer = this->direct_mipi_display_->get_frame_buffer();
   const size_t surface_bytes =
       this->direct_mipi_display_->get_frame_buffer_size();
-  if (frame_buffer == nullptr || surface_bytes == 0) {
+  if (surface_bytes == 0) {
     this->free_codec_resources_();
     return false;
   }
-  this->surfaces_[0] = frame_buffer;
-  this->surfaces_[1] = frame_buffer;
-  this->surfaces_borrowed_ = true;
 #endif
 
   this->surface_capacity_bytes_ = surface_bytes;
-#ifndef USE_P4_VIDEO_RENDERER_H264
   for (size_t index = 0; index < 2; index++) {
     if (this->surfaces_[index] != nullptr)
       continue;
@@ -811,7 +823,6 @@ bool P4VideoRenderer::allocate_session_resources_() {
     this->surface_native_size_[index] = 0;
 #endif
   }
-#endif
   return true;
 }
 
@@ -1159,7 +1170,6 @@ bool P4VideoRenderer::decode_h264_access_unit_(const uint8_t *data, size_t size,
                                                bool key_frame,
                                                uint32_t session_generation,
                                                uint32_t loss_generation) {
-  p4_video_workload::Guard video_workload(p4_video_workload::Role::RX);
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   const uint32_t au_started_us = micros();
 #endif
@@ -1255,7 +1265,8 @@ bool P4VideoRenderer::decode_h264_access_unit_(const uint8_t *data, size_t size,
             ESP_H264_ERR_OK) {
       rendered = this->render_i420_(output.outbuf, output.out_size,
                                     static_cast<uint16_t>(resolution.width),
-                                    static_cast<uint16_t>(resolution.height)) ||
+                                    static_cast<uint16_t>(resolution.height),
+                                    session_generation) ||
                  rendered;
     }
   }
@@ -1580,7 +1591,8 @@ bool P4VideoRenderer::compute_h264_surface_geometry_(
 }
 
 bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
-                                   uint16_t width, uint16_t height) {
+                                   uint16_t width, uint16_t height,
+                                   uint32_t session_generation) {
   const size_t decoded_bytes = static_cast<size_t>(width) * height * 3 / 2;
   if (i420 == nullptr || !this->h264_resolution_fits_(width, height) ||
       size < decoded_bytes || this->optimized_yuv420_ == nullptr ||
@@ -1649,12 +1661,8 @@ bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
   config.in.yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601;
   config.out.buffer = this->surfaces_[output_index];
   config.out.buffer_size = this->surface_capacity_bytes_;
-  config.out.pic_w = static_cast<uint32_t>(
-      this->direct_mipi_display_->get_native_width());
-  config.out.pic_h = static_cast<uint32_t>(
-      this->direct_mipi_display_->get_native_height());
-  config.out.block_offset_x = geometry.native_x;
-  config.out.block_offset_y = geometry.native_y;
+  config.out.pic_w = geometry.surface_width;
+  config.out.pic_h = geometry.surface_height;
   config.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
   config.rotation_angle = rotation;
   const float scale =
@@ -1670,12 +1678,27 @@ bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
   update_max(this->rx_ppa_max_us_, micros() - ppa_started_us);
 #endif
   if (ppa_error != ESP_OK ||
-      !this->rx_active_.load(std::memory_order_acquire)) {
+      !this->rx_active_.load(std::memory_order_acquire) ||
+      session_generation !=
+          this->rx_session_generation_.load(std::memory_order_acquire)) {
+    return false;
+  }
+  xSemaphoreTake(this->presentation_mutex_, portMAX_DELAY);
+  if (!this->rx_active_.load(std::memory_order_acquire) ||
+      session_generation !=
+          this->rx_session_generation_.load(std::memory_order_acquire)) {
+    xSemaphoreGive(this->presentation_mutex_);
     return false;
   }
   this->prepare_surface_(output_index, geometry);
   this->pending_surface_.store(output_index, std::memory_order_release);
+  if (this->direct_page_active_.load(std::memory_order_acquire) &&
+      this->commit_direct_surface_(output_index)) {
+    xSemaphoreGive(this->presentation_mutex_);
+    return true;
+  }
   this->enable_loop_soon_any_context();
+  xSemaphoreGive(this->presentation_mutex_);
   return true;
 }
 #endif
@@ -1804,13 +1827,6 @@ void P4VideoRenderer::free_codec_resources_() {
 void P4VideoRenderer::free_unpublished_surfaces_() {
   if (this->surface_ever_presented_.load(std::memory_order_acquire))
     return;
-  if (this->surfaces_borrowed_) {
-    this->surfaces_[0] = nullptr;
-    this->surfaces_[1] = nullptr;
-    this->surfaces_borrowed_ = false;
-    this->surface_capacity_bytes_ = 0;
-    return;
-  }
   for (size_t index = 0; index < 2; index++) {
     if (this->surfaces_[index] != nullptr)
       heap_caps_free(this->surfaces_[index]);
@@ -1833,6 +1849,9 @@ void P4VideoRenderer::free_unpublished_surfaces_() {
 }
 
 void P4VideoRenderer::stop_video() {
+#ifdef USE_P4_VIDEO_RENDERER_H264
+  this->direct_page_active_.store(false, std::memory_order_release);
+#endif
   // Keep the large PSRAM buffers reserved across calls so esp_video can
   // recreate its MMAP queues in the same contiguous regions every time.
   this->set_video_active(false);
@@ -1862,11 +1881,7 @@ void P4VideoRenderer::stop_video() {
       TAG,
       "H.264 RX stats: admitted=%u rendered=%u rate_drop=%u "
       "busy_drop=%u dependency_drop=%u decode_drop=%u "
-      "geometry_drop=%u "
-      "presented=%u refresh_done=%u refresh_max_ms=%u "
-      "dec_max_us=%u convert_max_us=%u "
-      "ppa_max_us=%u present_ppa_max_us=%u "
-      "au_max_us=%u",
+      "geometry_drop=%u presented=%u refresh_done=%u",
       (unsigned)this->rx_admitted_frames_.load(std::memory_order_relaxed),
       (unsigned)this->rx_rendered_frames_.load(std::memory_order_relaxed),
       (unsigned)this->rx_rate_drops_.load(std::memory_order_relaxed),
@@ -1875,7 +1890,12 @@ void P4VideoRenderer::stop_video() {
       (unsigned)this->rx_decode_drops_.load(std::memory_order_relaxed),
       (unsigned)this->rx_geometry_drops_.load(std::memory_order_relaxed),
       (unsigned)this->rx_presented_frames_.load(std::memory_order_relaxed),
-      (unsigned)this->rx_refresh_completed_.load(std::memory_order_relaxed),
+      (unsigned)this->rx_refresh_completed_.load(std::memory_order_relaxed));
+  ESP_LOGI(
+      TAG,
+      "H.264 RX timing: refresh_max_ms=%u dec_max_us=%u "
+      "convert_max_us=%u ppa_max_us=%u present_ppa_max_us=%u "
+      "au_max_us=%u",
       (unsigned)this->rx_refresh_max_ms_.load(std::memory_order_relaxed),
       (unsigned)this->rx_h264_decode_max_us_.load(std::memory_order_relaxed),
       (unsigned)this->rx_i420_convert_max_us_.load(std::memory_order_relaxed),

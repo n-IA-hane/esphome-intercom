@@ -126,6 +126,9 @@ protected:
 #endif
 #ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
   bool present_surface_direct_(int index);
+#ifdef USE_P4_VIDEO_RENDERER_H264
+  bool commit_direct_surface_(int index);
+#endif
 #endif
 #if defined(USE_P4_VIDEO_RENDERER_JPEG) &&                                  \
     defined(USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY)
@@ -163,7 +166,7 @@ protected:
   bool compute_h264_surface_geometry_(uint16_t width, uint16_t height,
                                       H264SurfaceGeometry *geometry) const;
   bool render_i420_(const uint8_t *i420, size_t size, uint16_t width,
-                    uint16_t height);
+                    uint16_t height, uint32_t session_generation);
 #endif
   void free_codec_resources_();
   void free_unpublished_surfaces_();
@@ -251,7 +254,6 @@ protected:
 #endif
 #endif
   uint8_t *surfaces_[2]{nullptr, nullptr};
-  bool surfaces_borrowed_{false};
   size_t surface_capacity_bytes_{0};
   size_t surface_data_size_[2]{0, 0};
   uint16_t surface_stride_bytes_[2]{0, 0};
@@ -313,6 +315,9 @@ protected:
   std::atomic<bool> presentation_in_flight_{false};
   std::atomic<bool> surface_ever_presented_{false};
   std::atomic<bool> remote_frame_visible_{false};
+#ifdef USE_P4_VIDEO_RENDERER_H264
+  std::atomic<bool> direct_page_active_{false};
+#endif
   std::atomic<bool> video_ended_pending_{false};
   std::atomic<uint32_t> rx_admitted_frames_{0};
   std::atomic<uint32_t> rx_rendered_frames_{0};

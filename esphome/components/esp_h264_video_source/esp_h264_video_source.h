@@ -19,6 +19,7 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <freertos/task.h>
 
 namespace esphome::esp_h264_video_source {
 
@@ -83,6 +84,10 @@ class EspH264VideoSource
       const esp_video_camera::RawVideoFrame &frame, uint8_t *target);
   bool encode_frame_(const uint8_t *yuv, uint32_t timestamp_90khz,
                      bool publish, uint32_t generation = 0);
+  bool start_tx_task_();
+  bool stop_tx_task_();
+  static void tx_task_trampoline_(void *ctx);
+  void tx_task_();
 
   esp_video_camera::ESPVideoCamera *camera_{nullptr};
   uint16_t width_{400};
@@ -94,7 +99,14 @@ class EspH264VideoSource
 
   ppa_client_handle_t ppa_{nullptr};
   esp_h264_enc_handle_t encoder_{nullptr};
-  uint8_t *tx_yuv_{nullptr};
+  struct TxSlot {
+    uint8_t *yuv{nullptr};
+    std::atomic<uint8_t> state{0};
+    uint32_t timestamp_90khz{0};
+    uint32_t generation{0};
+    uint32_t sequence{0};
+  };
+  TxSlot tx_slots_[2]{};
   uint8_t *tx_encoded_{nullptr};
   std::string profile_level_id_;
   std::atomic<bool> encoder_ready_{false};
@@ -107,13 +119,23 @@ class EspH264VideoSource
 
   std::atomic<bool> tx_active_{false};
   std::atomic<uint32_t> tx_generation_{0};
+  std::atomic<bool> tx_task_running_{false};
+  TaskHandle_t tx_task_handle_{nullptr};
+  StaticTask_t tx_task_tcb_{};
+  StackType_t *tx_task_stack_{nullptr};
+  bool tx_task_with_caps_{false};
+  SemaphoreHandle_t tx_done_{nullptr};
+  StaticSemaphore_t tx_done_storage_{};
   // The generation value makes a key-frame request immune to a previous
   // call's in-flight encoder operation consuming it during rapid redial.
   std::atomic<uint32_t> force_idr_generation_{0};
   std::atomic<uint32_t> requested_bitrate_{400000};
   std::atomic<bool> timestamp_seen_{false};
   std::atomic<uint32_t> next_admit_timestamp_{0};
+  uint32_t next_tx_sequence_{0};
   std::atomic<uint32_t> raw_frames_{0};
+  std::atomic<uint32_t> queued_frames_{0};
+  std::atomic<uint32_t> queue_drops_{0};
   std::atomic<uint32_t> encoded_frames_{0};
 
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
