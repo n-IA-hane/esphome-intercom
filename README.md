@@ -554,8 +554,8 @@ interoperability work introduced in `2026.8.1-dev`:
   conference paths;
 - stabilized P4 bidirectional JPEG/H.264 negotiation, audio-first video
   upgrades, bounded presentation queues and post-call LVGL recovery;
-- exact candidate locks for all four repositories, firmware manifests and
-  release artifact promotion without rebuilding the qualified ZIP;
+- exact candidate locks for all four repositories, firmware manifests and a
+  deterministic HACS ZIP built, validated and published explicitly;
 - executable regression evidence for community interop fixes and post-call
   quiescence.
 

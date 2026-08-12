@@ -32,30 +32,18 @@ find custom_components/voip_stack/frontend -name '*.js' -print0 \
 
 ## Candidate qualification
 
-The GitHub `Qualification` workflow is the fail-closed product gate. It resolves
-the exact commits of `esphome-intercom`, `esphome-voip-stack`,
-`esphome-audio-stack` and `esphome-runtime-controller` before testing, records
-them in `candidate-lock.json`, and switches every maintained YAML to those
-local checkouts. No firmware build reads a moving remote component branch after
-the lock has been created.
+Qualification runs locally and never starts merely because a branch was
+pushed. The tools resolve the current commits of `esphome-intercom`,
+`esphome-voip-stack`, `esphome-audio-stack` and
+`esphome-runtime-controller`, record them in `candidate-lock.json`, and use
+local component checkouts for candidate firmware builds.
 
-Every push to `dev` selects the complete plan. The summary requires
-`software-full`, the real Home Assistant runtime, coverage, mutation, isolated
-peers, a real browser, firmware compilation and the selected S3/P4 hardware
-jobs. It also builds the deterministic HACS archive. The evidence records the
-exact commits resolved from the four `dev` branches, but maintained YAMLs stay
-readable and continue to reference `@dev` rather than embedding commit hashes.
-A failed, skipped or cancelled required job fails the summary.
-
-Pull requests execute only jobs hosted by GitHub. The `pull_request_target`
-trigger keeps the workflow definition on the trusted base branch, while the
-hosted jobs explicitly check out and test the pull request head with empty
-token permissions. The planner records live, browser-real and HIL jobs as
-skipped because they require a trusted runner, and does not claim scenarios
-that need those executors. Self-hosted live and HIL jobs run only for a trusted
-push to `dev`, a scheduled qualification or an explicit `workflow_dispatch`.
-The workflow also enforces this boundary on the jobs themselves, independently
-of the generated plan.
+The complete plan includes `software-full`, the real Home Assistant runtime,
+coverage, mutation, isolated peers, a real browser, firmware compilation and
+the selected S3/P4 hardware jobs. The maintained YAML files remain readable
+and reference the four `dev` branches. Test operators must record the resolved
+commits with the resulting evidence because GitHub does not run or preserve a
+qualification automatically.
 
 This software and compile gate still does not claim physical interoperability.
 A release candidate also needs the applicable live browser, SIP peer and ESP
@@ -79,10 +67,8 @@ HA_PYTHON=/path/to/ha/.venv/bin/python \
   ./scripts/run_peer_live_qualification.sh evidence/results
 ```
 
-Configure the GitHub Actions repository variable
-`VOIP_QUALIFICATION_POLICY_ENDPOINT_ID` for the hardware runner. The command
-fails before testing when the selection is absent. It never assumes the
-historical `default` endpoint.
+The command fails before testing when the selection is absent. It never assumes
+the historical `default` endpoint.
 
 The same peer-live command also executes the two explicit-extension precedence
 cases from `tools/inbound_routing_qualification.py`. Their separate JSON
@@ -131,11 +117,16 @@ an asset named exactly `voip_stack.zip`. Publish or backfill that flat asset
 before making the setting visible on the default branch; a differently named
 or nested ZIP is not a HACS release asset.
 
-`.github/workflows/release.yml` never rebuilds the public archive. It finds a
-successful Qualification run for the exact tag commit, downloads the archive
-created by that run and verifies its candidate ID, commit, size and SHA-256
-against the final qualification manifest. A tag without matching complete
-evidence cannot receive a release asset.
+GitHub does not build or test the project automatically. After completing the
+applicable local qualification, build and validate the archive locally, then
+upload that exact file explicitly when publishing a release:
+
+```bash
+./.venv/bin/python scripts/build_hacs_zip.py
+./.venv/bin/python -m zipfile -t voip_stack.zip
+sha256sum voip_stack.zip
+gh release upload <tag> voip_stack.zip
+```
 
 For a manual installation of this same flat archive, extract it into the
 integration directory rather than directly into `/config`:

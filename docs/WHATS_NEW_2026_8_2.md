@@ -47,14 +47,14 @@ TTS and Sendspin, while VoIP-only profiles remain smaller.
 
 ## Qualification and release custody
 
-Qualification records exact commits for intercom, VoIP stack, audio stack and
-runtime controller together with tool versions. It runs the required software,
-HA runtime, coverage, mutation, firmware, browser, external SIP peer and HIL
-jobs, then rejects missing, skipped, stale or foreign evidence.
+Local qualification records exact commits for intercom, VoIP stack, audio
+stack and runtime controller together with tool versions. Its tools cover
+software, HA runtime, coverage, mutation, firmware, browser, external SIP peer
+and HIL jobs without executing automatically on GitHub pushes.
 
-Every maintained firmware build records its config hash, binary hash and size
-metadata. A release promotes the exact ZIP produced by the successful
-qualification for the tag commit. It does not rebuild a look-alike archive.
+Every maintained firmware build can record its config hash, binary hash and
+size metadata. The release ZIP is built deterministically, validated locally
+and uploaded explicitly to the GitHub release for HACS.
 
 Real hardware evidence remains explicit. A green model, unit suite or firmware
 compile is never described as proof of physical audio, video or panel output.

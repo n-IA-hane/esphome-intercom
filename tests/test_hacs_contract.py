@@ -15,7 +15,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_ARCHIVE = ROOT / "scripts" / "build_hacs_zip.py"
-RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 ARCHIVE_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 ARCHIVE_MODE = stat.S_IFREG | 0o644
 
@@ -43,22 +42,6 @@ def test_hacs_and_manifest_names_match_current_domain() -> None:
     assert hacs["filename"] == "voip_stack.zip"
     assert manifest["domain"] == "voip_stack"
     assert manifest["name"] == "VoIP Stack"
-
-
-def test_release_workflow_promotes_the_exact_qualified_hacs_asset() -> None:
-    workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
-
-    assert "release:" in workflow
-    assert "types: [published]" in workflow
-    assert "workflow_dispatch:" in workflow
-    assert "contents: write" in workflow
-    assert "python scripts/build_hacs_zip.py" not in workflow
-    assert "scripts/verify_release_candidate.py" in workflow
-    assert 'qualification-summary-$TAG_SHA' in workflow
-    assert 'qualification-result-release-package-$TAG_SHA' in workflow
-    assert 'gh release upload "$RELEASE_TAG" voip_stack.zip' in workflow
-    assert "--clobber" in workflow
-    assert "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in workflow
 
 
 def _module_exists(module_parts: list[str], members: set[str]) -> bool:
