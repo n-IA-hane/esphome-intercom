@@ -849,6 +849,7 @@ def test_workflow_wires_fail_closed_qualification_chain() -> None:
     assert "if-no-files-found: error" in workflow
     assert "yaml_paths.sh --local" in workflow
     assert "scripts/run_peer_live_qualification.sh" in workflow
+    assert "evidence/results/wildix-trunk-dtmf.json" in workflow
     assert "VOIP_QUALIFICATION_POLICY_ENDPOINT_ID" in workflow
     assert "pull_request_target:" in workflow
     assert "\n  pull_request:\n" not in workflow

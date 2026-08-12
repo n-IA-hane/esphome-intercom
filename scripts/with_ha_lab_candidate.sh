@@ -11,6 +11,8 @@ candidate_package="$repo_root/qualification/home_assistant/voip_qualification.ya
 lock_file=${HA_LAB_LOCK_FILE:-${XDG_RUNTIME_DIR:-/tmp}/voip-ha-lab-v2.lock}
 session_name=${HA_LAB_TMUX_SESSION:-ha-voip-lab}
 ha_url=${HA_LAB_URL:-http://127.0.0.1:18123}
+sip_ready_host=${HA_LAB_SIP_READY_HOST:-127.0.0.1}
+sip_ready_port=${HA_LAB_SIP_READY_PORT:-15060}
 
 if [[ ${1:-} != -- || $# -lt 2 ]]; then
   echo "usage: $0 -- command [args...]" >&2
@@ -60,7 +62,10 @@ restart_ha() {
     "$lab_root/.venv/bin/hass -c $config_dir 2>&1 | tee -a $config_dir/home-assistant.log" \
     9>&-
   for _ in $(seq 1 120); do
-    curl -fsS "$ha_url/" >/dev/null 2>&1 && return 0
+    if curl -fsS "$ha_url/" >/dev/null 2>&1 && \
+      nc -z "$sip_ready_host" "$sip_ready_port" >/dev/null 2>&1; then
+      return 0
+    fi
     sleep 0.5
   done
   echo "Home Assistant lab did not become ready" >&2

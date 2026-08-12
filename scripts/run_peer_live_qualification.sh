@@ -38,3 +38,21 @@ SSL_CERT_FILE="$certificate_dir/server.crt" "$ha_python" \
   --server-cert "$certificate_dir/server.crt" \
   --server-key "$certificate_dir/server.key" \
   --out-dir "$evidence_root/sip-transport"
+
+# The isolated lab proves routing mechanics. This final witness proves the
+# public Wildix trunk and real ESP destination against this exact checkout.
+home_ha_url=${HOME_HA_URL:?HOME_HA_URL is required for the Wildix witness}
+home_ha_auth=${HOME_HA_AUTH_FILE:?HOME_HA_AUTH_FILE is required for the Wildix witness}
+wildix_config=${WILDIX_CONFIG:?WILDIX_CONFIG is required for the Wildix witness}
+p4_route_name=${P4_ROUTE_NAME:?P4_ROUTE_NAME is required for the Wildix witness}
+./tools/deploy_ha_voip_stack.sh
+HA_BASE="$home_ha_url" \
+HA_AUTH_FILE="$home_ha_auth" \
+WILDIX_CONFIG="$wildix_config" \
+VOIP_SECONDARY_EXTENSION="${P4_EXTENSION:-1000}" \
+VOIP_SECONDARY_CALLEE="$p4_route_name" \
+VOIP_SECONDARY_EXPECTED_STATE=ringing \
+  "$ha_python" tools/inbound_routing_qualification.py \
+    --only dtmf_secondary_extension_bypasses_automation \
+    --result-name wildix_trunk_dtmf_route_to_esp \
+    --out "$evidence_root/wildix-trunk-dtmf.json"

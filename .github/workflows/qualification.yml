@@ -409,6 +409,7 @@ jobs:
             artifacts=(
               --artifact evidence/results/peer-live.json
               --artifact evidence/results/dtmf-extension-precedence.json
+              --artifact evidence/results/wildix-trunk-dtmf.json
             )
           elif [ "$JOB" = browser-real ]; then
             artifacts=(

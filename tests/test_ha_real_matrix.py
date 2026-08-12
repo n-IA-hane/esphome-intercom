@@ -127,6 +127,7 @@ def test_lab_wrapper_stops_tmux_before_collecting_processes() -> None:
     assert source.index("tmux kill-session") < source.index("mapfile -t pids")
     assert "ps -eo pid=,comm=,args=" in source
     assert '$2 == "hass" || $2 ~ /^python/' in source
+    assert 'nc -z "$sip_ready_host" "$sip_ready_port"' in source
     assert 'kill -KILL "${pids[@]}"' in source
 
 
@@ -204,6 +205,8 @@ def test_peer_live_wrapper_requires_explicit_policy_endpoint(
     assert "requires an explicit policy endpoint" in completed.stdout
     wrapper = (ROOT / "scripts/run_peer_live_qualification.sh").read_text()
     assert '--policy-endpoint-id "$policy_endpoint_id"' in wrapper
+    assert "wildix_trunk_dtmf_route_to_esp" in wrapper
+    assert 'VOIP_SECONDARY_EXTENSION="${P4_EXTENSION:-1000}"' in wrapper
 
 
 def test_qualification_package_uses_public_selection_and_real_ring_delay() -> None:
