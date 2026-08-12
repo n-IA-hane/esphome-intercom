@@ -208,6 +208,11 @@ def _prepare_firmware(
     ]
     if not profile or len(matches) != 1:
         raise HilError(f"device {device_name} firmware profile is not unique")
+    if matches[0].get("installable") is not True:
+        source = str(matches[0].get("credential_source") or "unknown")
+        raise HilError(
+            f"profile {profile} is not installable, credential source is {source}"
+        )
     artifact_kind = str(config.get("artifact_kind") or "factory")
     if artifact_kind == "factory":
         artifact = matches[0].get("artifact")
@@ -241,6 +246,7 @@ def _prepare_firmware(
         "HIL_FIRMWARE_PROFILE": profile,
         "HIL_CANDIDATE_ID": candidate_id,
         "HIL_SOURCE_LOCK_SHA256": source_lock_sha256,
+        "HIL_FIRMWARE_INSTALLABLE": "true",
     }
     mode = config.get("mode")
     command = _command(config.get("command"), firmware_environment)

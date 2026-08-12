@@ -84,6 +84,8 @@ def _evidence(tmp_path: Path) -> dict[str, object]:
             "firmware": [
                 {
                     "profile": "waveshare-s3-full",
+                    "credential_source": "configured",
+                    "installable": True,
                     "artifact": {
                         "path": "firmware/waveshare-s3-full/firmware.factory.bin",
                         "sha256": hashlib.sha256(firmware.read_bytes()).hexdigest(),
@@ -273,6 +275,8 @@ def test_one_device_runs_required_scenarios_on_sequential_firmware_variants(
     evidence["firmware_manifest"]["firmware"].append(
         {
             "profile": "waveshare-s3-second",
+            "credential_source": "configured",
+            "installable": True,
             "artifact": {
                 "path": "firmware/waveshare-s3-second/firmware.factory.bin",
                 "sha256": hashlib.sha256(second_firmware.read_bytes()).hexdigest(),
@@ -393,6 +397,23 @@ def test_candidate_firmware_hash_mismatch_fails_before_scenario(tmp_path: Path) 
     evidence["firmware_manifest"]["firmware"][0]["artifact"]["sha256"] = "0" * 64
 
     with pytest.raises(HilError, match="candidate firmware hash mismatch"):
+        run_hil(
+            _plan("hil-s3"),
+            _hardware(tmp_path, scenario),
+            environment=dict(os.environ),
+            **evidence,
+        )
+
+
+def test_placeholder_credentials_firmware_is_never_installed(tmp_path: Path) -> None:
+    scenario = tmp_path / "scenario.py"
+    scenario.write_text("raise AssertionError('must not run')\n", encoding="utf-8")
+    evidence = _evidence(tmp_path)
+    firmware = evidence["firmware_manifest"]["firmware"][0]
+    firmware["credential_source"] = "placeholder"
+    firmware["installable"] = False
+
+    with pytest.raises(HilError, match="not installable.*placeholder"):
         run_hil(
             _plan("hil-s3"),
             _hardware(tmp_path, scenario),

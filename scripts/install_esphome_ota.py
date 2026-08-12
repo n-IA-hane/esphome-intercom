@@ -15,6 +15,10 @@ def main() -> int:
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", type=int, default=3232)
     args = parser.parse_args()
+    if os.environ.get("HIL_FIRMWARE_INSTALLABLE") != "true":
+        raise RuntimeError(
+            "refusing OTA image without an installable firmware attestation"
+        )
     firmware = Path(os.environ["HIL_FIRMWARE_PATH"])
     status, _address = run_ota(
         args.host,

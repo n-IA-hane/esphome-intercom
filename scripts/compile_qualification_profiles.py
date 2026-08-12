@@ -31,7 +31,7 @@ def _test_secrets(paths: list[Path]):
             secret.write_text(TEST_SECRETS, encoding="utf-8")
             created.append(secret)
     try:
-        yield
+        yield {secret.parent for secret in created}
     finally:
         for secret in created:
             secret.unlink()
@@ -55,7 +55,7 @@ def main() -> int:
         raise RuntimeError("qualification plan selected no firmware profiles")
     paths = [ROOT / profile.path for profile in profiles]
     staged: list[dict[str, object]] = []
-    with _test_secrets(paths):
+    with _test_secrets(paths) as placeholder_directories:
         for profile, path in zip(profiles, paths, strict=True):
             subprocess.run(
                 [str(ROOT / ".venv/bin/esphome"), "compile", str(path)],
@@ -103,6 +103,12 @@ def main() -> int:
                 {
                     **record,
                     "profile": profile.id,
+                    "credential_source": (
+                        "placeholder"
+                        if path.parent in placeholder_directories
+                        else "configured"
+                    ),
+                    "installable": path.parent not in placeholder_directories,
                     "artifacts": staged_artifacts,
                     "artifact": {
                         "path": str(target.relative_to(args.index.parent)),
