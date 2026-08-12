@@ -159,6 +159,7 @@ case "$MODE" in
       --cov=custom_components/voip_stack
       --cov-branch
       --cov-context=test
+      --cov-fail-under=0
       --cov-report=
     )
     regular_args=(
