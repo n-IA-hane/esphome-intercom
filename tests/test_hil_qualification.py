@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 import pytest
+import yaml
 
 from scripts.run_hil_qualification import HilError, _lab_lock, run_hil
 
@@ -203,6 +204,22 @@ def test_hardware_variant_can_install_attested_ota_artifact(tmp_path: Path) -> N
     assert artifact["jobs"]["hil-s3"]["firmware"][0]["sha256"] == hashlib.sha256(
         ota.read_bytes()
     ).hexdigest()
+
+
+def test_example_p4_variants_install_ota_artifacts() -> None:
+    root = Path(__file__).parents[1]
+    hardware = yaml.safe_load(
+        (root / "qualification/hardware-map.example.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    for variant in hardware["devices"]["p4"]["firmware_variants"]:
+        assert variant["artifact_kind"] == "ota"
+        assert variant["command"][:2] == [
+            ".venv/bin/python",
+            "scripts/install_esphome_ota.py",
+        ]
 
 
 def test_selected_hardware_job_does_not_execute_other_required_jobs(

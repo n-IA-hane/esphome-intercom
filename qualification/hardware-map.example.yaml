@@ -43,14 +43,13 @@ devices:
     doctor: [nc, -z, "${P4_HOST}", "${P4_API_PORT}"]
     firmware_variants:
       - profile: waveshare-p4-h264
+        artifact_kind: ota
         mode: install
         command:
-          - .venv/bin/esptool
-          - --port
-          - "${P4_SERIAL_PORT}"
-          - write-flash
-          - "0x0"
-          - "${HIL_FIRMWARE_PATH}"
+          - .venv/bin/python
+          - scripts/install_esphome_ota.py
+          - --host
+          - "${P4_HOST}"
         scenarios:
           p4-audio-to-bidirectional-video-reinvite:
             command:
@@ -81,14 +80,13 @@ devices:
               - --output
               - "${HIL_ARTIFACT_DIR}/p4-h264-reinvite/result.json"
       - profile: waveshare-p4-full-landscape
+        artifact_kind: ota
         mode: install
         command:
-          - .venv/bin/esptool
-          - --port
-          - "${P4_SERIAL_PORT}"
-          - write-flash
-          - "0x0"
-          - "${HIL_FIRMWARE_PATH}"
+          - .venv/bin/python
+          - scripts/install_esphome_ota.py
+          - --host
+          - "${P4_HOST}"
         scenarios:
           p4-full-landscape-jpeg-call-lifecycle:
             command:
