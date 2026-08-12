@@ -84,6 +84,11 @@ cleanup
 SINK_PID=
 .venv/bin/python scripts/run_answered_sipp_lab.py --quiescence-only >/dev/null
 while IFS= read -r -d '' artifact; do
-  mv -- "$artifact" "${artifact//:/_}"
-done < <(find "$CAPTURE_DIR" -type f -name '*:*' -print0)
+  directory=$(dirname "$artifact")
+  basename=$(basename "$artifact")
+  safe_basename=$(printf '%s' "$basename" | tr ':<>"|*?' '_______')
+  if [[ "$safe_basename" != "$basename" ]]; then
+    mv -- "$artifact" "$directory/$safe_basename"
+  fi
+done < <(find "$CAPTURE_DIR" -type f -print0)
 printf '%s\n' "lab_regression_gate=passed"
