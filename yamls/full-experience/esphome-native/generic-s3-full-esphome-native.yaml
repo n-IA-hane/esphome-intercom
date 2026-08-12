@@ -322,8 +322,12 @@ voice_assistant:
 # the shared speaker mixer at 48 kHz. HA owns the normal central phonebook and
 # pushes updates through the included API package.
 
+runtime_controller:
+  storage_in_psram: true
+
 voip_stack:
   task_stacks_in_psram: true
+  signaling_buffers_in_psram: true
   buffers_in_psram: true
   audio:
     tx:

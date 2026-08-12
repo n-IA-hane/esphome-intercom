@@ -36,12 +36,7 @@ P4_LANDSCAPE_FULL_AFE = (
 P4_FULL_JPEG_PACKAGE = ROOT / "packages" / "voip" / "p4_full_video_jpeg.yaml"
 HA_PHONE_PACKAGE = ROOT / "packages" / "voip" / "ha_phone.yaml"
 VOIP_ONLY_PACKAGE = ROOT / "packages" / "voip_only.yaml"
-P4_VIDEOPHONE_BASE = (
-    YAMLS
-    / "voip-only"
-    / "single-bus"
-    / "waveshare-p4-touch-videophone-base.yaml"
-)
+P4_VIDEOPHONE_BASE = ROOT / "packages" / "voip" / "waveshare_p4_touch_videophone_base.yaml"
 RINGTONE_ORCHESTRATION = ROOT / "packages" / "runtime" / "voip_ringtone_orchestration.yaml"
 RUNTIME_MEDIA_PLAYER = (
     ROOT
@@ -94,7 +89,7 @@ def test_physical_phone_presets_use_complete_ha_phone_package() -> None:
 
     assert "ha_phone: !include voip/ha_phone.yaml" in voip_only
     assert "ha_phone:" in p4_base
-    assert "packages/voip/ha_phone.yaml" in p4_base
+    assert "!include ha_phone.yaml" in p4_base
     for text in (voip_only, p4_base):
         assert "ha_integration:" not in text
         assert "ha_api:" not in text
@@ -329,12 +324,7 @@ def test_p4_sip_only_uses_espressif_hosted_video_receive_depths() -> None:
     assert 'CONFIG_WIFI_RMT_TX_BA_WIN: "32"' in board
     assert 'CONFIG_WIFI_RMT_RX_BA_WIN: "32"' in board
     assert 'CONFIG_LWIP_TCPIP_RECVMBOX_SIZE: "64"' in board
-    base = (
-        YAMLS
-        / "voip-only"
-        / "single-bus"
-        / "waveshare-p4-touch-videophone-base.yaml"
-    ).read_text()
+    base = P4_VIDEOPHONE_BASE.read_text()
     assert re.search(
         r"(?ms)^        - number\.set:\n"
         r"            id: master_volume\n"
@@ -394,9 +384,7 @@ def test_p4_codec_profiles_have_isolated_generated_builds() -> None:
 
 def test_p4_production_profiles_keep_video_debug_off_and_safe_mode_on() -> None:
     profile_dir = YAMLS / "voip-only" / "single-bus"
-    dedicated = (
-        profile_dir / "waveshare-p4-touch-videophone-base.yaml"
-    ).read_text()
+    dedicated = P4_VIDEOPHONE_BASE.read_text()
     full = P4_LANDSCAPE_FULL_AFE.read_text()
     full_jpeg = P4_FULL_JPEG_PACKAGE.read_text()
 
@@ -475,12 +463,7 @@ def test_p4_full_jpeg_video_page_has_dedicated_lifecycle() -> None:
 def test_p4_videophone_contact_navigation_waits_for_owner_callback() -> None:
     """The SIP owner publishes the new contact; UI actions must not read stale state."""
     ui = (ROOT / "packages" / "lvgl" / "p4_videophone_ui.yaml").read_text()
-    base = (
-        YAMLS
-        / "voip-only"
-        / "single-bus"
-        / "waveshare-p4-touch-videophone-base.yaml"
-    ).read_text()
+    base = P4_VIDEOPHONE_BASE.read_text()
 
     navigation = ui[ui.index("on_swipe_left:") : ui.index("id: videophone_call_button")]
     assert navigation.count("voip_stack.next_contact:") == 1

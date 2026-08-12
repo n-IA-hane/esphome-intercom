@@ -1,4 +1,4 @@
-# Waveshare ESP32-P4 Touch 10.1: common dedicated SIP videophone runtime.
+# Internal package for the Waveshare ESP32-P4 Touch 10.1 SIP videophone runtime.
 #
 # This target intentionally excludes Voice Assistant, micro_wake_word,
 # Sendspin, media_player, audio files and the full dashboard runtime. A thin
@@ -34,14 +34,14 @@ substitutions:
   p4_afe_fetch_task_priority: "18"
 
 packages:
-  hardware: !include ../../../packages/board/waveshare_p4_touch_10_1_videophone.yaml
-  ui: !include ../../../packages/lvgl/p4_videophone_ui.yaml
-  voip_entities: !include ../../../packages/voip/entities_full_duplex.yaml
-  call_settings: !include ../../../packages/voip/call_settings.yaml
-  ha_phone: !include ../../../packages/voip/ha_phone.yaml
-  transport: !include ../../../packages/voip/transport.yaml
-  speaker_mute: !include ../../../packages/voip/speaker_mute.yaml
-  audio_controls: !include ../../../packages/esp_audio_stack/controls.yaml
+  hardware: !include ../board/waveshare_p4_touch_10_1_videophone.yaml
+  ui: !include ../lvgl/p4_videophone_ui.yaml
+  voip_entities: !include entities_full_duplex.yaml
+  call_settings: !include call_settings.yaml
+  ha_phone: !include ha_phone.yaml
+  transport: !include transport.yaml
+  speaker_mute: !include speaker_mute.yaml
+  audio_controls: !include ../esp_audio_stack/controls.yaml
 
 esphome:
   name: ${name}

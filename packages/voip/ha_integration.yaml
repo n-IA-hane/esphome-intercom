@@ -69,3 +69,4 @@ switch:
       id: voip_conference_ring
       name: VoIP Ring On Conference
       icon: mdi:account-voice
+      restore_mode: RESTORE_DEFAULT_OFF

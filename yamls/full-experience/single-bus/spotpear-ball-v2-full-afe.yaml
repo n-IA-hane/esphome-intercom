@@ -551,6 +551,7 @@ voice_assistant:
 
 voip_stack:
   task_stacks_in_psram: true   # save ~28KB internal heap on S3 PSRAM builds by placing task stacks in PSRAM
+  signaling_buffers_in_psram: true
   buffers_in_psram: true # VoIP staging buffers in PSRAM; AEC/AFE buffers live in esp_audio_stack
   id: phone
   # Optional local dial-plan alias published to HA. Keep it unique across your
