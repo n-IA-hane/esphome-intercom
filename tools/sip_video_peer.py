@@ -151,6 +151,18 @@ VIDEO_PROFILES = {
 _PROCESS_STOP_TIMEOUT = 0.25
 
 AUDIO_PROFILES = {
+    "opus": {
+        "payload_type": 106,
+        "rtpmap": "OPUS/48000/2",
+        "encoding": "OPUS",
+        "ptime": 20,
+        "sample_rate": 48000,
+        "frame_samples": 960,
+        # RFC 6716 comfort-noise/silence frame. Keeping the peer silent makes
+        # returned P4 microphone continuity measurable without acoustic echo.
+        "silence": b"\xf8\xff\xfe",
+        "silence_only": True,
+    },
     "pcma": {
         "payload_type": 8,
         "rtpmap": "PCMA/8000",
@@ -336,7 +348,7 @@ def _request_headers(
 
 def _response_headers(request) -> list[tuple[str, str]]:
     return [
-        *(('Via', value) for value in request.header_values("Via")),
+        *(("Via", value) for value in request.header_values("Via")),
         ("From", request.header("From")),
         ("To", request.header("To")),
         ("Call-ID", request.header("Call-ID")),
@@ -499,20 +511,34 @@ async def _start_audio_sender(
         ]
     )
     command = [
-        shutil.which("ffmpeg") or "ffmpeg", "-hide_banner", "-loglevel", "warning",
-        "-nostdin", "-re", *input_args,
-        "-t", str(max(2.0, duration + 2.0)), "-vn",
+        shutil.which("ffmpeg") or "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-nostdin",
+        "-re",
+        *input_args,
+        "-t",
+        str(max(2.0, duration + 2.0)),
+        "-vn",
         # Keep the qualification source bounded without loudnorm's analysis
         # latency and batching. The sender below owns the RTP packet clock.
-        "-af", "volume=0.15",
-        "-ac", "1",
-        "-ar", str(profile["sample_rate"]),
-        "-c:a", str(profile["ffmpeg_codec"]),
-        "-f", str(profile["ffmpeg_format"]),
+        "-af",
+        "volume=0.15",
+        "-ac",
+        "1",
+        "-ar",
+        str(profile["sample_rate"]),
+        "-c:a",
+        str(profile["ffmpeg_codec"]),
+        "-f",
+        str(profile["ffmpeg_format"]),
         "pipe:1",
     ]
     return await asyncio.create_subprocess_exec(
-        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
 
 
@@ -746,7 +772,11 @@ async def _start_video_sender(
 
 
 async def _start_video_receiver(
-    *, codec: str, local_ip: str, local_port: int, output: str,
+    *,
+    codec: str,
+    local_ip: str,
+    local_port: int,
+    output: str,
 ):
     """Record the browser's returned RTP stream without sharing its SIP socket."""
     ffmpeg = shutil.which("ffmpeg")
@@ -768,11 +798,25 @@ async def _start_video_receiver(
     sdp_text = "\n".join(sdp_lines)
     return await asyncio.create_subprocess_exec(
         ffmpeg,
-        "-hide_banner", "-loglevel", "warning", "-nostdin",
-        "-protocol_whitelist", "pipe,udp,rtp",
-        "-f", "sdp", "-i", "pipe:0",
-        "-an", "-c:v", "copy", "-f", "h264", "-flush_packets", "1",
-        "-y", output,
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-nostdin",
+        "-protocol_whitelist",
+        "pipe,udp,rtp",
+        "-f",
+        "sdp",
+        "-i",
+        "pipe:0",
+        "-an",
+        "-c:v",
+        "copy",
+        "-f",
+        "h264",
+        "-flush_packets",
+        "1",
+        "-y",
+        output,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
@@ -785,9 +829,7 @@ async def async_main(args: argparse.Namespace) -> int:
     remove_video_mid_dialog = args.remove_video_after >= 0
     readd_video_mid_dialog = args.readd_video_after >= 0
     if (
-        add_video_mid_dialog
-        or remove_video_mid_dialog
-        or readd_video_mid_dialog
+        add_video_mid_dialog or remove_video_mid_dialog or readd_video_mid_dialog
     ) and args.codec == "audio":
         raise ValueError("video re-INVITE qualification requires a video codec")
     initial_codec = "audio" if add_video_mid_dialog else args.codec
@@ -920,9 +962,7 @@ async def async_main(args: argparse.Namespace) -> int:
             result["video_receiver_returncode"] = receiver.returncode
             result["video_rx_file"] = args.video_rx_file
             if video_receiver_stderr:
-                result["video_receiver_stderr_tail"] = list(
-                    video_receiver_stderr
-                )
+                result["video_receiver_stderr_tail"] = list(video_receiver_stderr)
         video_receiver_process = None
         if jpeg_recorder is not None:
             jpeg_recorder.close(result)
@@ -940,7 +980,10 @@ async def async_main(args: argparse.Namespace) -> int:
                     # OK on the same event-loop turn.
                     raw, _addr = await loop.sock_recvfrom(sip_socket, 65535)
                     message = sip.parse_message(raw)
-                    if message.status_code is None or message.header("Call-ID") != call_id:
+                    if (
+                        message.status_code is None
+                        or message.header("Call-ID") != call_id
+                    ):
                         continue
                     result["sip_statuses"].append(int(message.status_code))
                     print(f"SIP {message.status_code} {message.reason}", flush=True)
@@ -1072,29 +1115,49 @@ async def async_main(args: argparse.Namespace) -> int:
                 result["connected_identity_uri"] = ""
             return True
 
-        audio_destination = (str(answer_audio["connection_ip"]), int(answer_audio["media_port"]))
-        audio_process = await _start_audio_sender(
-            args.audio_file,
-            args.duration,
-            audio_codec=args.audio_codec,
+        audio_destination = (
+            str(answer_audio["connection_ip"]),
+            int(answer_audio["media_port"]),
         )
-        tasks = [
-            asyncio.create_task(
-                _send_audio_process(
-                    audio_process,
-                    audio_socket,
-                    audio_destination,
-                    stopped,
-                    result,
-                    payload_type=selected_audio.payload_type,
-                    frame_samples=int(audio_profile["frame_samples"]),
-                    frame_bytes=int(audio_profile["frame_bytes"]),
-                    frame_ms=int(audio_profile["ptime"]),
-                )
-            ),
-            asyncio.create_task(_receive_audio(audio_socket, stopped, result)),
-            asyncio.create_task(_drain_stderr(audio_process, audio_stderr)),
-        ]
+        if audio_profile.get("silence_only"):
+            tasks = [
+                asyncio.create_task(
+                    _send_audio_silence(
+                        audio_socket,
+                        audio_destination,
+                        stopped,
+                        result,
+                        payload_type=selected_audio.payload_type,
+                        frame_samples=int(audio_profile["frame_samples"]),
+                        payload=bytes(audio_profile["silence"]),
+                    )
+                ),
+                asyncio.create_task(_receive_audio(audio_socket, stopped, result)),
+            ]
+        else:
+            audio_process = await _start_audio_sender(
+                args.audio_file,
+                args.duration,
+                audio_codec=args.audio_codec,
+            )
+            tasks = [
+                asyncio.create_task(
+                    _send_audio_process(
+                        audio_process,
+                        audio_socket,
+                        audio_destination,
+                        stopped,
+                        result,
+                        payload_type=selected_audio.payload_type,
+                        frame_samples=int(audio_profile["frame_samples"]),
+                        frame_bytes=int(audio_profile["frame_bytes"]),
+                        frame_ms=int(audio_profile["ptime"]),
+                    )
+                ),
+                asyncio.create_task(_receive_audio(audio_socket, stopped, result)),
+                asyncio.create_task(_drain_stderr(audio_process, audio_stderr)),
+            ]
+
         async def _start_negotiated_video(
             parsed: dict | None,
             direction: str,
@@ -1162,9 +1225,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     video_file=args.video_file,
                 )
                 video_tasks.append(
-                    asyncio.create_task(
-                        _drain_stderr(video_process, video_stderr)
-                    )
+                    asyncio.create_task(_drain_stderr(video_process, video_stderr))
                 )
 
         await _start_negotiated_video(parsed_video, initial_video_direction)
@@ -1276,9 +1337,7 @@ async def async_main(args: argparse.Namespace) -> int:
             )
             await loop.sock_sendto(sip_socket, ack, (args.host, args.port))
             next_cseq += 1
-            expected = (
-                int(args.expect_reinvite_status or 0) if active else 200
-            )
+            expected = int(args.expect_reinvite_status or 0) if active else 200
             if expected and int(final_response.status_code) != expected:
                 raise RuntimeError(
                     "unexpected re-INVITE response: "
@@ -1315,9 +1374,7 @@ async def async_main(args: argparse.Namespace) -> int:
                 result[f"{prefix}_video_direction"] = "inactive"
                 result[f"{prefix}_remote_video_rtp"] = 0
                 if not args.allow_audio_only:
-                    raise RuntimeError(
-                        "HA accepted the re-INVITE without active video"
-                    )
+                    raise RuntimeError("HA accepted the re-INVITE without active video")
                 return
             selected = formats[0]
             result[f"{prefix}_negotiated_video"] = selected.wire_token()
@@ -1537,19 +1594,15 @@ async def async_main(args: argparse.Namespace) -> int:
                             )
                             remote_bye = True
                             continue
-                        if (
-                            message.status_code is not None
-                            and message.header("CSeq").upper().endswith(" BYE")
-                        ):
-                            result["bye_response_status"] = int(
-                                message.status_code
-                            )
+                        if message.status_code is not None and message.header(
+                            "CSeq"
+                        ).upper().endswith(" BYE"):
+                            result["bye_response_status"] = int(message.status_code)
             except TimeoutError as err:
                 raise TimeoutError("SIP BYE was not acknowledged") from err
             if not 200 <= int(result["bye_response_status"]) < 300:
                 raise RuntimeError(
-                    "SIP BYE failed: "
-                    f"{result['bye_response_status']} {message.reason}"
+                    f"SIP BYE failed: {result['bye_response_status']} {message.reason}"
                 )
         if not reinvite_done:
             raise RuntimeError("call ended before the video re-INVITE was sent")
@@ -1558,7 +1611,9 @@ async def async_main(args: argparse.Namespace) -> int:
         if not readd_video_done:
             raise RuntimeError("call ended before video was added again")
         if not hold_done or not resume_done:
-            raise RuntimeError("call ended before the audio hold/resume cycle completed")
+            raise RuntimeError(
+                "call ended before the audio hold/resume cycle completed"
+            )
         if result["audio_tx_packets"] <= 0 or result["audio_rx_packets"] <= 0:
             raise RuntimeError(
                 "established dialog did not retain bidirectional audio RTP"
@@ -1676,7 +1731,9 @@ def main() -> int:
         default="pcma",
         help="audio wire profile used by the simulated SIP peer",
     )
-    parser.add_argument("--codec", choices=("audio", *sorted(VIDEO_PROFILES)), required=True)
+    parser.add_argument(
+        "--codec", choices=("audio", *sorted(VIDEO_PROFILES)), required=True
+    )
     parser.add_argument(
         "--direction",
         choices=("sendonly", "recvonly", "sendrecv"),
@@ -1725,17 +1782,14 @@ def main() -> int:
         type=float,
         default=-1,
         help=(
-            "remove video with an m=video 0 in-dialog re-INVITE after this "
-            "many seconds"
+            "remove video with an m=video 0 in-dialog re-INVITE after this many seconds"
         ),
     )
     parser.add_argument(
         "--readd-video-after",
         type=float,
         default=-1,
-        help=(
-            "add video again after a prior --remove-video-after transition"
-        ),
+        help=("add video again after a prior --remove-video-after transition"),
     )
     parser.add_argument(
         "--audio-hold-after",
@@ -1753,12 +1807,16 @@ def main() -> int:
     parser.add_argument(
         "--audio-file",
         default="",
-        help="optional looping audio source; defaults to a generated 440 Hz qualification tone",
+        help=(
+            "optional looping audio source; defaults to a generated 440 Hz tone "
+            "for PCM profiles and codec-native silence for Opus"
+        ),
     )
     parser.add_argument("--video-file", default="")
     parser.add_argument("--video-fps", type=int, choices=range(1, 31), default=15)
     parser.add_argument(
-        "--video-rx-file", default="",
+        "--video-rx-file",
+        default="",
         help="record video returned by the HA browser to this media file",
     )
     parser.add_argument("--out", default="/tmp/sip_video_peer.json")
@@ -1773,9 +1831,9 @@ def main() -> int:
         )
         if value >= 0
     ]
-    if transition_times != sorted(transition_times) or len(
-        transition_times
-    ) != len(set(transition_times)):
+    if transition_times != sorted(transition_times) or len(transition_times) != len(
+        set(transition_times)
+    ):
         parser.error("video transition times must be strictly increasing")
     if any(value >= args.duration for value in transition_times):
         parser.error("video transitions must occur before --duration")
@@ -1797,9 +1855,13 @@ def main() -> int:
         or args.add_video_after >= 0
         or args.activate_video_after >= 0
     ):
-        parser.error("audio hold qualification requires --codec audio without video re-INVITE")
+        parser.error(
+            "audio hold qualification requires --codec audio without video re-INVITE"
+        )
     if args.audio_hold_seconds <= 0:
         parser.error("--audio-hold-seconds must be greater than zero")
+    if args.audio_file and AUDIO_PROFILES[args.audio_codec].get("silence_only"):
+        parser.error("--audio-file is not supported by the Opus silence profile")
     try:
         return asyncio.run(async_main(args))
     except KeyboardInterrupt:

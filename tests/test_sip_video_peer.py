@@ -168,6 +168,28 @@ def test_audio_hold_mode_rejects_video_qualification() -> None:
     assert "audio hold qualification requires --codec audio" in completed.stderr
 
 
+def test_opus_audio_file_fails_closed_instead_of_sending_silence() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(TOOL),
+            "--codec",
+            "audio",
+            "--audio-codec",
+            "opus",
+            "--audio-file",
+            "tone.wav",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "Opus silence profile" in completed.stderr
+
+
 def test_softphone_matrix_uses_the_public_device_selector() -> None:
     source = SOFTPHONE_MATRIX.read_text()
 
