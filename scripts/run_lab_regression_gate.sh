@@ -27,9 +27,9 @@ fi
 
 printf 'candidate=%s\n' "$(git rev-parse HEAD)"
 
-.venv/bin/python scripts/run_answered_sipp_lab.py
+.venv/bin/python scripts/run_answered_sipp_lab.py --out-dir "$CAPTURE_DIR/answered"
 .venv/bin/python scripts/check_live_qualification.py \
-  test_captures/sipp-answered-lab/summary.json \
+  "$CAPTURE_DIR/answered/summary.json" \
   --require caller_bye \
   --require callee_bye
 

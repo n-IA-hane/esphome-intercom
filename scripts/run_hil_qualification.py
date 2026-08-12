@@ -407,7 +407,8 @@ def run_hil(
     snapshot_command = _command(snapshot.get("command"), environment)
     interval = float(snapshot.get("interval_seconds", 0.25))
     timeout = float(snapshot.get("timeout_seconds", 8))
-    if interval <= 0 or timeout <= 0:
+    firmware_timeout = float(hardware.get("firmware_timeout_seconds", 180))
+    if interval <= 0 or timeout <= 0 or firmware_timeout <= 0:
         raise HilError("snapshot timing must be positive")
 
     with _lab_lock(Path(_expand(lock_value, environment))):
@@ -465,7 +466,7 @@ def run_hil(
                     source_lock_sha256=source_lock_sha256,
                     firmware_root=firmware_root,
                     environment=child_environment,
-                    timeout=timeout,
+                    timeout=firmware_timeout,
                 )
                 firmwares.append(firmware)
                 doctor = subprocess.run(

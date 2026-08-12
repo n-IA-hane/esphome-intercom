@@ -36,6 +36,7 @@ def _hardware(tmp_path: Path, scenario: Path) -> dict[str, object]:
     return {
         "schema_version": 1,
         "lock_file": str(tmp_path / "lab.lock"),
+        "firmware_timeout_seconds": 30,
         "snapshot": {
             "command": [sys.executable, str(snapshot)],
             "interval_seconds": 0.01,
@@ -113,6 +114,21 @@ def test_required_hardware_without_device_fails_closed(tmp_path: Path) -> None:
     }
 
     with pytest.raises(HilError, match="exactly one enabled device"):
+        run_hil(
+            _plan("hil-s3"),
+            hardware,
+            environment=dict(os.environ),
+            **_evidence(tmp_path),
+        )
+
+
+def test_non_positive_firmware_timeout_fails_closed(tmp_path: Path) -> None:
+    scenario = tmp_path / "scenario.py"
+    scenario.write_text("pass\n", encoding="utf-8")
+    hardware = _hardware(tmp_path, scenario)
+    hardware["firmware_timeout_seconds"] = 0
+
+    with pytest.raises(HilError, match="snapshot timing must be positive"):
         run_hil(
             _plan("hil-s3"),
             hardware,

@@ -1,5 +1,6 @@
 schema_version: 1
 lock_file: "${XDG_RUNTIME_DIR}/voip-hardware-lab.lock"
+firmware_timeout_seconds: 180
 snapshot:
   command:
     - .venv/bin/python
@@ -44,7 +45,7 @@ devices:
       - profile: waveshare-p4-h264
         mode: install
         command:
-          - esptool
+          - .venv/bin/esptool
           - --port
           - "${P4_SERIAL_PORT}"
           - write-flash
@@ -82,7 +83,7 @@ devices:
       - profile: waveshare-p4-full-landscape
         mode: install
         command:
-          - esptool
+          - .venv/bin/esptool
           - --port
           - "${P4_SERIAL_PORT}"
           - write-flash
