@@ -5,6 +5,9 @@
 # source, hardware decoder and direct DSI presentation without a second camera
 # pipeline or software image conversion.
 
+packages:
+  video_entities: !include video_entities.yaml
+
 substitutions:
   # Keep the native square camera envelope. The P4 hardware path performs the
   # rotation and JPEG work without a software image conversion.

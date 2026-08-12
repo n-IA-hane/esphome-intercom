@@ -276,6 +276,9 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     assert "id(p4_video)" in video
     assert "video_send_switch" not in text
     assert "ui_video_send_sw" not in text
+    video_entities = (ROOT / "packages/voip/video_entities.yaml").read_text()
+    assert "video_send:" in video_entities
+    assert "restore_mode: RESTORE_DEFAULT_ON" in video_entities
     assert re.search(
         r"(?ms)^esp_video_camera:\n"
         r".*?^  id: p4_camera\n"

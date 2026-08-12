@@ -3,6 +3,9 @@
 # Do not include this together with the JPEG package. Camera TX uses the P4
 # hardware encoder; RX uses Espressif's software decoder and PPA.
 
+packages:
+  video_entities: !include video_entities.yaml
+
 substitutions:
   # Keep the sensor/ISP in its native 800x800 mode and let PPA scale the full
   # field of view to the square 400x400 encoder input in hardware.

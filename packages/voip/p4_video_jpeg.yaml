@@ -3,6 +3,9 @@
 # Do not include this together with the H.264 package. Only the selected
 # source, decoder and voip_stack codec are emitted into the firmware.
 
+packages:
+  video_entities: !include video_entities.yaml
+
 substitutions:
   p4_video_width: "800"
   p4_video_height: "800"

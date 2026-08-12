@@ -103,7 +103,11 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     async with HaWs(args.ha_url, token, insecure=args.insecure) as ws:
         async with EspApi(spec, capture_info_logs=True) as esp:
             video_switch = next(
-                (name for name in esp.entities if name.endswith("video_send")),
+                (
+                    name
+                    for name in esp.entities
+                    if name in {"send_video", "video_send"}
+                ),
                 "",
             )
             if not video_switch:

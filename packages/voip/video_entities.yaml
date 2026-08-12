@@ -1,0 +1,8 @@
+# Controls compiled only for endpoints that include a native video pipeline.
+
+switch:
+  - platform: voip_stack
+    voip_stack_id: phone
+    video_send:
+      name: Send Video
+      restore_mode: RESTORE_DEFAULT_ON
