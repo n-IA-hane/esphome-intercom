@@ -12,5 +12,5 @@
   "loggers": ["custom_components.voip_stack"],
   "requirements": ["dnspython==2.8.0"],
   "single_config_entry": true,
-  "version": "2026.8.1-dev"
+  "version": "2026.8.2-dev"
 }
