@@ -290,7 +290,8 @@ jobs:
           rsync -a workspace/esphome-runtime-controller/ "$build_root/esphome-runtime-controller/"
           cd "$build_root/esphome-intercom"
           python -m venv .venv
-          .venv/bin/pip install -r requirements-test.txt -r requirements-firmware-test.txt
+          .venv/bin/pip install -r requirements-test.txt
+          .venv/bin/pip install -r requirements-firmware-test.txt
           ./scripts/yaml_paths.sh --local
           .venv/bin/python scripts/run_qualification_command.py \
             --job firmware \
@@ -356,7 +357,7 @@ jobs:
             --candidate evidence/input/candidate-lock.json \
             --evidence-root evidence/results \
             -- bash -lc \
-              "cd '$RUNNER_TEMP/mutation-worktree' && ulimit -c 0 && .venv/bin/python -m mutmut run && .venv/bin/python -m mutmut export-cicd-stats && .venv/bin/python scripts/check_mutation_score.py mutants/mutmut-cicd-stats.json"
+              "cd '$RUNNER_TEMP/mutation-worktree' && HA_PYTHON=.venv/bin/python ./scripts/test_suite.sh mutation"
       - name: Upload mutation evidence
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
@@ -459,7 +460,8 @@ jobs:
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         run: |
           python -m venv .venv
-          .venv/bin/pip install -r requirements-test.txt -r requirements-firmware-test.txt
+          .venv/bin/pip install -r requirements-test.txt
+          .venv/bin/pip install -r requirements-firmware-test.txt
       - name: Execute ${{ matrix.job }}
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         env:
