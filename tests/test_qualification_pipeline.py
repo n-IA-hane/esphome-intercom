@@ -23,6 +23,14 @@ from scripts.record_qualification_result import build_result
 from scripts.verify_qualification import verify
 
 
+def test_regular_environment_contains_live_websocket_client() -> None:
+    requirements = (
+        Path(__file__).parents[1] / "requirements-test.txt"
+    ).read_text(encoding="utf-8")
+
+    assert "websockets==17.0" in requirements.splitlines()
+
+
 def _candidate(head: str) -> dict[str, object]:
     payload = {
         "schema_version": 1,
