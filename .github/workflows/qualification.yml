@@ -1,7 +1,9 @@
 name: Qualification
 
 on:
-  pull_request:
+  # The definition stays on the trusted base branch. Hosted jobs still test
+  # the pull request head with no token permissions.
+  pull_request_target:
   push:
     branches: [dev]
   workflow_dispatch:
@@ -30,6 +32,7 @@ jobs:
       - name: Check out intercom candidate
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: workspace/esphome-intercom
           fetch-depth: 0
           persist-credentials: false
@@ -77,7 +80,7 @@ jobs:
           .venv/bin/python scripts/candidate_lock.py \
             --ha-python .ha-venv/bin/python \
             --output evidence/candidate-lock.json
-          if [ "$EVENT_NAME" = pull_request ]; then
+          if [ "$EVENT_NAME" = pull_request_target ]; then
             base=$PR_BASE
             event=pull-request
             full=
@@ -95,7 +98,7 @@ jobs:
             full=--full
           fi
           .venv/bin/python scripts/qualification_plan.py \
-            --base "$base" --head "$GITHUB_SHA" --event "$event" $full \
+            --base "$base" --head "${{ github.event.pull_request.head.sha || github.sha }}" --event "$event" $full \
             --output evidence/qualification-plan.json
           .venv/bin/python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -111,7 +114,7 @@ jobs:
       - name: Upload immutable qualification inputs
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
-          name: qualification-input-${{ github.sha }}
+          name: qualification-input-${{ github.event.pull_request.head.sha || github.sha }}
           path: workspace/esphome-intercom/evidence/
           if-no-files-found: error
 
@@ -126,6 +129,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: workspace/esphome-intercom
           fetch-depth: 0
           persist-credentials: false
@@ -140,7 +144,7 @@ jobs:
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         with:
-          name: qualification-input-${{ github.sha }}
+          name: qualification-input-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/input
       - name: Resolve C++ contract source
         if: matrix.job == 'cpp-contract' && contains(needs.plan.outputs.required_jobs, '"cpp-contract"')
@@ -220,7 +224,7 @@ jobs:
         if: always() && contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
-          name: qualification-result-${{ matrix.job }}-${{ github.sha }}
+          name: qualification-result-${{ matrix.job }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/results/
           if-no-files-found: error
 
@@ -232,6 +236,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: workspace/esphome-intercom
           fetch-depth: 0
           persist-credentials: false
@@ -240,7 +245,7 @@ jobs:
           python-version: "3.14.2"
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          name: qualification-input-${{ github.sha }}
+          name: qualification-input-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/input
       - name: Check out exact dependency commits
         id: refs
@@ -305,13 +310,13 @@ jobs:
             --artifact "$GITHUB_WORKSPACE/evidence/results/firmware.log" \
             --artifact "$GITHUB_WORKSPACE/evidence/results/firmware-manifest.json" \
             --root "$GITHUB_WORKSPACE/evidence/results" \
-            --plan-id "$plan_id" --candidate-id "$candidate_id" --head "$GITHUB_SHA" \
+            --plan-id "$plan_id" --candidate-id "$candidate_id" --head "${{ github.event.pull_request.head.sha || github.sha }}" \
             --output "$GITHUB_WORKSPACE/evidence/results/result-firmware.json"
       - name: Upload firmware evidence
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
-          name: qualification-result-firmware-${{ github.sha }}
+          name: qualification-result-firmware-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/results/
           if-no-files-found: error
 
@@ -323,6 +328,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
@@ -330,7 +336,7 @@ jobs:
           python-version: "3.14.2"
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          name: qualification-input-${{ github.sha }}
+          name: qualification-input-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/input
       - name: Create disposable mutation checkout
         run: |
@@ -351,13 +357,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
-          name: qualification-result-mutation-${{ github.sha }}
+          name: qualification-result-mutation-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/results/
           if-no-files-found: error
 
   live:
     needs: plan
-    if: contains(needs.plan.outputs.required_jobs, '"peer-live"') || contains(needs.plan.outputs.required_jobs, '"browser-real"')
+    if: github.event_name != 'pull_request_target' && (contains(needs.plan.outputs.required_jobs, '"peer-live"') || contains(needs.plan.outputs.required_jobs, '"browser-real"'))
     runs-on: [self-hosted, voip-lab]
     strategy:
       fail-fast: false
@@ -367,12 +373,13 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         with:
-          name: qualification-input-${{ github.sha }}
+          name: qualification-input-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/input
       - name: Prepare qualification environment
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
@@ -415,13 +422,13 @@ jobs:
         if: always() && contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
-          name: qualification-result-${{ matrix.job }}-${{ github.sha }}
+          name: qualification-result-${{ matrix.job }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/results/
           if-no-files-found: error
 
   hil:
     needs: [plan, firmware]
-    if: contains(needs.plan.outputs.required_jobs, '"hil-s3"') || contains(needs.plan.outputs.required_jobs, '"hil-p4"')
+    if: github.event_name != 'pull_request_target' && (contains(needs.plan.outputs.required_jobs, '"hil-s3"') || contains(needs.plan.outputs.required_jobs, '"hil-p4"'))
     runs-on: [self-hosted, voip-lab]
     strategy:
       fail-fast: false
@@ -431,17 +438,18 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         with:
-          name: qualification-input-${{ github.sha }}
+          name: qualification-input-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/input
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         with:
-          name: qualification-result-firmware-${{ github.sha }}
+          name: qualification-result-firmware-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/firmware-input
       - name: Prepare qualification environment
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
@@ -476,7 +484,7 @@ jobs:
         if: always() && contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
-          name: qualification-result-${{ matrix.job }}-${{ github.sha }}
+          name: qualification-result-${{ matrix.job }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/results/
           if-no-files-found: error
 
@@ -487,14 +495,15 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          name: qualification-input-${{ github.sha }}
+          name: qualification-input-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/input
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          pattern: qualification-result-*-${{ github.sha }}
+          pattern: qualification-result-*-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/results
           merge-multiple: true
       - name: Verify complete candidate evidence
@@ -514,7 +523,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
-          name: qualification-summary-${{ github.sha }}
+          name: qualification-summary-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/
           if-no-files-found: error
       - name: Enforce qualification result

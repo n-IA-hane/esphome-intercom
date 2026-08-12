@@ -79,10 +79,12 @@ def test_ha_service_surface_requires_real_ha_without_hardware() -> None:
     assert plan["areas"] == ["ha_surface"]
     assert plan["required_jobs"] == [
         "ha-runtime",
-        "peer-live",
         "software-full",
         "static",
     ]
+    assert plan["skipped_jobs"]["peer-live"] == (
+        "requires trusted push to dev or workflow dispatch"
+    )
     assert plan["firmware_profiles"] == []
 
 
@@ -95,27 +97,20 @@ def test_lifecycle_change_requires_real_qualification() -> None:
         event="pull-request",
     )
 
-    assert set(plan["required_jobs"]) >= {
-        "software-full",
-        "ha-runtime",
-        "peer-live",
-        "firmware",
-        "hil-s3",
-    }
+    assert set(plan["required_jobs"]) >= {"software-full", "ha-runtime", "firmware"}
+    assert not set(plan["required_jobs"]).intersection(
+        {"peer-live", "browser-real", "hil-s3", "hil-p4"}
+    )
     assert "waveshare-s3-full" in {
         profile["id"] for profile in plan["firmware_profiles"]
     }
-    assert any(
+    assert not any(
         scenario["id"] == "registered-sip-to-esp-bidirectional-hangup"
         for scenario in plan["scenarios"]
     )
-    assert "browser-real" in plan["required_jobs"]
     assert {record["id"] for record in plan["regressions"]} == {
         "issue-85",
-        "issue-88",
-        "issue-93",
         "issue-94",
-        "issue-95",
     }
 
 
@@ -191,7 +186,7 @@ def test_hil_evidence_requires_exact_passed_scenario_and_quiescence(
         base="base",
         head="head",
         full=False,
-        event="pull-request",
+        event="manual",
     )
     artifact = tmp_path / "hil-s3.json"
     artifact.write_text(
@@ -251,7 +246,7 @@ def test_browser_evidence_rejects_a_failed_real_matrix(tmp_path: Path) -> None:
         base="base",
         head="head",
         full=False,
-        event="pull-request",
+        event="manual",
     )
     artifact = tmp_path / "browser-matrix.json"
     artifact.write_text(
@@ -275,7 +270,7 @@ def test_peer_evidence_requires_exact_live_matrix_scenario_ids(
         base="base",
         head="head",
         full=False,
-        event="pull-request",
+        event="manual",
     )
     matrix = tmp_path / "peer-live.json"
     matrix.write_text(
@@ -383,6 +378,23 @@ def test_push_to_dev_selects_complete_firmware_matrix() -> None:
     assert {profile["id"] for profile in plan["firmware_profiles"]} == {
         profile.id for profile in FIRMWARE_PROFILES
     }
+    assert {"peer-live", "browser-real", "hil-s3", "hil-p4"}.issubset(
+        plan["required_jobs"]
+    )
+
+
+def test_manual_full_plan_keeps_trusted_runner_jobs() -> None:
+    plan = build_plan(
+        ["README.md"],
+        base="base",
+        head="head",
+        full=True,
+        event="manual",
+    )
+
+    assert {"peer-live", "browser-real", "hil-s3", "hil-p4"}.issubset(
+        plan["required_jobs"]
+    )
 
 
 def test_unknown_path_fails_closed_to_full_plan() -> None:
@@ -838,6 +850,17 @@ def test_workflow_wires_fail_closed_qualification_chain() -> None:
     assert "yaml_paths.sh --local" in workflow
     assert "scripts/run_peer_live_qualification.sh" in workflow
     assert "VOIP_QUALIFICATION_POLICY_ENDPOINT_ID" in workflow
+    assert "pull_request_target:" in workflow
+    assert "\n  pull_request:\n" not in workflow
+    assert "ref: ${{ github.event.pull_request.head.sha || github.sha }}" in workflow
+    assert (
+        "if: github.event_name != 'pull_request_target' && "
+        "(contains(needs.plan.outputs.required_jobs, '\"peer-live\"')"
+    ) in workflow
+    assert (
+        "if: github.event_name != 'pull_request_target' && "
+        "(contains(needs.plan.outputs.required_jobs, '\"hil-s3\"')"
+    ) in workflow
     assert 'build_root="$RUNNER_TEMP/candidate"' in workflow
     assert (
         "working-directory: workspace/esphome-intercom\n        run: |\n          ./scripts/yaml_paths.sh --local"

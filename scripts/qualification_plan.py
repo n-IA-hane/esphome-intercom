@@ -29,6 +29,7 @@ from qualification.registry import (  # noqa: E402
 
 
 RISK_ORDER = {risk: index for index, risk in enumerate(Risk)}
+TRUSTED_RUNNER_JOBS = frozenset({"browser-real", "peer-live", "hil-s3", "hil-p4"})
 
 
 def plan_id(payload: dict[str, object]) -> str:
@@ -118,6 +119,15 @@ def build_plan(
             or profile.areas.intersection(area_ids)
         )
     ]
+    if event == "pull-request":
+        jobs.difference_update(TRUSTED_RUNNER_JOBS)
+        scenarios = [
+            scenario
+            for scenario in scenarios
+            if not {
+                EXECUTOR_JOBS[executor] for executor in scenario.executors
+            }.intersection(TRUSTED_RUNNER_JOBS)
+        ]
     selected_scenario_ids = {scenario.id for scenario in scenarios}
     regressions = [
         record
@@ -127,10 +137,12 @@ def build_plan(
     risk = max(
         (area.risk for area in matched.values()), key=RISK_ORDER.get, default=Risk.LOW
     )
-    skipped = {
-        job: "not required by changed areas"
-        for job in sorted(ALL_JOBS.difference(jobs))
-    }
+    skipped = {}
+    for job in sorted(ALL_JOBS.difference(jobs)):
+        if event == "pull-request" and job in TRUSTED_RUNNER_JOBS:
+            skipped[job] = "requires trusted push to dev or workflow dispatch"
+        else:
+            skipped[job] = "not required by changed areas"
     payload: dict[str, object] = {
         "schema_version": 1,
         "base": base,

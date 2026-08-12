@@ -47,6 +47,16 @@ exact commits resolved from the four `dev` branches, but maintained YAMLs stay
 readable and continue to reference `@dev` rather than embedding commit hashes.
 A failed, skipped or cancelled required job fails the summary.
 
+Pull requests execute only jobs hosted by GitHub. The `pull_request_target`
+trigger keeps the workflow definition on the trusted base branch, while the
+hosted jobs explicitly check out and test the pull request head with empty
+token permissions. The planner records live, browser-real and HIL jobs as
+skipped because they require a trusted runner, and does not claim scenarios
+that need those executors. Self-hosted live and HIL jobs run only for a trusted
+push to `dev`, a scheduled qualification or an explicit `workflow_dispatch`.
+The workflow also enforces this boundary on the jobs themselves, independently
+of the generated plan.
+
 This software and compile gate still does not claim physical interoperability.
 A release candidate also needs the applicable live browser, SIP peer and ESP
 matrix below, with both peers observed and call-scoped resources returned to
