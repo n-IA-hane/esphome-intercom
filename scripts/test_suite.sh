@@ -210,6 +210,9 @@ case "$MODE" in
     pytest_args+=(-m fault)
     ;;
   mutation)
+    # Crashing mutants are already recorded as detected. Core files add no
+    # evidence and can exhaust a runner before the mutation score is emitted.
+    ulimit -c 0
     git_dir=$(git rev-parse --path-format=absolute --git-dir)
     common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
     [[ $git_dir != "$common_dir" ]] || {
