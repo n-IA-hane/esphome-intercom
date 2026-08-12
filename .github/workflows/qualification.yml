@@ -391,6 +391,9 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install -r requirements-test.txt
+          if [ "${{ matrix.job }}" = browser-real ]; then
+            .venv/bin/pip install -r requirements-browser-test.txt
+          fi
       - name: Execute ${{ matrix.job }}
         if: contains(needs.plan.outputs.required_jobs, format('"{0}"', matrix.job))
         env:

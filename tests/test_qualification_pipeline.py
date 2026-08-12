@@ -31,6 +31,15 @@ def test_regular_environment_contains_live_websocket_client() -> None:
     assert "websockets==17.0" in requirements.splitlines()
 
 
+def test_browser_live_job_installs_browser_environment() -> None:
+    workflow = (
+        Path(__file__).parents[1] / ".github/workflows/qualification.yml"
+    ).read_text(encoding="utf-8")
+
+    assert 'if [ "${{ matrix.job }}" = browser-real ]' in workflow
+    assert ".venv/bin/pip install -r requirements-browser-test.txt" in workflow
+
+
 def _candidate(head: str) -> dict[str, object]:
     payload = {
         "schema_version": 1,
