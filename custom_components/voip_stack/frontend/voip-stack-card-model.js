@@ -63,6 +63,26 @@ export function terminalPeerLabel(snapshot = {}) {
   );
 }
 
+export function mirroredEndpointPeerLabel(snapshot = {}, localName = "") {
+  const normalise = (value) => String(value || "")
+    .normalize("NFKC")
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+  const local = normalise(localName);
+  const callerIsLocal = local && normalise(snapshot.caller) === local;
+  const calleeIsLocal = local && [snapshot.callee, snapshot.peer_name, snapshot.local_name]
+    .some((value) => normalise(value) === local);
+  const candidates = callerIsLocal
+    ? [snapshot.connected_party, snapshot.answered_by, snapshot.callee,
+      snapshot.peer_name, snapshot.target, snapshot.dialed_target]
+    : calleeIsLocal
+      ? [snapshot.caller, snapshot.connected_party, snapshot.answered_by,
+        snapshot.target, snapshot.dialed_target]
+      : [terminalPeerLabel(snapshot), snapshot.caller, snapshot.callee];
+  return String(candidates.find((value) => value && (!local || normalise(value) !== local)) || "");
+}
+
 const ACTIVE_CALL_STATES = new Set([
   "calling", "remote_ringing", "ringing", "answering", "connecting", "in_call",
 ]);

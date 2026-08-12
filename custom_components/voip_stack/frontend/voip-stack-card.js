@@ -33,6 +33,7 @@ const {
   normaliseAudioMode,
   normaliseCardConfig,
   normaliseTransport,
+  mirroredEndpointPeerLabel,
   reasonKey,
   softphoneSnapshotSupersedes,
   targetFromRosterEntry,
@@ -323,7 +324,10 @@ class VoipStackCard extends HTMLElement {
     if (!this._eventConcernsThisCard(data)) return;
     const state = String(data.state || data.sip_state || "").toLowerCase();
     if (state === "in_call" || state === "answering") {
-      this._mirroredConnectedPeer = terminalPeerLabel(data).trim();
+      this._mirroredConnectedPeer = mirroredEndpointPeerLabel(
+        data,
+        this._cardPeerName(),
+      ).trim();
       this._render();
       return;
     }
@@ -334,7 +338,7 @@ class VoipStackCard extends HTMLElement {
     if (!["idle", "busy", "declined", "cancelled", "media_incompatible", "transport_unreachable", "auth_required_unsupported", "error"].includes(state)) return;
     this._mirroredConnectedPeer = "";
     const reason = data.terminal_reason || data.reason || state;
-    const peer = terminalPeerLabel(data);
+    const peer = mirroredEndpointPeerLabel(data, this._cardPeerName());
     this._captureEndReason("terminal", reason, data.actor || "remote", peer);
     this._render();
   }

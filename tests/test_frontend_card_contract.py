@@ -185,7 +185,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._eventConcernsThisCard(data)", body)
         self.assertIn('"busy"', body)
         self.assertIn("data.terminal_reason || data.reason || state", body)
-        self.assertIn("terminalPeerLabel(data)", body)
+        self.assertIn("mirroredEndpointPeerLabel(data, this._cardPeerName())", body)
         self.assertIn(
             'this._captureEndReason("terminal", reason, data.actor || "remote", peer)',
             body,
@@ -733,7 +733,7 @@ class FrontendCardContractTest(unittest.TestCase):
         source = CARD.read_text()
         handler = _method_body(source, "_onMirroredBridgeStateEvent")
         self.assertIn('state === "in_call" || state === "answering"', handler)
-        self.assertIn("terminalPeerLabel(data)", handler)
+        self.assertIn("mirroredEndpointPeerLabel", handler)
         self.assertIn('this._mirroredConnectedPeer = ""', handler)
         self.assertIn(
             "(!this._isHaSoftphoneMode() && this._mirroredConnectedPeer)",

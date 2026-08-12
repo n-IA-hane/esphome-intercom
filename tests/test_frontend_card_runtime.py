@@ -54,7 +54,7 @@ source = source
     `const {{
       audioModeLabel, formatCallDuration, formatEndReason,
       formatKnownReason, formatListFromMetadata, formatVideoFailureReason,
-      normaliseAudioMode, normaliseTransport, reasonKey,
+      mirroredEndpointPeerLabel, normaliseAudioMode, normaliseTransport, reasonKey,
       softphoneSnapshotSupersedes, targetFromRosterEntry, terminalPeerLabel,
     }} = globalThis.__cardModel;`,
   )
@@ -263,6 +263,18 @@ assert.equal(cardModel.terminalPeerLabel({{
   peer_name: "RG Casa",
   connected_party: "Waveshare P4 Touch",
 }}), "Waveshare P4 Touch");
+assert.equal(cardModel.mirroredEndpointPeerLabel({{
+  direction: "outgoing",
+  caller: "CG Casa",
+  callee: "Waveshare S3 Audio",
+  peer_name: "Waveshare S3 Audio",
+}}, "Waveshare S3 Audio"), "CG Casa");
+assert.equal(cardModel.mirroredEndpointPeerLabel({{
+  direction: "outgoing",
+  caller: "Waveshare P4 Touch",
+  callee: "Daniele",
+  peer_name: "Daniele",
+}}, "Waveshare P4 Touch"), "Daniele");
 
 function elements() {{
   const names = [
@@ -306,6 +318,18 @@ function makeCard() {{
   }});
   return card;
 }}
+
+const ws3Mirror = makeCard();
+ws3Mirror.config = {{ mode: "esp_mirror", name: "Waveshare S3 Audio" }};
+ws3Mirror._activeDeviceInfo = {{
+  device_id: "device-ws3", name: "Waveshare S3 Audio", softphone: false,
+}};
+ws3Mirror._onMirroredBridgeStateEvent({{ data: {{
+  scope: "sip_bridge", state: "in_call", direction: "outgoing",
+  caller: "CG Casa", callee: "Waveshare S3 Audio",
+  peer_name: "Waveshare S3 Audio", dest_device_id: "device-ws3",
+}} }});
+assert.equal(ws3Mirror._mirroredConnectedPeer, "CG Casa");
 
 const card = makeCard();
 const antiAliasPreference = makeCard();
