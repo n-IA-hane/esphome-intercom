@@ -851,6 +851,8 @@ def test_workflow_wires_fail_closed_qualification_chain() -> None:
     assert "scripts/run_peer_live_qualification.sh" in workflow
     assert "evidence/results/wildix-trunk-dtmf.json" in workflow
     assert "VOIP_QUALIFICATION_POLICY_ENDPOINT_ID" in workflow
+    assert "HA_LAB_SIP_HOST: 192.168.1.48" in workflow
+    assert "HA_LAB_SIP_PORT: 15060" in workflow
     assert "pull_request_target:" in workflow
     assert "\n  pull_request:\n" not in workflow
     assert "ref: ${{ github.event.pull_request.head.sha || github.sha }}" in workflow

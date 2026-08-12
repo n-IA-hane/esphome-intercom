@@ -396,6 +396,8 @@ jobs:
         env:
           JOB: ${{ matrix.job }}
           HA_PYTHON: /home/codex/ha-voip-lab/.venv/bin/python
+          HA_LAB_SIP_HOST: 192.168.1.48
+          HA_LAB_SIP_PORT: 15060
           VOIP_QUALIFICATION_POLICY_ENDPOINT_ID: ${{ vars.VOIP_QUALIFICATION_POLICY_ENDPOINT_ID }}
           SIP_REGRESSION_CAPTURE_DIR: evidence/results/browser-real
         run: |
