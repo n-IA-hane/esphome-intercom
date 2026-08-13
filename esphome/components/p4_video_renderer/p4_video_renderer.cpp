@@ -1155,7 +1155,9 @@ bool P4VideoRenderer::decode_h264_access_unit_(const uint8_t *data, size_t size,
                                                uint32_t timestamp_90khz,
                                                bool key_frame,
                                                uint32_t session_generation,
-                                               uint32_t loss_generation) {
+                                               uint32_t loss_generation,
+                                               bool &decoded) {
+  decoded = false;
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   const uint32_t au_started_us = micros();
 #endif
@@ -1237,10 +1239,21 @@ bool P4VideoRenderer::decode_h264_access_unit_(const uint8_t *data, size_t size,
     input.raw_data.len -= input.consume;
     if (output.outbuf == nullptr || output.out_size == 0)
       continue;
+    decoded = true;
     if (session_generation !=
             this->rx_session_generation_.load(std::memory_order_acquire) ||
         !this->rx_active_.load(std::memory_order_acquire)) {
       break;
+    }
+    // Decode every H.264 picture so dependent P-frames retain a valid GOP,
+    // but spend conversion, PPA and DSI bandwidth only at the negotiated
+    // presentation cadence. Peers sometimes exceed max-fps; dropping before
+    // decode would corrupt subsequent references and force repeated IDRs.
+    if (!this->cadence_.accept(output.pts)) {
+#ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
+      this->rx_rate_drops_.fetch_add(1, std::memory_order_relaxed);
+#endif
+      continue;
     }
     esp_h264_dec_param_sw_handle_t parameters = nullptr;
     esp_h264_resolution_t resolution{};
@@ -1299,6 +1312,7 @@ void P4VideoRenderer::rx_task_() {
           slot.loss_generation ==
               this->loss_generation_.load(std::memory_order_acquire);
       bool rendered = false;
+      bool decoded = false;
       if (current) {
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
         update_max(this->rx_queue_wait_max_us_,
@@ -1306,13 +1320,13 @@ void P4VideoRenderer::rx_task_() {
 #endif
         rendered = this->decode_h264_access_unit_(
             slot.data, slot.size, slot.timestamp, slot.key_frame,
-            slot.session_generation, slot.loss_generation);
+            slot.session_generation, slot.loss_generation, decoded);
       }
       if (current) {
         if (rendered)
           this->rx_rendered_frames_.fetch_add(1, std::memory_order_relaxed);
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
-        else
+        else if (!decoded)
           this->rx_decode_drops_.fetch_add(1, std::memory_order_relaxed);
 #endif
       }

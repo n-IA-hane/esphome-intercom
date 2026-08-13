@@ -386,7 +386,6 @@ def test_p4_codec_profiles_have_isolated_generated_builds() -> None:
 
 
 def test_p4_production_profiles_keep_video_debug_off_and_safe_mode_on() -> None:
-    profile_dir = YAMLS / "voip-only" / "single-bus"
     dedicated = P4_VIDEOPHONE_BASE.read_text()
     full = P4_LANDSCAPE_FULL_AFE.read_text()
     full_jpeg = P4_FULL_JPEG_PACKAGE.read_text()
@@ -631,6 +630,14 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "xTaskNotifyGive(this->rx_task_handle_)" in renderer_cpp
     assert "this->pending_surface_.load(std::memory_order_acquire) >= 0" in renderer_cpp
     assert "this->cadence_.accept(access_unit.timestamp_90khz)" in renderer_cpp
+    h264_decode = renderer_cpp[
+        renderer_cpp.index("bool P4VideoRenderer::decode_h264_access_unit_(") :
+        renderer_cpp.index("void P4VideoRenderer::rx_task_()")
+    ]
+    assert h264_decode.index("esp_h264_dec_process(") < h264_decode.index(
+        "this->cadence_.accept(output.pts)"
+    ) < h264_decode.index("this->render_i420_(")
+    assert "dropping before\n    // decode would corrupt" in h264_decode
     assert "static constexpr uint8_t kTaskPriority = 17;" in renderer_header
     assert (
         "this, kTaskPriority, 1, this->task_stacks_in_psram_"

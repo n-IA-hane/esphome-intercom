@@ -158,7 +158,7 @@ protected:
   bool decode_h264_access_unit_(const uint8_t *data, size_t size,
                                 uint32_t timestamp_90khz, bool key_frame,
                                 uint32_t session_generation,
-                                uint32_t loss_generation);
+                                uint32_t loss_generation, bool &decoded);
   bool configure_i420_converter_(uint16_t width, uint16_t height);
   bool refresh_direct_display_layout_();
   bool compute_h264_surface_geometry_(uint16_t width, uint16_t height,
