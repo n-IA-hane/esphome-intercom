@@ -11,9 +11,6 @@ namespace esphome::esp_jpeg_video_source {
 
 static const char *const TAG = "esp_jpeg_video_source";
 
-static constexpr uint32_t kRateTokenCost = 90000U;
-static constexpr uint32_t kRateTokenCapacity = 2U * kRateTokenCost;
-
 void EspJpegVideoSource::setup() {
   this->control_mutex_ =
       xSemaphoreCreateMutexStatic(&this->control_mutex_storage_);
@@ -64,8 +61,7 @@ bool EspJpegVideoSource::start_video(
   this->negotiated_fps_ = capability.max_fps == 0
                               ? this->framerate_
                               : std::min(this->framerate_, capability.max_fps);
-  this->rate_timestamp_ = 0;
-  this->rate_tokens_ = kRateTokenCost;
+  this->cadence_.reset(this->negotiated_fps_);
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   this->frames_seen_.store(0, std::memory_order_release);
   this->frames_published_.store(0, std::memory_order_release);
@@ -128,24 +124,13 @@ void EspJpegVideoSource::consume_jpeg_frame(
     return;
   }
 
-  if (this->rate_timestamp_ != 0) {
-    const uint32_t elapsed = frame.timestamp_90khz - this->rate_timestamp_;
-    const uint64_t replenished =
-        static_cast<uint64_t>(this->rate_tokens_) +
-        static_cast<uint64_t>(elapsed) * this->negotiated_fps_;
-    this->rate_tokens_ = static_cast<uint32_t>(
-        std::min<uint64_t>(kRateTokenCapacity, replenished));
-  }
-  this->rate_timestamp_ = frame.timestamp_90khz;
-  if (this->rate_tokens_ < kRateTokenCost) {
+  if (!this->cadence_.accept(frame.timestamp_90khz)) {
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
     this->rate_drops_.fetch_add(1, std::memory_order_relaxed);
 #endif
     xSemaphoreGive(this->control_mutex_);
     return;
   }
-  this->rate_tokens_ -= kRateTokenCost;
-
   this->callback_(
       this->callback_ctx_,
       voip_stack::EncodedVideoAccessUnit{

@@ -151,10 +151,11 @@ void P4VideoRenderer::loop() {
 #ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
     // Direct presentation bypasses LVGL's invalidation tracking. The teardown
     // trigger selects the final page, then this full invalidation makes LVGL
-    // repaint every panel pixel overwritten by the direct video writer.
+    // repaint every panel pixel overwritten by the direct video writer. Leave
+    // the repaint to LVGL's normal display timer: forcing lv_refr_now() here
+    // can block ESPHome's watched loop task while DSI waits for refresh ready.
     auto *screen = lv_screen_active();
     lv_obj_invalidate(screen);
-    lv_refr_now(lv_obj_get_display(screen));
 #endif
   }
 
@@ -183,10 +184,8 @@ void P4VideoRenderer::loop() {
           lv_disp_get_scr_act(nullptr);
 #ifdef USE_P4_VIDEO_RENDERER_H264
       this->direct_page_active_.store(page_active, std::memory_order_release);
-      const bool presented = page_active && this->commit_direct_surface_(pending);
-#else
-      const bool presented = page_active && this->present_surface_direct_(pending);
 #endif
+      const bool presented = page_active && this->commit_direct_surface_(pending);
       if (!presented) {
         // A hidden page or failed presentation consumed no pixels. Release
         // only the surface observed above; never erase a newer publication.
@@ -673,7 +672,6 @@ bool P4VideoRenderer::present_surface_direct_(int index) {
 #endif
 }
 
-#ifdef USE_P4_VIDEO_RENDERER_H264
 bool P4VideoRenderer::commit_direct_surface_(int index) {
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
   const uint32_t started_ms = millis();
@@ -688,7 +686,6 @@ bool P4VideoRenderer::commit_direct_surface_(int index) {
 #endif
   return true;
 }
-#endif
 #endif
 
 #ifdef USE_P4_VIDEO_RENDERER_JPEG
@@ -920,8 +917,10 @@ bool P4VideoRenderer::start_video(
 #endif
   if (this->rx_task_handle_ != nullptr)
     xTaskNotifyGive(this->rx_task_handle_);
-  this->rx_timestamp_seen_.store(false, std::memory_order_release);
-  this->last_admitted_timestamp_.store(0, std::memory_order_release);
+  this->cadence_.reset(std::max<uint8_t>(
+      1, std::min(this->framerate_, capability.max_fps == 0
+                                       ? this->framerate_
+                                       : capability.max_fps)));
   this->rx_admitted_frames_.store(0, std::memory_order_release);
   this->rx_rendered_frames_.store(0, std::memory_order_release);
   this->rx_presented_frames_.store(0, std::memory_order_release);
@@ -972,8 +971,10 @@ bool P4VideoRenderer::set_video_active(bool active) {
     return false;
   this->rx_active_.store(active, std::memory_order_release);
   if (active) {
-    this->rx_timestamp_seen_.store(false, std::memory_order_release);
-    this->last_admitted_timestamp_.store(0, std::memory_order_release);
+    this->cadence_.reset(std::max<uint8_t>(
+        1, std::min(this->framerate_, this->rx_capability_.max_fps == 0
+                                         ? this->framerate_
+                                         : this->rx_capability_.max_fps)));
 #ifdef USE_P4_VIDEO_RENDERER_H264
     this->waiting_for_key_frame_.store(true, std::memory_order_release);
 #endif
@@ -1103,23 +1104,11 @@ bool P4VideoRenderer::consume_video_access_unit(
 #endif
     return false;
   }
-  const uint32_t admission_fps = std::max<uint32_t>(
-      1,
-      std::min<uint32_t>(this->framerate_, this->rx_capability_.max_fps == 0
-                                               ? this->framerate_
-                                               : this->rx_capability_.max_fps));
-  const uint32_t minimum_timestamp_delta =
-      (90000U + admission_fps - 1U) / admission_fps;
-  if (this->rx_timestamp_seen_.load(std::memory_order_acquire)) {
-    const uint32_t elapsed =
-        access_unit.timestamp_90khz -
-        this->last_admitted_timestamp_.load(std::memory_order_relaxed);
-    if (elapsed < minimum_timestamp_delta) {
+  if (!this->cadence_.accept(access_unit.timestamp_90khz)) {
 #ifdef USE_ESPHOME_VOIP_STACK_VIDEO_DEBUG
-      this->rx_rate_drops_.fetch_add(1, std::memory_order_relaxed);
+    this->rx_rate_drops_.fetch_add(1, std::memory_order_relaxed);
 #endif
-      return false;
-    }
+    return false;
   }
   uint8_t expected = 0;
   if (!this->rx_slot_state_.compare_exchange_strong(
@@ -1135,9 +1124,6 @@ bool P4VideoRenderer::consume_video_access_unit(
   this->rx_au_generation_ =
       this->rx_session_generation_.load(std::memory_order_acquire);
   this->rx_key_frame_ = access_unit.key_frame;
-  this->last_admitted_timestamp_.store(access_unit.timestamp_90khz,
-                                       std::memory_order_relaxed);
-  this->rx_timestamp_seen_.store(true, std::memory_order_release);
   this->rx_admitted_frames_.fetch_add(1, std::memory_order_relaxed);
   this->rx_slot_state_.store(1, std::memory_order_release);
   if (this->rx_task_handle_ != nullptr)

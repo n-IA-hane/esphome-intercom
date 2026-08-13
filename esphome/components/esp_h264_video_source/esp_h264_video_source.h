@@ -130,8 +130,7 @@ class EspH264VideoSource
   // call's in-flight encoder operation consuming it during rapid redial.
   std::atomic<uint32_t> force_idr_generation_{0};
   std::atomic<uint32_t> requested_bitrate_{400000};
-  std::atomic<bool> timestamp_seen_{false};
-  std::atomic<uint32_t> next_admit_timestamp_{0};
+  voip_stack::RtpFrameCadence90k cadence_{};
   uint32_t next_tx_sequence_{0};
   std::atomic<uint32_t> raw_frames_{0};
   std::atomic<uint32_t> queued_frames_{0};

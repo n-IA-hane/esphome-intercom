@@ -126,9 +126,7 @@ protected:
 #endif
 #ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
   bool present_surface_direct_(int index);
-#ifdef USE_P4_VIDEO_RENDERER_H264
   bool commit_direct_surface_(int index);
-#endif
 #endif
 #if defined(USE_P4_VIDEO_RENDERER_JPEG) &&                                  \
     defined(USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY)
@@ -276,8 +274,7 @@ protected:
 #endif
   // RTP timestamps provide the producer clock, so receive admission is
   // frame-driven and needs neither a timer nor a periodic main-loop poll.
-  std::atomic<bool> rx_timestamp_seen_{false};
-  std::atomic<uint32_t> last_admitted_timestamp_{0};
+  voip_stack::RtpFrameCadence90k cadence_{};
 #ifndef USE_P4_VIDEO_RENDERER_H264
   size_t rx_au_size_{0};
   uint32_t rx_timestamp_{0};

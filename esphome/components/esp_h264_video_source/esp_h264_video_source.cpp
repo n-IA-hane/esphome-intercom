@@ -190,8 +190,10 @@ bool EspH264VideoSource::start_video(
   this->negotiated_capability_ = capability;
   this->requested_bitrate_.store(
       negotiated_bitrate, std::memory_order_release);
-  this->timestamp_seen_.store(false, std::memory_order_release);
-  this->next_admit_timestamp_.store(0, std::memory_order_release);
+  this->cadence_.reset(std::max<uint8_t>(
+      1, std::min(this->framerate_, capability.max_fps == 0
+                                       ? this->framerate_
+                                       : capability.max_fps)));
   this->next_tx_sequence_ = 0;
   this->force_idr_generation_.store(
       generation, std::memory_order_release);
@@ -616,37 +618,11 @@ void EspH264VideoSource::consume_raw_video_frame(
     return;
   }
   this->raw_frames_.fetch_add(1, std::memory_order_relaxed);
-  const uint32_t fps = std::max<uint32_t>(
-      1, std::min<uint32_t>(
-             this->framerate_,
-             this->negotiated_capability_.max_fps == 0
-                 ? this->framerate_
-                 : this->negotiated_capability_.max_fps));
-  const uint32_t minimum_delta = (90000U + fps - 1U) / fps;
-  uint32_t next_timestamp = frame.timestamp_90khz + minimum_delta;
-  if (this->timestamp_seen_.load(std::memory_order_acquire)) {
-    next_timestamp =
-        this->next_admit_timestamp_.load(std::memory_order_relaxed);
-    const int32_t schedule_delta =
-        static_cast<int32_t>(frame.timestamp_90khz - next_timestamp);
-    if (schedule_delta < 0) {
-      return;
-    }
-    // Preserve the ideal RTP clock instead of restarting the interval from
-    // the nearest input frame. A 25 fps camera can therefore feed 15 fps as
-    // the exact repeating 2-2-1 frame pattern, without burst conversion.
-    const uint32_t elapsed =
-        static_cast<uint32_t>(schedule_delta);
-    next_timestamp +=
-        (elapsed / minimum_delta + 1U) * minimum_delta;
-  }
+  if (!this->cadence_.accept(frame.timestamp_90khz))
+    return;
   // Advance the ideal clock before doing any work. PPA copies the borrowed
   // camera frame into an owned bounded slot. Encoding then runs independently,
   // so capture never retains a CSI buffer for the full encoder latency.
-  this->next_admit_timestamp_.store(
-      next_timestamp, std::memory_order_relaxed);
-  this->timestamp_seen_.store(true, std::memory_order_release);
-
   const uint32_t generation =
       this->tx_generation_.load(std::memory_order_acquire);
   TxSlot *slot = nullptr;

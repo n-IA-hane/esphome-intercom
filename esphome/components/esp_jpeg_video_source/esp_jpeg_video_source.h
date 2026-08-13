@@ -63,8 +63,7 @@ class EspJpegVideoSource
   StaticSemaphore_t control_mutex_storage_{};
   std::atomic<bool> active_{false};
   uint8_t negotiated_fps_{10};
-  uint32_t rate_timestamp_{0};
-  uint32_t rate_tokens_{0};
+  voip_stack::RtpFrameCadence90k cadence_{};
   voip_stack::EncodedVideoAccessUnitCallback callback_{nullptr};
   void *callback_ctx_{nullptr};
 

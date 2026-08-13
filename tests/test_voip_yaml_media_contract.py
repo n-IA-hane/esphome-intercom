@@ -630,7 +630,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "ulTaskNotifyTake(pdTRUE, portMAX_DELAY);" in renderer_cpp
     assert "xTaskNotifyGive(this->rx_task_handle_)" in renderer_cpp
     assert "this->pending_surface_.load(std::memory_order_acquire) >= 0" in renderer_cpp
-    assert "access_unit.timestamp_90khz -" in renderer_cpp
+    assert "this->cadence_.accept(access_unit.timestamp_90khz)" in renderer_cpp
     assert "static constexpr uint8_t kTaskPriority = 17;" in renderer_header
     assert (
         "this, kTaskPriority, 1, this->task_stacks_in_psram_"
@@ -965,8 +965,8 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "ulTaskNotifyTake(pdTRUE, portMAX_DELAY);" in source_cpp
     assert "vTaskDelay" not in source_cpp
     assert "request_key_frame()" in source_cpp
-    assert "next_admit_timestamp_" in source_header
-    assert "elapsed / minimum_delta + 1U" in source_cpp
+    assert "voip_stack::RtpFrameCadence90k cadence_{};" in source_header
+    assert "this->cadence_.accept(frame.timestamp_90khz)" in source_cpp
     assert "static constexpr size_t kEncodedBufferBytes = 64 * 1024;" in (
         source_header
     )
@@ -977,7 +977,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "void EspH264VideoSource::tx_task_()" in source_cpp
     assert "start_managed_pinned_task(" in source_cpp
     assert "candidate.sequence - oldest_sequence" in source_cpp
-    assert source_consume.index("this->next_admit_timestamp_.store(") < (
+    assert source_consume.index("this->cadence_.accept(") < (
         source_consume.index("this->transform_to_encoder_yuv_(")
     )
     assert "convert_avg_us=%u convert_max_us=%u" in source_cpp
@@ -1091,10 +1091,14 @@ def test_p4_video_boundaries_fail_closed() -> None:
     assert submit.index("xSemaphoreTake(this->submit_mutex_") < submit.index(
         "esp_lcd_panel_draw_bitmap("
     )
-    assert submit.index("xSemaphoreTake(this->io_lock_") < submit.rindex(
+    assert submit.count("xSemaphoreTake(this->io_lock_") == 2
+    assert submit.index("xSemaphoreTake(this->io_lock_, 0)") < submit.index(
+        "esp_lcd_panel_draw_bitmap("
+    )
+    assert submit.rindex("xSemaphoreTake(this->io_lock_") < submit.rindex(
         "xSemaphoreGive(this->submit_mutex_)"
     )
-    assert submit.index("if (err != ESP_OK)") < submit.index(
+    assert submit.index("if (err != ESP_OK)") < submit.rindex(
         "xSemaphoreTake(this->io_lock_"
     )
     assert "portMAX_DELAY" in submit
