@@ -130,6 +130,47 @@ CLICK = r"""
 }
 """
 
+MEDIA_CONTROLS = r"""
+async () => {
+  const deep = (selector, root = document) => {
+    const found = [...root.querySelectorAll(selector)];
+    for (const node of root.querySelectorAll("*")) if (node.shadowRoot) found.push(...deep(selector, node.shadowRoot));
+    return found;
+  };
+  const card = deep("voip-stack-card, intercom-card")
+    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
+  const root = card?.shadowRoot;
+  const button = root?.querySelector('.call-options[aria-label="Media options"]');
+  if (!card || !button || button.hidden || button.disabled) return { error: "media options unavailable" };
+  button.click();
+  for (let attempt = 0; attempt < 100 && card._mediaDeviceBusy; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  const panel = root.querySelector("#voip-call-media-panel");
+  const selects = [...(panel?.querySelectorAll("select") || [])];
+  const state = window.__voipStackEngine?.mediaDeviceState || {};
+  const microphone = state.devices?.audioinput?.[0]?.deviceId || "";
+  if (microphone) await card._selectMediaDevice("audioinput", microphone);
+  let hangupScale = 1;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    hangupScale = Number.parseFloat(
+      card._els?.card?.style?.getPropertyValue("--voip-hangup-scale") || "1"
+    );
+    if (hangupScale > 1.001) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return {
+    panel_visible: !!panel && !panel.hidden,
+    select_count: selects.length,
+    microphones: state.devices?.audioinput?.length || 0,
+    cameras: state.devices?.videoinput?.length || 0,
+    active_microphone: window.__voipStackEngine?.mediaDeviceState?.active?.audioinput || "",
+    hangup_scale: hangupScale,
+    state: card._softphoneSnapshot?.state || "",
+  };
+}
+"""
+
 SET_AUTO_ANSWER = r"""
 async (enabled) => {
   const deep = (selector, root = document) => {
@@ -1014,6 +1055,17 @@ def main() -> int:
                     raise RuntimeError("Answer button unavailable")
                 caller.wait_for("Call established", 5)
                 answered = matching(page, "in_call")
+                media_controls = page.evaluate(MEDIA_CONTROLS)
+                if media_controls.get("error"):
+                    raise RuntimeError(str(media_controls["error"]))
+                if media_controls["select_count"] != 3:
+                    raise RuntimeError(f"wrong media device controls: {media_controls}")
+                if media_controls["microphones"] < 1 or not media_controls["active_microphone"]:
+                    raise RuntimeError(f"microphone switch was not committed: {media_controls}")
+                if media_controls["state"] != "in_call":
+                    raise RuntimeError(f"media switch interrupted call: {media_controls}")
+                if media_controls["hangup_scale"] <= 1.001:
+                    raise RuntimeError(f"received audio did not animate Hangup: {media_controls}")
                 if os.environ.get("EXPECT_VIDEO", "") == "1":
                     answered = wait_card(
                         page,
@@ -1031,6 +1083,7 @@ def main() -> int:
                 return {
                     "call_id": ringing["card"]["call_id"],
                     "answered": answered["card"],
+                    "media_controls": media_controls,
                 }
 
             case("registered_sip_answer_from_card", local_registered_sip_answer)

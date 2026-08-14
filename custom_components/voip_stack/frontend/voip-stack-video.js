@@ -87,8 +87,11 @@ export class VoipStackVideo extends EventTarget {
     this._mediaUpdatePromise = Promise.resolve();
     this._generation = 0;
     this._senderGeneration = 0;
+    this._senderSerial = 0;
+    this._senderSwitchGeneration = 0;
     this._senderSetupPromise = null;
-    this._senderSetupToken = 0;
+    this._cameraDeviceId = "";
+    this._cameraSettings = {};
     this._lastRenderedAt = 0;
     this._lastRenderedTimestamp = null;
     this._lastDecodedAt = 0;
@@ -108,7 +111,13 @@ export class VoipStackVideo extends EventTarget {
     return url;
   }
 
-  async _createJpegEncoder(width, height, generation, senderGeneration) {
+  async _createJpegEncoder(
+    width,
+    height,
+    generation,
+    senderGeneration,
+    isCurrent = () => this._senderIsCurrent(generation, senderGeneration),
+  ) {
     if (typeof Worker === "undefined") {
       throw new Error("Browser cannot encode JPEG outside the UI thread");
     }
@@ -179,7 +188,7 @@ export class VoipStackVideo extends EventTarget {
         quality: JPEG_CAMERA_QUALITY,
       });
       await setup;
-      if (!this._senderIsCurrent(generation, senderGeneration)) {
+      if (!isCurrent()) {
         throw new Error("SIP video session was superseded or camera transmission was disabled");
       }
       encoder.state = "configured";
@@ -492,6 +501,32 @@ export class VoipStackVideo extends EventTarget {
 
   get cameraEnabled() {
     return this._cameraEnabled;
+  }
+
+  get cameraSettings() {
+    return { ...this._cameraSettings };
+  }
+
+  setCameraDevicePreference(deviceId = "") {
+    if (this._encoder) return false;
+    this._cameraDeviceId = String(deviceId || "");
+    return true;
+  }
+
+  async switchCamera(deviceId = "") {
+    const selected = String(deviceId || "");
+    if (!this._active || !this._cameraEnabled || !this._cameraAllowed || !this._negotiated) {
+      this._cameraDeviceId = selected;
+      return {};
+    }
+    const currentId = String(this._cameraSettings.deviceId || "");
+    if (selected && selected === currentId) return this.cameraSettings;
+    return this._replaceSender(
+      this._mediaContract("send").codec,
+      this._generation,
+      selected,
+      true,
+    );
   }
 
   async setCameraEnabled(enabled, endpointId = this._endpointId) {
@@ -870,24 +905,8 @@ export class VoipStackVideo extends EventTarget {
 
   async _ensureSender(codec, generation) {
     if (this._encoder?.state === "configured") return;
-    if (
-      this._senderSetupPromise &&
-      this._senderSetupToken === this._senderGeneration
-    ) {
-      return this._senderSetupPromise;
-    }
-    const senderGeneration = ++this._senderGeneration;
-    const setup = this._setupEncoder(codec, generation, senderGeneration);
-    this._senderSetupPromise = setup;
-    this._senderSetupToken = senderGeneration;
-    try {
-      await setup;
-    } finally {
-      if (this._senderSetupPromise === setup) {
-        this._senderSetupPromise = null;
-        this._senderSetupToken = 0;
-      }
-    }
+    if (this._senderSetupPromise) return this._senderSetupPromise;
+    return this._replaceSender(codec, generation, this._cameraDeviceId, false);
   }
 
   _senderIsCurrent(generation, senderGeneration) {
@@ -899,11 +918,101 @@ export class VoipStackVideo extends EventTarget {
     );
   }
 
-  _cameraCaptureContract() {
-    return cameraCaptureContract(this._mediaContract("send"));
+  _senderSetupIsCurrent(generation, switchGeneration) {
+    return (
+      generation === this._generation &&
+      switchGeneration === this._senderSwitchGeneration &&
+      this._cameraEnabled &&
+      this._cameraAllowed
+    );
   }
 
-  async _setupEncoder(codec, generation, senderGeneration) {
+  _cameraCaptureContract(deviceId = this._cameraDeviceId) {
+    const contract = cameraCaptureContract(this._mediaContract("send"));
+    const selected = String(deviceId || "");
+    if (selected) {
+      contract.constraints = {
+        ...contract.constraints,
+        deviceId: { exact: selected },
+      };
+    }
+    return contract;
+  }
+
+  async _replaceSender(codec, generation, deviceId, exact) {
+    const switchGeneration = ++this._senderSwitchGeneration;
+    const senderGeneration = ++this._senderSerial;
+    let setup = this._prepareSender(
+      codec,
+      generation,
+      senderGeneration,
+      switchGeneration,
+      deviceId,
+    );
+    this._senderSetupPromise = setup;
+    let prepared = null;
+    try {
+      try {
+        prepared = await setup;
+      } catch (err) {
+        if (exact || !deviceId || !this._senderSetupIsCurrent(generation, switchGeneration)) {
+          throw err;
+        }
+        setup = this._prepareSender(
+          codec,
+          generation,
+          senderGeneration,
+          switchGeneration,
+          "",
+        );
+        this._senderSetupPromise = setup;
+        prepared = await setup;
+      }
+      if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
+        throw new Error("SIP video session was superseded or camera transmission was disabled");
+      }
+      const previous = this._takeSenderResources();
+      this._senderGeneration = senderGeneration;
+      this._cameraDeviceId = String(prepared.deviceId || deviceId || "");
+      this._cameraSettings = { ...prepared.settings };
+      this._cameraStream = prepared.stream;
+      this._encoder = prepared.encoder;
+      this._cameraReader = prepared.reader;
+      this._jpegEncoderWorker = prepared.encoder.kind === "jpeg"
+        ? prepared.encoder.worker
+        : null;
+      this._jpegEncodePending = false;
+      this._jpegQueuedFrame = null;
+      this._encodedFrames = 0;
+      this._forceCameraKeyFrame = true;
+      this._encodeTask = this._encodeCamera(
+        prepared.framerate,
+        prepared.reader,
+        prepared.encoder,
+        generation,
+        senderGeneration,
+      );
+      prepared = null;
+      this._canSend = true;
+      this._sendTxEpoch();
+      await this._disposeSenderResources(previous);
+      this._emit();
+      return this.cameraSettings;
+    } finally {
+      if (prepared) await this._disposeSenderResources(prepared);
+      if (this._senderSetupPromise === setup) {
+        this._senderSetupPromise = null;
+      }
+    }
+  }
+
+  async _prepareSender(
+    codec,
+    generation,
+    senderGeneration,
+    switchGeneration,
+    deviceId,
+  ) {
     const send = this._mediaContract("send");
     if (
       typeof MediaStreamTrackProcessor === "undefined" ||
@@ -916,14 +1025,14 @@ export class VoipStackVideo extends EventTarget {
     let stream = null;
     let encoder = null;
     let reader = null;
-    let published = false;
+    let prepared = false;
     try {
-      const captureContract = this._cameraCaptureContract();
+      const captureContract = this._cameraCaptureContract(deviceId);
       stream = await navigator.mediaDevices.getUserMedia({
         video: captureContract.constraints,
         audio: false,
       });
-      if (!this._senderIsCurrent(generation, senderGeneration)) {
+      if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
         throw new Error("SIP video session was superseded or camera transmission was disabled");
       }
       const track = stream.getVideoTracks()[0];
@@ -948,6 +1057,7 @@ export class VoipStackVideo extends EventTarget {
           height,
           generation,
           senderGeneration,
+          () => this._senderSetupIsCurrent(generation, switchGeneration),
         );
       } else {
         const encoderConfig = await this._supportedConfig(VideoEncoder, {
@@ -958,11 +1068,11 @@ export class VoipStackVideo extends EventTarget {
           bitrate: 600000,
           ...(send.encoding === "H264" ? { avc: { format: "annexb" } } : {}),
         }, send.encoding === "H264");
-        if (!this._senderIsCurrent(generation, senderGeneration)) {
+        if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
           throw new Error("SIP video session was superseded or camera transmission was disabled");
         }
         const support = await VideoEncoder.isConfigSupported(encoderConfig);
-        if (!this._senderIsCurrent(generation, senderGeneration)) {
+        if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
           throw new Error("SIP video session was superseded or camera transmission was disabled");
         }
         if (!support?.supported) {
@@ -989,31 +1099,20 @@ export class VoipStackVideo extends EventTarget {
       }
       const processor = new MediaStreamTrackProcessor({ track });
       reader = processor.readable.getReader();
-      if (!this._senderIsCurrent(generation, senderGeneration)) {
+      if (!this._senderSetupIsCurrent(generation, switchGeneration)) {
         throw new Error("SIP video session was superseded or camera transmission was disabled");
       }
-      // Publish the complete pipeline atomically. Until this point all media
-      // resources are locally owned and a superseding call can only make this
-      // setup stop and dispose them; it cannot inherit a half-built sender.
-      this._cameraStream = stream;
-      this._encoder = encoder;
-      this._cameraReader = reader;
-      this._jpegEncoderWorker = encoder.kind === "jpeg" ? encoder.worker : null;
-      this._jpegEncodePending = false;
-      this._jpegQueuedFrame = null;
-      this._encodeTask = this._encodeCamera(
-        framerate,
-        reader,
+      prepared = true;
+      return {
+        stream,
         encoder,
-        generation,
-        senderGeneration,
-      );
-      published = true;
-      // A newly created WebCodecs encoder may restart its timestamp epoch.
-      // WebSocket ordering applies the reset before its first access unit.
-      this._sendTxEpoch();
+        reader,
+        framerate,
+        deviceId: String(settings.deviceId || deviceId || ""),
+        settings,
+      };
     } finally {
-      if (!published) {
+      if (!prepared) {
         if (reader) await reader.cancel().catch(() => {});
         if (encoder && encoder.state !== "closed") encoder.close();
         if (stream) stream.getTracks().forEach((track) => track.stop());
@@ -1540,9 +1639,16 @@ export class VoipStackVideo extends EventTarget {
     // Invalidate in-flight permission/config probes and detach all published
     // resources before the first await. A later call can then create its own
     // sender while this call finishes cancelling its old reader/task.
-    this._senderGeneration++;
+    this._senderSwitchGeneration++;
+    this._senderGeneration = ++this._senderSerial;
     this._senderSetupPromise = null;
-    this._senderSetupToken = 0;
+    const resources = this._takeSenderResources();
+    this._cameraSettings = {};
+    this._canSend = false;
+    await this._disposeSenderResources(resources);
+  }
+
+  _takeSenderResources() {
     const reader = this._cameraReader;
     const encodeTask = this._encodeTask;
     const encoder = this._encoder;
@@ -1555,8 +1661,12 @@ export class VoipStackVideo extends EventTarget {
     this._jpegEncoderWorker = null;
     this._jpegEncodePending = false;
     this._jpegQueuedFrame = null;
-    this._canSend = false;
-    queuedJpegFrame?.close();
+    return { reader, encodeTask, encoder, stream, queuedJpegFrame };
+  }
+
+  async _disposeSenderResources(resources = {}) {
+    const { reader, encodeTask, encoder, stream, queuedJpegFrame } = resources;
+    queuedJpegFrame?.close?.();
     let readerCancel = Promise.resolve();
     if (reader) {
       try {

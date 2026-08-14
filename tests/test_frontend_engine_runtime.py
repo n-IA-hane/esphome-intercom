@@ -25,6 +25,7 @@ ENGINE = (
 MEDIA_MODEL = ENGINE.with_name("voip-stack-media-model.js")
 SESSION_MODEL = ENGINE.with_name("voip-stack-session-model.js")
 CARD_MODEL = ENGINE.with_name("voip-stack-card-model.js")
+MEDIA_DEVICES = ENGINE.with_name("voip-stack-media-devices.js")
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
@@ -85,8 +86,11 @@ source = source.replace(
 ).replace(
   /const \{{\s*normaliseSoftphoneSelector[\s\S]*?\}} = await import\(`\.\/voip-stack-session-model\.js[^;]+;/,
   `const {{
-    normaliseSoftphoneSelector, softphoneScopeKey, softphoneStateMatches,
-  }} = globalThis.__sessionModel;`,
+      normaliseSoftphoneSelector, softphoneScopeKey, softphoneStateMatches,
+    }} = globalThis.__sessionModel;`,
+).replace(
+  /const \{{ BrowserMediaDevices, exactDeviceConstraint \}} = await import\([\s\S]*?\);/,
+  "const {{ BrowserMediaDevices, exactDeviceConstraint }} = globalThis.__deviceModel;",
 ).replace("class VoipStackEngine", "export class VoipStackEngine");
 
 const storage = new Map();
@@ -94,6 +98,31 @@ const session = new Map();
 const context = vm.createContext({{
   __mediaModel: mediaModel,
   __sessionModel: sessionModel,
+  __deviceModel: {{
+    exactDeviceConstraint(base, deviceId) {{
+      return deviceId ? {{ ...base, deviceId: {{ exact: deviceId }} }} : base;
+    }},
+    BrowserMediaDevices: class BrowserMediaDevices extends EventTarget {{
+      constructor() {{
+        super();
+        this.selected = {{ audioinput: "", audiooutput: "", videoinput: "" }};
+        this.active = {{ audioinput: "", audiooutput: "", videoinput: "" }};
+      }}
+      get state() {{
+        return {{
+          devices: {{ audioinput: [], audiooutput: [], videoinput: [] }},
+          selected: {{ ...this.selected }}, active: {{ ...this.active }},
+        }};
+      }}
+      preference(kind) {{ return this.selected[kind] || ""; }}
+      setActive(kind, value) {{ this.active[kind] = value || ""; }}
+      commit(kind, value, settings = {{}}) {{
+        this.selected[kind] = value || "";
+        this.active[kind] = settings.deviceId || value || "";
+      }}
+      async refresh() {{ return this.state; }}
+    }},
+  }},
   EventTarget,
   Event,
   CustomEvent: class CustomEvent extends Event {{

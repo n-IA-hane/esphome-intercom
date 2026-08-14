@@ -109,6 +109,34 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn('"esp_mirror"', body)
         self.assertNotIn('"hybrid"', body)
 
+    def test_browser_media_controls_are_session_owned_and_available_in_call(self) -> None:
+        engine = ENGINE.read_text()
+        video = ENGINE.with_name("voip-stack-video.js").read_text()
+        devices = ENGINE.with_name("voip-stack-media-devices.js").read_text()
+        self.assertIn("BrowserMediaDevices", engine)
+        self.assertIn("selectAudioOutput", engine)
+        self.assertIn("context.setSinkId(selected)", engine)
+        self.assertIn("previousStream?.getTracks", engine)
+        self.assertIn("await this._disposeSenderResources(previous)", video)
+        self.assertIn('localStorage', devices)
+        self.assertIn('"devicechange"', devices)
+        self.assertIn('settingsLabel.textContent = "Options"', self.view_source)
+        self.assertIn('settingsLabelIcon.setAttribute("icon", "mdi:tune-variant")', self.view_source)
+        self.assertIn("mediaDeviceViews: [idleMediaDevices]", self.view_source)
+        self.assertNotIn("callMediaOptionsBtn", self.view_source)
+        self.assertNotIn("callMediaPanel", self.view_source)
+        self.assertIn('classList.toggle("settings-open", showSettingsPanel)', self.source)
+
+    def test_hangup_pulse_uses_received_audio_without_fixed_button_size(self) -> None:
+        engine = ENGINE.read_text()
+        pulse = _method_body(self.source, "_applyHangupAudioLevel")
+        self.assertIn("createAnalyser", engine)
+        self.assertIn('CustomEvent("audio-level"', engine)
+        self.assertIn('"--voip-hangup-scale"', pulse)
+        self.assertIn("scaleY(var(--voip-hangup-scale, 1))", self.view_source)
+        self.assertNotIn("style.width", pulse)
+        self.assertNotIn("style.height", pulse)
+
     def test_card_picker_device_models_match_backend_contract(self) -> None:
         backend = ENDPOINT_DEVICE.read_text()
         expected = {

@@ -175,6 +175,13 @@ It is enabled by default and stored per browser and logical phone. The setting
 takes effect when the next call opens the microphone and only adds processing
 when the negotiated transmit rate is lower than the browser capture rate.
 
+The same panel selects the browser microphone, speaker and camera. These
+preferences belong to the browser or Companion App session, are shared by all
+VoIP Stack cards in that session and remain unchanged when no device is
+selected. During a call, the tune button beside Hangup opens the same controls,
+so a headset or camera can be changed without ending the call. Unsupported
+speaker routing remains under operating-system control.
+
 Each room-to-room media endpoint needs a distinct browser or Companion session.
 Two cards in one browser tab can display two phones, but one tab still owns one
 physical microphone, speaker and camera pipeline.

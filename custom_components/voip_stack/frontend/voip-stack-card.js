@@ -154,6 +154,14 @@ class VoipStackCard extends HTMLElement {
     this._ringtoneEnabled = false;
     this._micAntiAliasEnabled = true;
     this._settingsOpen = false;
+    this._mediaDeviceState = voipStackEngine.mediaDeviceState || {
+      devices: { audioinput: [], audiooutput: [], videoinput: [] },
+      selected: {},
+      active: {},
+      supports_output_selection: false,
+    };
+    this._mediaDeviceBusy = false;
+    this._mediaDeviceStatus = "";
     this._ringtoneRequestKey = `voip-stack-card-${Math.random().toString(36).slice(2)}`;
     this._deepLinkAnswerConsumed = false;
 
@@ -192,6 +200,18 @@ class VoipStackCard extends HTMLElement {
       );
       this._render();
     };
+    this._mediaDevicesListener = (event) => {
+      this._mediaDeviceState = event?.detail || voipStackEngine.mediaDeviceState;
+      this._render();
+    };
+    this._audioLevelListener = (event) => {
+      const detail = event?.detail || {};
+      if (
+        !this._isHaSoftphoneMode() ||
+        detail.endpoint_id !== this._getSoftphoneEndpointId()
+      ) return;
+      this._applyHangupAudioLevel(detail.level);
+    };
     this._resizeObserver = new ResizeObserver(() => this._measureLayout());
   }
 
@@ -200,6 +220,9 @@ class VoipStackCard extends HTMLElement {
     voipStackEngine.addEventListener("state", this._engineListener);
     voipStackEngine.addEventListener("error", this._engineErrorListener);
     voipStackEngine.addEventListener("video-error", this._engineErrorListener);
+    voipStackEngine.addEventListener("media-devices", this._mediaDevicesListener);
+    voipStackEngine.addEventListener("audio-level", this._audioLevelListener);
+    void voipStackEngine.refreshMediaDevices?.();
     this._observeLayout();
     if (this._hass) {
       this._subscribeBusEvents();
@@ -244,6 +267,8 @@ class VoipStackCard extends HTMLElement {
     voipStackEngine.removeEventListener("state", this._engineListener);
     voipStackEngine.removeEventListener("error", this._engineErrorListener);
     voipStackEngine.removeEventListener("video-error", this._engineErrorListener);
+    voipStackEngine.removeEventListener("media-devices", this._mediaDevicesListener);
+    voipStackEngine.removeEventListener("audio-level", this._audioLevelListener);
     voipStackEngine.clearRingtoneRequest(this._ringtoneRequestKey);
     voipStackEngine.releaseVideoCanvas(this);
     voipStackEngine.releaseSoftphoneController(this, this._softphoneRuntimeKey());
@@ -1658,6 +1683,7 @@ class VoipStackCard extends HTMLElement {
       els.stats.textContent = "";
       els.err.textContent = "";
       voipStackEngine.clearRingtoneRequest(this._ringtoneRequestKey);
+      this._applyHangupAudioLevel(0);
       return;
     }
     els.offlinePanel.hidden = true;
@@ -1840,14 +1866,15 @@ class VoipStackCard extends HTMLElement {
     els.statusReason.textContent = statusReason;
     els.statusReason.hidden = !statusReason;
 
-    // Runtime options are idle-only and live behind a compact settings panel.
-    // During ringing/in_call the card shows only call actions, so toggles
-    // cannot be changed mid-call.
-    const showRuntimeOptions = showCall && !this._starting && !this._stopping;
+    // Reuse the normal Options surface during calls. The same control moves
+    // into the video call bar, while the panel remains a real card view.
+    const inCallOptions = softphoneMode && (showAnswer || showHangup) && !this._stopping;
+    const showRuntimeOptions = (showCall && !this._starting && !this._stopping) || inCallOptions;
     const showSettingsPanel = showRuntimeOptions && this._settingsOpen;
+    els.card.classList.toggle("settings-open", showSettingsPanel);
     const canUseKeypad = softphoneMode || !!this._startCallService;
     els.runtimeControls.hidden = !showRuntimeOptions;
-    els.keypadBtn.hidden = !(showRuntimeOptions && canUseKeypad);
+    els.keypadBtn.hidden = !(showCall && showRuntimeOptions && canUseKeypad);
     els.keypadBtn.textContent = keypadOpen ? "Contacts" : "Keypad";
     els.keypadBtn.setAttribute("aria-expanded", String(showCall && keypadOpen));
     els.settingsBtn.hidden = !showRuntimeOptions;
@@ -1891,6 +1918,16 @@ class VoipStackCard extends HTMLElement {
       els.softphoneGroupsPanel.hidden = !showGroups;
       if (showGroups) this._renderGroupControls();
     }
+    const idleMediaView = els.mediaDeviceViews?.[0];
+    if (idleMediaView) {
+      idleMediaView.root.hidden = !(showSettingsPanel && softphoneMode);
+    }
+    this._renderMediaDeviceViews();
+    this._applyHangupAudioLevel(
+      softphoneMode && showHangup && this._hasBrowserAudioPath()
+        ? voipStackEngine.audioLevel
+        : 0,
+    );
 
     // Stats line: diagnostics stay out of the video plane. In video mode they are a
     // compact, single-line item in the bottom call bar and only appear when
@@ -1992,6 +2029,14 @@ class VoipStackCard extends HTMLElement {
       }
     }
     if (els.settingsBtn) els.settingsBtn.onclick = () => this._toggleSettings();
+    for (const view of els.mediaDeviceViews || []) {
+      view.accessBtn.onclick = () => this._refreshMediaDeviceOptions(true);
+      view.cycleCameraBtn.onclick = () => this._cycleMediaCamera();
+      for (const [kind, row] of Object.entries(view.rows)) {
+        row.select.onchange = (event) =>
+          this._selectMediaDevice(kind, event.target.value);
+      }
+    }
     els.autoAnswerCheckbox.onchange = () => this._toggleAutoAnswer();
     if (els.dndCheckbox) els.dndCheckbox.onchange = () => this._toggleDnd();
     if (els.ringtoneCheckbox) els.ringtoneCheckbox.onchange = () => this._toggleRingtone();
@@ -2084,7 +2129,9 @@ class VoipStackCard extends HTMLElement {
       this._mirrorKeypadOpen = !this._mirrorKeypadOpen;
       if (this._mirrorKeypadOpen) this._mirrorManualTarget = "";
     }
-    if (this._keypadOpen()) this._settingsOpen = false;
+    if (this._keypadOpen()) {
+      this._settingsOpen = false;
+    }
     this._render();
     if (this._keypadOpen()) {
       requestAnimationFrame(() => this._els?.keypadInput?.focus());
@@ -2662,9 +2709,119 @@ class VoipStackCard extends HTMLElement {
     this._render();
   }
 
+  _applyHangupAudioLevel(level) {
+    const card = this._els?.card;
+    if (!card) return;
+    const scale = 1 + Math.max(0, Math.min(1, Number(level) || 0)) * 0.08;
+    card.style.setProperty("--voip-hangup-scale", scale.toFixed(4));
+  }
+
+  _renderMediaDeviceViews() {
+    const state = this._mediaDeviceState || voipStackEngine.mediaDeviceState || {};
+    const devices = state.devices || {};
+    const selected = state.selected || {};
+    const active = state.active || {};
+    for (const view of this._els?.mediaDeviceViews || []) {
+      for (const kind of ["audioinput", "audiooutput", "videoinput"]) {
+        const select = view.rows[kind].select;
+        const available = devices[kind] || [];
+        const wanted = String(selected[kind] || "");
+        const key = JSON.stringify([available, wanted, active[kind] || ""]);
+        if (select.dataset.options !== key) {
+          const defaultOption = document.createElement("option");
+          defaultOption.value = "";
+          defaultOption.textContent = kind === "audiooutput"
+            ? "System default"
+            : "Browser default";
+          if (!active[kind]) defaultOption.textContent += " - active";
+          const options = [defaultOption];
+          for (const device of available) {
+            const option = document.createElement("option");
+            option.value = device.deviceId;
+            option.textContent = device.label +
+              (device.deviceId === active[kind] ? " - active" : "");
+            options.push(option);
+          }
+          if (wanted && !available.some((device) => device.deviceId === wanted)) {
+            const missing = document.createElement("option");
+            missing.value = wanted;
+            missing.textContent = "Preferred device unavailable";
+            options.push(missing);
+          }
+          select.replaceChildren(...options);
+          select.dataset.options = key;
+        }
+        select.value = wanted;
+        select.disabled = this._mediaDeviceBusy ||
+          (kind === "audiooutput" && !state.supports_output_selection);
+      }
+      view.accessBtn.disabled = this._mediaDeviceBusy;
+      view.cycleCameraBtn.hidden = (devices.videoinput || []).length < 2;
+      view.cycleCameraBtn.disabled = this._mediaDeviceBusy;
+      view.status.textContent = this._mediaDeviceStatus ||
+        (!state.supports_output_selection
+          ? "Speaker routing is controlled by this device."
+          : "");
+    }
+  }
+
+  async _refreshMediaDeviceOptions(requestPermission = false) {
+    if (this._mediaDeviceBusy) return;
+    this._mediaDeviceBusy = true;
+    this._mediaDeviceStatus = requestPermission ? "Requesting media access..." : "";
+    this._render();
+    try {
+      this._mediaDeviceState = await voipStackEngine.refreshMediaDevices({
+        requestPermission,
+      });
+      this._mediaDeviceStatus = requestPermission ? "Media devices refreshed." : "";
+    } catch (err) {
+      this._mediaDeviceStatus = err?.message || String(err);
+    } finally {
+      this._mediaDeviceBusy = false;
+      this._render();
+    }
+  }
+
+  async _selectMediaDevice(kind, deviceId) {
+    if (this._mediaDeviceBusy) return;
+    this._mediaDeviceBusy = true;
+    this._mediaDeviceStatus = "Applying media device...";
+    this._render();
+    try {
+      this._mediaDeviceState = await voipStackEngine.setMediaDevice(kind, deviceId);
+      this._mediaDeviceStatus = "Media device active.";
+    } catch (err) {
+      this._mediaDeviceStatus = err?.message || String(err);
+    } finally {
+      this._mediaDeviceBusy = false;
+      this._render();
+    }
+  }
+
+  async _cycleMediaCamera() {
+    if (this._mediaDeviceBusy) return;
+    this._mediaDeviceBusy = true;
+    this._mediaDeviceStatus = "Switching camera...";
+    this._render();
+    try {
+      await voipStackEngine.cycleVideoInput();
+      this._mediaDeviceState = voipStackEngine.mediaDeviceState;
+      this._mediaDeviceStatus = "Camera active.";
+    } catch (err) {
+      this._mediaDeviceStatus = err?.message || String(err);
+    } finally {
+      this._mediaDeviceBusy = false;
+      this._render();
+    }
+  }
+
   _toggleSettings() {
     this._settingsOpen = !this._settingsOpen;
     this._render();
+    if (this._settingsOpen && this._isHaSoftphoneMode()) {
+      void this._refreshMediaDeviceOptions();
+    }
   }
 
   _toggleRingtone() {

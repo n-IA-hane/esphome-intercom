@@ -587,10 +587,13 @@ cameraRace._negotiated = {{ send: {{ codec: "vp8", encoding: "VP8" }} }};
 let cameraSetups = 0;
 let releaseCameraSetup;
 const cameraSetupGate = new Promise((resolve) => {{ releaseCameraSetup = resolve; }});
-cameraRace._setupEncoder = async () => {{
+cameraRace._replaceSender = () => {{
   cameraSetups++;
-  await cameraSetupGate;
-  cameraRace._encoder = {{ state: "configured" }};
+  const setup = cameraSetupGate.then(() => {{
+    cameraRace._encoder = {{ state: "configured" }};
+  }});
+  cameraRace._senderSetupPromise = setup;
+  return setup;
 }};
 const enableOne = cameraRace.setCameraEnabled(true);
 const enableTwo = cameraRace.setCameraEnabled(true);
@@ -1175,7 +1178,6 @@ context.Worker = JpegWorker;
 const sender = new Video();
 sender._codecWorkerUrl = () => "/voip-stack-video-worker.js";
 sender._generation = 3;
-sender._senderGeneration = 4;
 sender._cameraAllowed = true;
 sender._cameraEnabled = true;
 sender._negotiated = {{
@@ -1194,7 +1196,8 @@ sender._ws = {{
   bufferedAmount: 0,
   send(value) {{ wire.push(value); }},
 }};
-await sender._setupEncoder("jpeg", 3, 4);
+await sender._replaceSender("jpeg", 3, "", false);
+const senderGeneration = sender._senderGeneration;
 assert.equal(workers.length, 1);
 assert.equal(sender._encoder.kind, "jpeg");
 assert.equal(sender._encoder.state, "configured");
@@ -1234,7 +1237,7 @@ workers[0].onmessage({{
   data: {{
     type: "jpeg_frame",
     generation: 3,
-    senderGeneration: 4,
+    senderGeneration,
     timestamp: first.timestamp,
     buffer: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer,
   }},
@@ -1262,7 +1265,7 @@ workers[0].onmessage({{
   data: {{
     type: "jpeg_frame",
     generation: 3,
-    senderGeneration: 4,
+    senderGeneration,
     timestamp: latest.timestamp,
     buffer: new Uint8Array([1]).buffer,
   }},

@@ -155,6 +155,13 @@ Long caller names are truncated inside the bar rather than widening the page.
 Detailed codec, packet and frame counters appear only when VoIP Stack debug
 mode is enabled. The normal card does not cover the picture with diagnostics.
 
+The tune button beside Hangup selects the microphone, audio output and camera
+owned by the current browser or Companion App session. Camera replacement is
+atomic: the existing sender remains active until the replacement track and
+encoder are ready. The Hangup control keeps its responsive dimensions and
+pulses subtly from received audio only; it is not driven by the local
+microphone.
+
 Camera transmission has two gates. The integration-level option must first be
 enabled, then **Send Camera** must be enabled on that logical HA phone. The
 preference survives cache clearing and is shared by every card bound to the

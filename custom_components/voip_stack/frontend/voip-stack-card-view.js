@@ -27,6 +27,53 @@ function installWheelScrollHandoff(scroller) {
   }, { passive: false });
 }
 
+function buildMediaDeviceControls(prefix) {
+  const root = document.createElement("section");
+  root.className = "media-device-controls";
+  const heading = document.createElement("div");
+  heading.className = "media-device-heading";
+  heading.textContent = "Media devices";
+  root.appendChild(heading);
+
+  const rows = {};
+  for (const [kind, label] of [
+    ["audioinput", "Microphone"],
+    ["audiooutput", "Speaker"],
+    ["videoinput", "Camera"],
+  ]) {
+    const row = document.createElement("label");
+    row.className = "media-device-row";
+    row.htmlFor = `${prefix}-${kind}`;
+    const text = document.createElement("span");
+    text.textContent = label;
+    const select = document.createElement("select");
+    select.id = `${prefix}-${kind}`;
+    select.dataset.kind = kind;
+    row.appendChild(text);
+    row.appendChild(select);
+    root.appendChild(row);
+    rows[kind] = { row, select };
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "media-device-actions";
+  const accessBtn = document.createElement("button");
+  accessBtn.type = "button";
+  accessBtn.textContent = "Allow media access";
+  const cycleCameraBtn = document.createElement("button");
+  cycleCameraBtn.type = "button";
+  cycleCameraBtn.textContent = "Switch camera";
+  actions.appendChild(accessBtn);
+  actions.appendChild(cycleCameraBtn);
+  root.appendChild(actions);
+
+  const status = document.createElement("div");
+  status.className = "media-device-status";
+  status.setAttribute("role", "status");
+  root.appendChild(status);
+  return { root, rows, accessBtn, cycleCameraBtn, status, optionsKey: "" };
+}
+
 export function buildMainCardSkeleton(cardVersion) {
     const root = this.shadowRoot;
     root.replaceChildren();
@@ -122,8 +169,6 @@ export function buildMainCardSkeleton(cardVersion) {
       .video-active .destination-row,
       .video-active .status,
       .video-active .status-reason,
-      .video-active .runtime-controls,
-      .video-active .settings-panel,
       .video-active .version { display: none; }
       .header { font-size: 1.2em; font-weight: 500; margin-bottom: var(--voip-fluid-space, 16px); color: var(--primary-text-color); text-align: center; }
       .header[hidden] { display: none; }
@@ -235,10 +280,16 @@ export function buildMainCardSkeleton(cardVersion) {
       .voip-button.answer { background: #4caf50; color: white; animation: ring-pulse 1s infinite; }
       .voip-button.decline { background: #f44336; color: white; animation: ring-pulse 1s infinite; }
       .voip-button.hangup { background: #f44336; color: white; }
+      .voip-button.hangup {
+        transform: scale(var(--voip-hangup-scale, 1));
+        transform-origin: center;
+        transition: transform 80ms linear, opacity 0.2s ease;
+      }
       .hangup-icon, .hangup-copy, .hangup-duration { display: none; }
       .video-active .voip-button.hangup {
         box-sizing: border-box;
-        width: 100%;
+        width: auto;
+        flex: 1 1 auto;
         height: 100%;
         min-height: 50px;
         border-radius: 0;
@@ -250,6 +301,8 @@ export function buildMainCardSkeleton(cardVersion) {
         -webkit-backdrop-filter: blur(8px) saturate(1.12);
         backdrop-filter: blur(8px) saturate(1.12);
         box-shadow: 0 -1px 0 rgba(255,255,255,.18), 0 -8px 30px rgba(0,0,0,.24);
+        transform: scaleY(var(--voip-hangup-scale, 1));
+        transform-origin: center bottom;
       }
       .video-active .hangup-label { display: none; }
       .video-active .hangup-icon {
@@ -341,9 +394,103 @@ export function buildMainCardSkeleton(cardVersion) {
         margin-top: 10px;
         padding: 8px 10px;
         border-top: 1px solid var(--divider-color, #ddd);
+        background: var(--voip-stack-card-surface);
         text-align: left;
       }
       .settings-panel[hidden] { display: none; }
+      .settings-label-icon { display: none; }
+      .video-active:not(.settings-open) .runtime-controls {
+        position: absolute;
+        z-index: 4;
+        right: 0;
+        bottom: 0;
+        height: clamp(50px, 16%, 58px);
+        margin: 0;
+      }
+      .video-active:not(.settings-open) .runtime-controls .settings-btn {
+        width: clamp(50px, 16vw, 58px);
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        color: white;
+        background: transparent;
+      }
+      .video-active:not(.settings-open) .runtime-controls .settings-label { display: none; }
+      .video-active:not(.settings-open) .runtime-controls .settings-label-icon {
+        display: inline-flex;
+        --mdc-icon-size: 23px;
+      }
+      .video-active:not(.settings-open) .voip-button.hangup { padding-right: 68px; }
+      .card.settings-open {
+        overflow: auto;
+        background: var(--voip-stack-card-surface);
+      }
+      .card.settings-open > :not(.header):not(.runtime-controls):not(.settings-panel) {
+        display: none !important;
+      }
+      .card.settings-open .header { display: block; margin-bottom: 4px; }
+      .card.settings-open .header {
+        color: var(--primary-text-color);
+        text-shadow: none;
+      }
+      .card.settings-open .runtime-controls { order: 1; margin-top: 0; }
+      .card.settings-open .settings-panel {
+        order: 2;
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 8px;
+      }
+      .media-device-controls { margin-top: 10px; }
+      .media-device-heading {
+        color: var(--primary-text-color);
+        font-size: .9em;
+        font-weight: 600;
+      }
+      .media-device-row {
+        display: grid;
+        grid-template-columns: minmax(0, .8fr) minmax(0, 1.5fr);
+        gap: 8px;
+        align-items: center;
+        margin-top: 8px;
+        color: var(--secondary-text-color);
+        font-size: .85em;
+      }
+      .media-device-row select {
+        width: 100%;
+        min-width: 0;
+        padding: 5px;
+        color: var(--primary-text-color);
+        background: var(--voip-stack-card-surface);
+        border: 1px solid var(--divider-color, #ccc);
+        border-radius: 5px;
+      }
+      .media-device-row option { color: CanvasText; background: Canvas; }
+      .media-device-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .media-device-actions button {
+        border: 1px solid var(--divider-color, #ccc);
+        border-radius: 6px;
+        padding: 5px 9px;
+        background: var(--voip-control-surface);
+        color: var(--primary-text-color);
+        cursor: pointer;
+      }
+      .media-device-actions button[hidden] { display: none; }
+      .media-device-status {
+        min-height: 1em;
+        margin-top: 6px;
+        color: var(--secondary-text-color);
+        font-size: .76em;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .voip-button.hangup { transform: none !important; transition: none; }
+      }
       .auto-answer-row {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
@@ -605,7 +752,14 @@ export function buildMainCardSkeleton(cardVersion) {
     const settingsBtn = document.createElement("button");
     settingsBtn.type = "button";
     settingsBtn.className = "settings-btn";
-    settingsBtn.textContent = "Options";
+    const settingsLabel = document.createElement("span");
+    settingsLabel.className = "settings-label";
+    settingsLabel.textContent = "Options";
+    const settingsLabelIcon = document.createElement("ha-icon");
+    settingsLabelIcon.className = "settings-label-icon";
+    settingsLabelIcon.setAttribute("icon", "mdi:tune-variant");
+    settingsBtn.appendChild(settingsLabel);
+    settingsBtn.appendChild(settingsLabelIcon);
     settingsBtn.setAttribute("aria-controls", "voip-settings-panel");
     settingsBtn.setAttribute("aria-expanded", "false");
     runtimeControls.appendChild(settingsBtn);
@@ -679,6 +833,9 @@ export function buildMainCardSkeleton(cardVersion) {
     videoCameraRow.appendChild(videoCameraCheckbox);
     videoCameraRow.appendChild(videoCameraLabel);
     settingsPanel.appendChild(videoCameraRow);
+
+    const idleMediaDevices = buildMediaDeviceControls("voip-settings-media");
+    settingsPanel.appendChild(idleMediaDevices.root);
 
     const softphoneGroupsPanel = document.createElement("div");
     softphoneGroupsPanel.className = "softphone-groups-panel";
@@ -773,6 +930,7 @@ export function buildMainCardSkeleton(cardVersion) {
       autoAnswerRow, autoAnswerCheckbox, dndRow, dndCheckbox, ringtoneRow, ringtoneCheckbox,
       microphoneAntiAliasRow, microphoneAntiAliasCheckbox,
       videoCameraRow, videoCameraCheckbox,
+      mediaDeviceViews: [idleMediaDevices],
       softphoneGroupsPanel, extensionRow, extensionInput, ringGroupInput, ringGroupOptions, conferenceGroupInput, conferenceGroupOptions, conferenceRingRow, conferenceRingCheckbox,
       stats, err,
     };
