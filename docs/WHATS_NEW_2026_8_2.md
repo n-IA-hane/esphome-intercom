@@ -59,6 +59,19 @@ and uploaded explicitly to the GitHub release for HACS.
 Real hardware evidence remains explicit. A green model, unit suite or firmware
 compile is never described as proof of physical audio, video or panel output.
 
+## Known issues
+
+- On a OnePlus Nord 5, browser softphone receive audio can develop audible gaps
+  and increment the playback underrun counter when the display uses a high
+  refresh rate, especially during touch interaction or orientation changes.
+  The same call path is stable on that phone at 60 Hz and has not reproduced on
+  a Samsung S20 or desktop browser. The current workaround is to select the
+  standard 60 Hz display mode, either globally or for Chrome and the Home
+  Assistant app. Initial evidence points to device-side Chromium or OxygenOS
+  scheduling under high-refresh rendering load, but the exact cause is not yet
+  proven. Deeper instrumentation and any narrowly scoped mitigation are planned
+  after this release.
+
 ## Upgrade checklist
 
 1. Read [Breaking changes](BREAKING_CHANGES.md).
