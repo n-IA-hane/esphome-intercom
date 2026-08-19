@@ -422,7 +422,7 @@ async def test_phonebook_pushes_only_changed_content_and_rehydrates_one_device(
     assert deliveries.count(("s3_set_roster_json", changed)) == 1
 
 
-async def test_phonebook_keeps_configured_peer_stable_during_esphome_restart(
+async def test_phonebook_hides_offline_peer_but_keeps_reconnect_metadata(
     hass: HomeAssistant,
 ) -> None:
     from custom_components.voip_stack.peer import Peer
@@ -478,11 +478,13 @@ async def test_phonebook_keeps_configured_peer_stable_during_esphome_restart(
     assert sensor._stable_phonebook_peers([original]) == [original]
     sensor._rehydrate_services.clear()
     runtime.phonebook_delivered_roster["s3_set_roster_json"] = "current"
-    assert sensor._stable_phonebook_peers([]) == [original]
-    assert "s3_set_roster_json" not in runtime.phonebook_delivered_roster
 
     for entity_id in entities.values():
         hass.states.async_set(entity_id, "unavailable")
+    assert sensor._stable_phonebook_peers([]) == []
+    assert "s3_set_roster_json" not in runtime.phonebook_delivered_roster
+
+    hass.states.async_set(endpoint_entity, "S3|192.0.2.11|5060|40000|full_duplex")
     restoring = Peer(
         name="S3",
         host="192.0.2.11",

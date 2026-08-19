@@ -440,11 +440,13 @@ class VoipPhonebookSensor(SensorEntity):
 
         browser_peers: list[Peer] = []
         online_services: dict[str, str] = {}
+        live_esp_keys: set[str] = set()
         for peer in live_peers:
             if peer.endpoint_kind != "esphome":
                 browser_peers.append(peer)
                 continue
             key = peer.device_id or peer.endpoint_id
+            live_esp_keys.add(key)
             previous = self._known_esp_peers.get(key)
             entities = (peer.device or {}).get("entities") or {}
             restoring = any(
@@ -484,6 +486,10 @@ class VoipPhonebookSensor(SensorEntity):
                 self._known_esp_peers.pop(key, None)
 
         return [
-            *(self._known_esp_peers[key] for key in sorted(self._known_esp_peers)),
+            *(
+                self._known_esp_peers[key]
+                for key in sorted(live_esp_keys)
+                if key in self._known_esp_peers
+            ),
             *browser_peers,
         ]
