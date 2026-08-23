@@ -1,16 +1,13 @@
 # ESPHome speaker fork upstream record
 
-Upstream baseline: ESPHome upstream `dev` commit
-`5738c60206b2792634ac4dfe05712d675235d0ec`
-(`[nrf52] Run clang-tidy against the native sdk-nrf toolchain (#17364)`),
-component path `esphome/components/speaker`.
+Upstream baseline: ESPHome 2026.8.0 tag, component path
+`esphome/components/speaker`.
 
 Checked with:
 
 ```bash
 .venv/bin/esphome version
-diff -ru .venv/lib/python3.14/site-packages/esphome/components/speaker esphome/components/speaker
-diff -ru /tmp/esphome-upstream/esphome/components/speaker esphome/components/speaker
+diff -ru test_captures/esphome-2026.8.0-src/esphome/components/speaker esphome/components/speaker
 ```
 
 ## Local patches

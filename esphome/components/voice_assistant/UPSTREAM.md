@@ -1,14 +1,12 @@
 # ESPHome Voice Assistant fork upstream record
 
-Upstream baseline: ESPHome upstream `dev` commit
-`5738c60206b2792634ac4dfe05712d675235d0ec`
-(`[nrf52] Run clang-tidy against the native sdk-nrf toolchain (#17364)`),
-component path `esphome/components/voice_assistant`.
+Upstream baseline: ESPHome 2026.8.0 tag, component path
+`esphome/components/voice_assistant`.
 
 Checked with:
 
 ```bash
-diff -ru /tmp/esphome-upstream/esphome/components/voice_assistant esphome/components/voice_assistant
+diff -ru test_captures/esphome-2026.8.0-src/esphome/components/voice_assistant esphome/components/voice_assistant
 ```
 
 ## Local patch
