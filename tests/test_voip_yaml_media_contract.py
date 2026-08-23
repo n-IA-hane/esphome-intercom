@@ -231,6 +231,8 @@ def test_spotpear_concurrency_memory_policy_is_explicit_and_safe_by_default() ->
     text = SPOTPEAR_FULL_AFE.read_text()
 
     assert 'http_media_persistent_ring_buffer: "false"' in text
+    assert 'http_media_ring_buffer_size: "65536"' in text
+    assert text.count("buffer_size: ${http_media_ring_buffer_size}") == 2
     assert text.count(
         "persistent_ring_buffer: ${http_media_persistent_ring_buffer}"
     ) == 2
