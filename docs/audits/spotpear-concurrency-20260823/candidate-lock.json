@@ -1,0 +1,29 @@
+{
+  "captured_at_utc": "2026-08-23T15:00:00Z",
+  "profile": "yamls/full-experience/single-bus/spotpear-ball-v2-full-afe.yaml",
+  "device": {
+    "name": "Spotpear Ball v2",
+    "host": "192.168.1.31",
+    "serial_device": "/dev/ttyACM0",
+    "usb_serial": "B8:F8:62:E4:A1:38"
+  },
+  "software": {
+    "esphome": "2026.7.4",
+    "esp_idf": "5.5.5",
+    "esphome_intercom": "fef583e3c37e9ee6fcd143017c47a2ebecec6c24",
+    "esphome_audio_stack": "07041f51b1b63929f84c75d4a216ea117f9b1b68",
+    "esphome_voip_stack": "d1aff249c6323ca50d261e18ee8cb4a1b388b209",
+    "esphome_runtime_controller": "a41b84d871b4f6ef7a8bd8b02190ff647460b83f"
+  },
+  "remote_heads": {
+    "esphome_intercom_dev": "fef583e3c37e9ee6fcd143017c47a2ebecec6c24",
+    "esphome_intercom_main": "e6d67e91c207688e22b908da3d5854b841344df8",
+    "esphome_audio_stack_dev": "07041f51b1b63929f84c75d4a216ea117f9b1b68",
+    "esphome_voip_stack_dev": "d1aff249c6323ca50d261e18ee8cb4a1b388b209",
+    "esphome_runtime_controller_dev": "a41b84d871b4f6ef7a8bd8b02190ff647460b83f"
+  },
+  "artifacts": {
+    "ota_sha256": "1ab9783224d6ed1879801c50c7db224ec0e808d9414640df1a44acb5156fa354",
+    "elf_sha256": "2c1be0e61a935053f443e8e91690cbbd754520b7591251102a56564959d7bbbf"
+  }
+}
