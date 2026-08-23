@@ -227,6 +227,21 @@ def test_spotpear_round_dialer_preserves_memory_and_routing_contracts() -> None:
     assert "get_contacts_csv()" not in text
 
 
+def test_spotpear_concurrency_memory_policy_is_explicit_and_safe_by_default() -> None:
+    text = SPOTPEAR_FULL_AFE.read_text()
+
+    assert 'http_media_persistent_ring_buffer: "false"' in text
+    assert text.count(
+        "persistent_ring_buffer: ${http_media_persistent_ring_buffer}"
+    ) == 2
+    assert 'voip_audio_task_stacks_in_psram: "false"' in text
+    assert 'voip_tx_task_stack_size: "12288"' in text
+    assert 'voip_rx_task_stack_size: "12288"' in text
+    assert "audio_task_stacks_in_psram: ${voip_audio_task_stacks_in_psram}" in text
+    assert "tx_task_stack_size: ${voip_tx_task_stack_size}" in text
+    assert "rx_task_stack_size: ${voip_rx_task_stack_size}" in text
+
+
 def test_spotpear_layout_and_aec_sync_use_runtime_contracts() -> None:
     text = SPOTPEAR_FULL_AFE.read_text()
     esphome_block = text.split("\nesp32:", 1)[0]

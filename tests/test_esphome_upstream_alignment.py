@@ -41,3 +41,18 @@ def test_local_forks_remain_narrow_and_documented() -> None:
     assert "pause_releases_pipeline" in speaker
     assert "tts_playback_start_timeout" in voice_assistant
     assert "host simulator" in audio
+
+
+def test_audio_http_exposes_micro_decoder_persistent_ring_policy() -> None:
+    schema = (COMPONENTS / "audio_http" / "media_source.py").read_text()
+    source = (COMPONENTS / "audio_http" / "audio_http_media_source.cpp").read_text()
+    header = (COMPONENTS / "audio_http" / "audio_http_media_source.h").read_text()
+    upstream = (COMPONENTS / "audio_http" / "UPSTREAM.md").read_text()
+
+    assert 'CONF_PERSISTENT_RING_BUFFER = "persistent_ring_buffer"' in schema
+    assert "default=False" in schema
+    assert "set_persistent_ring_buffer(config[CONF_PERSISTENT_RING_BUFFER])" in schema
+    assert "config.persistent_ring_buffer = this->persistent_ring_buffer_;" in source
+    assert "bool persistent_ring_buffer_{false};" in header
+    assert "ESPHome 2026.8.0" in upstream
+    assert "micro-decoder 0.4.0" in upstream

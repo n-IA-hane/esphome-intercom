@@ -29,6 +29,10 @@
 
 substitutions:
   runtime_controller_debug: "false"
+  http_media_persistent_ring_buffer: "false"
+  voip_audio_task_stacks_in_psram: "false"
+  voip_tx_task_stack_size: "12288"
+  voip_rx_task_stack_size: "12288"
   # Hardware-shared identity: all Spotpear Ball v2 firmware variants (voip / full-afe
   # / full-afe) share `spotpear-ball-v2` so a flash swap reuses the same HA device entity
   # and the same .esphome/build cache.
@@ -450,10 +454,12 @@ media_source:
     id: media_http_source
     buffer_size: 65536
     task_stack_in_psram: true
+    persistent_ring_buffer: ${http_media_persistent_ring_buffer}
   - platform: audio_http
     id: announcement_http_source
     buffer_size: 65536
     task_stack_in_psram: true
+    persistent_ring_buffer: ${http_media_persistent_ring_buffer}
   - platform: audio_file
     id: announcement_file_source
     task_stack_in_psram: true
@@ -551,6 +557,9 @@ voice_assistant:
 
 voip_stack:
   task_stacks_in_psram: true   # save ~28KB internal heap on S3 PSRAM builds by placing task stacks in PSRAM
+  audio_task_stacks_in_psram: ${voip_audio_task_stacks_in_psram}
+  tx_task_stack_size: ${voip_tx_task_stack_size}
+  rx_task_stack_size: ${voip_rx_task_stack_size}
   signaling_buffers_in_psram: true
   buffers_in_psram: true # VoIP staging buffers in PSRAM; AEC/AFE buffers live in esp_audio_stack
   id: phone
