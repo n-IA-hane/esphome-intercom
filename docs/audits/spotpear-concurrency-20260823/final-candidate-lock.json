@@ -1,0 +1,26 @@
+{
+  "captured_at_utc": "2026-08-23T19:00:00Z",
+  "esphome": "2026.8.0",
+  "esp_idf": "5.5.5",
+  "repositories": {
+    "esphome_intercom": "ce20b60c52339b24c60a6624c03cfebb1142e1c6",
+    "esphome_voip_stack": "8021412f590d5dd9692456dd696cc3f5b257c849",
+    "esphome_audio_stack": "07041f51b1b63929f84c75d4a216ea117f9b1b68",
+    "esphome_runtime_controller": "a41b84d871b4f6ef7a8bd8b02190ff647460b83f"
+  },
+  "artifacts": {
+    "spotpear_elf_sha256": "5f60dbd32660cd7a562f4460cdc4c3b6bb8c6f9c8bf46dbf419c2655c5ee2387",
+    "spotpear_ota_sha256": "1d6ec70f43ecb1fdc3eaa09478aebe66cc336011a1487c0ca107989818d9b813",
+    "ws3_elf_sha256": "c3bff4a102c3d0e9ec4be3259b1d6eaa0872b1e6bdbdd4c5aa892908bc6b7eb9",
+    "ws3_ota_sha256": "b2b233789a3d8ad22e9de5703c167cba4230936cb659b96228590ea84874a051",
+    "p4_jpeg_elf_sha256": "4ad2578d6e13d739f2dfd76fda4322b1371c5c3eb458e4e75e1a0997eb7622f9",
+    "p4_jpeg_ota_sha256": "51e92babc136c4304eb6199c0f2fcceab5e598996170d9e29405a6dcb9e9b71a",
+    "p4_h264_elf_sha256": "26feca4ee8e1ca316a9dab2fb4874ee4aafb67fc06805b30cb8247d3f8edf168",
+    "p4_h264_ota_sha256": "e5c98670995ed7d065189b0a7324ae78eb5e874537f6d074ba2fccf6bba2fe95"
+  },
+  "hardware_qualification": {
+    "spotpear": "passed",
+    "ws3": "passed",
+    "p4": "compile_only"
+  }
+}
