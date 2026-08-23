@@ -31,6 +31,7 @@ substitutions:
   runtime_controller_debug: "false"
   http_media_persistent_ring_buffer: "false"
   http_media_ring_buffer_size: "65536"
+  sendspin_audio_ring_buffer_size: "262144"
   voip_audio_task_stacks_in_psram: "false"
   voip_tx_task_stack_size: "12288"
   voip_rx_task_stack_size: "12288"
@@ -467,7 +468,7 @@ media_source:
   - platform: sendspin
     id: sendspin_media_source
     sample_rate: 48000
-    buffer_size: 262144
+    buffer_size: ${sendspin_audio_ring_buffer_size}
     task_stack_in_psram: true
     decode_memory: psram
 
