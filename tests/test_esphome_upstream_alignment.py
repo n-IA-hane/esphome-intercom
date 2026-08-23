@@ -56,3 +56,16 @@ def test_audio_http_exposes_micro_decoder_persistent_ring_policy() -> None:
     assert "bool persistent_ring_buffer_{false};" in header
     assert "ESPHome 2026.8.0" in upstream
     assert "micro-decoder 0.4.0" in upstream
+
+
+def test_spi_uses_direct_psram_dma_without_internal_bounce_buffers() -> None:
+    source = (COMPONENTS / "spi" / "spi_esp_idf.cpp").read_text()
+    upstream = (COMPONENTS / "spi" / "UPSTREAM.md").read_text()
+
+    assert "MAX_PSRAM_TRANSFER_SIZE = 4032" in source
+    assert "SPI_TRANS_DMA_USE_PSRAM" in source
+    assert "SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL" in source
+    assert "psram_tx_flags(txbuf, partial)" in source
+    assert "psram_tx_flags(data, chunk_size)" in source
+    assert "ESPHome 2026.8.0" in upstream
+    assert "ESP-IDF 5.5" in upstream

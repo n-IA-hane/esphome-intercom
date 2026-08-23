@@ -227,23 +227,24 @@ def test_spotpear_round_dialer_preserves_memory_and_routing_contracts() -> None:
     assert "get_contacts_csv()" not in text
 
 
-def test_spotpear_concurrency_memory_policy_is_explicit_and_safe_by_default() -> None:
+def test_spotpear_concurrency_memory_policy_is_explicit_and_preallocated() -> None:
     text = SPOTPEAR_FULL_AFE.read_text()
 
-    assert 'http_media_persistent_ring_buffer: "false"' in text
-    assert 'http_media_ring_buffer_size: "65536"' in text
+    assert 'http_media_persistent_ring_buffer: "true"' in text
+    assert 'http_media_ring_buffer_size: "32768"' in text
     assert text.count("buffer_size: ${http_media_ring_buffer_size}") == 2
-    assert 'sendspin_audio_ring_buffer_size: "262144"' in text
+    assert 'sendspin_audio_ring_buffer_size: "65536"' in text
     assert "buffer_size: ${sendspin_audio_ring_buffer_size}" in text
     assert text.count(
         "persistent_ring_buffer: ${http_media_persistent_ring_buffer}"
     ) == 2
-    assert 'voip_audio_task_stacks_in_psram: "false"' in text
+    assert 'voip_audio_task_stacks_in_psram: "true"' in text
     assert 'voip_tx_task_stack_size: "12288"' in text
     assert 'voip_rx_task_stack_size: "12288"' in text
     assert "audio_task_stacks_in_psram: ${voip_audio_task_stacks_in_psram}" in text
     assert "tx_task_stack_size: ${voip_tx_task_stack_size}" in text
     assert "rx_task_stack_size: ${voip_rx_task_stack_size}" in text
+    assert "components: [speaker, voice_assistant, spi]" in text
 
 
 def test_spotpear_layout_and_aec_sync_use_runtime_contracts() -> None:
