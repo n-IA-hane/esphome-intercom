@@ -1,6 +1,8 @@
 # ESPHome upstream alignment
 
-This component is based on ESPHome 2026.8.0 `audio_http`.
+This component is based on ESPHome `dev` commit
+`5f6a910e2d6e41d3716668a66e5dff8cca25f2ea`, path
+`esphome/components/audio_http`.
 
 The local fork adds one configuration option, `persistent_ring_buffer`, and
 passes it to micro-decoder 0.4.0. When enabled, the encoded-audio ring is

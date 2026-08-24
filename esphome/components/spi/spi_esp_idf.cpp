@@ -6,7 +6,7 @@
 namespace esphome::spi {
 
 #ifdef USE_ESP32
-static const char *const TAG = "spi-esp-idf";
+static const char *const TAG = "spi";
 static const size_t MAX_TRANSFER_SIZE = 4092;  // dictated by ESP-IDF API.
 // External DMA buffers must keep both address and length aligned to the cache
 // line. 4032 is the largest multiple of the S3's 64-byte cache line below the

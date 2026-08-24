@@ -10,7 +10,10 @@ COMPONENTS = ROOT / "esphome" / "components"
 pytestmark = pytest.mark.architecture
 
 
-def test_audio_dependencies_match_esphome_2026_8() -> None:
+UPSTREAM_DEV_SHA = "5f6a910e2d6e41d3716668a66e5dff8cca25f2ea"
+
+
+def test_audio_dependencies_match_recorded_esphome_dev() -> None:
     source = (COMPONENTS / "audio" / "__init__.py").read_text()
 
     assert 'name="esphome/micro-decoder", ref="0.4.0"' in source
@@ -35,9 +38,12 @@ def test_local_forks_remain_narrow_and_documented() -> None:
     speaker = (COMPONENTS / "speaker" / "UPSTREAM.md").read_text()
     voice_assistant = (COMPONENTS / "voice_assistant" / "UPSTREAM.md").read_text()
     audio = (COMPONENTS / "audio" / "UPSTREAM.md").read_text()
+    audio_http = (COMPONENTS / "audio_http" / "UPSTREAM.md").read_text()
+    mipi_dsi = (COMPONENTS / "mipi_dsi" / "UPSTREAM.md").read_text()
+    spi = (COMPONENTS / "spi" / "UPSTREAM.md").read_text()
 
-    for document in (speaker, voice_assistant, audio):
-        assert "ESPHome 2026.8.0" in document
+    for document in (speaker, voice_assistant, audio, audio_http, mipi_dsi, spi):
+        assert UPSTREAM_DEV_SHA in document
     assert "pause_releases_pipeline" in speaker
     assert "tts_playback_start_timeout" in voice_assistant
     assert "host simulator" in audio
@@ -54,7 +60,7 @@ def test_audio_http_exposes_micro_decoder_persistent_ring_policy() -> None:
     assert "set_persistent_ring_buffer(config[CONF_PERSISTENT_RING_BUFFER])" in schema
     assert "config.persistent_ring_buffer = this->persistent_ring_buffer_;" in source
     assert "bool persistent_ring_buffer_{false};" in header
-    assert "ESPHome 2026.8.0" in upstream
+    assert UPSTREAM_DEV_SHA in upstream
     assert "micro-decoder 0.4.0" in upstream
 
 
@@ -67,5 +73,5 @@ def test_spi_uses_direct_psram_dma_without_internal_bounce_buffers() -> None:
     assert "SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL" in source
     assert "psram_tx_flags(txbuf, partial)" in source
     assert "psram_tx_flags(data, chunk_size)" in source
-    assert "ESPHome 2026.8.0" in upstream
+    assert UPSTREAM_DEV_SHA in upstream
     assert "ESP-IDF 5.5" in upstream

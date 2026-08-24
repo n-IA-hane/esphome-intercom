@@ -1,13 +1,14 @@
 # ESPHome speaker fork upstream record
 
-Upstream baseline: ESPHome 2026.8.0 tag, component path
+Upstream baseline: ESPHome `dev` commit
+`5f6a910e2d6e41d3716668a66e5dff8cca25f2ea`, component path
 `esphome/components/speaker`.
 
 Checked with:
 
 ```bash
 .venv/bin/esphome version
-diff -ru test_captures/esphome-2026.8.0-src/esphome/components/speaker esphome/components/speaker
+git diff --no-index ../esphome-pr-work/esphome/components/speaker esphome/components/speaker
 ```
 
 ## Local patches

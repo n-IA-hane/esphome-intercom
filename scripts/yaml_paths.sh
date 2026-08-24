@@ -17,6 +17,7 @@ REPOS = {
     "runtime_controller_components_source": ("github://n-IA-hane/esphome-runtime-controller", ROOT.parent / "esphome-runtime-controller"),
 }
 CAMERA_ROOT = ROOT.parent / "esphome-esp-video-camera"
+P4_VOIP_YAML_ROOT = ROOT / "yamls/voip-only/single-bus"
 URLS = {url: path for url, path in REPOS.values()}
 
 
@@ -110,9 +111,21 @@ def rewrite_yaml(path, ref):
     path.write_text("\n".join(output) + "\n")
 
 
+def camera_source_root(path):
+    # ESPHome resolves external component paths after package expansion from
+    # the top-level YAML, not from the included package file. The maintained
+    # P4 codec packages are consumed by YAMLs in this single directory.
+    return (
+        P4_VOIP_YAML_ROOT
+        if path.parent == ROOT / "packages/voip"
+        else path.parent
+    )
+
+
 def rewrite_camera(path, ref):
     lines = path.read_text().splitlines()
-    source = relative(path.parent, CAMERA_ROOT / "components") if ref == "local" else f"{CAMERA_URL}@main"
+    source_root = camera_source_root(path)
+    source = relative(source_root, CAMERA_ROOT / "components") if ref == "local" else f"{CAMERA_URL}@main"
     for index in range(1, len(lines)):
         if re.fullmatch(r"\s*components:\s*\[esp_video_camera\]\s*", lines[index]):
             match = re.match(r"^(\s*-\s*source:)\s*.*$", lines[index - 1])

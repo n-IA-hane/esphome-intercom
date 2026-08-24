@@ -17,8 +17,12 @@
 
 namespace esphome::audio_http {
 
-// MediaSource reports state and writes audio to its listener. DecoderListener
-// receives decoded audio and state changes from the managed decoder.
+// Inherits from two unrelated listener-style interfaces:
+//   - media_source::MediaSource: this source reports state and writes audio *to* an orchestrator
+//     (the orchestrator calls set_listener() on us with a MediaSourceListener*).
+//   - micro_decoder::DecoderListener: the underlying decoder calls back *into* us with decoded
+//     audio and state changes (we call decoder_->set_listener(this) in setup()).
+// The two set_listener() methods live on different base classes and serve opposite directions.
 class AudioHTTPMediaSource final : public Component,
                                    public media_source::MediaSource,
                                    public micro_decoder::DecoderListener {
@@ -31,10 +35,12 @@ class AudioHTTPMediaSource final : public Component,
   void set_task_stack_in_psram(bool task_stack_in_psram) { this->decoder_task_stack_in_psram_ = task_stack_in_psram; }
   void set_persistent_ring_buffer(bool persistent) { this->persistent_ring_buffer_ = persistent; }
 
+  // MediaSource interface implementation
   bool play_uri(const std::string &uri) override;
   void handle_command(media_source::MediaSourceCommand command) override;
   bool can_handle(const std::string &uri) const override;
 
+  // DecoderListener interface implementation
   size_t on_audio_write(const uint8_t *data, size_t length, uint32_t timeout_ms) override;
   void on_stream_info(const micro_decoder::AudioStreamInfo &info) override;
   void on_state_change(micro_decoder::DecoderState state) override;
@@ -44,6 +50,9 @@ class AudioHTTPMediaSource final : public Component,
   audio::AudioStreamInfo stream_info_;
 
   size_t buffer_size_{50000};
+
+  // Written from the main loop in handle_command(), read from the decoder task in
+  // on_audio_write(). Must be atomic to avoid a data race.
   std::atomic<bool> pause_{false};
   bool decoder_task_stack_in_psram_{false};
   bool persistent_ring_buffer_{false};
@@ -52,4 +61,3 @@ class AudioHTTPMediaSource final : public Component,
 }  // namespace esphome::audio_http
 
 #endif  // USE_ESP32
-

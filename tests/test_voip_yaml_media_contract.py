@@ -244,7 +244,7 @@ def test_spotpear_concurrency_memory_policy_is_explicit_and_preallocated() -> No
     assert "audio_task_stacks_in_psram: ${voip_audio_task_stacks_in_psram}" in text
     assert "tx_task_stack_size: ${voip_tx_task_stack_size}" in text
     assert "rx_task_stack_size: ${voip_rx_task_stack_size}" in text
-    assert "components: [speaker, voice_assistant, spi]" in text
+    assert "components: [audio_http, speaker, voice_assistant, spi]" in text
 
 
 def test_spotpear_layout_and_aec_sync_use_runtime_contracts() -> None:
@@ -276,7 +276,8 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     block = _voip_stack_block(text)
     video_block = _voip_stack_block(video)
 
-    assert "components: [speaker, voice_assistant, mipi_dsi, esp_video_camera]" in text
+    assert "components: [speaker, voice_assistant, mipi_dsi]" in text
+    assert "components: [esp_video_camera]" in text
     assert "p4_full_video_jpeg:" in text
     assert "esp_h264_video_source" not in text + video
     assert "esp_jpeg_video_source" in video

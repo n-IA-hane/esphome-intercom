@@ -49,4 +49,3 @@ async def to_code(config: ConfigType) -> None:
         psram.request_external_task_stack()
     cg.add(var.set_buffer_size(config[CONF_BUFFER_SIZE]))
     cg.add(var.set_persistent_ring_buffer(config[CONF_PERSISTENT_RING_BUFFER]))
-

@@ -1,9 +1,23 @@
 import os
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 import subprocess
+from types import ModuleType
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_yaml_paths() -> ModuleType:
+    loader = SourceFileLoader(
+        "yaml_paths_contract", str(ROOT / "scripts/yaml_paths.sh")
+    )
+    spec = spec_from_loader(loader.name, loader)
+    assert spec is not None
+    module = module_from_spec(spec)
+    loader.exec_module(module)
+    return module
 
 
 def _expected_mode() -> str:
@@ -50,3 +64,15 @@ def test_check_file_limits_the_expected_mode_gate() -> None:
         line for line in (result.stdout + result.stderr).splitlines() if line.startswith("FAIL:")
     ]
     assert failures == [f"FAIL: {target} ({expected}, expected {opposite})"]
+
+
+def test_p4_camera_package_path_is_relative_to_the_top_level_yaml() -> None:
+    yaml_paths = _load_yaml_paths()
+    package = ROOT / "packages/voip/p4_video_h264.yaml"
+
+    source_root = yaml_paths.camera_source_root(package)
+    source = yaml_paths.relative(
+        source_root, yaml_paths.CAMERA_ROOT / "components"
+    )
+
+    assert source == "../../../../esphome-esp-video-camera/components"
