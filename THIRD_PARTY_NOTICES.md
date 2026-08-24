@@ -16,7 +16,6 @@ ESPHome's license is included in `licenses/ESPHOME-LICENSE.txt`.
 | `esphome/components/speaker/` | ESPHome `speaker` component | Fork with local pause/release and decoder-source scheduling patches. See `esphome/components/speaker/UPSTREAM.md`. |
 | `esphome/components/voice_assistant/` | ESPHome `voice_assistant` component | Fork with configurable TTS playback-start timeout. See `esphome/components/voice_assistant/UPSTREAM.md`. |
 | `esphome/components/audio/` | ESPHome audio component family | Local copy/adaptation used by maintained media profiles; resolves ESPHome audio codec libraries at build time. |
-| `esphome/components/ring_buffer/` | ESPHome ring buffer component | Local CAPS-aware copy used by audio/VoIP paths. |
 | `esphome/components/mipi_dsi/` | ESPHome community component lineage | Local P4 display support and panel models. |
 
 When rebasing a fork, update its `UPSTREAM.md` and keep the ESPHome license
