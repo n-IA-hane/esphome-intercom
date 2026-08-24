@@ -26,8 +26,10 @@ substitutions:
   p4_h264_gop: "10"
 
 external_components:
+  - source: github://Psix-anp/esphome-esp-video-camera@main
+    components: [esp_video_camera]
   - source: ${ext_components_source}
-    components: [esp_video_camera, esp_h264_video_source, p4_video_renderer]
+    components: [esp_h264_video_source, p4_video_renderer]
 
 esp_video_camera:
   id: p4_camera

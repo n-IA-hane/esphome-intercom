@@ -163,9 +163,14 @@ checkout, run:
 When you are ready to switch them back to the published form:
 
 ```bash
-./scripts/yaml_paths.sh remote --intercom main --audio main --runtime main
-./scripts/yaml_paths.sh check
+./scripts/yaml_paths.sh main
+./scripts/yaml_paths.sh check --expect remote
 ```
+
+Use `dev`, a tag or a temporary branch name instead of `main` to apply that
+same ref to every project repository. The camera repository always uses its
+upstream `main`. In local mode every managed source uses its sibling checkout,
+except the experimental Voice PE profile, which intentionally stays remote.
 
 ## Not sure which one to pick?
 

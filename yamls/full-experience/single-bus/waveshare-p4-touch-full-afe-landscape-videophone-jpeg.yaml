@@ -228,7 +228,9 @@ external_components:
   - source: ${voip_stack_components_source}
     components: [voip_stack]
   - source: ${ext_components_source}
-    components: [speaker, voice_assistant, mipi_dsi, esp_video_camera]
+    components: [speaker, voice_assistant, mipi_dsi]
+  - source: github://Psix-anp/esphome-esp-video-camera@main
+    components: [esp_video_camera]
   - source: ${runtime_controller_components_source}
     components: [runtime_controller]
   - source: ${audio_stack_components_source}
