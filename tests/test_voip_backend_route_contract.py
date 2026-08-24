@@ -133,6 +133,18 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         cls.automation_routing = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.automation_routing)
 
+    def test_registrar_expiry_is_monitored_by_runtime_owner(self) -> None:
+        monitor = self.source[
+            self.source.index("async def _monitor_registrar_expiry(") :
+            self.source.index("async def async_start_sip_endpoint(")
+        ]
+        self.assertIn("await asyncio.sleep(REGISTRAR_EXPIRY_INTERVAL)", monitor)
+        self.assertIn("registrar.expire()", monitor)
+        self.assertIn(
+            "create_runtime_task(hass, _monitor_registrar_expiry(registrar))",
+            self.source,
+        )
+
     def test_default_answer_ha_invite_rings_until_explicit_answer(self) -> None:
         source = self.invite_router
         marker = (

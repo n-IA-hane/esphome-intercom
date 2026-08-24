@@ -514,6 +514,31 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registrar.registrations, {})
         self.assertEqual(changes, [("DeskPhone", False)])
 
+    def test_expired_final_binding_emits_offline_event(self) -> None:
+        changes: list[tuple[str, bool]] = []
+        registrar = sip_registrar.SipRegistrar(
+            enabled=True,
+            accounts=[sip_registrar.SipAccount("DeskPhone", "Desk", "secret")],
+            local_ip="192.168.1.10",
+            local_sip_port=5060,
+            on_registration_change=lambda username, registered: changes.append(
+                (username, registered)
+            ),
+        )
+        registrar.registrations["DeskPhone"] = sip_registrar.SipRegistration(
+            username="DeskPhone",
+            contact_uri="sip:DeskPhone@192.168.1.50:5062",
+            source_host="192.168.1.50",
+            source_port=5062,
+            transport="UDP",
+            expires_at=0,
+        )
+
+        self.assertTrue(registrar.expire())
+
+        self.assertEqual(registrar.registrations, {})
+        self.assertEqual(changes, [("DeskPhone", False)])
+
     async def test_registration_identity_requires_exact_signaling_flow(self) -> None:
         registrar = sip_registrar.SipRegistrar(
             enabled=True,

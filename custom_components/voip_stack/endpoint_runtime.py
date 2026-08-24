@@ -84,6 +84,15 @@ _LOGGER = logging.getLogger(__name__)
 SIP_ROUTE_DECISION_TIMEOUT = 1.5
 MAX_TRUNK_INFO_DIGITS = 16
 MAX_PENDING_HA_INVITES = 64
+REGISTRAR_EXPIRY_INTERVAL = 1.0
+
+
+async def _monitor_registrar_expiry(registrar) -> None:
+    """Expire stale SIP bindings even when no later SIP request arrives."""
+
+    while True:
+        await asyncio.sleep(REGISTRAR_EXPIRY_INTERVAL)
+        registrar.expire()
 
 
 async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
@@ -171,6 +180,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     # dark until every listener component has transferred into it.
     pbx_runtime = registry
     pbx_runtime.attach_component("registrar", registrar)
+    create_runtime_task(hass, _monitor_registrar_expiry(registrar))
     route_resolver = EndpointRouteResolver(
         hass=hass,
         local_ip=local_ip,
