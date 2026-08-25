@@ -283,12 +283,19 @@ class RouterContractTest(unittest.TestCase):
         self.assertEqual(decision.sip_uri, "sip:Desk@192.168.1.55:5070;transport=tcp")
 
     def test_ha_router_public_number_requires_ready_trunk(self) -> None:
-        unavailable = router.resolve_ha_router("0551234567", [], trunk_ready=False)
+        # Reserved fictional 555-01xx input. This is a pure router test and
+        # must never create signaling, DNS or network traffic.
+        number = "+12025550100"
+        unavailable = router.resolve_ha_router(number, [], trunk_ready=False)
         self.assertEqual(unavailable.action, router.RouteAction.REJECT)
         self.assertEqual(unavailable.status, 503)
-        self.assertEqual(unavailable.reason, router.RouteReason.TRUNK_UNAVAILABLE)
-        ready = router.resolve_ha_router("0551234567", [], trunk_ready=True)
+        self.assertEqual(
+            unavailable.reason,
+            router.RouteReason.TRUNK_UNAVAILABLE,
+        )
+        ready = router.resolve_ha_router(number, [], trunk_ready=True)
         self.assertEqual(ready.action, router.RouteAction.TRUNK)
+        self.assertEqual(ready.target, number)
 
     def test_trunk_service_code_preserves_prefix_and_bypasses_local_extension(self) -> None:
         entries = roster.parse_roster_json(

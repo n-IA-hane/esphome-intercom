@@ -26,6 +26,25 @@ CONFIG = ROOT / "custom_components" / "voip_stack" / "config.py"
 INIT = ROOT / "custom_components" / "voip_stack" / "__init__.py"
 
 
+def _leaf_paths(value: dict, prefix: str = "") -> set[str]:
+    paths: set[str] = set()
+    for key, item in value.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(item, dict):
+            paths.update(_leaf_paths(item, path))
+        else:
+            paths.add(path)
+    return paths
+
+
+@pytest.mark.parametrize("language", ["de", "it", "pt-BR"])
+def test_translation_files_cover_every_english_key(language: str) -> None:
+    english = json.loads((TRANSLATIONS / "en.json").read_text())
+    translated = json.loads((TRANSLATIONS / f"{language}.json").read_text())
+
+    assert _leaf_paths(translated) == _leaf_paths(english)
+
+
 def _load_disabled_trunk_data():
     """Load the pure config helper without importing Home Assistant."""
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from importlib import import_module
 import random
 import socket
 import time
@@ -72,6 +73,8 @@ class SipServerResolver:
         self._random = random_source or random.Random()
         self._cache: dict[tuple[str, str], tuple[float, tuple[object, ...]]] = {}
         self._system_resolver: object | None = None
+        self._dns_record_types_ready = False
+        self._dns_record_types_lock = asyncio.Lock()
 
     async def resolve(
         self,
@@ -235,6 +238,12 @@ class SipServerResolver:
     async def _query_dns(self, name: str, kind: str) -> tuple[tuple[object, ...], float]:
         import dns.asyncresolver  # type: ignore[import-not-found]
 
+        if not self._dns_record_types_ready:
+            async with self._dns_record_types_lock:
+                if not self._dns_record_types_ready:
+                    await asyncio.to_thread(self._load_dns_record_types)
+                    self._dns_record_types_ready = True
+
         resolver = getattr(dns.asyncresolver, "default_resolver", None)
         if resolver is None and self._system_resolver is None:
             # dnspython reads /etc/resolv.conf while constructing its default
@@ -262,3 +271,9 @@ class SipServerResolver:
                 if bytes(item.flags).decode().upper() == "S"
             )
         return tuple(records), ttl
+
+    @staticmethod
+    def _load_dns_record_types() -> None:
+        """Load dnspython's lazy RFC record parsers outside HA's event loop."""
+        import_module("dns.rdtypes.IN.SRV")
+        import_module("dns.rdtypes.IN.NAPTR")

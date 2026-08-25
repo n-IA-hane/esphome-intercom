@@ -668,7 +668,7 @@ def run_scenario(name: str) -> dict:
         pbx.add_contact("Desk SIP", sip_uri="sip:desk@192.168.1.60:5060", ring_group="RG Casa, RG Desk")
         pbx.create_sip_account("MobileOffice", conference_group="CG Casa, CG Mobile", conference_ring=True)
         pbx.add_trunk("Wildix")
-        trunk = pbx.call_trunk("Casa", "+390551234567")
+        trunk = pbx.call_trunk("Casa", "+12025550100")
         return {"scenario": name, "phonebook": pbx.phonebook, "pushes": len(pbx.pushes), "trunk": asdict(trunk)}
     if name == "services-delete":
         pbx.add_contact("Desk SIP", sip_uri="sip:desk@192.168.1.60:5060", ring_group="RG Casa")
@@ -702,7 +702,7 @@ def run_scenario(name: str) -> dict:
         pbx.set_dnd("Spotpear", False)
         pbx.set_online("Spotpear", False)
         offline = pbx.call_endpoint("WS3", "Spotpear")
-        no_trunk = pbx.call_trunk("Casa", "+390551234567")
+        no_trunk = pbx.call_trunk("Casa", "+12025550100")
         return {
             "scenario": name,
             "unknown": asdict(unknown),

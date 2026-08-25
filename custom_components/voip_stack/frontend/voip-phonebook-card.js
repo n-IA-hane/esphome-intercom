@@ -1,4 +1,9 @@
 const DEFAULT_ENTITY = "sensor.voip_phonebook";
+const PHONEBOOK_MODULE_VERSION = (() => {
+  try { return new URL(import.meta.url).searchParams.get("v") || "dev"; }
+  catch (_) { return "dev"; }
+})();
+const { voipStackTranslate } = await import(`./voip-stack-i18n.js?v=${encodeURIComponent(PHONEBOOK_MODULE_VERSION)}`);
 
 function installWheelScrollHandoff(scroller) {
   scroller.addEventListener("wheel", (event) => {
@@ -61,7 +66,7 @@ class VoipPhonebookView extends HTMLElement {
 
   setConfig(config) {
     VoipPhonebookView._assertConfig(config);
-    this._config = { entity: DEFAULT_ENTITY, title: "VoIP Phonebook", ...config };
+    this._config = { entity: DEFAULT_ENTITY, ...config };
     this._lastRoster = null;
     this._render();
   }
@@ -92,7 +97,7 @@ class VoipPhonebookView extends HTMLElement {
   }
 
   _name(contact) {
-    return String(contact?.name || contact?.id || "Unnamed");
+    return String(contact?.name || contact?.id || voipStackTranslate(this._hass, "Unnamed"));
   }
 
   _appendContact(list, contact) {
@@ -118,7 +123,7 @@ class VoipPhonebookView extends HTMLElement {
       arrow.className = "arrow";
       arrow.textContent = "↳";
       const label = document.createElement("span");
-      label.textContent = "Extension:";
+      label.textContent = voipStackTranslate(this._hass, "Extension:");
       const value = document.createElement("code");
       value.textContent = String(contact.extension);
       extension.append(arrow, label, value);
@@ -130,7 +135,7 @@ class VoipPhonebookView extends HTMLElement {
       arrow.className = "arrow";
       arrow.textContent = "↳";
       const label = document.createElement("span");
-      label.textContent = "Number:";
+      label.textContent = voipStackTranslate(this._hass, "Number:");
       const link = document.createElement("a");
       link.href = `tel:${String(contact.number).replace(/[^\d+*#]/g, "")}`;
       link.textContent = String(contact.number);
@@ -205,7 +210,11 @@ class VoipPhonebookView extends HTMLElement {
     `;
 
     const card = document.createElement("ha-card");
-    const configuredTitle = String(this._config.title || "").trim();
+    const configuredTitle = String(
+      Object.hasOwn(this._config, "title")
+        ? this._config.title || ""
+        : voipStackTranslate(this._hass, "VoIP Phonebook"),
+    ).trim();
     if (configuredTitle) {
       const title = document.createElement("div");
       title.className = "header";
@@ -217,13 +226,13 @@ class VoipPhonebookView extends HTMLElement {
     list.className = "list";
     installWheelScrollHandoff(list);
     list.setAttribute("role", "list");
-    list.setAttribute("aria-label", configuredTitle || "VoIP phonebook");
+    list.setAttribute("aria-label", configuredTitle || voipStackTranslate(this._hass, "VoIP phonebook"));
     list.tabIndex = 0;
     const contacts = this._contacts();
     if (!contacts.length) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.textContent = this._config.empty_text || "No contacts available.";
+      empty.textContent = this._config.empty_text || voipStackTranslate(this._hass, "No contacts available.");
       list.appendChild(empty);
     } else {
       contacts.forEach((contact) => this._appendContact(list, contact));

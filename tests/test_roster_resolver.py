@@ -23,7 +23,7 @@ class RosterResolverTest(unittest.TestCase):
                         "metadata": {"sip_transport": "tcp"},
                     },
                     {"id": "Corridoio"},
-                    {"id": "Nonna", "number": "0574863562"},
+                    {"id": "Nonna", "number": "+12025550100"},
                 ]
             }
         )
@@ -46,7 +46,7 @@ class RosterResolverTest(unittest.TestCase):
 
         phone_from_ha = router.resolve_ha_router("Nonna", entries, trunk_ready=True)
         self.assertEqual(phone_from_ha.action, router.RouteAction.TRUNK)
-        self.assertEqual(phone_from_ha.target, "0574863562")
+        self.assertEqual(phone_from_ha.target, "+12025550100")
 
     def test_explicit_sip_uri_and_name_at_ip(self) -> None:
         entries = roster.parse_roster_json([{"id": "HA", "address": "192.168.1.10"}])

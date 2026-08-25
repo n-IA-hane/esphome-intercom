@@ -27,12 +27,12 @@ function installWheelScrollHandoff(scroller) {
   }, { passive: false });
 }
 
-function buildMediaDeviceControls(prefix) {
+function buildMediaDeviceControls(prefix, translate = (value) => value) {
   const root = document.createElement("section");
   root.className = "media-device-controls";
   const heading = document.createElement("div");
   heading.className = "media-device-heading";
-  heading.textContent = "Media devices";
+  heading.textContent = translate("Media devices");
   root.appendChild(heading);
 
   const rows = {};
@@ -45,7 +45,7 @@ function buildMediaDeviceControls(prefix) {
     row.className = "media-device-row";
     row.htmlFor = `${prefix}-${kind}`;
     const text = document.createElement("span");
-    text.textContent = label;
+    text.textContent = translate(label);
     const select = document.createElement("select");
     select.id = `${prefix}-${kind}`;
     select.dataset.kind = kind;
@@ -59,10 +59,10 @@ function buildMediaDeviceControls(prefix) {
   actions.className = "media-device-actions";
   const accessBtn = document.createElement("button");
   accessBtn.type = "button";
-  accessBtn.textContent = "Allow media access";
+  accessBtn.textContent = translate("Allow media access");
   const cycleCameraBtn = document.createElement("button");
   cycleCameraBtn.type = "button";
-  cycleCameraBtn.textContent = "Switch camera";
+  cycleCameraBtn.textContent = translate("Switch camera");
   actions.appendChild(accessBtn);
   actions.appendChild(cycleCameraBtn);
   root.appendChild(actions);
@@ -75,6 +75,7 @@ function buildMediaDeviceControls(prefix) {
 }
 
 export function buildMainCardSkeleton(cardVersion) {
+    const translate = (value) => this._t ? this._t(value) : value;
     const root = this.shadowRoot;
     root.replaceChildren();
     this._softphoneTargetOptionsKey = null;
@@ -562,7 +563,7 @@ export function buildMainCardSkeleton(cardVersion) {
     const videoCanvas = document.createElement("canvas");
     videoCanvas.className = "video-canvas";
     videoCanvas.hidden = true;
-    videoCanvas.setAttribute("aria-label", "Remote SIP video");
+    videoCanvas.setAttribute("aria-label", translate("Remote SIP video"));
     const videoShade = document.createElement("div");
     videoShade.className = "video-shade";
     videoShade.hidden = true;
@@ -585,14 +586,14 @@ export function buildMainCardSkeleton(cardVersion) {
     const prevBtn = document.createElement("button");
     prevBtn.type = "button";
     prevBtn.className = "nav-btn";
-    prevBtn.title = "Previous";
-    prevBtn.setAttribute("aria-label", "Previous destination");
+    prevBtn.title = translate("Previous");
+    prevBtn.setAttribute("aria-label", translate("Previous destination"));
     prevBtn.textContent = "<";
     const destValueWrap = document.createElement("div");
     destValueWrap.className = "destination-value";
     const destLabel = document.createElement("span");
     destLabel.className = "destination-label";
-    destLabel.textContent = "Destination";
+    destLabel.textContent = translate("Destination");
     destValueWrap.appendChild(destLabel);
     const destValue = document.createTextNode("");
     const destText = document.createElement("span");
@@ -601,14 +602,14 @@ export function buildMainCardSkeleton(cardVersion) {
     destValueWrap.appendChild(destText);
     const destSelect = document.createElement("select");
     destSelect.className = "destination-select";
-    destSelect.setAttribute("aria-label", "Destination");
+    destSelect.setAttribute("aria-label", translate("Destination"));
     destSelect.hidden = true;
     destValueWrap.appendChild(destSelect);
     const nextBtn = document.createElement("button");
     nextBtn.type = "button";
     nextBtn.className = "nav-btn";
-    nextBtn.title = "Next";
-    nextBtn.setAttribute("aria-label", "Next destination");
+    nextBtn.title = translate("Next");
+    nextBtn.setAttribute("aria-label", translate("Next destination"));
     nextBtn.textContent = ">";
     destRow.appendChild(prevBtn);
     destRow.appendChild(destValueWrap);
@@ -625,8 +626,8 @@ export function buildMainCardSkeleton(cardVersion) {
     keypadInput.inputMode = "tel";
     keypadInput.autocomplete = "off";
     keypadInput.spellcheck = false;
-    keypadInput.placeholder = "Number, name or SIP URI";
-    keypadInput.setAttribute("aria-label", "Number, name or SIP URI");
+    keypadInput.placeholder = translate("Number, name or SIP URI");
+    keypadInput.setAttribute("aria-label", translate("Number, name or SIP URI"));
     keypadPanel.appendChild(keypadInput);
     const keypadGrid = document.createElement("div");
     keypadGrid.className = "keypad-grid";
@@ -635,9 +636,9 @@ export function buildMainCardSkeleton(cardVersion) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "keypad-key";
-      btn.textContent = key;
-      if (key === "Clear") btn.setAttribute("aria-label", "Clear destination");
-      if (key === "⌫") btn.setAttribute("aria-label", "Delete last character");
+      btn.textContent = translate(key);
+      if (key === "Clear") btn.setAttribute("aria-label", translate("Clear destination"));
+      if (key === "⌫") btn.setAttribute("aria-label", translate("Delete last character"));
       keypadKeys[key] = btn;
       keypadGrid.appendChild(btn);
     }
@@ -655,7 +656,7 @@ export function buildMainCardSkeleton(cardVersion) {
     offlineIcon.appendChild(offlineHaIcon);
     const offlineTitle = document.createElement("div");
     offlineTitle.className = "offline-title";
-    offlineTitle.textContent = "ESP unavailable";
+    offlineTitle.textContent = translate("ESP unavailable");
     offlinePanel.appendChild(offlineIcon);
     offlinePanel.appendChild(offlineTitle);
     card.appendChild(offlinePanel);
@@ -667,18 +668,18 @@ export function buildMainCardSkeleton(cardVersion) {
     const answerBtn = document.createElement("button");
     answerBtn.type = "button";
     answerBtn.className = "voip-button small answer";
-    answerBtn.textContent = "Answer";
+    answerBtn.textContent = translate("Answer");
     const declineBtn = document.createElement("button");
     declineBtn.type = "button";
     declineBtn.className = "voip-button small decline";
-    declineBtn.textContent = "Decline";
+    declineBtn.textContent = translate("Decline");
     const hangupBtn = document.createElement("button");
     hangupBtn.type = "button";
     hangupBtn.className = "voip-button hangup";
-    hangupBtn.setAttribute("aria-label", "Hang up call");
+    hangupBtn.setAttribute("aria-label", translate("Hang up call"));
     const hangupLabel = document.createElement("span");
     hangupLabel.className = "hangup-label";
-    hangupLabel.textContent = "Hangup";
+    hangupLabel.textContent = translate("Hangup");
     const hangupIcon = document.createElement("span");
     hangupIcon.className = "hangup-icon";
     const hangupHaIcon = document.createElement("ha-icon");
@@ -688,7 +689,7 @@ export function buildMainCardSkeleton(cardVersion) {
     hangupCopy.className = "hangup-copy";
     const hangupState = document.createElement("span");
     hangupState.className = "hangup-state";
-    hangupState.textContent = "In call";
+    hangupState.textContent = translate("In call");
     const hangupPeer = document.createElement("span");
     hangupPeer.className = "hangup-peer";
     hangupCopy.appendChild(hangupState);
@@ -707,7 +708,7 @@ export function buildMainCardSkeleton(cardVersion) {
     const callBtn = document.createElement("button");
     callBtn.type = "button";
     callBtn.className = "voip-button call";
-    callBtn.textContent = "Call";
+    callBtn.textContent = translate("Call");
     const placeholderBtn = document.createElement("button");
     placeholderBtn.type = "button";
     placeholderBtn.className = "voip-button";
@@ -744,7 +745,7 @@ export function buildMainCardSkeleton(cardVersion) {
     const keypadBtn = document.createElement("button");
     keypadBtn.type = "button";
     keypadBtn.className = "settings-btn";
-    keypadBtn.textContent = "Keypad";
+    keypadBtn.textContent = translate("Keypad");
     keypadBtn.setAttribute("aria-controls", "voip-keypad-panel");
     keypadBtn.setAttribute("aria-expanded", "false");
     runtimeControls.appendChild(keypadBtn);
@@ -754,7 +755,7 @@ export function buildMainCardSkeleton(cardVersion) {
     settingsBtn.className = "settings-btn";
     const settingsLabel = document.createElement("span");
     settingsLabel.className = "settings-label";
-    settingsLabel.textContent = "Options";
+    settingsLabel.textContent = translate("Options");
     const settingsLabelIcon = document.createElement("ha-icon");
     settingsLabelIcon.className = "settings-label-icon";
     settingsLabelIcon.setAttribute("icon", "mdi:tune-variant");
@@ -778,7 +779,7 @@ export function buildMainCardSkeleton(cardVersion) {
     autoAnswerCheckbox.id = "auto-answer-cb";
     const autoAnswerLabel = document.createElement("label");
     autoAnswerLabel.htmlFor = "auto-answer-cb";
-    autoAnswerLabel.textContent = "Auto Answer";
+    autoAnswerLabel.textContent = translate("Auto Answer");
     autoAnswerRow.appendChild(autoAnswerCheckbox);
     autoAnswerRow.appendChild(autoAnswerLabel);
     settingsPanel.appendChild(autoAnswerRow);
@@ -790,7 +791,7 @@ export function buildMainCardSkeleton(cardVersion) {
     dndCheckbox.id = "ha-softphone-dnd-cb";
     const dndLabel = document.createElement("label");
     dndLabel.htmlFor = "ha-softphone-dnd-cb";
-    dndLabel.textContent = "Do Not Disturb";
+    dndLabel.textContent = translate("Do Not Disturb");
     dndRow.appendChild(dndCheckbox);
     dndRow.appendChild(dndLabel);
     settingsPanel.appendChild(dndRow);
@@ -802,7 +803,7 @@ export function buildMainCardSkeleton(cardVersion) {
     ringtoneCheckbox.id = "ha-softphone-ringtone-cb";
     const ringtoneLabel = document.createElement("label");
     ringtoneLabel.htmlFor = "ha-softphone-ringtone-cb";
-    ringtoneLabel.textContent = "Ringtone";
+    ringtoneLabel.textContent = translate("Ringtone");
     ringtoneRow.appendChild(ringtoneCheckbox);
     ringtoneRow.appendChild(ringtoneLabel);
     settingsPanel.appendChild(ringtoneRow);
@@ -816,7 +817,7 @@ export function buildMainCardSkeleton(cardVersion) {
     const microphoneAntiAliasLabel = document.createElement("label");
     microphoneAntiAliasLabel.htmlFor =
       "ha-softphone-microphone-anti-alias-cb";
-    microphoneAntiAliasLabel.textContent = "Microphone anti-alias filter";
+    microphoneAntiAliasLabel.textContent = translate("Microphone anti-alias filter");
     microphoneAntiAliasRow.appendChild(microphoneAntiAliasCheckbox);
     microphoneAntiAliasRow.appendChild(microphoneAntiAliasLabel);
     settingsPanel.appendChild(microphoneAntiAliasRow);
@@ -829,12 +830,12 @@ export function buildMainCardSkeleton(cardVersion) {
     videoCameraCheckbox.id = "ha-softphone-video-camera-cb";
     const videoCameraLabel = document.createElement("label");
     videoCameraLabel.htmlFor = "ha-softphone-video-camera-cb";
-    videoCameraLabel.textContent = "Send Camera";
+    videoCameraLabel.textContent = translate("Send Camera");
     videoCameraRow.appendChild(videoCameraCheckbox);
     videoCameraRow.appendChild(videoCameraLabel);
     settingsPanel.appendChild(videoCameraRow);
 
-    const idleMediaDevices = buildMediaDeviceControls("voip-settings-media");
+    const idleMediaDevices = buildMediaDeviceControls("voip-settings-media", translate);
     settingsPanel.appendChild(idleMediaDevices.root);
 
     const softphoneGroupsPanel = document.createElement("div");
@@ -845,7 +846,7 @@ export function buildMainCardSkeleton(cardVersion) {
     extensionRow.className = "softphone-group-row";
     const extensionLabel = document.createElement("label");
     extensionLabel.htmlFor = "ha-softphone-extension";
-    extensionLabel.textContent = "Extension";
+    extensionLabel.textContent = translate("Extension");
     const extensionInput = document.createElement("input");
     extensionInput.type = "text";
     extensionInput.id = "ha-softphone-extension";
@@ -859,7 +860,7 @@ export function buildMainCardSkeleton(cardVersion) {
     ringGroupRow.className = "softphone-group-row";
     const ringGroupLabel = document.createElement("label");
     ringGroupLabel.htmlFor = "ha-softphone-ring-group";
-    ringGroupLabel.textContent = "Ring Group";
+    ringGroupLabel.textContent = translate("Ring Group");
     const ringGroupInput = document.createElement("input");
     ringGroupInput.type = "text";
     ringGroupInput.id = "ha-softphone-ring-group";
@@ -876,7 +877,7 @@ export function buildMainCardSkeleton(cardVersion) {
     conferenceGroupRow.className = "softphone-group-row";
     const conferenceGroupLabel = document.createElement("label");
     conferenceGroupLabel.htmlFor = "ha-softphone-conference-group";
-    conferenceGroupLabel.textContent = "Conference Group";
+    conferenceGroupLabel.textContent = translate("Conference Group");
     const conferenceGroupInput = document.createElement("input");
     conferenceGroupInput.type = "text";
     conferenceGroupInput.id = "ha-softphone-conference-group";
@@ -896,7 +897,7 @@ export function buildMainCardSkeleton(cardVersion) {
     conferenceRingCheckbox.id = "ha-softphone-conference-ring";
     const conferenceRingLabel = document.createElement("label");
     conferenceRingLabel.htmlFor = "ha-softphone-conference-ring";
-    conferenceRingLabel.textContent = "Ring On Conference";
+    conferenceRingLabel.textContent = translate("Ring On Conference");
     conferenceRingRow.appendChild(conferenceRingCheckbox);
     conferenceRingRow.appendChild(conferenceRingLabel);
     softphoneGroupsPanel.appendChild(conferenceRingRow);
@@ -940,6 +941,7 @@ export function buildMainCardSkeleton(cardVersion) {
   }
 
 export function buildUnconfiguredCardSkeleton(cardVersion) {
+    const translate = (value) => this._t ? this._t(value) : value;
     const root = this.shadowRoot;
     root.replaceChildren();
 
@@ -975,7 +977,7 @@ export function buildUnconfiguredCardSkeleton(cardVersion) {
 
     const unconfigured = document.createElement("div");
     unconfigured.className = "unconfigured";
-    unconfigured.textContent = "Please configure the card to select an VoIP device.";
+    unconfigured.textContent = translate("Please configure the card to select an VoIP device.");
     card.appendChild(unconfigured);
 
     const version = document.createElement("div");

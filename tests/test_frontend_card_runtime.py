@@ -39,6 +39,10 @@ const cardModel = await import(pathToFileURL({json.dumps(str(CARD_MODEL))}));
 
 let source = fs.readFileSync({json.dumps(str(CARD))}, "utf8");
 source = source
+  .replace(
+    /const \{{ voipStackTranslate \}} = await import\(`\.\/voip-stack-i18n\.js[^;]+;/,
+    "const {{ voipStackTranslate }} = globalThis.__i18n;",
+  )
   .replace(/await import\(`\.\/voip-phonebook-card\.js[^;]+;/, "")
   .replace(/await import\(`\.\/voip-stack-card-editor\.js[^;]+;/, "")
   .replace(
@@ -190,6 +194,7 @@ let microphonePermissionError = null;
 let microphonePermissionRequests = 0;
 const context = vm.createContext({{
   __engine: {{ voipStackEngine: engine }},
+  __i18n: {{ voipStackTranslate: (_hass, value) => String(value ?? "") }},
   __cardModel: cardModel,
   __cardView: {{
     buildMainCardSkeleton() {{}},

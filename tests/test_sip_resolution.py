@@ -107,7 +107,12 @@ async def test_system_resolver_configuration_runs_off_event_loop_once(
             queries.append((name, kind, search))
             return Answer()
 
+    offloaded: list[str] = []
+
     async def offload(factory):
+        offloaded.append(factory.__name__)
+        if factory is not Resolver:
+            return None
         resolver = factory()
         constructed.append(resolver)
         return resolver
@@ -118,6 +123,7 @@ async def test_system_resolver_configuration_runs_off_event_loop_once(
     dns.asyncresolver = asyncresolver
     monkeypatch.setitem(sys.modules, "dns", dns)
     monkeypatch.setitem(sys.modules, "dns.asyncresolver", asyncresolver)
+    monkeypatch.setattr(SipServerResolver, "_load_dns_record_types", staticmethod(lambda: None))
     monkeypatch.setattr(sip_resolution.asyncio, "to_thread", offload)
     resolver = SipServerResolver()
 
@@ -126,6 +132,7 @@ async def test_system_resolver_configuration_runs_off_event_loop_once(
 
     assert first == second == ((), 30.0)
     assert len(constructed) == 1
+    assert offloaded == ["<lambda>", "Resolver"]
     assert queries == [
         ("pbx.example", "SRV", False),
         ("pbx.example", "SRV", False),
@@ -155,6 +162,7 @@ async def test_explicit_dnspython_default_resolver_is_preserved(
     dns.asyncresolver = asyncresolver
     monkeypatch.setitem(sys.modules, "dns", dns)
     monkeypatch.setitem(sys.modules, "dns.asyncresolver", asyncresolver)
+    monkeypatch.setattr(SipServerResolver, "_load_dns_record_types", staticmethod(lambda: None))
 
     assert await SipServerResolver()._query_dns("voip.test", "NAPTR") == ((), 30.0)
     assert queries == [("voip.test", "NAPTR", False)]

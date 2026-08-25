@@ -21,6 +21,7 @@ const VOIP_STACK_MODULE_VERSION = (() => {
   }
 })();
 const VOIP_STACK_CARD_VERSION = VOIP_STACK_MODULE_VERSION.replace(/-\d+$/, "") || "dev";
+const { voipStackTranslate } = await import(`./voip-stack-i18n.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 await import(`./voip-phonebook-card.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 const { voipStackEngine } = await import(`./voip-stack-engine.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 const {
@@ -213,6 +214,10 @@ class VoipStackCard extends HTMLElement {
       this._applyHangupAudioLevel(detail.level);
     };
     this._resizeObserver = new ResizeObserver(() => this._measureLayout());
+  }
+
+  _t(text) {
+    return voipStackTranslate(this._hass, text);
   }
 
   connectedCallback() {
@@ -722,7 +727,12 @@ class VoipStackCard extends HTMLElement {
 
   set hass(hass) {
     const oldHass = this._hass;
+    const languageChanged = String(oldHass?.language || "") !== String(hass?.language || "");
     this._hass = hass;
+    if (languageChanged) {
+      this._els = null;
+      this._skeletonMode = null;
+    }
     if (this._nativeCameraCard) this._nativeCameraCard.hass = hass;
     if (this._isPhonebookMode()) {
       this._render();
@@ -1677,8 +1687,8 @@ class VoipStackCard extends HTMLElement {
       els.placeholderBtn.hidden = true;
       els.autoAnswerRow.hidden = true;
       els.statusIndicator.className = "status-indicator unavailable";
-      els.statusText.textContent = "ESP unavailable";
-      els.statusReason.textContent = "Device is offline";
+      els.statusText.textContent = this._t("ESP unavailable");
+      els.statusReason.textContent = this._t("Device is offline");
       els.statusReason.hidden = false;
       els.stats.textContent = "";
       els.err.textContent = "";
@@ -1862,8 +1872,8 @@ class VoipStackCard extends HTMLElement {
 
     // Status
     els.statusIndicator.className = "status-indicator " + statusClass;
-    els.statusText.textContent = statusText;
-    els.statusReason.textContent = statusReason;
+    els.statusText.textContent = this._t(statusText);
+    els.statusReason.textContent = this._t(statusReason);
     els.statusReason.hidden = !statusReason;
 
     // Reuse the normal Options surface during calls. The same control moves
@@ -1875,7 +1885,7 @@ class VoipStackCard extends HTMLElement {
     const canUseKeypad = softphoneMode || !!this._startCallService;
     els.runtimeControls.hidden = !showRuntimeOptions;
     els.keypadBtn.hidden = !(showCall && showRuntimeOptions && canUseKeypad);
-    els.keypadBtn.textContent = keypadOpen ? "Contacts" : "Keypad";
+    els.keypadBtn.textContent = this._t(keypadOpen ? "Contacts" : "Keypad");
     els.keypadBtn.setAttribute("aria-expanded", String(showCall && keypadOpen));
     els.settingsBtn.hidden = !showRuntimeOptions;
     els.settingsPanel.hidden = !showSettingsPanel;
@@ -1952,7 +1962,7 @@ class VoipStackCard extends HTMLElement {
     }
 
     // Error
-    els.err.textContent = this._errorMsg;
+    els.err.textContent = this._t(this._errorMsg);
   }
 
   _renderUnconfigured(name) {
@@ -2087,7 +2097,7 @@ class VoipStackCard extends HTMLElement {
     if (targets.length === 0) {
       const opt = document.createElement("option");
       opt.value = "";
-      opt.textContent = "No endpoints";
+      opt.textContent = this._t("No endpoints");
       options.push(opt);
     } else {
       for (const device of targets) {
@@ -2745,7 +2755,7 @@ class VoipStackCard extends HTMLElement {
           if (wanted && !available.some((device) => device.deviceId === wanted)) {
             const missing = document.createElement("option");
             missing.value = wanted;
-            missing.textContent = "Preferred device unavailable";
+            missing.textContent = this._t("Preferred device unavailable");
             options.push(missing);
           }
           select.replaceChildren(...options);
@@ -2758,10 +2768,10 @@ class VoipStackCard extends HTMLElement {
       view.accessBtn.disabled = this._mediaDeviceBusy;
       view.cycleCameraBtn.hidden = (devices.videoinput || []).length < 2;
       view.cycleCameraBtn.disabled = this._mediaDeviceBusy;
-      view.status.textContent = this._mediaDeviceStatus ||
+      view.status.textContent = this._t(this._mediaDeviceStatus ||
         (!state.supports_output_selection
           ? "Speaker routing is controlled by this device."
-          : "");
+          : ""));
     }
   }
 
@@ -3093,7 +3103,7 @@ class VoipStackCard extends HTMLElement {
 
   _showError(msg) {
     this._errorMsg = msg || "";
-    if (this._els?.err) this._els.err.textContent = this._errorMsg;
+    if (this._els?.err) this._els.err.textContent = this._t(this._errorMsg);
   }
 
   getGridOptions() {

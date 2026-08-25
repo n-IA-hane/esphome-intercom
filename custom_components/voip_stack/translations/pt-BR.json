@@ -1,0 +1,417 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "VoIP Stack",
+        "description": "Softphone SIP e ponte/roteador SIP para telefones VoIP ESPHome. O Home Assistant escuta SIP em UDP e TCP automaticamente.",
+        "data": {
+          "sip_port": "Porta SIP",
+          "rtp_port": "Porta RTP",
+          "advertise_host": "Host/IP anunciado do Home Assistant",
+          "assist_intents": "Ativar intents do Assist",
+          "assist_endpoint_enabled": "Incluir assistente de voz",
+          "debug_mode": "Ativar logs de depuração SIP/RTP",
+          "media_capture": "Gravar áudio privado das chamadas para diagnóstico",
+          "experimental_sip_video": "Ativar vídeo SIP para o softphone do Home Assistant",
+          "sip_registrar_enabled": "Ativar contas SIP locais",
+          "trunk_enabled": "Ativar tronco SIP opcional"
+        },
+        "data_description": {
+          "sip_port": "Porta de escuta do endpoint SIP do Home Assistant. O Home Assistant aceita sinalização SIP por UDP e TCP nessa porta.",
+          "rtp_port": "Porta UDP base de RTP para mídia e retransmissões do Home Assistant.",
+          "advertise_host": "Substituição opcional publicada nas agendas telefônicas dos ESPs. Use quando o Home Assistant estiver atrás de roteamento, NAT, LXC, VPN ou múltiplas sub-redes e o endereço anunciado automaticamente não puder ser alcançado pelos ESPs.",
+          "assist_intents": "Registra handlers opcionais do Assist para ligar, desligar, atender e recusar chamadas (\"Ei Jarvis, ligue para Cozinha\"). Os nomes falados são resolvidos dinamicamente na agenda telefônica VoIP atual.",
+          "assist_endpoint_enabled": "Adiciona uma extensão SIP atendida diretamente por uma pipeline do Home Assistant Assist. Não é necessária outra integração VoIP nem outro listener SIP.",
+          "debug_mode": "Ativa diagnósticos e logs detalhados de SIP/RTP/mídia sem gravar o áudio das chamadas.",
+          "media_capture": "Grava explicitamente o áudio privado das chamadas: até 15 segundos por direção do softphone do Home Assistant e 8 segundos por perna de retransmissão, armazenados como WAV/JSON em ~/.cache/voip_stack_debug (modo 0700) e limitados a 24 arquivos / 64 MiB. Mantenha desativado, exceto durante a coleta de uma captura de diagnóstico.",
+          "experimental_sip_video": "Permite que o softphone do Home Assistant negocie vídeo SIP com telefones, softphones e interfones compatíveis. H.264, VP8 e JPEG usam o caminho de mídia do navegador. Endpoints ESP padrão permanecem somente com áudio; perfis ESP32-P4 qualificados podem negociar JPEG ou H.264. Requer HTTPS e um navegador compatível.",
+          "sip_registrar_enabled": "Aceita REGISTER de endpoints SIP locais, como telefones VoIP, Zoiper, Linphone ou baresip, usando contas gerenciadas pelos serviços do VoIP Stack.",
+          "trunk_enabled": "Exibe as configurações do tronco de provedor/PBX. Quando desativado, não inicia registro do tronco, rota externa nem coletor DTMF."
+        }
+      },
+      "video": {
+        "title": "Vídeo SIP",
+        "description": "O vídeo é opcional. O softphone do Home Assistant e endpoints SIP padrão oferecem suporte, e perfis ESP32-P4 qualificados podem negociar JPEG ou H.264. Outros endpoints ESP permanecem somente com áudio.",
+        "data": {
+          "video_transcoding_enabled": "Ativar transcodificação de vídeo",
+          "video_camera_send_enabled": "Permitir transmissão da câmera do navegador"
+        },
+        "data_description": {
+          "video_transcoding_enabled": "Permite que o VoIP Stack use o binário FFmpeg do Home Assistant quando duas pernas de vídeo negociadas não compartilham um codec direto. H.264, VP8 e JPEG diretos continuam preferidos. O fallback limitado pode converter vídeo legado para o softphone do Home Assistant e H.264 ou JPEG entre pernas SIP pertencentes ao Home Assistant. O envio JPEG do navegador também pode usar um normalizador RFC 2435 limitado. Em caso de falha, o áudio compatível permanece ativo.",
+          "video_camera_send_enabled": "Exibe a opção Enviar câmera no card. Cada telefone lógico do Home Assistant mantém sua própria escolha; a permissão da câmera continua sendo local de cada navegador. Receber vídeo nunca exige acesso à câmera."
+        }
+      },
+      "assist": {
+        "title": "Extensão do assistente de voz",
+        "description": "Escolha a extensão SIP e a pipeline do Home Assistant Assist usadas para chamadas telefônicas. O VoIP Stack inicia a conversa com uma mensagem do usuário, como `Chamada SIP recebida de \"Daniele\".` Configure o comportamento telefônico nas Instruções ou no campo de prompt do agente de conversa selecionado, em Configurações > Dispositivos e serviços > integração do agente > Configurar. Exemplo: `Quando receber uma mensagem começando com \"Chamada SIP recebida de\", trate-a como uma chamada telefônica em andamento. Cumprimente o chamador uma vez, aja como uma recepcionista objetiva e não repita o nome dele em todas as respostas.` Tom amigável: `Durante chamadas SIP, seja alegre e informal, mas permaneça objetivo e prestativo.` Tom terrível: `Oi. Eu não dou a mínima, então, por favor, vá se f**er.`",
+        "data": {
+          "assist_extension": "Extensão do assistente de voz",
+          "assist_pipeline": "Pipeline do assistente de voz",
+          "assist_advanced_call_context": "Fornecer detalhes avançados da chamada ao assistente"
+        },
+        "data_description": {
+          "assist_extension": "Extensão numérica de 1 a 8 dígitos, exclusiva entre contas, contatos e grupos.",
+          "assist_pipeline": "Pipeline do Assist usada para reconhecimento de fala, conversação e conversão de texto em fala nas chamadas telefônicas.",
+          "assist_advanced_call_context": "Adiciona uma vez à mensagem inicial do usuário o identificador do chamador, correspondência na agenda, origem e extensão chamada. Esses valores são metadados de chamada não confiáveis e uma correspondência na agenda não é autenticação."
+        }
+      },
+      "trunk": {
+        "title": "Tronco SIP opcional",
+        "description": "Registra o Home Assistant em um tronco de provedor/PBX. As chamadas recebidas usam a agenda telefônica central e podem opcionalmente expor um ponto de decisão curto para automações experimentais.",
+        "data": {
+          "trunk_transport": "Transporte SIP do tronco",
+          "trunk_server": "Servidor do tronco",
+          "trunk_port": "Porta SIP do tronco",
+          "trunk_domain": "Domínio do tronco",
+          "trunk_username": "Usuário do tronco",
+          "trunk_auth_username": "Usuário de autenticação",
+          "trunk_password": "Senha",
+          "trunk_register_expires": "Expiração do REGISTER",
+          "trunk_outbound_proxy": "Proxy de saída",
+          "trunk_inbound_default_target": "Destino alternativo",
+          "trunk_inbound_mode": "Tratamento de chamadas recebidas",
+          "automation_routing_enabled": "Permitir que automações selecionem o destino de entrada",
+          "trunk_dtmf_timeout_ms": "Tempo limite do DTMF (segundos)",
+          "trunk_dtmf_terminator": "Finalizador DTMF"
+        },
+        "data_description": {
+          "trunk_transport": "Transporte SIP usado pelo Home Assistant até o provedor.",
+          "trunk_server": "Host do registrador/proxy do provedor.",
+          "trunk_port": "Porta SIP do provedor, normalmente 5060.",
+          "trunk_domain": "Realm/domínio SIP opcional. Quando vazio, usa o servidor do tronco.",
+          "trunk_username": "Usuário da conta SIP e usuário padrão do Request-URI de entrada.",
+          "trunk_auth_username": "Usuário de autenticação Digest quando for diferente do usuário SIP.",
+          "trunk_password": "Senha de autenticação Digest.",
+          "trunk_register_expires": "Expiração do REGISTER em segundos.",
+          "trunk_outbound_proxy": "Host de proxy opcional ou sip:host:porta usado como próximo salto da sinalização.",
+          "trunk_inbound_default_target": "Nome da agenda, URI SIP, extensão ou número usado somente quando nenhuma extensão DTMF ou automação selecionar outro destino.",
+          "trunk_inbound_mode": "O modo de rota imediata ignora a coleta de dígitos. O modo de coleta por DTMF atende primeiro a perna do tronco e permite que os dígitos selecionem explicitamente uma extensão da agenda.",
+          "automation_routing_enabled": "Antes de usar o destino alternativo, publica uma solicitação curta de roteamento que uma automação pode atender. Dígitos DTMF explícitos sempre têm prioridade.",
+          "trunk_dtmf_timeout_ms": "Tempo entre dígitos usado no modo DTMF. O primeiro dígito pode levar até 10 segundos. O padrão é 3 segundos e o máximo é 10 segundos.",
+          "trunk_dtmf_terminator": "Dígito finalizador opcional, como #. Vazio significa que o tempo limite ou uma correspondência exata de extensão na agenda decide."
+        }
+      }
+    },
+    "error": {
+      "sip_rtp_port_conflict": "SIP e RTP devem usar portas diferentes.",
+      "assist_extension_invalid": "A extensão do assistente de voz deve conter de 1 a 8 dígitos.",
+      "assist_extension_conflict": "A extensão do assistente de voz já está sendo usada por outra rota.",
+      "trunk_server_required": "O servidor do tronco é obrigatório.",
+      "trunk_username_required": "O usuário do tronco é obrigatório.",
+      "trunk_password_required": "A senha do tronco é obrigatória."
+    },
+    "abort": {
+      "reconfigure_successful": "VoIP Stack reconfigurado com sucesso.",
+      "already_configured": "O VoIP Stack já está configurado."
+    }
+  },
+  "config_subentries": {
+    "phone": {
+      "entry_type": "Telefone",
+      "initiate_flow": {
+        "user": "Adicionar telefone"
+      },
+      "title": "Endpoint telefônico",
+      "step": {
+        "user": {
+          "title": "Adicionar telefone",
+          "description": "Crie outro softphone de navegador do Home Assistant ou uma conta SIP padrão. Todos os telefones compartilham o mesmo listener SIP e o mesmo conjunto de portas RTP.",
+          "data": {
+            "kind": "Tipo de telefone"
+          }
+        },
+        "browser": {
+          "title": "Softphone do Home Assistant",
+          "description": "Crie um telefone lógico para um ou mais cards Lovelace. Cards vinculados ao mesmo telefone tocam juntos; o primeiro a atender assume a mídia.",
+          "data": {
+            "name": "Nome",
+            "extension": "Extensão",
+            "enabled": "Ativado",
+            "dnd": "Não perturbe",
+            "ring_group": "Grupo de toque",
+            "conference_group": "Grupo de conferência",
+            "conference_ring": "Tocar para chamadas de conferência",
+            "video_enabled": "Permitir vídeo",
+            "auto_answer": "Atendimento automático",
+            "send_video": "Enviar vídeo"
+          },
+          "data_description": {
+            "name": "Nome obrigatório do telefone usado pelo card, pela agenda telefônica e pelo roteamento de chamadas.",
+            "extension": "Extensão discável exclusiva opcional. O telefone lógico continua podendo receber chamadas mesmo sem um card de navegador conectado.",
+            "auto_answer": "Atende automaticamente quando um navegador conectado tiver permissão para usar o microfone.",
+            "send_video": "Envia por padrão a câmera do navegador conectado quando o vídeo for negociado e houver permissão."
+          }
+        },
+        "sip_account": {
+          "title": "Conta SIP padrão",
+          "description": "Crie credenciais para qualquer telefone ou softphone SIP/RTP padrão. Nenhum comportamento específico de fabricante é utilizado.",
+          "data": {
+            "name": "Nome",
+            "extension": "Extensão",
+            "username": "Usuário SIP",
+            "password": "Senha SIP",
+            "enabled": "Ativado",
+            "dnd": "Não perturbe",
+            "ring_group": "Grupo de toque",
+            "conference_group": "Grupo de conferência",
+            "conference_ring": "Tocar para chamadas de conferência",
+            "video_enabled": "Permitir negociação de vídeo",
+            "offline_policy": "Quando não estiver registrado",
+            "offline_forward_target": "Destino de encaminhamento"
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigurar telefone"
+        }
+      },
+      "error": {
+        "phone_name_required": "O nome do telefone é obrigatório.",
+        "phone_username_invalid": "Use somente letras, números, pontos, sublinhados ou hífens.",
+        "phone_password_required": "A senha SIP é obrigatória.",
+        "phone_forward_target_required": "Um destino de encaminhamento é obrigatório para a política Encaminhar.",
+        "phone_alias_conflict": "O nome, a extensão ou o usuário já está sendo usado por outro telefone."
+      },
+      "abort": {
+        "reconfigure_successful": "Telefone reconfigurado com sucesso.",
+        "already_configured": "Este telefone já existe."
+      }
+    }
+  },
+  "selector": {
+    "trunk_inbound_mode": {
+      "options": {
+        "direct": "Encaminhar imediatamente",
+        "dtmf": "Coletar extensão com DTMF"
+      }
+    }
+  },
+  "system_health": {
+    "info": {
+      "sip_udp_ready": "Listener SIP UDP",
+      "sip_tcp_ready": "Listener SIP TCP",
+      "advertise_host": "Seleção do host anunciado",
+      "configured_phones": "Telefones configurados",
+      "online_esphome_phones": "Telefones ESPHome online",
+      "registered_sip_accounts": "Contas SIP registradas",
+      "trunk_registered": "Tronco SIP registrado",
+      "active_calls": "Chamadas ativas",
+      "reserved_rtp_ports": "Portas RTP reservadas",
+      "runtime_tasks": "Tarefas em execução",
+      "active_media_owners": "Proprietários de mídia ativos no navegador",
+      "media_workers": "Workers de mídia ativos"
+    }
+  },
+  "issues": {
+    "esphome_actions_incomplete": {
+      "title": "O controle do telefone ESPHome está incompleto",
+      "description": "{phone} não expõe as ações de controle de chamada do ESPHome: {actions}. Atualize o pacote e o firmware do telefone VoIP."
+    },
+    "media_capture_enabled": {
+      "title": "A captura de mídia privada está ativada",
+      "description": "O VoIP Stack está salvando mídia privada das chamadas para diagnóstico. Desative a captura de mídia ao concluir a solução de problemas."
+    }
+  },
+  "exceptions": {
+    "destination_required": {
+      "message": "É necessário informar um destino para a chamada."
+    },
+    "advertise_ip_unknown": {
+      "message": "O endereço IP anunciado pelo Home Assistant é desconhecido."
+    },
+    "call_changed_during_operation": {
+      "message": "A chamada {call_id} mudou durante a operação solicitada."
+    },
+    "call_forwarding": {
+      "message": "A chamada {call_id} está sendo encaminhada."
+    },
+    "call_id_destination_required": {
+      "message": "É necessário informar o ID da chamada e o destino."
+    },
+    "call_id_required": {
+      "message": "É necessário informar o ID da chamada."
+    },
+    "call_inactive": {
+      "message": "A chamada {call_id} não está mais ativa."
+    },
+    "call_not_forwardable": {
+      "message": "A chamada {call_id} não é uma chamada pendente ou tocando no Home Assistant que possa ser encaminhada."
+    },
+    "call_not_ringing": {
+      "message": "A chamada {call_id} já foi atendida ou não está mais tocando."
+    },
+    "call_phase_mismatch": {
+      "message": "A chamada {call_id} está no estado {state}, não na fase {phase}."
+    },
+    "call_phone_owner_missing": {
+      "message": "A chamada {call_id} não possui um telefone proprietário no Home Assistant."
+    },
+    "call_sequence_mismatch": {
+      "message": "A sequência da chamada {call_id} é {actual}, mas era esperado {expected}."
+    },
+    "call_state_mismatch": {
+      "message": "A chamada {call_id} está em {actual}, mas era esperado {expected}."
+    },
+    "call_unknown_or_ended": {
+      "message": "A chamada {call_id} é desconhecida ou já terminou."
+    },
+    "conference_full": {
+      "message": "A conferência {conference} está lotada."
+    },
+    "conference_phone_mismatch": {
+      "message": "A chamada de conferência {call_id} não pertence ao telefone {phone}."
+    },
+    "destination_not_forwardable": {
+      "message": "O destino {destination} não é um destino encaminhável do plano de discagem SIP."
+    },
+    "destination_not_ha_phone": {
+      "message": "O destino {destination} não é um telefone do Home Assistant configurado."
+    },
+    "destination_not_ready": {
+      "message": "O destino {destination} ainda não está disponível."
+    },
+    "forward_failure_policy_invalid": {
+      "message": "A política de falha de encaminhamento deve ser resume, terminate ou busy."
+    },
+    "forward_ring_group_only": {
+      "message": "Atualmente, uma chamada que já está tocando só pode ser encaminhada para um grupo de toque."
+    },
+    "local_phone_operation_failed": {
+      "message": "O telefone local não conseguiu concluir a operação de chamada solicitada."
+    },
+    "pbx_session_unavailable": {
+      "message": "A sessão PBX da chamada {call_id} não está mais disponível."
+    },
+    "pending_route_missing": {
+      "message": "Não há uma rota SIP pendente para a chamada {call_id}."
+    },
+    "phone_busy": {
+      "message": "{phone} está ocupado."
+    },
+    "phone_disabled": {
+      "message": "{phone} está desativado."
+    },
+    "phone_self_target": {
+      "message": "Um telefone do Home Assistant não pode usar a si próprio como destino da chamada."
+    },
+    "ring_group_phone_already_declined": {
+      "message": "Este telefone já recusou a chamada do grupo de toque."
+    },
+    "ring_group_phone_required": {
+      "message": "Atenda à chamada do grupo de toque em um dos telefones que estão tocando."
+    },
+    "route_destination_required": {
+      "message": "A ação de rota solicitada exige um destino."
+    },
+    "route_hop_limit_exceeded": {
+      "message": "A chamada {call_id} excedeu o limite de roteamento de {limit} saltos."
+    },
+    "route_not_decidable": {
+      "message": "A rota SIP da chamada {call_id} não pode mais ser decidida."
+    },
+    "sip_answer_failed": {
+      "message": "A transação SIP de atendimento falhou para a chamada {call_id}."
+    },
+    "sip_call_start_failed": {
+      "message": "Não foi possível iniciar a chamada SIP para {destination}."
+    },
+    "sip_target_unresolved": {
+      "message": "Não foi possível resolver o destino SIP {destination}."
+    },
+    "trunk_required": {
+      "message": "O destino {destination} exige um tronco SIP registrado."
+    },
+    "esphome_action_missing": {
+      "message": "{phone} não expõe a ação obrigatória {action} do ESPHome. Atualize o pacote e o firmware do telefone VoIP."
+    },
+    "esphome_route_missing": {
+      "message": "{phone} não expõe uma rota de controle de chamadas do ESPHome."
+    },
+    "phone_not_browser": {
+      "message": "O dispositivo selecionado não é um telefone de navegador do Home Assistant."
+    },
+    "phone_not_integration_owned": {
+      "message": "O dispositivo selecionado não é um telefone gerenciado pelo VoIP Stack."
+    },
+    "phone_operation_not_supported": {
+      "message": "{phone} não oferece suporte à operação {operation}."
+    },
+    "phone_selection_required": {
+      "message": "Selecione o telefone que deve executar esta ação."
+    },
+    "phone_unavailable": {
+      "message": "{phone} está indisponível no momento."
+    },
+    "purge_devices_disabled": {
+      "message": "Esta ação está desativada porque o VoIP Stack não é proprietário dos dispositivos ESPHome e não pode removê-los com segurança."
+    },
+    "transfer_destination_required": {
+      "message": "É necessário informar um destino de transferência ou uma chamada substituta."
+    },
+    "transfer_target_invalid": {
+      "message": "O destino da transferência é inválido ou ambíguo."
+    },
+    "unknown_phone_device": {
+      "message": "O dispositivo de telefone do Home Assistant selecionado é desconhecido."
+    }
+  },
+  "entity": {
+    "event": {
+      "voip_stack_call_event": {
+        "name": "Chamada VoIP Stack"
+      },
+      "phone_endpoint_call": {
+        "name": "Chamada"
+      }
+    },
+    "sensor": {
+      "voip_stack_ha_softphone_call_state": {
+        "name": "Estado da chamada VoIP Stack"
+      },
+      "phone_endpoint_call_state": {
+        "name": "Estado da chamada",
+        "state": {
+          "offline": "Offline",
+          "idle": "Ocioso",
+          "calling": "Chamando",
+          "remote_ringing": "Chamando no destino",
+          "ringing": "Tocando",
+          "connecting": "Conectando",
+          "in_call": "Em chamada",
+          "held": "Em espera",
+          "terminating": "Encerrando"
+        }
+      }
+    },
+    "switch": {
+      "phone_endpoint_dnd": {
+        "name": "Não perturbe"
+      },
+      "phone_endpoint_conference_ring": {
+        "name": "Tocar para chamadas de conferência"
+      },
+      "phone_endpoint_auto_answer": {
+        "name": "Atendimento automático"
+      },
+      "phone_endpoint_send_video": {
+        "name": "Enviar vídeo"
+      }
+    },
+    "text": {
+      "phone_endpoint_extension": {
+        "name": "Extensão"
+      },
+      "phone_endpoint_ring_group": {
+        "name": "Grupos de toque"
+      },
+      "phone_endpoint_conference_group": {
+        "name": "Grupos de conferência"
+      }
+    },
+    "binary_sensor": {
+      "phone_endpoint_connectivity": {
+        "name": "Conectividade"
+      }
+    }
+  }
+}
+

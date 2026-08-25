@@ -120,7 +120,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("await this._disposeSenderResources(previous)", video)
         self.assertIn('localStorage', devices)
         self.assertIn('"devicechange"', devices)
-        self.assertIn('settingsLabel.textContent = "Options"', self.view_source)
+        self.assertIn('settingsLabel.textContent = translate("Options")', self.view_source)
         self.assertIn('settingsLabelIcon.setAttribute("icon", "mdi:tune-variant")', self.view_source)
         self.assertIn("mediaDeviceViews: [idleMediaDevices]", self.view_source)
         self.assertNotIn("callMediaOptionsBtn", self.view_source)
@@ -752,8 +752,14 @@ class FrontendCardContractTest(unittest.TestCase):
         source = self.source
         self.assertIn('statusRow.setAttribute("aria-live", "polite")', source)
         self.assertIn('err.setAttribute("role", "alert")', source)
-        self.assertIn('prevBtn.setAttribute("aria-label", "Previous destination")', source)
-        self.assertIn('nextBtn.setAttribute("aria-label", "Next destination")', source)
+        self.assertIn(
+            'prevBtn.setAttribute("aria-label", translate("Previous destination"))',
+            source,
+        )
+        self.assertIn(
+            'nextBtn.setAttribute("aria-label", translate("Next destination"))',
+            source,
+        )
         self.assertIn('els.keypadBtn.setAttribute("aria-expanded"', source)
         self.assertIn('els.settingsBtn.setAttribute("aria-expanded"', source)
 

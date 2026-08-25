@@ -1108,10 +1108,10 @@ class GroupCallMatrixTest(unittest.TestCase):
         self.assertNotIn("MobileOffice", pbx.phonebook)
         self.assertNotIn("MobileOffice", pbx.phonebook["CG Casa"]["members"])
 
-        no_trunk = pbx.call_trunk("Casa", "+390551234567")
+        no_trunk = pbx.call_trunk("Casa", "+12025550100")
         self.assertEqual(no_trunk.state, UNAVAILABLE)
         pbx.add_trunk("Wildix", "+")
-        via_trunk = pbx.call_trunk("Casa", "+390551234567")
+        via_trunk = pbx.call_trunk("Casa", "+12025550100")
         self.assertEqual(via_trunk.state, IN_CALL)
         self.assertEqual(via_trunk.winner, "trunk")
         self.assertIn("INVITE_TRUNK", via_trunk.events)
@@ -1226,7 +1226,7 @@ class GroupCallMatrixTest(unittest.TestCase):
         self.assertEqual(offline.state, UNAVAILABLE)
         self.assertIn("callee_offline", offline.events)
 
-        no_trunk = pbx.call_trunk("Casa", "+390551234567")
+        no_trunk = pbx.call_trunk("Casa", "+12025550100")
         self.assertEqual(no_trunk.state, UNAVAILABLE)
         self.assertIn("trunk_unavailable", no_trunk.events)
 

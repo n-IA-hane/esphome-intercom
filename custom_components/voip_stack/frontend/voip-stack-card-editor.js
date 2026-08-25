@@ -8,6 +8,7 @@ const VOIP_STACK_MODULE_VERSION = (() => {
     return "dev";
   }
 })();
+const { voipStackTranslate } = await import(`./voip-stack-i18n.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 const {
   audioModeLabel,
   normaliseAudioMode,
@@ -30,6 +31,10 @@ class VoipStackCardEditor extends HTMLElement {
     if (this._hass && !this._devicesLoaded) this._loadDevices();
   }
 
+  _t(text) {
+    return voipStackTranslate(this._hass, text);
+  }
+
   disconnectedCallback() {
     if (this._devicesRetryTimer) {
       clearTimeout(this._devicesRetryTimer);
@@ -44,8 +49,13 @@ class VoipStackCardEditor extends HTMLElement {
   }
 
   set hass(hass) {
+    const languageChanged = String(this._hass?.language || "") !== String(hass?.language || "");
     this._hass = hass;
     if (hass && !this._devicesLoaded) this._loadDevices();
+    if (languageChanged && this._els) {
+      this._els = null;
+      this._render();
+    }
   }
 
   _normaliseAudioMode(value) {
@@ -124,19 +134,19 @@ class VoipStackCardEditor extends HTMLElement {
     const modeGroup = document.createElement("div");
     modeGroup.className = "form-group";
     const modeLabel = document.createElement("label");
-    modeLabel.textContent = "Card Mode";
+    modeLabel.textContent = this._t("Card Mode");
     modeGroup.appendChild(modeLabel);
     const modeSelect = document.createElement("select");
     modeSelect.id = "mode-select";
     const mirrorOpt = document.createElement("option");
     mirrorOpt.value = "esp_mirror";
-    mirrorOpt.textContent = "ESP mirror";
+    mirrorOpt.textContent = this._t("ESP mirror");
     const softphoneOpt = document.createElement("option");
     softphoneOpt.value = "ha_softphone";
-    softphoneOpt.textContent = "Home Assistant softphone";
+    softphoneOpt.textContent = this._t("Home Assistant softphone");
     const phonebookOpt = document.createElement("option");
     phonebookOpt.value = "phonebook";
-    phonebookOpt.textContent = "VoIP phonebook";
+    phonebookOpt.textContent = this._t("VoIP phonebook");
     modeSelect.append(mirrorOpt, softphoneOpt, phonebookOpt);
     modeGroup.appendChild(modeSelect);
     const modeInfo = document.createElement("div");
@@ -147,7 +157,7 @@ class VoipStackCardEditor extends HTMLElement {
     const deviceGroup = document.createElement("div");
     deviceGroup.className = "form-group";
     const deviceLabel = document.createElement("label");
-    deviceLabel.textContent = "VoIP Device";
+    deviceLabel.textContent = this._t("VoIP Device");
     deviceGroup.appendChild(deviceLabel);
     const select = document.createElement("select");
     select.id = "entity-select";
@@ -160,12 +170,12 @@ class VoipStackCardEditor extends HTMLElement {
     const nameGroup = document.createElement("div");
     nameGroup.className = "form-group";
     const nameLabel = document.createElement("label");
-    nameLabel.textContent = "Card Name (optional)";
+    nameLabel.textContent = this._t("Card Name (optional)");
     nameGroup.appendChild(nameLabel);
     const nameInput = document.createElement("input");
     nameInput.type = "text";
     nameInput.id = "name-input";
-    nameInput.placeholder = "No title";
+    nameInput.placeholder = this._t("No title");
     nameGroup.appendChild(nameInput);
     wrap.appendChild(nameGroup);
 
@@ -177,7 +187,7 @@ class VoipStackCardEditor extends HTMLElement {
     extendedInfoInput.id = "show-extended-info-input";
     extendedInfoLabel.appendChild(extendedInfoInput);
     extendedInfoLabel.appendChild(
-      document.createTextNode(" Extended information"),
+      document.createTextNode(` ${this._t("Extended information")}`),
     );
     extendedInfoGroup.appendChild(extendedInfoLabel);
     wrap.appendChild(extendedInfoGroup);
@@ -217,21 +227,21 @@ class VoipStackCardEditor extends HTMLElement {
       : softphoneMode
         ? "ha_softphone"
         : "esp_mirror";
-    els.modeInfo.textContent = phonebookMode
+    els.modeInfo.textContent = this._t(phonebookMode
       ? "Scrollable view of the shared VoIP phonebook."
       : softphoneMode
         ? "Home Assistant phone: bind this card to one logical phone, or leave it unselected for the preferred phone."
-        : "ESP mirror card: mirrors one ESP endpoint and presses that ESP's own call, answer and hangup controls.";
+        : "ESP mirror card: mirrors one ESP endpoint and presses that ESP's own call, answer and hangup controls.");
     els.deviceGroup.classList.toggle("hidden", phonebookMode);
-    els.deviceLabel.textContent = softphoneMode
+    els.deviceLabel.textContent = this._t(softphoneMode
       ? "Home Assistant phone"
-      : "VoIP Device";
+      : "VoIP Device");
 
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = softphoneMode
+    placeholder.textContent = this._t(softphoneMode
       ? "Preferred Home Assistant phone"
-      : "-- Select device --";
+      : "-- Select device --");
     const newOptions = [placeholder];
     const selectableDevices = this._devices.filter((device) => softphoneMode
       ? this._isSoftphoneDevice(device) && !!device.device_id
@@ -254,7 +264,7 @@ class VoipStackCardEditor extends HTMLElement {
     if (configuredMissingPhone) {
       const missing = document.createElement("option");
       missing.value = configuredDeviceId;
-      missing.textContent = `Missing phone: ${configuredDeviceId}`;
+      missing.textContent = this._t(`Missing phone: ${configuredDeviceId}`);
       missing.selected = true;
       missing.disabled = true;
       newOptions.push(missing);
@@ -262,28 +272,28 @@ class VoipStackCardEditor extends HTMLElement {
     els.select.replaceChildren(...newOptions);
 
     if (!this._devicesLoaded) {
-      els.deviceInfo.textContent = "Loading...";
+      els.deviceInfo.textContent = this._t("Loading...");
     } else if (selectableDevices.length === 0) {
-      els.deviceInfo.textContent = softphoneMode
+      els.deviceInfo.textContent = this._t(softphoneMode
         ? "No additional HA softphones found; the preferred or sole phone will be used."
-        : "No devices found";
+        : "No devices found");
     } else if (configuredMissingPhone) {
-      els.deviceInfo.textContent =
-        "The configured Home Assistant phone no longer exists. Select another phone or use the preferred phone.";
+      els.deviceInfo.textContent = this._t(
+        "The configured Home Assistant phone no longer exists. Select another phone or use the preferred phone.");
     } else if (selectedDevice) {
       els.deviceInfo.textContent = softphoneMode
         ? `Phone: ${selectedDevice.name || selectedDevice.device_id}`
         : `Audio: ${this._normaliseAudioMode(selectedDevice.audio_mode).replace("_", " ")}`;
     } else {
-      els.deviceInfo.textContent = softphoneMode
+      els.deviceInfo.textContent = this._t(softphoneMode
         ? "Omit the selection to use the preferred Home Assistant phone."
-        : "Required for ESP mirror mode.";
+        : "Required for ESP mirror mode.");
     }
 
-    els.nameLabel.textContent = phonebookMode
+    els.nameLabel.textContent = this._t(phonebookMode
       ? "Title (optional)"
-      : "Card Name (optional)";
-    els.nameInput.placeholder = "No title";
+      : "Card Name (optional)");
+    els.nameInput.placeholder = this._t("No title");
     els.nameInput.value = phonebookMode
       ? this._config.title || this._config.name || ""
       : this._config.name || "";
