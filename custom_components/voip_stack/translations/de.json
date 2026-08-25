@@ -20,7 +20,7 @@
           "sip_port": "Abhörport für den HA-SIP-Endpunkt. HA akzeptiert SIP-Signalisierung über UDP und TCP an diesem Port.",
           "rtp_port": "Basis-RTP-UDP-Port für HA-Medien und Relays.",
           "advertise_host": "Optionale Überschreibung in ESP-Telefonbüchern veröffentlicht. Verwenden Sie diese Option, wenn sich HA hinter Routing, NAT, LXC, VPN oder mehreren Subnetzen befindet und die automatisch angekündigte Adresse für ESP-Geräte nicht erreichbar ist.",
-          "assist_intents": "Registrieren Sie optionale Assist-Handler zum Anrufen, Auflegen, Annehmen und Ablehnen („Hey Jarvis, rufen Sie Kitchen an“). Gesprochene Kontaktnamen werden dynamisch anhand des Live-VoIP-Telefonbuchs aufgelöst.",
+          "assist_intents": "Registrieren Sie optionale Assist-Handler zum Anrufen, Auflegen, Annehmen und Ablehnen (\"Hey Jarvis, rufen Sie Kitchen an\"). Gesprochene Kontaktnamen werden dynamisch anhand des Live-VoIP-Telefonbuchs aufgelöst.",
           "assist_endpoint_enabled": "Fügt eine SIP-Nebenstelle hinzu, die direkt von einer Home Assistant Assist-Pipeline bedient wird. Es ist keine separate VoIP-Integration oder ein SIP-Listener erforderlich.",
           "debug_mode": "Ermöglicht detaillierte SIP-/RTP-/Mediendiagnosen und Protokolle, ohne Anrufaudio aufzuzeichnen.",
           "media_capture": "Zeichnet ausdrücklich private Anrufmedien auf: bis zu 15 Sekunden je HA-Softphone-Richtung und 8 Sekunden je Relay-Abschnitt, gespeichert als WAV/JSON in ~/.cache/voip_stack_debug (Modus 0700) und begrenzt auf 24 Dateien / 64 MiB. Nur für Diagnoseaufzeichnungen aktivieren.",
@@ -38,12 +38,12 @@
         },
         "data_description": {
           "video_transcoding_enabled": "Erlauben Sie VoIP Stack, die FFmpeg-Binärdatei von Home Assistant zu verwenden, wenn zwei ausgehandelte Videoabschnitte keine direkte Codec-Übereinstimmung haben. Direktes H.264, VP8 und JPEG bleiben bevorzugt. Der begrenzte Fallback kann Legacy-Videos für das HA-Softphone und H.264 oder JPEG zwischen HA-eigenen SIP-Strecken konvertieren. Beim Browser-JPEG-Versand kann auch ein begrenzter RFC 2435-Normalisierer verwendet werden. Bei einem Fehler bleibt kompatibles Audio aktiv.",
-          "video_camera_send_enabled": "Stellen Sie auf der Karte die Option „Kamera senden“ bereit. Jedes logische Home Assistant-Telefon behält seine Wahl; Die Kameraberechtigung bleibt für jeden Browser lokal. Für den Videoempfang ist niemals Kamerazugriff erforderlich."
+          "video_camera_send_enabled": "Stellen Sie auf der Karte die Option \"Kamera senden\" bereit. Jedes logische Home Assistant-Telefon behält seine Wahl; Die Kameraberechtigung bleibt für jeden Browser lokal. Für den Videoempfang ist niemals Kamerazugriff erforderlich."
         }
       },
       "assist": {
         "title": "Sprachassistent-Nebenstelle",
-        "description": "Wählen Sie die SIP-Nebenstelle und die Home Assistant Assist-Pipeline aus, die für Telefonanrufe verwendet werden. VoIP Stack startet das Gespräch mit einer Benutzernachricht wie „Eingehender SIP-Anruf von „Daniele“.“ Konfigurieren Sie das Telefonverhalten in den Anweisungen oder dem Eingabeaufforderungsfeld des ausgewählten Gesprächsagenten unter Einstellungen > Geräte & Dienste > Agentenintegration > Konfigurieren. Beispielanweisungen: „Wenn Sie eine Nachricht erhalten, die mit „Eingehender SIP-Anruf von“ beginnt, behandeln Sie sie als Live-Telefonanruf. Begrüßen Sie den Anrufer einmal, agieren Sie wie eine prägnante Empfangsdame und wiederholen Sie seinen Namen nicht in jeder Antwort.“ Freundliche Stimmung: „Seien Sie bei SIP-Anrufen fröhlich und informell, bleiben Sie dabei prägnant und hilfsbereit.“ Schreckliche Stimmung: „Hallo. Es ist mir scheißegal, also fick dich bitte selbst.`",
+        "description": "Wählen Sie die SIP-Nebenstelle und die Home Assistant Assist-Pipeline aus, die für Telefonanrufe verwendet werden. VoIP Stack startet das Gespräch mit einer Benutzernachricht wie \"Eingehender SIP-Anruf von Daniele.\" Konfigurieren Sie das Telefonverhalten in den Anweisungen oder dem Eingabeaufforderungsfeld des ausgewählten Gesprächsagenten unter Einstellungen > Geräte & Dienste > Agentenintegration > Konfigurieren. Beispielanweisungen: \"Wenn Sie eine Nachricht erhalten, die mit Eingehender SIP-Anruf von beginnt, behandeln Sie sie als Live-Telefonanruf. Begrüßen Sie den Anrufer einmal, agieren Sie wie eine prägnante Empfangsdame und wiederholen Sie seinen Namen nicht in jeder Antwort.\" Freundliche Stimmung: \"Seien Sie bei SIP-Anrufen fröhlich und informell, bleiben Sie dabei prägnant und hilfsbereit.\" Schreckliche Stimmung: \"Hallo. Es ist mir scheißegal, also fick dich bitte selbst.\"",
         "data": {
           "assist_extension": "Sprachassistent-Nebenstelle",
           "assist_pipeline": "Pipeline für Sprachassistenten",
@@ -270,7 +270,7 @@
       "message": "Das Ziel {destination} ist noch nicht verfügbar."
     },
     "forward_failure_policy_invalid": {
-      "message": "Die Forward-Failure-Richtlinie muss „resume“, „terminate“ oder „busy“ lauten."
+      "message": "Die Forward-Failure-Richtlinie muss \"resume\", \"terminate\" oder \"busy\" lauten."
     },
     "forward_ring_group_only": {
       "message": "Ein bereits klingelnder Anruf kann derzeit nur an eine Rufgruppe weitergeleitet werden."

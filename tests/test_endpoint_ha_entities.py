@@ -385,6 +385,52 @@ def test_dynamic_entity_creation_is_not_reentered_by_device_id_update(
     assert manager.entities["kitchen"] is added[0][0][0]
 
 
+def test_entity_manager_refreshes_cached_device_info_after_phone_rename(
+    monkeypatch,
+) -> None:
+    """An entity rename must not let stale DeviceInfo restore the old name."""
+    registry = endpoint_registry.EndpointRegistry()
+    hass = types.SimpleNamespace(
+        data={"voip_stack": {"endpoint_registry": registry}}
+    )
+    entry = types.SimpleNamespace(
+        async_on_unload=lambda _callback: None,
+        runtime_data=types.SimpleNamespace(endpoints=registry),
+    )
+
+    class ManagedEntity:
+        hass = None
+
+        def __init__(self, endpoint) -> None:
+            self.endpoint = endpoint
+            self._attr_device_info = endpoint_device.endpoint_device_info(endpoint)
+
+        def apply_endpoint(self, endpoint) -> None:
+            self.endpoint = endpoint
+
+    monkeypatch.setattr(
+        entity_manager,
+        "async_ensure_endpoint_device",
+        lambda _hass, _entry, endpoint, _registry: endpoint,
+    )
+    manager = entity_manager.EndpointEntityManager(
+        hass,
+        entry,
+        lambda _entities, *args, **kwargs: None,
+        lambda _hass, endpoint, _registry: ManagedEntity(endpoint),
+    )
+    manager.async_setup()
+    registry.register(_endpoint(name="apt1001", device_id="ha-device"))
+
+    entity = manager.entities["kitchen"]
+    assert entity._attr_device_info["name"] == "apt1001"
+
+    registry.update("kitchen", name="apt101")
+
+    assert entity.endpoint.name == "apt101"
+    assert entity._attr_device_info["name"] == "apt101"
+
+
 def test_entity_manager_predicate_excludes_unsupported_phone_kind(monkeypatch) -> None:
     registry = endpoint_registry.EndpointRegistry()
     hass = types.SimpleNamespace(

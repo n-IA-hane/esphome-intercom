@@ -15,6 +15,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .endpoint_device import (
     async_ensure_endpoint_device,
     endpoint_config_subentry_id,
+    endpoint_device_info,
     is_managed_endpoint,
 )
 
@@ -144,6 +145,12 @@ class EndpointEntityManager(Generic[_EntityT]):
                 self.hass, self.entry, event.endpoint, self.registry
             )
         endpoint = self.registry.get(endpoint_id) or event.endpoint
+        if (
+            previous is None
+            or previous.name != endpoint.name
+            or previous.kind != endpoint.kind
+        ):
+            entity._attr_device_info = endpoint_device_info(endpoint)
         apply_endpoint = getattr(entity, "apply_endpoint", None)
         if callable(apply_endpoint):
             apply_endpoint(endpoint)
