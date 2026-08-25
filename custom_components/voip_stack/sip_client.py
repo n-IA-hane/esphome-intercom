@@ -148,8 +148,9 @@ def rtp_payload_to_pcm(payload: bytes, fmt: AudioFormat | sdp.RtpPcmFormat) -> b
 class RtpPayloadDecoder:
     def __init__(self, fmt: sdp.RtpPcmFormat) -> None:
         self.fmt = fmt
+        pcm_format = fmt.audio_format
         self._codec = (
-            OpusDecoder(fmt.pcm_sample_rate, fmt.channels)
+            OpusDecoder(pcm_format.sample_rate, pcm_format.channels, pcm_format.frame_ms)
             if fmt.encoding == "OPUS"
             else G722Decoder()
             if fmt.encoding == "G722"
@@ -165,8 +166,9 @@ class RtpPayloadDecoder:
 class RtpPayloadEncoder:
     def __init__(self, fmt: sdp.RtpPcmFormat) -> None:
         self.fmt = fmt
+        pcm_format = fmt.audio_format
         self._codec = (
-            OpusEncoder(fmt.pcm_sample_rate, fmt.channels)
+            OpusEncoder(pcm_format.sample_rate, pcm_format.channels, pcm_format.frame_ms)
             if fmt.encoding == "OPUS"
             else G722Encoder()
             if fmt.encoding == "G722"
@@ -347,6 +349,7 @@ class SipCallClient:
         password: str = "",
         outbound_proxy: str = "",
         include_common_codecs: bool = False,
+        allow_directional_audio_payloads: bool = False,
         peer_user_agent: str = "",
         local_video_rtp_port: int = 0,
         video_format: sdp.RtpVideoFormat | None = None,
@@ -390,6 +393,9 @@ class SipCallClient:
         self.password = password
         self.outbound_proxy = outbound_proxy
         self.include_common_codecs = bool(include_common_codecs)
+        self.allow_directional_audio_payloads = bool(
+            allow_directional_audio_payloads
+        )
         self.peer_user_agent = str(peer_user_agent or "").strip()
         self.include_dahua_pcm = supports_dahua_pcm(self.peer_user_agent)
         self.local_video_rtp_port = int(local_video_rtp_port or 0)
@@ -1770,6 +1776,7 @@ class SipCallClient:
                 self.supported_recv_formats,
                 include_common_codecs=self.include_common_codecs,
                 include_dahua_pcm=self.include_dahua_pcm,
+                allow_directional_payloads=self.allow_directional_audio_payloads,
                 video_port=self.local_video_rtp_port,
                 video_format=self.video_format,
                 video_formats=self.video_formats,

@@ -26,14 +26,15 @@ class RouterContractTest(unittest.TestCase):
         self.assertEqual(decision.action, router.RouteAction.DIRECT)
         self.assertEqual(decision.sip_uri, target)
 
-    def test_sip_video_offer_is_not_gated_by_target_roster_capabilities(self) -> None:
+    def test_sip_video_offer_is_gated_only_for_explicit_esphome_capabilities(self) -> None:
         source = (PKG_DIR / "softphone_originate.py").read_text()
         self.assertIn(
             "use_trunk or not native_audio_endpoint or esphome_sip_endpoint",
             source,
         )
-        self.assertNotIn("target_video_enabled", source)
-        self.assertNotIn('target_endpoint.supports("video")', source)
+        self.assertIn("target_video_enabled", source)
+        self.assertIn("not esphome_sip_endpoint", source)
+        self.assertIn('target_endpoint.supports("video")', source)
 
     def _matrix_entries(self):
         return roster.parse_roster_json(

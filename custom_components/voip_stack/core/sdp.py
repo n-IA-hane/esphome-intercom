@@ -8,7 +8,12 @@ import re
 from dataclasses import dataclass, replace
 from fractions import Fraction
 
-from .audio_format import AudioFormat, PcmFormat, UDP_SAFE_PAYLOAD_BYTES
+from .audio_format import (
+    AudioFormat,
+    PcmFormat,
+    UDP_SAFE_PAYLOAD_BYTES,
+    choose_common_frame_ms,
+)
 from .codec_capabilities import common_sip_codecs
 
 
@@ -159,7 +164,7 @@ class RtpPcmFormat:
             )
         if self.encoding == "OPUS":
             return AudioFormat(
-                48000, PcmFormat.S16LE, self.channels, self.frame_ms or 20
+                48000, PcmFormat.S16LE, 1, self.frame_ms or 20
             )
         pcm = (
             PcmFormat.S16LE
@@ -1067,8 +1072,7 @@ def _rtp_compatible_audio(
         if (
             local.pcm_format == PcmFormat.S16LE
             and local.sample_rate == 48000
-            and local.channels == offered.channels
-            and local.frame_ms == 20
+            and local.channels == 1
         ):
             return RtpPcmFormat(
                 offered.payload_type, "OPUS", 48000, offered.channels, local.frame_ms
@@ -1366,19 +1370,49 @@ def build_offer_directional(
     audio_direction: str = "sendrecv",
     video_direction: str = "sendrecv",
     audio_rtp_formats: tuple[RtpPcmFormat, ...] | None = None,
+    allow_directional_payloads: bool = False,
 ) -> str:
     audio_direction = normalize_direction(audio_direction)
     video_direction = normalize_direction(video_direction)
+    directional_flows: dict[tuple[int, PcmFormat, int, int], str] = {}
     if audio_rtp_formats is not None:
         rtp_formats = list(dict.fromkeys(audio_rtp_formats))
         if not rtp_formats:
             raise SdpError("SDP offer requires at least one RTP audio format")
     else:
-        capability_formats = _formats_for_local_direction(
-            send_formats or [],
-            recv_formats or [],
-            audio_direction,
-        )
+        if allow_directional_payloads and audio_direction == "sendrecv":
+            frame_ms = choose_common_frame_ms(send_formats or [], recv_formats or [])
+            if frame_ms is None:
+                raise SdpError(
+                    "SDP directional offer requires a common RTP packet time"
+                )
+            send_keys = {
+                _format_key(fmt) for fmt in send_formats if fmt.frame_ms == frame_ms
+            }
+            recv_keys = {
+                _format_key(fmt) for fmt in recv_formats if fmt.frame_ms == frame_ms
+            }
+            capability_formats = _dedupe_formats(
+                [
+                    *(fmt for fmt in recv_formats if fmt.frame_ms == frame_ms),
+                    *(fmt for fmt in send_formats if fmt.frame_ms == frame_ms),
+                ]
+            )
+            for fmt in capability_formats:
+                key = _format_key(fmt)
+                directional_flows[key] = (
+                    "sendrecv"
+                    if key in send_keys and key in recv_keys
+                    else "send"
+                    if key in send_keys
+                    else "recv"
+                )
+        else:
+            capability_formats = _formats_for_local_direction(
+                send_formats or [],
+                recv_formats or [],
+                audio_direction,
+            )
         formats = rtp_offer_formats(capability_formats)
         if not formats:
             raise SdpError(
@@ -1426,10 +1460,15 @@ def build_offer_directional(
             lines.append(
                 f"a=fmtp:{fmt.payload_type} stereo=1;sprop-stereo=1;maxaveragebitrate=28000"
             )
+        if allow_directional_payloads and audio_direction == "sendrecv":
+            flow = directional_flows.get(_format_key(fmt.audio_format))
+            if flow is not None:
+                lines.append(f"a=x-voip-stack-flow:{fmt.payload_type} {flow}")
     lines.append(f"a=rtpmap:{dtmf_payload_type} telephone-event/8000")
     lines.append(f"a=fmtp:{dtmf_payload_type} 0-15")
     lines.append(f"a=ptime:{rtp_formats[0].frame_ms}")
-    lines.append(f"a=maxptime:{rtp_formats[0].frame_ms}")
+    if not allow_directional_payloads:
+        lines.append(f"a=maxptime:{rtp_formats[0].frame_ms}")
     lines.append(f"a={audio_direction}")
     offered_video = _unique_video_payloads(
         video_formats or (() if video_format is None else (video_format,))
@@ -2894,6 +2933,14 @@ def negotiate_directional(
         parsed["direction"],
         local_direction,
     )
+    explicit = _negotiate_audio_flow_attributes(
+        remote_sdp,
+        offered_pcm_formats(remote_sdp, allow_dahua_pcm=allow_dahua_pcm),
+        local_send_preferred,
+        local_recv_preferred,
+    )
+    if explicit is not None:
+        return explicit
     return _negotiate_for_local_direction(
         offered_pcm_formats(
             remote_sdp,
@@ -2932,7 +2979,7 @@ def negotiate_answer_directional(
         allow_dahua_pcm=allow_dahua_pcm,
     )
     if local_offer_sdp is not None:
-        explicit = _negotiate_answer_flow_attributes(
+        explicit = _negotiate_audio_flow_attributes(
             remote_sdp,
             answered_formats,
             local_send_preferred,
@@ -2959,7 +3006,7 @@ def negotiate_answer_directional(
     )
 
 
-def _negotiate_answer_flow_attributes(
+def _negotiate_audio_flow_attributes(
     remote_sdp: str | bytes,
     answered: list[RtpPcmFormat],
     local_send_preferred: list[AudioFormat],
@@ -2967,32 +3014,25 @@ def _negotiate_answer_flow_attributes(
 ) -> RtpPcmDirection | None:
     """Apply the ESPHome directional payload extension when both flows exist."""
 
-    text = (
-        remote_sdp.decode("utf-8", errors="strict")
-        if isinstance(remote_sdp, bytes)
-        else remote_sdp
-    )
-    flows: dict[str, int] = {}
-    for raw in text.replace("\r\n", "\n").split("\n"):
-        match = re.fullmatch(
-            r"a=x-voip-stack-flow:(\d+)\s+(send|recv)",
-            raw.strip(),
-            flags=re.IGNORECASE,
-        )
-        if match is not None:
-            flows[match.group(2).lower()] = int(match.group(1))
-    if set(flows) != {"send", "recv"}:
-        return None
-    by_payload = {item.payload_type: item for item in answered}
-    remote_recv = by_payload.get(flows["recv"])
-    remote_send = by_payload.get(flows["send"])
-    if remote_recv is None or remote_send is None:
+    flows = _audio_flow_attributes(remote_sdp)
+    remote_recv = [
+        item
+        for item in answered
+        if flows.get(item.payload_type) in {"recv", "sendrecv"}
+    ]
+    remote_send = [
+        item
+        for item in answered
+        if flows.get(item.payload_type) in {"send", "sendrecv"}
+    ]
+    if not remote_recv or not remote_send:
         return None
     send = next(
         (
             selected
             for local in local_send_preferred
-            if (selected := _rtp_compatible_audio(remote_recv, local)) is not None
+            for offered in remote_recv
+            if (selected := _rtp_compatible_audio(offered, local)) is not None
         ),
         None,
     )
@@ -3000,11 +3040,35 @@ def _negotiate_answer_flow_attributes(
         (
             selected
             for local in local_recv_preferred
-            if (selected := _rtp_compatible_audio(remote_send, local)) is not None
+            for offered in remote_send
+            if (selected := _rtp_compatible_audio(offered, local)) is not None
         ),
         None,
     )
     return RtpPcmDirection(send, recv) if send is not None and recv is not None else None
+
+
+def _audio_flow_attributes(remote_sdp: str | bytes) -> dict[int, str]:
+    text = (
+        remote_sdp.decode("utf-8", errors="strict")
+        if isinstance(remote_sdp, bytes)
+        else remote_sdp
+    )
+    return {
+        int(match.group(1)): match.group(2).lower()
+        for match in re.finditer(
+            r"^a=x-voip-stack-flow:(\d+)\s+(send|recv|sendrecv)\s*$",
+            text.replace("\r\n", "\n"),
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+    }
+
+
+def _has_directional_audio_flow_attributes(remote_sdp: str | bytes) -> bool:
+    flows = set(_audio_flow_attributes(remote_sdp).values())
+    can_send = bool(flows & {"send", "sendrecv"})
+    can_recv = bool(flows & {"recv", "sendrecv"})
+    return can_send and can_recv
 
 
 def build_answer_directional(
@@ -3040,16 +3104,22 @@ def build_answer_directional(
         remote_audio["direction"] if remote_audio is not None else "sendrecv",
         audio_direction,
     )
+    directional_payloads = bool(
+        remote_sdp and _has_directional_audio_flow_attributes(remote_sdp)
+    )
     if format_direction == "sendonly":
         selected = [send]
     elif format_direction == "recvonly":
         selected = [recv]
     else:
-        if _rtp_contract_key(send) != _rtp_contract_key(recv):
+        if (
+            _rtp_contract_key(send) != _rtp_contract_key(recv)
+            and not directional_payloads
+        ):
             raise SdpError(
                 "SDP sendrecv answer requires one RTP payload usable for both TX and RX"
             )
-        selected = [send]
+        selected = list(dict.fromkeys([recv, send]))
     payload_values = [str(fmt.payload_type) for fmt in selected]
     if (
         dtmf is not None
@@ -3063,6 +3133,17 @@ def build_answer_directional(
         audio_lines.append(
             f"a=rtpmap:{fmt.payload_type} {fmt.encoding}/{fmt.sample_rate}/{fmt.channels}"
         )
+        if format_direction == "sendrecv" and directional_payloads:
+            send_match = _rtp_contract_key(fmt) == _rtp_contract_key(send)
+            recv_match = _rtp_contract_key(fmt) == _rtp_contract_key(recv)
+            flow = (
+                "sendrecv"
+                if send_match and recv_match
+                else "send"
+                if send_match
+                else "recv"
+            )
+            audio_lines.append(f"a=x-voip-stack-flow:{fmt.payload_type} {flow}")
     if dtmf is not None and dtmf.events:
         audio_lines.append(
             f"a=rtpmap:{dtmf.payload_type} telephone-event/{dtmf.sample_rate}"

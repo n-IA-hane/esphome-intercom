@@ -959,6 +959,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("_roster_entry_formats(", tx_profile)
         self.assertIn('route.entry, "tx_formats"', tx_profile)
         self.assertIn('_device_formats(dest_device, "tx_formats")', tx_profile)
+        self.assertIn("target_endpoint.supports(\"video\")", call_service)
+        self.assertIn('entry_metadata.get("capabilities", [])', call_service)
         self.assertIn("_roster_entry_formats(", rx_profile)
         self.assertIn('route.entry, "rx_formats"', rx_profile)
         self.assertIn('_device_formats(dest_device, "rx_formats")', rx_profile)

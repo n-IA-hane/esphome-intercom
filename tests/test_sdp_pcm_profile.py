@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 from .voip_phase1_support import (
     asyncio,
     audio_format,
@@ -1206,6 +1208,22 @@ class SdpPcmProfileTest(unittest.TestCase):
         self.assertEqual(converter.convert(ten_ms), [])
         self.assertEqual(converter.convert(ten_ms), [bytes(640)])
 
+    def test_pcm_converter_preserves_level_when_upsampling(self) -> None:
+        destination = audio_format.AudioFormat(48000, "s16le", 1, 10)
+        for source_rate in (8000, 16000):
+            with self.subTest(source_rate=source_rate):
+                source = audio_format.AudioFormat(source_rate, "s16le", 1, 10)
+                converter = audio_pcm.PcmFrameConverter(source, destination)
+                frame = np.full(
+                    source.nominal_frame_samples, 2000, dtype="<i2"
+                ).tobytes()
+
+                converted = [converter.convert(frame)[0] for _ in range(8)]
+                steady = np.frombuffer(b"".join(converted[3:]), dtype="<i2")
+
+                self.assertLess(abs(float(np.mean(steady)) - 2000.0), 2.0)
+                self.assertLessEqual(int(np.max(np.abs(steady))), 2002)
+
     def test_bounded_sip_udp_queue_keeps_freshest_datagram(self) -> None:
         queue: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(maxsize=2)
         protocol = sip_client._SipClientProtocol(queue)
@@ -1333,3 +1351,74 @@ class SdpPcmProfileTest(unittest.TestCase):
         self.assertIsNotNone(selected)
         self.assertEqual(selected.send.payload_type, 96)
         self.assertEqual(selected.recv.payload_type, 98)
+
+    def test_esphome_directional_offer_advertises_48k_rx_and_16k_tx(self) -> None:
+        wide = audio_format.AudioFormat(48000, "s16le", 1, 10)
+        narrow = audio_format.AudioFormat(16000, "s16le", 1, 10)
+
+        offer = sdp.build_offer_directional(
+            "192.0.2.10",
+            "192.0.2.10",
+            40000,
+            [wide, narrow],
+            [narrow],
+            allow_directional_payloads=True,
+        )
+
+        offered = sdp.offered_pcm_formats(offer)
+        self.assertEqual(
+            [(item.sample_rate, item.frame_ms) for item in offered],
+            [(48000, 10), (16000, 10)],
+        )
+        self.assertIn("a=x-voip-stack-flow:96 send\r\n", offer)
+        self.assertIn("a=x-voip-stack-flow:97 sendrecv\r\n", offer)
+        self.assertIn("a=ptime:10\r\n", offer)
+        self.assertNotIn("a=maxptime:", offer)
+
+    def test_standard_offer_does_not_advertise_one_way_codec_capabilities(self) -> None:
+        wide = audio_format.AudioFormat(48000, "s16le", 1, 10)
+        narrow = audio_format.AudioFormat(16000, "s16le", 1, 10)
+
+        with self.assertRaises(sdp.SdpError):
+            sdp.build_offer_directional(
+                "192.0.2.10",
+                "192.0.2.10",
+                40000,
+                [wide],
+                [narrow],
+            )
+
+    def test_esphome_directional_offer_and_answer_select_48k_to_esp_16k_from_esp(self) -> None:
+        wide = audio_format.AudioFormat(48000, "s16le", 1, 10)
+        narrow = audio_format.AudioFormat(16000, "s16le", 1, 10)
+        offer = sdp.build_offer_directional(
+            "192.0.2.10",
+            "192.0.2.10",
+            40000,
+            [wide, narrow],
+            [narrow],
+            allow_directional_payloads=True,
+        )
+
+        selected_by_esp = sdp.negotiate_directional(offer, [narrow], [wide])
+        self.assertIsNotNone(selected_by_esp)
+        self.assertEqual(selected_by_esp.send.audio_format, narrow)
+        self.assertEqual(selected_by_esp.recv.audio_format, wide)
+
+        answer = sdp.build_answer_directional(
+            "192.0.2.20",
+            "192.0.2.20",
+            40002,
+            selected_by_esp.send,
+            selected_by_esp.recv,
+            remote_sdp=offer,
+        )
+        selected_by_ha = sdp.negotiate_answer_directional(
+            answer,
+            [wide],
+            [narrow],
+            local_offer_sdp=offer,
+        )
+        self.assertIsNotNone(selected_by_ha)
+        self.assertEqual(selected_by_ha.send.audio_format, wide)
+        self.assertEqual(selected_by_ha.recv.audio_format, narrow)

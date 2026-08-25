@@ -16,7 +16,7 @@ substitutions:
   p4_video_max_decode_height: "800"
 
 external_components:
-  - source: github://Psix-anp/esphome-esp-video-camera@main
+  - source: ../../../../esphome-esp-video-camera/components
     components: [esp_video_camera]
   - source: ${ext_components_source}
     components: [esp_jpeg_video_source, p4_video_renderer]

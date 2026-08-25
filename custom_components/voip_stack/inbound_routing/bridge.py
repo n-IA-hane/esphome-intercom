@@ -34,6 +34,7 @@ from ..endpoint_routing import (
     peer_video_codec,
     roster_entry_formats,
     sip_target_audio_profile,
+    supports_directional_audio_payloads,
 )
 from ..fsm import (
     CallState,
@@ -270,6 +271,9 @@ async def route_sip_bridge(
         if bridge_to_trunk
         else "",
         include_common_codecs=bridge_to_trunk or bridge_to_softphone,
+        allow_directional_audio_payloads=supports_directional_audio_payloads(
+            peer_target, decision.entry
+        ),
         peer_user_agent=(
             str((decision.entry.metadata or {}).get("user_agent") or "")
             if bridge_to_softphone and decision.entry is not None

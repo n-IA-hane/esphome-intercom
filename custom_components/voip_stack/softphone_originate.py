@@ -464,19 +464,28 @@ async def async_originate_browser_call(
         str(entry_metadata.get("endpoint_kind") or "").strip().lower()
         == EndpointKind.ESPHOME.value
     )
-    # SIP video is HA/browser-owned.  Local HA/group endpoints stay outside
-    # this path.  An ESPHome endpoint is allowed to negotiate video and remains
-    # standards-compatible with audio-only firmware, which can reject the video
-    # media line while accepting the audio line.
-    # A phonebook entry may carry ESP-style audio capability metadata while
-    # its resolved route still exits through the SIP trunk.  The final route,
-    # not those contact hints, decides whether browser-owned video is valid.
+    # SIP video is HA/browser-owned. Local HA/group endpoints stay outside
+    # this path. ESPHome targets advertise explicit capabilities, so avoid a
+    # useless video m-line on audio-only firmware. Besides describing the leg
+    # accurately, this keeps UDP INVITEs below the path MTU.
     source_video_enabled = browser_endpoint is None or browser_endpoint.supports(
         "video"
+    )
+    target_video_enabled = bool(
+        not esphome_sip_endpoint
+        or (
+            target_endpoint is not None
+            and target_endpoint.supports("video")
+        )
+        or "video" in {
+            str(value).strip().lower()
+            for value in entry_metadata.get("capabilities", [])
+        }
     )
     video_enabled = (
         bool(cfg.get(CONF_SIP_VIDEO, False))
         and source_video_enabled
+        and target_video_enabled
         and (use_trunk or not native_audio_endpoint or esphome_sip_endpoint)
     )
     video_reservation = None
@@ -550,6 +559,7 @@ async def async_originate_browser_call(
         include_common_codecs=use_trunk
         or use_registered_contact_codecs
         or video_enabled,
+        allow_directional_audio_payloads=esphome_sip_endpoint,
         peer_user_agent=(
             str(entry_metadata.get("user_agent") or "")
             if use_registered_contact_codecs

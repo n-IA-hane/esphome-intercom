@@ -18,6 +18,7 @@ from .endpoint_routing import (
     peer_video_codec,
     roster_entry_formats,
     sip_target_audio_profile,
+    supports_directional_audio_payloads,
 )
 from .media_ports import (
     RtpPortReservation,
@@ -247,6 +248,9 @@ class EndpointDialer:
                 outbound_proxy=policy.outbound_proxy,
                 include_common_codecs=(
                     bridge_to_softphone or policy.force_common_audio
+                ),
+                allow_directional_audio_payloads=supports_directional_audio_payloads(
+                    peer_target, member_entry
                 ),
                 peer_user_agent=(
                     str(peer_user_agent_override or "").strip()

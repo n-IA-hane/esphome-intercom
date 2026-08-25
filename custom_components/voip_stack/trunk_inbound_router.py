@@ -31,6 +31,7 @@ from .endpoint_routing import (
     roster_entry_formats,
     roster_from_peers,
     sip_target_audio_profile,
+    supports_directional_audio_payloads,
 )
 from .fsm import (
     CallState,
@@ -496,6 +497,9 @@ async def async_route_trunk_invite(
         local_rtp_port=dest_relay_port,
         supported_send_formats=sip_send_formats,
         supported_recv_formats=sip_recv_formats,
+        allow_directional_audio_payloads=supports_directional_audio_payloads(
+            peer_target, decision.entry
+        ),
         signaling_transport=uri_transport(bridge_uri),
         peer_user_agent=str(
             (

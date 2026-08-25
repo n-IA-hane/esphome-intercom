@@ -38,12 +38,12 @@ substitutions:
   mic_id: mic_afe
   afe_vad_restore_mode: ALWAYS_ON
 
-  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
-  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
+  ext_components_source: "../../../esphome/components"
+  voip_stack_components_source: "../../../../esphome-voip-stack/esphome/components"
+  audio_stack_components_source: "../../../../esphome-audio-stack/esphome/components"
+  runtime_controller_components_source: "../../../../esphome-runtime-controller/esphome/components"
 
-  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/dev/"
+  assets_base: "../../../"
 
   # AI avatar folder (${assets_base}assets/images/assistant/<ai_avatar>/)
   ai_avatar: default
@@ -125,29 +125,29 @@ substitutions:
 # navigation, ESP AFE controls, mixer/media player and assets.
 
 packages:
-  full_voice_voip_runtime: github://n-IA-hane/esphome-intercom/packages/presets/full_voice_voip_runtime.yaml@dev
-  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller_no_led.yaml@dev
-  voice_assistant_runtime_controls: github://n-IA-hane/esphome-intercom/packages/voice_assistant/runtime_controls.yaml@dev
-  call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
-  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api_runtime.yaml@dev
-  voice_assistant_local_commands: github://n-IA-hane/esphome-intercom/packages/voice_assistant/local_commands.yaml@dev
-  ota_maintenance: github://n-IA-hane/esphome-intercom/packages/ota/full_audio_lvgl_maintenance.yaml@dev
-  voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
-  phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
-  s3_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32s3_base.yaml@dev
-  native_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native.yaml@dev
-  aec_entities: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/aec_controls.yaml@dev
-  audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@dev
-  speaker_power: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/speaker_power_output.yaml@dev
-  speaker_mixer: github://n-IA-hane/esphome-intercom/packages/audio/shared_mono_mixer_48k.yaml@dev
-  flac_codecs_psram: github://n-IA-hane/esphome-intercom/packages/audio/flac_codecs_psram.yaml@dev
-  sendspin_artwork: github://n-IA-hane/esphome-intercom/packages/media_player/sendspin_artwork.yaml@dev
-  lvgl_settings_nav: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_navigation.yaml@dev
-  lvgl_settings_sync_volumes: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_sync_volumes.yaml@dev
-  lvgl_settings_sync_mute: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_sync_mute.yaml@dev
-  lvgl_settings_sync_aec: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_sync_aec.yaml@dev
-  lvgl_settings_sync_va: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_sync_va.yaml@dev
-  spotpear_voip_nav: github://n-IA-hane/esphome-intercom/packages/lvgl/spotpear_voip/nav_full.yaml@dev
+  full_voice_voip_runtime: !include ../../../packages/presets/full_voice_voip_runtime.yaml
+  runtime_controller: !include ../../../../esphome-runtime-controller/packages/runtime_controller/full_controller_no_led.yaml
+  voice_assistant_runtime_controls: !include ../../../packages/voice_assistant/runtime_controls.yaml
+  call_settings: !include ../../../packages/voip/call_settings.yaml
+  ha_api: !include ../../../packages/voip/ha_api_runtime.yaml
+  voice_assistant_local_commands: !include ../../../packages/voice_assistant/local_commands.yaml
+  ota_maintenance: !include ../../../packages/ota/full_audio_lvgl_maintenance.yaml
+  voip_transport: !include ../../../packages/voip/transport.yaml
+  phonebook_subscribe: !include ../../../packages/voip/phonebook_subscribe.yaml
+  s3_base: !include ../../../packages/platform/esp32s3_base.yaml
+  native_diagnostics: !include ../../../packages/diagnostics/native.yaml
+  aec_entities: !include ../../../packages/esp_audio_stack/aec_controls.yaml
+  audio_stack_controls: !include ../../../packages/esp_audio_stack/controls.yaml
+  speaker_power: !include ../../../packages/esp_audio_stack/speaker_power_output.yaml
+  speaker_mixer: !include ../../../packages/audio/shared_mono_mixer_48k.yaml
+  flac_codecs_psram: !include ../../../packages/audio/flac_codecs_psram.yaml
+  sendspin_artwork: !include ../../../packages/media_player/sendspin_artwork.yaml
+  lvgl_settings_nav: !include ../../../packages/lvgl/lvgl_settings_navigation.yaml
+  lvgl_settings_sync_volumes: !include ../../../packages/lvgl/lvgl_settings_sync_volumes.yaml
+  lvgl_settings_sync_mute: !include ../../../packages/lvgl/lvgl_settings_sync_mute.yaml
+  lvgl_settings_sync_aec: !include ../../../packages/lvgl/lvgl_settings_sync_aec.yaml
+  lvgl_settings_sync_va: !include ../../../packages/lvgl/lvgl_settings_sync_va.yaml
+  spotpear_voip_nav: !include ../../../packages/lvgl/spotpear_voip/nav_full.yaml
 
 # =============================================================================
 # BOARD AND MEMORY
@@ -950,156 +950,186 @@ font:
 
 image:
   # Static VA state images
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/error.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/error.png
     id: assistant_gui_error
     resize: 360x360
     type: RGB565
     transparency: alpha_channel
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/listening.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/listening.png
     id: assistant_gui_listening
     resize: 360x360
     type: RGB565
     transparency: alpha_channel
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/thinking.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/thinking.png
     id: assistant_gui_thinking
     resize: 360x360
     type: RGB565
     transparency: alpha_channel
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/timer_finished.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/timer_finished.png
     id: assistant_gui_timer_finished
     resize: 360x360
     type: RGB565
     transparency: alpha_channel
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/loading.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/loading.png
     id: assistant_gui_initializing
     resize: 360x360
     type: RGB565
     transparency: alpha_channel
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/error_no_wifi.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/error_no_wifi.png
     id: error_no_wifi
     resize: 360x360
     type: RGB565
     transparency: alpha_channel
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/error_no_ha.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/error_no_ha.png
     id: error_no_ha
     resize: 360x360
     type: RGB565
     transparency: alpha_channel
 
   # Idle animation frames (20 frames @ 5fps)
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_00.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_00.png
     id: idle_00
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_01.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_01.png
     id: idle_01
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_02.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_02.png
     id: idle_02
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_03.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_03.png
     id: idle_03
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_04.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_04.png
     id: idle_04
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_05.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_05.png
     id: idle_05
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_06.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_06.png
     id: idle_06
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_07.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_07.png
     id: idle_07
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_08.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_08.png
     id: idle_08
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_09.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_09.png
     id: idle_09
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_10.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_10.png
     id: idle_10
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_11.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_11.png
     id: idle_11
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_12.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_12.png
     id: idle_12
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_13.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_13.png
     id: idle_13
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_14.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_14.png
     id: idle_14
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_15.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_15.png
     id: idle_15
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_16.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_16.png
     id: idle_16
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_17.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_17.png
     id: idle_17
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_18.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_18.png
     id: idle_18
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_19.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_19.png
     id: idle_19
     resize: 360x360
     type: RGB565
     transparency: opaque
 
   # Mood backgrounds for replying page (set based on LLM emoticon prefix)
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/happy.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/happy.png
     id: mood_happy
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/neutral.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/neutral.png
     id: mood_neutral
     resize: 360x360
     type: RGB565
     transparency: opaque
-  - file: ${assets_base}assets/images/assistant/${ai_avatar}/angry.png
+  - platform: file
+    file: ${assets_base}assets/images/assistant/${ai_avatar}/angry.png
     id: mood_angry
     resize: 360x360
     type: RGB565

@@ -327,6 +327,25 @@ class SipProfileTest(unittest.TestCase):
         self.assertEqual(selected.send.wire_token(), "pt=98:OPUS/48000/2/20ms")
         self.assertEqual(selected.recv.wire_token(), "pt=98:OPUS/48000/2/20ms")
 
+    def test_opus_rtpmap_channels_do_not_force_stereo_pcm_or_20ms(self) -> None:
+        offer = (
+            "v=0\r\n"
+            "o=- 0 0 IN IP4 192.168.1.48\r\n"
+            "s=baresip\r\n"
+            "c=IN IP4 192.168.1.48\r\n"
+            "t=0 0\r\n"
+            "m=audio 41000 RTP/AVP 96\r\n"
+            "a=rtpmap:96 opus/48000/2\r\n"
+            "a=ptime:10\r\n"
+            "a=sendrecv\r\n"
+        )
+        pcm = [audio_format.AudioFormat(48000, "s16le", 1, 10)]
+        selected = sdp.negotiate_directional(offer, pcm, pcm)
+        self.assertIsNotNone(selected)
+        assert selected is not None
+        self.assertEqual(selected.send.wire_token(), "pt=96:OPUS/48000/2/10ms")
+        self.assertEqual(selected.send.audio_format, pcm[0])
+
     def test_sdp_parser_scopes_connection_and_payloads_to_selected_audio(self) -> None:
         offer = (
             "v=0\r\n"

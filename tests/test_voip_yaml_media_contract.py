@@ -44,6 +44,7 @@ RUNTIME_MEDIA_PLAYER = (
     / "media_player"
     / "runtime_controller_mono_media_player_48k.yaml"
 )
+SENDSPIN_ARTWORK = ROOT / "packages" / "media_player" / "sendspin_artwork.yaml"
 
 
 def _voip_stack_block(text: str) -> str:
@@ -233,7 +234,7 @@ def test_spotpear_concurrency_memory_policy_is_explicit_and_preallocated() -> No
     assert 'http_media_persistent_ring_buffer: "true"' in text
     assert 'http_media_ring_buffer_size: "32768"' in text
     assert text.count("buffer_size: ${http_media_ring_buffer_size}") == 2
-    assert 'sendspin_audio_ring_buffer_size: "65536"' in text
+    assert 'sendspin_audio_ring_buffer_size: "262144"' in text
     assert "buffer_size: ${sendspin_audio_ring_buffer_size}" in text
     assert text.count(
         "persistent_ring_buffer: ${http_media_persistent_ring_buffer}"
@@ -245,6 +246,15 @@ def test_spotpear_concurrency_memory_policy_is_explicit_and_preallocated() -> No
     assert "tx_task_stack_size: ${voip_tx_task_stack_size}" in text
     assert "rx_task_stack_size: ${voip_rx_task_stack_size}" in text
     assert "components: [audio_http, speaker, voice_assistant, spi]" in text
+
+
+def test_sendspin_artwork_uses_the_official_image_platform() -> None:
+    text = SENDSPIN_ARTWORK.read_text()
+
+    assert "image:\n  - platform: sendspin" in text
+    assert "current_image:\n      id: sendspin_cover_art" in text
+    assert "generic_image:" not in text
+    assert "github://pr#16057" not in text
 
 
 def test_spotpear_layout_and_aec_sync_use_runtime_contracts() -> None:

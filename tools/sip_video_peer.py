@@ -196,8 +196,11 @@ AUDIO_PROFILES = {
         "frame_samples": 256,
         "frame_bytes": 512,
         "silence": bytes(512),
-        "ffmpeg_codec": "pcm_s16le",
-        "ffmpeg_format": "s16le",
+        # RFC 3551 L16 samples are carried in network byte order.  Keep the
+        # generated RTP payload standards-compliant so a successful packet
+        # continuity test also represents the audio heard by the endpoint.
+        "ffmpeg_codec": "pcm_s16be",
+        "ffmpeg_format": "s16be",
     },
 }
 

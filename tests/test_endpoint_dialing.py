@@ -159,6 +159,39 @@ def test_trunk_policy_uses_external_ports_and_common_builder(
     reservation.release.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("endpoint_kind", "expected"),
+    [("esphome", True), ("sip_account", False)],
+)
+def test_directional_audio_extension_is_limited_to_esphome_peers(
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint_kind: str,
+    expected: bool,
+) -> None:
+    dialer, created, _reused = _dialer(monkeypatch)
+    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock())
+    peer = Peer(
+        name="Phone",
+        host="192.0.2.20",
+        endpoint_kind=endpoint_kind,
+        sip_uri_user="phone",
+        tx_formats=["16000:s16le:1:10"],
+        rx_formats=["48000:s16le:1:10"],
+    )
+
+    leg = dialer.prepare_outbound_leg(
+        member="Phone",
+        peers=[peer],
+        roster_entries=[],
+        local_name="Caller",
+        local_rtp_port_index=0,
+        port_reservation=reservation,
+    )
+
+    assert leg is not None
+    assert created["allow_directional_audio_payloads"] is expected
+
+
 def test_failed_external_leg_keeps_caller_owned_reservation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

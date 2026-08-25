@@ -2,9 +2,7 @@
 #
 # Source and status:
 #   - Added for https://github.com/n-IA-hane/esphome-intercom/issues/58.
-#   - Uses ESPHome development PR https://github.com/esphome/esphome/pull/16057
-#     for the generic_image/sendspin image platform until that support lands in
-#     the ESPHome release used by this project.
+#   - Uses the official Sendspin image platform available since ESPHome 2026.8.
 #
 # Include this package on display builds that already define:
 #   - sendspin_hub
@@ -16,25 +14,24 @@
 substitutions:
   sendspin_artwork_resize: 240x240
 
-external_components:
-  - source: github://pr#16057
-    components: [generic_image, sendspin]
-    refresh: 1h
+globals:
+  - id: sendspin_artwork_available
+    type: bool
+    restore_value: false
+    initial_value: "false"
 
-esp32:
-  framework:
-    components:
-      - espressif/esp-dsp^1.8.0
-
-generic_image:
+image:
   - platform: sendspin
-    id: sendspin_cover_art
+    id: sendspin_artwork_slot
     sendspin_id: sendspin_hub
     format: JPEG
     type: RGB565
     resize: ${sendspin_artwork_resize}
     source: ALBUM
+    current_image:
+      id: sendspin_cover_art
     on_image_display:
+      - lambda: id(sendspin_artwork_available) = true;
       # The guard mixes LVGL mode, VA state, media_player state and
       # runtime_controller activity. There is no single native ESPHome condition
       # for this combined UI predicate.
@@ -47,25 +44,18 @@ generic_image:
                      !id(runtime).is_activity_active("announcement");
           then:
             - script.execute: apply_media_artwork
+    on_image_clear:
+      - lambda: id(sendspin_artwork_available) = false;
+      - script.execute: apply_media_artwork
     on_image_error:
-      # Same guard as successful image display: repaint only when the media page
-      # is allowed to own the artwork.
-      - if:
-          condition:
-            lambda: |-
-              return id(current_mode) == 0 &&
-                     id(voice_assistant_phase) == ${voice_assist_replying_phase_id} &&
-                     id(speaker_media_player).state == media_player::MediaPlayerState::MEDIA_PLAYER_STATE_PLAYING &&
-                     !id(runtime).is_activity_active("announcement");
-          then:
-            - script.execute: apply_media_artwork
+      - lambda: id(sendspin_artwork_available) = false;
+      - script.execute: apply_media_artwork
 
 script:
   - id: !extend apply_media_artwork
     then:
-      # generic_image exposes the loaded LVGL image source through C++.
       - lambda: |-
-          if (id(sendspin_cover_art).is_loaded()) {
+          if (id(sendspin_artwork_available)) {
             lv_img_set_src(id(mood_bg), id(sendspin_cover_art));
             id(runtime_visual_source) = 4;
           } else {

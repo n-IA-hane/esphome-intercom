@@ -11,6 +11,7 @@ from .core.audio_format import (
     AudioFormat,
     HA_SIP_PCM_RX_FORMATS,
     HA_SIP_PCM_TX_FORMATS,
+    choose_common_frame_ms,
     parse_audio_format_list,
 )
 from .config import assist_config, trunk_config, trunk_enabled
@@ -238,28 +239,38 @@ def sip_target_audio_profile(
         )
         return [], []
 
-    common_formats = set(send_candidates) & set(recv_candidates)
-    if not common_formats:
+    common_frame_ms = choose_common_frame_ms(send_candidates, recv_candidates)
+    if common_frame_ms is None:
         _LOGGER.warning(
-            "No bidirectional SIP RTP format for %s (send=%s recv=%s)",
+            "No common SIP RTP packet time for %s (send=%s recv=%s)",
             target,
             [fmt.wire_token() for fmt in send_candidates],
             [fmt.wire_token() for fmt in recv_candidates],
         )
         return [], []
 
-    # A single RFC 3264 sendrecv m=audio cannot assign one payload contract
-    # to TX and another to RX. Keep direction-specific preference ordering,
-    # but expose only formats supported on both sides of this dialog leg.
-    send_candidates = [fmt for fmt in send_candidates if fmt in common_formats]
-    recv_candidates = [fmt for fmt in recv_candidates if fmt in common_formats]
+    send_candidates = [
+        fmt for fmt in send_candidates if fmt.frame_ms == common_frame_ms
+    ]
+    recv_candidates = [
+        fmt for fmt in recv_candidates if fmt.frame_ms == common_frame_ms
+    ]
     _LOGGER.debug(
-        "Bidirectional SIP PCM profile for %s: send=%s recv=%s",
+        "Directional SIP PCM profile for %s: ptime=%sms send=%s recv=%s",
         target,
+        common_frame_ms,
         [fmt.wire_token() for fmt in send_candidates],
         [fmt.wire_token() for fmt in recv_candidates],
     )
     return send_candidates, recv_candidates
+
+
+def supports_directional_audio_payloads(peer: Peer | None, entry) -> bool:
+    """Return whether the destination implements the ESP directional SDP profile."""
+    if peer is not None and str(peer.endpoint_kind).lower() == "esphome":
+        return True
+    metadata = dict(getattr(entry, "metadata", None) or {})
+    return str(metadata.get("endpoint_kind") or "").lower() == "esphome"
 
 
 def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries) -> list:

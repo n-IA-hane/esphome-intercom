@@ -53,6 +53,7 @@ SECONDARY_EXPECTED_STATE = os.environ.get(
     "VOIP_SECONDARY_EXPECTED_STATE", "ringing"
 )
 SECONDARY_HOLD_SECONDS = float(os.environ.get("VOIP_SECONDARY_HOLD_SECONDS", "0"))
+ROUTE_HOLD_SECONDS = float(os.environ.get("VOIP_ROUTE_HOLD_SECONDS", "0"))
 
 
 class HomeAssistantApi:
@@ -846,6 +847,28 @@ def main() -> int:
 
         case("direct_default_without_automation_window", direct_default)
 
+        def direct_ws3_default() -> dict[str, Any]:
+            snapshot.apply(
+                api,
+                mode="direct",
+                automation=False,
+                default_target=ROUTE_DESTINATION,
+            )
+            sip = caller()
+            with temporary_switch(api, WS3_AUTO_ANSWER, True):
+                sip.dial()
+                connected = wait_event_state(
+                    api,
+                    "in_call",
+                    15,
+                    expected_remote_party=ROUTE_DESTINATION,
+                )
+                if ROUTE_HOLD_SECONDS > 0:
+                    time.sleep(ROUTE_HOLD_SECONDS)
+            return {"call": connected}
+
+        case("direct_ws3_default", direct_ws3_default)
+
         def direct_ring_group_waits_for_member_answer() -> dict[str, Any]:
             with temporary_switch(api, WS3_AUTO_ANSWER, False):
                 snapshot.apply(
@@ -918,6 +941,8 @@ def main() -> int:
                         15,
                         expected_remote_party=ROUTE_DESTINATION,
                     )
+                    if ROUTE_HOLD_SECONDS > 0:
+                        time.sleep(ROUTE_HOLD_SECONDS)
                     time.sleep(0.15)
             triggered = automation_last_triggered(api, ROUTE_AUTOMATION)
             if not triggered or triggered == previous:

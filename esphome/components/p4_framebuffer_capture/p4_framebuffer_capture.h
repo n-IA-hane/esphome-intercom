@@ -15,6 +15,7 @@ class P4FramebufferCapture : public Component {
   void set_display(mipi_dsi::MipiDsi *display) { this->display_ = display; }
   void set_host(const std::string &host) { this->host_ = host; }
   void set_port(uint16_t port) { this->port_ = port; }
+  void setup() override;
   void capture();
 
  protected:
@@ -26,6 +27,7 @@ class P4FramebufferCapture : public Component {
   uint16_t port_{19090};
   std::atomic_bool capture_active_{false};
   uint8_t *snapshot_{nullptr};
+  size_t snapshot_capacity_{0};
   size_t snapshot_size_{0};
   int snapshot_width_{0};
   int snapshot_height_{0};

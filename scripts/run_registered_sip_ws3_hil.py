@@ -41,8 +41,9 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                 finally:
                     peer.close()
         finally:
-            with suppress(Exception):
-                await esp.button("call")
+            if norm(esp.values.get("voip_state")) != "idle":
+                with suppress(Exception):
+                    await esp.button("call")
             await esp.switch("auto_answer", original_auto_answer)
     return {"schema_version": 1, "status": "passed", "cycles": results}
 

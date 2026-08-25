@@ -87,7 +87,12 @@ class _PolyphaseResampler:
         n = np.arange(filter_len) - (filter_len - 1) / 2.0
         cutoff = _ROLLOFF * min(1.0 / self._up, 1.0 / self._down)
         kernel = cutoff * np.sinc(cutoff * n) * np.kaiser(filter_len, _KAISER_BETA)
-        kernel *= self._up / kernel.reshape(taps, self._up).sum(axis=0).max()
+        # ``process`` evaluates one polyphase branch directly against the
+        # original input samples.  Each branch therefore needs unity DC gain.
+        # Multiplying by ``up`` here would be appropriate for a zero-stuffed
+        # signal, but would apply the interpolation gain twice in this direct
+        # polyphase form.
+        kernel /= kernel.reshape(taps, self._up).sum(axis=0).max()
 
         self._history = taps
         out_index = np.arange(out_samples)

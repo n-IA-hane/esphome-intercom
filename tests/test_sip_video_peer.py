@@ -136,6 +136,8 @@ def test_p4_l16_profile_matches_firmware_packet_cadence() -> None:
     assert b"a=ptime:16\r\n" in offer
     assert peer.AUDIO_PROFILES["l16-16k"]["frame_samples"] == 256
     assert peer.AUDIO_PROFILES["l16-16k"]["frame_bytes"] == 512
+    assert peer.AUDIO_PROFILES["l16-16k"]["ffmpeg_codec"] == "pcm_s16be"
+    assert peer.AUDIO_PROFILES["l16-16k"]["ffmpeg_format"] == "s16be"
 
 
 def test_h264_peer_repeats_parameter_sets_at_random_access_points() -> None:
