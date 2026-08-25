@@ -5,6 +5,7 @@ HA_HOST="${HA_HOST:-hass}"
 HA_COMPONENT_DIR="${HA_COMPONENT_DIR:-/var/lib/hass/custom_components/voip_stack}"
 HA_SERVICE="${HA_SERVICE:-home-assistant.service}"
 HA_BACKUP_ROOT="${HA_BACKUP_ROOT:-/var/lib/hass/.cache/voip_stack_deploy_backups}"
+HA_CREATE_BACKUP="${HA_CREATE_BACKUP:-0}"
 LOCAL_COMPONENT_DIR="custom_components/voip_stack"
 REMOTE_STAGE="/tmp/voip-stack-deploy-${USER:-codex}-$$"
 
@@ -13,13 +14,13 @@ usage() {
 Usage: tools/deploy_ha_voip_stack.sh
 
 Deploy the local VoIP Stack custom component to the configured Home Assistant,
-create a timestamped pre-deploy backup, restart Home Assistant and wait until
-Home Assistant completes initialization.
+restart Home Assistant and wait until Home Assistant completes initialization.
 
 Environment overrides:
   HA_HOST           SSH alias or host (default: hass)
   HA_COMPONENT_DIR  Remote component directory
   HA_SERVICE        Remote systemd service
+  HA_CREATE_BACKUP  Set to 1 to create a pre-deploy backup (default: 0)
   HA_BACKUP_ROOT    Remote backup directory
 EOF
 }
@@ -59,8 +60,8 @@ tar \
 
 ssh "$HA_HOST" "
   set -eu
-  backup_dir='$HA_BACKUP_ROOT'/\$(date -u +%Y%m%dT%H%M%SZ)-predeploy
-  if sudo -n test -d '$HA_COMPONENT_DIR'; then
+  if [ '$HA_CREATE_BACKUP' = 1 ] && sudo -n test -d '$HA_COMPONENT_DIR'; then
+    backup_dir='$HA_BACKUP_ROOT'/\$(date -u +%Y%m%dT%H%M%SZ)-predeploy
     sudo -n mkdir -p \"\$backup_dir\"
     sudo -n cp -a '$HA_COMPONENT_DIR'/. \"\$backup_dir\"/
     echo \"Pre-deploy backup: \$backup_dir\"
