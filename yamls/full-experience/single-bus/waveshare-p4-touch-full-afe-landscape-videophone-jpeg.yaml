@@ -344,6 +344,10 @@ esp_video_camera:
   # the PPA only rotates the frame before hardware JPEG encoding.
   resolution: 800x800
   jpeg_quality: 10
+  # Espressif's standard capture path is double-buffered. Two 800x800 RGB565
+  # buffers preserve one 1.28 MB PSRAM extent for the concurrent JPEG encoder,
+  # RTP queues and bidirectional display pipeline.
+  buffer_count: 2
   # The native API and SIP share the same event-driven camera stream.
   max_framerate: 10
   # Camera is mounted portrait relative to the landscape front panel. Rotate

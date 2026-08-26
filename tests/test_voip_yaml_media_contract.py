@@ -300,6 +300,7 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     assert 'p4_sip_jpeg_height: "800"' in video
     assert 'p4_sip_jpeg_fps: "10"' in video
     assert "resolution: 800x800" in text
+    assert "buffer_count: 2" in text
     assert "output_prebuffer_frames: 1" in text
     assert "gmf_output_delay_samples" not in text
     assert not re.search(r"(?m)^  video:", block)
