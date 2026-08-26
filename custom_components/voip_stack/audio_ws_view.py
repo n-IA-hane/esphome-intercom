@@ -698,9 +698,6 @@ async def _run_audio_session(
     last_counter_event = 0.0
     ws_send_lock = asyncio.Lock()
     media_state_lock = asyncio.Lock()
-    # Browser frames can arrive in short scheduler-driven bursts. Keep a
-    # shallow FIFO jitter buffer and consume exactly one frame per RTP tick.
-    tx_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=4)
     debug_capture = (
         _DebugAudioCapture(session.call_id, rx_format=session.recv_format, tx_format=session.send_format)
         if media_capture_enabled(hass)
@@ -713,8 +710,6 @@ async def _run_audio_session(
         if session.dtmf_payload_type is not None
         else None
     )
-    tx_frame_delay = max(0.001, session.send_format.audio_format.frame_ms / 1000.0)
-    tx_silence_pcm = bytes(int(session.send_format.audio_format.nominal_frame_bytes))
 
     def publish_counters(*, force: bool = False) -> None:
         nonlocal last_counter_event
@@ -788,7 +783,7 @@ async def _run_audio_session(
     async def refresh_media_state(generation: int) -> None:
         nonlocal applied_media_generation, remote_rtp_host, remote_rtp_port
         nonlocal latched_rtp_source, latched_rtp_ssrc, logged_first_rtp
-        nonlocal rtp_decoder, rtp_encoder, tx_frame_delay, tx_silence_pcm
+        nonlocal rtp_decoder, rtp_encoder
         nonlocal dtmf_decoder
         nonlocal debug_capture
         if generation == applied_media_generation:
@@ -807,13 +802,6 @@ async def _run_audio_session(
                 if session.dtmf_payload_type is not None
                 else None
             )
-            next_frame_delay = max(
-                0.001,
-                session.send_format.audio_format.frame_ms / 1000.0,
-            )
-            next_silence_pcm = bytes(
-                int(session.send_format.audio_format.nominal_frame_bytes)
-            )
             protocol.reconfigure_frame_ms(
                 int(session.recv_format.audio_format.frame_ms)
             )
@@ -823,12 +811,9 @@ async def _run_audio_session(
             latched_rtp_ssrc = None
             logged_first_rtp = False
             protocol.dropped_packets += drain_queue(queue)
-            counters["drop_tx_queue"] += drain_queue(tx_queue)
             rtp_decoder = next_decoder
             rtp_encoder = next_encoder
             dtmf_decoder = next_dtmf_decoder
-            tx_frame_delay = next_frame_delay
-            tx_silence_pcm = next_silence_pcm
             if debug_capture is not None:
                 _schedule_debug_capture_write(hass, debug_capture, counters)
                 debug_capture = _DebugAudioCapture(
@@ -958,101 +943,7 @@ async def _run_audio_session(
                 counters["drop_error"] += 1
                 _LOGGER.debug("HA softphone RTP RX drop: %s", err)
 
-    async def ws_to_rtp() -> None:
-        nonlocal sequence, timestamp, remote_rtp_host, remote_rtp_port
-        frame_delay = tx_frame_delay
-        next_send = loop.time()
-        silence_pcm = tx_silence_pcm
-        observed_generation = int(session.media_generation)
-        while not closed.is_set():
-            if observed_generation != session.media_generation:
-                observed_generation = int(session.media_generation)
-                await refresh_media_state(observed_generation)
-                frame_delay = tx_frame_delay
-                silence_pcm = tx_silence_pcm
-                next_send = loop.time()
-            sleep_for = next_send - loop.time()
-            if sleep_for > 0:
-                await asyncio.sleep(sleep_for)
-                if closed.is_set():
-                    break
-            if observed_generation != session.media_generation:
-                observed_generation = int(session.media_generation)
-                await refresh_media_state(observed_generation)
-                frame_delay = tx_frame_delay
-                silence_pcm = tx_silence_pcm
-                next_send = loop.time()
-            try:
-                pcm = tx_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                pcm = silence_pcm
-                counters["tx_silence_keepalive"] += 1
-            if (
-                session.remote_audio_connection_held
-                or session.local_audio_direction not in {"sendonly", "sendrecv"}
-            ):
-                counter = (
-                    "drop_connection_hold"
-                    if session.remote_audio_connection_held
-                    else "drop_direction"
-                )
-                counters[counter] += 1
-                timestamp = rtp.next_timestamp(
-                    timestamp,
-                    session.send_format.rtp_timestamp_step,
-                )
-                rtp_source.timestamp = timestamp
-                publish_counters()
-                next_send += frame_delay
-                if next_send <= loop.time():
-                    next_send = loop.time() + frame_delay
-                continue
-            try:
-                payload = rtp_encoder.encode(pcm)
-            except Exception as err:  # noqa: BLE001 - keep the media clock alive.
-                counters["tx_error"] += 1
-                _LOGGER.debug("HA softphone RTP encode drop: %s", err)
-                timestamp = rtp.next_timestamp(
-                    timestamp,
-                    session.send_format.rtp_timestamp_step,
-                )
-                rtp_source.timestamp = timestamp
-                next_send = max(next_send + frame_delay, loop.time() + frame_delay)
-                continue
-            if payload:
-                packet = rtp.build_packet(
-                    rtp.RtpPacket(
-                        payload_type=session.send_format.payload_type,
-                        sequence=sequence,
-                        timestamp=timestamp,
-                        ssrc=ssrc,
-                        payload=payload,
-                    )
-                )
-                try:
-                    transport.sendto(packet, (remote_rtp_host, remote_rtp_port))
-                except (OSError, RuntimeError) as err:
-                    counters["tx_error"] += 1
-                    _LOGGER.debug("HA softphone RTP TX drop: %s", err)
-                else:
-                    if debug_capture is not None:
-                        debug_capture.note_rtp_tx(loop.time())
-                    counters["rtp_tx"] += 1
-                    counters["rtp_tx_bytes"] += len(packet)
-                sequence = rtp.next_sequence(sequence)
-                rtp_source.sequence = sequence
-            timestamp = rtp.next_timestamp(
-                timestamp,
-                session.send_format.rtp_timestamp_step,
-            )
-            rtp_source.timestamp = timestamp
-            publish_counters()
-            next_send += frame_delay
-            if next_send <= loop.time():
-                next_send = loop.time() + frame_delay
-
     rx_task = asyncio.create_task(rtp_to_ws())
-    tx_task = asyncio.create_task(ws_to_rtp())
     call_ended, remove_call_listener = _listen_for_call_end(
         hass, session.call_id, endpoint_id
     )
@@ -1074,10 +965,15 @@ async def _run_audio_session(
             async with ws_send_lock:
                 await ws.send_json(negotiation_payload(message_type="media_update"))
 
-    async def browser_to_queue() -> None:
+    async def browser_to_rtp() -> None:
+        nonlocal sequence, timestamp, remote_rtp_host, remote_rtp_port
+        observed_generation = int(session.media_generation)
         async for msg in ws:
             if msg.type == WSMsgType.BINARY:
                 try:
+                    if observed_generation != session.media_generation:
+                        observed_generation = int(session.media_generation)
+                        await refresh_media_state(observed_generation)
                     counters["ws_rx"] += 1
                     pcm = decode_audio_frame(bytes(msg.data))
                     expected = int(session.send_format.audio_format.nominal_frame_bytes)
@@ -1085,21 +981,56 @@ async def _run_audio_session(
                         raise ValueError(f"browser PCM frame has {len(pcm)} bytes, expected {expected}")
                     if debug_capture is not None:
                         debug_capture.note_ws_rx(loop.time(), pcm)
-                    if tx_queue.full():
-                        tx_queue.get_nowait()
-                        counters["drop_tx_queue"] += 1
-                    tx_queue.put_nowait(pcm)
+                    if (
+                        session.remote_audio_connection_held
+                        or session.local_audio_direction
+                        not in {"sendonly", "sendrecv"}
+                    ):
+                        counter = (
+                            "drop_connection_hold"
+                            if session.remote_audio_connection_held
+                            else "drop_direction"
+                        )
+                        counters[counter] += 1
+                    else:
+                        payload = rtp_encoder.encode(pcm)
+                        if payload:
+                            packet = rtp.build_packet(
+                                rtp.RtpPacket(
+                                    payload_type=session.send_format.payload_type,
+                                    sequence=sequence,
+                                    timestamp=timestamp,
+                                    ssrc=ssrc,
+                                    payload=payload,
+                                )
+                            )
+                            transport.sendto(
+                                packet,
+                                (remote_rtp_host, remote_rtp_port),
+                            )
+                            if debug_capture is not None:
+                                debug_capture.note_rtp_tx(loop.time())
+                            counters["rtp_tx"] += 1
+                            counters["rtp_tx_bytes"] += len(packet)
+                            sequence = rtp.next_sequence(sequence)
+                            rtp_source.sequence = sequence
+                    timestamp = rtp.next_timestamp(
+                        timestamp,
+                        session.send_format.rtp_timestamp_step,
+                    )
+                    rtp_source.timestamp = timestamp
+                    publish_counters()
                 except Exception as err:  # noqa: BLE001 - malformed frames cannot stop call control.
                     counters["tx_error"] += 1
                     _LOGGER.debug("HA softphone browser audio TX drop: %s", err)
             elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR):
                 break
 
-    browser_task = asyncio.create_task(browser_to_queue())
+    browser_task = asyncio.create_task(browser_to_rtp())
     lifetime_task = asyncio.create_task(call_ended.wait())
     update_task = asyncio.create_task(session_updates_to_ws())
     try:
-        critical_tasks = {browser_task, lifetime_task, rx_task, tx_task, update_task}
+        critical_tasks = {browser_task, lifetime_task, rx_task, update_task}
         done, _pending = await asyncio.wait(
             critical_tasks,
             return_when=asyncio.FIRST_COMPLETED,
@@ -1130,7 +1061,7 @@ async def _run_audio_session(
         remove_call_listener()
         if active_sessions.get(session.call_id) is session:
             active_sessions.pop(session.call_id, None)
-        for task in (rx_task, tx_task, browser_task, lifetime_task, update_task):
+        for task in (rx_task, browser_task, lifetime_task, update_task):
             task.cancel()
         transport.close()
         caller_cancelled = False
@@ -1138,7 +1069,6 @@ async def _run_audio_session(
             await async_wait_for_cleanup(
                 asyncio.gather(
                     rx_task,
-                    tx_task,
                     browser_task,
                     lifetime_task,
                     update_task,

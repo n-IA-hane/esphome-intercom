@@ -334,7 +334,6 @@ class RtpProfileTest(unittest.TestCase):
             relay.left_encoder,
             relay.right_encoder,
         )
-        pacing_generation = relay._audio_pacing_generation  # noqa: SLF001
         updated = sip_rtp_bridge.RtpPeer(
             "198.51.100.10",
             43000,
@@ -359,7 +358,6 @@ class RtpProfileTest(unittest.TestCase):
                 relay.right_encoder,
             ),
         )
-        self.assertEqual(relay._audio_pacing_generation, pacing_generation)  # noqa: SLF001
 
     def test_opposite_relay_reconfigurations_do_not_overwrite_each_other(self) -> None:
         fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
@@ -385,7 +383,7 @@ class RtpProfileTest(unittest.TestCase):
         self.assertEqual(relay.right.host, "198.51.100.20")
 
 
-class RtpPacingTest(unittest.IsolatedAsyncioTestCase):
+class RtpPacketizationTest(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def _packet(
         fmt: sdp.RtpPcmFormat,
@@ -441,7 +439,6 @@ class RtpPacingTest(unittest.IsolatedAsyncioTestCase):
         )
         output = TimedTransport()
         relay.left_transport = output  # type: ignore[assignment]
-        relay._start_audio_pacers()  # noqa: SLF001
         started = loop.time()
 
         for sequence in range(2):
@@ -455,12 +452,11 @@ class RtpPacingTest(unittest.IsolatedAsyncioTestCase):
                 (right.host, right.port),
             )
 
-        self.assertFalse(relay._audio_pacing_required["left"])  # noqa: SLF001
         self.assertEqual(len(output.sent), 1)
         self.assertLess(output.sent[0][0] - started, 0.01)
         await relay.stop()
 
-    async def test_split_source_frame_uses_absolute_destination_clock(self) -> None:
+    async def test_split_source_frame_preserves_rtp_timestamp_clock(self) -> None:
         loop = asyncio.get_running_loop()
 
         class TimedTransport:
@@ -499,7 +495,6 @@ class RtpPacingTest(unittest.IsolatedAsyncioTestCase):
         )
         output = TimedTransport()
         relay.right_transport = output  # type: ignore[assignment]
-        relay._start_audio_pacers()  # noqa: SLF001
         payload = sip_rtp_bridge.RtpPayloadEncoder(pcma).encode(
             bytes(pcma.audio_format.nominal_frame_bytes)
         )
@@ -509,12 +504,10 @@ class RtpPacingTest(unittest.IsolatedAsyncioTestCase):
             self._packet(pcma, 0, payload),
             (left.host, left.port),
         )
-        await asyncio.sleep(0.04)
         await relay.stop()
 
-        self.assertTrue(relay._audio_pacing_required["right"])  # noqa: SLF001
         self.assertEqual(len(output.sent), 2)
-        self.assertGreaterEqual(output.sent[1][0] - output.sent[0][0], 0.007)
+        self.assertLess(output.sent[1][0] - output.sent[0][0], 0.007)
         packets = [rtp.parse_packet(raw) for _at, raw in output.sent]
         self.assertEqual(
             [
@@ -523,4 +516,69 @@ class RtpPacingTest(unittest.IsolatedAsyncioTestCase):
                 for index in range(1, len(packets))
             ],
             [l16.rtp_timestamp_step],
+        )
+
+    async def test_split_source_burst_preserves_every_rtp_frame(self) -> None:
+        class Transport:
+            def __init__(self) -> None:
+                self.sent: list[bytes] = []
+
+            def sendto(self, data: bytes, _addr: tuple[str, int]) -> None:
+                self.sent.append(data)
+
+            def close(self) -> None:
+                pass
+
+        source = sdp.RtpPcmFormat(8, "PCMA", 8000, 1, 20)
+        l16 = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
+        left = sip_rtp_bridge.RtpPeer(
+            "192.0.2.10",
+            40000,
+            source.payload_type,
+            source.audio_format,
+            rtp_format=source,
+            send_rtp_format=source,
+        )
+        right = sip_rtp_bridge.RtpPeer(
+            "192.0.2.20",
+            41000,
+            l16.payload_type,
+            l16.audio_format,
+            rtp_format=l16,
+            send_rtp_format=l16,
+        )
+        relay = sip_rtp_bridge.SipRtpRelay(
+            left=left,
+            right=right,
+            left_port=42000,
+            right_port=42002,
+        )
+        output = Transport()
+        relay.right_transport = output  # type: ignore[assignment]
+        encoder = sip_rtp_bridge.RtpPayloadEncoder(source)
+        payload = encoder.encode(bytes(source.audio_format.nominal_frame_bytes))
+
+        # Reproduce the 383 ms scheduler pause from the real capture. Incoming
+        # datagrams are delivered as one burst when the HA loop resumes.
+        for sequence in range(20):
+            relay.handle_packet(
+                "left",
+                self._packet(source, sequence, payload),
+                (left.host, left.port),
+            )
+        await relay.stop()
+
+        self.assertEqual(len(output.sent), 40)
+        packets = [rtp.parse_packet(raw) for raw in output.sent]
+        self.assertEqual(
+            [packet.sequence for packet in packets],
+            list(range(packets[0].sequence, packets[0].sequence + 40)),
+        )
+        self.assertEqual(
+            [
+                (packets[index].timestamp - packets[index - 1].timestamp)
+                & 0xFFFFFFFF
+                for index in range(1, len(packets))
+            ],
+            [l16.rtp_timestamp_step] * 39,
         )

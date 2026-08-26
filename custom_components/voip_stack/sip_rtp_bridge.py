@@ -31,7 +31,6 @@ from .dtmf import (
     build_telephone_event_payload,
     telephone_event_code,
 )
-from .queue_utils import drain_queue, put_drop_oldest
 from .core.sdp import RtpPcmFormat, audio_format_to_rtp
 from .session_cleanup import async_wait_for_cleanup
 from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder
@@ -40,7 +39,6 @@ _LOGGER = logging.getLogger(__name__)
 _DEBUG_CAPTURE_SECONDS = 8
 _RTP_IP_TOS = 0xB8
 _DTMF_UPDATE_SECONDS = 0.05
-_RTP_PACER_QUEUE_FRAMES = 8
 
 @dataclass(slots=True)
 class RtpPeer:
@@ -173,10 +171,6 @@ class SipRtpRelay:
         self._start_task: asyncio.Task[None] | None = None
         self._stop_task: asyncio.Task[None] | None = None
         self._stop_requested = False
-        self._audio_queues: dict[str, asyncio.Queue[tuple[int, bytes]]] = {}
-        self._audio_pacers: dict[str, asyncio.Task[None]] = {}
-        self._audio_pacing_generation = 0
-        self._audio_pacing_required: dict[str, bool] = {}
         self._dtmf_tasks: set[asyncio.Task[None]] = set()
         self._dtmf_locks = {"left": asyncio.Lock(), "right": asyncio.Lock()}
         self.video_relay: Any | None = None
@@ -192,7 +186,6 @@ class SipRtpRelay:
         self.right_rx_bytes = 0
         self.right_tx_packets = 0
         self.right_tx_bytes = 0
-        self.pacing_dropped_packets = 0
         self.left_dtmf_tx_events = 0
         self.right_dtmf_tx_events = 0
         self._configure_media(left, right)
@@ -258,7 +251,6 @@ class SipRtpRelay:
         self.left_encoder = state["left_encoder"]
         self.right_encoder = state["right_encoder"]
         self._dtmf_decoders = state["dtmf_decoders"]
-        self._reconfigure_audio_pacers()
 
     def _configure_media(self, left: RtpPeer, right: RtpPeer) -> None:
         """Build all codec state first, then publish one coherent peer pair."""
@@ -448,7 +440,6 @@ class SipRtpRelay:
                 await self.video_relay.start()
             if self._stop_requested:
                 raise asyncio.CancelledError
-            self._start_audio_pacers()
         except BaseException:
             self._close_audio_resources()
             if left_sock is not None:
@@ -522,7 +513,6 @@ class SipRtpRelay:
         )
         video_relay = self.video_relay
         self.video_relay = None
-        pacer_tasks = self._stop_audio_pacers()
         dtmf_tasks = tuple(self._dtmf_tasks)
         for task in dtmf_tasks:
             task.cancel()
@@ -532,9 +522,8 @@ class SipRtpRelay:
         # cleanup. Release it before the first await so a slow filesystem or a
         # broken video relay cannot starve subsequent calls.
         self._release_ports()
-        if pacer_tasks or dtmf_tasks:
+        if dtmf_tasks:
             await asyncio.gather(
-                *pacer_tasks,
                 *dtmf_tasks,
                 return_exceptions=True,
             )
@@ -587,84 +576,6 @@ class SipRtpRelay:
             self.right_transport.close()
             self.right_transport = None
 
-    def _start_audio_pacers(self) -> None:
-        """Start one event-driven packet clock for each destination leg."""
-
-        if self._audio_pacers:
-            return
-        for side in ("left", "right"):
-            queue: asyncio.Queue[tuple[int, bytes]] = asyncio.Queue(
-                maxsize=_RTP_PACER_QUEUE_FRAMES
-            )
-            self._audio_queues[side] = queue
-            self._audio_pacers[side] = asyncio.create_task(
-                self._pace_audio_packets(side, queue),
-                name=f"voip-rtp-pacer-{side}-{self.left_port}-{self.right_port}",
-            )
-
-    def _reconfigure_audio_pacers(self) -> None:
-        self._audio_pacing_generation += 1
-        self._audio_pacing_required = {
-            # A shorter source frame is accumulated by PcmFrameConverter and
-            # already emerges on the source packet clock.  Only splitting one
-            # longer source frame into multiple destination frames creates a
-            # burst that needs a destination-side playout clock.
-            "left": self.right.audio_format.frame_ms
-            > self.left.outbound_audio_format.frame_ms,
-            "right": self.left.audio_format.frame_ms
-            > self.right.outbound_audio_format.frame_ms,
-        }
-        dropped = sum(drain_queue(queue) for queue in self._audio_queues.values())
-        self.pacing_dropped_packets += dropped
-        self.dropped += dropped
-
-    def _stop_audio_pacers(self) -> tuple[asyncio.Task[None], ...]:
-        self._reconfigure_audio_pacers()
-        tasks = tuple(self._audio_pacers.values())
-        for task in tasks:
-            task.cancel()
-        self._audio_pacers.clear()
-        self._audio_queues.clear()
-        return tasks
-
-    async def _pace_audio_packets(
-        self,
-        destination_side: str,
-        queue: asyncio.Queue[tuple[int, bytes]],
-    ) -> None:
-        """Smooth converted frames on the destination RTP packet clock."""
-
-        loop = asyncio.get_running_loop()
-        generation = self._audio_pacing_generation
-        next_send = 0.0
-        while True:
-            packet_generation, packet = await queue.get()
-            if generation != self._audio_pacing_generation:
-                generation = self._audio_pacing_generation
-                next_send = 0.0
-            if packet_generation != generation:
-                self.pacing_dropped_packets += 1
-                self.dropped += 1
-                continue
-            destination = (
-                self.left if destination_side == "left" else self.right
-            )
-            frame_delay = max(
-                0.001,
-                destination.outbound_rtp_format.frame_ms / 1000,
-            )
-            now = loop.time()
-            if next_send <= 0:
-                next_send = now
-            await asyncio.sleep(max(0.0, next_send - now))
-            if packet_generation != self._audio_pacing_generation:
-                next_send = 0.0
-                self.pacing_dropped_packets += 1
-                self.dropped += 1
-                continue
-            self._send_audio_packet(destination_side, packet)
-            next_send += frame_delay
-
     def _send_audio_packet(self, destination_side: str, packet: bytes) -> bool:
         destination = self.left if destination_side == "left" else self.right
         transport = (
@@ -693,15 +604,6 @@ class SipRtpRelay:
             self.right_tx_packets += 1
             self.right_tx_bytes += len(packet)
         self.forwarded += 1
-        return True
-
-    def _queue_audio_packet(self, destination_side: str, packet: bytes) -> bool:
-        queue = self._audio_queues.get(destination_side)
-        if queue is None or not self._audio_pacing_required[destination_side]:
-            return self._send_audio_packet(destination_side, packet)
-        if put_drop_oldest(queue, (self._audio_pacing_generation, packet)):
-            self.pacing_dropped_packets += 1
-            self.dropped += 1
         return True
 
     def _release_ports(self) -> None:
@@ -834,7 +736,7 @@ class SipRtpRelay:
                         marker=marker,
                     )
                 )
-                return self._queue_audio_packet(destination_side, packet)
+                return self._send_audio_packet(destination_side, packet)
 
             if not _send(elapsed_ms=1, marker=True, end=False):
                 return
@@ -984,7 +886,7 @@ class SipRtpRelay:
             self.right_rx_bytes += len(data)
         destination_side = "right" if side == "left" else "left"
         for out in outgoing:
-            self._queue_audio_packet(destination_side, out)
+            self._send_audio_packet(destination_side, out)
         dest.sequence = sequence
         dest.timestamp = timestamp
 
@@ -1006,17 +908,6 @@ class SipRtpRelay:
             "right_rx_bytes": self.right_rx_bytes,
             "right_tx_packets": self.right_tx_packets,
             "right_tx_bytes": self.right_tx_bytes,
-            "pacing_dropped_packets": self.pacing_dropped_packets,
-            "left_pacer_queue_depth": (
-                self._audio_queues["left"].qsize()
-                if "left" in self._audio_queues
-                else 0
-            ),
-            "right_pacer_queue_depth": (
-                self._audio_queues["right"].qsize()
-                if "right" in self._audio_queues
-                else 0
-            ),
             "left_dtmf_tx_events": self.left_dtmf_tx_events,
             "right_dtmf_tx_events": self.right_dtmf_tx_events,
             "left_rx_format": self.left.audio_format.wire_token(),

@@ -269,8 +269,8 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
         self.assertIn("next_decoder = RtpPayloadDecoder(session.recv_format)", refresh)
         self.assertIn("next_encoder = RtpPayloadEncoder(session.send_format)", refresh)
-        self.assertIn("tx_frame_delay = next_frame_delay", refresh)
-        self.assertIn("tx_silence_pcm = next_silence_pcm", refresh)
+        self.assertNotIn("tx_frame_delay", refresh)
+        self.assertNotIn("tx_silence_pcm", refresh)
         self.assertIn(
             "_schedule_debug_capture_write(hass, debug_capture, counters)", refresh
         )
@@ -451,23 +451,15 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             len(publish_line) - len(publish_line.lstrip()),
         )
 
-    def test_softphone_tx_uses_one_deadline_per_frame_without_double_wait(self) -> None:
+    def test_softphone_tx_preserves_the_browser_source_clock(self) -> None:
         audio_ws = (
             ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
         ).read_text()
-        self.assertIn(
-            "tx_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=4)", audio_ws
-        )
-        self.assertIn("pcm = tx_queue.get_nowait()", audio_ws)
-        self.assertNotIn("while not tx_queue.empty():", audio_ws)
+        self.assertIn("async def browser_to_rtp()", audio_ws)
         self.assertIn("payload = rtp_encoder.encode(pcm)", audio_ws)
-        self.assertIn("tx_queue.put_nowait(pcm)", audio_ws)
-        self.assertNotIn(
-            "await asyncio.wait_for(tx_queue.get(), timeout=frame_delay)", audio_ws
-        )
-        self.assertNotIn("asyncio.wait_for(closed.wait()", audio_ws)
-        self.assertIn("await asyncio.sleep(sleep_for)", audio_ws)
-        self.assertIn("next_send = loop.time() + frame_delay", audio_ws)
+        self.assertIn("transport.sendto(", audio_ws)
+        self.assertNotIn("async def ws_to_rtp()", audio_ws)
+        self.assertNotIn("tx_queue: asyncio.Queue[bytes]", audio_ws)
 
     def test_softphone_tx_uses_negotiated_rtp_timestamp_clock(self) -> None:
         audio_ws = (

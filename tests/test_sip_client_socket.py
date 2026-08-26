@@ -1900,6 +1900,36 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 if packet.payload_type == l16.payload_type:
                     decoded_tx = decoder.decode(packet.payload)
             self.assertEqual(decoded_tx, second_pcm)
+
+            for _index in range(40):
+                await ws.messages.put(
+                    types.SimpleNamespace(
+                        type=WSMsgType.BINARY,
+                        data=audio_ws.encode_audio_frame(second_pcm),
+                    )
+                )
+            burst: list[rtp.RtpPacket] = []
+            deadline = loop.time() + 1.0
+            while len(burst) < 40:
+                data = await asyncio.wait_for(
+                    loop.sock_recv(remote, 65535),
+                    timeout=max(0.01, deadline - loop.time()),
+                )
+                packet = rtp.parse_packet(data)
+                if packet.payload_type == l16.payload_type:
+                    burst.append(packet)
+            self.assertEqual(
+                [packet.sequence for packet in burst],
+                list(range(burst[0].sequence, burst[0].sequence + 40)),
+            )
+            self.assertEqual(
+                [
+                    (burst[index].timestamp - burst[index - 1].timestamp)
+                    & 0xFFFFFFFF
+                    for index in range(1, len(burst))
+                ],
+                [l16.rtp_timestamp_step] * 39,
+            )
         finally:
             await ws.messages.put(None)
             await asyncio.wait_for(runtime, timeout=1)
