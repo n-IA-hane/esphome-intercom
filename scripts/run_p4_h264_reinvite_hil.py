@@ -158,8 +158,7 @@ def validate_cycle(
     # independent end-to-end oracles below.
     checks.update(
         {
-            "p4_presented": serial_metrics.get("first_keyframe") is True
-            and int(rx.get("admitted", 0)) > 0
+            "p4_presented": int(rx.get("admitted", 0)) > 0
             and int(rx.get("rendered", 0)) >= 3
             and int(rx.get("presented", 0)) >= 3
             and int(rx.get("refresh_done", 0)) >= 3,

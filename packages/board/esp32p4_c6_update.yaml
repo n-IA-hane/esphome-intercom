@@ -1,0 +1,16 @@
+# Optional ESP32-C6 coprocessor firmware maintenance.
+#
+# Keep this out of realtime P4 profiles. The hosted update component performs
+# an HTTP manifest check at boot and then at its configured interval, which can
+# hold the ESPHome loop for hundreds of milliseconds. Include this package only
+# in a disposable maintenance firmware when the coprocessor must be updated.
+
+http_request:
+
+update:
+  - platform: esp32_hosted
+    id: esp32_c6_coprocessor_update
+    name: ESP32-C6 Coprocessor Firmware
+    type: http
+    source: https://esphome.github.io/esp-hosted-firmware/manifest/esp32c6.json
+    update_interval: 6h

@@ -16,14 +16,18 @@ substitutions:
   p4_video_rx_width: "352"
   p4_video_rx_height: "288"
   p4_video_fps: "10"
-  # The CSI source runs at 50 fps and accepts integer divisors. A 25 fps
-  # dequeue cadence lets the timestamp scheduler select an exact 10 fps even
-  # when a shared-PPA encode occasionally misses a 100 ms sensor interval.
-  p4_camera_fps: "25"
+  # The CSI source runs at 50 fps and accepts integer divisors. Request the
+  # product cadence in the driver so unused frames never consume the P4 path.
+  p4_camera_fps: "10"
   p4_camera_resolution: "800x800"
   p4_camera_rotation: "270"
   p4_h264_bitrate: "800000"
   p4_h264_gop: "10"
+
+esp32:
+  framework:
+    sdkconfig_options:
+      CONFIG_ESP_H264_HW_ENCODER_PREFER_DB_SPIRAM: "y"
 
 external_components:
   - source: ../../../../esphome-esp-video-camera/components
@@ -39,7 +43,6 @@ esp_video_camera:
   resolution: ${p4_camera_resolution}
   max_framerate: ${p4_camera_fps}
   rotation: ${p4_camera_rotation}
-
 esp_h264_video_source:
   id: p4_h264_video
   camera_id: p4_camera

@@ -346,7 +346,15 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     assert 'CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY: "y"' in hosted
     assert 'CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE: "20"' in hosted
     assert 'CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE: "20"' in hosted
+    assert "platform: esp32_hosted" not in hosted
+    assert "http_request:" not in hosted
 
+    hosted_update = (
+        ROOT / "packages" / "board" / "esp32p4_c6_update.yaml"
+    ).read_text()
+    assert "platform: esp32_hosted" in hosted_update
+    assert "http_request:" in hosted_update
+    assert "update_interval: 6h" in hosted_update
 
 def test_p4_sip_only_uses_espressif_hosted_video_receive_depths() -> None:
     board = (
@@ -657,7 +665,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         in renderer_header
     )
     assert (
-        "static constexpr size_t kH264AccessUnitQueueDepth = 8;"
+        "static constexpr size_t kH264AccessUnitQueueDepth = 3;"
         in renderer_header
     )
     assert "xQueueCreateStatic(" in renderer_cpp
@@ -689,10 +697,9 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         'add_idf_component(name="espressif/esp_h264", ref="1.3.8")'
         in source_config
     )
-    assert (
-        'cg.add_build_flag("-Wl,--wrap=esp_h264_malloc_prefer")'
-        in source_config
-    )
+    assert "--wrap=esp_h264_malloc_prefer" not in source_config
+    assert "release_callback" in renderer_cpp
+    assert "memcpy(slot.data, access_unit.data" not in renderer_cpp
     assert (
         'ref="50d258a34938014b5f43277573880d96bd8ed669"'
         in camera_config
@@ -866,6 +873,8 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "config.out.buffer = this->surfaces_[output_index];" in render_i420
     assert "config.out.pic_w = geometry.surface_width;" in render_i420
     assert "config.out.pic_h = geometry.surface_height;" in render_i420
+    assert "config.out.block_offset_x" not in render_i420
+    assert "config.out.block_offset_y" not in render_i420
     assert "geometry.scale_units" in render_i420
     assert "config.scale_x = scale;" in render_i420
     assert "config.scale_y = scale;" in render_i420
@@ -894,7 +903,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "expected_bytes > this->surface_capacity_bytes_" in direct_present
     assert "this->surface_content_width_[index]" in direct_present
     assert "this->surface_content_height_[index]" in direct_present
-    assert "direct_display_->draw_pixels_at(" in direct_present
+    assert "this->direct_display_->draw_pixels_at(" in direct_present
     assert "this->surfaces_[index]" in direct_present
     assert "const int content_width = kH264SurfaceWidth;" not in (
         direct_present
@@ -1096,17 +1105,17 @@ def test_p4_video_boundaries_fail_closed() -> None:
     assert submit.index("xSemaphoreTake(this->submit_mutex_") < submit.index(
         "esp_lcd_panel_draw_bitmap("
     )
-    assert submit.count("xSemaphoreTake(this->io_lock_") == 2
-    assert submit.index("xSemaphoreTake(this->io_lock_, 0)") < submit.index(
-        "esp_lcd_panel_draw_bitmap("
-    )
-    assert submit.rindex("xSemaphoreTake(this->io_lock_") < submit.rindex(
+    assert "xSemaphoreTake(this->io_lock_, 0)" in submit
+    assert submit.rindex("xSemaphoreTake(this->io_lock_, portMAX_DELAY)") < submit.rindex(
         "xSemaphoreGive(this->submit_mutex_)"
     )
     assert submit.index("if (err != ESP_OK)") < submit.rindex(
-        "xSemaphoreTake(this->io_lock_"
+        "xSemaphoreTake(this->io_lock_, portMAX_DELAY)"
     )
     assert "portMAX_DELAY" in submit
+    assert ".num_fbs = 1" in dsi_cpp
+    assert "prepare_direct_frame_buffers" not in dsi_cpp
+    assert "present_direct_frame_buffer" not in dsi_cpp
     assert "capability.width == this->width_" in jpeg_source
     assert "capability.height == this->height_" in jpeg_source
     assert "capability.max_fps == 0" in jpeg_source

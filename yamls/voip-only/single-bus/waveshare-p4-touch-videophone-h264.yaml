@@ -13,7 +13,7 @@ substitutions:
   p4_video_rx_width: "352"
   p4_video_rx_height: "288"
   p4_video_fps: "10"
-  p4_camera_fps: "25"
+  p4_camera_fps: "10"
   p4_camera_resolution: "800x800"
   p4_camera_rotation: "270"
   p4_h264_bitrate: "800000"

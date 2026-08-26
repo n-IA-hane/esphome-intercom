@@ -31,16 +31,3 @@ esp32:
       # headroom in both directions and the transport mempool remains in PSRAM.
       CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE: "20"
       CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE: "20"
-
-# Native ESPHome coprocessor update path. Once the C6 runs current
-# ESP-Hosted network_adapter firmware, this keeps it current without opening
-# the device again.
-http_request:
-
-update:
-  - platform: esp32_hosted
-    id: esp32_c6_coprocessor_update
-    name: ESP32-C6 Coprocessor Firmware
-    type: http
-    source: https://esphome.github.io/esp-hosted-firmware/manifest/esp32c6.json
-    update_interval: 6h
