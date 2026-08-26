@@ -678,7 +678,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert 'add_idf_component(name="espressif/esp_jpeg"' not in renderer_config
     assert 'add_lv_use("image", "label")' in renderer_config
     assert (
-        'add_idf_component(name="espressif/esp_h264", ref="1.3.6")'
+        'add_idf_component(name="espressif/esp_h264", ref="1.3.8")'
         in renderer_config
     )
     assert (
@@ -686,11 +686,11 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         in renderer_config
     )
     assert (
-        'add_idf_component(name="espressif/esp_h264", ref="1.3.6")'
+        'add_idf_component(name="espressif/esp_h264", ref="1.3.8")'
         in source_config
     )
     assert (
-        'cg.add_build_flag("-Wl,--wrap=esp_h264_calloc_prefer")'
+        'cg.add_build_flag("-Wl,--wrap=esp_h264_malloc_prefer")'
         in source_config
     )
     assert (
@@ -951,7 +951,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "rx_au_copy_max_us_" in renderer_header
     assert "copy_total_bytes=%llu" in renderer_cpp
     assert "esp_h264_enc_set_bitrate" in source_cpp
-    assert "extern \"C\" void *__wrap_esp_h264_calloc_prefer(" in source_cpp
+    assert "extern \"C\" void *__wrap_esp_h264_malloc_prefer(" in source_cpp
     assert "bytes >= kLargeAllocationBytes" in source_cpp
     assert "caps1 == MALLOC_CAP_INTERNAL" in source_cpp
     assert "caps2 == MALLOC_CAP_SPIRAM" in source_cpp
