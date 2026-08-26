@@ -51,16 +51,23 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 raise AssertionError("P4 firmware does not expose Send Video")
             original_volume = float(esp.values.get("master_volume") or 1)
             original_auto = norm(esp.values.get("auto_answer")) == "on"
+            original_extension = str(esp.values.get("voip_extension") or "")
             await esp.number("master_volume", 1.0)
             await esp.switch("auto_answer", True)
+            if original_extension != args.destination:
+                await esp.text("voip_extension", args.destination)
+                await asyncio.sleep(args.registration_settle)
             try:
                 for cycle in range(1, args.cycles + 1):
                     started = time.monotonic()
                     await asyncio.to_thread(xb.call_ha_route, args.destination)
-                    await wait_esp(esp, {"in_call"})
+                    # The route completes asynchronously after the final SIP
+                    # INFO digit. Use persistent HA relay counters as the first
+                    # oracle instead of a short ESPHome state edge.
+                    audio = await wait_media(ws, video=False, timeout=20)
+                    await wait_esp(esp, {"in_call"}, timeout=3)
                     if norm(esp.values.get(video_switch)) != "on":
                         await esp.switch(video_switch, True)
-                    audio = await wait_media(ws, video=False, timeout=15)
                     await asyncio.sleep(args.audio_hold)
                     await wait_esp(esp, {"in_call"}, timeout=2)
                     await asyncio.to_thread(xb.enable_video)
@@ -114,6 +121,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                     await esp.switch("auto_answer", original_auto)
                 with suppress(Exception):
                     await esp.number("master_volume", original_volume)
+                if original_extension and original_extension != args.destination:
+                    with suppress(Exception):
+                        await esp.text("voip_extension", original_extension)
     return {
         "status": "passed",
         "candidate": candidate_revision(),
@@ -134,6 +144,7 @@ def main() -> int:
     parser.add_argument("--cycles", type=int, default=2)
     parser.add_argument("--audio-hold", type=float, default=4)
     parser.add_argument("--video-hold", type=float, default=6)
+    parser.add_argument("--registration-settle", type=float, default=2)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
