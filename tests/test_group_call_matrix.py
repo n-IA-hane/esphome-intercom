@@ -649,6 +649,19 @@ class GroupCallMatrixTest(unittest.TestCase):
                 )
         self.assertIsNone(endpoint_routing.peer_for_target("unknown", [endpoint]))
 
+        entries = self._roster(peers=[endpoint], registered=[])
+        entry = roster.find_entry(entries, "waveshares3")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.id, "waveshare-s3")
+        self.assertEqual(entry.name, "Waveshare S3 Audio")
+
+        decision = router.resolve_ha_router("waveshares3", entries)
+        self.assertEqual(decision.action, router.RouteAction.FORWARD)
+        self.assertEqual(
+            decision.sip_uri,
+            "sip:waveshare-s3@192.168.1.47",
+        )
+
     def test_voip_matrix_runner_all_scenarios_validate(self) -> None:
         results, errors = run_matrix()
         self.assertEqual(errors, [])

@@ -612,7 +612,6 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "this->surface_capacity_bytes_" in renderer_cpp
     assert "config.scale_x = scale;" in renderer_cpp
     assert "config.scale_y = scale;" in renderer_cpp
-    assert "config.data_burst_length = PPA_DATA_BURST_LENGTH_16;" in renderer_cpp
     assert "kMaxPresentationPixels = 256U * 1024U" in renderer_cpp
     assert "jpeg_output_streaming_" in camera_header
     assert "jpeg_capture_streaming_" in camera_header
@@ -807,6 +806,14 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         in renderer_cpp
     )
     assert "xSemaphoreTake(this->presentation_mutex_, portMAX_DELAY);" in renderer_cpp
+    assert renderer_loop.index(
+        "if (xSemaphoreTake(this->presentation_mutex_, 0) != pdTRUE)"
+    ) < renderer_loop.index(
+        "this->video_ended_pending_.exchange(false, std::memory_order_acq_rel)"
+    )
+    assert renderer_loop.index(
+        "this->video_ended_pending_.exchange(false, std::memory_order_acq_rel)"
+    ) < renderer_loop.index("lv_obj_invalidate(lv_screen_active())")
     assert "StaticSemaphore_t presentation_mutex_storage_{};" in renderer_header
     assert "kH264Level30MaxMacroblocks = 1620" in renderer_header
     assert "h264_receive_profile_level_id_" in renderer_header
@@ -885,6 +892,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         in renderer_cpp
     )
     assert "this->compute_h264_surface_geometry_(" in render_i420
+    assert "config.out.buffer = this->surfaces_[0];" in render_i420
     assert "config.out.pic_w = geometry.surface_width;" in render_i420
     assert "config.out.pic_h = geometry.surface_height;" in render_i420
     assert "geometry.scale_units" in render_i420
@@ -895,8 +903,9 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         render_i420
     )
     assert "kH264SurfaceWidth) / width" not in render_i420
-    assert "config.out.block_offset_x" not in render_i420
-    assert "config.out.block_offset_y" not in render_i420
+    assert "get_frame_buffer()" not in render_i420
+    assert "this->prepare_surface_(0, geometry);" in render_i420
+    assert "this->commit_direct_surface_(0)" in render_i420
     assert "memset(this->surfaces_[output_index], 0, kSurfaceBytes)" not in (
         render_i420
     )

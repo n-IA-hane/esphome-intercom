@@ -1328,6 +1328,9 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 # it from directional runtime fields can select the opposite
                 # wire format on asymmetric ESP endpoints.
                 audio_rtp_formats=current_audio_formats,
+                allow_directional_payloads=(
+                    sdp.has_directional_audio_flow_attributes(current_local_sdp)
+                ),
             )
             next_version = int(dialog.local_sdp_session_version)
             offer = sdp.rewrite_sdp_origin(
@@ -3425,6 +3428,7 @@ class SipTcpServer:
         on_media_update: MediaUpdateHandler | None = None,
         on_refer: ReferHandler | None = None,
         on_request: RequestHandler | None = None,
+        on_flow_closed: Callable[[str, int, str], None] | None = None,
         enable_video: bool = False,
         enable_video_transcoding: bool = False,
         prefer_browser_video_send: bool = False,
@@ -3448,6 +3452,7 @@ class SipTcpServer:
         self.on_media_update = on_media_update
         self.on_refer = on_refer
         self.on_request = on_request
+        self.on_flow_closed = on_flow_closed
         self.enable_video = bool(enable_video)
         self.enable_video_transcoding = bool(enable_video_transcoding)
         self.prefer_browser_video_send = bool(prefer_browser_video_send)
@@ -3582,6 +3587,15 @@ class SipTcpServer:
                 self._tcp_writers.pop(addr, None)
                 for key in [key for key in self._dialog_queues if key[0] == addr]:
                     self._dialog_queues.pop(key, None)
+                if self.on_flow_closed is not None:
+                    try:
+                        self.on_flow_closed(addr[0], addr[1], "TCP")
+                    except Exception:
+                        _LOGGER.exception(
+                            "SIP TCP flow-close observer failed for %s:%s",
+                            addr[0],
+                            addr[1],
+                        )
             await tx.close()
             writer.close()
             with contextlib.suppress(Exception):

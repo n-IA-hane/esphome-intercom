@@ -385,6 +385,32 @@ DEFAULT_VIDEO_FORMATS = (
 _SUPPORTED_RTCP_FEEDBACK = frozenset({"nack pli", "ccm fir"})
 
 
+def video_offer_formats_for_target_codec(
+    codec: str,
+    available: tuple[RtpVideoFormat, ...] | list[RtpVideoFormat] | None = None,
+) -> tuple[RtpVideoFormat, ...]:
+    """Return the narrowest honest offer for one advertised peer codec."""
+
+    formats = tuple(DEFAULT_VIDEO_FORMATS if available is None else available)
+    normalized = str(codec or "").strip().upper()
+    if normalized == "JPEG":
+        return tuple(fmt for fmt in formats if fmt.encoding == "JPEG")[:1]
+    if normalized == "H264":
+        matching = tuple(fmt for fmt in formats if fmt.encoding == "H264")
+        if not matching:
+            return ()
+        constrained = next(
+            (
+                fmt
+                for fmt in matching
+                if fmt.profile_level_id.lower().startswith("42c0")
+            ),
+            None,
+        )
+        return (constrained or matching[0],)
+    return formats
+
+
 def browser_video_send_supported(video_format: RtpVideoFormat | None) -> bool:
     """Return whether the browser bridge can packetize this negotiated codec."""
 
@@ -1379,6 +1405,20 @@ def build_offer_directional(
         rtp_formats = list(dict.fromkeys(audio_rtp_formats))
         if not rtp_formats:
             raise SdpError("SDP offer requires at least one RTP audio format")
+        if allow_directional_payloads and audio_direction == "sendrecv":
+            send_keys = {_format_key(fmt) for fmt in send_formats}
+            recv_keys = {_format_key(fmt) for fmt in recv_formats}
+            for fmt in rtp_formats:
+                key = _format_key(fmt.audio_format)
+                directional_flows[key] = (
+                    "sendrecv"
+                    if key in send_keys and key in recv_keys
+                    else "send"
+                    if key in send_keys
+                    else "recv"
+                    if key in recv_keys
+                    else ""
+                )
     else:
         if allow_directional_payloads and audio_direction == "sendrecv":
             frame_ms = choose_common_frame_ms(send_formats or [], recv_formats or [])
@@ -1458,7 +1498,7 @@ def build_offer_directional(
         )
         if fmt.encoding == "OPUS":
             lines.append(
-                f"a=fmtp:{fmt.payload_type} stereo=1;sprop-stereo=1;maxaveragebitrate=28000"
+                f"a=fmtp:{fmt.payload_type} stereo=0;sprop-stereo=0;maxaveragebitrate=28000"
             )
         if allow_directional_payloads and audio_direction == "sendrecv":
             flow = directional_flows.get(_format_key(fmt.audio_format))
@@ -3069,6 +3109,12 @@ def _has_directional_audio_flow_attributes(remote_sdp: str | bytes) -> bool:
     can_send = bool(flows & {"send", "sendrecv"})
     can_recv = bool(flows & {"recv", "sendrecv"})
     return can_send and can_recv
+
+
+def has_directional_audio_flow_attributes(remote_sdp: str | bytes) -> bool:
+    """Return whether SDP declares usable directional audio payloads."""
+
+    return _has_directional_audio_flow_attributes(remote_sdp)
 
 
 def build_answer_directional(

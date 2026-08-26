@@ -83,11 +83,7 @@ def video_bridge_offer_formats(
                     rtcp_feedback=(),
                 ),
             )
-        candidate = (
-            sdp.CONSTRAINED_BASELINE_H264_FORMAT
-            if normalized_target == "H264"
-            else sdp.DEFAULT_VIDEO_FORMATS[3]
-        )
+        candidate = sdp.video_offer_formats_for_target_codec(normalized_target)[0]
         return (
             replace(
                 candidate,

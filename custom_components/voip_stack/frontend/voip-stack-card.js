@@ -528,7 +528,8 @@ class VoipStackCard extends HTMLElement {
       conference_group: String(snapshot.groups?.conference_group || "").trim(),
       conference_ring: !!snapshot.groups?.conference_ring,
     };
-    this._activeSessionDeviceId = snapshot.session_device_id || snapshot.device_id || "";
+    this._activeSessionDeviceId =
+      snapshot.session_device_id || snapshot.device_id || this._activeSessionDeviceId || "";
     const activePhoneState = ["calling", "remote_ringing", "ringing", "answering", "in_call", "connecting", "terminating"].includes(snapshot.state);
     if (activePhoneState) {
       this._lastSoftphoneTerminalKey = "";
@@ -947,7 +948,8 @@ class VoipStackCard extends HTMLElement {
 
   _getConfigDeviceId() {
     if (this._isHaSoftphoneMode()) {
-      return this.config?.device_id || this._softphoneSnapshot?.device_id || "";
+      return this.config?.device_id || this._softphoneSnapshot?.device_id ||
+        this._activeSessionDeviceId || "";
     }
     return this._resolvedDeviceId || this._getConfigSelector();
   }

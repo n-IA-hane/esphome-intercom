@@ -13,10 +13,12 @@ from __future__ import annotations
 import asyncio
 from functools import partial
 import logging
+import time
 import secrets
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.event import async_call_later
 
 from .core import sdp as sip_sdp
 from .core.audio_format import (
@@ -84,15 +86,35 @@ _LOGGER = logging.getLogger(__name__)
 SIP_ROUTE_DECISION_TIMEOUT = 1.5
 MAX_TRUNK_INFO_DIGITS = 16
 MAX_PENDING_HA_INVITES = 64
-REGISTRAR_EXPIRY_INTERVAL = 1.0
+class _RegistrarExpiryScheduler:
+    """Own the single timer for the nearest SIP Contact expiry."""
 
+    def __init__(self, hass: HomeAssistant, registrar) -> None:
+        self._hass = hass
+        self._registrar = registrar
+        self._cancel = None
 
-async def _monitor_registrar_expiry(registrar) -> None:
-    """Expire stale SIP bindings even when no later SIP request arrives."""
+    def reschedule(self) -> None:
+        self.close()
+        expires_at = self._registrar.next_expiration_at()
+        if expires_at is None:
+            return
+        self._cancel = async_call_later(
+            self._hass,
+            max(0.0, expires_at - time.time()),
+            self._expire,
+        )
 
-    while True:
-        await asyncio.sleep(REGISTRAR_EXPIRY_INTERVAL)
-        registrar.expire()
+    def _expire(self, _now) -> None:
+        self._cancel = None
+        self._registrar.expire()
+        self.reschedule()
+
+    def close(self) -> None:
+        cancel = self._cancel
+        self._cancel = None
+        if cancel is not None:
+            cancel()
 
 
 async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
@@ -180,7 +202,12 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     # dark until every listener component has transferred into it.
     pbx_runtime = registry
     pbx_runtime.attach_component("registrar", registrar)
-    create_runtime_task(hass, _monitor_registrar_expiry(registrar))
+    registrar_expiry = _RegistrarExpiryScheduler(hass, registrar)
+    pbx_runtime.attach_component(
+        "registrar_expiry",
+        registrar_expiry,
+        closer=registrar_expiry.close,
+    )
     route_resolver = EndpointRouteResolver(
         hass=hass,
         local_ip=local_ip,
@@ -193,8 +220,15 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     async def _on_register(request, addr, transport):
         result = await registrar.handle_register(request, addr, transport)
         if 200 <= int(result.status) < 300:
+            registrar_expiry.reschedule()
             await _refresh_and_push_phonebook(hass)
         return result
+
+    def _on_flow_closed(host: str, port: int, transport: str) -> None:
+        if not registrar.remove_flow(host, port, transport):
+            return
+        registrar_expiry.reschedule()
+        create_runtime_task(hass, _refresh_and_push_phonebook(hass))
 
     _on_info = partial(handle_sip_info, hass)
     from .sip_application import SipApplicationMethods
@@ -771,6 +805,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         on_media_update=_on_media_update,
         on_refer=_on_refer,
         on_request=application_methods.handle,
+        on_flow_closed=_on_flow_closed,
         udp_enabled=True,
         tcp_enabled=True,
         enable_video=bool(cfg.get(CONF_SIP_VIDEO, False)),

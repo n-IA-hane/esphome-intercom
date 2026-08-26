@@ -105,6 +105,10 @@ class SipProfileTest(unittest.TestCase):
             )
         self.assertIn("m=audio 40000 RTP/AVP 98 9 8 0", body)
         self.assertIn("a=rtpmap:98 OPUS/48000/2", body)
+        self.assertIn(
+            "a=fmtp:98 stereo=0;sprop-stereo=0;maxaveragebitrate=28000",
+            body,
+        )
         self.assertIn("a=rtpmap:9 G722/8000/1", body)
         self.assertIn("a=rtpmap:8 PCMA/8000/1", body)
         self.assertIn("a=rtpmap:0 PCMU/8000/1", body)

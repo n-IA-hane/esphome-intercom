@@ -285,7 +285,7 @@
       "message": "Für den Anruf {call_id} ist keine SIP-Route ausstehend."
     },
     "phone_busy": {
-      "message": "{Telefon} ist besetzt."
+      "message": "{phone} ist besetzt."
     },
     "phone_disabled": {
       "message": "{phone} ist deaktiviert."

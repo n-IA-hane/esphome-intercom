@@ -565,6 +565,7 @@ class FrontendCardContractTest(unittest.TestCase):
         editor = _method_body(self.editor_source, "_deviceChanged")
 
         self.assertIn("this.config?.entity_id || this.config?.device_id", selector)
+        self.assertIn("this._activeSessionDeviceId", device_id)
         self.assertIn("this._resolvedDeviceId || this._getConfigSelector()", device_id)
         self.assertIn("newConfig.device_id = deviceId", editor)
         self.assertIn("delete newConfig.entity_id", editor)

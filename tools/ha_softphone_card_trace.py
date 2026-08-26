@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -82,6 +83,25 @@ async () => {
 }
 """
 
+CARD_HANDLE = r"""
+() => {
+  const deep = (selector, root = document) => {
+    const found = [...root.querySelectorAll(selector)];
+    for (const node of root.querySelectorAll("*")) {
+      if (node.shadowRoot) found.push(...deep(selector, node.shadowRoot));
+    }
+    return found;
+  };
+  return deep("voip-stack-card, intercom-card")
+    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone") || null;
+}
+"""
+
+
+def _safe_name(value: object) -> str:
+    text = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(value or "unknown")).strip("-")
+    return text or "unknown"
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -91,6 +111,10 @@ def main() -> int:
     parser.add_argument(
         "--out", default=str(ROOT / "test_runs" / "ha_softphone_card_trace.json")
     )
+    parser.add_argument("--screenshots-dir")
+    parser.add_argument("--viewport-width", type=int, default=1440)
+    parser.add_argument("--viewport-height", type=int, default=900)
+    parser.add_argument("--language", choices=("de", "en", "it", "pt-BR"))
     args = parser.parse_args()
     from ha_playwright_auth import context_kwargs
     from playwright.sync_api import sync_playwright
@@ -107,7 +131,15 @@ def main() -> int:
                 f"--unsafely-treat-insecure-origin-as-secure={args.url.split('/lovelace', 1)[0]}",
             ],
         )
-        context = browser.new_context(**context_kwargs())
+        context = browser.new_context(
+            **context_kwargs(),
+            viewport={"width": args.viewport_width, "height": args.viewport_height},
+        )
+        if args.language:
+            context.add_init_script(
+                "localStorage.setItem('selectedLanguage', JSON.stringify("
+                f"{json.dumps(args.language)}));"
+            )
         page = context.new_page()
         page.on(
             "console", lambda message: console.append(f"{message.type}: {message.text}")
@@ -131,13 +163,45 @@ def main() -> int:
             page.reload(wait_until="domcontentloaded", timeout=30_000)
             page.wait_for_function(card_ready, timeout=30_000)
         page.evaluate(INSTALL_TRACE)
+        screenshots_dir = Path(args.screenshots_dir) if args.screenshots_dir else None
+        if screenshots_dir:
+            screenshots_dir.mkdir(parents=True, exist_ok=True)
+        screenshot_records: list[dict[str, object]] = []
+        last_signature: tuple[str, str, str] | None = None
         started = time.monotonic()
         while time.monotonic() - started < args.seconds:
             sample = page.evaluate(SAMPLE)
             print(json.dumps(sample, separators=(",", ":")), flush=True)
+            backend = sample.get("backend") or {}
+            signature = (
+                str(backend.get("state") or ""),
+                str(backend.get("call_id") or ""),
+                str(backend.get("terminal_reason") or ""),
+            )
+            if screenshots_dir and signature != last_signature:
+                index = len(screenshot_records)
+                stem = (
+                    f"{index:02d}-{_safe_name(signature[0])}-"
+                    f"{_safe_name(signature[2] or signature[1] or 'no-call')}"
+                )
+                page_path = screenshots_dir / f"{stem}-page.png"
+                card_path = screenshots_dir / f"{stem}-card.png"
+                page.screenshot(path=str(page_path), full_page=True)
+                handle = page.evaluate_handle(CARD_HANDLE).as_element()
+                if handle is not None:
+                    handle.screenshot(path=str(card_path))
+                screenshot_records.append(
+                    {
+                        "signature": signature,
+                        "page": str(page_path),
+                        "card": str(card_path) if handle is not None else "",
+                    }
+                )
+                last_signature = signature
             page.wait_for_timeout(max(10, int(args.interval * 1000)))
         result = page.evaluate("() => window.__voipTrace")
         result["console"] = console
+        result["screenshots"] = screenshot_records
         Path(args.out).write_text(json.dumps(result, indent=2, ensure_ascii=False))
         context.close()
         browser.close()

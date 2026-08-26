@@ -254,7 +254,11 @@ async def async_commit_outbound_bridge(
         reservation.detach()
     winner.video_relay = None
     BridgeMediaUpdateBinder(hass).attach(
-        client, relay, source_call_id=invite.call_id
+        client,
+        relay,
+        source_call_id=invite.call_id,
+        source_video_send_format=invite.send_video_format,
+        source_video_receive_format=invite.recv_video_format,
     )
     registry.attach_relay(invite.call_id, relay)
 

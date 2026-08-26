@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from .core import sdp
 from .core.audio_format import AudioFormat
@@ -123,6 +123,7 @@ class SipEndpointManager:
         on_media_update: MediaUpdateHandler | None = None,
         on_refer: ReferHandler | None = None,
         on_request: RequestHandler | None = None,
+        on_flow_closed: Callable[[str, int, str], None] | None = None,
         udp_enabled: bool = True,
         tcp_enabled: bool = True,
         enable_video: bool = False,
@@ -144,6 +145,7 @@ class SipEndpointManager:
         self.on_media_update = on_media_update
         self.on_refer = on_refer
         self.on_request = on_request
+        self.on_flow_closed = on_flow_closed
         self.udp_enabled = bool(udp_enabled)
         self.tcp_enabled = bool(tcp_enabled)
         self.enable_video = bool(enable_video)
@@ -235,6 +237,7 @@ class SipEndpointManager:
                     on_media_update=self.on_media_update,
                     on_refer=self.on_refer,
                     on_request=self.on_request,
+                    on_flow_closed=self.on_flow_closed,
                     enable_video=self.enable_video,
                     enable_video_transcoding=self.enable_video_transcoding,
                     prefer_browser_video_send=self.prefer_browser_video_send,

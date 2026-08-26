@@ -585,6 +585,12 @@ async () => {
     checkbox.click();
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
+  if (settings && card._settingsOpen) {
+    settings.click();
+    for (let attempt = 0; attempt < 20 && card._settingsOpen; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
   // Additional logical phones do not own the page-global engine while idle;
   // their camera preference is nevertheless authoritative on the card and is
   // handed to the engine when that endpoint starts or answers a call.

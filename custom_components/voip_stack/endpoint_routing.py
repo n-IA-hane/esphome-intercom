@@ -282,7 +282,7 @@ def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries
     for peer in peers:
         entries.append(
             RosterEntry(
-                id=peer.name,
+                id=peer.sip_uri_user or peer.name,
                 name=peer.name,
                 address=peer.host,
                 extension=peer.extension,

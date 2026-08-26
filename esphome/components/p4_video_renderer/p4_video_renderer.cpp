@@ -17,6 +17,7 @@ static const char *const TAG = "p4_video_renderer";
 
 namespace {
 
+#if defined(USE_P4_VIDEO_RENDERER_JPEG) || defined(USE_P4_VIDEO_RENDERER_H264)
 void *alloc_surface(size_t bytes, size_t reserve_after) {
   const size_t free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
   const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
@@ -25,6 +26,7 @@ void *alloc_surface(size_t bytes, size_t reserve_after) {
   return heap_caps_aligned_alloc(
       64, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
 }
+#endif
 
 #ifdef USE_P4_VIDEO_RENDERER_H264
 void *alloc_psram_dma(size_t bytes) {
@@ -149,13 +151,10 @@ void P4VideoRenderer::loop() {
 #endif
     this->video_ended_trigger_.trigger();
 #ifdef USE_P4_VIDEO_RENDERER_DIRECT_DISPLAY
-    // Direct presentation bypasses LVGL's invalidation tracking. The teardown
-    // trigger selects the final page, then this full invalidation makes LVGL
-    // repaint every panel pixel overwritten by the direct video writer. Leave
-    // the repaint to LVGL's normal display timer: forcing lv_refr_now() here
-    // can block ESPHome's watched loop task while DSI waits for refresh ready.
-    auto *screen = lv_screen_active();
-    lv_obj_invalidate(screen);
+    // The media worker holds presentation_mutex_ for its complete PPA write.
+    // Start LVGL's page repaint only after that transaction has finished so
+    // the two PPA clients cannot enter teardown concurrently.
+    lv_obj_invalidate(lv_screen_active());
 #endif
   }
 
@@ -185,7 +184,8 @@ void P4VideoRenderer::loop() {
 #ifdef USE_P4_VIDEO_RENDERER_H264
       this->direct_page_active_.store(page_active, std::memory_order_release);
 #endif
-      const bool presented = page_active && this->commit_direct_surface_(pending);
+      const bool presented =
+          page_active && this->commit_direct_surface_(pending);
       if (!presented) {
         // A hidden page or failed presentation consumed no pixels. Release
         // only the surface observed above; never erase a newer publication.
@@ -797,10 +797,12 @@ bool P4VideoRenderer::allocate_session_resources_() {
 #endif
 
   this->surface_capacity_bytes_ = surface_bytes;
-  for (size_t index = 0; index < 2; index++) {
+  const size_t surface_count = 2;
+  for (size_t index = 0; index < surface_count; index++) {
     if (this->surfaces_[index] != nullptr)
       continue;
-    const size_t remaining_surfaces = (1 - index) * surface_bytes;
+    const size_t remaining_surfaces =
+        (surface_count - index - 1) * surface_bytes;
     this->surfaces_[index] = static_cast<uint8_t *>(
         alloc_surface(surface_bytes, remaining_surfaces));
     if (this->surfaces_[index] == nullptr) {
@@ -981,10 +983,10 @@ bool P4VideoRenderer::set_video_active(bool active) {
     return true;
   }
 
-  // A decoder AU may already be owned, but every publish site rechecks
-  // rx_active_. Drop a decoded surface still waiting for presentation. A
-  // surface already handed to LVGL remains the immutable front buffer until
-  // LV_EVENT_REFR_READY.
+  // Invalidate the generation before touching presentation state. A decoder
+  // AU may already be owned, but every publish site rechecks rx_active_. Drop
+  // a decoded surface still waiting for presentation. A surface handed to DSI
+  // remains immutable until the serialized presentation owner releases it.
   xSemaphoreTake(this->presentation_mutex_, portMAX_DELAY);
   this->pending_surface_.store(-1, std::memory_order_release);
   this->rx_session_generation_.fetch_add(1, std::memory_order_acq_rel);
@@ -1597,7 +1599,8 @@ bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
   if (i420 == nullptr || !this->h264_resolution_fits_(width, height) ||
       size < decoded_bytes || this->optimized_yuv420_ == nullptr ||
       this->optimized_yuv420_capacity_ < decoded_bytes ||
-      this->ppa_ == nullptr ||
+      this->ppa_ == nullptr || this->direct_mipi_display_ == nullptr ||
+      this->surfaces_[0] == nullptr ||
       this->pending_surface_.load(std::memory_order_acquire) >= 0) {
     return false;
   }
@@ -1634,8 +1637,6 @@ bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
     }
     return false;
   }
-  const int output_index =
-      1 - this->front_surface_.load(std::memory_order_acquire);
   ppa_srm_rotation_angle_t rotation = PPA_SRM_ROTATION_ANGLE_0;
   switch (this->display_rotation_) {
   case 90:
@@ -1659,6 +1660,8 @@ bool P4VideoRenderer::render_i420_(const uint8_t *i420, size_t size,
   config.in.srm_cm = PPA_SRM_COLOR_MODE_YUV420;
   config.in.yuv_range = PPA_COLOR_RANGE_LIMIT;
   config.in.yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601;
+  const int output_index =
+      1 - this->front_surface_.load(std::memory_order_acquire);
   config.out.buffer = this->surfaces_[output_index];
   config.out.buffer_size = this->surface_capacity_bytes_;
   config.out.pic_w = geometry.surface_width;

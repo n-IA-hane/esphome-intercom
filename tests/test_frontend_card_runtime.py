@@ -1024,6 +1024,30 @@ assert.equal(
   "Call with Waveshare S3 Audio ended.",
 );
 
+// A preferred HA softphone has no fixed device_id in its Lovelace config.
+// Terminal snapshots may omit both device identifiers, but must not turn the
+// already-bound card into the unconfigured skeleton while showing the error.
+const terminalWithoutDevice = makeCard();
+terminalWithoutDevice._applySoftphoneSnapshot({{
+  endpoint_id: "browser:office", device_id: "device-office",
+  session_device_id: "device-office", state: "in_call",
+  direction: "outgoing", call_id: "terminal-no-device",
+  peer_name: "Controlled peer", sequence: 1,
+}});
+terminalWithoutDevice._render();
+assert.equal(terminalWithoutDevice._getConfigDeviceId(), "device-office");
+assert.equal(terminalWithoutDevice._skeletonMode, "main");
+terminalWithoutDevice._applySoftphoneSnapshot({{
+  endpoint_id: "browser:office", state: "idle",
+  direction: "outgoing", call_id: "terminal-no-device",
+  peer_name: "Controlled peer", terminal_reason: "sip_403", sequence: 2,
+}});
+terminalWithoutDevice._render();
+assert.equal(terminalWithoutDevice._getConfigDeviceId(), "device-office");
+assert.equal(terminalWithoutDevice._skeletonMode, "main");
+assert.match(terminalWithoutDevice._els.statusText.textContent, /ended/i);
+assert.match(terminalWithoutDevice._els.statusReason.textContent, /403/);
+
 // The authoritative endpoint-wide idle snapshot normally has no call_id.
 // It must still release and close the browser media session that owned the
 // just-ended call; an empty call_id is not a stale terminal for another call.

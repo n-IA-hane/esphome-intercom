@@ -190,6 +190,9 @@ class _FakeHass:
     def async_create_task(self, coro):
         return asyncio.create_task(coro)
 
+    def async_create_background_task(self, coro, _name):
+        return asyncio.create_task(coro)
+
 
 def _test_runtime(hass):
     return hass.runtime

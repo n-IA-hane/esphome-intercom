@@ -21,6 +21,8 @@ const checks = [
   [{{ language: "it" }}, "Answer", "Answer"],
   [{{ language: "pt-BR" }}, "Incoming: Sala", "Recebendo: Sala"],
   [{{ language: "de-DE" }}, "Calling Büro...", "Büro wird angerufen..."],
+  [{{ language: "pt-BR" }}, "Call with Sala ended.", "Chamada com Sala encerrada."],
+  [{{ language: "de-DE" }}, "Call with Büro ended.", "Gespräch mit Büro beendet."],
 ];
 for (const [hass, source, expected] of checks) {{
   const actual = voipStackTranslate(hass, source);

@@ -10,12 +10,16 @@ from homeassistant.core import HomeAssistant
 
 from .endpoint_lifecycle import call_registry
 from .media_offer_answer import validate_bridged_video_reoffer
+from .media_ports import release_sip_rtp_port_pair, reserve_sip_video_relay_media
 from .runtime_data import sip_endpoint_manager
 from .core import sdp
 from .sip_bridge import (
     dialog_rtp_peer,
     dialog_video_rtp_peer,
+    build_pending_invite_video_relay,
+    configure_answered_invite_video_relay,
     invite_video_rtp_peer,
+    video_bridge_offer_formats,
 )
 from .sip_client import PreparedDialogMediaUpdate
 
@@ -38,6 +42,8 @@ class BridgeMediaUpdateBinder:
         relay: Any,
         *,
         source_call_id: str,
+        source_video_send_format: sdp.RtpVideoFormat | None = None,
+        source_video_receive_format: sdp.RtpVideoFormat | None = None,
     ) -> None:
         """Install the staged media-update callback on one SIP client."""
 
@@ -60,6 +66,9 @@ class BridgeMediaUpdateBinder:
             previous_video_peer = video_relay.right if video_relay is not None else None
             previous_video = previous.video_format
             updated_video = updated.video_format
+            adding_video = video_relay is None and updated_video is not None
+            removing_video = video_relay is not None and updated_video is None
+            staged_video_relay = None
             rollback_video = None
             commit_video_generation = None
             rollback_video_generation = None
@@ -67,24 +76,101 @@ class BridgeMediaUpdateBinder:
             answer_video_format = None
             source_video_formats = ()
             if updated_video is not None:
-                next_video_peer = dialog_video_rtp_peer(updated)
                 endpoint = sip_endpoint_manager(self.hass)
-                if endpoint is None or video_relay is None:
+                if endpoint is None:
                     return None
+                if adding_video:
+                    from .config import transport_config
+                    from .const import CONF_SIP_VIDEO, CONF_VIDEO_TRANSCODING
+
+                    cfg = transport_config(self.hass)
+                    if not bool(cfg.get(CONF_SIP_VIDEO, False)):
+                        return None
+                    reservation = None
+                    sockets = ()
+                    try:
+                        reservation, sockets = reserve_sip_video_relay_media(
+                            self.hass
+                        )
+                        source_video_formats = video_bridge_offer_formats(
+                            source_video_send_format or updated_video,
+                            source_receive=source_video_receive_format,
+                            enable_transcoding=bool(
+                                cfg.get(CONF_VIDEO_TRANSCODING, False)
+                            ),
+                        )
+                        source_reinvite = await endpoint.async_prepare_video_reinvite(
+                            source_call_id,
+                            local_video_rtp_port=int(reservation.ports[0]),
+                            video_formats=source_video_formats,
+                            video_direction=updated_video.direction,
+                        )
+                        if source_reinvite is None:
+                            raise RuntimeError("source rejected video addition")
+                        staged_video_relay = build_pending_invite_video_relay(
+                            source_reinvite.candidate,
+                            remote_host=updated.remote_host,
+                            left_port=reservation.ports[0],
+                            right_port=reservation.ports[1],
+                            sockets=sockets,
+                            on_release=lambda ports: release_sip_rtp_port_pair(
+                                self.hass, ports
+                            ),
+                        )
+                        reservation.detach()
+                        reservation = None
+                        video_relay = staged_video_relay
+                        configured = configure_answered_invite_video_relay(
+                            source_reinvite.candidate,
+                            updated,
+                            video_relay,
+                            hass=self.hass,
+                            enable_transcoding=bool(
+                                cfg.get(CONF_VIDEO_TRANSCODING, False)
+                            ),
+                        )
+                        if configured is None:
+                            raise RuntimeError("incompatible video addition")
+                        await video_relay.start()
+                    except (OSError, RuntimeError, TypeError, ValueError) as err:
+                        if source_reinvite is not None:
+                            await source_reinvite.restore(
+                                local_video_rtp_port=0,
+                                video_formats=source_video_formats,
+                            )
+                        if staged_video_relay is not None:
+                            await staged_video_relay.stop()
+                        else:
+                            for sock in sockets:
+                                sock.close()
+                            if reservation is not None:
+                                reservation.release()
+                        _LOGGER.warning(
+                            "SIP bridge could not stage destination video addition "
+                            "source_call_id=%s dest_call_id=%s: %s",
+                            source_call_id,
+                            client.dialog_ids.call_id,
+                            err,
+                        )
+                        return None
+                if video_relay is None:
+                    return None
+                next_video_peer = dialog_video_rtp_peer(updated)
                 _, rollback_video = (
                     video_relay.stage_peer_reconfiguration(
                         "right",
                         next_video_peer,
                     )
                 )
-                source_video_formats = tuple(
-                    dict.fromkeys(
-                        (
-                            video_relay.left.recv_format,
-                            video_relay.left.send_format,
+                if not source_video_formats:
+                    source_video_formats = tuple(
+                        dict.fromkeys(
+                            (
+                                video_relay.left.recv_format,
+                                video_relay.left.send_format,
+                            )
                         )
                     )
-                )
                 source_video_peer = video_relay.left
                 caller_sends = sdp.remote_can_send(updated_video)
                 caller_receives = sdp.remote_can_receive(
@@ -96,9 +182,9 @@ class BridgeMediaUpdateBinder:
                     source_video_peer.video_format,
                     connection_held=source_video_peer.connection_held,
                 )
-                if (caller_sends and not source_receives) or (
+                if not adding_video and ((caller_sends and not source_receives) or (
                     caller_receives and not source_sends
-                ):
+                )):
                     source_reinvite = await endpoint.async_prepare_video_reinvite(
                         source_call_id,
                         local_video_rtp_port=int(video_relay.left_port),
@@ -149,7 +235,9 @@ class BridgeMediaUpdateBinder:
                     restored = bool(
                         source_reinvite is None
                         or await source_reinvite.restore(
-                            local_video_rtp_port=int(video_relay.left_port),
+                            local_video_rtp_port=(
+                                0 if adding_video else int(video_relay.left_port)
+                            ),
                             video_formats=source_video_formats,
                         )
                     )
@@ -185,6 +273,8 @@ class BridgeMediaUpdateBinder:
                         raise RuntimeError(
                             "SIP bridge could not compensate rejected source offer"
                         )
+                    if adding_video and staged_video_relay is not None:
+                        await staged_video_relay.stop()
                     return None
                 # A transcoding bridge terminates two independent codec
                 # contracts.  Keep the answer already negotiated on the
@@ -207,12 +297,16 @@ class BridgeMediaUpdateBinder:
                 ):
                     rollback_video()
                     if source_reinvite is not None and not await source_reinvite.restore(
-                        local_video_rtp_port=int(video_relay.left_port),
+                        local_video_rtp_port=(
+                            0 if adding_video else int(video_relay.left_port)
+                        ),
                         video_formats=source_video_formats,
                     ):
                         raise RuntimeError(
                             "SIP bridge could not compensate invalid video answer"
                         )
+                    if adding_video and staged_video_relay is not None:
+                        await staged_video_relay.stop()
                     return None
                 (
                     commit_video_generation,
@@ -221,6 +315,26 @@ class BridgeMediaUpdateBinder:
                     left=source_video_peer,
                     right=next_video_peer,
                 )
+            elif removing_video:
+                endpoint = sip_endpoint_manager(self.hass)
+                if endpoint is None or video_relay is None:
+                    return None
+                source_video_formats = tuple(
+                    dict.fromkeys(
+                        (
+                            video_relay.left.recv_format,
+                            video_relay.left.send_format,
+                        )
+                    )
+                )
+                source_reinvite = await endpoint.async_prepare_video_reinvite(
+                    source_call_id,
+                    local_video_rtp_port=0,
+                    video_formats=source_video_formats,
+                    video_direction="inactive",
+                )
+                if source_reinvite is None:
+                    return None
             else:
                 commit_video_generation = None
 
@@ -237,6 +351,8 @@ class BridgeMediaUpdateBinder:
                     "SIP bridge re-offer source commit rejected source_call_id=%s",
                     source_call_id,
                 )
+                if adding_video and staged_video_relay is not None:
+                    await staged_video_relay.stop()
                 return None
 
             async def commit() -> None:
@@ -248,14 +364,18 @@ class BridgeMediaUpdateBinder:
                         "SIP bridge media update belongs to a terminated call"
                     )
                 if relay.right is not previous_audio_peer or (
-                    video_relay is not None
-                    and previous_video_peer is not None
+                    previous_video_peer is not None
                     and video_relay.right is not previous_video_peer
                 ):
                     raise RuntimeError("SIP bridge media owner changed before commit")
                 commit_audio()
+                if adding_video:
+                    relay.attach_video_relay(video_relay)
                 if commit_video_generation is not None:
                     await commit_video_generation()
+                if removing_video:
+                    relay.video_relay = None
+                    await video_relay.stop()
                 _LOGGER.info(
                     "SIP bridge outbound %s committed source_call_id=%s "
                     "dest_call_id=%s remote_rtp=%s:%s audio_direction=%s "
@@ -277,12 +397,16 @@ class BridgeMediaUpdateBinder:
                 if rollback_video_generation is not None:
                     await rollback_video_generation()
                 if source_reinvite is not None and not await source_reinvite.restore(
-                    local_video_rtp_port=int(video_relay.left_port),
+                    local_video_rtp_port=(
+                        0 if adding_video else int(video_relay.left_port)
+                    ),
                     video_formats=source_video_formats,
                 ):
                     raise RuntimeError(
                         "SIP bridge could not compensate unsent media answer"
                     )
+                if adding_video and staged_video_relay is not None:
+                    await staged_video_relay.stop()
 
             return PreparedDialogMediaUpdate(
                 commit,
@@ -291,6 +415,9 @@ class BridgeMediaUpdateBinder:
                 or rollback_video_generation is not None
                 else None,
                 answer_video_format=answer_video_format,
+                answer_video_rtp_port=(
+                    int(video_relay.right_port) if updated_video is not None else 0
+                ),
             )
 
         client.on_media_update = prepare

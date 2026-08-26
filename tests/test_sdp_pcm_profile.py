@@ -19,6 +19,40 @@ from .voip_phase1_support import (
 
 
 class SdpPcmProfileTest(unittest.TestCase):
+    def test_known_video_target_gets_narrow_codec_offer(self) -> None:
+        jpeg = sdp.video_offer_formats_for_target_codec("jpeg")
+        h264 = sdp.video_offer_formats_for_target_codec("h264")
+
+        self.assertEqual(len(jpeg), 1)
+        self.assertEqual(jpeg[0].encoding, "JPEG")
+        self.assertEqual(len(h264), 1)
+        self.assertEqual(h264[0].encoding, "H264")
+        self.assertTrue(h264[0].profile_level_id.lower().startswith("42c0"))
+
+    def test_unknown_video_target_preserves_complete_offer(self) -> None:
+        self.assertEqual(
+            sdp.video_offer_formats_for_target_codec(""),
+            sdp.DEFAULT_VIDEO_FORMATS,
+        )
+
+    def test_explicit_rtp_formats_preserve_directional_payload_contract(self) -> None:
+        wide = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
+        narrow = sdp.RtpPcmFormat(97, "L16", 16000, 1, 10)
+
+        offer = sdp.build_offer_directional(
+            "192.0.2.1",
+            "192.0.2.1",
+            40000,
+            [wide.audio_format],
+            [narrow.audio_format],
+            audio_rtp_formats=(narrow, wide),
+            allow_directional_payloads=True,
+        )
+
+        self.assertIn("m=audio 40000 RTP/AVP 97 96", offer)
+        self.assertIn("a=x-voip-stack-flow:97 recv\r\n", offer)
+        self.assertIn("a=x-voip-stack-flow:96 send\r\n", offer)
+
     def test_video_offer_has_one_mapping_per_payload_type(self) -> None:
         local = [audio_format.AudioFormat(16000, "s16le", 1, 20)]
         offer = sdp.build_offer_directional(

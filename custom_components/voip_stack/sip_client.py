@@ -50,6 +50,18 @@ from .core.sip_transaction import (
 _LOGGER = logging.getLogger(__name__)
 
 _S24_SIGN_EXTENSION = bytes(0xFF if value & 0x80 else 0x00 for value in range(256))
+_SIP_UDP_SAFE_REQUEST_BYTES = 1300
+
+
+def _uri_with_transport(uri: sip.SipUri, transport: str) -> sip.SipUri:
+    """Return one URI with a single authoritative transport parameter."""
+
+    params = tuple(
+        (key, value)
+        for key, value in uri.params
+        if key.strip().lower() != "transport"
+    )
+    return replace(uri, params=(*params, ("transport", transport.lower())))
 
 
 def _rtp_encoding(fmt: AudioFormat | sdp.RtpPcmFormat) -> str:
@@ -293,6 +305,7 @@ class PreparedDialogMediaUpdate:
     commit: DialogMediaCommit
     rollback: DialogMediaCommit | None = None
     answer_video_format: sdp.RtpVideoFormat | None = None
+    answer_video_rtp_port: int | None = None
 
 
 DialogMediaUpdateHandler = Callable[
@@ -1790,6 +1803,86 @@ class SipCallClient:
         self._invite_cseq = self.dialog_ids.cseq
         raw = self._build_pending_invite()
 
+        if (
+            self.signaling_transport == "UDP"
+            and len(raw) > _SIP_UDP_SAFE_REQUEST_BYTES
+            and self._tcp_reuse_send is None
+        ):
+            # RFC 3261 section 18.1.1 requires requests larger than 1300
+            # bytes to use a congestion-controlled transport when the path
+            # MTU is unknown. Rebuild every transport-bearing field before
+            # connecting so the Request-URI, Via and Contact all describe the
+            # TCP transaction that is actually sent.
+            if self.transport is not None:
+                self.transport.close()
+                self.transport = None
+                self.protocol = None
+            self._resolved_signaling_target = None
+            self.signaling_transport = "TCP"
+            transport_param = (("transport", "tcp"),)
+            logical_uri = _uri_with_transport(logical_uri, "tcp")
+            request_uri = str(logical_uri)
+            route_uri = logical_uri
+            if self.outbound_proxy:
+                proxy = str(self.outbound_proxy).strip()
+                route_uri = _uri_with_transport(
+                    sip.parse_sip_uri(
+                        proxy
+                        if proxy.lower().startswith(("sip:", "sips:"))
+                        else f"sip:{proxy}"
+                    ),
+                    "tcp",
+                )
+            elif remote_host != logical_uri.host:
+                route_uri = sip.SipUri(
+                    "",
+                    remote_host,
+                    int(remote_sip_port),
+                    params=transport_param,
+                )
+            self._tls_server_name = route_uri.host
+            try:
+                endpoints = tuple(
+                    endpoint
+                    for candidate in await self.target_resolver.resolve(
+                        route_uri,
+                        transport="TCP",
+                    )
+                    for endpoint in candidate.endpoints()
+                )
+            except (OSError, RuntimeError, sip.SipError) as err:
+                return self._transport_failure(
+                    err,
+                    target,
+                    remote_host,
+                    remote_sip_port,
+                )
+            endpoint_index = -1
+            if not await select_next_endpoint():
+                return self._transport_failure(
+                    OSError("every resolved SIP TCP target is unreachable"),
+                    target,
+                    remote_host,
+                    remote_sip_port,
+                )
+            local_uri = str(
+                sip.SipUri(
+                    self.local_uri_user,
+                    self.local_ip,
+                    self.local_sip_port,
+                    params=transport_param,
+                )
+            )
+            remote_uri = request_uri
+            self._pending_request_uri = request_uri
+            self._pending_local_uri = local_uri
+            self._pending_remote_uri = remote_uri
+            raw = self._build_pending_invite()
+            _LOGGER.info(
+                "SIP initial request is %s bytes; using TCP per RFC 3261 section 18.1.1",
+                len(raw),
+            )
+
         def refresh_pending_local_uri() -> None:
             nonlocal local_uri, raw
             local_uri = str(
@@ -2146,6 +2239,13 @@ class SipCallClient:
                             answer_video_format = (
                                 prepared_update.answer_video_format
                             )
+                            if prepared_update.answer_video_rtp_port is not None:
+                                updated = replace(
+                                    updated,
+                                    local_video_rtp_port=int(
+                                        prepared_update.answer_video_rtp_port
+                                    ),
+                                )
                             if answer_video_format is not None:
                                 video_pair = sdp.video_offer_answer_directional(
                                     updated.video_format,
@@ -2182,6 +2282,30 @@ class SipCallClient:
                                         local_video_format=video_pair.recv,
                                         local_sdp_body=answer,
                                     )
+                            elif prepared_update.answer_video_rtp_port is not None:
+                                answer = sdp.build_answer_directional(
+                                    self.local_ip,
+                                    self.local_ip,
+                                    updated.local_rtp_port,
+                                    updated.send_format,
+                                    updated.recv_format,
+                                    dtmf=(
+                                        sdp.offered_dtmf_formats(request.body)[0]
+                                        if sdp.offered_dtmf_formats(request.body)
+                                        else None
+                                    ),
+                                    remote_sdp=request.body,
+                                    video_port=updated.local_video_rtp_port,
+                                    video_format=updated.video_format,
+                                    audio_direction=updated.local_audio_direction,
+                                    video_direction=updated.local_video_direction,
+                                )
+                                answer = sdp.rewrite_sdp_origin(
+                                    answer,
+                                    updated.local_sdp_session_id,
+                                    updated.local_sdp_session_version,
+                                )
+                                updated = replace(updated, local_sdp_body=answer)
                         else:
                             commit = prepared_update
                     except asyncio.CancelledError:

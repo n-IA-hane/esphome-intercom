@@ -13,6 +13,38 @@ from .voip_phase1_support import (
 
 
 class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
+    def test_closed_flow_removes_only_its_bindings(self) -> None:
+        changes: list[tuple[str, bool]] = []
+        registrar = sip_registrar.SipRegistrar(
+            enabled=True,
+            accounts=[sip_registrar.SipAccount("Phone", "Phone", "secret")],
+            local_ip="192.168.1.10",
+            local_sip_port=5060,
+            on_registration_change=lambda username, registered: changes.append(
+                (username, registered)
+            ),
+        )
+        registrar.registrations = {
+            "Phone": sip_registrar.SipRegistration(
+                "Phone", "sip:Phone@192.0.2.50:40000;transport=tcp",
+                "192.0.2.50", 40000, "TCP", 9999999999,
+            ),
+            "Phone#2": sip_registrar.SipRegistration(
+                "Phone", "sip:Phone@192.0.2.50:41000;transport=tcp",
+                "192.0.2.50", 41000, "TCP", 9999999999,
+            ),
+        }
+
+        self.assertTrue(registrar.remove_flow("192.0.2.50", 40000, "tcp"))
+        self.assertEqual(
+            [item.source_port for item in registrar.registered_contacts("Phone")],
+            [41000],
+        )
+        self.assertEqual(changes, [])
+        self.assertTrue(registrar.remove_flow("192.0.2.50", 41000, "TCP"))
+        self.assertEqual(changes, [("Phone", False)])
+        self.assertFalse(registrar.remove_flow("192.0.2.50", 41000, "TCP"))
+
     @staticmethod
     def _authorized_register(
         registrar,
@@ -538,6 +570,32 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(registrar.registrations, {})
         self.assertEqual(changes, [("DeskPhone", False)])
+
+    def test_next_expiration_returns_nearest_live_contact(self) -> None:
+        registrar = sip_registrar.SipRegistrar(
+            enabled=True,
+            accounts=[sip_registrar.SipAccount("DeskPhone", "Desk", "secret")],
+            local_ip="192.168.1.10",
+            local_sip_port=5060,
+        )
+        registrar.registrations["DeskPhone"] = sip_registrar.SipRegistration(
+            username="DeskPhone",
+            contact_uri="sip:DeskPhone@192.168.1.50:5062",
+            source_host="192.168.1.50",
+            source_port=5062,
+            transport="UDP",
+            expires_at=9999999999,
+        )
+        registrar.registrations["DeskPhone#2"] = sip_registrar.SipRegistration(
+            username="DeskPhone",
+            contact_uri="sip:DeskPhone@192.168.1.51:5062",
+            source_host="192.168.1.51",
+            source_port=5062,
+            transport="UDP",
+            expires_at=9999999000,
+        )
+
+        self.assertEqual(registrar.next_expiration_at(), 9999999000)
 
     async def test_registration_identity_requires_exact_signaling_flow(self) -> None:
         registrar = sip_registrar.SipRegistrar(

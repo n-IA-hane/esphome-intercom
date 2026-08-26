@@ -46,6 +46,7 @@ from .media_ports import (
     allocate_sip_rtp_port as _allocate_sip_rtp_port,
     reserve_sip_video_media,
 )
+from .media_offer_answer import validate_direct_video_reoffer
 from .media_session_updates import (
     commit_audio_session_update,
     commit_video_session_update,
@@ -514,7 +515,7 @@ async def async_originate_browser_call(
     from .core.sdp import (
         DEFAULT_VIDEO_FORMATS,
         browser_video_send_supported,
-        video_formats_renegotiation_compatible,
+        video_offer_formats_for_target_codec,
     )
 
     # Camera transmission is opt-in for each call.  Keep offering a receive
@@ -531,6 +532,15 @@ async def async_originate_browser_call(
         )
         if camera_send_enabled
         else DEFAULT_VIDEO_FORMATS
+    )
+    target_video_codec = str(
+        entry_metadata.get("sip_video_codec")
+        or ((dest_device or {}).get("sip_video_codec"))
+        or ""
+    ).strip()
+    offered_video_formats = video_offer_formats_for_target_codec(
+        target_video_codec,
+        offered_video_formats,
     )
 
     client = SipCallClient(
@@ -585,21 +595,15 @@ async def async_originate_browser_call(
         audio_session = browser_media.sessions_for("audio").get(call_id)
         previous_video = previous.video_format
         updated_video = updated.video_format
-        if (previous_video is None) != (updated_video is None):
+        video_offer = validate_direct_video_reoffer(
+            previous_video,
+            previous.recv_video_format,
+            updated_video,
+            updated.recv_video_format,
+        )
+        if not video_offer.accepted:
             return None
         video_session = browser_media.sessions_for("video").get(call_id)
-        if previous_video is not None and updated_video is not None:
-            if not (
-                video_formats_renegotiation_compatible(
-                    previous_video,
-                    updated_video,
-                )
-                and video_formats_renegotiation_compatible(
-                    previous.recv_video_format,
-                    updated.recv_video_format,
-                )
-            ):
-                return None
 
         async def _commit() -> None:
             if not registry.is_generation_current(call_id, call_generation):
@@ -620,6 +624,10 @@ async def async_originate_browser_call(
                     updated,
                     local_direction=updated.local_video_direction,
                 )
+            elif video_session is not None:
+                video_session.removed = True
+                video_session.media_generation += 1
+                video_session.update_event.set()
             store = _ha_softphone_store(hass, endpoint_id)
             if str(store.get("call_id") or "") == call_id:
                 store.update(
@@ -815,6 +823,7 @@ async def async_originate_browser_call(
             endpoint_id, peer_name=display_target, direction="outgoing",
                 target_device_id=target_device_id, sip_status_code=180,
                 last_sip_event="SIP_RESPONSE", sip_uri=route_uri,
+                sip_transport=client.signaling_transport.lower(),
         )
     elif public_result == CallState.IN_CALL.value and client.dialog is not None:
         connected_party = str(client.connected_party or display_target).strip()
@@ -870,6 +879,7 @@ async def async_originate_browser_call(
             sip_status_code=200,
             last_sip_event="SIP_RESPONSE",
             sip_uri=route_uri,
+            sip_transport=client.signaling_transport.lower(),
         )
     await _track_outbound_sip_client(
         hass,

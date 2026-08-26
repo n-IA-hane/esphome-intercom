@@ -410,6 +410,43 @@ class SipRegistrar:
         if removed_username:
             self._notify_registration_change(removed_username, False)
 
+    def remove_flow(self, host: str, port: int, transport: str) -> bool:
+        """Remove Contact bindings whose authenticated signaling flow closed."""
+
+        wanted_host = str(host or "")
+        wanted_port = int(port)
+        wanted_transport = str(transport or "").upper()
+        affected = {
+            registration.username.lower(): registration.username
+            for registration in self.registrations.values()
+            if registration.source_host == wanted_host
+            and registration.source_port == wanted_port
+            and registration.transport.upper() == wanted_transport
+        }
+        if not affected:
+            return False
+        self.registrations = {
+            key: registration
+            for key, registration in self.registrations.items()
+            if not (
+                registration.source_host == wanted_host
+                and registration.source_port == wanted_port
+                and registration.transport.upper() == wanted_transport
+            )
+        }
+        remaining = {
+            registration.username.lower() for registration in self.registrations.values()
+        }
+        for username_key, username in affected.items():
+            if username_key not in remaining:
+                _LOGGER.info(
+                    "SIP registrar removed final binding for closed %s flow user=%s",
+                    wanted_transport,
+                    username,
+                )
+                self._notify_registration_change(username, False)
+        return True
+
     def registration_matches_source(
         self,
         username: str,
@@ -845,6 +882,15 @@ class SipRegistrar:
                 _LOGGER.info("SIP registrar expired final binding user=%s", username)
                 self._notify_registration_change(username, False)
         return bool(expired)
+
+    def next_expiration_at(self) -> float | None:
+        """Return the nearest live Contact expiry, if registrations exist."""
+
+        self.expire()
+        return min(
+            (registration.expires_at for registration in self.registrations.values()),
+            default=None,
+        )
 
     def roster_entries(self) -> list[RosterEntry]:
         return self.registered_roster_entries()

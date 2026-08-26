@@ -117,7 +117,10 @@ def create_runtime_task(hass: HomeAssistant, coro: Coroutine[Any, Any, Any]) -> 
     """Create a detached integration task that is cancelled on endpoint reload."""
 
     tasks = require_runtime_data(hass).tasks
-    task = hass.async_create_task(coro)
+    task = hass.async_create_background_task(
+        coro,
+        "voip-stack-runtime",
+    )
     tasks.add(task)
     task.add_done_callback(tasks.discard)
     return task

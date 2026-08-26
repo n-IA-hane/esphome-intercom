@@ -240,7 +240,7 @@ export function voipStackTranslate(hass, text) {
       [/^In Call: (.+)$/, "Im Gespräch: $1"],
       [/^Calling (.+)\.\.\.$/, "$1 wird angerufen..."],
       [/^(.+) is ringing\.\.\.$/, "$1 klingelt..."],
-      [/^Call (.+) ended\.$/, "Gespräch mit $1 beendet."],
+      [/^Call with (.+) ended\.$/, "Gespräch mit $1 beendet."],
       [/^Missing phone: (.+)$/, "Fehlendes Telefon: $1"],
     ]
     : [
@@ -249,7 +249,7 @@ export function voipStackTranslate(hass, text) {
       [/^In Call: (.+)$/, "Em chamada: $1"],
       [/^Calling (.+)\.\.\.$/, "Chamando $1..."],
       [/^(.+) is ringing\.\.\.$/, "$1 está tocando..."],
-      [/^Call (.+) ended\.$/, "Chamada com $1 encerrada."],
+      [/^Call with (.+) ended\.$/, "Chamada com $1 encerrada."],
       [/^Missing phone: (.+)$/, "Telefone ausente: $1"],
     ];
   for (const [pattern, replacement] of replacements) {

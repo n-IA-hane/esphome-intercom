@@ -6,6 +6,7 @@ import ast
 import asyncio
 import json
 from pathlib import Path
+import string
 from types import SimpleNamespace
 
 import pytest
@@ -37,12 +38,47 @@ def _leaf_paths(value: dict, prefix: str = "") -> set[str]:
     return paths
 
 
+def _leaf_values(value: dict, prefix: str = "") -> dict[str, object]:
+    values: dict[str, object] = {}
+    for key, item in value.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(item, dict):
+            values.update(_leaf_values(item, path))
+        else:
+            values[path] = item
+    return values
+
+
+def _format_fields(value: object) -> set[str]:
+    if not isinstance(value, str):
+        return set()
+    return {
+        field_name.split(".", 1)[0].split("[", 1)[0]
+        for _literal, field_name, _format_spec, _conversion in string.Formatter().parse(
+            value
+        )
+        if field_name
+    }
+
+
 @pytest.mark.parametrize("language", ["de", "it", "pt-BR"])
 def test_translation_files_cover_every_english_key(language: str) -> None:
     english = json.loads((TRANSLATIONS / "en.json").read_text())
     translated = json.loads((TRANSLATIONS / f"{language}.json").read_text())
 
     assert _leaf_paths(translated) == _leaf_paths(english)
+
+
+@pytest.mark.parametrize("language", ["de", "en", "it", "pt-BR"])
+def test_translation_placeholders_match_source_strings(language: str) -> None:
+    source = _leaf_values(json.loads(STRINGS.read_text()))
+    translated = _leaf_values(
+        json.loads((TRANSLATIONS / f"{language}.json").read_text())
+    )
+
+    assert {
+        path: _format_fields(value) for path, value in translated.items()
+    } == {path: _format_fields(value) for path, value in source.items()}
 
 
 def _load_disabled_trunk_data():

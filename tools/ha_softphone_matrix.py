@@ -140,13 +140,15 @@ async () => {
   const card = deep("voip-stack-card, intercom-card")
     .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
   const root = card?.shadowRoot;
-  const button = root?.querySelector('.call-options[aria-label="Media options"]');
+  const button = root?.querySelector(
+    '.settings-btn[aria-controls="voip-settings-panel"]'
+  );
   if (!card || !button || button.hidden || button.disabled) return { error: "media options unavailable" };
   button.click();
   for (let attempt = 0; attempt < 100 && card._mediaDeviceBusy; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  const panel = root.querySelector("#voip-call-media-panel");
+  const panel = root.querySelector("#voip-settings-panel");
   const selects = [...(panel?.querySelectorAll("select") || [])];
   const state = window.__voipStackEngine?.mediaDeviceState || {};
   const microphone = state.devices?.audioinput?.[0]?.deviceId || "";

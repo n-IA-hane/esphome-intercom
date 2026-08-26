@@ -21,6 +21,11 @@ esp32:
       # this companion gate is enabled. Hosted uses exactly that API for the
       # PSRAM stacks above, so the two options are one indivisible contract.
       CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY: "y"
+      # Keep WiFi/LwIP packet storage out of the internal heap used by the
+      # hosted SDIO RX copy and the concurrent audio/video DMA pipelines.
+      # This is ESP-IDF's supported allocation policy and retains internal
+      # fallback when external RAM cannot satisfy an allocation.
+      CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP: "y"
       # Match Espressif's normal 20/20 P4 SDIO profile. Its Kconfig explicitly
       # warns that very small queues lower throughput; bidirectional RTP needs
       # headroom in both directions and the transport mempool remains in PSRAM.
