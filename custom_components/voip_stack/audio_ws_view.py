@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import contextlib
 from dataclasses import dataclass, field
 import json
@@ -63,6 +64,37 @@ _AUDIO_OWNER_HANDOFF_TIMEOUT = 5.0
 # (3,840 bytes) plus the one-byte framing tag.  Keep a small fixed ceiling so
 # aiohttp never buffers multi-megabyte payloads on this real-time endpoint.
 _MAX_BROWSER_AUDIO_MESSAGE_BYTES = 4096
+_BROWSER_PLAYOUT_TARGET_MS = 60
+_BROWSER_PLAYOUT_MAX_MS = 200
+
+
+def _conceal_pcm_frame(last_pcm: bytes, frame_bytes: int) -> bytes:
+    """Return one click-free s16le PLC frame which decays to silence."""
+    if frame_bytes < 2 or not last_pcm:
+        return bytes(frame_bytes)
+    last_sample = int.from_bytes(last_pcm[-2:], "little", signed=True)
+    samples = frame_bytes // 2
+    output = bytearray(frame_bytes)
+    for index in range(samples):
+        sample = round(last_sample * (samples - index - 1) / samples)
+        output[index * 2 : index * 2 + 2] = int(sample).to_bytes(
+            2, "little", signed=True
+        )
+    return bytes(output)
+
+
+def _fade_in_pcm_frame(pcm: bytes, fade_samples: int) -> bytes:
+    """Fade in recovered s16le PCM so PLC recovery cannot click."""
+    samples = min(len(pcm) // 2, max(0, fade_samples))
+    if samples == 0:
+        return pcm
+    output = bytearray(pcm)
+    for index in range(samples):
+        offset = index * 2
+        sample = int.from_bytes(pcm[offset : offset + 2], "little", signed=True)
+        sample = round(sample * (index + 1) / samples)
+        output[offset : offset + 2] = int(sample).to_bytes(2, "little", signed=True)
+    return bytes(output)
 
 
 @dataclass(slots=True)
@@ -685,6 +717,11 @@ async def _run_audio_session(
         "drop_tx_queue": 0,
         "tx_error": 0,
         "tx_silence_keepalive": 0,
+        "tx_playout_depth": 0,
+        "tx_playout_peak": 0,
+        "tx_playout_late_discard": 0,
+        "tx_playout_plc": 0,
+        "tx_playout_rebuffer": 0,
         "drop_direction": 0,
         "drop_connection_hold": 0,
         "dtmf_rx_events": 0,
@@ -968,12 +1005,116 @@ async def _run_audio_session(
     async def browser_to_rtp() -> None:
         nonlocal sequence, timestamp, remote_rtp_host, remote_rtp_port
         observed_generation = int(session.media_generation)
-        async for msg in ws:
-            if msg.type == WSMsgType.BINARY:
+        tx_frames: deque[bytes] = deque()
+        tx_ready = asyncio.Event()
+        frame_ms = int(session.send_format.audio_format.frame_ms)
+        target_frames = max(1, _BROWSER_PLAYOUT_TARGET_MS // frame_ms)
+        max_frames = max(target_frames, _BROWSER_PLAYOUT_MAX_MS // frame_ms)
+        last_pcm = b""
+        plc_active = False
+        silence_pcm = bytes(int(session.send_format.audio_format.nominal_frame_bytes))
+
+        async def playout() -> None:
+            nonlocal sequence, timestamp, last_pcm, plc_active
+            started = False
+            next_deadline = loop.time()
+            while not closed.is_set():
+                if not started:
+                    deadline = loop.time() + (_BROWSER_PLAYOUT_TARGET_MS / 1000)
+                    while len(tx_frames) < target_frames and loop.time() < deadline:
+                        tx_ready.clear()
+                        try:
+                            await asyncio.wait_for(
+                                tx_ready.wait(),
+                                timeout=max(0.001, deadline - loop.time()),
+                            )
+                        except TimeoutError:
+                            break
+                    if not tx_frames:
+                        continue
+                    started = True
+                    next_deadline = loop.time()
+
+                if tx_frames:
+                    pcm = tx_frames.popleft()
+                    if plc_active:
+                        pcm = _fade_in_pcm_frame(
+                            pcm,
+                            int(session.send_format.audio_format.sample_rate) * 2 // 1000,
+                        )
+                    last_pcm = pcm
+                    plc_active = False
+                else:
+                    pcm = (
+                        silence_pcm
+                        if plc_active
+                        else _conceal_pcm_frame(last_pcm, len(silence_pcm))
+                    )
+                    last_pcm = pcm
+                    plc_active = True
+                    counters["tx_playout_plc"] += 1
+
+                if not (
+                    session.remote_audio_connection_held
+                    or session.local_audio_direction not in {"sendonly", "sendrecv"}
+                ):
+                    payload = rtp_encoder.encode(pcm)
+                    if payload:
+                        packet = rtp.build_packet(
+                            rtp.RtpPacket(
+                                payload_type=session.send_format.payload_type,
+                                sequence=sequence,
+                                timestamp=timestamp,
+                                ssrc=ssrc,
+                                payload=payload,
+                            )
+                        )
+                        transport.sendto(packet, (remote_rtp_host, remote_rtp_port))
+                        if debug_capture is not None:
+                            debug_capture.note_rtp_tx(loop.time())
+                        counters["rtp_tx"] += 1
+                        counters["rtp_tx_bytes"] += len(packet)
+                        sequence = rtp.next_sequence(sequence)
+                        rtp_source.sequence = sequence
+                else:
+                    counter = (
+                        "drop_connection_hold"
+                        if session.remote_audio_connection_held
+                        else "drop_direction"
+                    )
+                    counters[counter] += 1
+                timestamp = rtp.next_timestamp(
+                    timestamp, session.send_format.rtp_timestamp_step
+                )
+                rtp_source.timestamp = timestamp
+                counters["tx_playout_depth"] = len(tx_frames)
+                publish_counters()
+                frame_delay = frame_ms / 1000
+                next_deadline += frame_delay
+                now = loop.time()
+                if next_deadline <= now:
+                    next_deadline = now + frame_delay
+                await asyncio.sleep(next_deadline - now)
+
+        playout_task = asyncio.create_task(playout())
+        try:
+            async for msg in ws:
+                if msg.type != WSMsgType.BINARY:
+                    if msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR):
+                        break
+                    continue
                 try:
                     if observed_generation != session.media_generation:
                         observed_generation = int(session.media_generation)
                         await refresh_media_state(observed_generation)
+                        tx_frames.clear()
+                        frame_ms = int(session.send_format.audio_format.frame_ms)
+                        target_frames = max(1, _BROWSER_PLAYOUT_TARGET_MS // frame_ms)
+                        max_frames = max(target_frames, _BROWSER_PLAYOUT_MAX_MS // frame_ms)
+                        silence_pcm = bytes(
+                            int(session.send_format.audio_format.nominal_frame_bytes)
+                        )
+                        counters["tx_playout_rebuffer"] += 1
                     counters["ws_rx"] += 1
                     pcm = decode_audio_frame(bytes(msg.data))
                     expected = int(session.send_format.audio_format.nominal_frame_bytes)
@@ -981,50 +1122,22 @@ async def _run_audio_session(
                         raise ValueError(f"browser PCM frame has {len(pcm)} bytes, expected {expected}")
                     if debug_capture is not None:
                         debug_capture.note_ws_rx(loop.time(), pcm)
-                    if (
-                        session.remote_audio_connection_held
-                        or session.local_audio_direction
-                        not in {"sendonly", "sendrecv"}
-                    ):
-                        counter = (
-                            "drop_connection_hold"
-                            if session.remote_audio_connection_held
-                            else "drop_direction"
-                        )
-                        counters[counter] += 1
-                    else:
-                        payload = rtp_encoder.encode(pcm)
-                        if payload:
-                            packet = rtp.build_packet(
-                                rtp.RtpPacket(
-                                    payload_type=session.send_format.payload_type,
-                                    sequence=sequence,
-                                    timestamp=timestamp,
-                                    ssrc=ssrc,
-                                    payload=payload,
-                                )
-                            )
-                            transport.sendto(
-                                packet,
-                                (remote_rtp_host, remote_rtp_port),
-                            )
-                            if debug_capture is not None:
-                                debug_capture.note_rtp_tx(loop.time())
-                            counters["rtp_tx"] += 1
-                            counters["rtp_tx_bytes"] += len(packet)
-                            sequence = rtp.next_sequence(sequence)
-                            rtp_source.sequence = sequence
-                    timestamp = rtp.next_timestamp(
-                        timestamp,
-                        session.send_format.rtp_timestamp_step,
+                    tx_frames.append(pcm)
+                    queue_limit = target_frames if plc_active else max_frames
+                    while len(tx_frames) > queue_limit:
+                        tx_frames.popleft()
+                        counters["tx_playout_late_discard"] += 1
+                    counters["tx_playout_depth"] = len(tx_frames)
+                    counters["tx_playout_peak"] = max(
+                        counters["tx_playout_peak"], len(tx_frames)
                     )
-                    rtp_source.timestamp = timestamp
-                    publish_counters()
+                    tx_ready.set()
                 except Exception as err:  # noqa: BLE001 - malformed frames cannot stop call control.
                     counters["tx_error"] += 1
                     _LOGGER.debug("HA softphone browser audio TX drop: %s", err)
-            elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR):
-                break
+        finally:
+            playout_task.cancel()
+            await asyncio.gather(playout_task, return_exceptions=True)
 
     browser_task = asyncio.create_task(browser_to_rtp())
     lifetime_task = asyncio.create_task(call_ended.wait())
@@ -1081,7 +1194,7 @@ async def _run_audio_session(
         _LOGGER.info(
             "HA softphone audio websocket detached call_id=%s ws_rx=%d rtp_tx=%d rtp_rx=%d ws_tx=%d "
             "drop_addr=%d drop_pt=%d drop_size=%d drop_error=%d drop_rx_queue=%d "
-            "drop_tx_queue=%d tx_error=%d",
+            "drop_tx_queue=%d tx_error=%d playout_peak=%d late_discard=%d plc=%d rebuffer=%d",
             session.call_id,
             counters["ws_rx"],
             counters["rtp_tx"],
@@ -1094,6 +1207,10 @@ async def _run_audio_session(
             protocol.dropped_packets,
             counters["drop_tx_queue"],
             counters["tx_error"],
+            counters["tx_playout_peak"],
+            counters["tx_playout_late_discard"],
+            counters["tx_playout_plc"],
+            counters["tx_playout_rebuffer"],
         )
         if debug_capture is not None:
             _schedule_debug_capture_write(hass, debug_capture, counters)

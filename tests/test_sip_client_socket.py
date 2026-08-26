@@ -34,6 +34,33 @@ from .voip_phase1_support import (
 
 
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
+    async def test_browser_playout_plc_fades_out_and_recovers_without_a_step(self) -> None:
+        audio_ws_view = _load_audio_ws_runtime_module()
+        pcm = b"".join(
+            int(12000).to_bytes(2, "little", signed=True) for _ in range(160)
+        )
+
+        concealed = audio_ws_view._conceal_pcm_frame(pcm, len(pcm))
+        concealed_samples = [
+            int.from_bytes(concealed[index : index + 2], "little", signed=True)
+            for index in range(0, len(concealed), 2)
+        ]
+        self.assertLess(concealed_samples[-1], 100)
+        self.assertTrue(
+            all(
+                left >= right
+                for left, right in zip(concealed_samples, concealed_samples[1:])
+            )
+        )
+
+        recovered = audio_ws_view._fade_in_pcm_frame(pcm, 32)
+        recovered_samples = [
+            int.from_bytes(recovered[index : index + 2], "little", signed=True)
+            for index in range(0, 64, 2)
+        ]
+        self.assertLess(recovered_samples[0], 500)
+        self.assertEqual(recovered_samples[-1], 12000)
+
     def test_vp8_loss_keeps_complete_frames_flowing(self) -> None:
         video = _load_video_ws_runtime_module()
 
@@ -1909,6 +1936,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                     )
                 )
             burst: list[rtp.RtpPacket] = []
+            burst_arrivals: list[float] = []
             deadline = loop.time() + 1.0
             while len(burst) < 40:
                 data = await asyncio.wait_for(
@@ -1918,6 +1946,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 packet = rtp.parse_packet(data)
                 if packet.payload_type == l16.payload_type:
                     burst.append(packet)
+                    burst_arrivals.append(loop.time())
             self.assertEqual(
                 [packet.sequence for packet in burst],
                 list(range(burst[0].sequence, burst[0].sequence + 40)),
@@ -1930,6 +1959,13 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 ],
                 [l16.rtp_timestamp_step] * 39,
             )
+            intervals = [
+                burst_arrivals[index] - burst_arrivals[index - 1]
+                for index in range(1, len(burst_arrivals))
+            ]
+            self.assertGreater(burst_arrivals[-1] - burst_arrivals[0], 0.30)
+            self.assertGreater(min(intervals), 0.004)
+            self.assertLess(max(intervals), 0.040)
         finally:
             await ws.messages.put(None)
             await asyncio.wait_for(runtime, timeout=1)

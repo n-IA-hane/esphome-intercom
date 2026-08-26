@@ -451,11 +451,18 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             len(publish_line) - len(publish_line.lstrip()),
         )
 
-    def test_softphone_tx_preserves_the_browser_source_clock(self) -> None:
+    def test_softphone_tx_dejitters_browser_delivery_on_a_bounded_playout_clock(
+        self,
+    ) -> None:
         audio_ws = (
             ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
         ).read_text()
         self.assertIn("async def browser_to_rtp()", audio_ws)
+        self.assertIn("async def playout()", audio_ws)
+        self.assertIn("_BROWSER_PLAYOUT_TARGET_MS = 60", audio_ws)
+        self.assertIn("_BROWSER_PLAYOUT_MAX_MS = 200", audio_ws)
+        self.assertIn("_conceal_pcm_frame(", audio_ws)
+        self.assertIn('counters["tx_playout_late_discard"]', audio_ws)
         self.assertIn("payload = rtp_encoder.encode(pcm)", audio_ws)
         self.assertIn("transport.sendto(", audio_ws)
         self.assertNotIn("async def ws_to_rtp()", audio_ws)
