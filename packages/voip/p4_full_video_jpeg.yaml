@@ -24,7 +24,7 @@ globals:
     initial_value: "false"
 
 external_components:
-  - source: ${ext_components_source}
+  - source: ${voip_stack_components_source}
     components: [esp_jpeg_video_source, p4_video_renderer]
 
 esp_jpeg_video_source:

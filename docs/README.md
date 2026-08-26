@@ -64,9 +64,9 @@ Each ESPHome component ships its own README with the full option list, YAML snip
 - [`esp_video_camera`](../esphome/components/esp_video_camera/README.md), the
   ESP32-P4 Espressif V4L2 camera surface used by the native camera entity and
   SIP video sources.
-- [`esp_jpeg_video_source`](../esphome/components/esp_jpeg_video_source/README.md),
-  [`esp_h264_video_source`](../esphome/components/esp_h264_video_source/README.md)
-  and [`p4_video_renderer`](../esphome/components/p4_video_renderer/README.md),
+- [`esp_jpeg_video_source`](https://github.com/n-IA-hane/esphome-voip-stack/tree/dev/esphome/components/esp_jpeg_video_source),
+  [`esp_h264_video_source`](https://github.com/n-IA-hane/esphome-voip-stack/tree/dev/esphome/components/esp_h264_video_source)
+  and [`p4_video_renderer`](https://github.com/n-IA-hane/esphome-voip-stack/tree/dev/esphome/components/p4_video_renderer),
   the compile-gated P4 SIP video TX and RX paths.
 - [`esp_audio_stack`](https://github.com/n-IA-hane/esphome-audio-stack/tree/main/esphome/components/esp_audio_stack), the
   coordinated full-duplex audio backend for shared codec buses, dual I2S

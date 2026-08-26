@@ -7,6 +7,10 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+VOIP_COMPONENTS = ROOT.parent / "esphome-voip-stack" / "esphome" / "components"
+P4_RENDERER_COMPONENT = VOIP_COMPONENTS / "p4_video_renderer"
+H264_SOURCE_COMPONENT = VOIP_COMPONENTS / "esp_h264_video_source"
+JPEG_SOURCE_COMPONENT = VOIP_COMPONENTS / "esp_jpeg_video_source"
 pytestmark = pytest.mark.architecture
 YAMLS = ROOT / "yamls"
 
@@ -531,34 +535,10 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     camera_header = (
         ROOT / "esphome" / "components" / "esp_video_camera" / "esp_video_camera.h"
     ).read_text()
-    renderer_cpp = (
-        ROOT
-        / "esphome"
-        / "components"
-        / "p4_video_renderer"
-        / "p4_video_renderer.cpp"
-    ).read_text()
-    renderer_header = (
-        ROOT
-        / "esphome"
-        / "components"
-        / "p4_video_renderer"
-        / "p4_video_renderer.h"
-    ).read_text()
-    source_cpp = (
-        ROOT
-        / "esphome"
-        / "components"
-        / "esp_h264_video_source"
-        / "esp_h264_video_source.cpp"
-    ).read_text()
-    source_header = (
-        ROOT
-        / "esphome"
-        / "components"
-        / "esp_h264_video_source"
-        / "esp_h264_video_source.h"
-    ).read_text()
+    renderer_cpp = (P4_RENDERER_COMPONENT / "p4_video_renderer.cpp").read_text()
+    renderer_header = (P4_RENDERER_COMPONENT / "p4_video_renderer.h").read_text()
+    source_cpp = (H264_SOURCE_COMPONENT / "esp_h264_video_source.cpp").read_text()
+    source_header = (H264_SOURCE_COMPONENT / "esp_h264_video_source.h").read_text()
 
     assert 'this->set_timeout("capture_linger", LINGER_MS' in camera_cpp
     assert "this->enable_loop_soon_any_context();" in camera_cpp
@@ -687,20 +667,8 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "A full bounded queue means the decoder has fallen behind." in renderer_cpp
     assert "xRingbuffer" not in renderer_cpp
     assert "RingbufHandle_t" not in renderer_header
-    renderer_config = (
-        ROOT
-        / "esphome"
-        / "components"
-        / "p4_video_renderer"
-        / "__init__.py"
-    ).read_text()
-    source_config = (
-        ROOT
-        / "esphome"
-        / "components"
-        / "esp_h264_video_source"
-        / "__init__.py"
-    ).read_text()
+    renderer_config = (P4_RENDERER_COMPONENT / "__init__.py").read_text()
+    source_config = (H264_SOURCE_COMPONENT / "__init__.py").read_text()
     camera_config = (
         ROOT
         / "esphome"
@@ -806,10 +774,15 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         in renderer_cpp
     )
     assert "xSemaphoreTake(this->presentation_mutex_, portMAX_DELAY);" in renderer_cpp
-    assert renderer_loop.index(
-        "if (xSemaphoreTake(this->presentation_mutex_, 0) != pdTRUE)"
-    ) < renderer_loop.index(
-        "this->video_ended_pending_.exchange(false, std::memory_order_acq_rel)"
+    deactivate = renderer_cpp[
+        renderer_cpp.index("bool P4VideoRenderer::set_video_active(bool active)") :
+        renderer_cpp.index("bool P4VideoRenderer::consume_video_access_unit(")
+    ]
+    assert deactivate.index(
+        "xSemaphoreTake(this->presentation_mutex_, portMAX_DELAY)"
+    ) < deactivate.index("this->pending_surface_.store(-1")
+    assert deactivate.index("xSemaphoreGive(this->presentation_mutex_)") < (
+        deactivate.index("this->video_ended_pending_.store(true")
     )
     assert renderer_loop.index(
         "this->video_ended_pending_.exchange(false, std::memory_order_acq_rel)"
@@ -851,13 +824,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "CONFIG_ESP_H264_DUAL_TASK_PRIORITY" not in (
         renderer_config
     )
-    h264_source_config = (
-        ROOT
-        / "esphome"
-        / "components"
-        / "esp_h264_video_source"
-        / "__init__.py"
-    ).read_text()
+    h264_source_config = (H264_SOURCE_COMPONENT / "__init__.py").read_text()
     assert "CONFIG_ESP_H264_DUAL_TASK" not in h264_source_config
     renderer_setup = renderer_cpp[
         renderer_cpp.index("void P4VideoRenderer::setup()") :
@@ -892,7 +859,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         in renderer_cpp
     )
     assert "this->compute_h264_surface_geometry_(" in render_i420
-    assert "config.out.buffer = this->surfaces_[0];" in render_i420
+    assert "config.out.buffer = this->surfaces_[output_index];" in render_i420
     assert "config.out.pic_w = geometry.surface_width;" in render_i420
     assert "config.out.pic_h = geometry.surface_height;" in render_i420
     assert "geometry.scale_units" in render_i420
@@ -904,8 +871,8 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     )
     assert "kH264SurfaceWidth) / width" not in render_i420
     assert "get_frame_buffer()" not in render_i420
-    assert "this->prepare_surface_(0, geometry);" in render_i420
-    assert "this->commit_direct_surface_(0)" in render_i420
+    assert "this->prepare_surface_(output_index, geometry);" in render_i420
+    assert "this->commit_direct_surface_(output_index)" in render_i420
     assert "memset(this->surfaces_[output_index], 0, kSurfaceBytes)" not in (
         render_i420
     )
@@ -1098,34 +1065,10 @@ def test_p4_video_boundaries_fail_closed() -> None:
     dsi_header = (
         ROOT / "esphome" / "components" / "mipi_dsi" / "mipi_dsi.h"
     ).read_text()
-    jpeg_source = (
-        ROOT
-        / "esphome"
-        / "components"
-        / "esp_jpeg_video_source"
-        / "esp_jpeg_video_source.cpp"
-    ).read_text()
-    h264_config = (
-        ROOT
-        / "esphome"
-        / "components"
-        / "esp_h264_video_source"
-        / "__init__.py"
-    ).read_text()
-    h264_source = (
-        ROOT
-        / "esphome"
-        / "components"
-        / "esp_h264_video_source"
-        / "esp_h264_video_source.cpp"
-    ).read_text()
-    renderer_config = (
-        ROOT
-        / "esphome"
-        / "components"
-        / "p4_video_renderer"
-        / "__init__.py"
-    ).read_text()
+    jpeg_source = (JPEG_SOURCE_COMPONENT / "esp_jpeg_video_source.cpp").read_text()
+    h264_config = (H264_SOURCE_COMPONENT / "__init__.py").read_text()
+    h264_source = (H264_SOURCE_COMPONENT / "esp_h264_video_source.cpp").read_text()
+    renderer_config = (P4_RENDERER_COMPONENT / "__init__.py").read_text()
 
     submit = dsi_cpp[
         dsi_cpp.index("bool MipiDsi::submit_bitmap_(") :

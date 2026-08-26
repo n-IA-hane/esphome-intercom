@@ -18,7 +18,7 @@ substitutions:
 external_components:
   - source: ../../../../esphome-esp-video-camera/components
     components: [esp_video_camera]
-  - source: ${ext_components_source}
+  - source: ${voip_stack_components_source}
     components: [esp_jpeg_video_source, p4_video_renderer]
 
 esp_video_camera:
