@@ -41,7 +41,6 @@ esp_jpeg_video_source:
 p4_video_renderer:
   id: p4_video
   codec: jpeg
-  task_stacks_in_psram: false
   width: ${p4_video_width}
   height: ${p4_video_height}
   framerate: ${p4_video_fps}

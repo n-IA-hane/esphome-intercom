@@ -52,7 +52,6 @@ esp_h264_video_source:
 p4_video_renderer:
   id: p4_video
   codec: h264
-  task_stacks_in_psram: true
   width: ${p4_video_rx_width}
   height: ${p4_video_rx_height}
   framerate: ${p4_video_fps}

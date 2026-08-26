@@ -66,7 +66,7 @@ The maintained ESP32-P4 profiles wire four components. They are excluded when
 | `esp_video_camera` | Espressif `esp_video` V4L2 camera source and native ESPHome camera entity. Required `i2c_id`; options include `device`, `resolution`, `jpeg_quality`, `max_framerate`, `rotation`, XCLK controls and optional UVC support. `device: jpeg` exposes hardware JPEG frames, while `device: csi` exposes raw CSI frames for H.264. |
 | `esp_jpeg_video_source` | Borrowed JPEG access-unit adapter with `camera_id`, `width`, `height` and `framerate`. It requires a JPEG-producing camera and performs no decode/re-encode or per-frame allocation. |
 | `esp_h264_video_source` | ESP32-P4 hardware H.264 encoder with `camera_id`, `width`, `height`, `framerate`, `bitrate` and `gop`. Width and height must be multiples of 16 and the camera must use `device: csi`. PPA performs crop, rotation and scaling before the Espressif encoder. |
-| `p4_video_renderer` | Encoded RX sink with `codec`, preferred `width`, `height`, `framerate`, decode bounds, `task_stacks_in_psram`, optional `display_id`, `display_rotation`, `on_first_frame` and `on_video_ended`. H.264 requires `display_id` and presents through the direct P4 display path. |
+| `p4_video_renderer` | Encoded RX sink with `codec`, preferred `width`, `height`, `framerate`, decode bounds, optional `display_id`, `display_rotation`, `on_first_frame` and `on_video_ended`. H.264 requires `display_id` and presents through the direct P4 display path. |
 
 The source and renderer codec must match `voip_stack.video.codec`. The shipped
 P4 packages are the reference wiring; custom YAMLs should copy one complete

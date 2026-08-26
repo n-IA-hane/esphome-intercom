@@ -649,10 +649,9 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     ) < h264_decode.index("this->render_i420_(")
     assert "dropping before\n    // decode would corrupt" in h264_decode
     assert "static constexpr uint8_t kTaskPriority = 17;" in renderer_header
-    assert (
-        "this, kTaskPriority, 1, this->task_stacks_in_psram_"
-        in renderer_cpp
-    )
+    assert "this, kTaskPriority, 1, kTaskStackInPsram" in renderer_cpp
+    assert "static constexpr bool kTaskStackInPsram = true;" in renderer_header
+    assert "static constexpr bool kTaskStackInPsram = false;" in renderer_header
     assert (
         "static constexpr size_t kMaxAccessUnitBytes = 128 * 1024;"
         in renderer_header
@@ -706,8 +705,13 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         ROOT / "packages" / "voip" / "p4_video_h264.yaml"
     ).read_text()
     assert (
-        len(re.findall(r"(?m)^  task_stacks_in_psram: true$", h264_package)) == 2
+        len(re.findall(r"(?m)^  task_stacks_in_psram: true$", h264_package)) == 1
     )
+    renderer_yaml = h264_package[
+        h264_package.index("p4_video_renderer:") :
+        h264_package.index("voip_stack:")
+    ]
+    assert "task_stacks_in_psram" not in renderer_yaml
     assert "audio_task_stacks_in_psram: false" in h264_package
     assert "buffers_in_psram: false" in h264_package
     assert 'p4_video_width: "400"' in h264_package
@@ -1007,7 +1011,13 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         source_cpp.index("bool EspH264VideoSource::encode_frame_(") :
         source_cpp.index("void EspH264VideoSource::consume_raw_video_frame(")
     ]
-    assert "xSemaphoreTake" not in encode_frame
+    assert "xSemaphoreTake(this->control_mutex_, portMAX_DELAY)" in encode_frame
+    assert encode_frame.index(
+        "xSemaphoreTake(this->control_mutex_, portMAX_DELAY)"
+    ) < encode_frame.index("this->callback_(this->callback_ctx_, access_unit);")
+    assert encode_frame.index("this->callback_(this->callback_ctx_, access_unit);") < (
+        encode_frame.index("xSemaphoreGive(this->control_mutex_)")
+    )
     assert "this->tx_active_.load(std::memory_order_acquire)" in encode_frame
     assert "slot->state.store(2, std::memory_order_release);" in source_consume
     assert "PPA_TRANS_MODE_BLOCKING" in source_cpp
@@ -1027,7 +1037,8 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "this->encode_frame_(" not in source_consume
     assert "generation ==" in encode_frame
     assert "this->tx_generation_.load(std::memory_order_acquire)" in encode_frame
-    assert "start_tx_task_" not in source_setup
+    assert "this->start_tx_task_()" in source_setup
+    assert "this->start_tx_task_()" not in source_start
     source_stop = source_cpp[
         source_cpp.index("void EspH264VideoSource::stop_video()") :
         source_cpp.index("void EspH264VideoSource::request_key_frame()")
@@ -1043,10 +1054,12 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "xSemaphoreTake(this->control_mutex_" not in tx_task
     assert "this->encode_frame_(" in tx_task
     assert source_stop.index("this->tx_active_.exchange(false") < (
-        source_stop.index("this->stop_tx_task_()")
+        source_stop.index("this->wait_for_tx_idle_()")
     )
     callback_revoke = source_stop.index("this->callback_ = nullptr;")
-    assert source_stop.index("this->stop_tx_task_()") < callback_revoke
+    assert source_stop.index("this->wait_for_tx_idle_()") < callback_revoke
+    assert "this->stop_tx_task_()" not in source_stop
+    assert "xSemaphoreTake(this->tx_idle_, 0)" in source_stop
     assert "this->callback_ctx_ = nullptr;" in source_stop
     shutdown = source_cpp[
         source_cpp.index("void EspH264VideoSource::on_shutdown()") :
@@ -1055,7 +1068,9 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert shutdown.index("this->stop_video();") < shutdown.index(
         "this->close_encoder_();"
     )
-    assert "stop_tx_task_" not in shutdown
+    assert shutdown.index("this->stop_video();") < shutdown.index(
+        "this->stop_tx_task_();"
+    ) < shutdown.index("this->close_encoder_();")
 
 
 def test_p4_video_boundaries_fail_closed() -> None:
