@@ -894,7 +894,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "expected_bytes > this->surface_capacity_bytes_" in direct_present
     assert "this->surface_content_width_[index]" in direct_present
     assert "this->surface_content_height_[index]" in direct_present
-    assert "present_buffer_region(" in direct_present
+    assert "direct_display_->draw_pixels_at(" in direct_present
     assert "this->surfaces_[index]" in direct_present
     assert "const int content_width = kH264SurfaceWidth;" not in (
         direct_present

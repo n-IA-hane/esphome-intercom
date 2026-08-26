@@ -304,21 +304,6 @@ bool MipiDsi::submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
   return true;
 }
 
-bool MipiDsi::present_frame_buffer_region(int x, int y, int width,
-                                          int height) {
-  if (this->frame_buffer_ == nullptr || width <= 0 || height <= 0)
-    return false;
-  return this->present_buffer_region(this->frame_buffer_, x, y, width,
-                                     height);
-}
-
-bool MipiDsi::present_buffer_region(const uint8_t *buffer, int x, int y,
-                                    int width, int height) {
-  if (buffer == nullptr || width <= 0 || height <= 0)
-    return false;
-  return this->submit_bitmap_(x, y, x + width, y + height, buffer);
-}
-
 void MipiDsi::write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,
                                 int x_pad) {
   if (this->is_failed())
