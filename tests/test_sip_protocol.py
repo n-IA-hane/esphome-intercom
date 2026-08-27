@@ -32,6 +32,26 @@ from .voip_phase1_support import (
 
 
 class SipProtocolBugFixTest(unittest.TestCase):
+    def test_dialog_headers_can_separate_via_flow_from_contact(self) -> None:
+        ids = sip.SipDialogIds("register", "local", branch="z9hG4bKflow")
+        headers = sip.dialog_headers(
+            request_uri="sip:registrar.example",
+            local_uri="sip:ha@registrar.example",
+            remote_uri="sip:ha@registrar.example",
+            dialog=ids,
+            method="REGISTER",
+            contact_uri="sip:ha@192.0.2.10:5060;transport=udp",
+            via_sent_by=("2001:db8::10", 40175),
+        )
+
+        via = sip.parse_via(dict(headers)["Via"])
+        self.assertEqual((via.host, via.port), ("2001:db8::10", 40175))
+        self.assertIn(("rport", None), via.params)
+        self.assertEqual(
+            dict(headers)["Contact"],
+            "<sip:ha@192.0.2.10:5060;transport=udp>",
+        )
+
     def test_tls_via_round_trip(self) -> None:
         ids = sip.SipDialogIds("call", "local", branch="z9hG4bKtls")
         headers = sip.dialog_headers(
@@ -1746,6 +1766,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
                 request = sip.parse_message(data)
                 self.requests.append((request, addr))
+                via = sip.parse_via(request.header("Via"))
                 headers = [
                     *[("Via", value) for value in request.header_values("Via")],
                     ("From", request.header("From")),
@@ -1781,7 +1802,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 assert self.transport is not None
                 self.transport.sendto(
                     sip.build_response(status, reason, headers),
-                    addr,
+                    (via.host, via.port),
                 )
 
         loop = asyncio.get_running_loop()
@@ -1823,6 +1844,15 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(second[0].uri, "sip:fritz.box")
             self.assertIn("<sip:ha@fritz.box>", first[0].header("To"))
             self.assertEqual(first[1], second[1])
+            self.assertEqual(
+                (sip.parse_via(first[0].header("Via")).host,
+                 sip.parse_via(first[0].header("Via")).port),
+                first[1],
+            )
+            self.assertEqual(
+                sip.parse_sip_uri(first[0].header("Contact")).port,
+                5060,
+            )
             self.assertFalse(first[0].header("Authorization"))
             self.assertTrue(second[0].header("Authorization").startswith("Digest "))
             self.assertEqual(
@@ -1839,6 +1869,105 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             trunk.registered = False
             await trunk.stop()
             server_transport.close()
+
+    async def test_udp_trunk_trusts_all_configured_peer_addresses_without_port_matching(
+        self,
+    ) -> None:
+        class Resolver:
+            async def resolve(self, uri, *, transport=""):
+                del transport
+                if uri.host == "proxy.example":
+                    return (
+                        sip_resolution.SipServerTarget(
+                            "edge-a.example", 5060, "UDP", ("192.0.2.10",),
+                        ),
+                        sip_resolution.SipServerTarget(
+                            "edge-b.example", 5060, "UDP", ("192.0.2.11",),
+                        ),
+                    )
+                return (
+                    sip_resolution.SipServerTarget(
+                        "registrar.example", 5060, "UDP", ("198.51.100.20",),
+                    ),
+                )
+
+        config = sip_trunk.SipTrunkConfig(
+            enabled=True,
+            transport="udp",
+            server="registrar.example",
+            port=5060,
+            domain="registrar.example",
+            username="ha",
+            auth_username="ha",
+            password="secret",
+            expires=300,
+            outbound_proxy="sip:proxy.example:5060;transport=udp",
+        )
+        trunk = sip_trunk.SipTrunkClient(
+            config=config,
+            local_ip="127.0.0.1",
+            local_sip_port=5060,
+            target_resolver=Resolver(),
+        )
+
+        await trunk._refresh_udp_trusted_hosts()
+        self.assertEqual(
+            trunk._trusted_udp_hosts,
+            frozenset({"192.0.2.10", "192.0.2.11", "198.51.100.20"}),
+        )
+        trunk.registered = True
+        self.assertTrue(trunk.accepts_inbound_source("192.0.2.11", 62000, "UDP"))
+        self.assertTrue(trunk.accepts_inbound_source("198.51.100.20", 5060, "udp"))
+        self.assertFalse(trunk.accepts_inbound_source("203.0.113.99", 5060, "UDP"))
+        self.assertFalse(trunk.accepts_inbound_source("192.0.2.11", 5060, "TCP"))
+        trunk.registered = False
+        self.assertFalse(trunk.accepts_inbound_source("192.0.2.11", 5060, "UDP"))
+
+    async def test_udp_register_timeout_retires_flow_before_retry(self) -> None:
+        class Transport:
+            def __init__(self) -> None:
+                self.closed = False
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+            def close(self) -> None:
+                self.closed = True
+
+        config = sip_trunk.SipTrunkConfig(
+            enabled=True,
+            transport="udp",
+            server="192.0.2.10",
+            port=5060,
+            domain="example.test",
+            username="ha",
+            auth_username="ha",
+            password="secret",
+            expires=300,
+        )
+        trunk = sip_trunk.SipTrunkClient(
+            config=config,
+            local_ip="192.0.2.20",
+            local_sip_port=5060,
+        )
+        transport = Transport()
+        trunk.transport = transport  # type: ignore[assignment]
+        trunk.protocol = object()  # type: ignore[assignment]
+        trunk._udp_local_port = 40175
+
+        with patch.object(
+            trunk,
+            "_failover_registrar",
+            new=unittest.mock.AsyncMock(return_value=False),
+        ):
+            result = await trunk.register(timeout=0.01)
+
+        self.assertEqual(result, "timeout")
+        self.assertTrue(transport.closed)
+        self.assertIsNone(trunk.transport)
+        self.assertIsNone(trunk.protocol)
+        self.assertIsNone(trunk._udp_local_port)
 
     async def test_tcp_trunk_connects_to_next_rfc3263_target(self) -> None:
         class Resolver:

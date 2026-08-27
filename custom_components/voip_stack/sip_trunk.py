@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from dataclasses import dataclass, replace
+import ipaddress
 import logging
 import socket
 import ssl
@@ -92,6 +93,7 @@ class SipTrunkClient:
         self.responses: asyncio.Queue[sip.SipMessage] = asyncio.Queue(maxsize=32)
         self.protocol: SipDatagramQueueProtocol | None = None
         self.transport: asyncio.DatagramTransport | None = None
+        self._udp_local_port: int | None = None
         self.reader: asyncio.StreamReader | None = None
         self.writer: asyncio.StreamWriter | None = None
         self._tcp_writer: SipTcpWriter | None = None
@@ -317,8 +319,7 @@ class SipTrunkClient:
         self.request_handler = None
         self.inbound_endpoint = None
         if self.transport is not None:
-            self.transport.close()
-            self.transport = None
+            self._close_udp_transport()
         if self._tcp_writer is not None:
             await self._tcp_writer.close()
             self._tcp_writer = None
@@ -483,6 +484,32 @@ class SipTrunkClient:
             transport.close()
             raise RuntimeError("SIP trunk stopped while opening UDP transport")
         self.transport = transport  # type: ignore[assignment]
+        sockname = transport.get_extra_info("sockname")
+        if not isinstance(sockname, tuple) or len(sockname) < 2 or int(sockname[1]) <= 0:
+            self._close_udp_transport()
+            raise ConnectionError("SIP trunk UDP socket has no usable local port")
+        self._udp_local_port = int(sockname[1])
+        _LOGGER.info(
+            "SIP trunk UDP socket bound %s:%s",
+            self.local_ip,
+            self._udp_local_port,
+        )
+
+    def _close_udp_transport(self) -> None:
+        transport = self.transport
+        self.transport = None
+        self.protocol = None
+        self._udp_local_port = None
+        if transport is not None:
+            transport.close()
+
+    def _reset_udp_transport_after_timeout(self) -> None:
+        """Retire one failed UDP flow before the refresh owner retries."""
+
+        self._close_udp_transport()
+        while not self.responses.empty():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self.responses.get_nowait()
 
     async def _failover_registrar(self) -> bool:
         """Move one unconfirmed REGISTER transaction to its next server."""
@@ -505,10 +532,7 @@ class SipTrunkClient:
             sock = self.transport.get_extra_info("socket")
             current_family = getattr(sock, "family", None)
         if self.transport is not None and current_family not in {None, family}:
-            self.transport.close()
-            self.transport = None
-            self.protocol = None
-        self._trusted_udp_hosts = frozenset((address,))
+            self._close_udp_transport()
         if self.transport is None:
             await self._connect_udp(refresh=False)
         return True
@@ -519,7 +543,26 @@ class SipTrunkClient:
         if self.transport_name in {"TCP", "TLS"}:
             return
         try:
-            candidate = await self._resolve_registrar()
+            await self._resolve_registrar()
+            resolved = {
+                normalized
+                for item in self._registrar_candidates
+                for address in item.addresses
+                if (normalized := self._normalize_ip(address))
+            }
+            server_target = (str(self.config.server), int(self.config.port))
+            if server_target != self.registrar_target:
+                server_candidates = await self.target_resolver.resolve(
+                    sip.SipUri("", server_target[0], server_target[1]),
+                    transport="UDP",
+                )
+                resolved.update(
+                    normalized
+                    for item in server_candidates
+                    for address in item.addresses
+                    if (normalized := self._normalize_ip(address))
+                )
+            resolved = frozenset(resolved)
         except OSError:
             if self._trusted_udp_hosts:
                 _LOGGER.warning(
@@ -528,13 +571,37 @@ class SipTrunkClient:
                 )
                 return
             raise
-        resolved = frozenset(candidate.addresses)
         if not resolved:
             raise OSError(f"SIP trunk UDP proxy {self.registrar_host!r} has no address")
         self._trusted_udp_hosts = resolved
 
+    @staticmethod
+    def _normalize_ip(value: str) -> str:
+        candidate = str(value or "").strip().strip("[]").split("%", 1)[0]
+        try:
+            return ipaddress.ip_address(candidate).compressed
+        except ValueError:
+            return ""
+
     def _udp_source_is_trusted(self, addr: tuple[str, int]) -> bool:
-        return bool(self._trusted_udp_hosts) and str(addr[0]) in self._trusted_udp_hosts
+        source = self._normalize_ip(addr[0])
+        return bool(source and self._trusted_udp_hosts) and source in self._trusted_udp_hosts
+
+    def accepts_inbound_source(
+        self,
+        source_host: str,
+        source_port: int,
+        signaling_transport: str,
+    ) -> bool:
+        """Identify an inbound request using the configured UDP peer ACL."""
+
+        del source_port
+        return bool(
+            self.registered
+            and self.transport_name == "UDP"
+            and str(signaling_transport or "").upper() == "UDP"
+            and self._udp_source_is_trusted((source_host, 0))
+        )
 
     async def _send_raw(self, raw: bytes) -> None:
         if self.transport_name in {"TCP", "TLS"}:
@@ -920,6 +987,8 @@ class SipTrunkClient:
                     self.transport_name,
                     expires_value,
                 )
+                if self.transport_name == "UDP":
+                    self._reset_udp_transport_after_timeout()
                 return "timeout"
             except Exception as err:
                 try:
@@ -1047,6 +1116,9 @@ class SipTrunkClient:
             method="REGISTER",
             contact_uri=self.contact_uri,
             transport=self.transport_name,
+            via_sent_by=(self.local_ip, self._udp_local_port)
+            if self.transport_name == "UDP" and self._udp_local_port is not None
+            else None,
         )
         headers.append(("Expires", str(int(expires))))
         if self.transport_name in {"TCP", "TLS"}:

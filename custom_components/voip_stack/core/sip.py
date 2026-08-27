@@ -1002,10 +1002,12 @@ def dialog_headers(
     local_display_name: str = "",
     remote_display_name: str = "",
     contact_display_name: str = "",
+    via_sent_by: tuple[str, int | None] | None = None,
 ) -> list[tuple[str, str]]:
     """Build the common headers used by the ESP/HA phase-1 profile."""
     contact = parse_sip_uri(contact_uri)
-    sent_by = format_host_port(contact.host, contact.port)
+    via_host, via_port = via_sent_by or (contact.host, contact.port)
+    sent_by = format_host_port(via_host, via_port)
     via_transport = (transport or "UDP").strip().upper()
     if via_transport not in {"UDP", "TCP", "TLS"}:
         raise SipError(f"unsupported SIP transport {transport!r}")

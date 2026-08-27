@@ -2,16 +2,69 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from custom_components.voip_stack import trunk_inbound_router
+from custom_components.voip_stack import endpoint_runtime, trunk_inbound_router
 
 
 pytestmark = pytest.mark.ha
+
+
+@dataclass(frozen=True)
+class _TestInvite:
+    received_via_trunk: bool
+    source_host: str
+    source_port: int
+    signaling_transport: str
+
+
+def _invite(*, received_via_trunk: bool = False) -> _TestInvite:
+    return _TestInvite(
+        received_via_trunk=received_via_trunk,
+        source_host="198.51.100.20",
+        source_port=49152,
+        signaling_transport="UDP",
+    )
+
+
+def test_registered_trunk_classifies_trusted_main_listener_invite() -> None:
+    trunk = SimpleNamespace(
+        registered=True,
+        accepts_inbound_source=Mock(return_value=True),
+    )
+
+    classified = endpoint_runtime._classify_trunk_invite(
+        _invite(), enabled=True, trunk=trunk
+    )
+
+    assert classified.received_via_trunk
+    trunk.accepts_inbound_source.assert_called_once_with(
+        "198.51.100.20", 49152, "UDP"
+    )
+
+
+def test_untrusted_or_unregistered_invite_is_not_classified_as_trunk() -> None:
+    untrusted = SimpleNamespace(
+        registered=True,
+        accepts_inbound_source=Mock(return_value=False),
+    )
+    unregistered = SimpleNamespace(
+        registered=False,
+        accepts_inbound_source=Mock(return_value=True),
+    )
+
+    assert not endpoint_runtime._classify_trunk_invite(
+        _invite(), enabled=True, trunk=untrusted
+    ).received_via_trunk
+    assert not endpoint_runtime._classify_trunk_invite(
+        _invite(received_via_trunk=True), enabled=True, trunk=unregistered
+    ).received_via_trunk
+    unregistered.accepts_inbound_source.assert_not_called()
 
 
 def test_dtmf_route_keeps_provisional_owner_until_bridge_commit() -> None:

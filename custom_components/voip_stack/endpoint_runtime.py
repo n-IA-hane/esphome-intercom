@@ -11,6 +11,7 @@ through the runtime dataclasses instead of rebuilding lifecycle state here.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from functools import partial
 import logging
 import time
@@ -86,6 +87,30 @@ _LOGGER = logging.getLogger(__name__)
 SIP_ROUTE_DECISION_TIMEOUT = 1.5
 MAX_TRUNK_INFO_DIGITS = 16
 MAX_PENDING_HA_INVITES = 64
+
+
+def _classify_trunk_invite(invite, *, enabled: bool, trunk):
+    """Apply the authoritative registered-trunk source classification."""
+
+    trusted = False
+    if enabled and getattr(trunk, "registered", False):
+        if invite.received_via_trunk:
+            trusted = True
+        else:
+            accepts_source = getattr(trunk, "accepts_inbound_source", None)
+            trusted = bool(
+                callable(accepts_source)
+                and accepts_source(
+                    invite.source_host,
+                    invite.source_port,
+                    invite.signaling_transport,
+                )
+            )
+    if invite.received_via_trunk == trusted:
+        return invite
+    return replace(invite, received_via_trunk=trusted)
+
+
 class _RegistrarExpiryScheduler:
     """Own the single timer for the nearest SIP Contact expiry."""
 
@@ -240,14 +265,17 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         closer=application_methods.stop,
     )
 
-    def _is_trunk_invite(invite: SipInvite) -> bool:
+    def _classified_trunk_invite(invite):
         trunk_cfg = _get_trunk_config(hass)
         trunk = sip_trunk(hass)
-        return bool(
-            _trunk_enabled(trunk_cfg)
-            and invite.received_via_trunk
-            and getattr(trunk, "registered", False)
+        return _classify_trunk_invite(
+            invite,
+            enabled=_trunk_enabled(trunk_cfg),
+            trunk=trunk,
         )
+
+    def _is_trunk_invite(invite: SipInvite) -> bool:
+        return _classified_trunk_invite(invite).received_via_trunk
 
     assist_endpoint = AssistEndpoint(
         hass=hass,
@@ -664,6 +692,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     pbx_runtime.start_ring_group_from_ha = _start_ring_group_from_ha
 
     async def _on_invite(invite: SipInvite) -> SipInviteResult:
+        invite = _classified_trunk_invite(invite)
         return await route_invite(
             InviteRuntime(
                 hass=hass,
@@ -698,6 +727,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
     ) -> UasDelayedOfferPlan | None:
         """Prepare one offer, then continue through the canonical router."""
 
+        initial = _classified_trunk_invite(initial)
         registry = _call_registry(hass)
         session = registry.upsert(
             initial.call_id,
