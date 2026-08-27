@@ -204,6 +204,18 @@ class BridgeMediaUpdateBinder:
                     source_video_peer = invite_video_rtp_peer(
                         source_reinvite.candidate
                     )
+                    if source_video_peer is not video_relay.left:
+                        _, rollback_left_video = (
+                            video_relay.stage_peer_reconfiguration(
+                                "left",
+                                source_video_peer,
+                            )
+                        )
+                        rollback_right_video = rollback_video
+
+                        def rollback_video() -> None:
+                            rollback_left_video()
+                            rollback_right_video()
                 proposed_transcoding = video_relay.transcode_directions_for(
                     source_video_peer,
                     next_video_peer,

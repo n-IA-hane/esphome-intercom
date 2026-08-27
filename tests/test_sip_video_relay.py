@@ -371,6 +371,38 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertEqual(rtp.parse_packet(forwarded).payload, b"sps-pps-idr")
         self.assertEqual(rtp.parse_packet(forwarded).payload_type, 102)
 
+    def test_passthrough_generation_does_not_require_transcoder(self) -> None:
+        self.relay.started = True
+        replacement_left = VideoRtpPeer(
+            self.left.host,
+            self.left.port,
+            self.left.rtcp_port,
+            _format(102, direction="sendrecv"),
+        )
+        replacement_right = VideoRtpPeer(
+            self.right.host,
+            self.right.port,
+            self.right.rtcp_port,
+            _format(110, direction="sendrecv"),
+        )
+        self.relay.stage_peer_reconfiguration("left", replacement_left)
+        self.relay.stage_peer_reconfiguration("right", replacement_right)
+
+        commit, _rollback = asyncio.run(
+            self.relay.async_prepare_peer_generation(
+                left=replacement_left,
+                right=replacement_right,
+            )
+        )
+
+        self.assertIs(self.relay.left, self.left)
+        self.assertIs(self.relay.right, self.right)
+        asyncio.run(commit())
+        self.assertIs(self.relay.left, replacement_left)
+        self.assertIs(self.relay.right, replacement_right)
+        self.assertFalse(self.relay.transcoding)
+        self.assertIsNone(self.relay._transcode_hass)  # noqa: SLF001
+
     def test_opposite_side_staged_reconfigurations_commit_independently(self) -> None:
         left = VideoRtpPeer("10.0.0.9", 19000, 19001, _format(120))
         right = VideoRtpPeer("10.0.0.10", 20000, 20001, _format(121))

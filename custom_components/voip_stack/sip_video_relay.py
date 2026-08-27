@@ -677,13 +677,74 @@ class SipVideoRtpRelay:
     ) -> tuple[Callable[[], Awaitable[None]], Callable[[], Awaitable[None]]]:
         """Prepare one complete peer and transcoder generation atomically."""
 
-        if not self.started or self._transcode_hass is None:
-            raise RuntimeError("video relay transcoding is not active")
+        if not self.started:
+            raise RuntimeError("video relay is not active")
         previous_left = self.left
         previous_right = self.right
+        staged_left = self._staged_peers.get("left")
+        if left is not previous_left and (
+            staged_left is None or staged_left.peer is not left
+        ):
+            raise RuntimeError("left video peer is not staged")
         staged_right = self._staged_peers.get("right")
         if staged_right is None or staged_right.peer is not right:
             raise RuntimeError("right video peer is not staged")
+        directions = self.transcode_directions_for(left, right)
+
+        if not self._transcode.directions and not directions:
+            settled = False
+
+            async def rollback_passthrough() -> None:
+                nonlocal settled
+                if settled:
+                    return
+                settled = True
+                if self._staged_peers.get("left") is staged_left:
+                    self._staged_peers.pop("left", None)
+                if self._staged_peers.get("right") is staged_right:
+                    self._staged_peers.pop("right", None)
+
+            async def commit_passthrough() -> None:
+                nonlocal settled
+                if settled:
+                    raise RuntimeError("video peer generation already settled")
+                if (
+                    self.left is not previous_left
+                    or self.right is not previous_right
+                    or (
+                        staged_left is not None
+                        and self._staged_peers.get("left") is not staged_left
+                    )
+                    or self._staged_peers.get("right") is not staged_right
+                ):
+                    await rollback_passthrough()
+                    raise RuntimeError(
+                        "video relay peer changed before generation commit"
+                    )
+                settled = True
+                if staged_left is not None:
+                    self._staged_peers.pop("left", None)
+                self._staged_peers.pop("right", None)
+                left.rx_ssrc = None
+                left.rtcp_source_port = None
+                right.rx_ssrc = None
+                right.rtcp_source_port = None
+                self.left = left
+                self.right = right
+                self._keyframe_requests.clear()
+                for staged_side, staged_peer in (
+                    ("left", staged_left),
+                    ("right", staged_right),
+                ):
+                    if staged_peer is None:
+                        continue
+                    for data, addr in staged_peer.packets:
+                        self.handle_rtp(staged_side, data, addr)
+
+            return commit_passthrough, rollback_passthrough
+
+        if self._transcode_hass is None:
+            raise RuntimeError("video relay transcoding is not configured")
         loop = asyncio.get_running_loop()
         claimed_slot = not self._transcode_slot_claimed
         try:
@@ -698,6 +759,8 @@ class SipVideoRtpRelay:
         except BaseException:
             if self._staged_peers.get("right") is staged_right:
                 self._staged_peers.pop("right", None)
+            if self._staged_peers.get("left") is staged_left:
+                self._staged_peers.pop("left", None)
             if claimed_slot:
                 await _release_transcoder_slot(self._transcode_hass, self)
                 self._transcode_slot_claimed = False
@@ -712,6 +775,8 @@ class SipVideoRtpRelay:
             settled = True
             if self._staged_peers.get("right") is staged_right:
                 self._staged_peers.pop("right", None)
+            if self._staged_peers.get("left") is staged_left:
+                self._staged_peers.pop("left", None)
             await self._close_transcode_generation(generation)
             if claimed_slot:
                 await _release_transcoder_slot(self._transcode_hass, self)
@@ -724,12 +789,18 @@ class SipVideoRtpRelay:
             if (
                 self.left is not previous_left
                 or self.right is not previous_right
+                or (
+                    staged_left is not None
+                    and self._staged_peers.get("left") is not staged_left
+                )
                 or self._staged_peers.get("right") is not staged_right
             ):
                 await rollback()
                 raise RuntimeError("video relay peer changed before generation commit")
             settled = True
             self._staged_peers.pop("right", None)
+            if staged_left is not None:
+                self._staged_peers.pop("left", None)
             left.rx_ssrc = None
             left.rtcp_source_port = None
             right.rx_ssrc = None
@@ -742,8 +813,14 @@ class SipVideoRtpRelay:
             for side in ("left", "right"):
                 self._transcode_startup_rtp[side].clear()
                 self._transcode_startup_bytes[side] = 0
-            for data, addr in staged_right.packets:
-                self.handle_rtp("right", data, addr)
+            for staged_side, staged_peer in (
+                ("left", staged_left),
+                ("right", staged_right),
+            ):
+                if staged_peer is None:
+                    continue
+                for data, addr in staged_peer.packets:
+                    self.handle_rtp(staged_side, data, addr)
             await self._close_transcode_generation(old)
             if not generation.directions and self._transcode_slot_claimed:
                 await _release_transcoder_slot(self._transcode_hass, self)
