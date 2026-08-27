@@ -9,7 +9,7 @@ import sys
 
 ROOT = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
 VOICE_PE = ROOT / "yamls/experimental/home-assistant-voice-pe/home-assistant-voice-pe-voip.yaml"
-CAMERA_URL = "github://Psix-anp/esphome-esp-video-camera"
+CAMERA_URL = "github://n-IA-hane/esphome-esp-video-camera"
 REPOS = {
     "ext_components_source": ("github://n-IA-hane/esphome-intercom", ROOT),
     "voip_stack_components_source": ("github://n-IA-hane/esphome-voip-stack", ROOT.parent / "esphome-voip-stack"),
@@ -125,7 +125,7 @@ def camera_source_root(path):
 def rewrite_camera(path, ref):
     lines = path.read_text().splitlines()
     source_root = camera_source_root(path)
-    source = relative(source_root, CAMERA_ROOT / "components") if ref == "local" else f"{CAMERA_URL}@main"
+    source = relative(source_root, CAMERA_ROOT / "components") if ref == "local" else f"{CAMERA_URL}@{ref}"
     for index in range(1, len(lines)):
         if re.fullmatch(r"\s*components:\s*\[esp_video_camera\]\s*", lines[index]):
             match = re.match(r"^(\s*-\s*source:)\s*.*$", lines[index - 1])

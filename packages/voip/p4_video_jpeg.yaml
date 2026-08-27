@@ -16,7 +16,7 @@ substitutions:
   p4_video_max_decode_height: "800"
 
 external_components:
-  - source: ../../../../esphome-esp-video-camera/components
+  - source: github://n-IA-hane/esphome-esp-video-camera@dev
     components: [esp_video_camera]
   - source: ${voip_stack_components_source}
     components: [esp_jpeg_video_source, p4_video_renderer]
