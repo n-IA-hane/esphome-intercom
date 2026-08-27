@@ -516,7 +516,7 @@ class FrontendCardContractTest(unittest.TestCase):
         )[0]
         self.assertNotIn("video_offered", wants_video)
         self.assertIn("this._softphoneSnapshot?.send_video", start)
-        self.assertNotIn("targetSupportsVideo", start)
+        self.assertIn("this._targetSupportsVideo(target)", start)
         self.assertIn("endpointId: this._getSoftphoneEndpointId()", answer)
         self.assertIn("endpointId: this._getSoftphoneEndpointId()", start)
         self.assertIn("persistentOnly: true", auto_answer)
@@ -534,7 +534,14 @@ class FrontendCardContractTest(unittest.TestCase):
 
         self.assertIn("targetFromRosterEntry(entry)", target)
         self.assertIn("this._softphoneSnapshot?.send_video", start)
-        self.assertNotIn("targetSupportsVideo", start)
+        self.assertIn("this._targetSupportsVideo(target)", start)
+
+    def test_esp_video_send_control_is_discovered_from_its_switch(self) -> None:
+        render = _method_body(self.source, "_render")
+        toggle = _method_body(self.source, "async _toggleVideoCamera")
+
+        self.assertIn("this._videoSendSwitchEntityId", render)
+        self.assertIn("this._setSwitchEntity(this._videoSendSwitchEntityId, next)", toggle)
 
     def test_deep_link_answer_is_not_part_of_esp_mirror_state_updates(self) -> None:
         setter = _method_body(self.source, "set hass")

@@ -179,6 +179,10 @@ class SipEndpointParseTest(unittest.TestCase):
                 unique_id="abc-switch-voip_ring_on_conference",
             ),
             SimpleNamespace(
+                entity_id="switch.renamed_video_send",
+                unique_id="abc-switch-video_send",
+            ),
+            SimpleNamespace(
                 entity_id="camera.renamed_preview",
                 unique_id="abc-camera-front",
             ),
@@ -197,6 +201,7 @@ class SipEndpointParseTest(unittest.TestCase):
             collected["voip_conference_ring"],
             "switch.renamed_conference_ring",
         )
+        self.assertEqual(collected["video_send"], "switch.renamed_video_send")
         self.assertEqual(collected["camera"], "camera.renamed_preview")
 
     def test_list_devices_re_reads_live_endpoint_state(self) -> None:

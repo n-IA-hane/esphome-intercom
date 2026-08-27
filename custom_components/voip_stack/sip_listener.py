@@ -304,6 +304,8 @@ class _ActiveDialog(DialogSignalingState):
     delayed_offer: _PendingDelayedOffer | None = None
     prepared_video_reinvite: tuple[SipInvite, SipInvite, str] | None = None
     local_offer_in_progress: bool = False
+    local_video_reinvite_status: int = 0
+    local_video_reinvite_reason: str = ""
 
 
 @dataclass(slots=True)
@@ -1303,6 +1305,8 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         )
         prepared = False
         dialog.local_offer_in_progress = True
+        dialog.local_video_reinvite_status = 0
+        dialog.local_video_reinvite_reason = ""
         try:
             current_local_sdp = dialog.local_sdp_body or dialog.answer_sdp
             current_local = sdp.parse_sdp(current_local_sdp)
@@ -1349,6 +1353,12 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 body=offer.encode(),
                 content_type="application/sdp",
                 timeout=timeout,
+            )
+            dialog.local_video_reinvite_status = int(
+                response.status_code or 0
+            ) if response is not None else 408
+            dialog.local_video_reinvite_reason = (
+                str(response.reason or "") if response is not None else "Request Timeout"
             )
             if (
                 response is None

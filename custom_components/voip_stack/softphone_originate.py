@@ -234,7 +234,10 @@ async def async_originate_browser_call(
                 endpoint_id,
                 browser_destination.endpoint_id,
                 request_video=bool(
-                    browser_endpoint is not None and browser_endpoint.supports("video")
+                    browser_endpoint is not None
+                    and browser_endpoint.supports("video")
+                    and cfg.get(CONF_VIDEO_CAMERA_SEND, False)
+                    and call.data.get("send_video", False)
                 ),
                 enable_caller_video_send=bool(
                     cfg.get(CONF_VIDEO_CAMERA_SEND, False)
@@ -328,7 +331,10 @@ async def async_originate_browser_call(
                 endpoint_id=endpoint_id,
                 media_client_id=str(call.data.get("media_client_id") or ""),
                 request_video=bool(
-                    browser_endpoint is not None and browser_endpoint.supports("video")
+                    browser_endpoint is not None
+                    and browser_endpoint.supports("video")
+                    and cfg.get(CONF_VIDEO_CAMERA_SEND, False)
+                    and call.data.get("send_video", False)
                 ),
                 enable_caller_video_send=bool(
                     cfg.get(CONF_VIDEO_CAMERA_SEND, False)
@@ -483,11 +489,16 @@ async def async_originate_browser_call(
             for value in entry_metadata.get("capabilities", [])
         }
     )
-    video_enabled = (
+    video_capable = (
         bool(cfg.get(CONF_SIP_VIDEO, False))
         and source_video_enabled
         and target_video_enabled
         and (use_trunk or not native_audio_endpoint or esphome_sip_endpoint)
+    )
+    video_enabled = bool(
+        video_capable
+        and cfg.get(CONF_VIDEO_CAMERA_SEND, False)
+        and call.data.get("send_video", False)
     )
     video_reservation = None
     video_rtp_socket = None
@@ -518,14 +529,9 @@ async def async_originate_browser_call(
         video_offer_formats_for_target_codec,
     )
 
-    # Camera transmission is opt-in for each call.  Keep offering a receive
-    # path when it is off, but never advertise send capability solely because
-    # the administrator enabled browser camera transmission globally.
-    camera_send_enabled = (
-        video_enabled
-        and bool(cfg.get(CONF_VIDEO_CAMERA_SEND, False))
-        and bool(call.data.get("send_video", False))
-    )
+    # An outgoing browser call adds video only for an explicit per-call camera
+    # intent. Incoming offers remain independently answerable as recvonly.
+    camera_send_enabled = video_enabled
     offered_video_formats = (
         tuple(
             item for item in DEFAULT_VIDEO_FORMATS if browser_video_send_supported(item)

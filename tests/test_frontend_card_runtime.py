@@ -335,6 +335,14 @@ ws3Mirror._onMirroredBridgeStateEvent({{ data: {{
   peer_name: "Waveshare S3 Audio", dest_device_id: "device-ws3",
 }} }});
 assert.equal(ws3Mirror._mirroredConnectedPeer, "CG Casa");
+ws3Mirror._videoSendSwitchEntityId = "switch.p4_send_video";
+ws3Mirror._hass.states["switch.p4_send_video"] = {{ state: "on" }};
+const mirrorVideoCallsBefore = serviceCalls.length;
+await ws3Mirror._toggleVideoCamera(false);
+assert.equal(
+  JSON.stringify(serviceCalls[mirrorVideoCallsBefore]),
+  JSON.stringify(["switch", "turn_off", {{ entity_id: "switch.p4_send_video" }}]),
+);
 
 const card = makeCard();
 const antiAliasPreference = makeCard();
@@ -765,6 +773,7 @@ audioOnly._rosterEntries = [{{
 audioOnly._softphoneSnapshot = {{
   state: "idle", capabilities: ["audio", "video"],
   video_camera_send_enabled: true,
+  send_video: true,
 }};
 engine.videoCameraEnabled = true;
 let audioOnlyStart;

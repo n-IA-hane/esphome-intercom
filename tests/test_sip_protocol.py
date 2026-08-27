@@ -2667,6 +2667,46 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(await watcher, "remote_hangup")
 
+    async def test_local_reinvite_video_stream_rejection_preserves_audio_dialog(
+        self,
+    ) -> None:
+        client, current, sent, negotiated = self._confirmed_audio_client()
+        prepared = asyncio.create_task(
+            client.async_prepare_video_reinvite(
+                local_video_rtp_port=43000,
+                video_formats=(sdp.DEFAULT_VIDEO_FORMATS[3],),
+            )
+        )
+        request = await self._wait_for_sent_request(sent, "INVITE")
+        answer = sdp.build_answer_directional(
+            "127.0.0.2",
+            "127.0.0.2",
+            42000,
+            negotiated,
+            negotiated,
+            remote_sdp=request.body,
+        )
+        self.assertIn("m=video 0 RTP/AVP 26", answer)
+        client.queue.put_nowait(
+            (
+                self._response_to_request(request, 200, "OK", answer),
+                ("127.0.0.2", 5060),
+            )
+        )
+
+        candidate = await asyncio.wait_for(prepared, timeout=0.2)
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertIsNone(candidate.video_format)
+        self.assertIs(client.dialog, current)
+        self.assertTrue(client.commit_prepared_reinvite(current, candidate))
+        self.assertIs(client.dialog, candidate)
+        self.assertIsNone(client.video_format)
+        self.assertEqual(client.video_direction, "inactive")
+        methods = [sip.parse_message(raw).method for raw, _addr in sent]
+        self.assertIn("ACK", methods)
+        self.assertNotIn("BYE", methods)
+
     async def test_remote_bye_wins_during_local_reinvite(self) -> None:
         client, _current, sent, _negotiated = self._confirmed_audio_client()
         watcher = asyncio.create_task(

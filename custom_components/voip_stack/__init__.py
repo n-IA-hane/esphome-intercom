@@ -273,6 +273,14 @@ async def _handle_set_auto_answer_service(call: ServiceCall) -> None:
 
 async def _handle_set_send_video_service(call: ServiceCall) -> None:
     await _handle_browser_preference_service(call, preference="send_video")
+    endpoint_id, _endpoint = _service_browser_endpoint(call.hass, call, strict=True)
+    from .softphone_video_intent import async_apply_send_video_intent
+
+    await async_apply_send_video_intent(
+        call.hass,
+        endpoint_id,
+        bool(call.data.get("send_video")),
+    )
 
 
 async def _handle_set_ha_softphone_settings_service(call: ServiceCall) -> None:

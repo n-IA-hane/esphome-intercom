@@ -135,6 +135,7 @@ class VoipStackCard extends HTMLElement {
     this._callButtonEntityId = null;
     this._declineButtonEntityId = null;
     this._autoAnswerSwitchEntityId = null;
+    this._videoSendSwitchEntityId = null;
     this._dndSwitchEntityId = null;
     this._ringGroupsTextEntityId = null;
     this._conferenceGroupsTextEntityId = null;
@@ -392,6 +393,13 @@ class VoipStackCard extends HTMLElement {
   _softphoneSupportsVideo(snapshot = this._softphoneSnapshot || {}) {
     return Array.isArray(snapshot?.capabilities) &&
       snapshot.capabilities.some((item) => String(item).toLowerCase() === "video");
+  }
+
+  _targetSupportsVideo(target = {}) {
+    if (target?.manual || !Array.isArray(target?.capabilities)) return true;
+    return target.capabilities.some(
+      (item) => String(item).toLowerCase() === "video",
+    );
   }
 
   _otherPhoneOwnsBrowserMedia() {
@@ -719,7 +727,7 @@ class VoipStackCard extends HTMLElement {
       "_voipStateEntityId", "_transportEntityId", "_callerEntityId",
       "_destinationEntityId", "_lastReasonEntityId", "_previousButtonEntityId",
       "_nextButtonEntityId", "_callButtonEntityId", "_declineButtonEntityId",
-      "_autoAnswerSwitchEntityId", "_dndSwitchEntityId", "_ringGroupsTextEntityId",
+      "_autoAnswerSwitchEntityId", "_videoSendSwitchEntityId", "_dndSwitchEntityId", "_ringGroupsTextEntityId",
       "_conferenceGroupsTextEntityId", "_extensionTextEntityId",
       "_conferenceRingSwitchEntityId",
     ]) this[key] = null;
@@ -1520,6 +1528,7 @@ class VoipStackCard extends HTMLElement {
         this._callButtonEntityId = e.call || null;
         this._declineButtonEntityId = e.decline || null;
         this._autoAnswerSwitchEntityId = e.auto_answer || null;
+        this._videoSendSwitchEntityId = e.video_send || null;
         this._dndSwitchEntityId = e.dnd || null;
         this._extensionTextEntityId = e.voip_extension || null;
         this._ringGroupsTextEntityId = e.voip_ring_groups || null;
@@ -1559,6 +1568,7 @@ class VoipStackCard extends HTMLElement {
           else if (id.startsWith("button.") && id.includes("call") && !id.includes("decline")) this._callButtonEntityId = id;
           else if (id.startsWith("button.") && id.includes("decline")) this._declineButtonEntityId = id;
           else if (id.startsWith("switch.") && id.includes("auto_answer")) this._autoAnswerSwitchEntityId = id;
+          else if (id.startsWith("switch.") && (id.includes("video_send") || id.includes("send_video"))) this._videoSendSwitchEntityId = id;
           else if (id.startsWith("switch.") && (id.includes("do_not_disturb") || id.includes("_dnd"))) this._dndSwitchEntityId = id;
           else if (id.startsWith("text.") && id.includes("voip_extension")) this._extensionTextEntityId = id;
           else if (id.startsWith("text.") && id.includes("voip_ring_groups")) this._ringGroupsTextEntityId = id;
@@ -1907,11 +1917,14 @@ class VoipStackCard extends HTMLElement {
       els.microphoneAntiAliasCheckbox.checked = this._micAntiAliasEnabled;
     }
     if (els.videoCameraRow) {
-      const cameraAvailable = softphoneMode &&
-        this._softphoneSupportsVideo() &&
-        !!this._softphoneSnapshot?.video_camera_send_enabled;
+      const cameraAvailable = softphoneMode
+        ? this._softphoneSupportsVideo() &&
+          !!this._softphoneSnapshot?.video_camera_send_enabled
+        : !!this._videoSendSwitchEntityId;
       els.videoCameraRow.hidden = !(showSettingsPanel && cameraAvailable);
-      els.videoCameraCheckbox.checked = !!this._softphoneSnapshot?.send_video;
+      els.videoCameraCheckbox.checked = softphoneMode
+        ? !!this._softphoneSnapshot?.send_video
+        : this._entityState(this._videoSendSwitchEntityId).toLowerCase() === "on";
     }
     if (els.dndRow) {
       const dndAvailable = softphoneMode || !!this._dndSwitchEntityId;
@@ -2275,6 +2288,7 @@ class VoipStackCard extends HTMLElement {
     if (operationId !== this._callOperationId) return;
     let sendVideo = Boolean(
       this._softphoneSupportsVideo() &&
+      this._targetSupportsVideo(target) &&
       this._softphoneSnapshot?.video_camera_send_enabled &&
       this._softphoneSnapshot?.send_video
     );
@@ -2868,6 +2882,17 @@ class VoipStackCard extends HTMLElement {
   async _toggleVideoCamera(enabled) {
     this._settingsOpen = true;
     const next = Boolean(enabled);
+    if (!this._isHaSoftphoneMode()) {
+      if (!this._videoSendSwitchEntityId) return;
+      this._render();
+      try {
+        await this._setSwitchEntity(this._videoSendSwitchEntityId, next);
+      } catch (err) {
+        this._showError(err.message || String(err));
+      }
+      this._render();
+      return;
+    }
     const previous = !!this._softphoneSnapshot?.send_video;
     if (this._softphoneSnapshot) this._softphoneSnapshot.send_video = next;
     this._render();

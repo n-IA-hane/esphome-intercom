@@ -3154,10 +3154,6 @@ class SipCallClient:
                 if video_send is not None
                 else None
             )
-            if local_video_rtp_port > 0 and offered_video_formats and (
-                remote_video is None or int(remote_video["media_port"]) <= 0
-            ):
-                return None
             video_target = sdp.RemoteMediaTarget.from_section(
                 remote_video,
                 rtcp_mux=False,

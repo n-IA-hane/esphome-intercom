@@ -87,6 +87,7 @@ class LocalBridgeEventType(StrEnum):
 
     STARTED = "started"
     ANSWERED = "answered"
+    VIDEO_UPDATED = "video_updated"
     MEDIA_LEASE_ACQUIRED = "media_lease_acquired"
     MEDIA_LEASE_RELEASED = "media_lease_released"
     ENDED = "ended"
@@ -384,10 +385,9 @@ class LocalSoftphoneBridge:
     ) -> LocalCallSnapshot:
         """Claim two idle endpoints and create calling/ringing logical legs.
 
-        Video negotiation and camera transmission are independent.  The call
-        may negotiate a receive-only video path while the caller keeps its
-        camera disabled.  When supplied, ``caller_owner_id`` atomically pins
-        the originating browser instance before any bridge event is emitted.
+        Outgoing video is opt-in. When supplied, ``caller_owner_id``
+        atomically pins the originating browser instance before any bridge
+        event is emitted.
         """
         caller = self._registry.require(caller_endpoint_id)
         callee = self._registry.require(callee_endpoint_id)
@@ -538,6 +538,42 @@ class LocalSoftphoneBridge:
                 )
             )
         return LocalAnswerResult(snapshot, lease)
+
+    def set_video_send(
+        self,
+        call_id: object,
+        endpoint_id: object,
+        enabled: bool,
+    ) -> LocalCallSnapshot:
+        """Change one participant's camera direction on the active call."""
+
+        call = self._require_internal(call_id)
+        endpoint = self._canonical_participant(call, endpoint_id)
+        if call.state_for(endpoint) is not LocalCallState.IN_CALL:
+            raise LocalCallStateError("video direction requires an active call")
+        caller = self._registry.require(call.caller_endpoint_id)
+        callee = self._registry.require(call.callee_endpoint_id)
+        if enabled and not (
+            caller.supports(LocalMediaKind.VIDEO)
+            and callee.supports(LocalMediaKind.VIDEO)
+        ):
+            raise LocalBridgeError("both endpoints must support video")
+        if enabled:
+            call.video_requested = True
+            call.video_enabled = True
+        if endpoint.casefold() == call.caller_endpoint_id.casefold():
+            call.caller_video_send = bool(enabled and call.video_enabled)
+        else:
+            call.callee_video_send = bool(enabled and call.video_enabled)
+        snapshot = call.snapshot()
+        self._emit(
+            LocalBridgeEvent(
+                LocalBridgeEventType.VIDEO_UPDATED,
+                snapshot,
+                endpoint,
+            )
+        )
+        return snapshot
 
     def acquire_media(
         self,

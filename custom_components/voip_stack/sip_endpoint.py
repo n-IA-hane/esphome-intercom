@@ -406,6 +406,19 @@ class SipEndpointManager:
             )
         return None
 
+    def video_reinvite_result(self, call_id: str) -> tuple[int, str]:
+        """Return the last local video offer result from the dialog owner."""
+
+        for endpoint in self._dialog_endpoints():
+            dialog = endpoint.active_dialogs.get(call_id)
+            if dialog is None:
+                continue
+            return (
+                int(getattr(dialog, "local_video_reinvite_status", 0) or 0),
+                str(getattr(dialog, "local_video_reinvite_reason", "") or ""),
+            )
+        return (0, "")
+
     async def async_activate_video_reinvite(
         self,
         call_id: str,

@@ -1544,6 +1544,16 @@ async def async_main(args: argparse.Namespace) -> int:
                 continue
             if await _handle_connected_identity_update(message, addr):
                 continue
+            if message.method == "INVITE" and args.answer_local_reinvite:
+                status = int(args.answer_local_reinvite)
+                reason = "Not Acceptable Here" if status == 488 else "Request Pending"
+                await loop.sock_sendto(
+                    sip_socket,
+                    sip.build_response(status, reason, _response_headers(message)),
+                    addr,
+                )
+                result.setdefault("local_reinvite_responses", []).append(status)
+                continue
             if message.method == "BYE":
                 await loop.sock_sendto(
                     sip_socket,
@@ -1750,6 +1760,13 @@ def main() -> int:
         help="video RTP profile; feedback attributes are emitted only for AVPF",
     )
     parser.add_argument("--answer-timeout", type=float, default=60.0)
+    parser.add_argument(
+        "--answer-local-reinvite",
+        type=int,
+        choices=(488, 491),
+        default=0,
+        help="answer a re-INVITE initiated by HA with this final SIP status",
+    )
     parser.add_argument(
         "--allow-audio-only",
         action="store_true",

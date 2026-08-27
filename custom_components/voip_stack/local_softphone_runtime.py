@@ -319,6 +319,11 @@ def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
         _publish_leg(hass, snapshot, snapshot.callee_endpoint_id)
         return
 
+    if event.event_type is LocalBridgeEventType.VIDEO_UPDATED:
+        _publish_leg(hass, snapshot, snapshot.caller_endpoint_id)
+        _publish_leg(hass, snapshot, snapshot.callee_endpoint_id)
+        return
+
     if event.event_type is LocalBridgeEventType.ENDED:
         _publish_leg(
             hass,

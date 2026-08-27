@@ -222,6 +222,23 @@ class LocalSoftphoneBridgeTest(unittest.TestCase):
         with self.assertRaises(bridge_module.LocalMediaLeaseBusyError):
             self.bridge.answer("call-1", "kitchen", "wall-tablet-b")
 
+    def test_active_video_send_toggle_preserves_peer_receive_direction(self) -> None:
+        self.start(request_video=False)
+        self.bridge.answer("call-1", "kitchen", "kitchen-card")
+
+        enabled = self.bridge.set_video_send("call-1", "office", True)
+        self.assertTrue(enabled.video_enabled)
+        self.assertEqual(enabled.video_direction_for("office"), "sendonly")
+        self.bridge.set_video_send("call-1", "kitchen", True)
+        disabled = self.bridge.set_video_send("call-1", "office", False)
+        self.assertEqual(disabled.video_direction_for("office"), "recvonly")
+
+    def test_active_video_send_rejects_audio_only_peer(self) -> None:
+        self.bridge.start_call("office", "hall", call_id="audio")
+        self.bridge.answer("audio", "hall", "hall-card")
+        with self.assertRaises(bridge_module.LocalBridgeError):
+            self.bridge.set_video_send("audio", "office", True)
+
     def test_originating_card_can_be_pinned_before_call_events(self) -> None:
         events = []
         self.bridge.subscribe(events.append)
