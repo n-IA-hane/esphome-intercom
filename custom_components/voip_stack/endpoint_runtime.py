@@ -18,7 +18,7 @@ import time
 import secrets
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
 
 from .core import sdp as sip_sdp
@@ -130,6 +130,7 @@ class _RegistrarExpiryScheduler:
             self._expire,
         )
 
+    @callback
     def _expire(self, _now) -> None:
         self._cancel = None
         self._registrar.expire()

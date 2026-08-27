@@ -140,6 +140,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         ]
         self.assertIn("async_call_later(", scheduler)
         self.assertIn("next_expiration_at()", scheduler)
+        self.assertIn("@callback\n    def _expire", scheduler)
         self.assertNotIn("while True", scheduler)
         self.assertIn('closer=registrar_expiry.close', self.source)
         self.assertIn("registrar_expiry.reschedule()", self.source)
