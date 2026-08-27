@@ -2351,6 +2351,10 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sip_trunk._registration_refresh_delay(300, 1005.0, 1000.0), 1.0)
         self.assertEqual(sip_trunk._registration_refresh_delay(300, 1300.0, 1000.0), 240.0)
 
+    def test_trunk_registration_retry_policy_is_bounded(self) -> None:
+        self.assertEqual(sip_trunk._REGISTER_RETRY_INITIAL, 5.0)
+        self.assertEqual(sip_trunk._REGISTER_RETRY_MAX, 60.0)
+
     async def test_confirmed_dialog_accepts_proxy_bye_without_ending_on_cancel(self) -> None:
         class FakeTransport:
             def __init__(self) -> None:

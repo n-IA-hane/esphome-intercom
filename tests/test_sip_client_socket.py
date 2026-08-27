@@ -3058,6 +3058,74 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("transport=tcp", invite.uri)
         self.assertIn("transport=tcp", invite.header("Contact"))
 
+    async def test_large_udp_invite_preserves_configured_outbound_proxy(self) -> None:
+        resolved_transports: list[str] = []
+        sent: list[bytes] = []
+
+        class Resolver:
+            async def resolve(self, _uri, *, transport):
+                resolved_transports.append(transport)
+                return (
+                    types.SimpleNamespace(
+                        endpoints=lambda: (("192.0.2.20", 5060, transport),)
+                    ),
+                )
+
+        client = sip_client.SipCallClient(
+            local_ip="192.0.2.10",
+            local_name="HA",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            signaling_transport="UDP",
+            target_resolver=Resolver(),
+            outbound_proxy="sip:proxy.example:5060;transport=udp",
+            include_common_codecs=True,
+            local_video_rtp_port=41002,
+            video_formats=sdp.DEFAULT_VIDEO_FORMATS,
+            video_direction="recvonly",
+        )
+
+        async def select(host: str, port: int) -> None:
+            client._resolved_signaling_target = (host, port)
+
+        async def send(raw: bytes, _host: str, _port: int) -> None:
+            sent.append(raw)
+
+        async def read(_timeout: float):
+            request = sip.parse_message(sent[-1])
+            response = sip.build_response(
+                180,
+                "Ringing",
+                [
+                    ("Via", request.header("Via")),
+                    ("From", request.header("From")),
+                    ("To", f'{request.header("To")};tag=remote'),
+                    ("Call-ID", request.header("Call-ID")),
+                    ("CSeq", request.header("CSeq")),
+                ],
+            )
+            return sip.parse_message(response), ("192.0.2.20", 5060)
+
+        client._select_initial_signaling_target = select  # type: ignore[method-assign]
+        client._send_raw = send  # type: ignore[method-assign]
+        client._read_response = read  # type: ignore[method-assign]
+
+        result = await client.invite(
+            target="ESP",
+            remote_host="proxy.example",
+            remote_sip_port=5060,
+            request_uri="sip:ESP@example.test;transport=udp",
+            timeout=1,
+        )
+
+        self.assertEqual(result, "ringing")
+        self.assertEqual(resolved_transports, ["UDP"])
+        self.assertGreater(len(sent[-1]), 1300)
+        invite = sip.parse_message(sent[-1])
+        self.assertIn("SIP/2.0/UDP", invite.header("Via"))
+        self.assertIn("transport=udp", invite.uri)
+        self.assertIn("transport=udp", invite.header("Contact"))
+
     async def test_tls_client_verifies_logical_route_name(self) -> None:
         context = object()
         observed: dict[str, object] = {}

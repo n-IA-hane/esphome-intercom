@@ -1808,6 +1808,7 @@ class SipCallClient:
             self.signaling_transport == "UDP"
             and len(raw) > _SIP_UDP_SAFE_REQUEST_BYTES
             and self._tcp_reuse_send is None
+            and not self.outbound_proxy
         ):
             # RFC 3261 section 18.1.1 requires requests larger than 1300
             # bytes to use a congestion-controlled transport when the path
@@ -1881,6 +1882,18 @@ class SipCallClient:
             raw = self._build_pending_invite()
             _LOGGER.info(
                 "SIP initial request is %s bytes; using TCP per RFC 3261 section 18.1.1",
+                len(raw),
+            )
+        elif (
+            self.signaling_transport == "UDP"
+            and len(raw) > _SIP_UDP_SAFE_REQUEST_BYTES
+            and self.outbound_proxy
+        ):
+            # An administratively configured outbound proxy is the explicit
+            # next-hop transport contract. Do not silently replace a UDP-only
+            # trunk with TCP merely because its offer is large.
+            _LOGGER.warning(
+                "SIP initial request is %s bytes; preserving configured UDP outbound proxy",
                 len(raw),
             )
 

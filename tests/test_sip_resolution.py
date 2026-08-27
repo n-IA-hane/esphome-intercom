@@ -172,5 +172,21 @@ async def _empty_dns() -> tuple[tuple[object, ...], float]:
     return (), 30
 
 
+def test_dns_record_preload_loads_all_lazy_parsers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loaded: list[bool] = []
+    dns = types.ModuleType("dns")
+    rdata = types.ModuleType("dns.rdata")
+    rdata.load_all_types = lambda: loaded.append(True)  # type: ignore[attr-defined]
+    dns.rdata = rdata  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "dns", dns)
+    monkeypatch.setitem(sys.modules, "dns.rdata", rdata)
+
+    SipServerResolver._load_dns_record_types()
+
+    assert loaded == [True]
+
+
 async def _address(host: str, _port: int, _transport: str) -> tuple[str, ...]:
     return (host,)

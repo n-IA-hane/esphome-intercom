@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from importlib import import_module
 import random
 import socket
 import time
@@ -275,5 +274,6 @@ class SipServerResolver:
     @staticmethod
     def _load_dns_record_types() -> None:
         """Load dnspython's lazy RFC record parsers outside HA's event loop."""
-        import_module("dns.rdtypes.IN.SRV")
-        import_module("dns.rdtypes.IN.NAPTR")
+        import dns.rdata  # type: ignore[import-not-found]
+
+        dns.rdata.load_all_types()

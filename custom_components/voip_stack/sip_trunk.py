@@ -34,6 +34,8 @@ from .session_cleanup import async_wait_for_cleanup
 _LOGGER = logging.getLogger(__name__)
 _MAX_TRUNK_REQUEST_TASKS = 32
 _MAX_TRUNK_INVITE_TASKS = 24
+_REGISTER_RETRY_INITIAL = 5.0
+_REGISTER_RETRY_MAX = 60.0
 
 TrunkRequestHandler = Callable[[bytes, tuple[str, int]], Awaitable[None]]
 
@@ -362,7 +364,7 @@ class SipTrunkClient:
                 return
 
     async def _refresh_loop(self) -> None:
-        retry_delay = 30.0
+        retry_delay = _REGISTER_RETRY_INITIAL
         while not self._stopped:
             if self.registered and self.expires_at > 0:
                 delay = _registration_refresh_delay(
@@ -404,9 +406,9 @@ class SipTrunkClient:
                 )
                 continue
             if result == "registered":
-                retry_delay = 30.0
+                retry_delay = _REGISTER_RETRY_INITIAL
             else:
-                retry_delay = min(300.0, retry_delay * 2.0)
+                retry_delay = min(_REGISTER_RETRY_MAX, retry_delay * 2.0)
 
     async def _connect_tcp(self) -> None:
         async with self._tcp_connect_lock:
