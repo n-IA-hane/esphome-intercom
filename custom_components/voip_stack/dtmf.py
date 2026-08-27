@@ -59,6 +59,16 @@ def telephone_event_code(digit: str) -> int | None:
     return _DIGIT_EVENT_CODES.get(str(digit or "").strip().upper())
 
 
+def build_sip_info_dtmf_body(digit: str, *, duration_ms: int = 160) -> bytes:
+    """Build one legacy application/dtmf-relay body for an active dialog."""
+
+    normalized = str(digit or "").strip().upper()
+    if telephone_event_code(normalized) is None:
+        raise ValueError("unsupported DTMF digit")
+    duration = max(40, min(5000, int(duration_ms)))
+    return f"Signal={normalized}\r\nDuration={duration}\r\n".encode("ascii")
+
+
 def build_telephone_event_payload(
     digit: str,
     *,

@@ -35,6 +35,7 @@ def _load_dtmf_events(monkeypatch):
     fsm.CallState = SimpleNamespace(IN_CALL=SimpleNamespace(value="in_call"))
     runtime_data = types.ModuleType("custom_components.voip_stack.runtime_data")
     runtime_data.call_runtime_artifacts = lambda hass: hass.artifacts
+    runtime_data.sip_endpoint_manager = lambda _hass: None
     websocket = types.ModuleType("custom_components.voip_stack.websocket_api")
     websocket.SIP_DTMF_EVENT = "voip_stack.dtmf"
     for name, module in {
@@ -130,6 +131,44 @@ def test_bridge_publishes_canonical_dtmf_and_translates_info(monkeypatch) -> Non
     assert right["source_leg"] == "callee"
     assert right["side"] == "right"
     assert right["transport"] == "sip_info"
+
+
+def test_bridge_falls_back_to_client_info_when_rtp_dtmf_is_unavailable(
+    monkeypatch,
+) -> None:
+    dtmf_events = _load_dtmf_events(monkeypatch)
+    hass = SimpleNamespace(bus=_Bus())
+    registry = SimpleNamespace(
+        event_context=lambda _call_id: None,
+        sessions={},
+        resolve_session_id=lambda call_id: call_id,
+        event_fields=lambda _call_id, _state: {},
+        ha_context=lambda _call_id: None,
+    )
+    monkeypatch.setattr(dtmf_events, "call_registry", lambda _hass: registry)
+
+    sent: list[str] = []
+
+    class _Client:
+        on_info_dtmf = None
+
+        async def send_dtmf_info(self, digit: str) -> bool:
+            sent.append(digit)
+            return True
+
+    relay = SimpleNamespace(on_dtmf=None, relay_dtmf=lambda _side, _digit: False)
+    dtmf_events.attach_dtmf_event_bridge(
+        hass,
+        relay,
+        call_id="source-call",
+        dest_call_id="dest-call",
+        caller="Caller",
+        callee="Callee",
+        client=_Client(),
+    )
+
+    assert asyncio.run(relay.on_dtmf_fallback("left", "9"))
+    assert sent == ["9"]
 
 
 def test_direct_outbound_client_projects_info_from_callee(monkeypatch) -> None:

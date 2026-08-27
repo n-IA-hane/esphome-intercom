@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 import secrets
 import socket
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 import wave
 
 from .core import rtp
@@ -157,6 +157,7 @@ class SipRtpRelay:
         capture_name: str = "",
         on_release: Callable[[tuple[int, int]], None] | None = None,
         on_dtmf: Callable[[str, str, str], None] | None = None,
+        on_dtmf_fallback: Callable[[str, str], Awaitable[bool]] | None = None,
     ) -> None:
         self.left = left
         self.right = right
@@ -166,6 +167,7 @@ class SipRtpRelay:
         self.right_transport: asyncio.DatagramTransport | None = None
         self._on_release = on_release
         self.on_dtmf = on_dtmf
+        self.on_dtmf_fallback = on_dtmf_fallback
         self._released = False
         self._lifecycle_lock = asyncio.Lock()
         self._start_task: asyncio.Task[None] | None = None
@@ -636,19 +638,25 @@ class SipRtpRelay:
         destination_side = "right" if source_side == "left" else "left"
         destination = self.right if destination_side == "right" else self.left
         event = telephone_event_code(digit)
-        if (
-            event is None
-            or destination.outbound_dtmf_payload_type is None
-            or event not in destination.outbound_dtmf_events
-            or not destination.can_receive
-            or destination.connection_held
-        ):
+        if event is None or not destination.can_receive or destination.connection_held:
             _LOGGER.info(
                 "RTP DTMF not relayed source=%s destination=%s digit=%s negotiated=%s",
                 source_side,
                 destination_side,
                 digit,
                 destination.outbound_dtmf_payload_type is not None,
+            )
+            return False
+        if (
+            destination.outbound_dtmf_payload_type is None
+            or event not in destination.outbound_dtmf_events
+        ):
+            self._schedule_dtmf_fallback(source_side, digit)
+            _LOGGER.info(
+                "RTP DTMF unavailable; signaling fallback requested source=%s destination=%s digit=%s",
+                source_side,
+                destination_side,
+                digit,
             )
             return False
 
@@ -676,6 +684,38 @@ class SipRtpRelay:
         self._dtmf_tasks.add(task)
         task.add_done_callback(self._dtmf_tasks.discard)
         return True
+
+    def _schedule_dtmf_fallback(self, source_side: str, digit: str) -> None:
+        """Run one dialog-level fallback under the relay lifecycle owner."""
+
+        callback = self.on_dtmf_fallback
+        if callback is None or self._stop_requested:
+            return
+
+        async def _run() -> None:
+            try:
+                result = await callback(source_side, digit)
+                if not result:
+                    _LOGGER.info(
+                        "SIP INFO DTMF fallback not accepted source=%s digit=%s",
+                        source_side,
+                        digit,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.exception(
+                    "SIP INFO DTMF fallback failed source=%s digit=%s",
+                    source_side,
+                    digit,
+                )
+
+        task = asyncio.create_task(
+            _run(),
+            name=f"voip-sip-info-dtmf-{source_side}-{digit}",
+        )
+        self._dtmf_tasks.add(task)
+        task.add_done_callback(self._dtmf_tasks.discard)
 
     async def _send_dtmf_event(
         self,

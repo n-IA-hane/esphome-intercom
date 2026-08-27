@@ -10,7 +10,7 @@ from .automation_routing import CALL_EVENT_SCHEMA_VERSION, canonical_call_origin
 from .dtmf import parse_sip_info_digit
 from .endpoint_lifecycle import call_registry
 from .fsm import CallState
-from .runtime_data import call_runtime_artifacts
+from .runtime_data import call_runtime_artifacts, sip_endpoint_manager
 from .websocket_api import SIP_DTMF_EVENT
 
 
@@ -173,6 +173,20 @@ def attach_dtmf_event_bridge(
             relay.relay_dtmf(side, digit)
 
     relay.on_dtmf = _emit
+
+    async def _fallback(source_side: str, digit: str) -> bool:
+        if source_side == "left" and client is not None:
+            send = getattr(client, "send_dtmf_info", None)
+            return bool(callable(send) and await send(digit))
+        if source_side == "right":
+            endpoint = sip_endpoint_manager(hass)
+            return bool(
+                endpoint is not None
+                and await endpoint.async_send_dtmf_info(call_id, digit)
+            )
+        return False
+
+    relay.on_dtmf_fallback = _fallback
     if client is not None:
         client.on_info_dtmf = lambda digit: _emit("right", digit, "sip_info")
 

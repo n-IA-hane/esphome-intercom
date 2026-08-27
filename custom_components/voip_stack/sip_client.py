@@ -35,6 +35,7 @@ from .sip_tcp_io import (
     read_sip_stream_message as _read_sip_stream_message,
 )
 from .sip_udp_io import SipDatagramQueueProtocol
+from .dtmf import build_sip_info_dtmf_body
 from .core.sip_transaction import (
     SIP_T1,
     SIP_T2,
@@ -2565,6 +2566,30 @@ class SipCallClient:
             "INFO",
             body=sip.RFC5168_PICTURE_FAST_UPDATE_BODY,
             content_type="application/media_control+xml",
+            timeout=timeout,
+        )
+        return bool(
+            response is not None
+            and 200 <= int(response.status_code or 0) < 300
+        )
+
+    async def send_dtmf_info(
+        self,
+        digit: str,
+        *,
+        duration_ms: int = 160,
+        timeout: float = 3.0,
+    ) -> bool:
+        """Send one DTMF digit on the owned dialog using legacy SIP INFO."""
+
+        try:
+            body = build_sip_info_dtmf_body(digit, duration_ms=duration_ms)
+        except ValueError:
+            return False
+        response = await self._send_in_dialog_request(
+            "INFO",
+            body=body,
+            content_type="application/dtmf-relay",
             timeout=timeout,
         )
         return bool(

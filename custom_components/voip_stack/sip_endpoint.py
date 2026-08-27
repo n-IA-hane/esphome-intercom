@@ -434,6 +434,16 @@ class SipEndpointManager:
             return bool(callable(request) and await request(call_id))
         return False
 
+    async def async_send_dtmf_info(self, call_id: str, digit: str) -> bool:
+        """Send DTMF INFO through the transport owning an inbound dialog."""
+
+        for endpoint in self._dialog_endpoints():
+            if call_id not in endpoint.active_dialogs:
+                continue
+            send = getattr(endpoint, "send_dtmf_info", None)
+            return bool(callable(send) and await send(call_id, digit))
+        return False
+
     def _active_dialog_count_for(self, server: object) -> int:
         endpoint = getattr(server, "endpoint", None)
         active = getattr(endpoint, "active_dialogs", None)

@@ -37,6 +37,7 @@ from .core.sip_transaction import (
     same_request_transaction,
 )
 from .queue_utils import put_drop_oldest
+from .dtmf import build_sip_info_dtmf_body
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -3021,6 +3022,36 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             "INFO",
             body=sip.RFC5168_PICTURE_FAST_UPDATE_BODY,
             content_type="application/media_control+xml",
+            timeout=timeout,
+        )
+        return bool(
+            response is not None
+            and 200 <= int(response.status_code or 0) < 300
+        )
+
+    async def send_dtmf_info(
+        self,
+        call_id: str,
+        digit: str,
+        *,
+        duration_ms: int = 160,
+        timeout: float = 3.0,
+    ) -> bool:
+        """Send one DTMF digit on an owned inbound dialog using SIP INFO."""
+
+        dialog = self.active_dialogs.get(call_id)
+        if dialog is None:
+            return False
+        try:
+            body = build_sip_info_dtmf_body(digit, duration_ms=duration_ms)
+        except ValueError:
+            return False
+        response = await self._send_dialog_request(
+            call_id,
+            dialog,
+            "INFO",
+            body=body,
+            content_type="application/dtmf-relay",
             timeout=timeout,
         )
         return bool(

@@ -159,6 +159,22 @@ class SipRtpDtmfTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(relay._dtmf_tasks, set())
         await relay.stop()
 
+    async def test_missing_rfc4733_schedules_dialog_fallback(self) -> None:
+        relay = self._relay()
+        relay.right.dtmf_payload_type = None
+        relay.right.send_dtmf_payload_type = None
+        fallback: list[tuple[str, str]] = []
+
+        async def send_info(side: str, digit: str) -> bool:
+            fallback.append((side, digit))
+            return True
+
+        relay.on_dtmf_fallback = send_info
+        self.assertFalse(relay.relay_dtmf("left", "0"))
+        await asyncio.sleep(0)
+        self.assertEqual(fallback, [("left", "0")])
+        await relay.stop()
+
     async def test_outbound_event_uses_answer_payload_not_receive_payload(self) -> None:
         relay = self._relay()
         relay.right.send_dtmf_payload_type = 121

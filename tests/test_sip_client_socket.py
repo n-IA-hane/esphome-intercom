@@ -137,6 +137,19 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(await client.request_video_keyframe())
 
+    async def test_client_dtmf_info_uses_owned_dialog_transaction(self) -> None:
+        client = object.__new__(sip_client.SipCallClient)
+        client._send_in_dialog_request = unittest.mock.AsyncMock(  # type: ignore[method-assign] # noqa: SLF001
+            return_value=sip.SipMessage(status_code=200, reason="OK")
+        )
+
+        self.assertTrue(await client.send_dtmf_info("#"))
+
+        request = client._send_in_dialog_request.await_args  # type: ignore[attr-defined] # noqa: SLF001
+        self.assertEqual(request.args, ("INFO",))
+        self.assertEqual(request.kwargs["content_type"], "application/dtmf-relay")
+        self.assertEqual(request.kwargs["body"], b"Signal=#\r\nDuration=160\r\n")
+
     async def test_listener_rfc5168_keyframe_request_uses_dialog_info(self) -> None:
         endpoint = object.__new__(sip_listener.SipUdpEndpoint)
         endpoint.active_dialogs = {"incoming": object()}
@@ -160,6 +173,23 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             request.kwargs["body"], sip.RFC5168_PICTURE_FAST_UPDATE_BODY
         )
 
+    async def test_listener_dtmf_info_uses_owned_dialog_transaction(self) -> None:
+        endpoint = object.__new__(sip_listener.SipUdpEndpoint)
+        endpoint.active_dialogs = {"incoming": object()}
+        endpoint._send_dialog_request = unittest.mock.AsyncMock(  # type: ignore[method-assign] # noqa: SLF001
+            return_value=sip.SipMessage(status_code=200, reason="OK")
+        )
+
+        self.assertTrue(await endpoint.send_dtmf_info("incoming", "5"))
+
+        request = endpoint._send_dialog_request.await_args  # type: ignore[attr-defined] # noqa: SLF001
+        self.assertEqual(
+            request.args[:3],
+            ("incoming", endpoint.active_dialogs["incoming"], "INFO"),
+        )
+        self.assertEqual(request.kwargs["content_type"], "application/dtmf-relay")
+        self.assertEqual(request.kwargs["body"], b"Signal=5\r\nDuration=160\r\n")
+
     async def test_endpoint_manager_routes_keyframe_request_to_dialog_owner(self) -> None:
         owner = types.SimpleNamespace(
             active_dialogs={"incoming": object()},
@@ -170,6 +200,17 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(await manager.async_request_video_keyframe("incoming"))
         owner.request_video_keyframe.assert_awaited_once_with("incoming")
+
+    async def test_endpoint_manager_routes_dtmf_info_to_dialog_owner(self) -> None:
+        owner = types.SimpleNamespace(
+            active_dialogs={"incoming": object()},
+            send_dtmf_info=unittest.mock.AsyncMock(return_value=True),
+        )
+        manager = object.__new__(sip_endpoint.SipEndpointManager)
+        manager._dialog_endpoints = lambda: iter((owner,))  # type: ignore[method-assign] # noqa: SLF001
+
+        self.assertTrue(await manager.async_send_dtmf_info("incoming", "7"))
+        owner.send_dtmf_info.assert_awaited_once_with("incoming", "7")
 
     async def test_rfc5168_keyframe_request_uses_dialog_route_and_cseq(self) -> None:
         sent: list[tuple[bytes, tuple[str, int]]] = []

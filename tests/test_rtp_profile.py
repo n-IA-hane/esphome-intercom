@@ -104,6 +104,16 @@ class RtpProfileTest(unittest.TestCase):
         self.assertEqual(dtmf.parse_sip_info_digit("application/dtmf-relay", b"Signal=10\r\nDuration=160"), "*")
         self.assertEqual(dtmf.parse_sip_info_digit("application/dtmf", b"#"), "#")
 
+    def test_legacy_sip_info_body_is_bounded_and_round_trips(self) -> None:
+        body = dtmf.build_sip_info_dtmf_body("#", duration_ms=1)
+        self.assertEqual(body, b"Signal=#\r\nDuration=40\r\n")
+        self.assertEqual(
+            dtmf.parse_sip_info_digit("application/dtmf-relay", body),
+            "#",
+        )
+        with self.assertRaisesRegex(ValueError, "unsupported DTMF digit"):
+            dtmf.build_sip_info_dtmf_body("X")
+
     def test_rfc4733_payload_encodes_event_end_volume_and_duration(self) -> None:
         self.assertEqual(
             dtmf.build_telephone_event_payload("#", duration=1280, end=True),
