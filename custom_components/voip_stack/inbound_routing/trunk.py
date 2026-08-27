@@ -38,6 +38,18 @@ _LOGGER = logging.getLogger(__name__)
 MAX_TRUNK_INFO_DIGITS = 16
 
 
+def _preanswer_video_direction(invite: SipInvite, source_video_port: int) -> str:
+    """Receive offered video during digit collection without sending media."""
+
+    if not source_video_port or invite.video_format is None:
+        return "inactive"
+    return sip_sdp.constrained_video_direction(
+        invite.video_format.direction,
+        allow_send=False,
+        allow_receive=True,
+    )
+
+
 class TrunkRouteRuntime(Protocol):
     """Dependencies used while preparing an inbound trunk route."""
 
@@ -145,8 +157,11 @@ def prepare_trunk_preanswer(
     preanswered_media["final_response_sent"] = confirm_for_sip_info
     # Digit collection precedes destination selection. Anchor incoming video
     # on the pre-bound socket without advertising an outgoing source. This is
-    # the RFC 3264 recvonly role until the winning leg and relay are committed.
-    preanswer_video_direction = "recvonly" if source_video_port else "inactive"
+    # a receive-only role when the offer permits it, otherwise inactive, until
+    # the winning leg and relay are committed.
+    preanswer_video_direction = _preanswer_video_direction(
+        invite, source_video_port
+    )
     answer = build_answer_directional(
         local_ip,
         local_ip,

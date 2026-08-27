@@ -67,6 +67,28 @@ def test_untrusted_or_unregistered_invite_is_not_classified_as_trunk() -> None:
     unregistered.accepts_inbound_source.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("offer_direction", "expected"),
+    (
+        ("sendrecv", "recvonly"),
+        ("sendonly", "recvonly"),
+        ("recvonly", "inactive"),
+        ("inactive", "inactive"),
+    ),
+)
+def test_dtmf_preanswer_video_direction_respects_offer_answer_contract(
+    offer_direction: str,
+    expected: str,
+) -> None:
+    from custom_components.voip_stack.inbound_routing import trunk
+
+    invite = SimpleNamespace(
+        video_format=SimpleNamespace(direction=offer_direction)
+    )
+
+    assert trunk._preanswer_video_direction(invite, 40004) == expected
+
+
 def test_dtmf_route_keeps_provisional_owner_until_bridge_commit() -> None:
     source = Path(trunk_inbound_router.__file__).read_text()
     direct_route = source.rsplit(
