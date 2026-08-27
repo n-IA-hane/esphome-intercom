@@ -32,6 +32,8 @@ def _fixture():
         call_id="source-call",
         send_format=_format("PCMA/8000"),
         recv_format=_format("PCMU/8000"),
+        send_video_format=None,
+        recv_video_format=None,
         remote_sdp=(
             "v=0\r\nc=IN IP4 127.0.0.1\r\n"
             "m=audio 5000 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000\r\n"
