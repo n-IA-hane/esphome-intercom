@@ -687,17 +687,23 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert 'add_idf_component(name="espressif/esp_jpeg"' not in renderer_config
     assert 'add_lv_use("image", "label")' in renderer_config
     assert (
-        'add_idf_component(name="espressif/esp_h264", ref="1.3.8")'
+        'repo="https://github.com/n-IA-hane/esp-h264-component.git"'
         in renderer_config
     )
+    assert 'ref="cabfb05c1e20b08975b21544d67f61f483d023f5"' in (
+        renderer_config
+    )
+    assert 'path="esp_h264"' in renderer_config
     assert (
         'add_idf_component(name="espressif/esp_image_effects", ref="1.1.0")'
         in renderer_config
     )
     assert (
-        'add_idf_component(name="espressif/esp_h264", ref="1.3.8")'
+        'repo="https://github.com/n-IA-hane/esp-h264-component.git"'
         in source_config
     )
+    assert 'ref="cabfb05c1e20b08975b21544d67f61f483d023f5"' in source_config
+    assert 'path="esp_h264"' in source_config
     assert "--wrap=esp_h264_malloc_prefer" not in source_config
     assert "release_callback" in renderer_cpp
     assert "memcpy(slot.data, access_unit.data" not in renderer_cpp
@@ -727,7 +733,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert 'p4_video_fps: "10"' in h264_package
     assert 'p4_video_rx_width: "352"' in h264_package
     assert 'p4_video_rx_height: "288"' in h264_package
-    assert 'p4_camera_fps: "25"' in h264_package
+    assert 'p4_camera_fps: "10"' in h264_package
     assert 'p4_h264_gop: "10"' in h264_package
     assert "max_framerate: ${p4_camera_fps}" in h264_package
     assert "jpeg_new_decoder_engine" in renderer_cpp
@@ -785,16 +791,16 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
         "if (this->rx_running_.load(std::memory_order_acquire) &&"
         in renderer_cpp
     )
-    assert "xSemaphoreTake(this->presentation_mutex_, portMAX_DELAY);" in renderer_cpp
+    assert "xSemaphoreTake(this->presentation_mutex_, 0)" in renderer_cpp
     deactivate = renderer_cpp[
         renderer_cpp.index("bool P4VideoRenderer::set_video_active(bool active)") :
         renderer_cpp.index("bool P4VideoRenderer::consume_video_access_unit(")
     ]
     assert deactivate.index(
-        "xSemaphoreTake(this->presentation_mutex_, portMAX_DELAY)"
+        "xSemaphoreTake(this->presentation_mutex_, 0)"
     ) < deactivate.index("this->pending_surface_.store(-1")
-    assert deactivate.index("xSemaphoreGive(this->presentation_mutex_)") < (
-        deactivate.index("this->video_ended_pending_.store(true")
+    assert deactivate.rindex("xSemaphoreGive(this->presentation_mutex_)") < (
+        deactivate.rindex("this->video_ended_pending_.store(true")
     )
     assert renderer_loop.index(
         "this->video_ended_pending_.exchange(false, std::memory_order_acq_rel)"
@@ -880,7 +886,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "config.scale_x = scale;" in render_i420
     assert "config.scale_y = scale;" in render_i420
     assert "session_generation !=" in render_i420
-    assert "xSemaphoreTake(this->presentation_mutex_, portMAX_DELAY);" in (
+    assert "xSemaphoreTake(this->presentation_mutex_, 0)" in (
         render_i420
     )
     assert "kH264SurfaceWidth) / width" not in render_i420
@@ -961,11 +967,11 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "rx_au_copy_max_us_" in renderer_header
     assert "copy_total_bytes=%llu" in renderer_cpp
     assert "esp_h264_enc_set_bitrate" in source_cpp
-    assert "extern \"C\" void *__wrap_esp_h264_malloc_prefer(" in source_cpp
-    assert "bytes >= kLargeAllocationBytes" in source_cpp
-    assert "caps1 == MALLOC_CAP_INTERNAL" in source_cpp
-    assert "caps2 == MALLOC_CAP_SPIRAM" in source_cpp
-    assert "n, size, actual_size, caps2, caps1" in source_cpp
+    assert "__wrap_esp_h264_malloc_prefer" not in source_cpp
+    assert (
+        'CONFIG_ESP_H264_HW_ENCODER_PREFER_DB_SPIRAM: "y"'
+        in h264_package
+    )
     assert "capability.max_bitrate_bps" in source_cpp
     assert "ppa_unregister_client(this->ppa_)" in source_cpp
     source_setup = source_cpp[
@@ -981,12 +987,13 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
             "bool EspH264VideoSource::start_tx_task_()", consume_start
         )
     ]
-    assert "this->init_ppa_()" in source_consume
+    assert "this->init_ppa_()" in source_setup
+    assert "this->init_ppa_()" not in source_consume
     assert "p4_video_ppa::Guard" not in source_cpp
     assert "p4_video_ppa::Guard" not in renderer_cpp
     assert "p4_video_workload" not in source_cpp
     assert "p4_video_workload" not in renderer_cpp
-    assert "Unable to register runtime H.264 PPA client" in source_consume
+    assert "if (this->ppa_ == nullptr) return;" in source_consume
     assert "ppa_rotation_for_clockwise(frame.rotation_degrees)" in source_cpp
     assert "this->h264_optimized_yuv_bytes_()" in renderer_cpp
     assert "H.264 decode failure: error=%d" in renderer_cpp

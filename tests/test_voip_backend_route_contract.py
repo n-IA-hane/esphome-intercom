@@ -1553,9 +1553,12 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn('"local_video_rtp_port": source_video_port', trunk_branch)
         self.assertIn("video_port=source_video_port", trunk_branch)
         self.assertIn(
-            'preanswer_video_direction = "recvonly" if source_video_port else "inactive"',
+            "preanswer_video_direction = _preanswer_video_direction(",
             trunk_branch,
         )
+        self.assertIn("constrained_video_direction(", trunk_branch)
+        self.assertIn("allow_send=False", trunk_branch)
+        self.assertIn("allow_receive=True", trunk_branch)
         self.assertIn("video_direction=preanswer_video_direction", trunk_branch)
         self.assertIn(
             "async_activate_video_reinvite(",
