@@ -1,9 +1,0 @@
-packages:
-  candidate: github://n-IA-hane/esphome-intercom/yamls/voip-only/single-bus/waveshare-p4-touch-videophone-h264.yaml@dev
-
-esphome:
-  build_path: .esphome/build/waveshare-p4-touch-videophone-h264-video-debug
-
-voip_stack:
-  id: phone
-  video_debug: true

@@ -23,9 +23,9 @@ available.
 
 ## Contributed camera component
 
-| Local path | Origin | License |
+| Build source | Origin | License |
 |---|---|---|
-| `esphome/components/esp_video_camera/` | Snapshot shared by GitHub user `Psix-anp`, derived from ESPHome PR 16944 and retaining `@youkorr` as code owner | ESPHome split license, GPLv3 for C/C++ runtime files and MIT for Python and other files. The published upstream `LICENSE` and `NOTICE` confirm the origin and terms. The complete ESPHome license is included in `licenses/ESPHOME-LICENSE.txt`; see `PROVENANCE.md`. |
+| `n-IA-hane/esphome-esp-video-camera` external component | Fork of the repository maintained by GitHub user `Psix-anp`, derived from ESPHome PR 16944 and retaining `@youkorr` as code owner | ESPHome split license, GPLv3 for C/C++ runtime files and MIT for Python and other files. The external repository includes its complete `LICENSE` and `NOTICE`; this repository also includes the ESPHome license in `licenses/ESPHOME-LICENSE.txt`. |
 
 ## Runtime Python dependency
 
@@ -47,8 +47,8 @@ Component Manager. They are not vendored here; their upstream licenses apply.
 | `espressif/esp_audio_effects` | ESP Audio Stack rate/format/channel conversion. |
 | `espressif/esp_codec_dev` | ESP Audio Stack codec-backed I2S paths. |
 | `espressif/esp-dsp`, `espressif/esp-sr`, `espressif/gmf_ai_audio` | ESP AEC/AFE profiles. |
-| `espressif/esp_video` 2.3.0, `esp_ipa` 2.2.0~1 | P4 V4L2 camera, ISP and image-processing pipeline. Espressif MIT license; see `licenses/ESPRESSIF-MIT.txt`. |
-| `esp_cam_sensor` 2.3.0, `esp_sccb_intf` 0.0.8 | P4 camera-sensor and SCCB drivers. Apache-2.0; see `licenses/APACHE-2.0.txt`. |
+| `espressif/esp_video` 2.4.1, `esp_ipa` 2.3.x | P4 V4L2 camera, ISP and image-processing pipeline. Espressif MIT license; see `licenses/ESPRESSIF-MIT.txt`. |
+| `esp_cam_sensor` 2.4.x, compatible `esp_sccb_intf` | P4 camera-sensor and SCCB drivers. Apache-2.0; see `licenses/APACHE-2.0.txt`. |
 | `espressif/esp_h264` 1.3.6 | Optional P4 hardware H.264 encoder and software decoder. Apache-2.0; see `licenses/APACHE-2.0.txt`. |
 | `espressif/esp_image_effects` 1.1.0 | Optional P4 H.264 I420-to-PPA color-layout conversion. Espressif Modified MIT; see `licenses/ESPRESSIF-MODIFIED-MIT.txt`. |
 

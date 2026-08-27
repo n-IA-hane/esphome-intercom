@@ -242,9 +242,14 @@ def main() -> int:
                 f"--unsafely-treat-insecure-origin-as-secure={HA_BASE}",
             ],
         )
-        context = browser.new_context(**context_kwargs())
-        casa = context.new_page()
-        test = context.new_page()
+        # Each softphone represents a separate browser endpoint. Separate
+        # contexts also give each endpoint its own media-owner registry and
+        # persistent card state, matching two real clients rather than two
+        # tabs owned by one browser session.
+        casa_context = browser.new_context(**context_kwargs())
+        test_context = browser.new_context(**context_kwargs())
+        casa = casa_context.new_page()
+        test = test_context.new_page()
         casa.goto(CASA_URL, wait_until="domcontentloaded", timeout=30_000)
         test.goto(TEST_URL, wait_until="domcontentloaded", timeout=30_000)
         for page, name in ((casa, "Casa"), (test, "Test")):
@@ -456,7 +461,8 @@ def main() -> int:
         finally:
             with suppress(Exception):
                 casa.evaluate(SET_AUTO_ANSWER, False)
-        context.close()
+        casa_context.close()
+        test_context.close()
         browser.close()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(results, indent=2))

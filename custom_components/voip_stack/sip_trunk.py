@@ -492,9 +492,11 @@ class SipTrunkClient:
             raise ConnectionError("SIP trunk UDP socket has no usable local port")
         self._udp_local_port = int(sockname[1])
         _LOGGER.info(
-            "SIP trunk UDP socket bound %s:%s",
+            "SIP trunk UDP socket bound %s:%s remote=%s:%s",
             self.local_ip,
             self._udp_local_port,
+            candidate.addresses[0],
+            candidate.port,
         )
 
     def _close_udp_transport(self) -> None:
@@ -641,7 +643,19 @@ class SipTrunkClient:
             )
             if matches:
                 return message
-            _LOGGER.debug("Ignoring stale/non-REGISTER SIP trunk response")
+            cseq = message.header("CSeq").split()
+            _LOGGER.debug(
+                "Ignoring stale/non-REGISTER SIP trunk response "
+                "status=%s cseq=%s method=%s call_id_match=%s branch_match=%s",
+                message.status_code or 0,
+                cseq[0] if cseq else "",
+                cseq[1].upper() if len(cseq) == 2 else "",
+                message.header("Call-ID") == self.call_id,
+                bool(
+                    key is not None
+                    and (not expected_branch or key[2] == expected_branch)
+                ),
+            )
 
     def set_request_handler(self, handler: TrunkRequestHandler | None) -> None:
         self.request_handler = handler

@@ -524,76 +524,12 @@ def test_p4_videophone_contact_navigation_waits_for_owner_callback() -> None:
     )
 
 
-def test_p4_camera_applies_initial_jpeg_quality_with_extended_controls() -> None:
-    camera_cpp = (
-        ROOT / "esphome" / "components" / "esp_video_camera" / "esp_video_camera.cpp"
-    ).read_text()
-    start = camera_cpp.index("bool ESPVideoCamera::start_jpeg_pipeline_()")
-    end = camera_cpp.index("bool ESPVideoCamera::", start + 1)
-    jpeg_pipeline = camera_cpp[start:end]
-
-    assert 'this->jpeg_quality_, "jpeg_quality"' in jpeg_pipeline
-    assert "gate_set_ext_ctrl(" in jpeg_pipeline
-    assert "ioctl(this->jpeg_fd_, VIDIOC_S_CTRL" not in jpeg_pipeline
-
-
 def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> None:
-    camera_cpp = (
-        ROOT / "esphome" / "components" / "esp_video_camera" / "esp_video_camera.cpp"
-    ).read_text()
-    camera_header = (
-        ROOT / "esphome" / "components" / "esp_video_camera" / "esp_video_camera.h"
-    ).read_text()
     renderer_cpp = (P4_RENDERER_COMPONENT / "p4_video_renderer.cpp").read_text()
     renderer_header = (P4_RENDERER_COMPONENT / "p4_video_renderer.h").read_text()
     source_cpp = (H264_SOURCE_COMPONENT / "esp_h264_video_source.cpp").read_text()
     source_header = (H264_SOURCE_COMPONENT / "esp_h264_video_source.h").read_text()
 
-    assert 'this->set_timeout("capture_linger", LINGER_MS' in camera_cpp
-    assert "this->enable_loop_soon_any_context();" in camera_cpp
-    assert "this->disable_loop();" in camera_cpp
-    capture_start = camera_cpp[camera_cpp.index("bool ESPVideoCamera::start_direct_capture_") :]
-    assert "O_RDWR | O_NONBLOCK" not in capture_start
-    capture_hot_path = camera_cpp[
-        camera_cpp.index("void ESPVideoCamera::capture_task_run_()") :
-        camera_cpp.index("void ESPVideoCamera::deliver_raw_frame_(")
-    ]
-    assert "vTaskDelay" not in capture_hot_path
-    assert "ppa_do_scale_rotate_mirror" in camera_cpp
-    assert "this->ppa_transform_required_" in camera_cpp
-    assert "operation.scale_x = this->ppa_scale_x_;" in camera_cpp
-    assert "operation.scale_y = this->ppa_scale_y_;" in camera_cpp
-    assert "hardware_framerate_active_" in camera_cpp
-    assert "this->configure_capture_framerate_()" in camera_cpp
-    assert "fmt.fmt.pix.pixelformat != pixelformat" in camera_cpp
-    assert "actual_stride != packed_stride" in camera_cpp
-    assert "if (!this->has_consumers_())" in camera_cpp
-    assert "MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT" in camera_cpp
-    assert "copy = (uint8_t *) heap_caps_malloc(length, MALLOC_CAP_8BIT)" not in camera_cpp
-    assert "std::atomic<uint8_t> references{2};" in camera_cpp
-    assert "release_video_init_params(p);" in camera_cpp
-    assert "params->config.csi = uvc_only ? nullptr : &params->csi_config;" in camera_cpp
-    assert "schedule_capture_retry_();" in camera_cpp
-    assert 'this->set_timeout("capture_retry", CAPTURE_RETRY_MS' in camera_cpp
-    assert "MAX_CAPTURE_RETRIES" in camera_header
-    assert "void on_shutdown() override;" in camera_header
-    assert "capture_task_running_" in camera_header
-    assert "capture_task_done_storage_" in camera_header
-    assert "CAPTURE_STOP_TIMEOUT_MS = 3000" in camera_header
-    assert "void ESPVideoCamera::on_shutdown()" in camera_cpp
-    assert "esp_video_deinit()" in camera_cpp
-    assert "Camera pipeline stopped cleanly" in camera_cpp
-    assert "rotated_rgb565_capacity_" in camera_header
-    assert "capture_prepared_" in camera_header
-    assert "bool ESPVideoCamera::resume_capture_()" in camera_cpp
-    assert (
-        "this->ppa_transform_required_ &&\n"
-        "        (this->ppa_srm_ == nullptr || this->rotated_rgb565_ == nullptr)"
-        in camera_cpp
-    )
-    assert "bool ESPVideoCamera::suspend_capture_()" in camera_cpp
-    assert "bool ESPVideoCamera::stop_capture_()" in camera_cpp
-    assert "capture_streaming_" in camera_header
     assert "static constexpr int kPpaScaleUnits = 16" in renderer_cpp
     assert "container_width * kPpaScaleUnits / content_width" in renderer_cpp
     assert "container_height * kPpaScaleUnits / content_height" in renderer_cpp
@@ -602,49 +538,6 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "config.scale_x = scale;" in renderer_cpp
     assert "config.scale_y = scale;" in renderer_cpp
     assert "kMaxPresentationPixels = 256U * 1024U" in renderer_cpp
-    assert "jpeg_output_streaming_" in camera_header
-    assert "jpeg_capture_streaming_" in camera_header
-    assert (
-        "while (this->capture_task_running_.load(std::memory_order_acquire) &&\n"
-        "           this->capture_wanted_.load(std::memory_order_acquire) &&\n"
-        "           !this->capture_faulted_.load(std::memory_order_acquire))"
-        in camera_cpp
-    )
-    assert "Camera teardown deferred: V4L2 queue still active" in camera_cpp
-    assert "REQBUFS(0) failed" in camera_cpp
-    assert "native_capture_fps_" in camera_header
-    assert "release.count = 0;" in camera_cpp
-    assert (
-        "ulTaskNotifyTake(pdTRUE, portMAX_DELAY);" in camera_cpp
-    )
-    assert (
-        "this->rotated_rgb565_capacity_ < required_alloc_size"
-        in camera_cpp
-    )
-    release_rotation = camera_cpp[
-        camera_cpp.index("bool ESPVideoCamera::release_rotation_()") :
-        camera_cpp.index("bool ESPVideoCamera::setup_capture_buffers_()")
-    ]
-    assert "heap_caps_free(this->rotated_rgb565_)" not in release_rotation
-    assert (
-        "if (!this->hardware_framerate_active_.load("
-        "std::memory_order_acquire))"
-    ) in camera_cpp
-    assert "RawVideoFrameConsumer" in camera_header
-    assert "register_raw_frame_consumer" in camera_cpp
-    assert "start_raw_frame_consumer" in camera_cpp
-    assert "stop_raw_frame_consumer" in camera_cpp
-    assert "this->is_hw_jpeg_ || this->is_raw_csi_" in camera_cpp
-    assert "if (this->is_raw_csi_)\n    return true;" in camera_cpp
-    assert "if (this->is_raw_csi_ || !jpeg_wanted)" in camera_cpp
-    assert camera_cpp.index("this->deliver_raw_frame_(") < camera_cpp.index(
-        "if (this->is_raw_csi_ || !jpeg_wanted)"
-    )
-    assert camera_cpp.index("this->deliver_raw_frame_(") < camera_cpp.index(
-        "if (this->ppa_transform_required_)"
-    )
-    assert "this->rotation_degrees_" in camera_cpp
-
     assert "ulTaskNotifyTake(pdTRUE, portMAX_DELAY);" in renderer_cpp
     assert "xTaskNotifyGive(this->rx_task_handle_)" in renderer_cpp
     assert "this->pending_surface_.load(std::memory_order_acquire) >= 0" in renderer_cpp
@@ -677,13 +570,6 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "RingbufHandle_t" not in renderer_header
     renderer_config = (P4_RENDERER_COMPONENT / "__init__.py").read_text()
     source_config = (H264_SOURCE_COMPONENT / "__init__.py").read_text()
-    camera_config = (
-        ROOT
-        / "esphome"
-        / "components"
-        / "esp_video_camera"
-        / "__init__.py"
-    ).read_text()
     assert 'add_idf_component(name="espressif/esp_jpeg"' not in renderer_config
     assert 'add_lv_use("image", "label")' in renderer_config
     assert (
@@ -707,14 +593,6 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "--wrap=esp_h264_malloc_prefer" not in source_config
     assert "release_callback" in renderer_cpp
     assert "memcpy(slot.data, access_unit.data" not in renderer_cpp
-    assert (
-        'ref="50d258a34938014b5f43277573880d96bd8ed669"'
-        in camera_config
-    )
-    assert (
-        '"CONFIG_ESP_VIDEO_ENABLE_HW_JPEG_ENC_VIDEO_DEVICE", jpeg_enabled'
-        in camera_config
-    )
     h264_package = (
         ROOT / "packages" / "voip" / "p4_video_h264.yaml"
     ).read_text()
@@ -941,8 +819,6 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "ESP_H264_RAW_FMT_O_UYY_E_VYY" in source_cpp
     assert "PPA_SRM_COLOR_MODE_YUV420" in source_cpp
     assert "RawVideoPixelFormat::YUV420_OUYY_EVYY" in source_cpp
-    assert "V4L2_PIX_FMT_YUV420" in camera_cpp
-    assert "capture_pixel_format_" in camera_cpp
     assert "h264_profile_level_id_from_annex_b" in source_cpp
     assert "h264_same_subprofile" in source_cpp
     transform_start = source_cpp.index(

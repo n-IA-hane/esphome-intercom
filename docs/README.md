@@ -61,7 +61,7 @@ Each ESPHome component ships its own README with the full option list, YAML snip
 
 - [`voip_stack`](https://github.com/n-IA-hane/esphome-voip-stack), the ESP SIP
   phone component.
-- [`esp_video_camera`](../esphome/components/esp_video_camera/README.md), the
+- [`esp_video_camera`](https://github.com/n-IA-hane/esphome-esp-video-camera), the
   ESP32-P4 Espressif V4L2 camera surface used by the native camera entity and
   SIP video sources.
 - [`esp_jpeg_video_source`](https://github.com/n-IA-hane/esphome-voip-stack/tree/dev/esphome/components/esp_jpeg_video_source),

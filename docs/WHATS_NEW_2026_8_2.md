@@ -61,6 +61,15 @@ compile is never described as proof of physical audio, video or panel output.
 
 ## Known issues
 
+- One CheapConnect installation has shown a provider-specific cold-start
+  registration delay. The first two UDP REGISTER transactions reached the
+  standard 32 second SIP Timer F without any response, while the third fresh
+  UDP flow immediately completed the 401 challenge and 200 OK exchange. The
+  trunk then handled inbound and outbound calls with two-way audio and retained
+  the configured UDP transport. Automatic recovery is working, but the reason
+  that this provider ignored the first flows is not yet proven. A packet
+  capture from Home Assistant through successful registration is needed before
+  changing standards-based transaction timing or startup ordering.
 - On a OnePlus Nord 5, browser softphone receive audio can develop audible gaps
   and increment the playback underrun counter when the display uses a high
   refresh rate, especially during touch interaction or orientation changes.

@@ -1729,27 +1729,31 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
-        trunk.responses.put_nowait(response("other", "2 REGISTER"))
-        trunk.responses.put_nowait(response(trunk.call_id, "2 INVITE"))
-        trunk.responses.put_nowait(response(trunk.call_id, "1 REGISTER"))
-        provisional = sip.parse_message(
-            sip.build_response(
-                100,
-                "Trying",
-                [
-                    ("Via", "SIP/2.0/UDP 127.0.0.1:5060;branch=z9hG4bKtest"),
-                    ("From", "<sip:ha@127.0.0.1>;tag=local"),
-                    ("To", "<sip:ha@127.0.0.1>;tag=remote"),
-                    ("Call-ID", trunk.call_id),
-                    ("CSeq", "2 REGISTER"),
-                ],
-                b"",
+        with self.assertLogs(sip_trunk._LOGGER, level="DEBUG") as captured:
+            trunk.responses.put_nowait(response("other", "2 REGISTER"))
+            trunk.responses.put_nowait(response(trunk.call_id, "2 INVITE"))
+            trunk.responses.put_nowait(response(trunk.call_id, "1 REGISTER"))
+            provisional = sip.parse_message(
+                sip.build_response(
+                    100,
+                    "Trying",
+                    [
+                        ("Via", "SIP/2.0/UDP 127.0.0.1:5060;branch=z9hG4bKtest"),
+                        ("From", "<sip:ha@127.0.0.1>;tag=local"),
+                        ("To", "<sip:ha@127.0.0.1>;tag=remote"),
+                        ("Call-ID", trunk.call_id),
+                        ("CSeq", "2 REGISTER"),
+                    ],
+                    b"",
+                )
             )
-        )
-        trunk.responses.put_nowait(provisional)
-        trunk.responses.put_nowait(response(trunk.call_id, "2 REGISTER"))
-        received = await trunk._read_response(0.1, expected_cseq=2)
+            trunk.responses.put_nowait(provisional)
+            trunk.responses.put_nowait(response(trunk.call_id, "2 REGISTER"))
+            received = await trunk._read_response(0.1, expected_cseq=2)
         self.assertEqual(received.header("CSeq"), "2 REGISTER")
+        diagnostic = "\n".join(captured.output)
+        self.assertIn("status=100 cseq=2 method=REGISTER", diagnostic)
+        self.assertIn("call_id_match=True branch_match=True", diagnostic)
 
     async def test_udp_trunk_completes_authenticated_registration_on_one_flow(
         self,
