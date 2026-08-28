@@ -18,6 +18,7 @@ from .config import (
 from .const import (
     CONF_SIP_VIDEO,
     CONF_TRUNK_AUTH_USERNAME,
+    CONF_TRUNK_DOMAIN,
     CONF_TRUNK_OUTBOUND_PROXY,
     CONF_TRUNK_PASSWORD,
     CONF_TRUNK_PORT,
@@ -560,6 +561,11 @@ async def async_originate_browser_call(
                 if browser_endpoint is not None
                 else local_name
             )
+        ),
+        local_identity_uri=(
+            f"sip:{trunk_cfg[CONF_TRUNK_USERNAME]}@{trunk_cfg[CONF_TRUNK_DOMAIN]}"
+            if use_trunk
+            else ""
         ),
         local_sip_port=int(cfg["sip_port"]),
         local_rtp_port=local_rtp_port,

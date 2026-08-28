@@ -14,6 +14,7 @@ from ..const import (
     CONF_SIP_VIDEO,
     CONF_VIDEO_TRANSCODING,
     CONF_TRUNK_AUTH_USERNAME,
+    CONF_TRUNK_DOMAIN,
     CONF_TRUNK_OUTBOUND_PROXY,
     CONF_TRUNK_PASSWORD,
     CONF_TRUNK_PORT,
@@ -252,6 +253,11 @@ async def route_sip_bridge(
             str(trunk_config.get(CONF_TRUNK_USERNAME) or runtime.ha_peer_name(hass))
             if bridge_to_trunk
             else invite.routing_caller or runtime.ha_peer_name(hass)
+        ),
+        local_identity_uri=(
+            f"sip:{trunk_config[CONF_TRUNK_USERNAME]}@{trunk_config[CONF_TRUNK_DOMAIN]}"
+            if bridge_to_trunk
+            else ""
         ),
         local_sip_port=int(cfg["sip_port"]),
         local_rtp_port=dest_relay_port,

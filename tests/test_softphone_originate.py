@@ -83,6 +83,7 @@ def softphone_originate(monkeypatch):
         "const": {
             "CONF_SIP_VIDEO": "sip_video",
             "CONF_TRUNK_AUTH_USERNAME": "trunk_auth_username",
+            "CONF_TRUNK_DOMAIN": "trunk_domain",
             "CONF_TRUNK_OUTBOUND_PROXY": "trunk_outbound_proxy",
             "CONF_TRUNK_PASSWORD": "trunk_password",
             "CONF_TRUNK_PORT": "trunk_port",

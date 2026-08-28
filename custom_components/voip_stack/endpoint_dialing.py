@@ -47,6 +47,7 @@ class OutboundLegPolicy:
     """Policy differences applied by the common outbound-leg builder."""
 
     local_uri_user: str = ""
+    local_identity_uri: str = ""
     auth_username: str = ""
     username: str = ""
     password: str = ""
@@ -237,6 +238,7 @@ class EndpointDialer:
                         else local_name
                     )
                 ),
+                local_identity_uri=policy.local_identity_uri,
                 local_sip_port=int(self.config["sip_port"]),
                 local_rtp_port=ports.ports[local_rtp_port_index],
                 supported_send_formats=sip_send_formats,

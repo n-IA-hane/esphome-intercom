@@ -5277,6 +5277,99 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             sip.parse_cseq(invites[0].header("CSeq")).number + 2,
         )
 
+    async def test_trunk_invite_separates_identity_contact_and_proxy_route(self) -> None:
+        class Resolver:
+            async def resolve(self, uri, *, transport=""):
+                self_outer.assertEqual(uri.host, "fs1.voip.example")
+                self_outer.assertEqual(transport, "UDP")
+                return (
+                    sip_resolution.SipServerTarget(
+                        "fs1.voip.example",
+                        5060,
+                        "UDP",
+                        ("192.0.2.10",),
+                    ),
+                )
+
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+        self_outer = self
+        client = sip_client.SipCallClient(
+            local_ip="192.168.1.10",
+            local_name="Home",
+            local_uri_user="+41440000000",
+            local_identity_uri="sip:+41440000000@voip.example",
+            local_sip_port=5060,
+            local_rtp_port=41000,
+            username="+41440000000",
+            auth_username="CP-account@example.net",
+            password="secret",
+            outbound_proxy="sip:fs1.voip.example:5060;transport=udp",
+            target_resolver=Resolver(),
+        )
+        transport = FakeTransport()
+        client.transport = transport  # type: ignore[assignment]
+        responses = 0
+
+        async def read_response(_timeout: float):
+            nonlocal responses
+            responses += 1
+            invite = sip.parse_message(transport.sent[-1][0])
+            status, reason = (401, "Unauthorized") if responses == 1 else (180, "Ringing")
+            headers = [
+                ("Via", invite.header("Via")),
+                ("From", invite.header("From")),
+                ("To", '<sip:0800000000@voip.example>;tag=provider'),
+                ("Call-ID", invite.header("Call-ID")),
+                ("CSeq", invite.header("CSeq")),
+            ]
+            if status == 401:
+                headers.append(
+                    (
+                        "WWW-Authenticate",
+                        'Digest realm="voip.example", nonce="nonce", '
+                        'algorithm=SHA-256, qop="auth"',
+                    )
+                )
+            return sip.parse_message(sip.build_response(status, reason, headers)), (
+                "192.0.2.10",
+                5060,
+            )
+
+        client._read_response = read_response  # type: ignore[method-assign]
+        result = await client.invite(
+            target="0800000000",
+            remote_host="voip.example",
+            remote_sip_port=5060,
+            request_uri="sip:0800000000@voip.example:5060;transport=udp",
+        )
+
+        self.assertEqual(result, "ringing")
+        messages = [sip.parse_message(raw) for raw, _addr in transport.sent]
+        self.assertEqual([message.method for message in messages], ["INVITE", "ACK", "INVITE"])
+        first, ack, authenticated = messages
+        for message in messages:
+            self.assertEqual(message.uri, "sip:0800000000@voip.example:5060;transport=udp")
+            self.assertEqual(
+                message.header("Route"),
+                "<sip:fs1.voip.example:5060;transport=udp;lr>",
+            )
+            self.assertIn("sip:+41440000000@voip.example", message.header("From"))
+            self.assertIn("sip:+41440000000@192.168.1.10:5060", message.header("Contact"))
+        self.assertEqual(transport.sent[0][1], ("192.0.2.10", 5060))
+        self.assertEqual(ack.header("Via"), first.header("Via"))
+        authorization = authenticated.header("Authorization")
+        self.assertIn('username="CP-account@example.net"', authorization)
+        self.assertIn(
+            'uri="sip:0800000000@voip.example:5060;transport=udp"',
+            authorization,
+        )
+
     async def test_pending_cancel_waits_for_provisional_then_terminates_invite(self) -> None:
         class FakeTransport:
             def __init__(self) -> None:
