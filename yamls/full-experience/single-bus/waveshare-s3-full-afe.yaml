@@ -158,7 +158,7 @@ external_components:
   - source: ${voip_stack_components_source}
     components: [voip_stack]
   - source: ${ext_components_source}
-    components: [speaker, voice_assistant]
+    components: [audio_http, speaker, voice_assistant]
   - source: ${runtime_controller_components_source}
     components: [runtime_controller]
   - source: ${audio_stack_components_source}
@@ -359,6 +359,15 @@ voice_assistant:
   noise_suppression_level: 0
   auto_gain: 0dBFS
   volume_multiplier: 2.0
+
+# The shared media-player package defines these HTTP sources. On WS3, retain
+# their ring allocations across playback cycles so media, TTS and VoIP do not
+# repeatedly return large blocks to the heap under concurrent use.
+media_source:
+  - id: !extend media_http_source
+    persistent_ring_buffer: true
+  - id: !extend announcement_http_source
+    persistent_ring_buffer: true
 
 runtime_controller:
   storage_in_psram: true
