@@ -59,6 +59,26 @@ and uploaded explicitly to the GitHub release for HACS.
 Real hardware evidence remains explicit. A green model, unit suite or firmware
 compile is never described as proof of physical audio, video or panel output.
 
+## Final SIP interoperability refresh
+
+Outbound provider calls now keep four SIP roles separate: the provider account
+identity in `From`, the local signaling endpoint in `Contact`, the logical SIP
+domain in the request, and the configured outbound proxy as the next hop. The
+provider account identity is also used as the trunk-facing display identity,
+while the friendly Home Assistant phone name remains available to the local UI.
+
+The documented empty-domain fallback now applies uniformly to browser calls,
+forwarded calls and inbound-to-trunk bridges. Audio-only ESP endpoints receive
+audio and RFC 4733 DTMF offers without an unnecessary video media section,
+while video-capable endpoints retain initial video and audio-first video
+renegotiation.
+
+The final candidate passed 1661 Python tests, 4 deselected tests, 140 subtests
+and 88 Home Assistant runtime tests. A deployed Wildix call completed the
+standard challenge flow, ringing, answer, ACK and BYE with the provider identity
+in `From` and a separate local `Contact`. Real WS3 and P4 calls both reached
+`in_call`, returned to `idle`, and restored the original P4 auto-answer setting.
+
 ## Known issues
 
 - One CheapConnect installation has shown a provider-specific cold-start
