@@ -1927,6 +1927,73 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         trunk.registered = False
         self.assertFalse(trunk.accepts_inbound_source("192.0.2.11", 5060, "UDP"))
 
+    async def test_udp_register_uses_proxy_when_logical_domain_has_no_address(
+        self,
+    ) -> None:
+        class ProxyRegistrar(asyncio.DatagramProtocol):
+            def __init__(self) -> None:
+                self.transport: asyncio.DatagramTransport | None = None
+                self.request: sip.SipMessage | None = None
+
+            def connection_made(self, transport: asyncio.BaseTransport) -> None:
+                self.transport = transport  # type: ignore[assignment]
+
+            def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+                request = sip.parse_message(data)
+                self.request = request
+                headers = [
+                    *[("Via", value) for value in request.header_values("Via")],
+                    ("From", request.header("From")),
+                    ("To", request.header("To") + ";tag=proxy"),
+                    ("Call-ID", request.header("Call-ID")),
+                    ("CSeq", request.header("CSeq")),
+                    ("Contact", request.header("Contact")),
+                    ("Expires", "300"),
+                ]
+                assert self.transport is not None
+                self.transport.sendto(sip.build_response(200, "OK", headers), addr)
+
+        loop = asyncio.get_running_loop()
+        registrar = ProxyRegistrar()
+        server_transport, _ = await loop.create_datagram_endpoint(
+            lambda: registrar,
+            local_addr=("127.0.0.1", 0),
+        )
+        server_port = server_transport.get_extra_info("sockname")[1]
+        trunk = sip_trunk.SipTrunkClient(
+            config=sip_trunk.SipTrunkConfig(
+                enabled=True,
+                transport="udp",
+                server="logical.invalid",
+                port=5060,
+                domain="logical.invalid",
+                username="ha",
+                auth_username="ha-auth",
+                password="secret",
+                expires=300,
+                outbound_proxy=f"sip:127.0.0.1:{server_port};transport=udp",
+            ),
+            local_ip="127.0.0.1",
+            local_sip_port=5060,
+        )
+        try:
+            await trunk._connect_udp()
+            trunk._ensure_receive_task()
+
+            result = await trunk.register(timeout=1.0)
+
+            self.assertEqual(result, "registered")
+            self.assertTrue(trunk.registered)
+            self.assertIsNotNone(registrar.request)
+            assert registrar.request is not None
+            self.assertEqual(registrar.request.uri, "sip:logical.invalid")
+            self.assertIn("<sip:ha@logical.invalid>", registrar.request.header("To"))
+            self.assertEqual(trunk.active_registrar_target[0], "127.0.0.1")
+        finally:
+            trunk.registered = False
+            await trunk.stop()
+            server_transport.close()
+
     async def test_udp_register_timeout_retires_flow_before_retry(self) -> None:
         class Transport:
             def __init__(self) -> None:

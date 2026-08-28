@@ -556,10 +556,17 @@ class SipTrunkClient:
             }
             server_target = (str(self.config.server), int(self.config.port))
             if server_target != self.registrar_target:
-                server_candidates = await self.target_resolver.resolve(
-                    sip.SipUri("", server_target[0], server_target[1]),
-                    transport="UDP",
-                )
+                try:
+                    server_candidates = await self.target_resolver.resolve(
+                        sip.SipUri("", server_target[0], server_target[1]),
+                        transport="UDP",
+                    )
+                except OSError:
+                    # The server may be a logical SIP domain with no address
+                    # records.  When an outbound proxy is configured, only
+                    # that next hop must resolve; a logical domain must not
+                    # invalidate the proxy's source allowlist.
+                    server_candidates = ()
                 resolved.update(
                     normalized
                     for item in server_candidates
