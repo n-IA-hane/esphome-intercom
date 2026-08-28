@@ -662,6 +662,27 @@ class GroupCallMatrixTest(unittest.TestCase):
             "sip:waveshare-s3@192.168.1.47",
         )
 
+    def test_peer_video_contract_distinguishes_audio_only_from_unknown(self) -> None:
+        ws3 = peer.Peer(
+            name="Waveshare S3 Audio",
+            host="192.168.1.47",
+            endpoint_kind="esphome",
+            capabilities=("audio", "dtmf"),
+            device={"sip_video_codec": ""},
+        )
+        p4 = peer.Peer(
+            name="Waveshare P4 Touch",
+            host="192.168.1.48",
+            endpoint_kind="esphome",
+            capabilities=("audio", "dtmf", "video"),
+            device={"sip_video_codec": "h264"},
+        )
+        generic = peer.Peer(name="Generic SIP phone", host="192.0.2.30")
+
+        self.assertEqual(endpoint_routing.peer_video_codec(ws3), "")
+        self.assertEqual(endpoint_routing.peer_video_codec(p4), "h264")
+        self.assertIsNone(endpoint_routing.peer_video_codec(generic))
+
     def test_voip_matrix_runner_all_scenarios_validate(self) -> None:
         results, errors = run_matrix()
         self.assertEqual(errors, [])

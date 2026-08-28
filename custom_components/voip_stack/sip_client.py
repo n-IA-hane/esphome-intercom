@@ -65,6 +65,19 @@ def _uri_with_transport(uri: sip.SipUri, transport: str) -> sip.SipUri:
     return replace(uri, params=(*params, ("transport", transport.lower())))
 
 
+def _explicit_uri_transport(uri: sip.SipUri) -> str:
+    """Return an administratively selected SIP transport, if present."""
+
+    return next(
+        (
+            str(value or "").strip().upper()
+            for key, value in uri.params
+            if key.strip().lower() == "transport"
+        ),
+        "",
+    )
+
+
 def _rtp_encoding(fmt: AudioFormat | sdp.RtpPcmFormat) -> str:
     return getattr(fmt, "encoding", "")
 
@@ -1728,10 +1741,15 @@ class SipCallClient:
         timeout: float = 8.0,
         delayed_offer: bool = False,
     ) -> str:
+        supplied_request_uri = bool(str(request_uri or "").strip())
         transport_param = (("transport", self.signaling_transport.lower()),)
         request_uri = request_uri or str(sip.SipUri(target, remote_host, int(remote_sip_port), params=transport_param))
         logical_uri = sip.parse_sip_uri(request_uri)
         route_uri = logical_uri
+        request_transport = (
+            _explicit_uri_transport(logical_uri) if supplied_request_uri else ""
+        )
+        next_hop_transport = request_transport
         if self.outbound_proxy:
             proxy = str(self.outbound_proxy).strip()
             route_uri = sip.parse_sip_uri(
@@ -1739,6 +1757,7 @@ class SipCallClient:
                 if proxy.lower().startswith(("sip:", "sips:"))
                 else f"sip:{proxy}"
             )
+            next_hop_transport = _explicit_uri_transport(route_uri)
         elif remote_host != logical_uri.host:
             # The caller supplied an already selected next hop while keeping
             # the logical Request-URI intact, as required for trunks/proxies.
@@ -1848,7 +1867,7 @@ class SipCallClient:
             self.signaling_transport == "UDP"
             and len(raw) > _SIP_UDP_SAFE_REQUEST_BYTES
             and self._tcp_reuse_send is None
-            and not self.outbound_proxy
+            and not next_hop_transport
         ):
             # RFC 3261 section 18.1.1 requires requests larger than 1300
             # bytes to use a congestion-controlled transport when the path
@@ -1929,14 +1948,15 @@ class SipCallClient:
         elif (
             self.signaling_transport == "UDP"
             and len(raw) > _SIP_UDP_SAFE_REQUEST_BYTES
-            and self.outbound_proxy
+            and bool(next_hop_transport)
         ):
-            # An administratively configured outbound proxy is the explicit
-            # next-hop transport contract. Do not silently replace a UDP-only
-            # trunk with TCP merely because its offer is large.
+            # An explicit URI or proxy transport is the next-hop contract. Do
+            # not silently replace a UDP-only peer merely because its offer is
+            # large.
             _LOGGER.warning(
-                "SIP initial request is %s bytes; preserving configured UDP outbound proxy",
+                "SIP initial request is %s bytes; preserving explicit %s transport",
                 len(raw),
+                next_hop_transport,
             )
 
         def refresh_pending_local_uri() -> None:
@@ -1970,16 +1990,33 @@ class SipCallClient:
                     )
                 self.dialog_ids.branch = sip.make_branch()
                 refresh_pending_local_uri()
+        offered_audio = []
+        offered_dtmf = []
+        offered_video = []
+        if body.strip():
+            offered_audio = [
+                item
+                for item in sdp.offered_media_descriptions(body)
+                if "TELEPHONE-EVENT" not in item
+            ]
+            offered_dtmf = [
+                f"pt={item.payload_type}:TELEPHONE-EVENT/{item.sample_rate}"
+                for item in sdp.offered_dtmf_formats(body)
+            ]
+            offered_video = [
+                item.wire_token() for item in sdp.offered_video_formats(body)
+            ]
         _LOGGER.info(
-            "SIP TX INVITE %s@%s:%s offered=[%s]",
+            "SIP TX INVITE %s@%s:%s bytes=%s transport=%s "
+            "audio=[%s] dtmf=[%s] video=[%s]",
             target,
             remote_host,
             remote_sip_port,
-            (
-                ", ".join(sdp.offered_media_descriptions(body))
-                if body
-                else "delayed"
-            ),
+            len(raw),
+            self.signaling_transport,
+            ", ".join(offered_audio) if body else "delayed",
+            ", ".join(offered_dtmf) if body else "delayed",
+            ", ".join(offered_video) if body else "delayed",
         )
         transaction = SipClientTransaction[
             tuple[sip.SipMessage, tuple[str, int]]

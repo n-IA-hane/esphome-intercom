@@ -151,3 +151,19 @@ def trunk_enabled(cfg: dict) -> bool:
         and cfg.get(CONF_TRUNK_USERNAME)
         and cfg.get(CONF_TRUNK_PASSWORD)
     )
+
+
+def trunk_leg_identity(cfg: dict, fallback: str = "") -> str:
+    """Return the provider-facing identity for an outbound trunk leg."""
+
+    return str(cfg.get(CONF_TRUNK_USERNAME) or fallback).strip()
+
+
+def trunk_identity_uri(cfg: dict) -> str:
+    """Return the provider identity URI using the documented domain fallback."""
+
+    username = trunk_leg_identity(cfg)
+    domain = str(
+        cfg.get(CONF_TRUNK_DOMAIN) or cfg.get(CONF_TRUNK_SERVER) or ""
+    ).strip()
+    return f"sip:{username}@{domain}" if username and domain else ""

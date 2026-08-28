@@ -10,13 +10,15 @@ from typing import Any, Awaitable, Callable
 
 from homeassistant.core import HomeAssistant
 
-from .config import trunk_config as _get_trunk_config
+from .config import (
+    trunk_config as _get_trunk_config,
+    trunk_identity_uri as _trunk_identity_uri,
+)
 from .call_projection import publish_bridge_projection
 from .const import (
     CONF_SIP_VIDEO,
     CONF_VIDEO_TRANSCODING,
     CONF_TRUNK_AUTH_USERNAME,
-    CONF_TRUNK_DOMAIN,
     CONF_TRUNK_OUTBOUND_PROXY,
     CONF_TRUNK_PASSWORD,
     CONF_TRUNK_PORT,
@@ -948,9 +950,7 @@ async def async_forward_existing_call(
                         else invite.routing_caller or _ha_peer_name(hass)
                     ),
                     local_identity_uri=(
-                        f"sip:{trunk_cfg[CONF_TRUNK_USERNAME]}@{trunk_cfg[CONF_TRUNK_DOMAIN]}"
-                        if bridge_to_trunk
-                        else ""
+                        _trunk_identity_uri(trunk_cfg) if bridge_to_trunk else ""
                     ),
                     auth_username=str(
                         trunk_cfg.get(CONF_TRUNK_AUTH_USERNAME) or ""

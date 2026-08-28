@@ -14,11 +14,12 @@ from .config import (
     transport_config as _get_transport_config,
     trunk_config as _get_trunk_config,
     trunk_enabled as _trunk_enabled,
+    trunk_identity_uri as _trunk_identity_uri,
+    trunk_leg_identity as _trunk_leg_identity,
 )
 from .const import (
     CONF_SIP_VIDEO,
     CONF_TRUNK_AUTH_USERNAME,
-    CONF_TRUNK_DOMAIN,
     CONF_TRUNK_OUTBOUND_PROXY,
     CONF_TRUNK_PASSWORD,
     CONF_TRUNK_PORT,
@@ -550,11 +551,14 @@ async def async_originate_browser_call(
         offered_video_formats,
     )
 
+    provider_identity = (
+        _trunk_leg_identity(trunk_cfg, local_name) if use_trunk else local_name
+    )
     client = SipCallClient(
         local_ip=local_ip,
-        local_name=local_name,
+        local_name=provider_identity,
         local_uri_user=(
-            str(trunk_cfg.get(CONF_TRUNK_USERNAME) or local_name)
+            provider_identity
             if use_trunk
             else (
                 browser_endpoint.sip_uri_user
@@ -562,11 +566,7 @@ async def async_originate_browser_call(
                 else local_name
             )
         ),
-        local_identity_uri=(
-            f"sip:{trunk_cfg[CONF_TRUNK_USERNAME]}@{trunk_cfg[CONF_TRUNK_DOMAIN]}"
-            if use_trunk
-            else ""
-        ),
+        local_identity_uri=_trunk_identity_uri(trunk_cfg) if use_trunk else "",
         local_sip_port=int(cfg["sip_port"]),
         local_rtp_port=local_rtp_port,
         supported_send_formats=sip_send_formats,

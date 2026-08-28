@@ -75,11 +75,18 @@ def softphone_originate(monkeypatch):
         "call_projection": {},
         "audio_format": {"HA_TRUNK_AUDIO_FORMATS": []},
         "authorization": {"async_require_service_admin": AsyncMock()},
-        "config": {
-            "transport_config": Mock(return_value={}),
-            "trunk_config": Mock(return_value={}),
-            "trunk_enabled": Mock(return_value=False),
-        },
+            "config": {
+                "transport_config": Mock(return_value={}),
+                "trunk_config": Mock(return_value={}),
+                "trunk_enabled": Mock(return_value=False),
+                "trunk_identity_uri": lambda cfg: (
+                    f"sip:{cfg['trunk_username']}@"
+                    f"{cfg.get('trunk_domain') or cfg.get('trunk_server')}"
+                ),
+                "trunk_leg_identity": lambda cfg, fallback="": str(
+                    cfg.get("trunk_username") or fallback
+                ).strip(),
+            },
         "const": {
             "CONF_SIP_VIDEO": "sip_video",
             "CONF_TRUNK_AUTH_USERNAME": "trunk_auth_username",
@@ -221,6 +228,48 @@ def softphone_originate(monkeypatch):
 
 def _call(hass, **data):
     return SimpleNamespace(hass=hass, data=data, context=object())
+
+
+def test_provider_leg_uses_trunk_account_identity(softphone_originate) -> None:
+    assert (
+        softphone_originate._trunk_leg_identity(
+            {"trunk_username": "+41440000000"},
+            "Kitchen tablet",
+        )
+        == "+41440000000"
+    )
+
+
+def test_direct_leg_preserves_local_display_name(softphone_originate) -> None:
+    assert softphone_originate._trunk_leg_identity({}, "Kitchen tablet") == (
+        "Kitchen tablet"
+    )
+
+
+def test_provider_identity_uri_uses_logical_domain(softphone_originate) -> None:
+    assert (
+        softphone_originate._trunk_identity_uri(
+            {
+                "trunk_username": "+41440000000",
+                "trunk_domain": "voip.example",
+                "trunk_server": "registrar.example",
+            },
+        )
+        == "sip:+41440000000@voip.example"
+    )
+
+
+def test_provider_identity_uri_falls_back_to_server(softphone_originate) -> None:
+    assert (
+        softphone_originate._trunk_identity_uri(
+            {
+                "trunk_username": "427",
+                "trunk_domain": "",
+                "trunk_server": "pbx.example",
+            },
+        )
+        == "sip:427@pbx.example"
+    )
 
 
 def test_browser_to_browser_uses_local_bridge_before_network(

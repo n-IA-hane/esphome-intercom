@@ -155,15 +155,41 @@ def peer_audio_formats(peer: Peer | None, key: str) -> list[AudioFormat]:
         return []
 
 
-def peer_video_codec(peer: Peer | None, entry=None) -> str:
-    """Return one explicitly advertised SIP video codec for a destination."""
+def peer_video_codec(peer: Peer | None, entry=None) -> str | None:
+    """Return the destination video contract.
 
+    A codec names an explicitly video-capable peer, an empty string names a
+    known audio-only peer, and ``None`` preserves generic SIP negotiation when
+    the peer did not advertise capabilities.
+    """
+
+    metadata = (getattr(entry, "metadata", None) or {}) if entry is not None else {}
+    device = (peer.device or {}) if peer is not None else {}
     value = str(
-        ((peer.device or {}).get("sip_video_codec") if peer is not None else "")
-        or ((getattr(entry, "metadata", None) or {}).get("sip_video_codec"))
+        device.get("sip_video_codec")
+        or metadata.get("sip_video_codec")
         or ""
     ).strip().casefold()
-    return value if value in {"h264", "jpeg"} else ""
+    if value in {"h264", "jpeg"}:
+        return value
+
+    endpoint_kind = str(
+        (getattr(peer, "endpoint_kind", "") if peer is not None else "")
+        or metadata.get("endpoint_kind")
+        or ""
+    ).strip().casefold()
+    capabilities = {
+        str(item).strip().casefold()
+        for item in (
+            (getattr(peer, "capabilities", ()) if peer is not None else ())
+            or metadata.get("capabilities")
+            or ()
+        )
+        if str(item).strip()
+    }
+    if endpoint_kind == "esphome" or capabilities:
+        return "" if "video" not in capabilities else None
+    return None
 
 
 def device_formats(device: dict | None, key: str) -> list[AudioFormat]:

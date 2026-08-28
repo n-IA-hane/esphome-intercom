@@ -62,11 +62,13 @@ def video_bridge_offer_formats(
     *,
     source_receive: sdp.RtpVideoFormat | None = None,
     enable_transcoding: bool,
-    target_codec: str = "",
+    target_codec: str | None = None,
 ) -> tuple[sdp.RtpVideoFormat, ...]:
     """Offer what the source can receive, with bounded transcoding fallbacks."""
 
     source = source_receive or source_send
+    if target_codec == "":
+        return ()
 
     if not enable_transcoding:
         if source_send.encoding != source.encoding:

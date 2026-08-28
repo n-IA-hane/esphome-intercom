@@ -146,15 +146,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("registrar_expiry.reschedule()", self.source)
 
     def test_every_outbound_trunk_leg_uses_provider_identity_uri(self) -> None:
-        identity = (
-            'f"sip:{trunk_cfg[CONF_TRUNK_USERNAME]}@'
-            '{trunk_cfg[CONF_TRUNK_DOMAIN]}"'
-        )
-        self.assertIn(identity, self.softphone_originate)
-        self.assertIn(identity, self.call_forwarder)
+        self.assertIn("_trunk_identity_uri(trunk_cfg)", self.softphone_originate)
+        self.assertIn("_trunk_identity_uri(trunk_cfg)", self.call_forwarder)
         self.assertIn("local_identity_uri=policy.local_identity_uri", self.endpoint_dialing)
-        self.assertIn("CONF_TRUNK_DOMAIN", self.inbound_bridge)
-        self.assertIn("local_identity_uri=(", self.inbound_bridge)
+        self.assertIn("_trunk_identity_uri(trunk_config)", self.inbound_bridge)
 
     def test_default_answer_ha_invite_rings_until_explicit_answer(self) -> None:
         source = self.invite_router

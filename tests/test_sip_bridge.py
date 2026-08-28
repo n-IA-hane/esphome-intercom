@@ -240,6 +240,15 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(offered[0].transport_profile, "RTP/AVP")
         self.assertEqual(offered[0].rtcp_feedback, ())
 
+    def test_known_audio_only_destination_gets_no_video_offer(self) -> None:
+        offered = sip_bridge.video_bridge_offer_formats(
+            sdp.CONSTRAINED_BASELINE_H264_FORMAT,
+            enable_transcoding=True,
+            target_codec="",
+        )
+
+        self.assertEqual(offered, ())
+
     def test_cross_codec_video_answer_configures_bidirectional_ffmpeg(self) -> None:
         invite, dialog, relay = self._cross_codec_video_fixture()
         hass = types.SimpleNamespace(data={})

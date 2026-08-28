@@ -10,11 +10,11 @@ from homeassistant.core import HomeAssistant
 from ..bridge_manager import async_watch_sip_bridge_destination
 from ..call_projection import publish_bridge_projection
 from ..core.audio_format import HA_TRUNK_AUDIO_FORMATS
+from ..config import trunk_identity_uri as _trunk_identity_uri
 from ..const import (
     CONF_SIP_VIDEO,
     CONF_VIDEO_TRANSCODING,
     CONF_TRUNK_AUTH_USERNAME,
-    CONF_TRUNK_DOMAIN,
     CONF_TRUNK_OUTBOUND_PROXY,
     CONF_TRUNK_PASSWORD,
     CONF_TRUNK_PORT,
@@ -217,7 +217,12 @@ async def route_sip_bridge(
     video_transcoding_enabled = bool(
         runtime.config.get(CONF_VIDEO_TRANSCODING, False)
     )
-    if bool(cfg.get(CONF_SIP_VIDEO, False)) and invite.video_format is not None:
+    target_video_codec = peer_video_codec(peer_target, decision.entry)
+    if (
+        bool(cfg.get(CONF_SIP_VIDEO, False))
+        and invite.video_format is not None
+        and target_video_codec != ""
+    ):
         sockets = ()
         try:
             (
@@ -255,9 +260,7 @@ async def route_sip_bridge(
             else invite.routing_caller or runtime.ha_peer_name(hass)
         ),
         local_identity_uri=(
-            f"sip:{trunk_config[CONF_TRUNK_USERNAME]}@{trunk_config[CONF_TRUNK_DOMAIN]}"
-            if bridge_to_trunk
-            else ""
+            _trunk_identity_uri(trunk_config) if bridge_to_trunk else ""
         ),
         local_sip_port=int(cfg["sip_port"]),
         local_rtp_port=dest_relay_port,
@@ -291,7 +294,7 @@ async def route_sip_bridge(
                 invite.video_format,
                 source_receive=invite.recv_video_format,
                 enable_transcoding=video_transcoding_enabled,
-                target_codec=peer_video_codec(peer_target, decision.entry),
+                target_codec=target_video_codec,
             )
             if video_bridge_ports and invite.video_format is not None
             else ()

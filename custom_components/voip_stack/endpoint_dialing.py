@@ -187,12 +187,14 @@ class EndpointDialer:
                 peers,
                 roster_entries,
             )
+            target_video_codec = peer_video_codec(peer_target, member_entry)
             video_failure_reason = ""
             if (
                 invite is not None
                 and invite.video_format is not None
                 and policy.allow_video
                 and bool(self.config.get(CONF_SIP_VIDEO, False))
+                and target_video_codec != ""
             ):
                 video_reservation = None
                 sockets = ()
@@ -274,7 +276,7 @@ class EndpointDialer:
                         enable_transcoding=bool(
                             self.config.get(CONF_VIDEO_TRANSCODING, False)
                         ),
-                        target_codec=peer_video_codec(peer_target, member_entry),
+                        target_codec=target_video_codec,
                     )
                     if video_relay is not None
                     and invite is not None

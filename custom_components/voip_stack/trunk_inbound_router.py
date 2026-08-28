@@ -439,6 +439,7 @@ async def async_route_trunk_invite(
     )
     destination_video_reservation = None
     video_relay = None
+    target_video_codec = peer_video_codec(peer_target, decision.entry)
     video_failure_reason = str(
         (preanswered or {}).get("video_failure_reason") or ""
     )
@@ -448,6 +449,7 @@ async def async_route_trunk_invite(
         and source_video_reservation is not None
         and source_video_rtp_socket is not None
         and source_video_rtcp_socket is not None
+        and target_video_codec != ""
     ):
         try:
             (
@@ -521,7 +523,7 @@ async def async_route_trunk_invite(
                 enable_transcoding=bool(
                     cfg.get(CONF_VIDEO_TRANSCODING, False)
                 ),
-                target_codec=peer_video_codec(peer_target, decision.entry),
+                target_codec=target_video_codec,
             )
             if video_relay is not None and invite.video_format is not None
             else ()
