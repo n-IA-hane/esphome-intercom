@@ -148,7 +148,9 @@ capability and security boundaries.
 
 ## SDP and RTP
 
-ESP media is PCM-only.
+ESP media capabilities are compile-time profile choices. Full profiles are
+currently PCM-only. Compact VoIP-only profiles may also include Opus when the
+device has enough flash, internal memory and PSRAM bandwidth.
 
 - Mandatory: RTP `L16`
 - Optional: RTP `L24`, only when packed as RTP L24
@@ -162,12 +164,22 @@ ESP must convert at the RTP boundary:
 - internal `S16LE` to RTP `L16` network byte order
 - internal `S24LE_IN_S32` to packed RTP `L24` network byte order
 
-Compressed codecs are not implemented on ESP. If a SIP softphone offers only
-compressed codecs such as PCMU, PCMA, Opus, Speex, GSM or G.722, ESP returns
-`488 Not Acceptable Here`.
+The Spotpear VoIP-only profile implements Opus and advertises it through normal
+SDP capability negotiation. Other compressed codecs such as PCMU, PCMA, Speex,
+GSM and G.722 are not currently implemented on ESP. An ESP returns `488 Not
+Acceptable Here` when an offer has no codec compatible with that firmware.
 
-ESP devices never advertise or decode video. The optional HA softphone video
-path is not routed into an ESP, ring group, conference room or Assist pipeline.
+Do not add Opus to a Full profile merely because it compiles. The complete
+Spotpear Full workload could not sustain simultaneous Opus encode and decode
+when the codec working memory lived in PSRAM. Moving the hot working memory to
+internal RAM exhausted the DMA headroom required by the display. Full profiles
+therefore retain PCM until a future implementation passes complete hardware
+concurrency and media-cadence qualification.
+
+Audio-only ESP profiles never advertise video. Qualified ESP32-P4 videophone
+profiles compile one explicit JPEG or H.264 video contract and advertise only
+that capability. Video support is not inferred for S3 phones, ring groups,
+conference rooms or Assist pipelines.
 
 ## Roster
 

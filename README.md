@@ -197,12 +197,20 @@ separate user mode.
 | `mic_only` | microphone TX | Monitor or capture endpoint |
 | `speaker_only` | speaker RX | Paging or announcement target |
 
-An endpoint must have at least one real media direction. ESP VoIP intentionally
-uses uncompressed PCM for audio. Standard profiles are audio-only; qualified
-ESP32-P4 videophone profiles compile exactly one video codec, JPEG or H.264.
-HA performs format conversion when a standard SIP peer negotiates another
-supported audio codec; ESP firmware is not downgraded to a telephone codec for
-that purpose.
+An endpoint must have at least one real media direction. Maintained Full
+profiles use uncompressed PCM for audio. Compact VoIP-only profiles may compile
+additional codecs when their hardware budget permits it; the Spotpear VoIP-only
+profile currently negotiates Opus and retains PCM fallback. Standard S3
+profiles are audio-only, while qualified ESP32-P4 videophone profiles compile
+exactly one video codec, JPEG or H.264. HA performs format conversion when two
+SIP legs do not share a compatible codec.
+
+Opus is not currently enabled in Full profiles. A complete Full build already
+combines AFE or AEC, wake word detection, Voice Assistant, LVGL and media
+playback. Real Spotpear testing found insufficient fast working memory for
+simultaneous Opus encoding and decoding without either missing the 20 ms media
+cadence or taking DMA-capable memory required by the display. This is a current
+resource limit, not a permanent protocol restriction.
 
 Audio component details live in the companion projects:
 

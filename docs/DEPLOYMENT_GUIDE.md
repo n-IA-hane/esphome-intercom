@@ -182,13 +182,16 @@ If digits arrive and do not resolve, HA terminates the answered leg with
 
 ## Media
 
-ESP accepts compatible PCM SDP only. Unsupported codecs or oversized/unsupported
-formats must receive a SIP failure such as `488 Not Acceptable Here`.
+An ESP advertises only the codecs compiled into its selected profile. Maintained
+Full profiles accept compatible PCM SDP. Compact profiles may also advertise
+Opus when explicitly configured, as in the Spotpear VoIP-only profile.
+Unsupported codecs or oversized or unsupported formats must receive a SIP
+failure such as `488 Not Acceptable Here`.
 
 HA can bridge and resample between supported formats. Trunk/softphone legs may
 negotiate Opus, G.722, PCMA or PCMU when the HA runtime provides the required
 codec in both directions; optional codecs are not advertised when unavailable.
-G.722 exists only on the HA/standard-SIP leg: ESP legs remain PCM-only and keep
-their native quality. HA keeps the best negotiated quality per leg when
-conversion is available. If a conversion cannot be built, HA terminates the
-setup with `media_incompatible`.
+G.722 exists only on the HA or standard-SIP leg. Full ESP profiles remain PCM,
+while a codec-enabled VoIP-only ESP can use a compatible direct Opus leg. HA
+keeps the best negotiated quality per leg when conversion is available. If a
+conversion cannot be built, HA terminates the setup with `media_incompatible`.

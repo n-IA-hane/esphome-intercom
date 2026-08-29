@@ -35,6 +35,21 @@ Assistant, media playback, TTS and Sendspin already consume their hardware
 budget. Codec selection therefore follows the selected product profile instead
 of silently adding compressed-codec dependencies to every firmware.
 
+This is a current hardware-resource limit, not a SIP interoperability limit.
+Real-device testing of an Opus-only Spotpear Full build showed that incoming RTP
+kept its required 20 ms cadence with no packet loss, while the device could only
+encode about 15 frames per second and decode about 20 frames per second instead
+of the required 50. The encoder and decoder each need a heavily accessed Opus
+pseudostack. Keeping those working sets in PSRAM is too slow under the complete
+AFE, wake word, LVGL and media workload, while moving them to internal memory
+leaves too little DMA-capable RAM for the display and audio hardware.
+
+For now, maintained Full profiles therefore remain PCM-only. The Spotpear
+VoIP-only profile has enough remaining resources for bidirectional Opus and did
+not show the same runtime limitation. A future Full Opus profile remains
+possible if the codec working-memory contract or the available hardware budget
+improves, but it will require complete real-device concurrency qualification.
+
 ## Packet time and SDP offers are smaller and more interoperable
 
 Endpoints may support different packet times for the same wire codec. Offers
