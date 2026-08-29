@@ -452,9 +452,9 @@ class SipCallClient:
         self.reader: asyncio.StreamReader | None = None
         self.writer: asyncio.StreamWriter | None = None
         self._tcp_writer: SipTcpWriter | None = None
-        self._tcp_reuse_send: Callable[[bytes], bool | None] | None = None
-        self._tcp_reuse_responses: asyncio.Queue[bytes] | None = None
-        self._tcp_reuse_close: Callable[[], None] | None = None
+        self._reused_flow_send: Callable[[bytes], bool | None] | None = None
+        self._reused_flow_responses: asyncio.Queue[bytes] | None = None
+        self._reused_flow_close: Callable[[], None] | None = None
         self.queue: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(maxsize=128)
         self._deferred_signaling: list[tuple[sip.SipMessage, tuple[str, int]]] = []
         self._reliable_rseq: dict[tuple[str, int], int] = {}
@@ -527,6 +527,8 @@ class SipCallClient:
         if self.signaling_transport in {"TCP", "TLS"}:
             return
         async with self._start_lock:
+            if self._reused_flow_send is not None:
+                return
             if self.transport is not None:
                 return
             if self._closing or self._closed:
@@ -667,11 +669,11 @@ class SipCallClient:
         writer = self.writer
         self.writer = None
         self.reader = None
-        if self._tcp_reuse_close is not None:
-            self._tcp_reuse_close()
-            self._tcp_reuse_close = None
-        self._tcp_reuse_send = None
-        self._tcp_reuse_responses = None
+        if self._reused_flow_close is not None:
+            self._reused_flow_close()
+            self._reused_flow_close = None
+        self._reused_flow_send = None
+        self._reused_flow_responses = None
         try:
             try:
                 if tcp_writer is not None:
@@ -699,15 +701,25 @@ class SipCallClient:
         if self._closing or self._closed:
             close()
             raise RuntimeError("SIP client is already closed")
-        self._tcp_reuse_send = send
-        self._tcp_reuse_responses = responses
-        self._tcp_reuse_close = close
+        self._reused_flow_send = send
+        self._reused_flow_responses = responses
+        self._reused_flow_close = close
+
+    def use_reused_signaling_flow(
+        self,
+        *,
+        send: Callable[[bytes], bool | None],
+        responses: asyncio.Queue[bytes],
+        close: Callable[[], None],
+    ) -> None:
+        """Use one externally owned SIP flow for this dialog."""
+        self.use_reused_tcp_connection(send=send, responses=responses, close=close)
 
     async def _connect_tcp(self, remote_host: str, remote_sip_port: int) -> None:
         async with self._start_lock:
             if self._closing or self._closed:
                 raise RuntimeError("SIP client is already closed")
-            if self._tcp_reuse_send is not None:
+            if self._reused_flow_send is not None:
                 return
             if self.writer is not None and not self.writer.is_closing():
                 return
@@ -755,7 +767,7 @@ class SipCallClient:
         port: int,
     ) -> None:
         """Own one pre-dialog network target and discard the prior attempt."""
-        if self._tcp_reuse_send is not None:
+        if self._reused_flow_send is not None:
             self._resolved_signaling_target = (host, int(port))
             return
         selected = (host, int(port))
@@ -834,11 +846,11 @@ class SipCallClient:
         return (f"<{uri}>",)
 
     async def _send_raw(self, raw: bytes, remote_host: str, remote_sip_port: int) -> None:
+        if self._reused_flow_send is not None:
+            if self._reused_flow_send(raw) is False:
+                raise ConnectionError("reused SIP signaling flow is not writable")
+            return
         if self.signaling_transport in {"TCP", "TLS"}:
-            if self._tcp_reuse_send is not None:
-                if self._tcp_reuse_send(raw) is False:
-                    raise ConnectionError("reused SIP TCP connection is not writable")
-                return
             await self._connect_tcp(remote_host, remote_sip_port)
             if self._tcp_writer is None:
                 raise ConnectionError("SIP TCP writer is not available")
@@ -851,15 +863,17 @@ class SipCallClient:
         self.transport.sendto(raw, (host, port))
 
     def _has_signaling_path(self) -> bool:
+        if self._reused_flow_send is not None:
+            return True
         if self.signaling_transport in {"TCP", "TLS"}:
-            return self.writer is not None or self._tcp_reuse_send is not None
+            return self.writer is not None
         return self.transport is not None
 
     def _send_dialog_request(self, raw: bytes, host: str, port: int) -> bool:
         try:
+            if self._reused_flow_send is not None:
+                return self._reused_flow_send(raw) is not False
             if self.signaling_transport in {"TCP", "TLS"}:
-                if self._tcp_reuse_send is not None:
-                    return self._tcp_reuse_send(raw) is not False
                 if self.writer is None:
                     return False
                 if self._tcp_writer is not None:
@@ -1542,15 +1556,19 @@ class SipCallClient:
             if remaining <= 0:
                 return None
             try:
-                if self.signaling_transport in {"TCP", "TLS"}:
-                    if self._tcp_reuse_responses is not None:
-                        raw = await asyncio.wait_for(self._tcp_reuse_responses.get(), timeout=remaining)
-                    else:
-                        if self.reader is None:
-                            return None
-                        raw = await asyncio.wait_for(_read_sip_stream_message(self.reader), timeout=remaining)
-                        if raw is None:
-                            return None
+                if self._reused_flow_responses is not None:
+                    raw = await asyncio.wait_for(
+                        self._reused_flow_responses.get(), timeout=remaining
+                    )
+                    addr = (self._pending_remote_host, self._pending_remote_sip_port)
+                elif self.signaling_transport in {"TCP", "TLS"}:
+                    if self.reader is None:
+                        return None
+                    raw = await asyncio.wait_for(
+                        _read_sip_stream_message(self.reader), timeout=remaining
+                    )
+                    if raw is None:
+                        return None
                     addr = (self._pending_remote_host, self._pending_remote_sip_port)
                 else:
                     raw, addr = await asyncio.wait_for(self.queue.get(), timeout=remaining)
@@ -1767,7 +1785,7 @@ class SipCallClient:
         try:
             endpoints = (
                 ((remote_host, int(remote_sip_port), self.signaling_transport),)
-                if self._tcp_reuse_send is not None
+                if self._reused_flow_send is not None
                 else tuple(
                     endpoint
                     for candidate in await self.target_resolver.resolve(
@@ -1866,7 +1884,7 @@ class SipCallClient:
         if (
             self.signaling_transport == "UDP"
             and len(raw) > _SIP_UDP_SAFE_REQUEST_BYTES
-            and self._tcp_reuse_send is None
+            and self._reused_flow_send is None
             and not next_hop_transport
         ):
             # RFC 3261 section 18.1.1 requires requests larger than 1300

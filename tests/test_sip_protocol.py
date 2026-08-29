@@ -1994,6 +1994,63 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             await trunk.stop()
             server_transport.close()
 
+    async def test_registered_udp_trunk_flow_owns_outbound_dialog(self) -> None:
+        class Transport:
+            def __init__(self) -> None:
+                self.sent = []
+
+            def sendto(self, data, addr) -> None:
+                self.sent.append((data, addr))
+
+            def close(self) -> None:
+                pass
+
+        trunk = sip_trunk.SipTrunkClient(
+            config=sip_trunk.SipTrunkConfig(
+                enabled=True,
+                transport="udp",
+                server="proxy.example",
+                port=5060,
+                domain="logical.example",
+                username="+41440000000",
+                auth_username="account@example.net",
+                password="secret",
+                expires=300,
+                outbound_proxy="sip:proxy.example:5060;transport=udp",
+            ),
+            local_ip="192.0.2.20",
+            local_sip_port=5060,
+        )
+        transport = Transport()
+        trunk.transport = transport
+        trunk.registered = True
+        trunk._trusted_udp_hosts = frozenset({"192.0.2.10"})
+        opened = trunk.open_outbound_dialog("dialog-1")
+        self.assertIsNotNone(opened)
+        send, responses = opened
+        self.assertTrue(send(b"INVITE"))
+        self.assertEqual(transport.sent, [(b"INVITE", ("proxy.example", 5060))])
+
+        response = sip.build_response(
+            403,
+            "Forbidden",
+            [
+                ("Via", "SIP/2.0/UDP 192.0.2.20;branch=z9hG4bK-test"),
+                ("From", "<sip:+41440000000@logical.example>;tag=local"),
+                ("To", "<sip:0800000000@logical.example>;tag=remote"),
+                ("Call-ID", "dialog-1"),
+                ("CSeq", "1 INVITE"),
+            ],
+        )
+        receive_task = asyncio.create_task(trunk._receive_loop())
+        trunk.queue.put_nowait((response, ("192.0.2.10", 5060)))
+        self.assertEqual(await asyncio.wait_for(responses.get(), timeout=1), response)
+        receive_task.cancel()
+        await asyncio.gather(receive_task, return_exceptions=True)
+        trunk.close_outbound_dialog("dialog-1")
+        self.assertNotIn("dialog-1", trunk._outbound_dialogs)
+        trunk.registered = False
+
     async def test_udp_register_timeout_retires_flow_before_retry(self) -> None:
         class Transport:
             def __init__(self) -> None:

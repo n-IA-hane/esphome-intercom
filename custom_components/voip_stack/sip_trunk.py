@@ -130,6 +130,25 @@ class SipTrunkClient:
         self._instance_id = f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, f'{local_ip}:{self.domain}:{config.username}')}"
         self._flow_timer = 0.0
         self._keepalive_task: asyncio.Task[None] | None = None
+        self._outbound_dialogs: dict[str, asyncio.Queue[bytes]] = {}
+
+    def open_outbound_dialog(self, call_id: str) -> tuple[Callable[[bytes], bool], asyncio.Queue[bytes]] | None:
+        """Attach an outbound dialog to the registered UDP flow."""
+        if self.transport_name != "UDP" or not self.registered or self.transport is None or not call_id or call_id in self._outbound_dialogs:
+            return None
+        responses: asyncio.Queue[bytes] = asyncio.Queue(maxsize=64)
+        self._outbound_dialogs[call_id] = responses
+
+        def send(raw: bytes) -> bool:
+            if self.transport is None or not self.registered:
+                return False
+            self.transport.sendto(raw, self.active_registrar_target)
+            return True
+        return send, responses
+
+    def close_outbound_dialog(self, call_id: str) -> None:
+        """Release one outbound dialog without closing the trunk flow."""
+        self._outbound_dialogs.pop(call_id, None)
 
     def _ensure_receive_task(self) -> None:
         if not self._stopped and (
@@ -278,6 +297,7 @@ class SipTrunkClient:
 
     async def _stop(self) -> None:
         self._stopped = True
+        self._outbound_dialogs.clear()
         self._refresh_wakeup.set()
         start_task = self._start_task
         if start_task is not None and start_task is not asyncio.current_task() and not start_task.done():
@@ -911,6 +931,11 @@ class SipTrunkClient:
                     msg = sip.parse_message(raw)
                 except Exception as err:
                     _LOGGER.info("SIP trunk RX malformed from %s:%s: %s", addr[0], addr[1], err)
+                    continue
+                dialog_responses = self._outbound_dialogs.get(msg.header("Call-ID"))
+                if dialog_responses is not None:
+                    if put_drop_oldest(dialog_responses, raw):
+                        _LOGGER.debug("SIP trunk dialog queue full; dropped oldest message")
                     continue
                 if msg.is_response:
                     cseq = msg.header("CSeq").split()
