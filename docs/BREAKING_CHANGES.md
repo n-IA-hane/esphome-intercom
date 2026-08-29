@@ -6,7 +6,21 @@ an earlier development contract instead of carrying two parallel APIs. The
 config-entry migration preserves supported persisted settings, but copied card
 YAML and automations cannot be migrated by Home Assistant automatically.
 
-## 2026.8.1-dev: P4 full profile renamed for SIP video
+## 2026.9.0: upgrade checklist
+
+1. Update VoIP Stack through HACS and restart Home Assistant.
+2. Open Reconfigure once and review trunk, incoming-routing and video options.
+3. Open every `ha_softphone` card and confirm its selected Home Assistant phone
+   Device. Clear the browser or Companion app cache after the update.
+4. Rebuild ESPHome phones from the current YAMLs. The maintained YAMLs now use
+   the stable `main` branches of every coordinated component repository.
+5. Apply the two migrations below if upgrading directly from `2026.8.0`.
+
+The config-entry migration preserves supported persisted Home Assistant
+settings. The P4 filename, copied dashboard YAML and copied automations cannot
+be changed automatically.
+
+## 2026.9.0: P4 full profile renamed for SIP video
 
 The P4 full landscape profile now includes bidirectional SIP video over JPEG,
 in addition to AFE, micro wake word, Voice Assistant, media playback and its
@@ -28,7 +42,7 @@ yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophon
 The ESPHome node name and entity identities are unchanged. Only the example
 YAML filename and references to it must be updated.
 
-## 2026.8.1-dev: phone actions and cards use device identifiers only
+## 2026.9.0: phone actions and cards use device identifiers only
 
 VoIP Stack no longer accepts the synthetic
 `__voip_stack_ha_softphone__` selector or a card `endpoint_id`. Open each

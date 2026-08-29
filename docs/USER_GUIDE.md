@@ -286,7 +286,7 @@ as `target`, `source` or `entity_id` into the current phone actions.
 ## Detailed references
 
 - [Automation cookbook](AUTOMATION_DIALPLAN.md)
-- [What is new in 2026.8.2-dev](WHATS_NEW_2026_8_2.md)
+- [What is new in 2026.9.0](WHATS_NEW_2026_9_0.md)
 - [Deployment guide](DEPLOYMENT_GUIDE.md)
 - [Home Assistant actions](SERVICES.md)
 - [Dial plan](DIALPLAN_RESOLVER.md)

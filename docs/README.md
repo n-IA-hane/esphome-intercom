@@ -9,7 +9,7 @@ beyond the project overview in the [top-level README](../README.md).
 |---|---|
 | Learn the complete everyday workflow | [User guide](USER_GUIDE.md) |
 | Use redirects and advanced automations | [Automation cookbook](AUTOMATION_DIALPLAN.md) |
-| Review the new development features | [What is new in 2026.8.2-dev](WHATS_NEW_2026_8_2.md) |
+| Review the current release | [What is new in 2026.9.0](WHATS_NEW_2026_9_0.md) |
 | Choose a board and maintained YAML | [Deployment guide](DEPLOYMENT_GUIDE.md) |
 | Complete the shortest supported setup | [Quick start](../README.md#fastest-start) |
 | Upgrade without breaking automations | [Breaking changes](BREAKING_CHANGES.md) |
@@ -18,6 +18,7 @@ beyond the project overview in the [top-level README](../README.md).
 | Resolve a specific failure | [Troubleshooting](troubleshooting.md) |
 
 Published release notes live with their immutable artifacts on GitHub:
+[2026.9.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.9.0),
 [2026.8.2-dev](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.2-dev),
 [2026.8.1-dev](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.1-dev),
 [2026.8.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.0),

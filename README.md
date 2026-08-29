@@ -524,10 +524,10 @@ Before every upgrade:
 Never assume an automation still has the same contract merely because the
 integration loaded successfully.
 
-## What's new in `2026.8.2-dev`
+## What's new in `2026.9.0`
 
-`2026.8.2-dev` is a lifecycle, video and qualification pre-release built on the
-interoperability work introduced in `2026.8.1-dev`:
+`2026.9.0` turns the development work after `2026.8.0` into one coordinated
+Home Assistant and ESPHome release:
 
 - capability-gated G.722 on HA SIP legs, while ESP endpoints keep their native
   high-quality PCM path;
@@ -566,13 +566,10 @@ interoperability work introduced in `2026.8.1-dev`:
 - executable regression evidence for community interop fixes and post-call
   quiescence.
 
-The complete development delta is in
-[`What is new in 2026.8.2-dev`](docs/WHATS_NEW_2026_8_2.md). Once published,
-the immutable artifact will be attached to the
-[`2026.8.2-dev` pre-release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.2-dev).
-The illustrated
-[`2026.8.0` release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.8.0)
-remains the stable feature overview.
+The complete release overview is in
+[`What is new in 2026.9.0`](docs/WHATS_NEW_2026_9_0.md). The immutable HACS
+archive is attached to the
+[`2026.9.0` release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.9.0).
 
 ## Supported hardware
 

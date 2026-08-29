@@ -9,6 +9,30 @@ ESPHome's IDF Component Manager when users build their own firmware.
 The repositories ship YAML, ESPHome components and source code. They do not
 ship prebuilt firmware binaries for these Espressif audio components.
 
+## ESPHome compatibility forks in 2026.9.0
+
+Maintained YAMLs source the following project-owned compatibility components
+from `esphome-intercom@main`. Each fork records its upstream ESPHome baseline
+in the component directory and preserves upstream behavior unless its option is
+enabled explicitly.
+
+| Component | Local reason | Public compatibility |
+|---|---|---|
+| `audio_http` | `persistent_ring_buffer` allocates the encoded media ring once and reuses it across playback cycles. | Disabled by default. Existing YAML is unchanged. |
+| `speaker` | Optional pause policy releases a paused decoder pipeline, and decoder attachment uses an event instead of a fixed delay. | Existing pause behavior remains the default. |
+| `voice_assistant` | `tts_playback_start_timeout` allows slow TTS engines to exceed the upstream two-second start limit. | Upstream two-second default is preserved. |
+| `spi` | Enables the official ESP-IDF 5.5 PSRAM DMA transmit path for aligned external buffers. | Only affects ESP-IDF PSRAM transfers. Arduino and internal buffers retain their normal path. |
+| `mipi_dsi` | Serializes LVGL and direct video submissions and exposes the immutable framebuffer to the narrow P4 renderer adapter. | Panel models and normal ESPHome display behavior remain aligned with the recorded upstream baseline. |
+| `audio` | Supplies the narrow host adapters required by protocol simulation. | ESP32 runtime dependency and decoder behavior remain upstream-compatible. |
+
+`p4_framebuffer_capture` and `runtime_diag` are diagnostic components, not
+production media owners. They are included only by explicit diagnostic YAML.
+The obsolete private `ring_buffer` fork has been removed.
+
+Sendspin itself is not forked here. Maintained profiles use ESPHome's official
+Sendspin media player and artwork image platform. The local YAML only connects
+that public output to the shared display and audio owners.
+
 ![ESP audio-stack architecture](images/audio-stack.png)
 
 For repository-wide attribution, ESPHome-derived component notes and the
