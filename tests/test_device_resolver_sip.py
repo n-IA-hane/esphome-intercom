@@ -143,6 +143,83 @@ class SipEndpointParseTest(unittest.TestCase):
             assert parsed is not None
             self.assertEqual(parsed["sip_video_codec"], expected)
 
+    def test_parses_standard_rtp_audio_codec_extras(self) -> None:
+        endpoint = (
+            "Spotpear | 192.168.1.31 | 5060 | 40000 | full_duplex | "
+            "16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp | 101 | "
+            "audio_tx=opus/48000/2/20 | "
+            "audio_rx=OPUS/48000/2/20;G722/8000/1/20"
+        )
+        parsed = device_resolver.parse_voip_endpoint(endpoint)
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed["sip_audio_tx_formats"], ["OPUS/48000/2/20"])
+        self.assertEqual(
+            parsed["sip_audio_rx_formats"],
+            ["OPUS/48000/2/20", "G722/8000/1/20"],
+        )
+
+    def test_parses_compact_rtp_audio_codec_extras(self) -> None:
+        endpoint = (
+            "Spotpear | 192.168.1.31 | 5060 | 40000 | full_duplex |  |  | "
+            "sip_udp | 101 | at=o/48/2/10,l/16/1/10 | "
+            "ar=o/48/2/10,l/48/1/10 | sf=d1"
+        )
+        parsed = device_resolver.parse_voip_endpoint(endpoint)
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(
+            parsed["sip_audio_tx_formats"],
+            ["OPUS/48000/2/10", "L16/16000/1/10"],
+        )
+        self.assertEqual(
+            parsed["sip_audio_rx_formats"],
+            ["OPUS/48000/2/10", "L16/48000/1/10"],
+        )
+        self.assertEqual(parsed["sdp_features"], ["directional_audio_v1"])
+
+    def test_parses_transitional_pcm_and_compact_codec_endpoint(self) -> None:
+        endpoint = (
+            "Spotpear Ball v2 | 192.168.1.31 | 5060 | 40000 | full_duplex | "
+            "16000:s16le:1:10 | 48000:s16le:1:10 | sip_udp | 1000 | "
+            "at=o/48/2/20,o/48/2/10,l/16/1/10 | "
+            "ar=o/48/2/20,o/48/2/10,l/48/1/10 | sf=d1"
+        )
+
+        parsed = device_resolver.parse_voip_endpoint(endpoint)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(
+            [fmt.wire_token() for fmt in parsed["tx_formats"]],
+            ["16000:s16le:1:10"],
+        )
+        self.assertEqual(
+            [fmt.wire_token() for fmt in parsed["rx_formats"]],
+            ["48000:s16le:1:10"],
+        )
+        self.assertEqual(
+            parsed["sip_audio_tx_formats"],
+            ["OPUS/48000/2/20", "OPUS/48000/2/10", "L16/16000/1/10"],
+        )
+        self.assertEqual(parsed["extension"], "1000")
+
+    def test_identity_only_endpoint_remains_routable(self) -> None:
+        endpoint = (
+            "Plain SIP Phone | 192.0.2.40 | 5060 | 40000 | "
+            "full_duplex |  |  | sip_udp | 1040"
+        )
+
+        parsed = device_resolver.parse_voip_endpoint(endpoint)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed["tx_formats"], [])
+        self.assertEqual(parsed["rx_formats"], [])
+        self.assertEqual(parsed["sip_audio_tx_formats"], [])
+        self.assertEqual(parsed["sip_audio_rx_formats"], [])
+        self.assertEqual(parsed["extension"], "1040")
+
     def test_does_not_parse_group_membership_from_endpoint_extras(self) -> None:
         endpoint = (
             "Spotpear | 192.168.1.31 | 5060 | 40000 | "

@@ -33,6 +33,7 @@ from .pbx_routing import (
 )
 from .phone_endpoint import EndpointAvailability, EndpointKind
 from .runtime_data import endpoint_directory
+from .core.sip import sip_default_port
 
 if TYPE_CHECKING:
     from .peer import Peer
@@ -202,7 +203,7 @@ async def async_ring_conference_members(
                 target=uri.user or attempt.member,
                 target_display_name=attempt.member,
                 remote_host=uri.host,
-                remote_sip_port=uri.port or int(runtime.config["sip_port"]),
+                remote_sip_port=sip_default_port(uri),
                 request_uri=str(uri),
                 timeout=8.0,
             )

@@ -35,6 +35,7 @@ from ..endpoint_routing import (
     peer_video_codec,
     roster_entry_formats,
     sip_target_audio_profile,
+    sip_target_rtp_audio_profile,
     supports_directional_audio_payloads,
 )
 from ..fsm import (
@@ -57,7 +58,7 @@ from ..outbound_bridge_commit import (
 from ..phone_endpoint import EndpointKind
 from ..peer import sip_uri_for_peer
 from ..runtime_data import call_runtime_artifacts
-from ..core.sip import parse_sip_uri, sip_endpoints_equal, sip_uri_targets_listener
+from ..core.sip import parse_sip_uri, sip_default_port, sip_endpoints_equal, sip_uri_targets_listener
 from ..sip_bridge import (
     build_pending_invite_video_relay,
     video_bridge_offer_formats,
@@ -202,6 +203,10 @@ async def route_sip_bridge(
         remote_rx_formats=remote_rx_formats,
         target=decision.target or invite.target,
     )
+    rtp_audio_profile = sip_target_rtp_audio_profile(
+        peer_target,
+        decision.entry,
+    )
     bridge_to_softphone = bool(
         decision.entry is not None
         and decision.entry.sip_uri
@@ -210,6 +215,10 @@ async def route_sip_bridge(
     if bridge_to_trunk or bridge_to_softphone:
         sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
         sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
+        rtp_audio_profile = None
+    elif rtp_audio_profile is not None:
+        sip_send_formats = list(rtp_audio_profile.send_formats)
+        sip_recv_formats = list(rtp_audio_profile.recv_formats)
 
     video_bridge_ports = None
     video_relay = None
@@ -266,6 +275,16 @@ async def route_sip_bridge(
         local_rtp_port=dest_relay_port,
         supported_send_formats=sip_send_formats,
         supported_recv_formats=sip_recv_formats,
+        supported_send_rtp_formats=(
+            rtp_audio_profile.send_rtp_formats
+            if rtp_audio_profile is not None
+            else None
+        ),
+        supported_recv_rtp_formats=(
+            rtp_audio_profile.recv_rtp_formats
+            if rtp_audio_profile is not None
+            else None
+        ),
         signaling_transport=runtime.sip_uri_transport(decision_uri),
         auth_username=str(trunk_config.get(CONF_TRUNK_AUTH_USERNAME) or "")
         if bridge_to_trunk
@@ -380,7 +399,7 @@ async def route_sip_bridge(
             target=decision_uri.user,
             target_display_name=resolved_callee,
             remote_host=decision_uri.host,
-            remote_sip_port=decision_uri.port or int(cfg["sip_port"]),
+            remote_sip_port=sip_default_port(decision_uri),
             request_uri=str(decision_uri),
             timeout=SIP_TIMER_B if bridge_to_trunk else 8.0,
         )

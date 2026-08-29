@@ -18,6 +18,7 @@ from .endpoint_routing import (
     peer_video_codec,
     roster_entry_formats,
     sip_target_audio_profile,
+    sip_target_rtp_audio_profile,
     supports_directional_audio_payloads,
 )
 from .media_ports import (
@@ -174,6 +175,10 @@ class EndpointDialer:
                 remote_rx_formats=remote_rx_formats,
                 target=member,
             )
+            rtp_audio_profile = sip_target_rtp_audio_profile(
+                peer_target,
+                member_entry,
+            )
             bridge_to_softphone = bool(
                 member_entry is not None
                 and member_entry.sip_uri
@@ -182,6 +187,10 @@ class EndpointDialer:
             if bridge_to_softphone or policy.force_common_audio:
                 sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
                 sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
+                rtp_audio_profile = None
+            elif rtp_audio_profile is not None:
+                sip_send_formats = list(rtp_audio_profile.send_formats)
+                sip_recv_formats = list(rtp_audio_profile.recv_formats)
             target_endpoint = self.route_resolver.logical_endpoint(
                 member,
                 peers,
@@ -245,6 +254,16 @@ class EndpointDialer:
                 local_rtp_port=ports.ports[local_rtp_port_index],
                 supported_send_formats=sip_send_formats,
                 supported_recv_formats=sip_recv_formats,
+                supported_send_rtp_formats=(
+                    rtp_audio_profile.send_rtp_formats
+                    if rtp_audio_profile is not None
+                    else None
+                ),
+                supported_recv_rtp_formats=(
+                    rtp_audio_profile.recv_rtp_formats
+                    if rtp_audio_profile is not None
+                    else None
+                ),
                 signaling_transport=self.sip_uri_transport(uri),
                 auth_username=policy.auth_username,
                 username=policy.username,

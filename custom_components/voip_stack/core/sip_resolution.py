@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import importlib
 import random
 import socket
 import time
@@ -72,6 +73,7 @@ class SipServerResolver:
         self._random = random_source or random.Random()
         self._cache: dict[tuple[str, str], tuple[float, tuple[object, ...]]] = {}
         self._system_resolver: object | None = None
+        self._dns_asyncresolver: object | None = None
         self._dns_record_types_ready = False
         self._dns_record_types_lock = asyncio.Lock()
 
@@ -235,7 +237,11 @@ class SipServerResolver:
         return tuple(dict.fromkeys(str(answer[4][0]) for answer in answers))
 
     async def _query_dns(self, name: str, kind: str) -> tuple[tuple[object, ...], float]:
-        import dns.asyncresolver  # type: ignore[import-not-found]
+        if self._dns_asyncresolver is None:
+            self._dns_asyncresolver = await asyncio.to_thread(
+                importlib.import_module, "dns.asyncresolver"
+            )
+        dns_asyncresolver = self._dns_asyncresolver
 
         if not self._dns_record_types_ready:
             async with self._dns_record_types_lock:
@@ -243,13 +249,13 @@ class SipServerResolver:
                     await asyncio.to_thread(self._load_dns_record_types)
                     self._dns_record_types_ready = True
 
-        resolver = getattr(dns.asyncresolver, "default_resolver", None)
+        resolver = getattr(dns_asyncresolver, "default_resolver", None)
         if resolver is None and self._system_resolver is None:
             # dnspython reads /etc/resolv.conf while constructing its default
             # resolver. Home Assistant treats that synchronous file access as
             # an event-loop violation, so create it once in the executor and
             # keep all network I/O on dnspython's async resolver afterwards.
-            self._system_resolver = await asyncio.to_thread(dns.asyncresolver.Resolver)
+            self._system_resolver = await asyncio.to_thread(dns_asyncresolver.Resolver)
         resolver = resolver or self._system_resolver
         answer = await resolver.resolve(name, kind, search=False)
         ttl = float(answer.rrset.ttl if answer.rrset is not None else 30)

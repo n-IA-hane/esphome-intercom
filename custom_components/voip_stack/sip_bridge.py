@@ -391,6 +391,7 @@ def build_invite_client_relay(
     client: SipCallClient,
     source_relay_port: int,
     dest_relay_port: int,
+    debug: bool = False,
     debug_capture: bool = False,
     on_release: Callable[[tuple[int, int]], None] | None = None,
 ) -> SipRtpRelay:
@@ -402,6 +403,7 @@ def build_invite_client_relay(
         right=dialog_rtp_peer(client.dialog),
         left_port=source_relay_port,
         right_port=dest_relay_port,
+        debug=debug,
         debug_capture=debug_capture,
         capture_name=f"{invite.call_id}_{client.dialog_ids.call_id}",
         on_release=on_release,
@@ -417,6 +419,7 @@ def build_local_client_relay(
     source_relay_port: int,
     dest_relay_port: int,
     capture_name: str,
+    debug: bool = False,
     debug_capture: bool = False,
     on_release: Callable[[tuple[int, int]], None] | None = None,
 ) -> SipRtpRelay:
@@ -444,6 +447,7 @@ def build_local_client_relay(
         right=dialog_rtp_peer(client.dialog),
         left_port=source_relay_port,
         right_port=dest_relay_port,
+        debug=debug,
         debug_capture=debug_capture,
         capture_name=capture_name,
         on_release=on_release,

@@ -165,6 +165,7 @@ class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
                 user="427",
                 host="phone.local",
                 port=0,
+                scheme="sip",
                 __str__=lambda _self: "sip:427@phone.local",
             ),
             member="WS3",
@@ -184,7 +185,7 @@ class RingGroupForkTest(unittest.IsolatedAsyncioTestCase):
         await fork[0].close(_CloseMode.CANCEL_OR_BYE)
 
         self.assertIs(outcome.disposition, _Disposition.ANSWERED)
-        self.assertEqual(client.invite_kwargs["remote_sip_port"], 5070)
+        self.assertEqual(client.invite_kwargs["remote_sip_port"], 5060)
         self.assertEqual(client.final_timeout, 30.0)
         self.assertIs(payloads["sip:ws3"], leg)
         self.assertEqual(CLOSE_CALLS, [(leg, True)])

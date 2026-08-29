@@ -31,6 +31,7 @@ from .endpoint_routing import (
     roster_entry_formats,
     roster_from_peers,
     sip_target_audio_profile,
+    sip_target_rtp_audio_profile,
     supports_directional_audio_payloads,
 )
 from .fsm import (
@@ -58,7 +59,7 @@ from .peer import sip_uri_for_peer
 from .phonebook_runtime import registered_roster_entries
 from .router import CallContext, RouteAction, RouteReason, route_inbound_trunk
 from .runtime_data import call_runtime_artifacts, preferred_browser_phone
-from .core.sip import parse_sip_uri
+from .core.sip import parse_sip_uri, sip_default_port
 from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
 from .sip_client import SipCallClient
 from .sip_runtime import (
@@ -422,6 +423,13 @@ async def async_route_trunk_invite(
         remote_rx_formats=remote_rx_formats,
         target=destination,
     )
+    rtp_audio_profile = sip_target_rtp_audio_profile(
+        peer_target,
+        decision.entry,
+    )
+    if rtp_audio_profile is not None:
+        sip_send_formats = list(rtp_audio_profile.send_formats)
+        sip_recv_formats = list(rtp_audio_profile.recv_formats)
     source_video_reservation = (
         preanswered.get("video_rtp_reservation")
         if isinstance(preanswered, dict)
@@ -499,6 +507,16 @@ async def async_route_trunk_invite(
         local_rtp_port=dest_relay_port,
         supported_send_formats=sip_send_formats,
         supported_recv_formats=sip_recv_formats,
+        supported_send_rtp_formats=(
+            rtp_audio_profile.send_rtp_formats
+            if rtp_audio_profile is not None
+            else None
+        ),
+        supported_recv_rtp_formats=(
+            rtp_audio_profile.recv_rtp_formats
+            if rtp_audio_profile is not None
+            else None
+        ),
         allow_directional_audio_payloads=supports_directional_audio_payloads(
             peer_target, decision.entry
         ),
@@ -549,7 +567,7 @@ async def async_route_trunk_invite(
             else destination
         ),
         remote_host=bridge_uri.host,
-        remote_sip_port=bridge_uri.port or int(cfg["sip_port"]),
+        remote_sip_port=sip_default_port(bridge_uri),
         request_uri=str(bridge_uri),
     )
     if result == "ringing":

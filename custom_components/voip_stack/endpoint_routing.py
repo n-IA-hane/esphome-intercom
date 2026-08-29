@@ -14,6 +14,8 @@ from .core.audio_format import (
     choose_common_frame_ms,
     parse_audio_format_list,
 )
+from .core import sdp
+from .core.codec_capabilities import common_sip_codecs
 from .config import assist_config, trunk_config, trunk_enabled
 from .peer import Peer
 from .router import resolve_ha_router
@@ -21,6 +23,152 @@ from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk
 from .store import manual_roster_entries
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SipAudioCapabilityProfile:
+    """One endpoint's ordered, directional RTP wire capabilities."""
+
+    send_formats: tuple[AudioFormat, ...]
+    recv_formats: tuple[AudioFormat, ...]
+    send_rtp_formats: tuple[sdp.RtpPcmFormat, ...]
+    recv_rtp_formats: tuple[sdp.RtpPcmFormat, ...]
+    sdp_features: frozenset[str]
+
+
+def _rtp_capability_tokens(
+    peer: Peer | None,
+    entry,
+    direction: str,
+    device: dict | None = None,
+) -> list[str]:
+    field = f"sip_audio_{direction}_formats"
+    if peer is not None:
+        direct = getattr(peer, field, ())
+        if direct:
+            return [str(item) for item in direct]
+        device = peer.device or {}
+        if device.get(field):
+            return [str(item) for item in device[field]]
+    metadata = dict(getattr(entry, "metadata", None) or {})
+    value = metadata.get(field) or (device or {}).get(field) or ()
+    return [str(item) for item in value]
+
+
+def _endpoint_sdp_features(
+    peer: Peer | None,
+    entry,
+    device: dict | None = None,
+) -> frozenset[str]:
+    values: set[str] = set()
+    if peer is not None:
+        values.update(str(item).casefold() for item in peer.sdp_features)
+        values.update(
+            str(item).casefold()
+            for item in (peer.device or {}).get("sdp_features", ())
+        )
+    values.update(
+        str(item).casefold()
+        for item in (getattr(entry, "metadata", None) or {}).get(
+            "sdp_features", ()
+        )
+    )
+    values.update(
+        str(item).casefold()
+        for item in (device or {}).get("sdp_features", ())
+    )
+    return frozenset(values & {"directional_audio_v1"})
+
+
+def _assign_capability_payloads(
+    tokens: list[str],
+    payloads: dict[tuple[str, int, int, int], int] | None = None,
+) -> tuple[sdp.RtpPcmFormat, ...]:
+    available = common_sip_codecs()
+    payloads = payloads if payloads is not None else {}
+    used: set[int] = set(payloads.values())
+    dynamic = 96
+    out: list[sdp.RtpPcmFormat] = []
+    seen: set[tuple[str, int, int, int]] = set()
+    static_payloads = {"PCMU": 0, "PCMA": 8, "G722": 9, "OPUS": 98}
+    for token in tokens:
+        try:
+            parsed = sdp.parse_rtp_audio_capability(token)
+        except sdp.SdpError as err:
+            _LOGGER.warning("Ignoring invalid SIP RTP capability %r: %s", token, err)
+            continue
+        encoding = parsed.encoding.upper()
+        if encoding in {"OPUS", "G722"} and encoding not in available:
+            continue
+        key = (encoding, parsed.sample_rate, parsed.channels, parsed.frame_ms)
+        if key in seen:
+            continue
+        seen.add(key)
+        payload = payloads.get(key)
+        if payload is None:
+            payload = static_payloads.get(encoding)
+        if payload is None or (payload in used and payloads.get(key) != payload):
+            while dynamic in used or dynamic in static_payloads.values():
+                dynamic += 1
+            payload = dynamic
+            dynamic += 1
+        used.add(payload)
+        payloads[key] = payload
+        out.append(
+            sdp.RtpPcmFormat(
+                payload,
+                encoding,
+                parsed.sample_rate,
+                parsed.channels,
+                parsed.frame_ms,
+                fmtp=parsed.fmtp,
+            )
+        )
+    return tuple(out)
+
+
+def sip_target_rtp_audio_profile(
+    peer: Peer | None,
+    entry,
+    device: dict | None = None,
+) -> SipAudioCapabilityProfile | None:
+    """Build the HA-side profile from explicit RTP or legacy PCM metadata."""
+
+    remote_tx_tokens = _rtp_capability_tokens(peer, entry, "tx", device)
+    remote_rx_tokens = _rtp_capability_tokens(peer, entry, "rx", device)
+    shared_payloads: dict[tuple[str, int, int, int], int] = {}
+    remote_tx = _assign_capability_payloads(remote_tx_tokens, shared_payloads)
+    remote_rx = _assign_capability_payloads(remote_rx_tokens, shared_payloads)
+    if not remote_tx and not remote_tx_tokens:
+        legacy_tx = peer_audio_formats(peer, "tx_formats") or roster_entry_formats(
+            entry, "tx_formats"
+        )
+        remote_tx = tuple(
+            sdp.audio_format_to_rtp(fmt, 96 + index)
+            for index, fmt in enumerate(legacy_tx)
+            if sdp.is_rtp_pcm_mappable(fmt)
+        )
+    if not remote_rx and not remote_rx_tokens:
+        legacy_rx = peer_audio_formats(peer, "rx_formats") or roster_entry_formats(
+            entry, "rx_formats"
+        )
+        remote_rx = tuple(
+            sdp.audio_format_to_rtp(fmt, 112 + index)
+            for index, fmt in enumerate(legacy_rx)
+            if sdp.is_rtp_pcm_mappable(fmt)
+        )
+    if not remote_tx or not remote_rx:
+        return None
+    # Remote receive capabilities are HA's send capabilities and vice versa.
+    send_rtp = tuple(remote_rx)
+    recv_rtp = tuple(remote_tx)
+    return SipAudioCapabilityProfile(
+        send_formats=tuple(fmt.audio_format for fmt in send_rtp),
+        recv_formats=tuple(fmt.audio_format for fmt in recv_rtp),
+        send_rtp_formats=send_rtp,
+        recv_rtp_formats=recv_rtp,
+        sdp_features=_endpoint_sdp_features(peer, entry, device),
+    )
 
 
 def same_route_name(left: str, right: str) -> bool:
@@ -293,10 +441,7 @@ def sip_target_audio_profile(
 
 def supports_directional_audio_payloads(peer: Peer | None, entry) -> bool:
     """Return whether the destination implements the ESP directional SDP profile."""
-    if peer is not None and str(peer.endpoint_kind).lower() == "esphome":
-        return True
-    metadata = dict(getattr(entry, "metadata", None) or {})
-    return str(metadata.get("endpoint_kind") or "").lower() == "esphome"
+    return "directional_audio_v1" in _endpoint_sdp_features(peer, entry)
 
 
 def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries) -> list:
@@ -335,6 +480,9 @@ def roster_from_peers(hass: HomeAssistant, peers: list[Peer], registered_entries
                     "audio_mode": peer.audio_mode,
                     "tx_formats": list(peer.tx_formats or []),
                     "rx_formats": list(peer.rx_formats or []),
+                    "sip_audio_tx_formats": list(peer.sip_audio_tx_formats),
+                    "sip_audio_rx_formats": list(peer.sip_audio_rx_formats),
+                    "sdp_features": sorted(peer.sdp_features),
                     "conference_group": peer.conference_group,
                     "conference_ring": bool(peer.conference_ring),
                     "ring_group": peer.ring_group,

@@ -28,6 +28,9 @@ class Peer:
     audio_mode: Literal["full_duplex", "mic_only", "speaker_only"] = "full_duplex"
     tx_formats: list[str] | None = None
     rx_formats: list[str] | None = None
+    sip_audio_tx_formats: tuple[str, ...] = ()
+    sip_audio_rx_formats: tuple[str, ...] = ()
+    sdp_features: frozenset[str] = frozenset()
     device: dict[str, Any] | None = None
 
     @property

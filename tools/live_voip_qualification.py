@@ -90,6 +90,11 @@ def qualification_token(args: argparse.Namespace) -> str:
     """Load a live-test token without persisting a refreshed credential."""
     if args.token:
         return str(args.token).strip()
+    credentials = getattr(args, "credentials", None)
+    if credentials is not None:
+        from ha_voip_lab.auth import lab_token
+
+        return lab_token(args.ha_url, credentials)
     if args.auth_file.is_file():
         return _refresh_ha_token(args.auth_file)
     helper_path = (
@@ -1590,6 +1595,11 @@ def parse_args() -> argparse.Namespace:
         help="local HA OAuth JSON used when the private browser helper is absent",
     )
     parser.add_argument("--token")
+    parser.add_argument(
+        "--credentials",
+        type=Path,
+        help="private isolated-lab username/password file",
+    )
     parser.add_argument("--esp", choices=sorted(DEFAULT_ESPS), default="ws3")
     parser.add_argument(
         "--esp-host",

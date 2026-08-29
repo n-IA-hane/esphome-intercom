@@ -376,6 +376,12 @@ def parse_sip_uri(value: str) -> SipUri:
     return uri
 
 
+def sip_default_port(uri: SipUri) -> int:
+    """Return the explicit port or the RFC default for the URI scheme."""
+
+    return int(uri.port or (5061 if uri.scheme == "sips" else 5060))
+
+
 def format_host_port(host: str, port: int | None = None) -> str:
     """Render one SIP host and optional port without IPv6 ambiguity."""
 

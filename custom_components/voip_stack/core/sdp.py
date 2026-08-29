@@ -139,6 +139,7 @@ class RtpPcmFormat:
     frame_ms: int = 20
     min_frame_ms: int = 0
     max_frame_ms: int = 0
+    fmtp: str = ""
 
     @property
     def bits(self) -> int:
@@ -191,6 +192,27 @@ class RtpPcmFormat:
 
     def wire_token(self) -> str:
         return f"pt={self.payload_type}:{self.encoding}/{self.sample_rate}/{self.channels}/{self.frame_ms}ms"
+
+
+def parse_rtp_audio_capability(
+    token: str, payload_type: int = 96
+) -> RtpPcmFormat:
+    """Parse one codec/rate/channels/ptime SIP capability token."""
+    parts = [part.strip() for part in str(token or "").split("/")]
+    if len(parts) != 4:
+        raise SdpError(f"invalid RTP audio capability {token!r}")
+    encoding = parts[0].upper()
+    if encoding not in {"L16", "L24", "PCMA", "PCMU", "OPUS", "G722"}:
+        raise SdpError(f"unsupported RTP audio encoding {encoding!r}")
+    try:
+        rate, channels, frame_ms = map(int, parts[1:])
+    except ValueError as err:
+        raise SdpError(f"invalid RTP audio capability {token!r}") from err
+    fmt = RtpPcmFormat(int(payload_type), encoding, rate, channels, frame_ms)
+    if encoding == "OPUS" and (rate != 48000 or channels != 2):
+        raise SdpError("Opus SDP capability must use opus/48000/2")
+    fmt.audio_format
+    return fmt
 
 
 @dataclass(frozen=True, slots=True)
@@ -1195,6 +1217,51 @@ def _rtp_contract_key(fmt: RtpPcmFormat) -> tuple[int, str, int, int, int]:
     )
 
 
+def _rtp_wire_key(fmt: RtpPcmFormat) -> tuple[str, int, int, int]:
+    return (
+        fmt.encoding.upper(),
+        fmt.sample_rate,
+        fmt.channels,
+        fmt.frame_ms,
+    )
+
+
+def _rtp_encoding_key(fmt: RtpPcmFormat) -> tuple[str, int, int]:
+    """Identify one RTP encoding independently of packetization time."""
+
+    return (fmt.encoding.upper(), fmt.sample_rate, fmt.channels)
+
+
+def _dedupe_rtp_formats(
+    formats: list[RtpPcmFormat] | tuple[RtpPcmFormat, ...],
+) -> list[RtpPcmFormat]:
+    seen: set[tuple[str, int, int, int]] = set()
+    out: list[RtpPcmFormat] = []
+    for fmt in formats:
+        key = _rtp_wire_key(fmt)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(fmt)
+    return out
+
+
+def _dedupe_rtp_offer_encodings(
+    formats: list[RtpPcmFormat] | tuple[RtpPcmFormat, ...],
+) -> list[RtpPcmFormat]:
+    """Keep the preferred packetization for each advertised RTP encoding."""
+
+    seen: set[tuple[str, int, int]] = set()
+    out: list[RtpPcmFormat] = []
+    for fmt in formats:
+        key = _rtp_encoding_key(fmt)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(fmt)
+    return out
+
+
 def _bidirectional_offered_match(
     offered: list[RtpPcmFormat],
     local_send_preferred: list[AudioFormat],
@@ -1396,20 +1463,50 @@ def build_offer_directional(
     audio_direction: str = "sendrecv",
     video_direction: str = "sendrecv",
     audio_rtp_formats: tuple[RtpPcmFormat, ...] | None = None,
+    send_rtp_formats: tuple[RtpPcmFormat, ...] | None = None,
+    recv_rtp_formats: tuple[RtpPcmFormat, ...] | None = None,
     allow_directional_payloads: bool = False,
 ) -> str:
     audio_direction = normalize_direction(audio_direction)
     video_direction = normalize_direction(video_direction)
-    directional_flows: dict[tuple[int, PcmFormat, int, int], str] = {}
-    if audio_rtp_formats is not None:
-        rtp_formats = list(dict.fromkeys(audio_rtp_formats))
+    directional_flows: dict[tuple[str, int, int], str] = {}
+    explicit_rtp_formats = bool(
+        audio_rtp_formats is not None
+        or send_rtp_formats is not None
+        or recv_rtp_formats is not None
+    )
+    if explicit_rtp_formats:
+        if audio_rtp_formats is not None:
+            explicit_all = list(audio_rtp_formats)
+            send_audio_keys = {_format_key(fmt) for fmt in send_formats}
+            recv_audio_keys = {_format_key(fmt) for fmt in recv_formats}
+            explicit_send = [
+                fmt for fmt in explicit_all if _format_key(fmt.audio_format) in send_audio_keys
+            ]
+            explicit_recv = [
+                fmt for fmt in explicit_all if _format_key(fmt.audio_format) in recv_audio_keys
+            ]
+        else:
+            explicit_send = list(send_rtp_formats or ())
+            explicit_recv = list(recv_rtp_formats or ())
+        send_keys = {_rtp_encoding_key(fmt) for fmt in explicit_send}
+        recv_keys = {_rtp_encoding_key(fmt) for fmt in explicit_recv}
+        if audio_direction == "sendonly":
+            selected_explicit = explicit_send
+        elif audio_direction == "recvonly":
+            selected_explicit = explicit_recv
+        elif allow_directional_payloads:
+            selected_explicit = [*explicit_recv, *explicit_send]
+        else:
+            selected_explicit = [
+                fmt for fmt in explicit_recv if _rtp_encoding_key(fmt) in send_keys
+            ]
+        rtp_formats = _dedupe_rtp_offer_encodings(selected_explicit)
         if not rtp_formats:
             raise SdpError("SDP offer requires at least one RTP audio format")
         if allow_directional_payloads and audio_direction == "sendrecv":
-            send_keys = {_format_key(fmt) for fmt in send_formats}
-            recv_keys = {_format_key(fmt) for fmt in recv_formats}
             for fmt in rtp_formats:
-                key = _format_key(fmt.audio_format)
+                key = _rtp_encoding_key(fmt)
                 directional_flows[key] = (
                     "sendrecv"
                     if key in send_keys and key in recv_keys
@@ -1440,7 +1537,8 @@ def build_offer_directional(
             )
             for fmt in capability_formats:
                 key = _format_key(fmt)
-                directional_flows[key] = (
+                rtp_key = _rtp_encoding_key(audio_format_to_rtp(fmt, 96))
+                directional_flows[rtp_key] = (
                     "sendrecv"
                     if key in send_keys and key in recv_keys
                     else "send"
@@ -1497,11 +1595,12 @@ def build_offer_directional(
             f"a=rtpmap:{fmt.payload_type} {fmt.encoding}/{fmt.sample_rate}/{fmt.channels}"
         )
         if fmt.encoding == "OPUS":
-            lines.append(
-                f"a=fmtp:{fmt.payload_type} stereo=0;sprop-stereo=0;maxaveragebitrate=28000"
+            opus_fmtp = str(fmt.fmtp or "").strip() or (
+                "stereo=0;sprop-stereo=0;maxaveragebitrate=28000"
             )
+            lines.append(f"a=fmtp:{fmt.payload_type} {opus_fmtp}")
         if allow_directional_payloads and audio_direction == "sendrecv":
-            flow = directional_flows.get(_format_key(fmt.audio_format))
+            flow = directional_flows.get(_rtp_encoding_key(fmt))
             if flow is not None:
                 lines.append(f"a=x-voip-stack-flow:{fmt.payload_type} {flow}")
     lines.append(f"a=rtpmap:{dtmf_payload_type} telephone-event/8000")
@@ -2814,6 +2913,7 @@ def offered_pcm_formats(
                 else parsed["ptime"],
                 parsed["minptime"],
                 parsed["maxptime"],
+                str(parsed["fmtp"].get(pt) or ""),
             )
         )
     return out
@@ -3117,6 +3217,12 @@ def has_directional_audio_flow_attributes(remote_sdp: str | bytes) -> bool:
     return _has_directional_audio_flow_attributes(remote_sdp)
 
 
+def audio_flow_attributes(remote_sdp: str | bytes) -> dict[int, str]:
+    """Return explicitly advertised per-payload audio directions."""
+
+    return _audio_flow_attributes(remote_sdp)
+
+
 def build_answer_directional(
     origin_ip: str,
     media_ip: str,
@@ -3179,6 +3285,11 @@ def build_answer_directional(
         audio_lines.append(
             f"a=rtpmap:{fmt.payload_type} {fmt.encoding}/{fmt.sample_rate}/{fmt.channels}"
         )
+        if fmt.encoding == "OPUS":
+            opus_fmtp = str(fmt.fmtp or "").strip() or (
+                "stereo=0;sprop-stereo=0;maxaveragebitrate=28000"
+            )
+            audio_lines.append(f"a=fmtp:{fmt.payload_type} {opus_fmtp}")
         if format_direction == "sendrecv" and directional_payloads:
             send_match = _rtp_contract_key(fmt) == _rtp_contract_key(send)
             recv_match = _rtp_contract_key(fmt) == _rtp_contract_key(recv)

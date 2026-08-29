@@ -718,6 +718,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "if len(browser_endpoint_ids) + len(attempts) >= available_legs:",
             self.conference_ringing,
         )
+        self.assertIn(
+            "remote_sip_port=sip_default_port(uri)",
+            self.conference_ringing,
+        )
         media_session = (
             Path(__file__).resolve().parents[1]
             / "custom_components"

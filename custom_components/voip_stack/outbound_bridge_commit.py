@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 
 from .bridge_manager import async_watch_sip_bridge_destination
 from .bridge_media_updates import BridgeMediaUpdateBinder
-from .config import media_capture_enabled
+from .config import debug_mode, media_capture_enabled
 from .dtmf_events import attach_dtmf_event_bridge
 from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationIntent
@@ -188,6 +188,7 @@ async def async_commit_outbound_bridge(
                 source_relay_port=data.source_relay_port,
                 dest_relay_port=data.dest_relay_port,
                 capture_name=f"{invite.call_id}_{dest_call_id}",
+                debug=debug_mode(hass),
                 debug_capture=media_capture_enabled(hass),
                 on_release=_release_ports,
             )
@@ -197,6 +198,7 @@ async def async_commit_outbound_bridge(
                 client=client,
                 source_relay_port=data.source_relay_port,
                 dest_relay_port=data.dest_relay_port,
+                debug=debug_mode(hass),
                 debug_capture=media_capture_enabled(hass),
                 on_release=_release_ports,
             )

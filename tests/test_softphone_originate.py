@@ -116,11 +116,13 @@ def softphone_originate(monkeypatch):
         "endpoint_registry": {
             "EndpointBusyError": type("EndpointBusyError", (Exception,), {})
         },
-        "endpoint_routing": {
-            "device_formats": Mock(return_value=[]),
-            "roster_entry_formats": Mock(return_value=[]),
-            "sip_target_audio_profile": Mock(return_value=([], [])),
-        },
+            "endpoint_routing": {
+                "device_formats": Mock(return_value=[]),
+                "roster_entry_formats": Mock(return_value=[]),
+                "sip_target_audio_profile": Mock(return_value=([], [])),
+                "sip_target_rtp_audio_profile": Mock(return_value=None),
+                "supports_directional_audio_payloads": Mock(return_value=False),
+            },
         "esphome_actions": {
             "async_call_action": AsyncMock(),
             "async_resolve_source_device": AsyncMock(return_value=None),

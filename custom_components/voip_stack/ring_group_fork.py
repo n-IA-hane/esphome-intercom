@@ -18,6 +18,7 @@ from .outbound_attempts import (
     async_close_outbound_leg,
 )
 from .group_candidates import PreflightFailure
+from .core.sip import sip_default_port
 
 RING_GROUP_TIMEOUT_S = 30.0
 ForkPayload = OutboundLeg | BrowserLeg | dict[str, Any]
@@ -159,7 +160,7 @@ def build_ring_group_fork(
                 target=uri.user or outbound.member,
                 target_display_name=outbound.member,
                 remote_host=uri.host,
-                remote_sip_port=uri.port or sip_port,
+                remote_sip_port=sip_default_port(uri),
                 request_uri=str(uri),
                 timeout=8.0,
             )
