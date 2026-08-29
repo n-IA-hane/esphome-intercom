@@ -31,6 +31,9 @@ PHYSICAL_AUDIO_STACK_PROFILES = (
 SPOTPEAR_FULL_AFE = (
     YAMLS / "full-experience" / "single-bus" / "spotpear-ball-v2-full-afe.yaml"
 )
+SPOTPEAR_VOIP_ONLY = (
+    YAMLS / "voip-only" / "single-bus" / "spotpear-ball-v2-voip.yaml"
+)
 P4_LANDSCAPE_FULL_AFE = (
     YAMLS
     / "full-experience"
@@ -118,6 +121,8 @@ def test_flac_ringtone_drains_naturally_behind_source_local_ducking() -> None:
     assert orchestration.index("media_source::MediaSourceState::IDLE") < orchestration.index(
         "media_source::MediaSourceCommand::STOP"
     )
+    assert "g_voip_ringtone_media_suppressed" not in orchestration
+    assert "g_voip_ringtone_restore_media" not in orchestration
 
 
 def test_runtime_media_player_profiles_share_ringtone_lifecycle_owner() -> None:
@@ -249,7 +254,7 @@ def test_spotpear_concurrency_memory_policy_is_explicit_and_preallocated() -> No
     assert "audio_task_stacks_in_psram: ${voip_audio_task_stacks_in_psram}" in text
     assert "tx_task_stack_size: ${voip_tx_task_stack_size}" in text
     assert "rx_task_stack_size: ${voip_rx_task_stack_size}" in text
-    assert "components: [audio_http, speaker, voice_assistant, spi]" in text
+    assert "components: [audio_http, voice_assistant, spi]" in text
 
 
 def test_sendspin_artwork_uses_the_official_image_platform() -> None:
@@ -259,6 +264,16 @@ def test_sendspin_artwork_uses_the_official_image_platform() -> None:
     assert "current_image:\n      id: sendspin_cover_art" in text
     assert "generic_image:" not in text
     assert "github://pr#16057" not in text
+
+
+def test_spotpear_voip_only_uses_official_speaker_source_ringtone() -> None:
+    text = SPOTPEAR_VOIP_ONLY.read_text()
+
+    assert "platform: speaker_source" in text
+    assert "platform: speaker\n" not in text
+    assert "platform: audio_file" in text
+    assert 'media_url: "audio-file://voip_ringing_sound"' in text
+    assert "media_player.speaker.play_on_device_media_file" not in text
 
 
 def test_spotpear_layout_and_aec_sync_use_runtime_contracts() -> None:
@@ -290,7 +305,7 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     block = _voip_stack_block(text)
     video_block = _voip_stack_block(video)
 
-    assert "components: [speaker, voice_assistant, mipi_dsi]" in text
+    assert "components: [voice_assistant, mipi_dsi]" in text
     assert "components: [esp_video_camera]" in text
     assert "p4_full_video_jpeg:" in text
     assert "esp_h264_video_source" not in text + video

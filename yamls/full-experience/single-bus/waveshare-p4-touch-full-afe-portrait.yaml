@@ -209,7 +209,7 @@ external_components:
   - source: ${voip_stack_components_source}
     components: [voip_stack]
   - source: ${ext_components_source}
-    components: [speaker, voice_assistant]
+    components: [voice_assistant]
   - source: ${runtime_controller_components_source}
     components: [runtime_controller]
   - source: ${audio_stack_components_source}

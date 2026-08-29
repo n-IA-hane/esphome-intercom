@@ -67,7 +67,7 @@ external_components:
   - source: ${voip_stack_components_source}
     components: [voip_stack]
   - source: ${ext_components_source}
-    components: [speaker, mipi_dsi]
+    components: [mipi_dsi]
   - source: ${audio_stack_components_source}
     components: [esp_audio_stack, esp_afe]
 

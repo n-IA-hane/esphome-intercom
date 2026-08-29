@@ -89,19 +89,11 @@ globals:
     type: std::string
     restore_value: false
     initial_value: "\"\""
-  - id: g_voip_ringtone_media_suppressed
-    type: bool
-    restore_value: false
-    initial_value: "false"
   - id: g_voip_ringtone_active
     type: bool
     restore_value: false
     initial_value: "false"
   - id: g_voip_ringtone_stop_requested
-    type: bool
-    restore_value: false
-    initial_value: "false"
-  - id: g_voip_ringtone_restore_media
     type: bool
     restore_value: false
     initial_value: "false"

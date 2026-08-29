@@ -22,12 +22,6 @@
 # of this callback-local LED mapping.
 # =============================================================================
 
-globals:
-  - id: g_voip_ringtone_media_suppressed
-    type: bool
-    restore_value: false
-    initial_value: "false"
-
 script:
   - id: update_status
     mode: restart

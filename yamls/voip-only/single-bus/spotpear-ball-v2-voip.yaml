@@ -32,11 +32,11 @@ substitutions:
   name: spotpear-ball-v2
   friendly_name: Spotpear Ball v2
 
-  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
 
-  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/main/"
+  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/dev/"
 
   # Call layout proportions (relative to display_height)
   call_btn_size: "25%"
@@ -99,24 +99,24 @@ substitutions:
 # Shared packages: voip-only call controls, phonebook sync, Spotpear LED/LVGL
 # navigation, esp_audio_stack codec controls and AEC controls.
 packages:
-  core: github://n-IA-hane/esphome-intercom/packages/voip_only.yaml@main
-  voip_entities_full_duplex: github://n-IA-hane/esphome-intercom/packages/voip/entities_full_duplex.yaml@main
-  call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@main
-  voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@main
-  speaker_mute: github://n-IA-hane/esphome-intercom/packages/voip/speaker_mute.yaml@main
-  s3_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32s3_base.yaml@main
-  native_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native.yaml@main
-  status_led: github://n-IA-hane/esphome-intercom/packages/led/status_spotpear_ball_v2.yaml@main
-  audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@main
-  audio_stack_aec_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/aec_controls.yaml@main
-  speaker_power: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/speaker_power_output.yaml@main
+  core: github://n-IA-hane/esphome-intercom/packages/voip_only.yaml@dev
+  voip_entities_full_duplex: github://n-IA-hane/esphome-intercom/packages/voip/entities_full_duplex.yaml@dev
+  call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
+  voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
+  speaker_mute: github://n-IA-hane/esphome-intercom/packages/voip/speaker_mute.yaml@dev
+  s3_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32s3_base.yaml@dev
+  native_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native.yaml@dev
+  status_led: github://n-IA-hane/esphome-intercom/packages/led/status_spotpear_ball_v2.yaml@dev
+  audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@dev
+  audio_stack_aec_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/aec_controls.yaml@dev
+  speaker_power: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/speaker_power_output.yaml@dev
   # LVGL settings carousel: globals, navigation scripts, and the individual
   # settings pages this device exposes (swipe-left order is the include order).
-  lvgl_settings_nav: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_navigation.yaml@main
-  lvgl_settings_sync_volumes: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_sync_volumes.yaml@main
-  lvgl_settings_sync_mute: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_sync_mute.yaml@main
-  lvgl_settings_sync_aec: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_sync_aec.yaml@main
-  spotpear_voip_nav: github://n-IA-hane/esphome-intercom/packages/lvgl/spotpear_voip/nav_voip_only.yaml@main
+  lvgl_settings_nav: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_navigation.yaml@dev
+  lvgl_settings_sync_volumes: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_sync_volumes.yaml@dev
+  lvgl_settings_sync_mute: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_sync_mute.yaml@dev
+  lvgl_settings_sync_aec: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_sync_aec.yaml@dev
+  spotpear_voip_nav: github://n-IA-hane/esphome-intercom/packages/lvgl/spotpear_voip/nav_voip_only.yaml@dev
 
 # =============================================================================
 # BOARD AND MEMORY
@@ -389,8 +389,16 @@ speaker:
 # MEDIA, ASSIST AND VOIP
 # =============================================================================
 
+audio_file:
+  - id: voip_ringing_sound
+    file: ${assets_base}assets/sounds/ringtone.flac
+
+media_source:
+  - platform: audio_file
+    id: ringtone_file_source
+
 media_player:
-  - platform: speaker
+  - platform: speaker_source
     id: speaker_media_player
     name: None
     internal: true
@@ -408,9 +416,8 @@ media_player:
       format: FLAC
       sample_rate: 48000
       num_channels: 1
-    files:
-      - id: voip_ringing_sound
-        file: ${assets_base}assets/sounds/ringtone.flac
+      sources:
+        - ringtone_file_source
 
 # =============================================================================
 # VoIP phone: SIP endpoint, RTP media and local phonebook mirror.
@@ -419,7 +426,9 @@ media_player:
 
 voip_stack:
   task_stacks_in_psram: true
+  audio_task_stacks_in_psram: true
   buffers_in_psram: true
+  signaling_buffers_in_psram: true
   id: phone
   # Optional local dial-plan alias published to HA. Keep it unique across your
   # devices; calls to the same extension become ambiguous and HA will use the
@@ -429,24 +438,45 @@ voip_stack:
   conference_ring: false
   ring_groups: "RG Casa"
   audio:
-    # Primary/preferred RTP profile: 48 kHz/10 ms toward the speaker, and a
-    # matching 10 ms TX reframe of the 16 kHz mic for peers that negotiate
-    # ptime 10. 32 kHz/16 ms remains an alternate advertised format.
+    # VoIP-only has enough PSRAM and flash for Opus. The local mic remains
+    # 16 kHz mono and the speaker boundary remains 48 kHz mono; SDP uses the
+    # RFC 7587 opus/48000/2 wire mapping. PCM stays available as fallback.
+    tx:
+      codec: opus
+      sample_rate: 16000
+      pcm_format: s16le
+      channels: 1
+      frame_ms: 20
     tx_formats:
+      - codec: opus
+        sample_rate: 16000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 10
       - sample_rate: 16000
         pcm_format: s16le
         channels: 1
         frame_ms: 10
     rx:
+      codec: opus
       sample_rate: 48000
       pcm_format: s16le
       channels: 1
-      frame_ms: 10
+      frame_ms: 20
     # Additional accepted RX formats for direct ESP-to-ESP calls. These are valid
     # only because speaker: voip_speaker_input points at the resampler; do
     # not advertise additional formats when wiring voip_stack directly to a
     # fixed-rate mixer input.
     rx_formats:
+      - codec: opus
+        sample_rate: 48000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 10
+      - sample_rate: 48000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 10
       - sample_rate: 32000
         pcm_format: s16le
         channels: 1
@@ -1309,8 +1339,9 @@ script:
           condition:
             voip_stack.is_ringing:
           then:
-            - media_player.speaker.play_on_device_media_file:
-                media_file: voip_ringing_sound
+            - media_player.play_media:
+                id: speaker_media_player
+                media_url: "audio-file://voip_ringing_sound"
                 announcement: true
             - wait_until:
                 condition:

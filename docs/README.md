@@ -79,8 +79,8 @@ Each ESPHome component ships its own README with the full option list, YAML snip
 - Full-experience media now uses ESPHome's source-based `speaker_source` path:
   HA media, announcements, local files and optional Sendspin streams feed one
   media player before the mixer arbitrates with VoIP and Voice Assistant.
-  The local [`speaker`](../esphome/components/speaker/README.md) fork remains
-  documented for custom YAMLs that still use `platform: speaker`.
+  All maintained profiles use the official ESPHome `speaker` interface and
+  `speaker_source` media player; the former local `speaker` fork is retired.
 - [`runtime_controller`](https://github.com/n-IA-hane/esphome-runtime-controller), a generic
   YAML-programmed reducer used by maintained full-experience profiles to derive
   LED, LVGL/display, audio ducking, ringtone and timer policies from one state

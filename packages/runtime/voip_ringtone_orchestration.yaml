@@ -14,12 +14,6 @@ script:
           id: g_voip_ringtone_stop_requested
           value: "false"
       - globals.set:
-          id: g_voip_ringtone_media_suppressed
-          value: "true"
-      - globals.set:
-          id: g_voip_ringtone_restore_media
-          value: !lambda 'return id(runtime).is_activity_active("media");'
-      - globals.set:
           id: g_voip_ringtone_active
           value: "true"
       # Every ringtone starts with the announcement path at its normal gain.
@@ -86,12 +80,6 @@ script:
           id: g_voip_ringtone_active
           value: "false"
       - globals.set:
-          id: g_voip_ringtone_media_suppressed
-          value: "false"
-      - globals.set:
-          id: g_voip_ringtone_restore_media
-          value: "false"
-      - globals.set:
           id: g_voip_ringtone_stop_requested
           value: "false"
 
@@ -138,13 +126,7 @@ script:
                       announcement: true
                   - script.stop: voip_ringing_loop
                   - globals.set:
-                      id: g_voip_ringtone_media_suppressed
-                      value: "false"
-                  - globals.set:
                       id: g_voip_ringtone_active
-                      value: "false"
-                  - globals.set:
-                      id: g_voip_ringtone_restore_media
                       value: "false"
                   - mixer_speaker.apply_ducking:
                       id: tts_mixer_input
