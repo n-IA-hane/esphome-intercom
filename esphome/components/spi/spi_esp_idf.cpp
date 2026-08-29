@@ -1,29 +1,23 @@
 #include "spi.h"
 #include <vector>
 
+#ifdef USE_SPI_PSRAM_DMA
 #include <esp_memory_utils.h>
+#endif
 
 namespace esphome::spi {
 
 #ifdef USE_ESP32
 static const char *const TAG = "spi";
 static const size_t MAX_TRANSFER_SIZE = 4092;  // dictated by ESP-IDF API.
-// External DMA buffers must keep both address and length aligned to the cache
-// line. 4032 is the largest multiple of the S3's 64-byte cache line below the
-// ESP-IDF per-transaction limit, so consecutive display chunks stay aligned.
-static const size_t MAX_PSRAM_TRANSFER_SIZE = 4032;
 
-static uint32_t psram_tx_flags(const void *buffer, size_t length) {
-  if (buffer == nullptr || !esp_ptr_external_ram(buffer))
-    return 0;
-  uint32_t flags = SPI_TRANS_DMA_USE_PSRAM;
-  // Tell IDF not to allocate a private bounce buffer when the caller already
-  // supplied a cache-line-aligned external DMA block. A non-aligned tail still
-  // falls back to an external temporary buffer, never scarce internal DMA RAM.
-  if (((reinterpret_cast<uintptr_t>(buffer) | length) & 63U) == 0)
-    flags |= SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL;
-  return flags;
+#ifdef USE_SPI_PSRAM_DMA
+static uint32_t get_psram_dma_flags(bool enabled, const void *tx_buffer) {
+  if (enabled && tx_buffer != nullptr && esp_ptr_dma_ext_capable(tx_buffer))
+    return SPI_TRANS_DMA_USE_PSRAM;
+  return 0;
 }
+#endif
 
 class SPIDelegateHw : public SPIDelegate {
  public:
@@ -83,12 +77,14 @@ class SPIDelegateHw : public SPIDelegate {
       return;
     }
     spi_transaction_t desc = {};
-    const bool use_psram_dma = (txbuf != nullptr && esp_ptr_external_ram(txbuf)) ||
-                               (rxbuf != nullptr && esp_ptr_external_ram(rxbuf));
+#ifdef USE_SPI_PSRAM_DMA
+    const uint32_t psram_flags = rxbuf == nullptr ? get_psram_dma_flags(this->psram_dma_, txbuf) : 0;
+#endif
     while (length != 0) {
-      size_t const partial = std::min(length, use_psram_dma ? MAX_PSRAM_TRANSFER_SIZE : MAX_TRANSFER_SIZE);
-      desc.flags = rxbuf == nullptr ? psram_tx_flags(txbuf, partial)
-                                    : (use_psram_dma ? SPI_TRANS_DMA_USE_PSRAM : 0);
+#ifdef USE_SPI_PSRAM_DMA
+      desc.flags = psram_flags;
+#endif
+      size_t const partial = std::min(length, MAX_TRANSFER_SIZE);
       desc.length = partial * 8;
       desc.rxlength = this->write_only_ ? 0 : partial * 8;
       desc.tx_buffer = txbuf;
@@ -102,6 +98,12 @@ class SPIDelegateHw : public SPIDelegate {
         ESP_LOGE(TAG, "Transmit failed - err %X", err);
         break;
       }
+#ifdef USE_SPI_PSRAM_DMA
+      if ((desc.flags & SPI_TRANS_DMA_TX_FAIL) != 0) {
+        ESP_LOGE(TAG, "PSRAM DMA TX underflow");
+        break;
+      }
+#endif
       length -= partial;
       if (txbuf != nullptr)
         txbuf += partial;
@@ -143,7 +145,6 @@ class SPIDelegateHw : public SPIDelegate {
       return;
     }
     desc.base.flags = SPI_TRANS_VARIABLE_ADDR | SPI_TRANS_VARIABLE_CMD | SPI_TRANS_VARIABLE_DUMMY;
-    const bool use_psram_dma = data != nullptr && esp_ptr_external_ram(data);
     if (bus_width == 4) {
       desc.base.flags |= SPI_TRANS_MODE_QIO;
     } else if (bus_width == 8) {
@@ -155,11 +156,15 @@ class SPIDelegateHw : public SPIDelegate {
     desc.base.rxlength = 0;
     desc.base.cmd = cmd;
     desc.base.addr = address;
+#ifdef USE_SPI_PSRAM_DMA
+    const uint32_t transaction_flags = desc.base.flags | get_psram_dma_flags(this->psram_dma_, data);
+#endif
     do {
-      size_t chunk_size = std::min(length, use_psram_dma ? MAX_PSRAM_TRANSFER_SIZE : MAX_TRANSFER_SIZE);
+#ifdef USE_SPI_PSRAM_DMA
+      desc.base.flags = transaction_flags;
+#endif
+      size_t chunk_size = std::min(length, MAX_TRANSFER_SIZE);
       if (data != nullptr && chunk_size != 0) {
-        desc.base.flags &= ~(SPI_TRANS_DMA_USE_PSRAM | SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL);
-        desc.base.flags |= psram_tx_flags(data, chunk_size);
         desc.base.length = chunk_size * 8;
         desc.base.tx_buffer = data;
         length -= chunk_size;
@@ -176,6 +181,12 @@ class SPIDelegateHw : public SPIDelegate {
         ESP_LOGE(TAG, "Transmit failed - err %X", err);
         return;
       }
+#ifdef USE_SPI_PSRAM_DMA
+      if ((desc.base.flags & SPI_TRANS_DMA_TX_FAIL) != 0) {
+        ESP_LOGE(TAG, "PSRAM DMA TX underflow");
+        return;
+      }
+#endif
       // if more data is to be sent, skip the command and address phases.
       desc.command_bits = 0;
       desc.address_bits = 0;

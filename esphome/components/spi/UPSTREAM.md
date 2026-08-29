@@ -1,10 +1,10 @@
 # ESPHome upstream alignment
 
-This component is based on ESPHome `dev` commit
-`5f6a910e2d6e41d3716668a66e5dff8cca25f2ea`, path
+This component is identical to ESPHome `dev` merge commit
+`e458a38f89e7ccfc3d186d6d2f41708168e6f492`, pull request `#18699`, path
 `esphome/components/spi`.
 
-The local ESP-IDF adapter opts external transmit buffers into the ESP-IDF 5.5
-PSRAM DMA path. Cache-line-aligned transfers use 4032-byte chunks and disable
-the driver's automatic private bounce buffer. Non-aligned external tails keep
-the IDF fallback in PSRAM instead of consuming scarce internal DMA memory.
+The opt-in `psram_dma` setting enables the official ESP-IDF 5.5 PSRAM DMA path
+for supported hardware SPI devices and TX-only transactions. The local copy is
+temporary compatibility for ESPHome 2026.8.1 and can be removed once the
+merged component is included in the required ESPHome release.

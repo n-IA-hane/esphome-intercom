@@ -11,6 +11,7 @@ pytestmark = pytest.mark.architecture
 
 
 UPSTREAM_DEV_SHA = "5f6a910e2d6e41d3716668a66e5dff8cca25f2ea"
+SPI_UPSTREAM_MERGE_SHA = "e458a38f89e7ccfc3d186d6d2f41708168e6f492"
 
 
 def test_audio_dependencies_match_recorded_esphome_dev() -> None:
@@ -35,16 +36,16 @@ def test_voice_assistant_keeps_upstream_backpressure_and_speaker_drain() -> None
 
 
 def test_local_forks_remain_narrow_and_documented() -> None:
-    speaker = (COMPONENTS / "speaker" / "UPSTREAM.md").read_text()
     voice_assistant = (COMPONENTS / "voice_assistant" / "UPSTREAM.md").read_text()
     audio = (COMPONENTS / "audio" / "UPSTREAM.md").read_text()
     audio_http = (COMPONENTS / "audio_http" / "UPSTREAM.md").read_text()
     mipi_dsi = (COMPONENTS / "mipi_dsi" / "UPSTREAM.md").read_text()
     spi = (COMPONENTS / "spi" / "UPSTREAM.md").read_text()
 
-    for document in (speaker, voice_assistant, audio, audio_http, mipi_dsi, spi):
+    for document in (voice_assistant, audio, audio_http, mipi_dsi):
         assert UPSTREAM_DEV_SHA in document
-    assert "pause_releases_pipeline" in speaker
+    assert SPI_UPSTREAM_MERGE_SHA in spi
+    assert not (COMPONENTS / "speaker").exists()
     assert "tts_playback_start_timeout" in voice_assistant
     assert "host simulator" in audio
 
@@ -64,14 +65,15 @@ def test_audio_http_exposes_micro_decoder_persistent_ring_policy() -> None:
     assert "micro-decoder 0.4.0" in upstream
 
 
-def test_spi_uses_direct_psram_dma_without_internal_bounce_buffers() -> None:
+def test_spi_matches_the_upstream_opt_in_psram_dma_contract() -> None:
     source = (COMPONENTS / "spi" / "spi_esp_idf.cpp").read_text()
+    schema = (COMPONENTS / "spi" / "__init__.py").read_text()
     upstream = (COMPONENTS / "spi" / "UPSTREAM.md").read_text()
 
-    assert "MAX_PSRAM_TRANSFER_SIZE = 4032" in source
     assert "SPI_TRANS_DMA_USE_PSRAM" in source
-    assert "SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL" in source
-    assert "psram_tx_flags(txbuf, partial)" in source
-    assert "psram_tx_flags(data, chunk_size)" in source
-    assert UPSTREAM_DEV_SHA in upstream
+    assert "SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL" not in source
+    assert "rxbuf == nullptr ? get_psram_dma_flags" in source
+    assert 'CONF_PSRAM_DMA = "psram_dma"' in schema
+    assert 'cg.add_define("USE_SPI_PSRAM_DMA")' in schema
+    assert SPI_UPSTREAM_MERGE_SHA in upstream
     assert "ESP-IDF 5.5" in upstream
