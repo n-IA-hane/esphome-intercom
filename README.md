@@ -302,9 +302,18 @@ Audio remains usable when video is unavailable or deliberately disabled.
 
 Audio-only ESP endpoints and audio conferences remain audio-only. Qualified
 ESP32-P4 videophone profiles can negotiate RTP/JPEG or H.264 directly, while
-the full P4 profile supports bidirectional RTP/JPEG. Video compatibility
-depends on the actual offer/answer, packetization and browser decoder, not only
-on a codec name printed on a product page.
+the full P4 profile supports bidirectional RTP/JPEG. These are complete display
+endpoints, not camera-only devices: the P4 can transmit its camera, receive the
+remote RTP video stream, decode it through the selected JPEG or H.264 path and
+present the other party on its own MIPI DSI panel while bidirectional audio
+remains active. After video is removed or the call ends, the normal LVGL
+interface is restored.
+
+Video compatibility depends on the actual offer/answer, packetization and
+decoder contract, not only on a codec name printed on a product page. See the
+video guide for the separate outgoing camera path, incoming decode and panel
+presentation path, initial-video and audio-first re-INVITE behavior, and the
+JPEG/H.264 compile-time profiles.
 
 See the [capability matrix, privacy controls and limits](docs/SIP_VIDEO.md).
 
@@ -553,14 +562,15 @@ Home Assistant and ESPHome release:
 - faster vectorized G.711 conversion on HA;
 - smaller call-routing orchestrators with the existing single authoritative
   call lifecycle preserved;
-- a substantially expanded, schema-checked automation cookbook.
+- a substantially expanded, schema-checked automation cookbook;
 - fail-closed candidate qualification with real HA, browser, SIP peers,
-  maintained firmware builds and hardware-in-the-loop evidence.
+  maintained firmware builds and hardware-in-the-loop evidence;
 - one generation-owned call session with common answer, bridge, projection,
   rollback and termination primitives across direct, trunk, forward, group and
   conference paths;
 - stabilized P4 bidirectional JPEG/H.264 negotiation, audio-first video
-  upgrades, bounded presentation queues and post-call LVGL recovery;
+  upgrades, codec-specific decode and MIPI DSI presentation, bounded
+  presentation queues and post-call LVGL recovery;
 - exact candidate locks for all four repositories, firmware manifests and a
   deterministic HACS ZIP built, validated and published explicitly;
 - executable regression evidence for community interop fixes and post-call

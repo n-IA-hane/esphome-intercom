@@ -47,14 +47,48 @@ selection across browsers and mobile platforms.
 
 ## ESPHome P4 videophone
 
-The maintained ESP32-P4 profiles support bidirectional SIP video over JPEG or
-H.264 as separate compile-time choices. Initial video and audio-first video
-updates preserve bidirectional audio. Camera capture, transport, decode and
-panel presentation use bounded queues, persistent workers and reusable buffers.
+The ESP32-P4 is not only a network camera. It is a complete SIP videophone that
+can send its camera and display the remote party on its own MIPI DSI panel while
+bidirectional audio remains active.
+
+The video path works in both directions:
+
+- For outgoing video, `esp_video` owns the MIPI-CSI and V4L2 camera pipeline.
+  The JPEG profile sends the camera's already encoded JPEG frame instead of
+  capturing or encoding the same image twice. The H.264 profile uses the P4
+  hardware encoder.
+- For incoming video, the VoIP stack receives and reassembles RTP/JPEG or H.264
+  frames, then passes complete frames to the codec-specific P4 renderer.
+- JPEG is decoded by the P4 hardware JPEG engine. H.264 uses Espressif's
+  software decoder. PPA performs the required scaling, rotation and
+  pixel-format conversion without moving that work into the ESPHome main loop.
+- The decoded image is presented on the physical MIPI DSI display through the
+  maintained display adapter. Video presentation is paced by the media clock
+  and uses bounded queues, persistent workers and reusable buffers, so an old
+  or slow frame cannot build an unbounded backlog behind the live call.
+- The video view and the normal LVGL interface have an explicit lifecycle. The
+  call can enter video, return to audio-only and hang up without leaving a stale
+  frame, damaged navigation controls or a hidden lower bar. The idle interface
+  is restored after the call and is ready for an immediate redial.
+
+Both video modes support a call that starts with audio and adds video later by
+re-INVITE, as well as a call that offers audio and video from the initial
+INVITE. Adding, removing or rejecting video does not restart the established
+audio path. JPEG and H.264 remain separate compile-time choices, so the JPEG
+firmware does not silently include the H.264 pipeline and vice versa.
 
 The full JPEG profile combines the videophone with AFE, Micro Wake Word, Voice
 Assistant, LVGL, TTS, HTTP media and Sendspin. H.264 remains the experimental
-codec profile, while JPEG is the stable full-device baseline.
+codec profile, while JPEG is the stable full-device baseline. The full profile
+therefore remains a voice-assistant and media panel when idle, but becomes a
+bidirectional audio and video phone during a SIP call.
+
+Qualification covered the three independent layers required for a real P4
+videophone: SIP/SDP negotiation, RTP and codec processing, and presentation on
+the physical panel. The tested scenarios included initial video, audio-first
+video activation, video removal, hangup, immediate redial and repeated calls.
+The H.264 profile presented approximately 10 frames per second in its final
+three-cycle hardware run. JPEG is the maintained full-profile baseline.
 
 Camera work is maintained in the project fork of @Psix-anp's component and is
 being proposed upstream as focused pull requests. Once the required changes

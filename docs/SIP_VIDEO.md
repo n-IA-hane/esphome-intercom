@@ -56,6 +56,37 @@ camera entity. Home Assistant can render that entity through its normal camera
 platform, while negotiated calls use RTP/JPEG in both directions without a
 second capture pipeline.
 
+### What the P4 sends and displays
+
+The two video directions are independent and can run at the same time:
+
+1. In the outgoing direction, `esp_video` owns camera capture. The JPEG profile
+   forwards the camera's encoded JPEG frame into RTP without capturing or
+   encoding a duplicate image. The H.264 profile converts the camera frame and
+   uses the ESP32-P4 hardware encoder.
+2. In the incoming direction, the VoIP component receives RTP packets,
+   reorders the bounded packet window and reconstructs one complete JPEG or
+   H.264 access unit. Damaged or incomplete frames are discarded instead of
+   being shown later.
+3. The codec-specific renderer uses the P4 hardware JPEG decoder for JPEG or
+   Espressif's H.264 software decoder for H.264. PPA performs scaling, rotation
+   and pixel-format conversion where required.
+4. The resulting frame is presented on the physical MIPI DSI panel. This is a
+   real receive display path, not the ESPHome camera entity and not evidence
+   inferred from RTP counters.
+
+Presentation follows the video media clock. Capture, decode and display use
+bounded queues, persistent workers and reusable buffers so that a slow frame
+cannot create an ever-growing delay. Video work is kept out of the ESPHome main
+loop, and JPEG and H.264 dependencies remain gated by the selected firmware
+profile.
+
+The renderer also owns the transition between the normal LVGL interface and
+the call image. It enters the video view only for an accepted receive stream,
+can return to audio-only during the same dialog, and restores the idle page and
+navigation controls after hangup. Qualification therefore checks signaling,
+RTP/codec processing and physical-panel presentation separately.
+
 Do not enable both JPEG and H.264 in one P4 firmware. The YAML codec choice
 gates the unused source, decoder, buffers and managed libraries at compile
 time.
@@ -63,7 +94,9 @@ time.
 H.264 receive uses the P4 direct display path. `display_id` is therefore
 required on `p4_video_renderer` when `codec: h264`; ESPHome rejects the YAML at
 validation time if it is missing. JPEG can present through the LVGL image path
-or an optional direct display.
+or an optional direct display. In either case, receiving RTP packets or
+decoding frames is not considered display success: the presentation counter or
+a framebuffer capture must also prove that frames reached the panel.
 
 The profile supports:
 

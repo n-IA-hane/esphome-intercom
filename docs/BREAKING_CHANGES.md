@@ -8,17 +8,24 @@ YAML and automations cannot be migrated by Home Assistant automatically.
 
 ## 2026.9.0: upgrade checklist
 
+If you use only the standard HACS integration and its visual card editor, the
+upgrade is mostly automatic. The manual steps below apply when you copied an
+ESPHome YAML, wrote card YAML by hand, created VoIP Stack automations or built a
+custom frontend against the development API.
+
 1. Update VoIP Stack through HACS and restart Home Assistant.
 2. Open Reconfigure once and review trunk, incoming-routing and video options.
 3. Open every `ha_softphone` card and confirm its selected Home Assistant phone
    Device. Clear the browser or Companion app cache after the update.
 4. Rebuild ESPHome phones from the current YAMLs. The maintained YAMLs now use
    the stable `main` branches of every coordinated component repository.
-5. Apply the two migrations below if upgrading directly from `2026.8.0`.
+5. Apply the relevant migration sections below if upgrading directly from
+   `2026.8.0`.
 
-The config-entry migration preserves supported persisted Home Assistant
-settings. The P4 filename, copied dashboard YAML and copied automations cannot
-be changed automatically.
+Home Assistant migrates supported integration settings automatically. It cannot
+rewrite files and configuration that live outside the integration, including a
+copied P4 YAML, hand-written dashboard YAML, automations and custom frontend
+code. Those are the items described below.
 
 ## 2026.9.0: P4 full profile renamed for SIP video
 
@@ -40,26 +47,38 @@ yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophon
 ```
 
 The ESPHome node name and entity identities are unchanged. Only the example
-YAML filename and references to it must be updated.
+YAML filename and references to it must be updated. If your own YAML imports
+the old file, change that import to the new filename. You do not need to delete
+the ESPHome device or recreate its Home Assistant entities.
 
 ## 2026.9.0: phone actions and cards use device identifiers only
 
-VoIP Stack no longer accepts the synthetic
-`__voip_stack_ha_softphone__` selector or a card `endpoint_id`. Open each
-`ha_softphone` card in the editor and select its Home Assistant phone again.
-The saved card configuration must contain only the selected `device_id`.
-Omitting the selection uses the preferred Home Assistant phone configured by
-the integration.
+This section matters only if you wrote card YAML, automations or custom frontend
+code by hand. The visual card editor writes the new format for you.
+
+Each Home Assistant phone is now selected by its real Home Assistant Device ID.
+The old synthetic selector `__voip_stack_ha_softphone__` and the old card field
+`endpoint_id` are no longer accepted as configuration.
+
+For every `ha_softphone` card, open the card editor and select the Home
+Assistant phone that the card represents. Saving the editor replaces the old
+selector with `device_id`. If no phone is selected, VoIP Stack uses the
+preferred Home Assistant phone configured in the integration, or the only
+compatible phone when there is no ambiguity.
 
 Update copied automations so `device_id` contains the real Home Assistant
 Device Registry ID of the local phone. `endpoint_id` remains visible in call
 state and WebSocket snapshots for internal session and media correlation, but
 it is not accepted as user configuration.
 
-The `voip_stack.call` action response now exposes only schema version 2. Read
-the selected phone from `phone.device_id`, `phone.kind` and `phone.name`; read
-call state from `call.call_id`, `call.state` and `call.destination`. The former
-duplicate flat fields such as top-level `device_id`, `endpoint_id`, `call_id`
+If an automation only starts a call and does not read the action response, no
+response change is required. If it reads that response, use schema version 2:
+
+- read the selected phone from `phone.device_id`, `phone.kind` and
+  `phone.name`;
+- read the call from `call.call_id`, `call.state` and `call.destination`.
+
+The duplicate top-level response fields `device_id`, `endpoint_id`, `call_id`
 and `destination` were removed.
 
 ESPHome phones controlled from Home Assistant must expose the explicit
@@ -69,7 +88,8 @@ longer treats call/decline buttons as remote-control actions and no longer
 uses `decline_call` as a substitute for hangup. Rebuild and flash custom
 firmware that included only the older entity package.
 
-Custom frontends must use the current scoped
+The remaining changes in this section apply only to custom frontends, not to
+the bundled card. Custom frontends must use the current scoped
 `voip_stack/subscribe_ha_softphone` WebSocket request. The card no longer
 retries the older unscoped subscription when the server rejects that request.
 
