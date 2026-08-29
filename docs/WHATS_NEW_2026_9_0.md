@@ -37,6 +37,14 @@ them without replacing the SIP call.
 The card, editor, configuration, entities, repairs and service errors include
 Brazilian Portuguese and German translations.
 
+The card Options view now lets each browser or Companion app select its
+preferred microphone, speaker and camera. It can also request media permission
+and switch between the available cameras without changing the active SIP call.
+Future releases will continue consolidating media-device discovery and
+selection across browsers and mobile platforms.
+
+![Home Assistant VoIP card media-device options](images/voip-card-media-device-options-2026-9-0.jpg)
+
 ## ESPHome P4 videophone
 
 The maintained ESP32-P4 profiles support bidirectional SIP video over JPEG or
@@ -59,6 +67,13 @@ Audio Stack, ESP VoIP Stack, Runtime Controller and the P4 camera component are
 released together as `v2026.9.0`. Maintained YAMLs point to their stable `main`
 branches. Project-owned ESPHome compatibility forks are documented in
 [Espressif components and licenses](ESPRESSIF_COMPONENTS.md).
+
+## Known issues
+
+On some browsers and mobile devices, the operating system initially exposes
+only a generic camera or a partial device list. Open the card Options and tap
+`Allow media access` to grant permission and display all available
+microphones, speakers and cameras.
 
 ## Upgrade
 
