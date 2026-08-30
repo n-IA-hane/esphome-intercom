@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 import time
 from typing import Any, Iterable, Iterator, Literal
 
@@ -35,27 +34,6 @@ CallOwner = Literal[
 ]
 
 
-@dataclass(frozen=True, slots=True)
-class CallMutation:
-    """One bounded update applied by the authoritative call owner."""
-
-    state: str = ""
-    owner: CallOwner | None = None
-    outcome: str | None = None
-    caller: str = ""
-    callee: str = ""
-    route_kind: str = ""
-    terminal_reason: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
-class CallMutationGuard:
-    """Optional ownership checks for an existing call generation."""
-
-    revision: int | None = None
-    generation: int | None = None
-    owner: CallOwner | None = None
 TERMINAL_STATES = {
     "idle",
     "busy",
@@ -487,15 +465,13 @@ class CallRuntimeApi:
         materialized_event_only = bool(session.metadata.pop("event_only", False))
         return self._apply_call_mutation(
             session,
-            CallMutation(
-                state=state,
-                owner=owner,
-                caller=caller,
-                callee=callee,
-                route_kind=route_kind,
-                terminal_reason=terminal_reason,
-                metadata=ownership_metadata,
-            ),
+            state=state,
+            metadata=ownership_metadata,
+            owner=owner,
+            caller=caller,
+            callee=callee,
+            route_kind=route_kind,
+            terminal_reason=terminal_reason,
             force_revision=materialized_event_only,
         )
 
@@ -519,68 +495,46 @@ class CallRuntimeApi:
         session = self.sessions.get(session_id)
         if session is None:
             return None
-        guard = CallMutationGuard(
-            revision=expected_revision,
-            generation=expected_generation,
-            owner=expected_owner,
-        )
-        if not self._mutation_guard_matches(session, guard):
-            return None
-        return self._apply_call_mutation(
-            session,
-            CallMutation(
-                state=state,
-                owner=owner,
-                outcome=outcome,
-                caller=caller,
-                callee=callee,
-                route_kind=route_kind,
-                metadata=metadata,
-            ),
-            force_revision=True,
-        )
-
-    @staticmethod
-    def _mutation_guard_matches(
-        session: EndpointCallSession,
-        guard: CallMutationGuard,
-    ) -> bool:
-        return bool(
+        if not (
             session.live
             and session.owner != "terminal"
             and session.state not in TERMINAL_STATES
-            and (guard.revision is None or session.revision == int(guard.revision))
-            and (
-                guard.generation is None
-                or session.generation == int(guard.generation)
-            )
-            and (guard.owner is None or session.owner == guard.owner)
+            and (expected_revision is None or session.revision == int(expected_revision))
+            and (expected_generation is None or session.generation == int(expected_generation))
+            and (expected_owner is None or session.owner == expected_owner)
+        ):
+            return None
+        return self._apply_call_mutation(
+            session,
+            state=state,
+            metadata=metadata,
+            owner=owner,
+            outcome=outcome,
+            caller=caller,
+            callee=callee,
+            route_kind=route_kind,
+            force_revision=True,
         )
 
     def _apply_call_mutation(
         self,
         session: EndpointCallSession,
-        mutation: CallMutation,
         *,
+        state: str = "",
+        metadata: dict[str, Any],
         force_revision: bool = False,
+        **fields: Any,
     ) -> EndpointCallSession:
         """Apply state, ownership and projection data through one primitive."""
 
-        changed = bool(mutation.state and self._set_state(session, mutation.state))
-        for attribute, value in (
-            ("owner", mutation.owner),
-            ("outcome", mutation.outcome),
-            ("caller", mutation.caller),
-            ("callee", mutation.callee),
-            ("route_kind", mutation.route_kind),
-            ("terminal_reason", mutation.terminal_reason),
-        ):
+        changed = bool(state and self._set_state(session, state))
+        for attribute, value in fields.items():
             if value not in (None, "") and getattr(session, attribute) != value:
                 setattr(session, attribute, value)
                 changed = True
         clean_metadata = {
             key: value
-            for key, value in mutation.metadata.items()
+            for key, value in metadata.items()
             if value not in (None, "")
         }
         if any(

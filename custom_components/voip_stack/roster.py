@@ -140,17 +140,11 @@ def merge_roster_overrides(entries: list[RosterEntry], overrides: list[RosterEnt
 
     merged = list(entries)
     for override in overrides:
-        override_keys = {
-            normalize_roster_key(override.id),
-            normalize_roster_key(override.name),
-        }
+        override_keys = {normalize_roster_key(override.id), normalize_roster_key(override.name)}
         override_keys.discard("")
         index = -1
         for pos, entry in enumerate(merged):
-            entry_keys = {
-                normalize_roster_key(entry.id),
-                normalize_roster_key(entry.name),
-            }
+            entry_keys = {normalize_roster_key(entry.id), normalize_roster_key(entry.name)}
             entry_keys.discard("")
             if override_keys & entry_keys:
                 index = pos

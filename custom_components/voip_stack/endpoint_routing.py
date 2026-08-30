@@ -174,11 +174,7 @@ def sip_target_rtp_audio_profile(
 
 
 def same_route_name(left: str, right: str) -> bool:
-    return bool(
-        left
-        and right
-        and normalize_roster_key(left) == normalize_roster_key(right)
-    )
+    return bool(left and right and normalize_roster_key(left) == normalize_roster_key(right))
 
 
 def is_ha_target(hass: HomeAssistant, value: str) -> bool:
