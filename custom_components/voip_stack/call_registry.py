@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 import time
 from typing import Any, Iterable, Iterator, Literal
 
@@ -32,6 +33,29 @@ LegRole = Literal[
 CallOwner = Literal[
     "", "ha_softphone", "router", "bridge", "assist", "local_bridge", "terminal"
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class CallMutation:
+    """One bounded update applied by the authoritative call owner."""
+
+    state: str = ""
+    owner: CallOwner | None = None
+    outcome: str | None = None
+    caller: str = ""
+    callee: str = ""
+    route_kind: str = ""
+    terminal_reason: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class CallMutationGuard:
+    """Optional ownership checks for an existing call generation."""
+
+    revision: int | None = None
+    generation: int | None = None
+    owner: CallOwner | None = None
 TERMINAL_STATES = {
     "idle",
     "busy",
@@ -457,37 +481,23 @@ class CallRuntimeApi:
             **ownership_metadata,
         )
         session = authoritative
-        changed = False
-        if session.metadata.pop("event_only", False):
-            # An observable route event may precede materialisation of the
-            # authoritative call. Once an owner upserts the call, terminal UI
-            # projections must no longer retire that live generation.
-            changed = True
-        if state and self._set_state(session, state):
-            changed = True
-        for attribute, value in (
-            ("owner", owner),
-            ("caller", caller),
-            ("callee", callee),
-            ("route_kind", route_kind),
-            ("terminal_reason", terminal_reason),
-        ):
-            if value and getattr(session, attribute) != value:
-                setattr(session, attribute, value)
-                changed = True
-        clean_metadata = {
-            key: value
-            for key, value in ownership_metadata.items()
-            if value not in (None, "")
-        }
-        if any(
-            session.metadata.get(key) != value for key, value in clean_metadata.items()
-        ):
-            session.metadata.update(clean_metadata)
-            changed = True
-        if changed:
-            session.revision += 1
-        return session
+        # An observable route event may precede materialisation of the
+        # authoritative call. Once an owner upserts the call, terminal UI
+        # projections must no longer retire that live generation.
+        materialized_event_only = bool(session.metadata.pop("event_only", False))
+        return self._apply_call_mutation(
+            session,
+            CallMutation(
+                state=state,
+                owner=owner,
+                caller=caller,
+                callee=callee,
+                route_kind=route_kind,
+                terminal_reason=terminal_reason,
+                metadata=ownership_metadata,
+            ),
+            force_revision=materialized_event_only,
+        )
 
     def transition(
         self,
@@ -509,34 +519,77 @@ class CallRuntimeApi:
         session = self.sessions.get(session_id)
         if session is None:
             return None
-        if not session.live:
-            return None
-        if expected_revision is not None and session.revision != int(expected_revision):
-            return None
-        if expected_generation is not None and session.generation != int(
-            expected_generation
-        ):
-            return None
-        if expected_owner is not None and session.owner != expected_owner:
-            return None
-        if session.owner == "terminal" or session.state in TERMINAL_STATES:
-            return None
-        if state:
-            self._set_state(session, state)
-        if owner is not None:
-            session.owner = owner
-        if outcome is not None:
-            session.outcome = outcome
-        if caller:
-            session.caller = caller
-        if callee:
-            session.callee = callee
-        if route_kind:
-            session.route_kind = route_kind
-        session.metadata.update(
-            {key: value for key, value in metadata.items() if value not in (None, "")}
+        guard = CallMutationGuard(
+            revision=expected_revision,
+            generation=expected_generation,
+            owner=expected_owner,
         )
-        session.revision += 1
+        if not self._mutation_guard_matches(session, guard):
+            return None
+        return self._apply_call_mutation(
+            session,
+            CallMutation(
+                state=state,
+                owner=owner,
+                outcome=outcome,
+                caller=caller,
+                callee=callee,
+                route_kind=route_kind,
+                metadata=metadata,
+            ),
+            force_revision=True,
+        )
+
+    @staticmethod
+    def _mutation_guard_matches(
+        session: EndpointCallSession,
+        guard: CallMutationGuard,
+    ) -> bool:
+        return bool(
+            session.live
+            and session.owner != "terminal"
+            and session.state not in TERMINAL_STATES
+            and (guard.revision is None or session.revision == int(guard.revision))
+            and (
+                guard.generation is None
+                or session.generation == int(guard.generation)
+            )
+            and (guard.owner is None or session.owner == guard.owner)
+        )
+
+    def _apply_call_mutation(
+        self,
+        session: EndpointCallSession,
+        mutation: CallMutation,
+        *,
+        force_revision: bool = False,
+    ) -> EndpointCallSession:
+        """Apply state, ownership and projection data through one primitive."""
+
+        changed = bool(mutation.state and self._set_state(session, mutation.state))
+        for attribute, value in (
+            ("owner", mutation.owner),
+            ("outcome", mutation.outcome),
+            ("caller", mutation.caller),
+            ("callee", mutation.callee),
+            ("route_kind", mutation.route_kind),
+            ("terminal_reason", mutation.terminal_reason),
+        ):
+            if value not in (None, "") and getattr(session, attribute) != value:
+                setattr(session, attribute, value)
+                changed = True
+        clean_metadata = {
+            key: value
+            for key, value in mutation.metadata.items()
+            if value not in (None, "")
+        }
+        if any(
+            session.metadata.get(key) != value for key, value in clean_metadata.items()
+        ):
+            session.metadata.update(clean_metadata)
+            changed = True
+        if changed or force_revision:
+            session.revision += 1
         return session
 
     def is_current(
