@@ -53,6 +53,8 @@ def test_manifest_records_toolchain_config_and_binary_hash(tmp_path: Path) -> No
             "esphome_version": "2026.8.0",
             "esp_idf_version": "v5.5.5",
             "config_hash": 123,
+            "dependency_lock_sha256": "",
+            "idf_components": {},
             "memory": {
                 "dram_data_bytes": 0,
                 "dram_bss_bytes": 0,
@@ -72,6 +74,33 @@ def test_manifest_records_toolchain_config_and_binary_hash(tmp_path: Path) -> No
             ],
         }
     ]
+
+
+def test_manifest_records_resolved_idf_component_versions(tmp_path: Path) -> None:
+    build_root = tmp_path / "yamls/profile/.esphome/build/phone"
+    output = build_root / "build"
+    output.mkdir(parents=True)
+    (output / "project_description.json").write_text(
+        json.dumps({"project_name": "phone"}), encoding="utf-8"
+    )
+    (output / "firmware.bin").write_bytes(b"firmware")
+    lock = build_root / "dependencies.lock"
+    lock.write_text(
+        "dependencies:\n"
+        "  espressif/esp-sr:\n"
+        "    version: 2.4.6\n"
+        "  espressif/esp_codec_dev:\n"
+        "    version: 1.6.2\n",
+        encoding="utf-8",
+    )
+
+    record = load_script().build_records(tmp_path)[0]
+
+    assert record["dependency_lock_sha256"] == load_script().sha256(lock)
+    assert record["idf_components"] == {
+        "espressif/esp-sr": "2.4.6",
+        "espressif/esp_codec_dev": "1.6.2",
+    }
 
 
 def test_manifest_does_not_duplicate_nested_esphome_builds(tmp_path: Path) -> None:

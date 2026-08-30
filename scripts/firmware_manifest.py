@@ -12,6 +12,8 @@ import shutil
 import subprocess
 import sys
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -71,6 +73,19 @@ def _section_sizes(description: dict[str, object], build_dir: Path) -> dict[str,
     return sections
 
 
+def _resolved_components(build_root: Path) -> tuple[str, dict[str, str]]:
+    lock_path = build_root / "dependencies.lock"
+    if not lock_path.is_file():
+        return "", {}
+    payload = yaml.safe_load(lock_path.read_text(encoding="utf-8")) or {}
+    dependencies = payload.get("dependencies") or {}
+    return sha256(lock_path), {
+        str(name): str(details.get("version") or "")
+        for name, details in sorted(dependencies.items())
+        if isinstance(details, dict)
+    }
+
+
 def build_records(root: Path) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     # ``**`` may discover the same nested ESPHome build through more than one
@@ -92,6 +107,9 @@ def build_records(root: Path) -> list[dict[str, object]]:
             else {}
         )
         sections = _section_sizes(description, build_dir)
+        dependency_lock_sha256, idf_components = _resolved_components(
+            build_dir.parent
+        )
         application = build_dir / str(description.get("app_bin") or "")
         partition_bytes = _app_partition_bytes(build_dir.parent)
         records.append(
@@ -105,6 +123,8 @@ def build_records(root: Path) -> list[dict[str, object]]:
                 ),
                 "esp_idf_version": str(description.get("git_revision") or ""),
                 "config_hash": build_info.get("config_hash"),
+                "dependency_lock_sha256": dependency_lock_sha256,
+                "idf_components": idf_components,
                 "memory": {
                     "dram_data_bytes": sections.get(".dram0.data", 0),
                     "dram_bss_bytes": sections.get(".dram0.bss", 0),
