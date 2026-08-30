@@ -2,7 +2,7 @@
 
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3%20%7C%20ESP32--P4-blue.svg)](#supported-hardware)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-native-blue.svg)](https://www.home-assistant.io)
-[![ESPHome](https://img.shields.io/badge/ESPHome-2026.6.5%2B-18bcf2.svg)](https://esphome.io)
+[![ESPHome](https://img.shields.io/badge/ESPHome-2026.8.1%2B-18bcf2.svg)](https://esphome.io)
 
 Turn ESPHome audio devices and Home Assistant into a local SIP phone system,
 or use the maintained full-experience firmware to combine VoIP with a complete

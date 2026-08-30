@@ -1,7 +1,7 @@
 # ESPHome audio fork upstream record
 
 Upstream baseline: ESPHome `dev` commit
-`5f6a910e2d6e41d3716668a66e5dff8cca25f2ea`, component path
+`cd28a8a03e1fd00cde1e94e65ad089f3823ef274`, component path
 `esphome/components/audio`.
 
 Checked with:

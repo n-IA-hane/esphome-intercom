@@ -10,7 +10,7 @@ COMPONENTS = ROOT / "esphome" / "components"
 pytestmark = pytest.mark.architecture
 
 
-UPSTREAM_DEV_SHA = "5f6a910e2d6e41d3716668a66e5dff8cca25f2ea"
+UPSTREAM_DEV_SHA = "cd28a8a03e1fd00cde1e94e65ad089f3823ef274"
 SPI_UPSTREAM_MERGE_SHA = "e458a38f89e7ccfc3d186d6d2f41708168e6f492"
 
 

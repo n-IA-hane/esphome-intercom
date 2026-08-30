@@ -1,11 +1,11 @@
 # ESPHome upstream alignment
 
-This component is based on ESPHome `dev` commit
-`5f6a910e2d6e41d3716668a66e5dff8cca25f2ea`, path
-`esphome/components/audio_http`.
+This component is identical to ESPHome `dev` commit
+`cd28a8a03e1fd00cde1e94e65ad089f3823ef274`, path
+`esphome/components/audio_http`. The `persistent_ring_buffer` option entered
+upstream in commit `5ed20805ce` through pull request `#18708`.
 
-The local fork adds one configuration option, `persistent_ring_buffer`, and
-passes it to micro-decoder 0.4.0. When enabled, the encoded-audio ring is
-allocated during setup and retained across playback cycles. The default is
-`false`, matching upstream behavior for profiles that do not need the reserved
-capacity.
+The local copy is temporary compatibility for ESPHome 2026.8.1. It can be
+removed when the required stable ESPHome release includes that upstream
+commit. The option keeps micro-decoder 0.4.0's encoded ring allocated between
+playback cycles and preserves the upstream default of `false`.
