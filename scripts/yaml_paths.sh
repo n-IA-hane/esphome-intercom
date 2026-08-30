@@ -26,6 +26,13 @@ def yaml_files():
     for path in (ROOT / "yamls").rglob("*.yaml"):
         if ".esphome" in path.parts or path.name == "secrets.yaml":
             continue
+        ignored = subprocess.run(
+            ["git", "check-ignore", "--quiet", str(path)],
+            cwd=ROOT,
+            check=False,
+        ).returncode == 0
+        if ignored:
+            continue
         if path.is_relative_to(ROOT / "yamls/debug") or path.name.endswith("_NOT_READY.yaml"):
             continue
         files.append(path)

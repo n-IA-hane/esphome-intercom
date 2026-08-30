@@ -102,9 +102,7 @@ def test_export_returns_roster_only_in_service_response(monkeypatch) -> None:
 
 def test_export_service_requires_a_private_response() -> None:
     source = SERVICES.read_text()
-    registration = source[source.index('"export_phonebook"') :]
-
-    assert "supports_response=SupportsResponse.ONLY" in registration
+    assert '"export_phonebook": (None, SupportsResponse.ONLY)' in source
 
 
 def test_contact_group_lists_are_validated_as_individual_router_aliases(

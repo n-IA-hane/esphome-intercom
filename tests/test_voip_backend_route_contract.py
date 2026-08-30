@@ -821,7 +821,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             init_py,
         )
         self.assertIn(
-            'hass.services.async_register(\n        DOMAIN,\n        "set_ha_softphone_settings"',
+            '"set_ha_softphone_settings": (set_ha_softphone_settings_schema, None)',
             SERVICES.read_text(),
         )
         self.assertIn("_ha_softphone_extension", websocket)
@@ -1042,8 +1042,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         services_yaml = SERVICES_YAML.read_text()
         icons_json = ICONS_JSON.read_text()
 
-        self.assertIn('handler_for("list_accounts")', services)
-        self.assertIn("supports_response=SupportsResponse.ONLY", services)
+        self.assertIn('"list_accounts": (None, SupportsResponse.ONLY)', services)
         self.assertIn('"list_accounts": list_accounts', account_services)
         self.assertIn("list_accounts:", services_yaml)
         self.assertIn('"list_accounts"', icons_json)
