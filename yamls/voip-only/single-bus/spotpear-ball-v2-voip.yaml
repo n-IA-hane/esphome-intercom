@@ -685,7 +685,7 @@ lvgl:
         - voip_stack.prev_contact:
         - script.execute: update_call_idle_labels
       on_swipe_up:
-        - script.execute: call_to_settings
+        - script.execute: call_to_dialer
       on_swipe_down:
         - script.execute: call_to_va
       widgets:
@@ -1003,6 +1003,175 @@ lvgl:
             text_align: CENTER
             long_mode: SCROLL
             width: ${call_ended_reason_text_width}
+
+    # ========================================================================
+    # VOIP: ROUND SIP DIALER PAGE
+    # ========================================================================
+    - id: call_dialer_page
+      bg_color: 0x10131C
+      on_swipe_down:
+        - script.execute: dialer_to_contacts
+      on_swipe_up:
+        - script.execute: call_to_settings
+      widgets:
+        - label:
+            id: call_dial_value_label
+            align: TOP_MID
+            y: 16
+            width: 90
+            height: 26
+            text: "Number / extension"
+            text_color: 0xFFFFFF
+            text_font: font_info
+            text_align: CENTER
+            long_mode: SCROLL
+            clickable: true
+            gesture_bubble: true
+            on_short_click:
+              - script.execute: voip_dial_backspace
+            on_long_press:
+              - script.execute: voip_dial_clear
+
+        - buttonmatrix:
+            id: call_dial_row_123
+            align: TOP_MID
+            y: 46
+            width: 166
+            height: 31
+            bg_opa: TRANSP
+            border_width: 0
+            pad_row: 0
+            pad_column: 5
+            gesture_bubble: true
+            items:
+              bg_color: 0x273142
+              text_color: 0xFFFFFF
+              text_font: font_title
+              radius: 16
+            rows:
+              - buttons:
+                  - text: "1"
+                  - text: "2"
+                  - text: "3"
+            on_click:
+              - script.execute:
+                  id: voip_dial_append
+                  dial_char: !lambda |-
+                    static constexpr char keys[] = "123";
+                    return x < 3 ? keys[x] : 0;
+
+        - buttonmatrix:
+            id: call_dial_row_456
+            align: TOP_MID
+            y: 81
+            width: 206
+            height: 31
+            bg_opa: TRANSP
+            border_width: 0
+            pad_row: 0
+            pad_column: 5
+            gesture_bubble: true
+            items:
+              bg_color: 0x273142
+              text_color: 0xFFFFFF
+              text_font: font_title
+              radius: 16
+            rows:
+              - buttons:
+                  - text: "4"
+                  - text: "5"
+                  - text: "6"
+            on_click:
+              - script.execute:
+                  id: voip_dial_append
+                  dial_char: !lambda |-
+                    static constexpr char keys[] = "456";
+                    return x < 3 ? keys[x] : 0;
+
+        - buttonmatrix:
+            id: call_dial_row_789
+            align: TOP_MID
+            y: 116
+            width: 214
+            height: 31
+            bg_opa: TRANSP
+            border_width: 0
+            pad_row: 0
+            pad_column: 5
+            gesture_bubble: true
+            items:
+              bg_color: 0x273142
+              text_color: 0xFFFFFF
+              text_font: font_title
+              radius: 16
+            rows:
+              - buttons:
+                  - text: "7"
+                  - text: "8"
+                  - text: "9"
+            on_click:
+              - script.execute:
+                  id: voip_dial_append
+                  dial_char: !lambda |-
+                    static constexpr char keys[] = "789";
+                    return x < 3 ? keys[x] : 0;
+
+        - buttonmatrix:
+            id: call_dial_row_del0hash
+            align: TOP_MID
+            y: 151
+            width: 184
+            height: 31
+            bg_opa: TRANSP
+            border_width: 0
+            pad_row: 0
+            pad_column: 5
+            gesture_bubble: true
+            items:
+              bg_color: 0x273142
+              text_color: 0xFFFFFF
+              text_font: font_title
+              radius: 16
+            rows:
+              - buttons:
+                  - text: "\U000F006E"
+                  - text: "0"
+                  - text: "#"
+            on_click:
+              - if:
+                  condition:
+                    lambda: return x == 0;
+                  then:
+                    - script.execute: voip_dial_backspace
+                  else:
+                    - script.execute:
+                        id: voip_dial_append
+                        dial_char: !lambda |-
+                          if (x == 1) return '0';
+                          if (x == 2) return '#';
+                          return 0;
+
+        - button:
+            id: call_dial_call_btn
+            align: TOP_MID
+            y: 187
+            width: 74
+            height: 43
+            bg_color: 0x22C55E
+            border_width: 0
+            shadow_opa: TRANSP
+            radius: 22
+            gesture_bubble: true
+            on_short_click:
+              - script.execute: voip_dial_call
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "\U000F03F2"
+                  text_color: 0xFFFFFF
+                  text_font: call_icons
+                  gesture_bubble: true
+
     # ========================================================================
     # SETTINGS PAGES (factored into packages/lvgl/*.yaml)
     # The order here is the swipe-left navigation cycle. on_boot below
@@ -1252,6 +1421,20 @@ globals:
     restore_value: false
     initial_value: "false"
 
+  # Fixed dial buffer avoids heap work while entering a destination.
+  - id: voip_dialer_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: voip_dial_buffer
+    type: "std::array<char, 33>"
+    restore_value: false
+    initial_value: "{0}"
+  - id: voip_dial_length
+    type: uint8_t
+    restore_value: false
+    initial_value: "0"
+
   # settings_active, g_settings_pages, g_settings_index are defined in
   # packages/voip_only.yaml; populated at on_boot below.
 
@@ -1367,6 +1550,7 @@ script:
                           s == "in_call");
           if (in_call) {
             id(settings_active) = false;  // call interrupts settings view
+            id(voip_dialer_active) = false;
           }
           // ui_call_ended owns the screen for ~4 s after a terminated
           // call. Any redraw triggered in that window keeps the ended
@@ -1390,6 +1574,8 @@ script:
               target = id(call_ringing_out_page)->obj;
             } else if (s == "in_call" || s == "connecting") {
               target = id(call_in_call_page)->obj;
+            } else if (id(voip_dialer_active)) {
+              target = id(call_dialer_page)->obj;
             } else {
               target = id(call_idle_page)->obj;
             }
@@ -1422,6 +1608,72 @@ script:
             char buf[16];
             snprintf(buf, sizeof(buf), "\U000F06CB %d", count);
             return std::string(buf);
+
+  - id: voip_dial_refresh
+    then:
+      - lambda: |-
+          if (id(voip_dial_length) == 0) {
+            lv_label_set_text(id(call_dial_value_label), "Number / extension");
+          } else {
+            lv_label_set_text(id(call_dial_value_label), id(voip_dial_buffer).data());
+          }
+
+  - id: voip_dial_append
+    parameters:
+      dial_char: int
+    then:
+      - lambda: |-
+          if (dial_char == 0 || id(voip_dial_length) >= 32) return;
+          auto &buffer = id(voip_dial_buffer);
+          auto &length = id(voip_dial_length);
+          buffer[length++] = static_cast<char>(dial_char);
+          buffer[length] = '\0';
+          id(voip_dial_refresh).execute();
+
+  - id: voip_dial_backspace
+    then:
+      - lambda: |-
+          auto &length = id(voip_dial_length);
+          if (length > 0) length--;
+          id(voip_dial_buffer)[length] = '\0';
+          id(voip_dial_refresh).execute();
+
+  - id: voip_dial_clear
+    then:
+      - lambda: |-
+          id(voip_dial_length) = 0;
+          id(voip_dial_buffer)[0] = '\0';
+          id(voip_dial_refresh).execute();
+
+  - id: voip_dial_call
+    then:
+      - if:
+          condition:
+            lambda: return id(phone).is_idle() && id(voip_dial_length) > 0;
+          then:
+            - voip_stack.call:
+                target: !lambda |-
+                  return std::string(
+                      id(voip_dial_buffer).data(),
+                      id(voip_dial_length)
+                  );
+
+  - id: call_to_dialer
+    then:
+      - if:
+          condition:
+            lambda: return id(phone).is_idle();
+          then:
+            - lambda: |-
+                id(settings_active) = false;
+                id(voip_dialer_active) = true;
+            - script.execute: voip_dial_refresh
+            - script.execute: draw_display
+
+  - id: dialer_to_contacts
+    then:
+      - lambda: id(voip_dialer_active) = false;
+      - script.execute: draw_display
   # Top-layer clock + battery/wifi/HA status bar refresh.
   - id: update_idle_labels
     then:
@@ -1513,8 +1765,8 @@ binary_sensor:
       - script.execute: backlight_timer
 
   # Physical GPIO0 button (voip-only, no VA mode):
-  #   short  : call/answer/hangup
-  #   double : decline (incoming) / next contact (idle)
+  #   short  : call/answer/hangup, or dial the entered number
+  #   double : decline, next contact, or dialer backspace
   #   long   : mute toggle
   - platform: gpio
     pin:
@@ -1533,7 +1785,13 @@ binary_sensor:
           - ON for 10ms to 500ms
           - OFF for at least 400ms
         then:
-          - voip_stack.call_toggle:
+          - if:
+              condition:
+                lambda: return id(voip_dialer_active);
+              then:
+                - script.execute: voip_dial_call
+              else:
+                - voip_stack.call_toggle:
       # Double click: decline incoming, else next contact when idle
       - timing:
           - ON for 50ms to 500ms
@@ -1543,15 +1801,21 @@ binary_sensor:
         then:
           - if:
               condition:
-                voip_stack.is_ringing:
+                lambda: return id(voip_dialer_active);
               then:
-                - voip_stack.decline_call:
+                - script.execute: voip_dial_backspace
               else:
                 - if:
                     condition:
-                      voip_stack.is_idle:
+                      voip_stack.is_ringing:
                     then:
-                      - voip_stack.next_contact:
+                      - voip_stack.decline_call:
+                    else:
+                      - if:
+                          condition:
+                            voip_stack.is_idle:
+                          then:
+                            - voip_stack.next_contact:
       # Long press (1-3s): toggle mic mute
       - timing:
           - ON for 1s to 3s
