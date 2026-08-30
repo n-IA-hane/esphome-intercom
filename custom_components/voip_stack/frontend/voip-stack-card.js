@@ -498,6 +498,7 @@ class VoipStackCard extends HTMLElement {
       callee: payload.callee || "",
       peer_name: peerName,
       call_id: payload.call_id || "",
+      generation: Number(payload.generation || 0),
       sequence: Number(payload.sequence || 0),
       revision: Number(payload.revision || 0),
       selected_tx_format: payload.selected_tx_format || payload.tx_format || "",

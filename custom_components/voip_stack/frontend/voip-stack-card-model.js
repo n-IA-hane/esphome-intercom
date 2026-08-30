@@ -104,6 +104,16 @@ export function softphoneSnapshotSupersedes(current, next) {
     && terminal
     && nextCallId !== currentCallId
   ) return false;
+  const currentGeneration = Number(current.generation || 0);
+  const nextGeneration = Number(next.generation || 0);
+  if (
+    currentCallId === nextCallId
+    && currentGeneration > 0
+    && nextGeneration > 0
+  ) {
+    if (nextGeneration < currentGeneration) return false;
+    if (nextGeneration > currentGeneration) return true;
+  }
   if (!nextCallId || currentCallId !== nextCallId || terminal) return true;
   const currentSequence = Number(current.sequence || 0);
   const nextSequence = Number(next.sequence || 0);

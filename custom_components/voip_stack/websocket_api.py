@@ -1025,6 +1025,7 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         "direction": direction,
         "role": store.get("role", ""),
         "call_id": call_id,
+        "generation": session.generation if session is not None else 0,
         "sequence": event_context.sequence if event_context is not None else 0,
         "revision": session.revision if session is not None else 0,
         "owner": session.owner if session is not None else "",

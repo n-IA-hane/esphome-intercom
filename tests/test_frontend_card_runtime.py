@@ -849,6 +849,17 @@ assert.equal(card._applySoftphoneSnapshot({{
   ...base, state: "idle", call_id: base.call_id, sequence: 0, revision: 0,
 }}), true);
 
+// A reused SIP Call-ID is disambiguated by the backend call generation.
+assert.equal(card._applySoftphoneSnapshot({{
+  ...base, state: "calling", generation: 5, sequence: 1, revision: 1,
+}}), true);
+assert.equal(card._applySoftphoneSnapshot({{
+  ...base, state: "idle", generation: 4, sequence: 99, revision: 99,
+}}), false);
+assert.equal(card._applySoftphoneSnapshot({{
+  ...base, state: "calling", generation: 6, sequence: 1, revision: 1,
+}}), true);
+
 // Pressing Answer sends the exact call service but does not invent an
 // in-call state before the backend publishes a final 200/answer snapshot.
 const incoming = makeCard();
