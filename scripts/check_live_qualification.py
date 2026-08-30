@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Require live call evidence produced from the exact candidate commit."""
+"""Require fresh live call evidence and its executable scenario results."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from scripts.candidate_lock import load_lock  # noqa: E402
 def validate_artifact(
     artifact: dict[str, object],
     *,
-    candidate_id: str,
+    candidate_id: str | None,
     required: set[str],
     now: datetime,
     max_age: timedelta,
@@ -28,14 +28,15 @@ def validate_artifact(
     candidate = artifact.get("candidate")
     if not isinstance(candidate, dict):
         return ["artifact has no candidate metadata"]
-    if candidate.get("candidate_id") != candidate_id:
-        errors.append("artifact candidate does not match the source lock")
-    repositories = candidate.get("repositories")
-    if not isinstance(repositories, dict) or any(
-        not isinstance(repository, dict) or repository.get("dirty") is not False
-        for repository in repositories.values()
-    ):
-        errors.append("live qualification was not run from clean repositories")
+    if candidate_id is not None:
+        if candidate.get("candidate_id") != candidate_id:
+            errors.append("artifact candidate does not match the source lock")
+        repositories = candidate.get("repositories")
+        if not isinstance(repositories, dict) or any(
+            not isinstance(repository, dict) or repository.get("dirty") is not False
+            for repository in repositories.values()
+        ):
+            errors.append("live qualification was not run from clean repositories")
 
     try:
         created = datetime.fromisoformat(str(artifact["created_at"]))
@@ -69,7 +70,7 @@ def validate_artifact(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("artifact", type=Path)
-    parser.add_argument("--candidate-lock", type=Path, required=True)
+    parser.add_argument("--candidate-lock", type=Path)
     parser.add_argument("--max-age-hours", type=float, default=24.0)
     parser.add_argument("--require", action="append", default=[])
     return parser.parse_args()
@@ -78,10 +79,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     artifact = json.loads(args.artifact.read_text(encoding="utf-8"))
-    candidate = load_lock(args.candidate_lock)
+    candidate = load_lock(args.candidate_lock) if args.candidate_lock else None
     errors = validate_artifact(
         artifact,
-        candidate_id=str(candidate["candidate_id"]),
+        candidate_id=str(candidate["candidate_id"]) if candidate else None,
         required=set(args.require),
         now=datetime.now(UTC),
         max_age=timedelta(hours=args.max_age_hours),

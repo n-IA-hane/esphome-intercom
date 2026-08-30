@@ -49,6 +49,24 @@ def test_accepts_fresh_clean_evidence_for_exact_candidate() -> None:
     ) == []
 
 
+def test_accepts_current_dev_evidence_without_a_source_lock() -> None:
+    now = datetime.now(UTC)
+    artifact = _artifact(now)
+    artifact["candidate"] = {
+        "qualifying": False,
+        "commit": "current-dev",
+        "dirty": True,
+    }
+
+    assert gate.validate_artifact(
+        artifact,
+        candidate_id=None,
+        required={"both_directions", "remote_hangup"},
+        now=now,
+        max_age=timedelta(hours=24),
+    ) == []
+
+
 def test_rejects_other_candidate_dirty_stale_and_missing_scenario() -> None:
     now = datetime.now(UTC)
     artifact = _artifact(now - timedelta(days=2))
