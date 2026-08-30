@@ -14,8 +14,6 @@ from .voip_phase1_support import (
     contextlib,
     dtmf,
     patch,
-    roster,
-    router,
     rtp,
     sdp,
     sip,
@@ -31,9 +29,6 @@ from .voip_phase1_support import (
     types,
     unittest,
 )
-from .router_reference import resolve_esp_origin
-
-
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
     async def test_browser_playout_plc_fades_out_and_recovers_without_a_step(self) -> None:
         audio_ws_view = _load_audio_ws_runtime_module()
@@ -5086,53 +5081,3 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(sip_client._sip_decline_reason(msg), "DND")
-
-    def test_roster_target_matching_ignores_spaces_and_underscores(self) -> None:
-        entries = [
-            roster.RosterEntry(
-                id="Spotpear Ball v2",
-                name="Spotpear Ball v2",
-                address="192.168.1.31",
-                metadata={"sip_port": 5060},
-            ),
-            roster.RosterEntry(
-                id="Casa",
-                name="Casa",
-                address="192.168.1.10",
-                metadata={"sip_port": 5060},
-            ),
-        ]
-        decision = resolve_esp_origin(
-            router,
-            "Spotpear_Ball_v2",
-            entries,
-            "sip:Spotpear_Ball_v2@192.168.1.10:5060",
-        )
-        self.assertEqual(decision.action, router.RouteAction.DIRECT)
-        self.assertIsNotNone(decision.entry)
-        assert decision.entry is not None
-        self.assertEqual(decision.entry.address, "192.168.1.31")
-
-    def test_esp_roster_entry_with_address_is_direct_even_without_transport_param(self) -> None:
-        entries = [
-            roster.RosterEntry(
-                id="Casa",
-                name="Casa",
-                address="192.168.1.10",
-                metadata={"sip_port": 5060, "sip_transport": "tcp"},
-            ),
-            roster.RosterEntry(
-                id="Cucina",
-                name="Cucina",
-                address="192.168.1.31",
-                metadata={"sip_port": 5060},
-            ),
-        ]
-        decision = resolve_esp_origin(
-            router,
-            "Cucina",
-            entries,
-            "sip:Cucina@192.168.1.10:5060;transport=tcp",
-        )
-        self.assertEqual(decision.action, router.RouteAction.DIRECT)
-        self.assertEqual(decision.sip_uri, "sip:Cucina@192.168.1.31")

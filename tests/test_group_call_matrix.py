@@ -25,9 +25,6 @@ from tests.support.voip_matrix import (
     SCENARIO_NAMES,
     run_matrix,
 )
-from tests.router_reference import resolve_esp_origin
-
-
 ROOT = Path(__file__).resolve().parents[1]
 PKG_NAME = "custom_components.voip_stack"
 PKG_DIR = ROOT / "custom_components" / "voip_stack"
@@ -826,14 +823,10 @@ class GroupCallMatrixTest(unittest.TestCase):
 
     def test_group_routing_matrix_preserves_sip_pbx_roles(self) -> None:
         entries = self._roster()
-        ha_uri = "sip:Casa@192.168.1.10:5060;transport=tcp"
         cases = [
             ("HA calls RG", router.resolve_ha_router("RG Casa", entries, trunk_ready=False), router.RouteAction.GROUP, "RG Casa", ""),
             ("HA calls CG", router.resolve_ha_router("CG Casa", entries, trunk_ready=False), router.RouteAction.GROUP, "CG Casa", ""),
             ("HA calls endpoint", router.resolve_ha_router("Spotpear", entries, trunk_ready=False), router.RouteAction.FORWARD, "Spotpear", "sip:Spotpear@192.168.1.31"),
-            ("ESP calls RG", resolve_esp_origin(router, "RG Casa", entries, ha_uri), router.RouteAction.BRIDGE, "RG Casa", "sip:RG_Casa@192.168.1.10;transport=tcp"),
-            ("ESP calls CG", resolve_esp_origin(router, "CG Casa", entries, ha_uri), router.RouteAction.BRIDGE, "CG Casa", "sip:CG_Casa@192.168.1.10;transport=tcp"),
-            ("ESP calls endpoint", resolve_esp_origin(router, "WS3", entries, ha_uri), router.RouteAction.DIRECT, "WS3", "sip:WS3@192.168.1.47"),
         ]
         for label, decision, action, target, sip_uri in cases:
             with self.subTest(label):

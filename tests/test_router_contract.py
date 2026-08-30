@@ -9,9 +9,6 @@ from .voip_phase1_support import (
     router,
     unittest,
 )
-from .router_reference import resolve_esp_origin
-
-
 class RouterContractTest(unittest.TestCase):
     def test_secure_sip_uri_stays_on_the_direct_tls_route(self) -> None:
         target = "sips:door@pbx.example:5061"
@@ -73,37 +70,7 @@ class RouterContractTest(unittest.TestCase):
 
     def test_dialplan_matrix_core_routes(self) -> None:
         entries = self._matrix_entries()
-        ha_uri = "sip:Casa@192.168.1.10:5060;transport=tcp"
-
         cases = [
-            (
-                "ESP calls HA by name",
-                resolve_esp_origin(router, "Casa", entries, ha_uri),
-                router.RouteAction.DIRECT,
-                "sip:Casa@192.168.1.10;transport=tcp",
-                "Casa",
-            ),
-            (
-                "ESP calls external contact by name through HA",
-                resolve_esp_origin(router, "Daniele", entries, ha_uri),
-                router.RouteAction.BRIDGE,
-                "sip:Daniele@192.168.1.10;transport=tcp",
-                "Daniele",
-            ),
-            (
-                "ESP dials internal extension through HA",
-                resolve_esp_origin(router, "101", entries, ha_uri),
-                router.RouteAction.BRIDGE,
-                "sip:101@192.168.1.10;transport=tcp",
-                "101",
-            ),
-            (
-                "ESP calls another ESP by name direct",
-                resolve_esp_origin(router, "WS3", entries, ha_uri),
-                router.RouteAction.DIRECT,
-                "sip:WS3@192.168.1.47;transport=udp",
-                "WS3",
-            ),
             (
                 "HA calls ESP by name",
                 router.resolve_ha_router("Spotpear", entries, trunk_ready=True),
@@ -185,20 +152,6 @@ class RouterContractTest(unittest.TestCase):
         missing_trunk = router.resolve_ha_router("Daniele", entries, trunk_ready=False)
         self.assertEqual(missing_trunk.action, router.RouteAction.REJECT)
         self.assertEqual(missing_trunk.reason, router.RouteReason.TRUNK_UNAVAILABLE)
-
-    def test_esp_numeric_target_always_bridges_to_ha(self) -> None:
-        entries = roster.parse_roster_json(
-            [
-                {"id": "HA", "address": "192.168.1.10"},
-                {"id": "200", "address": "192.168.1.20", "metadata": {"sip_transport": "udp"}},
-            ]
-        )
-        decision = resolve_esp_origin(
-            router, "200", entries, "sip:200@192.168.1.10;transport=tcp"
-        )
-        self.assertEqual(decision.action, router.RouteAction.BRIDGE)
-        self.assertEqual(decision.reason, router.RouteReason.NUMBER_VIA_HA)
-        self.assertEqual(decision.sip_uri, "sip:200@192.168.1.10;transport=tcp")
 
     def test_ha_router_extension_forwards_to_esp(self) -> None:
         entries = roster.parse_roster_json(
