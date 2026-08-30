@@ -7,22 +7,19 @@ import argparse
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
-import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
-
-def _candidate_commit() -> str:
-    return subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
-    ).strip()
+from scripts.candidate_lock import load_lock  # noqa: E402
 
 
 def validate_artifact(
     artifact: dict[str, object],
     *,
-    commit: str,
+    candidate_id: str,
     required: set[str],
     now: datetime,
     max_age: timedelta,
@@ -31,10 +28,14 @@ def validate_artifact(
     candidate = artifact.get("candidate")
     if not isinstance(candidate, dict):
         return ["artifact has no candidate metadata"]
-    if candidate.get("commit") != commit:
-        errors.append("artifact commit does not match the candidate")
-    if candidate.get("dirty") is not False:
-        errors.append("live qualification was not run from a clean worktree")
+    if candidate.get("candidate_id") != candidate_id:
+        errors.append("artifact candidate does not match the source lock")
+    repositories = candidate.get("repositories")
+    if not isinstance(repositories, dict) or any(
+        not isinstance(repository, dict) or repository.get("dirty") is not False
+        for repository in repositories.values()
+    ):
+        errors.append("live qualification was not run from clean repositories")
 
     try:
         created = datetime.fromisoformat(str(artifact["created_at"]))
@@ -68,7 +69,7 @@ def validate_artifact(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("artifact", type=Path)
-    parser.add_argument("--commit", default="")
+    parser.add_argument("--candidate-lock", type=Path, required=True)
     parser.add_argument("--max-age-hours", type=float, default=24.0)
     parser.add_argument("--require", action="append", default=[])
     return parser.parse_args()
@@ -77,9 +78,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     artifact = json.loads(args.artifact.read_text(encoding="utf-8"))
+    candidate = load_lock(args.candidate_lock)
     errors = validate_artifact(
         artifact,
-        commit=args.commit or _candidate_commit(),
+        candidate_id=str(candidate["candidate_id"]),
         required=set(args.require),
         now=datetime.now(UTC),
         max_age=timedelta(hours=args.max_age_hours),
