@@ -15,6 +15,7 @@ ha_exceptions.ConfigEntryError = getattr(
 from custom_components.voip_stack import endpoint_dialing  # noqa: E402
 from custom_components.voip_stack import endpoint_routing  # noqa: E402
 from custom_components.voip_stack.peer import Peer  # noqa: E402
+from custom_components.voip_stack.roster import RosterEntry  # noqa: E402
 
 
 pytestmark = pytest.mark.ha
@@ -118,6 +119,28 @@ def test_registered_account_keeps_its_authenticated_sip_user(
     )
 
     assert str(uri) == "sip:studio-phone@192.0.2.80:5060;transport=tcp"
+
+
+def test_registered_udp_contact_keeps_observed_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialer, _created, _reused = _dialer(monkeypatch)
+
+    uri, _peer, entry = dialer.sip_uri_for_member(
+        "Video Sink",
+        [],
+        [
+            RosterEntry(
+                id="video_sink",
+                name="Video Sink",
+                sip_uri="sip:video_sink@192.0.2.80:5062",
+                metadata={"registered": True, "sip_transport": "udp"},
+            )
+        ],
+    )
+
+    assert str(uri) == "sip:video_sink@192.0.2.80:5062;transport=udp"
+    assert entry is not None
 
 
 def test_peer_uri_preserves_tls_and_ipv6_authority(

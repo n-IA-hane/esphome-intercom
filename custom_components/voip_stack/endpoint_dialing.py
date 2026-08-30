@@ -92,7 +92,26 @@ class EndpointDialer:
         if entry is None:
             return None, None, None
         if entry.sip_uri:
-            return parse_sip_uri(entry.sip_uri), None, entry
+            uri = parse_sip_uri(entry.sip_uri)
+            registered_transport = str(
+                (entry.metadata or {}).get("sip_transport") or ""
+            ).strip().lower()
+            if (
+                bool((entry.metadata or {}).get("registered"))
+                and registered_transport in {"udp", "tcp", "tls"}
+                and not any(
+                    str(key).lower() == "transport"
+                    for key, _value in uri.params
+                )
+            ):
+                uri = type(uri)(
+                    user=uri.user,
+                    host=uri.host,
+                    port=uri.port,
+                    params=(*uri.params, ("transport", registered_transport)),
+                    scheme=uri.scheme,
+                )
+            return uri, None, entry
         if not entry.metadata.get("local_ha") and entry.address:
             bridge_port = int(
                 entry.port
