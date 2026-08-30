@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import logging
 
+from .roster import normalize_roster_key
+
 from homeassistant.core import HomeAssistant
 
 from .core.audio_format import (
@@ -172,10 +174,11 @@ def sip_target_rtp_audio_profile(
 
 
 def same_route_name(left: str, right: str) -> bool:
-    def norm(value: str) -> str:
-        return "".join(ch for ch in value.lower() if ch.isalnum())
-
-    return bool(left and right and norm(left) == norm(right))
+    return bool(
+        left
+        and right
+        and normalize_roster_key(left) == normalize_roster_key(right)
+    )
 
 
 def is_ha_target(hass: HomeAssistant, value: str) -> bool:
