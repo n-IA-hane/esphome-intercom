@@ -209,6 +209,10 @@
     "media_capture_enabled": {
       "title": "La cattura dei media privati è attiva",
       "description": "VoIP Stack sta salvando i media privati delle chiamate per la diagnostica. Disattiva la cattura dei media al termine della verifica."
+    },
+    "duplicate_extension": {
+      "title": "Più telefoni usano lo stesso interno",
+      "description": "L'interno {extension} è assegnato a: {phones}. Assegna un interno univoco a ogni telefono per evitare destinazioni ambigue."
     }
   },
   "exceptions": {

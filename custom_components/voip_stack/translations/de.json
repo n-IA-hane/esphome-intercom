@@ -209,6 +209,10 @@
     "media_capture_enabled": {
       "title": "Die private Medienerfassung ist aktiviert",
       "description": "VoIP Stack speichert private Anrufmedien für die Diagnose. Deaktivieren Sie die Medienerfassung, wenn die Fehlerbehebung abgeschlossen ist."
+    },
+    "duplicate_extension": {
+      "title": "Mehrere Telefone verwenden dieselbe Nebenstelle",
+      "description": "Die Nebenstelle {extension} ist folgenden Telefonen zugewiesen: {phones}. Weisen Sie jedem Telefon eine eindeutige Nebenstelle zu."
     }
   },
   "exceptions": {

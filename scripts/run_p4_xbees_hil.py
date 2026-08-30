@@ -51,6 +51,7 @@ def load_xbees_modules(lab_root: Path) -> tuple[Any, Any]:
     sys.path.insert(0, str(lab_root))
     driver = importlib.import_module("xbees_driver")
     stress = importlib.import_module("xbees_stress")
+    driver.preflight()
     return driver, stress
 
 
@@ -105,7 +106,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                     started = time.monotonic()
                     before = await ws.softphone_state()
                     existing_call_ids = active_call_tokens(before)
-                    await asyncio.to_thread(xb.call_ha_route, args.destination)
+                    routing_timing = await asyncio.to_thread(
+                        xb.call_ha_route, args.destination
+                    )
                     # The route completes asynchronously after the final SIP
                     # INFO digit. Use persistent HA relay counters as the first
                     # oracle instead of a short ESPHome state edge.
@@ -141,6 +144,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                             "cycle": cycle,
                             "terminal_side": terminal_side,
                             "seconds": round(time.monotonic() - started, 3),
+                            "android_routing": routing_timing,
                             "audio": {
                                 key: int(audio["audio"].get(key) or 0)
                                 for key in (

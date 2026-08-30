@@ -269,6 +269,7 @@ class VoipPhonebookSensor(SensorEntity):
         self._recompute_task: asyncio.Task | None = None
         self._recompute_requested = False
         self._delivery_ready = False
+        self._duplicate_extension_issue_ids: set[str] = set()
 
     @property
     def extra_state_attributes(self) -> dict[str, object]:
@@ -293,6 +294,8 @@ class VoipPhonebookSensor(SensorEntity):
         self._delivery_ready = True
 
     async def async_will_remove_from_hass(self) -> None:
+        from .repairs import async_sync_duplicate_extension_issues
+
         if self._unsub_state:
             self._unsub_state()
             self._unsub_state = None
@@ -304,6 +307,9 @@ class VoipPhonebookSensor(SensorEntity):
             with contextlib.suppress(asyncio.CancelledError):
                 await self._recompute_task
             self._recompute_task = None
+        self._duplicate_extension_issue_ids = async_sync_duplicate_extension_issues(
+            self.hass, (), self._duplicate_extension_issue_ids
+        )
 
     @callback
     def _schedule_recompute(self) -> None:
@@ -395,11 +401,15 @@ class VoipPhonebookSensor(SensorEntity):
         )
         from .endpoint_routing import roster_from_peers
         from .roster import dump_roster_json
+        from .repairs import async_sync_duplicate_extension_issues
 
         peers = self._stable_phonebook_peers(await async_build_peer_snapshot(self.hass))
         entries = [format_entry_unified(p) for p in peers]
         roster_entries = roster_from_peers(
             self.hass, peers, registered_roster_entries(self.hass)
+        )
+        self._duplicate_extension_issue_ids = async_sync_duplicate_extension_issues(
+            self.hass, roster_entries, self._duplicate_extension_issue_ids
         )
         phonebook = ",".join(entries)
         roster_json = dump_roster_json(roster_entries)

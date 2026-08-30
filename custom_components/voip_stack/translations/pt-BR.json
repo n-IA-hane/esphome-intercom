@@ -209,6 +209,10 @@
     "media_capture_enabled": {
       "title": "A captura de mídia privada está ativada",
       "description": "O VoIP Stack está salvando mídia privada das chamadas para diagnóstico. Desative a captura de mídia ao concluir a solução de problemas."
+    },
+    "duplicate_extension": {
+      "title": "Vários telefones usam o mesmo ramal",
+      "description": "O ramal {extension} está atribuído a: {phones}. Atribua um ramal exclusivo a cada telefone para evitar destinos ambíguos."
     }
   },
   "exceptions": {
@@ -414,4 +418,3 @@
     }
   }
 }
-

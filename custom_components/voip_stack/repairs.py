@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+import hashlib
+from typing import Iterable
+
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
 from .const import DOMAIN
 from .runtime_data import runtime_data
+from .roster import RosterEntry, normalize_roster_key
 
 
 MEDIA_CAPTURE_ISSUE_ID = "media_capture_enabled"
 ESPHOME_ACTION_ISSUE_PREFIX = "esphome_actions_"
 _PHONE_ACTIONS = ("start_call", "answer_call", "decline_call", "hangup_call")
+DUPLICATE_EXTENSION_ISSUE_PREFIX = "duplicate_extension_"
 
 
 def async_sync_runtime_issues(hass: HomeAssistant) -> None:
@@ -62,3 +68,44 @@ def async_sync_esphome_action_issue(hass: HomeAssistant, device: dict) -> None:
             "actions": ", ".join(missing),
         },
     )
+
+
+def async_sync_duplicate_extension_issues(
+    hass: HomeAssistant,
+    entries: Iterable[RosterEntry],
+    previous_issue_ids: set[str],
+) -> set[str]:
+    """Publish one actionable issue per ambiguous phonebook extension."""
+
+    by_extension: dict[str, list[RosterEntry]] = defaultdict(list)
+    for entry in entries:
+        extension = normalize_roster_key(entry.extension)
+        if extension:
+            by_extension[extension].append(entry)
+
+    current_issue_ids: set[str] = set()
+    for extension, matches in by_extension.items():
+        if len(matches) < 2:
+            continue
+        suffix = hashlib.sha256(extension.encode()).hexdigest()[:12]
+        issue_id = f"{DUPLICATE_EXTENSION_ISSUE_PREFIX}{suffix}"
+        current_issue_ids.add(issue_id)
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="duplicate_extension",
+            translation_placeholders={
+                "extension": extension,
+                "phones": ", ".join(
+                    sorted(entry.display_name for entry in matches)
+                ),
+            },
+        )
+
+    for issue_id in previous_issue_ids - current_issue_ids:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+    return current_issue_ids

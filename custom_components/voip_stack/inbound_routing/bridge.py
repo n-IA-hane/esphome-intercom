@@ -480,7 +480,13 @@ async def route_sip_bridge(
             return
         final = initial_result
         if final == "ringing":
-            final = await client.wait_for_final()
+            try:
+                final = await client.wait_for_final()
+            except asyncio.CancelledError:
+                await async_close_client_and_release(client, bridge_ports)
+                if video_relay is not None:
+                    await video_relay.stop()
+                raise
         if final != "in_call" or client.dialog is None:
             status_code, sip_reason, terminal_reason, public_state = (
                 sip_failure_response(final)

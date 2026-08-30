@@ -761,6 +761,21 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.invite_router,
         )
 
+    def test_ringing_bridge_cancellation_releases_uncommitted_media(self) -> None:
+        start = self.inbound_bridge.index("async def finish_bridge")
+        finish = self.inbound_bridge[
+            start : self.inbound_bridge.index("finish_task =", start)
+        ]
+        self.assertIn("except asyncio.CancelledError:", finish)
+        self.assertIn(
+            "await async_close_client_and_release(client, bridge_ports)", finish
+        )
+        self.assertIn("await video_relay.stop()", finish)
+        self.assertLess(
+            finish.index("except asyncio.CancelledError:"),
+            finish.index("async_commit_outbound_bridge("),
+        )
+
     def test_group_routes_have_dedicated_dispatch_not_generic_bridge(self) -> None:
         on_invite = self.invite_router
         routeable = on_invite[

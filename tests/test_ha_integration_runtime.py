@@ -685,6 +685,40 @@ async def test_esphome_call_control_repair_tracks_missing_actions(
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
+async def test_duplicate_extension_repair_tracks_phonebook_ambiguity(
+    hass: HomeAssistant,
+) -> None:
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.voip_stack.repairs import (
+        async_sync_duplicate_extension_issues,
+    )
+    from custom_components.voip_stack.roster import RosterEntry
+
+    entries = (
+        RosterEntry(id="p4", name="P4", extension="1000"),
+        RosterEntry(id="spotpear", name="Spotpear", extension="1000"),
+    )
+    issue_ids = async_sync_duplicate_extension_issues(hass, entries, set())
+
+    assert len(issue_ids) == 1
+    issue_id = next(iter(issue_ids))
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.translation_placeholders == {
+        "extension": "1000",
+        "phones": "P4, Spotpear",
+    }
+
+    issue_ids = async_sync_duplicate_extension_issues(
+        hass,
+        (RosterEntry(id="p4", name="P4", extension="1000"),),
+        issue_ids,
+    )
+    assert issue_ids == set()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
 async def test_deleting_the_last_browser_phone_does_not_restore_a_default(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
