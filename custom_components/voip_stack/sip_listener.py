@@ -1890,6 +1890,48 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             return
         _LOGGER.info("SIP RX response ignored from %s:%s", addr[0], addr[1])
 
+    def _validate_request(self, request, addr):
+        """Validate common request syntax and return its parsed CSeq."""
+
+        if request.method not in sip.SUPPORTED_METHODS:
+            status, reason = _unsupported_method_response(request.method or "")
+            self._send_response(request, addr, status, reason)
+            return None
+        unsupported = sip.unsupported_required_options(request)
+        if unsupported:
+            self._send_response(
+                request,
+                addr,
+                420,
+                "Bad Extension",
+                extra_headers=(("Unsupported", ", ".join(unsupported)),),
+            )
+            return None
+        try:
+            request_cseq = sip.parse_cseq(request.header("CSeq"))
+        except (TypeError, ValueError, sip.SipError):
+            self._send_response(request, addr, 400, "Bad Request")
+            return None
+        if request_cseq.method != request.method:
+            self._send_response(request, addr, 400, "Bad Request")
+            return None
+        if request.method in {"INVITE", "UPDATE"}:
+            try:
+                sip.negotiate_uas_session_timer(request)
+            except sip.SipSessionIntervalTooSmall as err:
+                self._send_response(
+                    request,
+                    addr,
+                    422,
+                    "Session Interval Too Small",
+                    extra_headers=(("Min-SE", str(err.minimum)),),
+                )
+                return None
+            except sip.SipError:
+                self._send_response(request, addr, 400, "Bad Request")
+                return None
+        return request_cseq
+
     async def _handle_register_request(self, request, addr) -> None:
         if self.on_register is None:
             self._send_response(request, addr, 405, "Method Not Allowed")
@@ -2236,42 +2278,9 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
 
         _LOGGER.info("SIP RX %s %s from %s:%s", request.method, request.uri, addr[0], addr[1])
         sip.mark_sip_event(self, request.method or "SIP_REQUEST")
-        if request.method not in sip.SUPPORTED_METHODS:
-            status, reason = _unsupported_method_response(request.method or "")
-            self._send_response(request, addr, status, reason)
+        request_cseq = self._validate_request(request, addr)
+        if request_cseq is None:
             return
-        if unsupported := sip.unsupported_required_options(request):
-            sent = self._send_response(
-                request,
-                addr,
-                420,
-                "Bad Extension",
-                extra_headers=(("Unsupported", ", ".join(unsupported)),),
-            )
-            return
-        try:
-            request_cseq = sip.parse_cseq(request.header("CSeq"))
-        except (TypeError, ValueError, sip.SipError):
-            self._send_response(request, addr, 400, "Bad Request")
-            return
-        if request_cseq.method != request.method:
-            self._send_response(request, addr, 400, "Bad Request")
-            return
-        if request.method in {"INVITE", "UPDATE"}:
-            try:
-                sip.negotiate_uas_session_timer(request)
-            except sip.SipSessionIntervalTooSmall as err:
-                self._send_response(
-                    request,
-                    addr,
-                    422,
-                    "Session Interval Too Small",
-                    extra_headers=(("Min-SE", str(err.minimum)),),
-                )
-                return
-            except sip.SipError:
-                self._send_response(request, addr, 400, "Bad Request")
-                return
         if request.method == "OPTIONS":
             self._send_response(request, addr, 200, "OK")
             return
