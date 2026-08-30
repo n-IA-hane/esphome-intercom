@@ -81,8 +81,82 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(runtime.bridge_link_for("source"), "destination")
         linked_revision = linked.revision
-        self.assertEqual(runtime.forget_bridge_link("source"), "destination")
+        self.assertEqual(
+            runtime.forget_bridge_link(
+                linked.token,
+                expected_dest_call_id="destination",
+            ),
+            "destination",
+        )
         self.assertEqual(linked.revision, linked_revision + 1)
+        await runtime.terminate_call_wait("source", reason="cancelled")
+        await runtime.shutdown()
+
+    async def test_stale_bridge_cleanup_cannot_touch_reused_call_id(self) -> None:
+        runtime = SipEndpointRuntime()
+        runtime.activate()
+        first = runtime.upsert("source", state="ringing", owner="router")
+        runtime.set_bridge_link(
+            "source",
+            "old-destination",
+            expected_generation=first.generation,
+            expected_revision=first.revision,
+        )
+        runtime.add_leg(
+            "source",
+            "shared-destination",
+            role="callee",
+            state="ringing",
+        )
+        stale_token = first.token
+
+        await runtime.terminate_call_wait("source", reason="cancelled")
+        second = runtime.upsert("source", state="ringing", owner="router")
+        runtime.set_bridge_link(
+            "source",
+            "new-destination",
+            expected_generation=second.generation,
+            expected_revision=second.revision,
+        )
+        runtime.add_leg(
+            "source",
+            "shared-destination",
+            role="callee",
+            state="ringing",
+        )
+
+        self.assertEqual(
+            runtime.forget_bridge_link(
+                stale_token,
+                expected_dest_call_id="old-destination",
+            ),
+            "",
+        )
+        self.assertFalse(
+            await runtime.close_leg(
+                stale_token,
+                "shared-destination",
+                reason="cancelled",
+            )
+        )
+        self.assertEqual(runtime.bridge_link_for("source"), "new-destination")
+        self.assertIn("shared-destination", second.legs)
+        await runtime.terminate_call_wait("source", reason="cancelled")
+        await runtime.shutdown()
+
+    async def test_ensure_session_versions_changed_metadata_once(self) -> None:
+        runtime = SipEndpointRuntime()
+        runtime.activate()
+        session = runtime.ensure_session("source", destination="100")
+        initial_revision = session.revision
+
+        same = runtime.ensure_session("source", destination="100")
+        changed = runtime.ensure_session("source", destination="101")
+
+        self.assertIs(same, session)
+        self.assertIs(changed, session)
+        self.assertEqual(changed.metadata["destination"], "101")
+        self.assertEqual(changed.revision, initial_revision + 1)
         await runtime.terminate_call_wait("source", reason="cancelled")
         await runtime.shutdown()
 
@@ -114,7 +188,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         first = runtime.create_session("call-1", origin="trunk")
         runtime.transition("call-1", state="route_requested")
         self.assertIs(first.phase, SessionPhase.ROUTING)
-        first.update_metadata(destination="100")
+        first = runtime.ensure_session("call-1", destination="100")
         runtime.observe_leg("call-1", "leg-1", role="sip")
         token = first.token
 

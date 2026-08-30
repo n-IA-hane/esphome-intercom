@@ -34,6 +34,7 @@ _TERMINAL_PHONE_PROJECTIONS = "terminal_phone_projections"
 
 
 def stage_phone_termination_projection(
+    registry: Any,
     session: EndpointCallSession,
     endpoint_id: str,
     **details: Any,
@@ -45,8 +46,15 @@ def stage_phone_termination_projection(
         return False
     staged = dict(session.metadata.get(_TERMINAL_PHONE_PROJECTIONS) or {})
     staged[endpoint_id] = dict(details)
-    session.update_metadata(**{_TERMINAL_PHONE_PROJECTIONS: staged})
-    return True
+    return (
+        registry.transition(
+            session.call_id,
+            expected_generation=session.generation,
+            expected_revision=session.revision,
+            **{_TERMINAL_PHONE_PROJECTIONS: staged},
+        )
+        is not None
+    )
 
 
 def publish_call_projection(

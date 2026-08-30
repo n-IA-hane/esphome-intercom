@@ -387,12 +387,6 @@ class EndpointCallSession:
         if self.phase is SessionPhase.TERMINATED or self._termination_task is not None:
             raise RuntimeError(f"call session {self.call_id!r} cleanup has started")
 
-    def update_metadata(self, **values: Any) -> None:
-        """Update observable call metadata while this generation is live."""
-
-        self.ensure_live()
-        self.metadata.update(values)
-
     def add_leg(self, leg: CallLeg) -> CallLeg:
         self.ensure_live()
         if not leg.leg_id or leg.leg_id in self.legs:

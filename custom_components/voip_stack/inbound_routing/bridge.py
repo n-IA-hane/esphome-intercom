@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
@@ -468,8 +469,15 @@ async def route_sip_bridge(
             decline_reason=terminal_reason,
         )
 
+    finish_ready = asyncio.Event()
+    finish_token = None
+
     async def finish_bridge(initial_result: str) -> None:
         nonlocal video_failure_reason, video_relay
+        await finish_ready.wait()
+        token = finish_token
+        if token is None:
+            return
         final = initial_result
         if final == "ringing":
             final = await client.wait_for_final()
@@ -478,7 +486,7 @@ async def route_sip_bridge(
                 sip_failure_response(final)
             )
             await registry.close_leg(
-                invite.call_id,
+                token,
                 client.dialog_ids.call_id,
                 reason=terminal_reason,
             )
@@ -493,7 +501,10 @@ async def route_sip_bridge(
             )
             return
 
-        session = registry.get_session(invite.call_id)
+        session = registry.get_session(
+            token.call_id,
+            generation=token.generation,
+        )
         if session is None:
             bridge_ports.release()
             if video_relay is not None:
@@ -610,7 +621,11 @@ async def route_sip_bridge(
         dest_state=result,
     )
     if session is None:
+        finish_task.cancel()
+        await asyncio.gather(finish_task, return_exceptions=True)
         return SipInviteResult(487, "Request Terminated", to_tag="")
+    finish_token = session.token
+    finish_ready.set()
     _LOGGER.info(
         "SIP bridge registered call_id=%s dest_call_id=%s target=%s",
         invite.call_id,

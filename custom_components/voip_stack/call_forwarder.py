@@ -359,6 +359,7 @@ async def async_forward_existing_call(
                     "call_changed_during_operation",
                     call_id=call_id,
                 )
+            session = claimed
         else:
             route_already_claimed = False
         _release_ha_softphone_claim(
@@ -435,10 +436,13 @@ async def async_forward_existing_call(
         async def _cleanup_failed_route(reason: str) -> None:
             nonlocal video_relay
             attached_client = False
-            if dest_call_id:
-                registry.forget_bridge_link(call_id)
+            if dest_call_id and session is not None:
+                registry.forget_bridge_link(
+                    session.token,
+                    expected_dest_call_id=dest_call_id,
+                )
                 attached_client = await registry.close_leg(
-                    call_id,
+                    session.token,
                     dest_call_id,
                     reason=reason,
                 )

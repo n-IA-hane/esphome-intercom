@@ -678,6 +678,7 @@ class ConferenceRoom:
                 generation=session.generation,
             )
             stage_phone_termination_projection(
+                registry,
                 session,
                 endpoint_id,
                 peer_name=self.name,

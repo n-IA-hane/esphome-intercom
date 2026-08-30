@@ -188,6 +188,7 @@ def publish_ring_group_origin_state(
             generation=session.generation,
         )
         stage_phone_termination_projection(
+            registry,
             session,
             endpoint_id,
             peer_name=peer_name,

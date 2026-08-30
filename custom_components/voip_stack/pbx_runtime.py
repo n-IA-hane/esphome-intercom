@@ -16,6 +16,7 @@ from .endpoint_session import (
     CallArtifacts,
     CallEventContext,
     CallLeg,
+    CallToken,
     CleanupStage,
     EndpointCallSession,
     LegKind,
@@ -382,15 +383,22 @@ class SipEndpointRuntime(CallRuntimeApi):
             raise RuntimeError(f"call session {source_call_id!r} changed")
         return updated
 
-    def forget_bridge_link(self, source_call_id: str) -> str:
-        """Remove and return one destination link without ending the session."""
+    def forget_bridge_link(
+        self,
+        token: CallToken,
+        *,
+        expected_dest_call_id: str,
+    ) -> str:
+        """Remove one destination link only from its owning generation."""
 
-        session = self.get_session(source_call_id)
-        if session is None or session.phase is SessionPhase.TERMINATED:
+        session = self.get_session(token.call_id, generation=token.generation)
+        if session is None or not session.live:
             return ""
-        dest_call_id = str(session.metadata.pop("bridge_dest_call_id", "") or "")
-        if dest_call_id:
-            session.revision += 1
+        dest_call_id = str(session.metadata.get("bridge_dest_call_id") or "")
+        if not dest_call_id or dest_call_id != str(expected_dest_call_id or "").strip():
+            return ""
+        session.metadata.pop("bridge_dest_call_id", None)
+        session.revision += 1
         return dest_call_id
 
     def attach_relay(self, call_id: str, relay: Any) -> None:
@@ -564,7 +572,7 @@ class SipEndpointRuntime(CallRuntimeApi):
         if session is None:
             return self.create_session(call_id, **metadata)
         if metadata:
-            session.update_metadata(**metadata)
+            self._apply_call_mutation(session, metadata=metadata)
         return session
 
     def _resolve_observation(

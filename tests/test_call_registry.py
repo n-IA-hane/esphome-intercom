@@ -114,7 +114,7 @@ class CallRegistryEventContextTest(unittest.TestCase):
             registry.attach_client_watcher("destination", watcher)
 
             closed = await registry.close_leg(
-                "source",
+                registry.get_session("source").token,
                 "destination",
                 reason="cancelled",
             )

@@ -9,6 +9,7 @@ from typing import Any, Iterable, Iterator, Literal
 from .endpoint_session import (
     CallEventContext,
     CallLeg,
+    CallToken,
     CleanupStage,
     EndpointCallSession,
     SessionPhase,
@@ -614,10 +615,16 @@ class CallRuntimeApi:
         session.revision += 1
         return leg
 
-    def remove_leg(self, call_id: str, leg_id: str) -> CallLeg | None:
+    def remove_leg(
+        self,
+        call_id: str,
+        leg_id: str,
+        *,
+        generation: int | None = None,
+    ) -> CallLeg | None:
         """Remove one destination leg without ending its source call."""
         session_id = self.resolve_session_id(call_id)
-        session = self.sessions.get(session_id)
+        session = self.get_session(session_id, generation=generation)
         if session is None:
             return None
         leg = session.legs.get(leg_id)
@@ -633,15 +640,15 @@ class CallRuntimeApi:
 
     async def close_leg(
         self,
-        call_id: str,
+        token: CallToken,
         leg_id: str,
         *,
         reason: str,
     ) -> bool:
         """Close one failed fork leg without escaping session ownership."""
 
-        session_id = self.resolve_session_id(call_id)
-        session = self.sessions.get(session_id)
+        session_id = self.resolve_session_id(token.call_id)
+        session = self.get_session(session_id, generation=token.generation)
         if session is None or not session.live:
             return False
         watcher = session.named_tasks.get(f"client_watcher:{leg_id}")
@@ -650,7 +657,11 @@ class CallRuntimeApi:
             if watcher is not asyncio.current_task() and not watcher.done():
                 watcher.cancel()
                 await asyncio.gather(watcher, return_exceptions=True)
-        leg = self.remove_leg(session_id, leg_id)
+        leg = self.remove_leg(
+            session_id,
+            leg_id,
+            generation=token.generation,
+        )
         if leg is None:
             return False
         await leg.close(reason)
@@ -921,7 +932,12 @@ class CallRuntimeApi:
         if session is None:
             return None
         self.release_endpoint_claims(session_id)
-        self.forget_bridge_link(session_id)
+        dest_call_id = self.bridge_link_for(session_id)
+        if dest_call_id:
+            self.forget_bridge_link(
+                session.token,
+                expected_dest_call_id=dest_call_id,
+            )
         session.artifacts.settle()
         session.owner = "terminal"
         session.outcome = intent.reason

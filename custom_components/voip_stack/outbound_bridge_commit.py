@@ -14,7 +14,7 @@ from .bridge_media_updates import BridgeMediaUpdateBinder
 from .config import debug_mode, media_capture_enabled
 from .dtmf_events import attach_dtmf_event_bridge
 from .endpoint_termination import EndpointTerminationHandler
-from .endpoint_session import TerminationIntent
+from .endpoint_session import CallToken, TerminationIntent
 from .fsm import CallState, TerminalReason
 from .inbound_answer import async_commit_runtime_answer
 from .media_ports import release_sip_rtp_port_pair, release_video_media_reservation
@@ -158,6 +158,10 @@ async def async_commit_outbound_bridge(
     elif not registry.is_generation_current(invite.call_id, session.generation):
         return None
 
+    session_token = CallToken(
+        invite.call_id,
+        int(getattr(session, "generation", 0) or 0),
+    )
     video_answer = None
     try:
         if winner.video_relay is not None and client.dialog is not None:
@@ -238,9 +242,12 @@ async def async_commit_outbound_bridge(
             raise RuntimeError("preanswered source rejected video activation")
     except BaseException:
         await _cancel_watcher()
-        registry.forget_bridge_link(invite.call_id)
+        registry.forget_bridge_link(
+            session_token,
+            expected_dest_call_id=dest_call_id,
+        )
         await registry.close_leg(
-            invite.call_id,
+            session_token,
             dest_call_id,
             reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
         )

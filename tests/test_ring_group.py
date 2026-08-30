@@ -255,6 +255,7 @@ def test_origin_projection_is_gated_and_preserves_terminal_metadata(
         generation=registry.get_session.return_value.generation,
     )
     ring_group.stage_phone_termination_projection.assert_called_once_with(
+        registry,
         registry.get_session.return_value,
         "hall",
         peer_name="RG Casa",

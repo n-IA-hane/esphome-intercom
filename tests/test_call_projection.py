@@ -177,6 +177,7 @@ async def test_staged_phone_terminal_details_publish_after_cleanup(
         endpoint_id="kitchen",
     )
     call_projection.stage_phone_termination_projection(
+        runtime,
         session,
         "kitchen",
         peer_name="Alice",
@@ -201,6 +202,7 @@ def test_terminal_projection_details_cannot_mutate_terminating_session(
     session.claim_termination(TerminationIntent("remote_hangup"))
 
     assert not call_projection.stage_phone_termination_projection(
+        runtime,
         session,
         "kitchen",
         peer_name="late callback",
