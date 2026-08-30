@@ -1916,6 +1916,31 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         else:
             _LOGGER.warning("SIP REGISTER response dropped for %s:%s", addr[0], addr[1])
 
+    def _replay_completed_request(
+        self,
+        request,
+        addr,
+        completed,
+        response=None,
+    ) -> bool:
+        """Replay a cached UAS result and reject a mismatched transaction."""
+
+        if completed is None:
+            return False
+        response = response or completed
+        if _same_request_transaction(request, completed.request, addr, completed.addr):
+            self._send_response(
+                request,
+                addr,
+                response.status,
+                response.reason,
+                to_tag=str(getattr(response, "to_tag", "") or ""),
+                extra_headers=tuple(getattr(response, "headers", ()) or ()),
+            )
+        else:
+            self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+        return True
+
     async def _handle_application_request(
         self, request, addr, request_cseq, *, datagram_size: int
     ) -> None:
@@ -1930,19 +1955,9 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         completed_application = self.completed_application_requests.get(request_key)
         if completed_application is not None:
             completed_request, completed_result = completed_application
-            if _same_request_transaction(
-                request, completed_request.request, addr, completed_request.addr
-            ):
-                self._send_response(
-                    request,
-                    addr,
-                    completed_result.status,
-                    completed_result.reason,
-                    to_tag=completed_result.to_tag,
-                    extra_headers=completed_result.headers,
-                )
-            else:
-                self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+            self._replay_completed_request(
+                request, addr, completed_request, completed_result
+            )
             return
         result = await self.on_request(
             request,
@@ -1978,15 +1993,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         call_id = request.header("Call-ID")
         info_key = (call_id, request_cseq.number)
         completed = self.completed_infos.get(info_key)
-        if completed is not None:
-            if _same_request_transaction(
-                request, completed.request, addr, completed.addr
-            ):
-                self._send_response(
-                    request, addr, completed.status, completed.reason
-                )
-            else:
-                self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+        if self._replay_completed_request(request, addr, completed):
             return
         dialog = self.active_dialogs.get(call_id)
         if dialog is None or not _same_dialog_request(request, dialog, addr):
@@ -2007,11 +2014,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         dialog = self.active_dialogs.get(call_id)
         if dialog is None:
             completed = self.completed_byes.get(call_id)
-            if completed is not None and _same_request_transaction(
-                request, completed.request, addr, completed.addr
-            ):
-                self._send_response(request, addr, completed.status, completed.reason)
-            else:
+            if not self._replay_completed_request(request, addr, completed):
                 self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
             return
         if not _same_dialog_request(request, dialog, addr):
@@ -2176,26 +2179,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             call_id = request.header("Call-ID")
             prack_key = (call_id, request_cseq.number)
             completed = self.completed_pracks.get(prack_key)
-            if completed is not None:
-                if _same_request_transaction(
-                    request,
-                    completed.request,
-                    addr,
-                    completed.addr,
-                ):
-                    self._send_response(
-                        request,
-                        addr,
-                        completed.status,
-                        completed.reason,
-                    )
-                else:
-                    self._send_response(
-                        request,
-                        addr,
-                        481,
-                        "Call/Transaction Does Not Exist",
-                    )
+            if self._replay_completed_request(request, addr, completed):
                 return
             reliable = self._reliable_provisionals.get(call_id)
             try:
