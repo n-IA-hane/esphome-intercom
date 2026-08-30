@@ -12,6 +12,19 @@ from .voip_phase1_support import (
 
 
 class RouterContractTest(unittest.TestCase):
+    def test_dial_target_is_classified_and_resolved_once(self) -> None:
+        entries = self._matrix_entries()
+
+        named = router.parse_dial_target("  Spotpear  ", entries)
+        self.assertEqual(named.raw, "Spotpear")
+        self.assertEqual(named.target_class, router.TargetClass.NAME)
+        self.assertEqual(named.entry.id, "Spotpear")
+
+        direct = router.parse_dial_target("door@pbx.local", entries)
+        self.assertEqual(direct.target_class, router.TargetClass.NAME_AT_HOST)
+        self.assertEqual(direct.sip_uri, "sip:door@pbx.local")
+        self.assertIsNone(direct.entry)
+
     def test_secure_sip_uri_stays_on_the_direct_tls_route(self) -> None:
         target = "sips:door@pbx.example:5061"
         decision = router.resolve_ha_router(target, [], trunk_ready=True)

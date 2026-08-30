@@ -44,6 +44,16 @@ class TargetClass(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class DialTarget:
+    """Canonical interpretation of one user supplied dial token."""
+
+    raw: str
+    target_class: TargetClass
+    sip_uri: str = ""
+    entry: RosterEntry | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CallContext:
     call_id: str
     direction: Literal["inbound", "outbound", "internal"]
@@ -98,6 +108,27 @@ def to_sip_uri(target: str) -> str:
     if "@" in raw:
         return f"sip:{raw}"
     return raw
+
+
+def parse_dial_target(
+    target: str,
+    entries: list[RosterEntry],
+    *,
+    include_number: bool = True,
+    resolve_numeric: bool = True,
+) -> DialTarget:
+    """Classify and resolve a dial token once for all router branches."""
+
+    raw = (target or "").strip()
+    target_class = classify_target(raw)
+    if target_class in {TargetClass.SIP_URI, TargetClass.NAME_AT_HOST}:
+        return DialTarget(raw, target_class, sip_uri=to_sip_uri(raw))
+    if target_class is TargetClass.TRUNK_SERVICE_CODE:
+        return DialTarget(raw, target_class)
+    entry = None
+    if resolve_numeric or target_class is not TargetClass.NUMERIC:
+        entry = find_entry(entries, raw, include_number=include_number)
+    return DialTarget(raw, target_class, entry=entry)
 
 
 def _entry_transport(entry: RosterEntry | None) -> str:
@@ -176,14 +207,19 @@ def _ha_entry(entries: list[RosterEntry], ha_uri: str = "") -> RosterEntry | Non
 
 
 def resolve_esp_origin(target: str, entries: list[RosterEntry], ha_uri: str) -> RouteDecision:
-    target = (target or "").strip()
-    target_class = classify_target(target)
-    if target_class in {TargetClass.SIP_URI, TargetClass.NAME_AT_HOST}:
-        return RouteDecision(RouteAction.DIRECT, target=target, sip_uri=to_sip_uri(target), reason=RouteReason.DIRECT_URI)
-    if target_class == TargetClass.NUMERIC:
+    dial = parse_dial_target(
+        target,
+        entries,
+        include_number=False,
+        resolve_numeric=False,
+    )
+    target = dial.raw
+    if dial.sip_uri:
+        return RouteDecision(RouteAction.DIRECT, target=target, sip_uri=dial.sip_uri, reason=RouteReason.DIRECT_URI)
+    if dial.target_class == TargetClass.NUMERIC:
         return RouteDecision(RouteAction.BRIDGE, target=target, sip_uri=ha_uri_for(target, entries, ha_uri), reason=RouteReason.NUMBER_VIA_HA)
 
-    entry = find_entry(entries, target, include_number=False)
+    entry = dial.entry
     if entry is None:
         return RouteDecision(RouteAction.BRIDGE, target=target, sip_uri=ha_uri, reason=RouteReason.NAME_VIA_HA)
     if not entry.enabled:
@@ -197,11 +233,11 @@ def resolve_esp_origin(target: str, entries: list[RosterEntry], ha_uri: str) -> 
 
 
 def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: bool = False) -> RouteDecision:
-    target = (target or "").strip()
-    target_class = classify_target(target)
-    if target_class in {TargetClass.SIP_URI, TargetClass.NAME_AT_HOST}:
-        return RouteDecision(RouteAction.DIRECT, target=target, sip_uri=to_sip_uri(target), reason=RouteReason.DIRECT_URI)
-    if target_class is TargetClass.TRUNK_SERVICE_CODE:
+    dial = parse_dial_target(target, entries)
+    target = dial.raw
+    if dial.sip_uri:
+        return RouteDecision(RouteAction.DIRECT, target=target, sip_uri=dial.sip_uri, reason=RouteReason.DIRECT_URI)
+    if dial.target_class is TargetClass.TRUNK_SERVICE_CODE:
         if trunk_ready:
             return RouteDecision(RouteAction.TRUNK, target=target, source="trunk")
         return RouteDecision(
@@ -211,7 +247,7 @@ def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: b
             reason=RouteReason.TRUNK_UNAVAILABLE,
         )
 
-    entry = find_entry(entries, target)
+    entry = dial.entry
     if entry is not None and not entry.enabled:
         return RouteDecision(RouteAction.REJECT, target=target, status=403, reason=RouteReason.TARGET_DISABLED, entry=entry)
     if entry is not None:
