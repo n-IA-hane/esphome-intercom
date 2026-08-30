@@ -21,6 +21,7 @@ from scripts.candidate_lock import (
     load_lock,
     verify_workspace,
 )
+from scripts.compile_qualification_profiles import _locked_workspaces
 from scripts.install_ha_qualification_package import install
 from scripts.qualification_plan import build_plan
 from scripts.merge_qualification_results import merge_results
@@ -821,6 +822,18 @@ def test_candidate_lock_rejects_workspace_drift(monkeypatch, tmp_path: Path) -> 
 
     with pytest.raises(RuntimeError, match="workspace does not match"):
         verify_workspace(payload, sources=sources)
+
+
+def test_firmware_compile_rejects_dirty_candidate_lock(tmp_path: Path) -> None:
+    path = tmp_path / "candidate-lock.json"
+    payload = _candidate("head")
+    payload["repositories"]["esphome-voip-stack"]["dirty"] = True
+    payload["candidate_id"] = candidate_id(payload)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="clean candidate lock"):
+        with _locked_workspaces(path):
+            pass
 
 
 def test_result_merge_rejects_duplicate_job(tmp_path: Path) -> None:

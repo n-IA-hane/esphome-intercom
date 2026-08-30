@@ -94,10 +94,9 @@ def main() -> int:
     run(["git", "diff", "--check"])
 
     if args.compile_profiles:
-        esphome = str(ROOT / ".venv/bin/esphome")
         with temporary_test_secrets(args.test_secrets):
             for profile in COMPILE_PROFILES:
-                run([esphome, "compile", profile])
+                run([py, "-m", "esphome", "compile", profile])
     return 0
 
 

@@ -75,10 +75,16 @@ def diagnostic_revision() -> dict[str, object]:
 
 
 def candidate_revision() -> dict[str, object]:
-    """Return the locked HIL candidate, or label a standalone lab run diagnostic."""
+    """Return a locked candidate, or an explicitly requested diagnostic identity."""
 
     configured = os.environ.get("HIL_CANDIDATE_LOCK", "")
-    return load_lock(Path(configured).resolve()) if configured else diagnostic_revision()
+    if configured:
+        return load_lock(Path(configured).resolve())
+    if os.environ.get("HIL_DIAGNOSTIC") == "1":
+        return diagnostic_revision()
+    raise RuntimeError(
+        "live run requires HIL_CANDIDATE_LOCK; set HIL_DIAGNOSTIC=1 only for ad-hoc investigation"
+    )
 
 
 def qualification_candidate(args: argparse.Namespace) -> dict[str, object]:
