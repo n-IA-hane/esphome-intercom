@@ -261,91 +261,42 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
 
         return _handle
 
-    hass.services.async_register(DOMAIN, "purge_devices", handler_for("purge_devices"), schema=purge_schema)
-    hass.services.async_register(DOMAIN, "answer", handler_for("answer"), schema=sip_answer_schema)
-    hass.services.async_register(DOMAIN, "decline", handler_for("decline"), schema=sip_decline_schema)
-    hass.services.async_register(DOMAIN, "hangup", handler_for("hangup"), schema=sip_hangup_schema)
-    hass.services.async_register(
-        DOMAIN,
-        "call",
-        handler_for("call"),
-        schema=sip_call_schema,
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-    hass.services.async_register(DOMAIN, "forward", handler_for("forward"), schema=sip_forward_schema)
-    hass.services.async_register(
-        DOMAIN,
-        "transfer",
-        handler_for("transfer"),
-        schema=sip_transfer_schema,
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-    hass.services.async_register(DOMAIN, "route", handler_for("route"), schema=sip_route_schema)
-    hass.services.async_register(
-        DOMAIN,
-        "select_inbound_destination",
-        handler_for("select_inbound_destination"),
-        schema=select_inbound_destination_schema,
-    )
-    hass.services.async_register(
-        DOMAIN, "set_deadline", handler_for("set_deadline"), schema=sip_deadline_schema
-    )
-    hass.services.async_register(
-        DOMAIN,
-        "cancel_deadline",
-        handler_for("cancel_deadline"),
-        schema=sip_cancel_deadline_schema,
-    )
-    hass.services.async_register(DOMAIN, "add_contact", handler_for("add_contact"), schema=phonebook_add_schema)
-    hass.services.async_register(DOMAIN, "remove_contact", handler_for("remove_contact"), schema=phonebook_remove_schema)
-    hass.services.async_register(DOMAIN, "set_contacts", handler_for("set_contacts"), schema=phonebook_set_schema)
-    hass.services.async_register(DOMAIN, "clear_contacts", handler_for("clear_contacts"))
-    hass.services.async_register(
-        DOMAIN,
-        "export_phonebook",
-        handler_for("export_phonebook"),
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(DOMAIN, "push_phonebook", handler_for("push_phonebook"))
-    hass.services.async_register(DOMAIN, "set_dnd", handler_for("set_dnd"), schema=set_dnd_schema)
-    hass.services.async_register(
-        DOMAIN,
-        "set_auto_answer",
-        handler_for("set_auto_answer"),
-        schema=set_auto_answer_schema,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        "set_send_video",
-        handler_for("set_send_video"),
-        schema=set_send_video_schema,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        "set_ha_softphone_settings",
-        handler_for("set_ha_softphone_settings"),
-        schema=set_ha_softphone_settings_schema,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        "create_account",
-        handler_for("create_account"),
-        schema=sip_account_create_schema,
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(DOMAIN, "remove_account", handler_for("remove_account"), schema=sip_account_name_schema)
-    hass.services.async_register(
-        DOMAIN,
-        "rotate_account_password",
-        handler_for("rotate_account_password"),
-        schema=sip_account_name_schema,
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(DOMAIN, "enable_account", handler_for("enable_account"), schema=sip_account_name_schema)
-    hass.services.async_register(DOMAIN, "disable_account", handler_for("disable_account"), schema=sip_account_name_schema)
-    hass.services.async_register(
-        DOMAIN,
-        "list_accounts",
-        handler_for("list_accounts"),
-        supports_response=SupportsResponse.ONLY,
-    )
+    service_specs = {
+        "purge_devices": (purge_schema, None),
+        "answer": (sip_answer_schema, None),
+        "decline": (sip_decline_schema, None),
+        "hangup": (sip_hangup_schema, None),
+        "call": (sip_call_schema, SupportsResponse.OPTIONAL),
+        "forward": (sip_forward_schema, None),
+        "transfer": (sip_transfer_schema, SupportsResponse.OPTIONAL),
+        "route": (sip_route_schema, None),
+        "select_inbound_destination": (select_inbound_destination_schema, None),
+        "set_deadline": (sip_deadline_schema, None),
+        "cancel_deadline": (sip_cancel_deadline_schema, None),
+        "add_contact": (phonebook_add_schema, None),
+        "remove_contact": (phonebook_remove_schema, None),
+        "set_contacts": (phonebook_set_schema, None),
+        "clear_contacts": (None, None),
+        "export_phonebook": (None, SupportsResponse.ONLY),
+        "push_phonebook": (None, None),
+        "set_dnd": (set_dnd_schema, None),
+        "set_auto_answer": (set_auto_answer_schema, None),
+        "set_send_video": (set_send_video_schema, None),
+        "set_ha_softphone_settings": (set_ha_softphone_settings_schema, None),
+        "create_account": (sip_account_create_schema, SupportsResponse.ONLY),
+        "remove_account": (sip_account_name_schema, None),
+        "rotate_account_password": (
+            sip_account_name_schema,
+            SupportsResponse.ONLY,
+        ),
+        "enable_account": (sip_account_name_schema, None),
+        "disable_account": (sip_account_name_schema, None),
+        "list_accounts": (None, SupportsResponse.ONLY),
+    }
+    for name, (schema, supports_response) in service_specs.items():
+        options = {}
+        if schema is not None:
+            options["schema"] = schema
+        if supports_response is not None:
+            options["supports_response"] = supports_response
+        hass.services.async_register(DOMAIN, name, handler_for(name), **options)
