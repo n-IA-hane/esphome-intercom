@@ -92,7 +92,6 @@ packages:
   ota_maintenance: github://n-IA-hane/esphome-intercom/packages/ota/full_audio_maintenance.yaml@dev
   voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
   phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
-  voip_debug: github://n-IA-hane/esphome-intercom/packages/voip/debug.yaml@dev
   s3_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32s3_base.yaml@dev
   native_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native.yaml@dev
   status_led: github://n-IA-hane/esphome-intercom/packages/led/status_ws2812_ring.yaml@dev

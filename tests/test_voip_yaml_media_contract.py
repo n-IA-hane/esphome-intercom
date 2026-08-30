@@ -52,6 +52,7 @@ RUNTIME_MEDIA_PLAYER = (
     / "runtime_controller_mono_media_player_48k.yaml"
 )
 SENDSPIN_ARTWORK = ROOT / "packages" / "media_player" / "sendspin_artwork.yaml"
+WS3_FULL_AFE = YAMLS / "full-experience" / "single-bus" / "waveshare-s3-full-afe.yaml"
 
 
 def _voip_stack_block(text: str) -> str:
@@ -102,6 +103,10 @@ def test_physical_phone_presets_use_complete_ha_phone_package() -> None:
         assert "ha_integration:" not in text
         assert "ha_api:" not in text
         assert "phonebook_subscribe:" not in text
+
+
+def test_maintained_ws3_profile_does_not_enable_debug_entities() -> None:
+    assert "packages/voip/debug.yaml" not in WS3_FULL_AFE.read_text()
 
 
 def test_flac_ringtone_drains_naturally_behind_source_local_ducking() -> None:
