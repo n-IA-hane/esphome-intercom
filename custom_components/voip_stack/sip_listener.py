@@ -2096,6 +2096,114 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         if self.on_terminated is not None:
             await self.on_terminated(call_id, "cancelled")
 
+    async def _handle_prack_request(self, request, addr, request_cseq) -> None:
+        """Acknowledge one reliable provisional response and its optional SDP."""
+
+        call_id = request.header("Call-ID")
+        prack_key = (call_id, request_cseq.number)
+        completed = self.completed_pracks.get(prack_key)
+        if self._replay_completed_request(request, addr, completed):
+            return
+        reliable = self._reliable_provisionals.get(call_id)
+        try:
+            rack = sip.parse_rack(request.header("RAck"))
+            invite_cseq = sip.parse_cseq(reliable.request.header("CSeq"))
+            matches = bool(
+                reliable is not None
+                and reliable.addr[0] == addr[0]
+                and sip.extract_tag(request.header("From"))
+                == sip.extract_tag(reliable.request.header("From"))
+                and sip.extract_tag(request.header("To")) == reliable.to_tag
+                and rack == sip.SipRAck(reliable.rseq, invite_cseq.number, "INVITE")
+            )
+        except (AttributeError, TypeError, ValueError, sip.SipError):
+            matches = False
+        if not matches or reliable is None:
+            self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+            return
+
+        result: SipInviteResult | None = None
+        if request.body:
+            if (
+                request.header("Content-Type").split(";", 1)[0].strip().lower()
+                != "application/sdp"
+            ):
+                self._send_response(
+                    request,
+                    addr,
+                    415,
+                    "Unsupported Media Type",
+                    extra_headers=(("Accept", "application/sdp"),),
+                )
+                return
+            previous = self._parse_invite(reliable.request, reliable.addr)
+            updated = self._parse_invite(request, addr)
+            if (
+                previous is not None
+                and updated is not None
+                and self.on_media_update is not None
+            ):
+                try:
+                    result = await self.on_media_update(previous, updated, "PRACK")
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    _LOGGER.exception(
+                        "SIP PRACK media update failed call_id=%s", call_id
+                    )
+            if result is None or not 200 <= result.status < 300:
+                self._reliable_provisionals.pop(call_id, None)
+                self._cancel_reliable_provisional(reliable)
+                self._send_response(request, addr, 488, "Not Acceptable Here")
+                self._send_final_response_now(
+                    call_id,
+                    488,
+                    "Not Acceptable Here",
+                    decline_reason="media_incompatible",
+                )
+                return
+
+        self._reliable_provisionals.pop(call_id, None)
+        self._cancel_reliable_provisional(reliable)
+        self._remember_completed(
+            self.completed_pracks,
+            prack_key,
+            _CompletedRequest(request, addr, 200, "OK"),
+        )
+        sent = self._send_response(
+            request,
+            addr,
+            200,
+            "OK",
+            body=(result.answer_sdp.encode() if result and result.answer_sdp else b""),
+        )
+        if not sent:
+            if result is not None and result.rollback is not None:
+                await result.rollback()
+            return
+        if result is not None and not await apply_remote_offer_media(
+            result.commit, result.rollback
+        ):
+            _LOGGER.error("SIP PRACK commit failed call_id=%s", call_id)
+            self._send_final_response_now(
+                call_id,
+                500,
+                "Server Internal Error",
+                decline_reason="media_update_failed",
+            )
+            return
+        if reliable.deferred_final is not None:
+            final = reliable.deferred_final
+            self._send_final_response_now(
+                call_id,
+                final.status,
+                final.reason,
+                answer_sdp=final.answer_sdp,
+                decline_reason=final.decline_reason,
+                connected_identity_name=final.connected_identity_name,
+                connected_identity_user=final.connected_identity_user,
+            )
+
     async def _handle_ack_request(self, request, addr) -> None:
         """Consume a final-response ACK without creating application state."""
 
@@ -2176,121 +2284,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             )
             return
         if request.method == "PRACK":
-            call_id = request.header("Call-ID")
-            prack_key = (call_id, request_cseq.number)
-            completed = self.completed_pracks.get(prack_key)
-            if self._replay_completed_request(request, addr, completed):
-                return
-            reliable = self._reliable_provisionals.get(call_id)
-            try:
-                rack = sip.parse_rack(request.header("RAck"))
-                invite_cseq = sip.parse_cseq(reliable.request.header("CSeq"))
-                matches = bool(
-                    reliable is not None
-                    and reliable.addr[0] == addr[0]
-                    and sip.extract_tag(request.header("From"))
-                    == sip.extract_tag(reliable.request.header("From"))
-                    and sip.extract_tag(request.header("To")) == reliable.to_tag
-                    and rack
-                    == sip.SipRAck(reliable.rseq, invite_cseq.number, "INVITE")
-                )
-            except (AttributeError, TypeError, ValueError, sip.SipError):
-                matches = False
-            if not matches or reliable is None:
-                self._send_response(
-                    request,
-                    addr,
-                    481,
-                    "Call/Transaction Does Not Exist",
-                )
-                return
-            prack_result: SipInviteResult | None = None
-            if request.body:
-                if (
-                    request.header("Content-Type").split(";", 1)[0].strip().lower()
-                    != "application/sdp"
-                ):
-                    self._send_response(
-                        request,
-                        addr,
-                        415,
-                        "Unsupported Media Type",
-                        extra_headers=(("Accept", "application/sdp"),),
-                    )
-                    return
-                previous = self._parse_invite(reliable.request, reliable.addr)
-                updated = self._parse_invite(request, addr)
-                if (
-                    previous is not None
-                    and updated is not None
-                    and self.on_media_update is not None
-                ):
-                    try:
-                        prack_result = await self.on_media_update(
-                            previous,
-                            updated,
-                            "PRACK",
-                        )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        _LOGGER.exception(
-                            "SIP PRACK media update failed call_id=%s",
-                            call_id,
-                        )
-                if prack_result is None or not 200 <= prack_result.status < 300:
-                    self._reliable_provisionals.pop(call_id, None)
-                    self._cancel_reliable_provisional(reliable)
-                    self._send_response(request, addr, 488, "Not Acceptable Here")
-                    self._send_final_response_now(
-                        call_id,
-                        488,
-                        "Not Acceptable Here",
-                        decline_reason="media_incompatible",
-                    )
-                    return
-            self._reliable_provisionals.pop(call_id, None)
-            self._cancel_reliable_provisional(reliable)
-            self._remember_completed(
-                self.completed_pracks,
-                prack_key,
-                _CompletedRequest(request, addr, 200, "OK"),
-            )
-            sent = self._send_response(
-                request,
-                addr,
-                200,
-                "OK",
-                body=(
-                    prack_result.answer_sdp.encode()
-                    if prack_result is not None and prack_result.answer_sdp
-                    else b""
-                ),
-            )
-            if not sent:
-                if prack_result is not None and prack_result.rollback is not None:
-                    await prack_result.rollback()
-                return
-            if prack_result is not None and not await apply_remote_offer_media(
-                prack_result.commit, prack_result.rollback
-            ):
-                _LOGGER.error("SIP PRACK commit failed call_id=%s", call_id)
-                self._send_final_response_now(
-                    call_id, 500, "Server Internal Error",
-                    decline_reason="media_update_failed",
-                )
-                return
-            if reliable.deferred_final is not None:
-                final = reliable.deferred_final
-                self._send_final_response_now(
-                    call_id,
-                    final.status,
-                    final.reason,
-                    answer_sdp=final.answer_sdp,
-                    decline_reason=final.decline_reason,
-                    connected_identity_name=final.connected_identity_name,
-                    connected_identity_user=final.connected_identity_user,
-                )
+            await self._handle_prack_request(request, addr, request_cseq)
             return
         if request.method == "INFO":
             await self._handle_info_request(request, addr, request_cseq)
