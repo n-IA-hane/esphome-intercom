@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
+
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
@@ -30,6 +33,15 @@ PORT = vol.All(vol.Coerce(int), vol.Range(min=1, max=65535))
 SAMPLE_RATE = vol.All(vol.Coerce(int), vol.Range(min=8000, max=192000))
 PAYLOAD_BYTES = vol.All(vol.Coerce(int), vol.Range(min=64, max=65507))
 SEQUENCE = vol.All(vol.Coerce(int), vol.Range(min=0, max=2**31 - 1))
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceSpec:
+    """Registration and authorization contract for one HA service."""
+
+    schema: Any | None = None
+    supports_response: SupportsResponse | None = None
+    admin_only: bool = False
 
 
 async def async_register_services(hass: HomeAssistant, handlers: dict[str, object]) -> None:
@@ -227,33 +239,9 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         extra=vol.PREVENT_EXTRA,
     )
 
-    admin_services = {
-        "purge_devices",
-        "add_contact",
-        "remove_contact",
-        "set_contacts",
-        "clear_contacts",
-        "export_phonebook",
-        "push_phonebook",
-        "set_ha_softphone_settings",
-        "create_account",
-        "remove_account",
-        "rotate_account_password",
-        "enable_account",
-        "disable_account",
-        "list_accounts",
-        # These mutate routing/timers without a phone selector. Internal HA
-        # automations remain allowed; authenticated callers must be admins so
-        # global event-entity control cannot affect another user's call.
-        "route",
-        "select_inbound_destination",
-        "set_deadline",
-        "cancel_deadline",
-    }
-
-    def handler_for(name: str):
+    def handler_for(name: str, spec: ServiceSpec):
         async def _handle(call: ServiceCall) -> object:
-            if name in admin_services:
+            if spec.admin_only:
                 await async_require_service_admin(hass, call)
             else:
                 await async_require_service_control(hass, call)
@@ -262,41 +250,65 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         return _handle
 
     service_specs = {
-        "purge_devices": (purge_schema, None),
-        "answer": (sip_answer_schema, None),
-        "decline": (sip_decline_schema, None),
-        "hangup": (sip_hangup_schema, None),
-        "call": (sip_call_schema, SupportsResponse.OPTIONAL),
-        "forward": (sip_forward_schema, None),
-        "transfer": (sip_transfer_schema, SupportsResponse.OPTIONAL),
-        "route": (sip_route_schema, None),
-        "select_inbound_destination": (select_inbound_destination_schema, None),
-        "set_deadline": (sip_deadline_schema, None),
-        "cancel_deadline": (sip_cancel_deadline_schema, None),
-        "add_contact": (phonebook_add_schema, None),
-        "remove_contact": (phonebook_remove_schema, None),
-        "set_contacts": (phonebook_set_schema, None),
-        "clear_contacts": (None, None),
-        "export_phonebook": (None, SupportsResponse.ONLY),
-        "push_phonebook": (None, None),
-        "set_dnd": (set_dnd_schema, None),
-        "set_auto_answer": (set_auto_answer_schema, None),
-        "set_send_video": (set_send_video_schema, None),
-        "set_ha_softphone_settings": (set_ha_softphone_settings_schema, None),
-        "create_account": (sip_account_create_schema, SupportsResponse.ONLY),
-        "remove_account": (sip_account_name_schema, None),
-        "rotate_account_password": (
+        "purge_devices": ServiceSpec(purge_schema, admin_only=True),
+        "answer": ServiceSpec(sip_answer_schema),
+        "decline": ServiceSpec(sip_decline_schema),
+        "hangup": ServiceSpec(sip_hangup_schema),
+        "call": ServiceSpec(sip_call_schema, SupportsResponse.OPTIONAL),
+        "forward": ServiceSpec(sip_forward_schema),
+        "transfer": ServiceSpec(sip_transfer_schema, SupportsResponse.OPTIONAL),
+        "route": ServiceSpec(sip_route_schema, admin_only=True),
+        "select_inbound_destination": ServiceSpec(
+            select_inbound_destination_schema,
+            admin_only=True,
+        ),
+        "set_deadline": ServiceSpec(sip_deadline_schema, admin_only=True),
+        "cancel_deadline": ServiceSpec(sip_cancel_deadline_schema, admin_only=True),
+        "add_contact": ServiceSpec(phonebook_add_schema, admin_only=True),
+        "remove_contact": ServiceSpec(phonebook_remove_schema, admin_only=True),
+        "set_contacts": ServiceSpec(phonebook_set_schema, admin_only=True),
+        "clear_contacts": ServiceSpec(admin_only=True),
+        "export_phonebook": ServiceSpec(
+            supports_response=SupportsResponse.ONLY,
+            admin_only=True,
+        ),
+        "push_phonebook": ServiceSpec(admin_only=True),
+        "set_dnd": ServiceSpec(set_dnd_schema),
+        "set_auto_answer": ServiceSpec(set_auto_answer_schema),
+        "set_send_video": ServiceSpec(set_send_video_schema),
+        "set_ha_softphone_settings": ServiceSpec(
+            set_ha_softphone_settings_schema,
+            admin_only=True,
+        ),
+        "create_account": ServiceSpec(
+            sip_account_create_schema,
+            SupportsResponse.ONLY,
+            admin_only=True,
+        ),
+        "remove_account": ServiceSpec(sip_account_name_schema, admin_only=True),
+        "rotate_account_password": ServiceSpec(
             sip_account_name_schema,
             SupportsResponse.ONLY,
+            admin_only=True,
         ),
-        "enable_account": (sip_account_name_schema, None),
-        "disable_account": (sip_account_name_schema, None),
-        "list_accounts": (None, SupportsResponse.ONLY),
+        "enable_account": ServiceSpec(sip_account_name_schema, admin_only=True),
+        "disable_account": ServiceSpec(sip_account_name_schema, admin_only=True),
+        "list_accounts": ServiceSpec(
+            supports_response=SupportsResponse.ONLY,
+            admin_only=True,
+        ),
     }
-    for name, (schema, supports_response) in service_specs.items():
+    missing_handlers = service_specs.keys() - handlers.keys()
+    unexpected_handlers = handlers.keys() - service_specs.keys()
+    if missing_handlers or unexpected_handlers:
+        raise ValueError(
+            "VoIP service handler mismatch "
+            f"missing={sorted(missing_handlers)} unexpected={sorted(unexpected_handlers)}"
+        )
+    for name, spec in service_specs.items():
         options = {}
-        if schema is not None:
-            options["schema"] = schema
-        if supports_response is not None:
-            options["supports_response"] = supports_response
-        hass.services.async_register(DOMAIN, name, handler_for(name), **options)
+        if spec.schema is not None:
+            options["schema"] = spec.schema
+        if spec.supports_response is not None:
+            options["supports_response"] = spec.supports_response
+        hass.services.async_register(DOMAIN, name, handler_for(name, spec), **options)

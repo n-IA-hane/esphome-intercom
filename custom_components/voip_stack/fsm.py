@@ -160,26 +160,3 @@ def sip_failure_response(result: str) -> tuple[int, str, str, str]:
     if terminal_reason == TerminalReason.TIMEOUT.value:
         return 408, "Request Timeout", terminal_reason, public_state
     return 480, "Temporarily Unavailable", terminal_reason, public_state
-
-
-def sip_terminal_status(reason: str) -> tuple[str, int, str]:
-    """Classify an internal terminal reason as HA event class/SIP code/reason."""
-    value = (reason or "").strip()
-    if value in (TerminalReason.BUSY.value, TerminalReason.DECLINED.value, TerminalReason.CANCELLED.value):
-        return ("decline", 0, value)
-    if value == TerminalReason.MEDIA_INCOMPATIBLE.value:
-        return ("error", 488, value)
-    if value == TerminalReason.AUTH_REQUIRED_UNSUPPORTED.value:
-        return ("error", 401, value)
-    if value == TerminalReason.PROXY_AUTH_REQUIRED_UNSUPPORTED.value:
-        return ("error", 407, value)
-    if value == TerminalReason.TRANSPORT_UNREACHABLE.value:
-        return ("error", 0, value)
-    if value == TerminalReason.TIMEOUT.value:
-        return ("error", 408, value)
-    if value.startswith("sip_"):
-        try:
-            return ("error", int(value.split("_", 1)[1]), value)
-        except ValueError:
-            return ("error", 0, value)
-    return ("error", 0, value or TerminalReason.PROTOCOL_ERROR.value)

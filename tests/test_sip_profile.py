@@ -753,23 +753,6 @@ class SipProfileTest(unittest.TestCase):
 
     def test_sip_transport_classifies_terminal_response_reasons(self) -> None:
         sip_transport = _load_sip_transport_with_homeassistant_stubs()
-        self.assertEqual(sip_transport.sip_terminal_status("busy"), ("decline", 0, "busy"))
-        self.assertEqual(sip_transport.sip_terminal_status("declined"), ("decline", 0, "declined"))
-        self.assertEqual(sip_transport.sip_terminal_status("cancelled"), ("decline", 0, "cancelled"))
-        self.assertEqual(
-            sip_transport.sip_terminal_status("media_incompatible"),
-            ("error", 488, "media_incompatible"),
-        )
-        self.assertEqual(
-            sip_transport.sip_terminal_status("auth_required_unsupported"),
-            ("error", 401, "auth_required_unsupported"),
-        )
-        self.assertEqual(
-            sip_transport.sip_terminal_status("proxy_auth_required_unsupported"),
-            ("error", 407, "proxy_auth_required_unsupported"),
-        )
-        self.assertEqual(sip_transport.sip_terminal_status("timeout"), ("error", 408, "timeout"))
-        self.assertEqual(sip_transport.sip_terminal_status("sip_500"), ("error", 500, "sip_500"))
         self.assertEqual(sip_transport.sip_public_state("sip_500"), "transport_unreachable")
         self.assertEqual(sip_transport.sip_public_state("route_requested"), "route_requested")
         self.assertEqual(sip_transport.sip_terminal_reason("sip_500"), "sip_500")

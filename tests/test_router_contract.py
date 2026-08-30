@@ -9,22 +9,10 @@ from .voip_phase1_support import (
     router,
     unittest,
 )
+from .router_reference import resolve_esp_origin
 
 
 class RouterContractTest(unittest.TestCase):
-    def test_dial_target_is_classified_and_resolved_once(self) -> None:
-        entries = self._matrix_entries()
-
-        named = router.parse_dial_target("  Spotpear  ", entries)
-        self.assertEqual(named.raw, "Spotpear")
-        self.assertEqual(named.target_class, router.TargetClass.NAME)
-        self.assertEqual(named.entry.id, "Spotpear")
-
-        direct = router.parse_dial_target("door@pbx.local", entries)
-        self.assertEqual(direct.target_class, router.TargetClass.NAME_AT_HOST)
-        self.assertEqual(direct.sip_uri, "sip:door@pbx.local")
-        self.assertIsNone(direct.entry)
-
     def test_secure_sip_uri_stays_on_the_direct_tls_route(self) -> None:
         target = "sips:door@pbx.example:5061"
         decision = router.resolve_ha_router(target, [], trunk_ready=True)
@@ -90,28 +78,28 @@ class RouterContractTest(unittest.TestCase):
         cases = [
             (
                 "ESP calls HA by name",
-                router.resolve_esp_origin("Casa", entries, ha_uri),
+                resolve_esp_origin(router, "Casa", entries, ha_uri),
                 router.RouteAction.DIRECT,
                 "sip:Casa@192.168.1.10;transport=tcp",
                 "Casa",
             ),
             (
                 "ESP calls external contact by name through HA",
-                router.resolve_esp_origin("Daniele", entries, ha_uri),
+                resolve_esp_origin(router, "Daniele", entries, ha_uri),
                 router.RouteAction.BRIDGE,
                 "sip:Daniele@192.168.1.10;transport=tcp",
                 "Daniele",
             ),
             (
                 "ESP dials internal extension through HA",
-                router.resolve_esp_origin("101", entries, ha_uri),
+                resolve_esp_origin(router, "101", entries, ha_uri),
                 router.RouteAction.BRIDGE,
                 "sip:101@192.168.1.10;transport=tcp",
                 "101",
             ),
             (
                 "ESP calls another ESP by name direct",
-                router.resolve_esp_origin("WS3", entries, ha_uri),
+                resolve_esp_origin(router, "WS3", entries, ha_uri),
                 router.RouteAction.DIRECT,
                 "sip:WS3@192.168.1.47;transport=udp",
                 "WS3",
@@ -205,7 +193,9 @@ class RouterContractTest(unittest.TestCase):
                 {"id": "200", "address": "192.168.1.20", "metadata": {"sip_transport": "udp"}},
             ]
         )
-        decision = router.resolve_esp_origin("200", entries, "sip:200@192.168.1.10;transport=tcp")
+        decision = resolve_esp_origin(
+            router, "200", entries, "sip:200@192.168.1.10;transport=tcp"
+        )
         self.assertEqual(decision.action, router.RouteAction.BRIDGE)
         self.assertEqual(decision.reason, router.RouteReason.NUMBER_VIA_HA)
         self.assertEqual(decision.sip_uri, "sip:200@192.168.1.10;transport=tcp")

@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import sys
+import types
 from types import SimpleNamespace
 
 import voluptuous as vol
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SERVICES = ROOT / "custom_components" / "voip_stack" / "services.py"
+SERVICES_YAML = ROOT / "custom_components" / "voip_stack" / "services.yaml"
 
 
 def _boolean(value: object) -> bool:
@@ -24,8 +28,8 @@ def _boolean(value: object) -> bool:
     raise vol.Invalid("invalid boolean value")
 
 
-def load_service_schemas() -> dict[str, vol.Schema]:
-    """Register services against a minimal HA facade and return their schemas."""
+def load_service_registrations() -> dict[str, dict[str, object]]:
+    """Register services against a minimal HA facade and return their contracts."""
 
     source = SERVICES.read_text()
     source = source.replace(
@@ -42,10 +46,11 @@ def load_service_schemas() -> dict[str, vol.Schema]:
         "    async_require_service_admin,\n"
         "    async_require_service_control,\n"
         ")\n",
+        "AUTHORIZATION_CALLS = []\n"
         "async def async_require_service_admin(_hass, _call):\n"
-        "    return None\n\n"
+        "    AUTHORIZATION_CALLS.append('admin')\n\n"
         "async def async_require_service_control(_hass, _call):\n"
-        "    return None\n",
+        "    AUTHORIZATION_CALLS.append('control')\n",
     )
     source = source.replace(
         "from .const import DOMAIN\n",
@@ -60,9 +65,13 @@ def load_service_schemas() -> dict[str, vol.Schema]:
             boolean=_boolean,
         ),
     }
-    exec(compile(source, str(SERVICES), "exec"), namespace)
+    module = types.ModuleType(namespace["__name__"])
+    module.__dict__.update(namespace)
+    sys.modules[module.__name__] = module
+    exec(compile(source, str(SERVICES), "exec"), module.__dict__)
+    namespace = module.__dict__
 
-    schemas: dict[str, vol.Schema] = {}
+    registrations: dict[str, dict[str, object]] = {}
 
     class ServiceRegistry:
         def async_register(
@@ -72,14 +81,33 @@ def load_service_schemas() -> dict[str, vol.Schema]:
             _handler,
             *,
             schema=None,
-            **_kwargs,
+            **kwargs,
         ):
-            if schema is not None:
-                schemas[service] = schema
+            registrations[service] = {
+                "schema": schema,
+                "handler": _handler,
+                "authorization_calls": namespace["AUTHORIZATION_CALLS"],
+                **kwargs,
+            }
 
     hass = SimpleNamespace(services=ServiceRegistry())
-    asyncio.run(namespace["async_register_services"](hass, {}))
-    return schemas
+    service_names = set(yaml.safe_load(SERVICES_YAML.read_text()))
+    async def _handler(_call):
+        return None
+
+    handlers = {name: _handler for name in service_names}
+    asyncio.run(namespace["async_register_services"](hass, handlers))
+    return registrations
+
+
+def load_service_schemas() -> dict[str, vol.Schema]:
+    """Return every schema registered by the real service table."""
+
+    return {
+        name: registration["schema"]
+        for name, registration in load_service_registrations().items()
+        if registration.get("schema") is not None
+    }
 
 
 def schema_fields(schema: vol.Schema) -> set[str]:

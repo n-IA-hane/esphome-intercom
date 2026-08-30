@@ -1045,7 +1045,7 @@ class CallRuntimeApi:
         return session
 
     def clear_runtime(self) -> None:
-        if self.calls:
+        if self.sessions:
             raise RuntimeError("cannot clear projection before PBX shutdown")
         self._release_all_endpoint_claims()
         self.sessions.clear()

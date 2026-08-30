@@ -364,10 +364,6 @@ class SipRegistrar:
         for username in removed:
             self._notify_registration_change(username, False)
 
-    def _registration(self, username: str) -> SipRegistration | None:
-        registrations = self._registrations(username)
-        return registrations[0] if registrations else None
-
     def _registrations(self, username: str) -> list[SipRegistration]:
         wanted = str(username or "").lower()
         return [

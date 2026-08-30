@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 import re
-from typing import Literal, NamedTuple
+from typing import Literal
 
 from .roster import RosterEntry, entry_matches_extension, find_entry
 
@@ -41,13 +41,6 @@ class TargetClass(StrEnum):
     TRUNK_SERVICE_CODE = "trunk_service_code"
     NUMERIC = "numeric"
     NAME = "name"
-
-
-class DialTarget(NamedTuple):
-    raw: str
-    target_class: TargetClass
-    sip_uri: str = ""
-    entry: RosterEntry | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,27 +98,6 @@ def to_sip_uri(target: str) -> str:
     if "@" in raw:
         return f"sip:{raw}"
     return raw
-
-
-def parse_dial_target(
-    target: str,
-    entries: list[RosterEntry],
-    *,
-    include_number: bool = True,
-    resolve_numeric: bool = True,
-) -> DialTarget:
-    """Classify and resolve a dial token once for all router branches."""
-
-    raw = (target or "").strip()
-    target_class = classify_target(raw)
-    if target_class in {TargetClass.SIP_URI, TargetClass.NAME_AT_HOST}:
-        return DialTarget(raw, target_class, to_sip_uri(raw))
-    if target_class is TargetClass.TRUNK_SERVICE_CODE:
-        return DialTarget(raw, target_class)
-    entry = None
-    if resolve_numeric or target_class is not TargetClass.NUMERIC:
-        entry = find_entry(entries, raw, include_number=include_number)
-    return DialTarget(raw, target_class, entry=entry)
 
 
 def _entry_transport(entry: RosterEntry | None) -> str:
@@ -203,34 +175,16 @@ def _ha_entry(entries: list[RosterEntry], ha_uri: str = "") -> RosterEntry | Non
     return None
 
 
-def resolve_esp_origin(target: str, entries: list[RosterEntry], ha_uri: str) -> RouteDecision:
-    target, target_class, sip_uri, entry = parse_dial_target(
-        target,
-        entries,
-        include_number=False,
-        resolve_numeric=False,
-    )
-    if sip_uri:
-        return RouteDecision(RouteAction.DIRECT, target=target, sip_uri=sip_uri, reason=RouteReason.DIRECT_URI)
-    if target_class == TargetClass.NUMERIC:
-        return RouteDecision(RouteAction.BRIDGE, target=target, sip_uri=ha_uri_for(target, entries, ha_uri), reason=RouteReason.NUMBER_VIA_HA)
-
-    if entry is None:
-        return RouteDecision(RouteAction.BRIDGE, target=target, sip_uri=ha_uri, reason=RouteReason.NAME_VIA_HA)
-    if not entry.enabled:
-        return RouteDecision(RouteAction.REJECT, target=target, status=403, reason=RouteReason.TARGET_DISABLED, entry=entry)
-    transport = _entry_transport(entry)
-    direct_uri = entry.sip_uri or (_uri(entry.id, entry.address, _entry_port(entry), transport) if entry.address else "")
-    if direct_uri and not entry.ha_bridge:
-        return RouteDecision(RouteAction.DIRECT, target=entry.id, sip_uri=direct_uri, source="phonebook", entry=entry)
-    bridge_target = entry.extension or entry.id
-    return RouteDecision(RouteAction.BRIDGE, target=bridge_target, sip_uri=ha_uri_for(bridge_target, entries, ha_uri), reason=RouteReason.NAME_VIA_HA, source="phonebook", entry=entry)
-
-
 def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: bool = False) -> RouteDecision:
-    target, target_class, sip_uri, entry = parse_dial_target(target, entries)
-    if sip_uri:
-        return RouteDecision(RouteAction.DIRECT, target=target, sip_uri=sip_uri, reason=RouteReason.DIRECT_URI)
+    target = (target or "").strip()
+    target_class = classify_target(target)
+    if target_class in {TargetClass.SIP_URI, TargetClass.NAME_AT_HOST}:
+        return RouteDecision(
+            RouteAction.DIRECT,
+            target=target,
+            sip_uri=to_sip_uri(target),
+            reason=RouteReason.DIRECT_URI,
+        )
     if target_class is TargetClass.TRUNK_SERVICE_CODE:
         if trunk_ready:
             return RouteDecision(RouteAction.TRUNK, target=target, source="trunk")
@@ -241,6 +195,7 @@ def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: b
             reason=RouteReason.TRUNK_UNAVAILABLE,
         )
 
+    entry = find_entry(entries, target, include_number=True)
     if entry is not None and not entry.enabled:
         return RouteDecision(RouteAction.REJECT, target=target, status=403, reason=RouteReason.TARGET_DISABLED, entry=entry)
     if entry is not None:

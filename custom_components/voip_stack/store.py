@@ -89,7 +89,6 @@ def store_manual_roster_entries(hass: HomeAssistant, entries) -> None:
     data = dict(entry.data)
     data[CONF_PHONEBOOK_CONTACTS] = payload
     hass.config_entries.async_update_entry(entry, data=data)
-    hass.data.setdefault(DOMAIN, {})["manual_roster_entries"] = contacts
 
 
 def update_sip_accounts(hass: HomeAssistant, accounts: list[dict]) -> None:

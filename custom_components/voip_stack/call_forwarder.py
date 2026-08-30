@@ -331,29 +331,34 @@ async def async_forward_existing_call(
             )
         )
         if session is not None:
-            session.metadata["automation_resume_ha"] = ha_claimed
             route_already_claimed = bool(
                 session.state == CallState.CONNECTING.value
                 and session.owner == "router"
                 and session.callee == destination
             )
+            transition_fields: dict[str, Any] = {
+                "automation_resume_ha": ha_claimed,
+            }
             if not route_already_claimed:
-                claimed = registry.transition(
-                    call_id,
+                transition_fields.update(
                     state=CallState.CONNECTING.value,
                     owner="router",
                     callee=destination,
                     route_kind=decision.action.value,
-                    expected_revision=session.revision,
-                    expected_owner=session.owner,
-                    automation_resume_ha=ha_claimed,
                 )
-                if claimed is None:
-                    raise _service_error(
-                        f"call_id {call_id} changed while forwarding ownership was claimed",
-                        "call_changed_during_operation",
-                        call_id=call_id,
-                    )
+            claimed = registry.transition(
+                call_id,
+                expected_generation=session.generation,
+                expected_revision=session.revision,
+                expected_owner=session.owner,
+                **transition_fields,
+            )
+            if claimed is None:
+                raise _service_error(
+                    f"call_id {call_id} changed while forwarding ownership was claimed",
+                    "call_changed_during_operation",
+                    call_id=call_id,
+                )
         else:
             route_already_claimed = False
         _release_ha_softphone_claim(
@@ -1001,8 +1006,11 @@ async def async_forward_existing_call(
                     callee=destination,
                 )
                 if ringing_session is not None:
-                    ringing_session.metadata["bridge_dest_call_id"] = (
-                        client.dialog_ids.call_id
+                    ringing_session = registry.set_bridge_link(
+                        call_id,
+                        client.dialog_ids.call_id,
+                        expected_generation=ringing_session.generation,
+                        expected_revision=ringing_session.revision,
                     )
                     publish_bridge_projection(
                         hass,

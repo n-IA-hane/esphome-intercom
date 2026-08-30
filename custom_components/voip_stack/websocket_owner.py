@@ -137,8 +137,14 @@ def _set_call_media_client_id(registry: Any, call_id: str, client_id: str) -> No
     if session is None:
         raise WebSocketOwnerBusyError(call_id)
     if session.metadata.get("media_client_id") != client_id:
-        session.metadata["media_client_id"] = client_id
-        session.revision += 1
+        session = registry.transition(
+            session_id,
+            expected_generation=session.generation,
+            expected_revision=session.revision,
+            media_client_id=client_id,
+        )
+        if session is None:
+            raise WebSocketOwnerBusyError(call_id)
     for media_call_id in {call_id, session_id}:
         media = registry.resource_for(media_call_id, "softphone_media")
         if isinstance(media, dict):

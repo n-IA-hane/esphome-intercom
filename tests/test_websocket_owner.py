@@ -77,6 +77,7 @@ class _CallRegistry:
             "call-1": types.SimpleNamespace(
                 metadata={"media_client_id": client_id},
                 revision=1,
+                generation=1,
             )
         }
         self.softphone_media = {"call-1": {"media_client_id": client_id}}
@@ -92,8 +93,28 @@ class _CallRegistry:
         self.sessions[call_id] = types.SimpleNamespace(
             metadata={"media_client_id": client_id},
             revision=1,
+            generation=1,
         )
         self.softphone_media[call_id] = {"media_client_id": client_id}
+
+    def transition(
+        self,
+        call_id: str,
+        *,
+        expected_generation: int,
+        expected_revision: int,
+        **metadata,
+    ):
+        session = self.sessions.get(call_id)
+        if (
+            session is None
+            or session.generation != expected_generation
+            or session.revision != expected_revision
+        ):
+            return None
+        session.metadata.update(metadata)
+        session.revision += 1
+        return session
 
 
 class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):

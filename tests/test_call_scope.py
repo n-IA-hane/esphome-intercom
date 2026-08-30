@@ -127,11 +127,6 @@ class CallScopeTest(unittest.TestCase):
             frozenset({"casa", "test"}),
         )
 
-    def test_leg_alias_resolves_to_authoritative_session(self) -> None:
-        self.add("session", endpoint_id="test")
-        self.registry.aliases["leg"] = "session"
-        self.assertEqual(call_scope.call_endpoint_id(self.registry, "leg"), "test")
-
     def test_single_pending_route_is_scoped_and_must_be_unambiguous(self) -> None:
         self.add("casa-call", endpoint_id="casa")
         self.add("test-call", endpoint_id="test")

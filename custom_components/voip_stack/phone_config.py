@@ -35,7 +35,7 @@ from .phone_endpoint import (
     OfflinePolicy,
     PhoneEndpoint,
 )
-from .sip_registrar import account_from_mapping, normalize_username
+from .sip_registrar import account_from_mapping
 from .runtime_data import runtime_data
 
 
@@ -94,11 +94,6 @@ def new_browser_endpoint_id() -> str:
 def new_sip_account_endpoint_id() -> str:
     """Create a SIP-account identity independent from its mutable username."""
     return f"sip:{uuid4().hex}"
-
-
-def sip_account_endpoint_id(username: object) -> str:
-    """Return the identity used by pre-v3 username-keyed SIP accounts."""
-    return f"sip:{normalize_username(str(username or ''))}"
 
 
 def browser_phone_data(

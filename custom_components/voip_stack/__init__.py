@@ -82,7 +82,6 @@ from .runtime_data import (
     registration_data,
     runtime_data as _runtime_data,
 )
-from .store import manual_roster_entries as _manual_roster_entries
 from .websocket_api import (
     async_register_websocket_api,
     _async_load_ha_softphone_store,
@@ -589,7 +588,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     from .repairs import async_sync_runtime_issues
 
     async_sync_runtime_issues(hass)
-    hass.data[DOMAIN]["manual_roster_entries"] = _manual_roster_entries(hass)
     await _async_setup_shared(hass)
     for subentry in phone_subentries(entry):
         endpoint = endpoint_registry.get(str(subentry.data.get("endpoint_id") or ""))
@@ -668,7 +666,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) -
     if not isinstance(bucket, dict):
         return
 
-    bucket.pop("manual_roster_entries", None)
     bucket.pop(entry.entry_id, None)
 
 

@@ -24,16 +24,6 @@ def take_pending_route(hass: HomeAssistant, call_id: str) -> dict | None:
     return call_registry(hass).take_pending_route(call_id)
 
 
-def call_endpoint_id(registry, call_id: str) -> str:
-    """Return the primary browser endpoint owning a logical call."""
-    session_id = registry.resolve_session_id(str(call_id or "").strip())
-    session = registry.sessions.get(session_id)
-    return str(
-        ((session.metadata if session is not None else {}) or {}).get("endpoint_id")
-        or ""
-    ).strip()
-
-
 def call_endpoint_ids(registry, call_id: str) -> frozenset[str]:
     """Return every logical phone participating in one call.
 

@@ -9,10 +9,11 @@ from pathlib import Path
 import sys
 import types
 
+from tests.support.service_schemas import load_service_registrations
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "custom_components" / "voip_stack" / "phonebook_services.py"
-SERVICES = ROOT / "custom_components" / "voip_stack" / "services.py"
 PACKAGE = "voip_stack_phonebook_security_test"
 
 
@@ -101,8 +102,8 @@ def test_export_returns_roster_only_in_service_response(monkeypatch) -> None:
 
 
 def test_export_service_requires_a_private_response() -> None:
-    source = SERVICES.read_text()
-    assert '"export_phonebook": (None, SupportsResponse.ONLY)' in source
+    registrations = load_service_registrations()
+    assert registrations["export_phonebook"]["supports_response"] == "only"
 
 
 def test_contact_group_lists_are_validated_as_individual_router_aliases(

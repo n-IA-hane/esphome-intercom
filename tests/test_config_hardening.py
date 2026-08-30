@@ -309,7 +309,6 @@ def test_final_entry_removal_forgets_runtime_but_preserves_global_views() -> Non
         "registration": registration,
         "media_shutdown": object(),
         "debug_capture_tasks": {"finishing-write"},
-        "manual_roster_entries": [{"name": "Kitchen"}],
         "entry-id": {"legacy": True},
     }
     hass = SimpleNamespace(data={"voip_stack": bucket})
@@ -317,7 +316,6 @@ def test_final_entry_removal_forgets_runtime_but_preserves_global_views() -> Non
 
     asyncio.run(hook(hass, entry))
 
-    assert "manual_roster_entries" not in bucket
     assert "entry-id" not in bucket
     assert bucket["registration"] is registration
     assert bucket["debug_capture_tasks"] == {"finishing-write"}

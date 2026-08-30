@@ -52,9 +52,39 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
         runtime = SipEndpointRuntime()
 
         self.assertIs(runtime.phase, RuntimePhase.DARK)
+        self.assertFalse(hasattr(runtime, "calls"))
         self.assertIsNone(runtime.component("udp_listener"))
         with self.assertRaisesRegex(RuntimeError, "not active"):
             runtime.create_session("call-1")
+
+    async def test_bridge_links_are_versioned_and_generation_guarded(self) -> None:
+        runtime = SipEndpointRuntime()
+        runtime.activate()
+        session = runtime.upsert("source", state="ringing", owner="router")
+        initial_revision = session.revision
+
+        linked = runtime.set_bridge_link(
+            "source",
+            "destination",
+            expected_generation=session.generation,
+            expected_revision=initial_revision,
+        )
+
+        self.assertEqual(linked.revision, initial_revision + 1)
+        self.assertEqual(runtime.bridge_link_for("source"), "destination")
+        with self.assertRaisesRegex(RuntimeError, "changed"):
+            runtime.set_bridge_link(
+                "source",
+                "stale-destination",
+                expected_generation=session.generation,
+                expected_revision=initial_revision,
+            )
+        self.assertEqual(runtime.bridge_link_for("source"), "destination")
+        linked_revision = linked.revision
+        self.assertEqual(runtime.forget_bridge_link("source"), "destination")
+        self.assertEqual(linked.revision, linked_revision + 1)
+        await runtime.terminate_call_wait("source", reason="cancelled")
+        await runtime.shutdown()
 
     async def test_live_bridge_requires_lifecycle_owner_before_registration(
         self,
@@ -177,7 +207,7 @@ class SipEndpointRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(events, ["call", "trunk", "udp", "extra"])
         self.assertIs(runtime.phase, RuntimePhase.STOPPED)
-        self.assertEqual(runtime.calls, {})
+        self.assertEqual(runtime.sessions, {})
 
     async def test_shutdown_continues_after_component_close_failure(self) -> None:
         events: list[str] = []

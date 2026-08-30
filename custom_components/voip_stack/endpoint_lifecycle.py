@@ -176,19 +176,17 @@ async def async_stop_sip_endpoint(hass: HomeAssistant) -> None:
 
 
 async def _async_stop_sip_endpoint(hass: HomeAssistant) -> None:
-    registry = call_registry(hass)
     runtime = require_runtime_data(hass)
     pbx_runtime = runtime.sip
 
     await cancel_runtime_tasks(hass)
-    if pbx_runtime is not None:
-        pbx_runtime.forward_call = None
-
-    if pbx_runtime is not None:
-        try:
-            await pbx_runtime.shutdown()
-        except Exception:
-            _LOGGER.debug("Ignoring authoritative PBX runtime stop error", exc_info=True)
-    registry.clear_runtime()
+    if pbx_runtime is None:
+        return
+    pbx_runtime.forward_call = None
+    try:
+        await pbx_runtime.shutdown()
+    except Exception:
+        _LOGGER.debug("Ignoring authoritative PBX runtime stop error", exc_info=True)
+    pbx_runtime.clear_runtime()
     if runtime.sip is pbx_runtime:
         runtime.sip = None

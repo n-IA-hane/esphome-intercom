@@ -485,10 +485,6 @@ async def async_set_ha_softphone_settings(
     return state
 
 
-def _sip_bridge_store(hass: HomeAssistant) -> dict[str, Any]:
-    return require_runtime_data(hass).sip_bridge_state
-
-
 async def _async_shutdown_all(hass: HomeAssistant) -> None:
     """Clear HA softphone volatile state before SIP transports are stopped."""
     registry = call_registry(hass)
@@ -497,8 +493,6 @@ async def _async_shutdown_all(hass: HomeAssistant) -> None:
         if future is not None and not future.done():
             future.cancel()
     runtime = runtime_data(hass)
-    if runtime is not None:
-        runtime.sip_bridge_state.clear()
     # HTTP views remain registered across a config-entry reload. Gate claims
     # before taking owner snapshots so a concurrent GET cannot outlive unload.
     media = runtime.media if runtime is not None else None
@@ -1291,7 +1285,6 @@ def _set_sip_bridge_call_state(
     **extra: Any,
 ) -> None:
     """Publish SIP bridge/B2BUA state without mutating the HA softphone session."""
-    store = _sip_bridge_store(hass)
     state = _sip_public_state(state)
     terminal = state in {
         CallState.IDLE.value,
@@ -1315,10 +1308,9 @@ def _set_sip_bridge_call_state(
         "terminal_reason": extra.get("terminal_reason") or extra.get("reason") or "",
     }
     payload.update({k: v for k, v in extra.items() if v not in (None, "")})
-    store.update(payload)
     if terminal:
-        store["last_terminal_call_id"] = call_id
-        store["last_terminal_dest_call_id"] = dest_call_id
+        payload["last_terminal_call_id"] = call_id
+        payload["last_terminal_dest_call_id"] = dest_call_id
     _LOGGER.info(
         "SIP bridge state=%s call_id=%s dest_call_id=%s caller=%s callee=%s target=%s reason=%s event=%s",
         state,

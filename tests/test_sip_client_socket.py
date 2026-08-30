@@ -31,6 +31,7 @@ from .voip_phase1_support import (
     types,
     unittest,
 )
+from .router_reference import resolve_esp_origin
 
 
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
@@ -5101,7 +5102,12 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 metadata={"sip_port": 5060},
             ),
         ]
-        decision = router.resolve_esp_origin("Spotpear_Ball_v2", entries, "sip:Spotpear_Ball_v2@192.168.1.10:5060")
+        decision = resolve_esp_origin(
+            router,
+            "Spotpear_Ball_v2",
+            entries,
+            "sip:Spotpear_Ball_v2@192.168.1.10:5060",
+        )
         self.assertEqual(decision.action, router.RouteAction.DIRECT)
         self.assertIsNotNone(decision.entry)
         assert decision.entry is not None
@@ -5122,6 +5128,11 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 metadata={"sip_port": 5060},
             ),
         ]
-        decision = router.resolve_esp_origin("Cucina", entries, "sip:Cucina@192.168.1.10:5060;transport=tcp")
+        decision = resolve_esp_origin(
+            router,
+            "Cucina",
+            entries,
+            "sip:Cucina@192.168.1.10:5060;transport=tcp",
+        )
         self.assertEqual(decision.action, router.RouteAction.DIRECT)
         self.assertEqual(decision.sip_uri, "sip:Cucina@192.168.1.31")

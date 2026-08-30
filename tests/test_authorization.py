@@ -11,6 +11,8 @@ import types
 
 import pytest
 
+from tests.support.service_schemas import load_service_registrations
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "custom_components" / "voip_stack" / "authorization.py"
@@ -599,9 +601,10 @@ def test_all_external_surfaces_apply_authorization_and_ws_context() -> None:
     assert "user_id=context.user_id" in media_session
     assert "client_id=context.client_id" in media_session
 
+    registrations = load_service_registrations()
     for service in ("route", "set_deadline", "cancel_deadline"):
-        assert f'"{service}",' in services[
-            services.index("admin_services = {") : services.index(
-                "def handler_for(name: str):"
-            )
-        ]
+        registration = registrations[service]
+        authorization_calls = registration["authorization_calls"]
+        authorization_calls.clear()
+        asyncio.run(registration["handler"](types.SimpleNamespace()))
+        assert authorization_calls == ["admin"]

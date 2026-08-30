@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import importlib.util
 from pathlib import Path
 import sys
@@ -156,20 +155,6 @@ class OutboundAttemptsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events, ["video"])
         self.assertIsNone(leg.video_relay)
         self.assertEqual(leg.video_failure_reason, "remote_video_rejected")
-
-    async def test_dial_tasks_are_cancelled_and_joined(self) -> None:
-        started = asyncio.Event()
-
-        async def pending() -> None:
-            started.set()
-            await asyncio.Event().wait()
-
-        task = asyncio.create_task(pending())
-        await started.wait()
-        await outbound_attempts.async_cancel_and_join_tasks([task])
-
-        self.assertTrue(task.cancelled())
-
 
 if __name__ == "__main__":
     unittest.main()

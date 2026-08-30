@@ -11,6 +11,8 @@ import unittest
 
 import pytest
 
+from tests.support.service_schemas import load_service_registrations
+
 
 ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.architecture
@@ -820,9 +822,10 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             '"set_ha_softphone_settings": _handle_set_ha_softphone_settings_service',
             init_py,
         )
-        self.assertIn(
-            '"set_ha_softphone_settings": (set_ha_softphone_settings_schema, None)',
-            SERVICES.read_text(),
+        registrations = load_service_registrations()
+        self.assertIn("set_ha_softphone_settings", registrations)
+        self.assertIsNotNone(
+            registrations["set_ha_softphone_settings"]["schema"]
         )
         self.assertIn("_ha_softphone_extension", websocket)
         self.assertNotIn("HA_SOFTPHONE_ENDPOINT_ENTITY_ID", sensor)
@@ -1037,12 +1040,15 @@ class VoipBackendRouteContractTest(unittest.TestCase):
     def test_sip_endpoint_account_list_service_is_registered_and_documented(
         self,
     ) -> None:
-        services = SERVICES.read_text()
         account_services = ACCOUNT_SERVICES.read_text()
         services_yaml = SERVICES_YAML.read_text()
         icons_json = ICONS_JSON.read_text()
 
-        self.assertIn('"list_accounts": (None, SupportsResponse.ONLY)', services)
+        registrations = load_service_registrations()
+        self.assertEqual(
+            registrations["list_accounts"]["supports_response"],
+            "only",
+        )
         self.assertIn('"list_accounts": list_accounts', account_services)
         self.assertIn("list_accounts:", services_yaml)
         self.assertIn('"list_accounts"', icons_json)

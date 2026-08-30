@@ -8,6 +8,7 @@ from .voip_phase1_support import (
     router,
     unittest,
 )
+from .router_reference import resolve_esp_origin
 
 
 class RosterResolverTest(unittest.TestCase):
@@ -28,19 +29,19 @@ class RosterResolverTest(unittest.TestCase):
             }
         )
         ha_uri = "sip:Home@192.168.1.10;transport=tcp"
-        cucina = router.resolve_esp_origin("Cucina", entries, ha_uri)
+        cucina = resolve_esp_origin(router, "Cucina", entries, ha_uri)
         self.assertEqual(cucina.action, router.RouteAction.DIRECT)
         self.assertEqual(cucina.sip_uri, "sip:Cucina@192.168.1.30")
 
-        studio = router.resolve_esp_origin("Studio", entries, ha_uri)
+        studio = resolve_esp_origin(router, "Studio", entries, ha_uri)
         self.assertEqual(studio.action, router.RouteAction.DIRECT)
         self.assertEqual(studio.sip_uri, "sip:Studio@192.168.1.31;transport=tcp")
 
-        corridoio = router.resolve_esp_origin("Corridoio", entries, ha_uri)
+        corridoio = resolve_esp_origin(router, "Corridoio", entries, ha_uri)
         self.assertEqual(corridoio.action, router.RouteAction.BRIDGE)
         self.assertEqual(corridoio.sip_uri, "sip:Corridoio@192.168.1.10;transport=tcp")
 
-        phone_from_esp = router.resolve_esp_origin("Nonna", entries, ha_uri)
+        phone_from_esp = resolve_esp_origin(router, "Nonna", entries, ha_uri)
         self.assertEqual(phone_from_esp.action, router.RouteAction.BRIDGE)
         self.assertEqual(phone_from_esp.target, "Nonna")
 
@@ -51,11 +52,11 @@ class RosterResolverTest(unittest.TestCase):
     def test_explicit_sip_uri_and_name_at_ip(self) -> None:
         entries = roster.parse_roster_json([{"id": "HA", "address": "192.168.1.10"}])
         self.assertEqual(
-            router.resolve_esp_origin("sip:Cucina@192.168.1.30", entries, "sip:Home@192.168.1.10").sip_uri,
+            resolve_esp_origin(router, "sip:Cucina@192.168.1.30", entries, "sip:Home@192.168.1.10").sip_uri,
             "sip:Cucina@192.168.1.30",
         )
         self.assertEqual(
-            router.resolve_esp_origin("Cucina@192.168.1.30", entries, "sip:Home@192.168.1.10").sip_uri,
+            resolve_esp_origin(router, "Cucina@192.168.1.30", entries, "sip:Home@192.168.1.10").sip_uri,
             "sip:Cucina@192.168.1.30",
         )
 
@@ -82,11 +83,11 @@ class RosterResolverTest(unittest.TestCase):
             }
         )
         self.assertEqual(
-            router.resolve_esp_origin("Cucina", entries, "sip:Casa@192.168.1.10;transport=tcp").sip_uri,
+            resolve_esp_origin(router, "Cucina", entries, "sip:Casa@192.168.1.10;transport=tcp").sip_uri,
             "sip:Cucina@192.168.1.30;transport=tcp",
         )
         self.assertEqual(
-            router.resolve_esp_origin("Salotto", entries, "sip:Casa@192.168.1.10;transport=tcp").sip_uri,
+            resolve_esp_origin(router, "Salotto", entries, "sip:Casa@192.168.1.10;transport=tcp").sip_uri,
             "sip:Salotto@192.168.1.31;transport=udp",
         )
         bridged_entries = [
@@ -100,7 +101,8 @@ class RosterResolverTest(unittest.TestCase):
             ),
         ]
         self.assertEqual(
-            router.resolve_esp_origin(
+            resolve_esp_origin(
+                router,
                 "Salotto",
                 bridged_entries,
                 "sip:Casa@192.168.1.10;transport=tcp",

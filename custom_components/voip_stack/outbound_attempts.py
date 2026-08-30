@@ -110,23 +110,6 @@ async def async_close_outbound_leg(
     await async_wait_for_cleanup(task)
 
 
-async def async_cancel_and_join_tasks(tasks: list[asyncio.Task]) -> None:
-    """Cancel a dial fork's tasks and join every terminal callback."""
-
-    async def cleanup() -> None:
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-    task = asyncio.create_task(
-        cleanup(),
-        name="voip-outbound-dial-task-cleanup",
-    )
-    await async_wait_for_cleanup(task)
-
-
 async def async_cleanup_outbound_attempts(
     tasks: list[asyncio.Task],
     attempts: list[OutboundLeg],

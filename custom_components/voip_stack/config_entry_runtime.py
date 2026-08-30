@@ -9,7 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_SERVICE_REGISTERED
 from homeassistant.core import Event, HomeAssistant, callback
 
-from .const import CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS, DOMAIN
+from .const import CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS
 from .endpoint_lifecycle import create_runtime_task
 from .phone_config import (
     phone_subentries,
@@ -18,7 +18,7 @@ from .phone_config import (
 from .phone_endpoint import EndpointKind
 from .phonebook_runtime import push_roster_json_to_esps
 from .runtime_data import runtime_data, sip_registrar
-from .store import manual_roster_entries, sip_accounts
+from .store import sip_accounts
 from .websocket_api import (
     _async_load_ha_softphone_store,
     _publish_ha_softphone_state,
@@ -147,10 +147,6 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         if registrar is not None:
             registrar.update_accounts(sip_accounts(hass))
 
-    if contacts_changed:
-        hass.data.setdefault(DOMAIN, {})["manual_roster_entries"] = (
-            manual_roster_entries(hass)
-        )
     if phones_changed or contacts_changed:
         await async_refresh_and_push_phonebook(hass)
 

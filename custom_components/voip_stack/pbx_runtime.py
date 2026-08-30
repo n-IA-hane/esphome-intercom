@@ -146,8 +146,7 @@ class SipEndpointRuntime(CallRuntimeApi):
         allow_dark_sessions: bool = False,
     ) -> None:
         self.phase = RuntimePhase.DARK
-        self.calls: dict[str, EndpointCallSession] = {}
-        self.sessions = self.calls
+        self.sessions: dict[str, EndpointCallSession] = {}
         self.leg_index: dict[str, str] = {}
         self.terminated_call_ids: OrderedDict[
             str, tuple[int, CallEventContext | None]
@@ -235,7 +234,7 @@ class SipEndpointRuntime(CallRuntimeApi):
 
         if registry is self._endpoint_registry:
             return
-        if any(session.endpoint_claims for session in self.calls.values()):
+        if any(session.endpoint_claims for session in self.sessions.values()):
             raise RuntimeError(
                 "cannot replace endpoint registry while calls are active"
             )
@@ -275,7 +274,7 @@ class SipEndpointRuntime(CallRuntimeApi):
 
         return {
             call_id: dict(session.endpoint_claims)
-            for call_id, session in self.calls.items()
+            for call_id, session in self.sessions.items()
             if session.endpoint_claims
         }
 
@@ -296,7 +295,7 @@ class SipEndpointRuntime(CallRuntimeApi):
         """Return lifecycle watchers derived from session-owned named tasks."""
 
         watchers: dict[str, asyncio.Task[Any]] = {}
-        for session in self.calls.values():
+        for session in self.sessions.values():
             for name, task in session.named_tasks.items():
                 if name.startswith("client_watcher:"):
                     watchers[name.removeprefix("client_watcher:")] = task
@@ -355,18 +354,33 @@ class SipEndpointRuntime(CallRuntimeApi):
 
         return sum(
             1
-            for session in self.calls.values()
+            for session in self.sessions.values()
             if (task := session.named_tasks.get(name)) is not None and not task.done()
         )
 
-    def set_bridge_link(self, source_call_id: str, dest_call_id: str) -> None:
+    def set_bridge_link(
+        self,
+        source_call_id: str,
+        dest_call_id: str,
+        *,
+        expected_generation: int | None = None,
+        expected_revision: int | None = None,
+    ) -> EndpointCallSession:
         """Attach one destination dialog identity to its source session."""
 
         session = self.get_session(source_call_id)
         clean_dest_call_id = str(dest_call_id or "").strip()
         if session is None or not session.live or not clean_dest_call_id:
             raise RuntimeError(f"call session {source_call_id!r} is unavailable")
-        session.update_metadata(bridge_dest_call_id=clean_dest_call_id)
+        updated = self.transition(
+            source_call_id,
+            expected_generation=expected_generation,
+            expected_revision=expected_revision,
+            bridge_dest_call_id=clean_dest_call_id,
+        )
+        if updated is None:
+            raise RuntimeError(f"call session {source_call_id!r} changed")
+        return updated
 
     def forget_bridge_link(self, source_call_id: str) -> str:
         """Remove and return one destination link without ending the session."""
@@ -375,6 +389,8 @@ class SipEndpointRuntime(CallRuntimeApi):
         if session is None or session.phase is SessionPhase.TERMINATED:
             return ""
         dest_call_id = str(session.metadata.pop("bridge_dest_call_id", "") or "")
+        if dest_call_id:
+            session.revision += 1
         return dest_call_id
 
     def attach_relay(self, call_id: str, relay: Any) -> None:
@@ -496,10 +512,10 @@ class SipEndpointRuntime(CallRuntimeApi):
         session: EndpointCallSession,
         _result: SessionTerminationResult,
     ) -> None:
-        if self.calls.get(session.call_id) is not session:
+        if self.sessions.get(session.call_id) is not session:
             return
         self._retire_observation(session)
-        self.calls.pop(session.call_id, None)
+        self.sessions.pop(session.call_id, None)
 
     def create_session(
         self,
@@ -517,7 +533,7 @@ class SipEndpointRuntime(CallRuntimeApi):
         clean_call_id = str(call_id or "").strip()
         if not clean_call_id:
             raise ValueError("call_id must not be empty")
-        current = self.calls.get(clean_call_id)
+        current = self.sessions.get(clean_call_id)
         if current is not None:
             raise ValueError(f"call_id {clean_call_id!r} is already active")
         self._generation += 1
@@ -530,7 +546,7 @@ class SipEndpointRuntime(CallRuntimeApi):
             on_terminated=self._on_terminated,
         )
         session.metadata.update(metadata)
-        self.calls[clean_call_id] = session
+        self.sessions[clean_call_id] = session
         return session
 
     def ensure_session(
@@ -543,7 +559,7 @@ class SipEndpointRuntime(CallRuntimeApi):
         session = self.get_session(call_id)
         if session is not None and not session.live and self.phase is RuntimePhase.DARK:
             self._retire_observation(session)
-            self.calls.pop(session.call_id, None)
+            self.sessions.pop(session.call_id, None)
             session = None
         if session is None:
             return self.create_session(call_id, **metadata)
@@ -752,7 +768,7 @@ class SipEndpointRuntime(CallRuntimeApi):
         *,
         generation: int | None = None,
     ) -> EndpointCallSession | None:
-        session = self.calls.get(str(call_id or "").strip())
+        session = self.sessions.get(str(call_id or "").strip())
         if session is None or (
             generation is not None and session.generation != int(generation)
         ):
@@ -768,7 +784,7 @@ class SipEndpointRuntime(CallRuntimeApi):
 
     async def _run_shutdown(self) -> None:
         self.phase = RuntimePhase.STOPPING
-        sessions = tuple(self.calls.values())
+        sessions = tuple(self.sessions.values())
         if sessions:
             await asyncio.gather(
                 *(
