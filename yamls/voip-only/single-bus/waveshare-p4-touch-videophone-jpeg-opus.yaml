@@ -1,0 +1,31 @@
+# Waveshare ESP32-P4 Touch 10.1: JPEG SIP videophone with Opus audio.
+#
+# This VoIP-only profile keeps call-critical stacks and audio buffers in
+# internal RAM. Full-experience P4 profiles remain PCM-only because their
+# combined media, wake-word and assistant workload cannot carry Opus safely.
+
+substitutions:
+  p4_video_width: "800"
+  p4_video_height: "800"
+  p4_video_fps: "15"
+  p4_camera_rotation: "270"
+  p4_jpeg_quality: "10"
+  p4_video_max_decode_width: "800"
+  p4_video_max_decode_height: "800"
+
+packages:
+  base: github://n-IA-hane/esphome-intercom/packages/voip/waveshare_p4_touch_videophone_base.yaml@dev
+  video: github://n-IA-hane/esphome-intercom/packages/voip/p4_video_jpeg.yaml@dev
+
+esphome:
+  build_path: .esphome/build/waveshare-p4-touch-videophone-jpeg-opus
+
+voip_stack:
+  id: phone
+  audio:
+    tx:
+      codec: opus
+      frame_ms: 20
+    rx:
+      codec: opus
+      frame_ms: 20
