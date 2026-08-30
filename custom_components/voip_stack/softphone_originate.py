@@ -27,7 +27,6 @@ from .const import (
     CONF_TRUNK_TRANSPORT,
     CONF_TRUNK_USERNAME,
     CONF_VIDEO_CAMERA_SEND,
-    HA_PEER_FALLBACK_NAME,
 )
 from .endpoint_lifecycle import call_registry as _call_registry, create_runtime_task
 from .endpoint_termination import EndpointTerminationHandler
@@ -112,16 +111,6 @@ async def _mark_sip_account_unreachable(hass: HomeAssistant, username: str) -> N
         # binary sensor stale even though routing already returned 480.
         registrar.remove_registration(username)
         _LOGGER.info("SIP registrar contact marked unreachable user=%s", username)
-
-
-def _ha_peer_name(hass: HomeAssistant) -> str:
-    """Return the HA phonebook peer name.
-
-    HA normally always has a configured location_name. The default is only for
-    malformed/empty local config and avoids a hardcoded "Home Assistant" peer
-    identity.
-    """
-    return (hass.config.location_name or "").strip() or HA_PEER_FALLBACK_NAME
 
 
 async def _async_resolve_browser_destination(
