@@ -858,6 +858,21 @@ async def restore_baseline(ctx: LiveContext, original: dict[str, Any]) -> None:
     )
 
 
+async def hold_established_call(ctx: LiveContext) -> None:
+    """Keep a call alive and fail immediately if either endpoint drops it."""
+    deadline = time.monotonic() + max(0.0, ctx.args.in_call_seconds)
+    while time.monotonic() < deadline:
+        esp_state = norm(ctx.esp.values.get("voip_state"))
+        softphone = await ctx.ws.softphone_state()
+        softphone_state = norm(softphone.get("state"))
+        if esp_state != "in_call" or softphone_state != "in_call":
+            raise AssertionError(
+                "established call ended before qualification window: "
+                f"esp={esp_state!r}, ha={softphone_state!r}, softphone={softphone}"
+            )
+        await asyncio.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
+
+
 async def scenario_ha_to_esp_extension_answer_hangup(ctx: LiveContext) -> None:
     await ctx.cleanup()
     await ctx.esp.switch("auto_answer", False)
@@ -873,6 +888,7 @@ async def scenario_ha_to_esp_extension_answer_hangup(ctx: LiveContext) -> None:
         raise AssertionError(
             f"HA softphone did not resolve ESP extension to ESP peer: {soft}"
         )
+    await hold_established_call(ctx)
     await ctx.ha.service("voip_stack", "hangup", {})
     await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
     ctx.capture("ha_to_esp_extension_answer_hangup")
@@ -913,6 +929,7 @@ async def scenario_ha_to_esp_api_answer_hangup(ctx: LiveContext) -> None:
     await ctx.ha.service("esphome", f"{prefix}_answer_call", {})
     await wait_esp_voip_state(ctx, {"in_call"}, timeout=12)
     await wait_softphone_state(ctx, {"in_call"}, timeout=8)
+    await hold_established_call(ctx)
     await ctx.ha.service("esphome", f"{prefix}_hangup_call", {})
     await wait_esp_voip_state(ctx, {"idle"}, timeout=12)
     await wait_softphone_state(ctx, {"idle"}, timeout=8)
@@ -1086,7 +1103,7 @@ async def _start_conference_call(
         await ctx.esp.button("call")
     await wait_esp_voip_state(ctx, {"in_call"}, timeout=12)
     await wait_softphone_state(ctx, {"in_call"}, timeout=8)
-    await asyncio.sleep(max(0.0, ctx.args.in_call_seconds))
+    await hold_established_call(ctx)
 
 
 async def scenario_ha_to_conference_group_rings_esp(ctx: LiveContext) -> None:
@@ -1199,6 +1216,7 @@ async def scenario_esp_to_ha_extension_answer_hangup(ctx: LiveContext) -> None:
     )
     await wait_softphone_state(ctx, {"in_call"}, timeout=10)
     await wait_esp_voip_state(ctx, {"in_call"}, timeout=12)
+    await hold_established_call(ctx)
     await ctx.ha.service(
         "voip_stack",
         "hangup",

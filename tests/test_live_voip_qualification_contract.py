@@ -233,7 +233,8 @@ class EspPairQualificationBehaviorTest(unittest.IsolatedAsyncioTestCase):
             cleanup=AsyncMock(),
             esp=SimpleNamespace(service=AsyncMock()),
             ha=SimpleNamespace(service=AsyncMock()),
-            args=SimpleNamespace(ha_extension="666"),
+            ws=SimpleNamespace(softphone_state=AsyncMock()),
+            args=SimpleNamespace(ha_extension="666", in_call_seconds=0.0),
             capture=unittest.mock.Mock(),
         )
         ringing = {
@@ -273,6 +274,17 @@ class EspPairQualificationBehaviorTest(unittest.IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_hold_fails_when_established_call_drops_early(self) -> None:
+        ctx = SimpleNamespace(
+            args=SimpleNamespace(in_call_seconds=10.0),
+            esp=SimpleNamespace(values={"voip_state": "in_call"}),
+            ws=SimpleNamespace(
+                softphone_state=AsyncMock(return_value={"state": "idle"})
+            ),
+        )
+        with self.assertRaisesRegex(AssertionError, "ended before"):
+            await runner.hold_established_call(ctx)
 
     async def test_pair_scenario_covers_both_directions_and_hangup_owners(
         self,
