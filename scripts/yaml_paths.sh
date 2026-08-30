@@ -19,6 +19,7 @@ REPOS = {
 CAMERA_ROOT = ROOT.parent / "esphome-esp-video-camera"
 P4_VOIP_YAML_ROOT = ROOT / "yamls/voip-only/single-bus"
 URLS = {url: path for url, path in REPOS.values()}
+PROJECT_URLS = (*URLS, CAMERA_URL)
 
 
 def yaml_files():
@@ -46,6 +47,12 @@ def camera_files():
         if ".esphome" not in path.parts
         and re.search(r"(?m)^\s*components:\s*\[esp_video_camera\]\s*$", path.read_text())
     )
+
+
+def source_files():
+    """Return every maintained YAML that owns a project source reference."""
+
+    return sorted(set(yaml_files()) | set(camera_files()))
 
 
 def selected(files, only):
@@ -143,10 +150,23 @@ def rewrite_camera(path, ref):
 
 def mode(path):
     text = path.read_text()
-    remote = any(f'{key}: "{url}@' in text for key, (url, _) in REPOS.items())
-    remote |= any(re.search(rf"(?m)^\s+[A-Za-z_][A-Za-z0-9_]*:\s*{re.escape(url)}/", text) for url in URLS)
+    remote = bool(remote_refs(path))
     local = any(re.search(rf'^\s*{key}:\s*"\.\./', text, re.MULTILINE) for key in REPOS)
-    local |= bool(re.search(r"^\s+[A-Za-z_][A-Za-z0-9_]*:\s*!include\s+", text, re.MULTILINE))
+    if path.is_relative_to(ROOT / "yamls"):
+        local |= bool(
+            re.search(
+                r"^\s+[A-Za-z_][A-Za-z0-9_]*:\s*!include\s+",
+                text,
+                re.MULTILINE,
+            )
+        )
+    lines = text.splitlines()
+    local |= any(
+        index > 0
+        and re.fullmatch(r"\s*components:\s*\[esp_video_camera\]\s*", line)
+        and bool(re.match(r"^\s*-\s*source:\s*(?:\.\.?/|/)", lines[index - 1]))
+        for index, line in enumerate(lines)
+    )
     if remote and local:
         return "mixed"
     if remote:
@@ -156,22 +176,62 @@ def mode(path):
     return "fragment" if not re.search(r"(?m)^esphome:\s*$", text) else "unknown"
 
 
-def check(expect, only):
+def remote_refs(path):
+    """Return exact project refs used by one YAML or package file."""
+
+    refs = set()
+    for line in path.read_text().splitlines():
+        for url in PROJECT_URLS:
+            if url not in line:
+                continue
+            tail = line.split(url, 1)[1]
+            if "@" not in tail:
+                continue
+            ref = tail.rsplit("@", 1)[1].split("#", 1)[0].strip().strip('"\'')
+            if ref:
+                refs.add(ref)
+        match = re.search(
+            r"github\.com/n-IA-hane/esphome-intercom/raw/(.+?)/?\s*[\"']?$",
+            line,
+        )
+        if match:
+            ref = match.group(1).rstrip("/")
+            if ref:
+                refs.add(ref)
+    return refs
+
+
+def check(expect, only, ref=None):
     failed = False
-    for path in selected(yaml_files(), only):
+    observed_refs = set()
+    for path in selected(source_files(), only):
         current = mode(path)
         exception = expect == "local" and path.resolve() == VOICE_PE.resolve()
         bad = current in {"mixed", "unknown"}
         bad |= bool(expect and current != "fragment" and current != expect and not exception)
+        refs = remote_refs(path)
+        observed_refs.update(refs)
+        bad |= current == "remote" and len(refs) != 1
+        bad |= bool(ref and current == "remote" and refs != {ref})
         if bad:
-            detail = f", expected {expect}" if expect else ""
+            expected = f"{expect}@{ref}" if ref else expect
+            detail = f", expected {expected}" if expected else ""
+            if refs:
+                detail += f", refs={','.join(sorted(refs))}"
             print(f"FAIL: {path.relative_to(ROOT)} ({current}{detail})", file=sys.stderr)
             failed = True
         if re.search(r"(?m)^\s*-\s*!include\s+", path.read_text()):
             print(f"FAIL: {path.relative_to(ROOT)} (nested list !include is not portable outside the repo)", file=sys.stderr)
             failed = True
+    if expect == "remote" and ref is None and len(observed_refs) > 1:
+        print(
+            f"FAIL: project refs are mixed ({','.join(sorted(observed_refs))})",
+            file=sys.stderr,
+        )
+        failed = True
     if not failed:
-        print("OK: all YAMLs consistent.", file=sys.stderr)
+        suffix = f" at {ref}" if ref else ""
+        print(f"OK: all YAMLs consistent{suffix}.", file=sys.stderr)
     return int(failed)
 
 
@@ -195,17 +255,21 @@ def parse_args():
     parser.add_argument("command", help="local, a remote ref, status or check")
     parser.add_argument("--file")
     parser.add_argument("--expect", choices=("local", "remote"))
+    parser.add_argument("--ref")
     return parser.parse_args(args)
 
 
 def main():
     args = parse_args()
     if args.command == "status":
-        for path in selected(yaml_files(), args.file):
-            print(f"{path.relative_to(ROOT)} {mode(path)}")
+        for path in selected(source_files(), args.file):
+            refs = ",".join(sorted(remote_refs(path))) or "-"
+            print(f"{path.relative_to(ROOT)} mode={mode(path)} refs={refs}")
         return 0
     if args.command == "check":
-        return check(args.expect, args.file)
+        if args.ref and args.expect != "remote":
+            raise SystemExit("error: --ref requires --expect remote")
+        return check(args.expect, args.file, args.ref)
     files = selected(yaml_files(), args.file)
     for path in files:
         rewrite_yaml(path, args.command)

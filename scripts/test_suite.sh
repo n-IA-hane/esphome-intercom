@@ -78,12 +78,14 @@ resolve_ha_python() {
 cd "$ROOT"
 path_mode=$(
   ./scripts/yaml_paths.sh status |
-    awk '$NF == "local" || $NF == "remote" { if (!mode) mode = $NF } END { print mode }'
+    awk '{ sub(/^mode=/, "", $2); if ($2 == "local" || $2 == "remote") print $2 }' |
+    sort -u
 )
 [[ $path_mode == "local" || $path_mode == "remote" ]] || {
   printf '%s\n' "YAML paths are mixed or unknown" >&2
   exit 2
 }
+./scripts/yaml_paths.sh check --expect "$path_mode"
 
 pytest_args=(tests -q --tb=short)
 ha_tests=(

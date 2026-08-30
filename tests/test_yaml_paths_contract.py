@@ -63,7 +63,24 @@ def test_check_file_limits_the_expected_mode_gate() -> None:
     failures = [
         line for line in (result.stdout + result.stderr).splitlines() if line.startswith("FAIL:")
     ]
-    assert failures == [f"FAIL: {target} ({expected}, expected {opposite})"]
+    yaml_paths = _load_yaml_paths()
+    refs = yaml_paths.remote_refs(ROOT / target)
+    refs_suffix = f", refs={','.join(sorted(refs))}" if refs else ""
+    assert failures == [
+        f"FAIL: {target} ({expected}, expected {opposite}{refs_suffix})"
+    ]
+
+
+def test_remote_refs_report_mixed_project_revisions(tmp_path: Path) -> None:
+    yaml_paths = _load_yaml_paths()
+    config = tmp_path / "mixed.yaml"
+    config.write_text(
+        'substitutions:\n'
+        '  ext_components_source: "github://n-IA-hane/esphome-intercom@main"\n'
+        '  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"\n'
+    )
+
+    assert yaml_paths.remote_refs(config) == {"dev", "main"}
 
 
 def test_p4_camera_package_path_is_relative_to_the_top_level_yaml() -> None:
