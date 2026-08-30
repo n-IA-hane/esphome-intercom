@@ -549,10 +549,12 @@ def main() -> int:
     try:
         plan = json.loads(args.plan.read_text(encoding="utf-8"))
         candidate_bytes = args.candidate.read_bytes()
+        environment = dict(os.environ)
+        environment["HIL_CANDIDATE_LOCK"] = str(args.candidate.resolve())
         artifact = run_hil(
             plan,
             yaml.safe_load(args.hardware_map.read_text(encoding="utf-8")),
-            environment=dict(os.environ),
+            environment=environment,
             selected_job=args.job,
             candidate=json.loads(candidate_bytes),
             source_lock_sha256=hashlib.sha256(candidate_bytes).hexdigest(),

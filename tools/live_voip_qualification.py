@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import ssl
 import subprocess
+import sys
 import time
 from typing import Any
 import urllib.error
@@ -49,10 +50,14 @@ DEFAULT_TOKEN_FILE = Path("/home/codex/.secrets/esphome-intercom/ha_token_codex"
 DEFAULT_AUTH_FILE = Path("/home/codex/.secrets/esphome-intercom/ha_home_auth.json")
 OUT = Path("test_runs/live_voip_qualification")
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.candidate_lock import load_lock  # noqa: E402
 
 
-def candidate_revision() -> dict[str, object]:
-    """Identify the exact source revision exercised by a live artifact."""
+def diagnostic_revision() -> dict[str, object]:
+    """Describe an ad-hoc run that is not release qualification evidence."""
 
     commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"],
@@ -66,7 +71,27 @@ def candidate_revision() -> dict[str, object]:
             text=True,
         ).strip()
     )
-    return {"commit": commit, "dirty": dirty}
+    return {"qualifying": False, "commit": commit, "dirty": dirty}
+
+
+def candidate_revision() -> dict[str, object]:
+    """Return the locked HIL candidate, or label a standalone lab run diagnostic."""
+
+    configured = os.environ.get("HIL_CANDIDATE_LOCK", "")
+    return load_lock(Path(configured).resolve()) if configured else diagnostic_revision()
+
+
+def qualification_candidate(args: argparse.Namespace) -> dict[str, object]:
+    """Freeze the multi-repository candidate before touching live systems."""
+
+    configured = args.candidate_lock or os.environ.get("HIL_CANDIDATE_LOCK", "")
+    if configured:
+        return load_lock(Path(configured).resolve())
+    if args.diagnostic:
+        return diagnostic_revision()
+    raise RuntimeError(
+        "live qualification requires --candidate-lock; use --diagnostic only for ad-hoc investigation"
+    )
 
 
 def _refresh_ha_token(auth_file: Path) -> str:
@@ -150,9 +175,22 @@ def active_call_ids(state: dict[str, Any]) -> set[str]:
     }
 
 
+def active_call_tokens(state: dict[str, Any]) -> set[tuple[str, int]]:
+    """Return generation-aware call identities from one runtime snapshot."""
+
+    tokens = {
+        (str(item.get("call_id") or ""), int(item.get("generation") or 0))
+        for item in state.get("active_call_tokens") or ()
+        if isinstance(item, dict) and str(item.get("call_id") or "")
+    }
+    if tokens:
+        return tokens
+    return {(call_id, 0) for call_id in active_call_ids(state)}
+
+
 async def wait_new_call_id(
     ws: Any,
-    existing_call_ids: set[str],
+    existing_call_tokens: set[tuple[str, int]],
     *,
     timeout: float = 12.0,
 ) -> str:
@@ -162,9 +200,9 @@ async def wait_new_call_id(
     last: dict[str, Any] = {}
     while time.monotonic() < deadline:
         last = await ws.softphone_state()
-        created = active_call_ids(last) - existing_call_ids
+        created = active_call_tokens(last) - existing_call_tokens
         if len(created) == 1:
-            return created.pop()
+            return created.pop()[0]
         if len(created) > 1:
             raise AssertionError(
                 f"multiple calls appeared after baseline: {sorted(created)}"
@@ -1480,6 +1518,7 @@ async def run(args: argparse.Namespace) -> int:
                 f"{scenario.id}: {scenario.title} requires={','.join(sorted(scenario.requires))}"
             )
         return 0
+    candidate = qualification_candidate(args)
     apply_isolated_group_defaults(args)
     token = qualification_token(args)
     ha = HaRest(args.ha_url, token, insecure=args.insecure)
@@ -1601,7 +1640,7 @@ async def run(args: argparse.Namespace) -> int:
                 artifact = {
                     "schema_version": 2,
                     "created_at": datetime.now(UTC).isoformat(),
-                    "candidate": candidate_revision(),
+                    "candidate": candidate,
                     "esp": esp_spec.key,
                     "results": results,
                     "samples": ctx.artifacts,
@@ -1642,6 +1681,16 @@ def parse_args() -> argparse.Namespace:
         help="local HA OAuth JSON used when the private browser helper is absent",
     )
     parser.add_argument("--token")
+    parser.add_argument(
+        "--candidate-lock",
+        type=Path,
+        help="immutable multi-repository candidate lock for qualifying runs",
+    )
+    parser.add_argument(
+        "--diagnostic",
+        action="store_true",
+        help="allow an explicitly non-qualifying ad-hoc run",
+    )
     parser.add_argument(
         "--credentials",
         type=Path,

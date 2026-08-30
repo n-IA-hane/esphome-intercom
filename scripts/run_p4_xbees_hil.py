@@ -26,7 +26,7 @@ from live_voip_qualification import (  # noqa: E402
     EspApi,
     HaRest,
     HaWs,
-    active_call_ids,
+    active_call_tokens,
     candidate_revision,
     norm,
     phonebook_contact,
@@ -104,7 +104,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 for cycle in range(1, args.cycles + 1):
                     started = time.monotonic()
                     before = await ws.softphone_state()
-                    existing_call_ids = active_call_ids(before)
+                    existing_call_ids = active_call_tokens(before)
                     await asyncio.to_thread(xb.call_ha_route, args.destination)
                     # The route completes asynchronously after the final SIP
                     # INFO digit. Use persistent HA relay counters as the first

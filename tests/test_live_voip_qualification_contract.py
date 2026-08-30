@@ -111,16 +111,22 @@ class LiveVoipQualificationContractTest(unittest.TestCase):
             runner.norm("Waveshare_P4_Touch"),
         )
 
-    def test_candidate_revision_records_commit_and_dirty_state(self) -> None:
+    def test_diagnostic_revision_is_explicitly_non_qualifying(self) -> None:
         with unittest.mock.patch.object(
             runner.subprocess,
             "check_output",
             side_effect=["abc123\n", " M custom_components/voip_stack/a.py\n"],
         ):
             self.assertEqual(
-                runner.candidate_revision(),
-                {"commit": "abc123", "dirty": True},
+                runner.diagnostic_revision(),
+                {"qualifying": False, "commit": "abc123", "dirty": True},
             )
+
+    def test_qualification_candidate_requires_lock_or_diagnostic(self) -> None:
+        args = SimpleNamespace(candidate_lock=None, diagnostic=False)
+        with unittest.mock.patch.dict(runner.os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "requires --candidate-lock"):
+                runner.qualification_candidate(args)
 
     def test_active_call_ids_merge_runtime_and_media_owners(self) -> None:
         self.assertEqual(
@@ -133,11 +139,28 @@ class LiveVoipQualificationContractTest(unittest.TestCase):
             {"call-a", "call-b"},
         )
 
+    def test_active_call_tokens_preserve_reused_call_id_generation(self) -> None:
+        self.assertEqual(
+            runner.active_call_tokens(
+                {
+                    "active_call_ids": ["same-id"],
+                    "active_call_tokens": [
+                        {"call_id": "same-id", "generation": 7}
+                    ],
+                }
+            ),
+            {("same-id", 7)},
+        )
+
     def test_new_call_selection_rejects_unrelated_concurrent_calls(self) -> None:
         ws = SimpleNamespace(
             softphone_state=AsyncMock(
                 return_value={
-                    "active_call_ids": ["old", "wanted", "unrelated"],
+                    "active_call_tokens": [
+                        {"call_id": "old", "generation": 1},
+                        {"call_id": "wanted", "generation": 2},
+                        {"call_id": "unrelated", "generation": 3},
+                    ],
                     "rtp_relays": {},
                 }
             )
@@ -145,7 +168,7 @@ class LiveVoipQualificationContractTest(unittest.TestCase):
 
         with self.assertRaisesRegex(AssertionError, "multiple calls"):
             asyncio.run(
-                runner.wait_new_call_id(ws, {"old"}, timeout=0.01)
+                runner.wait_new_call_id(ws, {("old", 1)}, timeout=0.01)
             )
 
     def test_matrix_covers_real_ha_and_esp_paths(self) -> None:

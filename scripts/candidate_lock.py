@@ -17,6 +17,19 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCES = ROOT / "qualification/sources.json"
 
 
+def load_lock(path: Path) -> dict[str, object]:
+    """Load one candidate lock and verify its content identity."""
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("candidate lock must be a JSON object")
+    stored_id = str(payload.get("candidate_id") or "")
+    computed_id = candidate_id(payload)
+    if not stored_id or stored_id != computed_id:
+        raise RuntimeError("candidate lock identity mismatch")
+    return payload
+
+
 def candidate_id(payload: dict[str, object]) -> str:
     """Return the content identity without trusting a stored digest."""
 

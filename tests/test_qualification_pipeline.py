@@ -15,7 +15,7 @@ from qualification.evidence import (
     derive_scenario_evidence,
     validate_claim_contracts,
 )
-from scripts.candidate_lock import build_lock, candidate_id
+from scripts.candidate_lock import build_lock, candidate_id, load_lock
 from scripts.install_ha_qualification_package import install
 from scripts.qualification_plan import build_plan
 from scripts.merge_qualification_results import merge_results
@@ -48,6 +48,7 @@ def _candidate(head: str) -> dict[str, object]:
             "esphome-voip-stack": {"commit": "voip", "dirty": False},
             "esphome-audio-stack": {"commit": "audio", "dirty": False},
             "esphome-runtime-controller": {"commit": "runtime", "dirty": False},
+            "esphome-esp-video-camera": {"commit": "camera", "dirty": False},
         },
         "toolchain": {},
     }
@@ -787,6 +788,16 @@ def test_candidate_lock_has_stable_identity(monkeypatch, tmp_path: Path) -> None
 
     assert first == second
     assert len(first["candidate_id"]) == 64
+
+
+def test_candidate_lock_rejects_tampered_content(tmp_path: Path) -> None:
+    path = tmp_path / "candidate-lock.json"
+    payload = _candidate("head")
+    payload["repositories"]["esphome-intercom"]["commit"] = "changed"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="identity mismatch"):
+        load_lock(path)
 
 
 def test_result_merge_rejects_duplicate_job(tmp_path: Path) -> None:

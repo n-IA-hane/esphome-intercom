@@ -718,6 +718,7 @@ def _sip_runtime_snapshot(
         "active_dialogs": 0,
         "pending_call_ids": [],
         "active_call_ids": [],
+        "active_call_tokens": [],
         "last_sip_event": "",
         "last_sip_status_code": 0,
         "last_sip_reason": "",
@@ -857,6 +858,14 @@ def _sip_runtime_snapshot(
             )
     data["pending_call_ids"] = sorted(set(data["pending_call_ids"]))
     data["active_call_ids"] = sorted(set(data["active_call_ids"]))
+    data["active_call_tokens"] = [
+        {"call_id": session.call_id, "generation": session.generation}
+        for session in sorted(
+            registry.sessions.values(),
+            key=lambda item: (item.call_id, item.generation),
+        )
+        if session.live and not session.metadata.get("event_only")
+    ]
     runtime = runtime_data(hass)
     data["runtime_resources"] = runtime_resource_snapshot(
         registry,
@@ -1066,6 +1075,7 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         "active_dialogs": runtime["active_dialogs"],
         "pending_call_ids": runtime["pending_call_ids"],
         "active_call_ids": runtime["active_call_ids"],
+        "active_call_tokens": runtime["active_call_tokens"],
         "rtp_tx_packets": _runtime_counter(store, runtime, "rtp_tx_packets"),
         "rtp_rx_packets": _runtime_counter(store, runtime, "rtp_rx_packets"),
         "rtp_tx_bytes": _runtime_counter(store, runtime, "rtp_tx_bytes"),

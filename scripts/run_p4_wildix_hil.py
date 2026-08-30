@@ -26,7 +26,7 @@ from live_voip_qualification import (  # noqa: E402
     DEFAULT_TOKEN_FILE,
     EspApi,
     HaWs,
-    active_call_ids,
+    active_call_tokens,
     candidate_revision,
     norm,
     qualification_token,
@@ -132,7 +132,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 # extensions and explicit service codes have different
                 # dial-plan semantics and must not be silently rewritten.
                 before = await ws.softphone_state()
-                existing_call_ids = active_call_ids(before)
+                existing_call_ids = active_call_tokens(before)
                 await esp.service("start_call", {"dest": args.destination})
                 await wait_peer(peer, "Incoming call", 18)
                 peer.command("/accept")
