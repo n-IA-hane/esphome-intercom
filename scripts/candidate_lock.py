@@ -30,6 +30,26 @@ def load_lock(path: Path) -> dict[str, object]:
     return payload
 
 
+def verify_workspace(
+    payload: dict[str, object],
+    *,
+    sources: Path = DEFAULT_SOURCES,
+) -> None:
+    """Require every current repository to match one clean locked revision."""
+
+    config = json.loads(sources.read_text(encoding="utf-8"))
+    expected = payload.get("repositories")
+    configured = config.get("repositories")
+    if not isinstance(expected, dict) or not isinstance(configured, dict):
+        raise RuntimeError("candidate repository map is invalid")
+    if set(expected) != set(configured):
+        raise RuntimeError("candidate repository set does not match the workspace")
+    for name, source in configured.items():
+        current = _repository((ROOT / source["path"]).resolve())
+        if current != expected[name]:
+            raise RuntimeError(f"workspace does not match candidate repository: {name}")
+
+
 def candidate_id(payload: dict[str, object]) -> str:
     """Return the content identity without trusting a stored digest."""
 

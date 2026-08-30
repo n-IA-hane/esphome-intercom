@@ -15,7 +15,12 @@ from qualification.evidence import (
     derive_scenario_evidence,
     validate_claim_contracts,
 )
-from scripts.candidate_lock import build_lock, candidate_id, load_lock
+from scripts.candidate_lock import (
+    build_lock,
+    candidate_id,
+    load_lock,
+    verify_workspace,
+)
 from scripts.install_ha_qualification_package import install
 from scripts.qualification_plan import build_plan
 from scripts.merge_qualification_results import merge_results
@@ -798,6 +803,24 @@ def test_candidate_lock_rejects_tampered_content(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="identity mismatch"):
         load_lock(path)
+
+
+def test_candidate_lock_rejects_workspace_drift(monkeypatch, tmp_path: Path) -> None:
+    sources = tmp_path / "sources.json"
+    sources.write_text(
+        json.dumps({"repositories": {"repo": {"path": "."}}}),
+        encoding="utf-8",
+    )
+    payload = {
+        "repositories": {"repo": {"commit": "locked", "dirty": False}}
+    }
+    monkeypatch.setattr(
+        "scripts.candidate_lock._repository",
+        lambda _path: {"commit": "changed", "dirty": False},
+    )
+
+    with pytest.raises(RuntimeError, match="workspace does not match"):
+        verify_workspace(payload, sources=sources)
 
 
 def test_result_merge_rejects_duplicate_job(tmp_path: Path) -> None:

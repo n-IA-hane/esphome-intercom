@@ -53,7 +53,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.candidate_lock import load_lock  # noqa: E402
+from scripts.candidate_lock import load_lock, verify_workspace  # noqa: E402
 
 
 def diagnostic_revision() -> dict[str, object]:
@@ -86,7 +86,9 @@ def qualification_candidate(args: argparse.Namespace) -> dict[str, object]:
 
     configured = args.candidate_lock or os.environ.get("HIL_CANDIDATE_LOCK", "")
     if configured:
-        return load_lock(Path(configured).resolve())
+        candidate = load_lock(Path(configured).resolve())
+        verify_workspace(candidate)
+        return candidate
     if args.diagnostic:
         return diagnostic_revision()
     raise RuntimeError(
@@ -1611,7 +1613,10 @@ async def run(args: argparse.Namespace) -> int:
                         }
                     )
                     print(f"PASS {scenario.id}")
-                    if args.runtime_heap_sample:
+                    if (
+                        args.runtime_heap_sample
+                        and "capture_runtime_heap" in esp.services
+                    ):
                         # The call state can reach idle one scheduler turn
                         # before the ringtone owner has joined its decoder.
                         # This delay is an observation boundary, never a
