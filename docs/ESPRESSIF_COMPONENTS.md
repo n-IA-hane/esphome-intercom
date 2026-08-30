@@ -19,7 +19,6 @@ enabled explicitly.
 | Component | Local reason | Public compatibility |
 |---|---|---|
 | `audio_http` | `persistent_ring_buffer` allocates the encoded media ring once and reuses it across playback cycles. | Disabled by default. Existing YAML is unchanged. |
-| `speaker` | Optional pause policy releases a paused decoder pipeline, and decoder attachment uses an event instead of a fixed delay. | Existing pause behavior remains the default. |
 | `voice_assistant` | `tts_playback_start_timeout` allows slow TTS engines to exceed the upstream two-second start limit. | Upstream two-second default is preserved. |
 | `spi` | Enables the official ESP-IDF 5.5 PSRAM DMA transmit path for aligned external buffers. | Only affects ESP-IDF PSRAM transfers. Arduino and internal buffers retain their normal path. |
 | `mipi_dsi` | Serializes LVGL and direct video submissions and exposes the immutable framebuffer to the narrow P4 renderer adapter. | Panel models and normal ESPHome display behavior remain aligned with the recorded upstream baseline. |

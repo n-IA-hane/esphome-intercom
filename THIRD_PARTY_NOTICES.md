@@ -13,7 +13,6 @@ ESPHome's license is included in `licenses/ESPHOME-LICENSE.txt`.
 
 | Local path | Upstream | Notes |
 |---|---|---|
-| `esphome/components/speaker/` | ESPHome `speaker` component | Fork with local pause/release and decoder-source scheduling patches. See `esphome/components/speaker/UPSTREAM.md`. |
 | `esphome/components/voice_assistant/` | ESPHome `voice_assistant` component | Fork with configurable TTS playback-start timeout. See `esphome/components/voice_assistant/UPSTREAM.md`. |
 | `esphome/components/audio/` | ESPHome audio component family | Local copy/adaptation used by maintained media profiles; resolves ESPHome audio codec libraries at build time. |
 | `esphome/components/mipi_dsi/` | ESPHome community component lineage | Local P4 display support and panel models. |
@@ -49,7 +48,7 @@ Component Manager. They are not vendored here; their upstream licenses apply.
 | `espressif/esp-dsp`, `espressif/esp-sr`, `espressif/gmf_ai_audio` | ESP AEC/AFE profiles. |
 | `espressif/esp_video` 2.4.1, `esp_ipa` 2.3.x | P4 V4L2 camera, ISP and image-processing pipeline. Espressif MIT license; see `licenses/ESPRESSIF-MIT.txt`. |
 | `esp_cam_sensor` 2.4.x, compatible `esp_sccb_intf` | P4 camera-sensor and SCCB drivers. Apache-2.0; see `licenses/APACHE-2.0.txt`. |
-| `espressif/esp_h264` 1.3.6 | Optional P4 hardware H.264 encoder and software decoder. Apache-2.0; see `licenses/APACHE-2.0.txt`. |
+| `espressif/esp_h264` 1.3.8 | Optional P4 hardware H.264 encoder and software decoder. Apache-2.0; see `licenses/APACHE-2.0.txt`. |
 | `espressif/esp_image_effects` 1.1.0 | Optional P4 H.264 I420-to-PPA color-layout conversion. Espressif Modified MIT; see `licenses/ESPRESSIF-MODIFIED-MIT.txt`. |
 
 Firmware using Espressif-restricted components is intended for Espressif
