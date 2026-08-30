@@ -171,6 +171,49 @@ class LiveVoipQualificationContractTest(unittest.TestCase):
                 runner.wait_new_call_id(ws, {("old", 1)}, timeout=0.01)
             )
 
+    def test_new_relay_selection_uses_canonical_media_owner(self) -> None:
+        ws = SimpleNamespace(
+            softphone_state=AsyncMock(
+                side_effect=[
+                    {"rtp_relays": {"old": {}}},
+                    {"rtp_relays": {"old": {}, "canonical": {}}},
+                ]
+            )
+        )
+
+        self.assertEqual(
+            asyncio.run(
+                runner.wait_new_relay_call_id(
+                    ws,
+                    {"old"},
+                    timeout=0.5,
+                )
+            ),
+            "canonical",
+        )
+
+    def test_new_relay_selection_rejects_concurrent_media_owners(self) -> None:
+        ws = SimpleNamespace(
+            softphone_state=AsyncMock(
+                return_value={
+                    "rtp_relays": {
+                        "old": {},
+                        "call-a": {},
+                        "call-b": {},
+                    }
+                }
+            )
+        )
+
+        with self.assertRaisesRegex(AssertionError, "multiple RTP relays"):
+            asyncio.run(
+                runner.wait_new_relay_call_id(
+                    ws,
+                    {"old"},
+                    timeout=0.01,
+                )
+            )
+
     def test_matrix_covers_real_ha_and_esp_paths(self) -> None:
         scenarios = runner.SCENARIOS
         self.assertIn("ha_to_esp_extension_answer_hangup", scenarios)

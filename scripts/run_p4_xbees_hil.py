@@ -131,6 +131,11 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                         timeout=20,
                         call_id=call_id,
                     )
+                    if args.screenshot is not None:
+                        screenshot = args.screenshot.with_name(
+                            f"{args.screenshot.stem}-cycle-{cycle}{args.screenshot.suffix}"
+                        )
+                        await asyncio.to_thread(xb.screenshot, screenshot)
                     await asyncio.sleep(args.video_hold)
                     await wait_esp(esp, {"in_call"}, timeout=2)
                     terminal_side = "xbees" if cycle % 2 else "p4"
@@ -214,6 +219,7 @@ def main() -> int:
     parser.add_argument("--audio-hold", type=float, default=4)
     parser.add_argument("--video-hold", type=float, default=6)
     parser.add_argument("--registration-settle", type=float, default=12)
+    parser.add_argument("--screenshot", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:

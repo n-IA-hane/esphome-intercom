@@ -26,12 +26,11 @@ from live_voip_qualification import (  # noqa: E402
     EspApi,
     HaRest,
     HaWs,
-    active_call_tokens,
     candidate_revision,
     norm,
     phonebook_contact,
     qualification_token,
-    wait_new_call_id,
+    wait_new_relay_call_id,
     wait_phonebook_contains,
 )
 from run_p4_wildix_hil import wait_media, wait_quiescent  # noqa: E402
@@ -75,7 +74,6 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             original_volume = float(esp.values.get("master_volume") or 0)
             original_auto = norm(esp.values.get("auto_answer")) == "on"
             original_extension = str(esp.values.get("voip_extension") or "")
-            original_send_video = norm(esp.values.get("send_video")) == "on"
             try:
                 existing = phonebook_contact(
                     await ha.state("sensor.voip_phonebook"), args.destination
@@ -99,7 +97,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
 
                 before = await ws.softphone_state()
                 await asyncio.to_thread(zoiper.call, args.destination)
-                call_id = await wait_new_call_id(ws, active_call_tokens(before))
+                call_id = await wait_new_relay_call_id(
+                    ws, set(before.get("rtp_relays") or {})
+                )
                 audio = await wait_media(ws, video=False, timeout=20, call_id=call_id)
                 await esp.wait("voip_state", {"in_call"}, timeout=5)
                 await asyncio.to_thread(zoiper.enable_video)
@@ -107,6 +107,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 if norm(esp.values.get("send_video")) != "on":
                     await esp.switch("send_video", True)
                 video = await wait_media(ws, video=True, timeout=20, call_id=call_id)
+                if args.screenshot is not None:
+                    await asyncio.to_thread(zoiper.screenshot, args.screenshot)
                 await asyncio.sleep(args.video_hold)
                 await asyncio.to_thread(zoiper.hangup)
                 quiescent = await wait_quiescent(ws, esp)
@@ -127,8 +129,6 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                         await esp.service("hangup_call")
                 with suppress(Exception):
                     await asyncio.to_thread(zoiper.hangup)
-                with suppress(Exception):
-                    await esp.switch("send_video", original_send_video)
                 with suppress(Exception):
                     await esp.switch("auto_answer", original_auto)
                 with suppress(Exception):
@@ -157,6 +157,7 @@ def main() -> int:
     )
     parser.add_argument("--registration-settle", type=float, default=12)
     parser.add_argument("--video-hold", type=float, default=6)
+    parser.add_argument("--screenshot", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:

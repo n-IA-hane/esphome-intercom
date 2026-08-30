@@ -213,6 +213,33 @@ async def wait_new_call_id(
     raise AssertionError(f"no new call appeared after baseline: {last}")
 
 
+async def wait_new_relay_call_id(
+    ws: Any,
+    existing_relay_ids: set[str],
+    *,
+    timeout: float = 12.0,
+) -> str:
+    """Return the canonical call id once its RTP relay exists."""
+
+    deadline = time.monotonic() + timeout
+    last: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        last = await ws.softphone_state()
+        created = {
+            str(call_id)
+            for call_id in (last.get("rtp_relays") or {})
+            if str(call_id) and str(call_id) not in existing_relay_ids
+        }
+        if len(created) == 1:
+            return created.pop()
+        if len(created) > 1:
+            raise AssertionError(
+                f"multiple RTP relays appeared after baseline: {sorted(created)}"
+            )
+        await asyncio.sleep(0.2)
+    raise AssertionError(f"no new RTP relay appeared after baseline: {last}")
+
+
 async def maybe_await(result: Any) -> None:
     if hasattr(result, "__await__"):
         await result
