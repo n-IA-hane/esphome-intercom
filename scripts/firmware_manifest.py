@@ -207,7 +207,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--output", type=Path, default=Path("firmware-manifest.json"))
-    parser.add_argument("--expected", type=int, default=6)
+    parser.add_argument("--expected", type=int, default=len(FIRMWARE_PROFILES))
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--candidate", type=Path)
     parser.add_argument("--bundle", type=Path)

@@ -77,6 +77,12 @@ FIRMWARE_PROFILES = (
         frozenset({"esp_control", "sip_core", "audio_contract"}),
     ),
     FirmwareProfile(
+        "spotpear-ball-v2-opus",
+        "yamls/voip-only/single-bus/spotpear-ball-v2-voip.yaml",
+        ".esphome/build/spotpear-ball-v2/build/firmware.factory.bin",
+        frozenset({"esp_control", "sip_core", "audio_contract"}),
+    ),
+    FirmwareProfile(
         "waveshare-p4-jpeg",
         "yamls/voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml",
         ".esphome/.esphome/build/waveshare-p4-touch-videophone-jpeg/build/firmware.factory.bin",
@@ -86,6 +92,12 @@ FIRMWARE_PROFILES = (
         "waveshare-p4-h264",
         "yamls/voip-only/single-bus/waveshare-p4-touch-videophone-h264.yaml",
         ".esphome/.esphome/build/waveshare-p4-touch-videophone-h264/build/firmware.factory.bin",
+        frozenset({"esp_control", "sip_core", "audio_contract", "video"}),
+    ),
+    FirmwareProfile(
+        "waveshare-p4-jpeg-opus",
+        "yamls/voip-only/single-bus/waveshare-p4-touch-videophone-jpeg-opus.yaml",
+        ".esphome/.esphome/build/waveshare-p4-touch-videophone-jpeg-opus/build/firmware.factory.bin",
         frozenset({"esp_control", "sip_core", "audio_contract", "video"}),
     ),
     FirmwareProfile(
