@@ -1870,6 +1870,165 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         sip.mark_sip_event(self, "SIP_RESPONSE", int(status), reason)
         return True
 
+    def _route_client_response(self, response, addr) -> None:
+        """Deliver one SIP response to its client transaction, if present."""
+
+        sip.mark_sip_event(
+            self,
+            "SIP_RESPONSE",
+            int(response.status_code or 0),
+            response.reason,
+        )
+        try:
+            via_values = response.header_values("Via")
+            branch = sip.parse_via(via_values[0] if via_values else "").branch
+        except (TypeError, ValueError, sip.SipError):
+            branch = ""
+        queue = self._client_transaction_responses.get(branch)
+        if queue is not None:
+            put_drop_oldest(queue, (response, addr))
+            return
+        _LOGGER.info("SIP RX response ignored from %s:%s", addr[0], addr[1])
+
+    async def _handle_register_request(self, request, addr) -> None:
+        if self.on_register is None:
+            self._send_response(request, addr, 405, "Method Not Allowed")
+            return
+        result = await self.on_register(request, addr, self.signaling_transport)
+        raw = sip.build_uas_response(
+            request,
+            int(result.status),
+            str(result.reason),
+            top_via=_response_via_header(request, addr),
+            extra_headers=tuple(getattr(result, "headers", ()) or ()),
+        )
+        if self._send(raw, addr):
+            _LOGGER.info(
+                "SIP TX %s %s to %s:%s",
+                result.status,
+                result.reason,
+                addr[0],
+                addr[1],
+            )
+            sip.mark_sip_event(
+                self, "SIP_RESPONSE", int(result.status), str(result.reason)
+            )
+        else:
+            _LOGGER.warning("SIP REGISTER response dropped for %s:%s", addr[0], addr[1])
+
+    async def _handle_application_request(
+        self, request, addr, request_cseq, *, datagram_size: int
+    ) -> None:
+        if request.method == "MESSAGE" and self.signaling_transport == "UDP":
+            if datagram_size > 1300:
+                self._send_response(request, addr, 513, "Message Too Large")
+                return
+        if self.on_request is None:
+            self._send_response(request, addr, 405, "Method Not Allowed")
+            return
+        request_key = (request.header("Call-ID"), request_cseq.number, request.method)
+        completed_application = self.completed_application_requests.get(request_key)
+        if completed_application is not None:
+            completed_request, completed_result = completed_application
+            if _same_request_transaction(
+                request, completed_request.request, addr, completed_request.addr
+            ):
+                self._send_response(
+                    request,
+                    addr,
+                    completed_result.status,
+                    completed_result.reason,
+                    to_tag=completed_result.to_tag,
+                    extra_headers=completed_result.headers,
+                )
+            else:
+                self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+            return
+        result = await self.on_request(
+            request,
+            addr,
+            self.signaling_transport,
+            self._send_application_follow_up,
+        )
+        self._remember_completed(
+            self.completed_application_requests,
+            request_key,
+            (_CompletedRequest(request, addr, result.status, result.reason), result),
+        )
+        self._send_response(
+            request,
+            addr,
+            result.status,
+            result.reason,
+            to_tag=result.to_tag,
+            extra_headers=result.headers,
+        )
+        if result.follow_up is not None and 200 <= result.status < 300:
+            task = asyncio.create_task(
+                self._send_application_follow_up(request, addr, result),
+                name=(
+                    f"voip-sip-{result.follow_up.method.lower()}-"
+                    f"{request.header('Call-ID')}"
+                ),
+            )
+            self._maintenance_tasks.add(task)
+            task.add_done_callback(self._maintenance_tasks.discard)
+
+    async def _handle_info_request(self, request, addr, request_cseq) -> None:
+        call_id = request.header("Call-ID")
+        info_key = (call_id, request_cseq.number)
+        completed = self.completed_infos.get(info_key)
+        if completed is not None:
+            if _same_request_transaction(
+                request, completed.request, addr, completed.addr
+            ):
+                self._send_response(
+                    request, addr, completed.status, completed.reason
+                )
+            else:
+                self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+            return
+        dialog = self.active_dialogs.get(call_id)
+        if dialog is None or not _same_dialog_request(request, dialog, addr):
+            self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+            return
+        if self.on_info is not None:
+            await self.on_info(request, addr, self.signaling_transport)
+        self._remember_completed(
+            self.completed_infos,
+            info_key,
+            _CompletedRequest(request, addr, 200, "OK"),
+        )
+        dialog.cseq = max(dialog.cseq, request_cseq.number + 1)
+        self._send_response(request, addr, 200, "OK")
+
+    async def _handle_bye_request(self, request, addr) -> None:
+        call_id = request.header("Call-ID")
+        dialog = self.active_dialogs.get(call_id)
+        if dialog is None:
+            completed = self.completed_byes.get(call_id)
+            if completed is not None and _same_request_transaction(
+                request, completed.request, addr, completed.addr
+            ):
+                self._send_response(request, addr, completed.status, completed.reason)
+            else:
+                self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+            return
+        if not _same_dialog_request(request, dialog, addr):
+            self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+            return
+        delayed = self._retire_dialog(call_id)
+        if delayed is not None:
+            await self._rollback_delayed_offer(delayed)
+        self._remember_completed(
+            self.completed_byes,
+            call_id,
+            _CompletedRequest(request, addr, 200, "OK"),
+        )
+        self._send_response(request, addr, 200, "OK")
+        if self.on_terminated is not None:
+            await self.on_terminated(call_id, "remote_hangup")
+
     async def _handle_datagram(self, data: bytes, addr) -> None:
         try:
             request = sip.parse_message(data)
@@ -1877,17 +2036,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             _LOGGER.info("SIP RX malformed from %s:%s: %s", addr[0], addr[1], err)
             return
         if not request.is_request:
-            sip.mark_sip_event(self, "SIP_RESPONSE", int(request.status_code or 0), request.reason)
-            try:
-                via_values = request.header_values("Via")
-                branch = sip.parse_via(via_values[0] if via_values else "").branch
-            except (TypeError, ValueError, sip.SipError):
-                branch = ""
-            queue = self._client_transaction_responses.get(branch)
-            if queue is not None:
-                put_drop_oldest(queue, (request, addr))
-                return
-            _LOGGER.info("SIP RX response ignored from %s:%s", addr[0], addr[1])
+            self._route_client_response(request, addr)
             return
 
         _LOGGER.info("SIP RX %s %s from %s:%s", request.method, request.uri, addr[0], addr[1])
@@ -1932,89 +2081,12 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             self._send_response(request, addr, 200, "OK")
             return
         if request.method == "REGISTER":
-            if self.on_register is not None:
-                result = await self.on_register(request, addr, self.signaling_transport)
-                raw = sip.build_uas_response(
-                    request,
-                    int(result.status),
-                    str(result.reason),
-                    top_via=_response_via_header(request, addr),
-                    extra_headers=tuple(getattr(result, "headers", ()) or ()),
-                )
-                if self._send(raw, addr):
-                    _LOGGER.info("SIP TX %s %s to %s:%s", result.status, result.reason, addr[0], addr[1])
-                    sip.mark_sip_event(self, "SIP_RESPONSE", int(result.status), str(result.reason))
-                else:
-                    _LOGGER.warning("SIP REGISTER response dropped for %s:%s", addr[0], addr[1])
-                return
-            self._send_response(request, addr, 405, "Method Not Allowed")
+            await self._handle_register_request(request, addr)
             return
         if request.method in {"MESSAGE", "PUBLISH", "SUBSCRIBE"}:
-            if (
-                request.method == "MESSAGE"
-                and self.signaling_transport == "UDP"
-                and len(data) > 1300
-            ):
-                self._send_response(request, addr, 513, "Message Too Large")
-                return
-            if self.on_request is None:
-                self._send_response(request, addr, 405, "Method Not Allowed")
-                return
-            request_key = (
-                request.header("Call-ID"),
-                request_cseq.number,
-                request.method,
+            await self._handle_application_request(
+                request, addr, request_cseq, datagram_size=len(data)
             )
-            completed_application = self.completed_application_requests.get(
-                request_key
-            )
-            if completed_application is not None:
-                completed_request, completed_result = completed_application
-                if _same_request_transaction(
-                    request,
-                    completed_request.request,
-                    addr,
-                    completed_request.addr,
-                ):
-                    self._send_response(
-                        request,
-                        addr,
-                        completed_result.status,
-                        completed_result.reason,
-                        to_tag=completed_result.to_tag,
-                        extra_headers=completed_result.headers,
-                    )
-                else:
-                    self._send_response(
-                        request, addr, 481, "Call/Transaction Does Not Exist"
-                    )
-                return
-            result = await self.on_request(
-                request,
-                addr,
-                self.signaling_transport,
-                self._send_application_follow_up,
-            )
-            self._remember_completed(
-                self.completed_application_requests,
-                request_key,
-                (_CompletedRequest(request, addr, result.status, result.reason), result),
-            )
-            self._send_response(
-                request,
-                addr,
-                result.status,
-                result.reason,
-                to_tag=result.to_tag,
-                extra_headers=result.headers,
-            )
-            if result.follow_up is not None and 200 <= result.status < 300:
-                task = asyncio.create_task(
-                    self._send_application_follow_up(request, addr, result),
-                    name=f"voip-sip-{result.follow_up.method.lower()}-{request.header('Call-ID')}",
-                )
-                self._maintenance_tasks.add(task)
-                task.add_done_callback(self._maintenance_tasks.discard)
             return
         if request.method == "PRACK":
             call_id = request.header("Call-ID")
@@ -2153,28 +2225,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 )
             return
         if request.method == "INFO":
-            call_id = request.header("Call-ID")
-            info_key = (call_id, request_cseq.number)
-            completed_info = self.completed_infos.get(info_key)
-            if completed_info is not None:
-                if _same_request_transaction(request, completed_info.request, addr, completed_info.addr):
-                    self._send_response(request, addr, completed_info.status, completed_info.reason)
-                else:
-                    self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
-                return
-            dialog = self.active_dialogs.get(call_id)
-            if dialog is None or not _same_dialog_request(request, dialog, addr):
-                self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
-                return
-            if self.on_info is not None:
-                await self.on_info(request, addr, self.signaling_transport)
-            self._remember_completed(
-                self.completed_infos,
-                info_key,
-                _CompletedRequest(request, addr, 200, "OK"),
-            )
-            dialog.cseq = max(dialog.cseq, request_cseq.number + 1)
-            self._send_response(request, addr, 200, "OK")
+            await self._handle_info_request(request, addr, request_cseq)
             return
         if request.method == "CANCEL":
             call_id = request.header("Call-ID")
@@ -2236,35 +2287,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 await self.on_terminated(call_id, "cancelled")
             return
         if request.method == "BYE":
-            call_id = request.header("Call-ID")
-            dialog = self.active_dialogs.get(call_id)
-            if dialog is None:
-                completed = self.completed_byes.get(call_id)
-                if completed is not None and _same_request_transaction(
-                    request,
-                    completed.request,
-                    addr,
-                    completed.addr,
-                ):
-                    self._send_response(request, addr, completed.status, completed.reason)
-                else:
-                    self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
-                return
-            same_dialog = _same_dialog_request(request, dialog, addr)
-            if not same_dialog:
-                self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
-                return
-            delayed = self._retire_dialog(call_id)
-            if delayed is not None:
-                await self._rollback_delayed_offer(delayed)
-            self._remember_completed(
-                self.completed_byes,
-                call_id,
-                _CompletedRequest(request, addr, 200, "OK"),
-            )
-            self._send_response(request, addr, 200, "OK")
-            if self.on_terminated is not None:
-                await self.on_terminated(call_id, "remote_hangup")
+            await self._handle_bye_request(request, addr)
             return
         if request.method == "ACK":
             call_id = request.header("Call-ID")
