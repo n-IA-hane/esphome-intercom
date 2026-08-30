@@ -77,6 +77,7 @@ def _load_module(registry, answer_calls: list[dict]):
     _module(
         "media_session_updates",
         commit_audio_session_update=lambda *_args, **_kwargs: None,
+        commit_softphone_projection_update=lambda *_args, **_kwargs: None,
         commit_video_session_update=lambda *_args, **_kwargs: None,
     )
     _module("phone_endpoint", DEFAULT_ENDPOINT_ID="default")

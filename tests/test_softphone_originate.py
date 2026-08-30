@@ -146,6 +146,7 @@ def softphone_originate(monkeypatch):
                 "attach_outbound_connected_identity_state": Mock(),
                 "async_prepare_ha_outbound_call": AsyncMock(),
                 "async_track_outbound_sip_client": AsyncMock(),
+                "publish_outbound_sip_result": Mock(),
             },
         "peer_snapshot": {"async_advertise_host": AsyncMock(return_value="127.0.0.1")},
         "phone_endpoint": {

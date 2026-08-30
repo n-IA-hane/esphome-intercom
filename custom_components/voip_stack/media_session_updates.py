@@ -61,3 +61,55 @@ def commit_video_session_update(
     )
     session.media_generation += 1
     session.update_event.set()
+
+
+def commit_softphone_projection_update(
+    hass: Any,
+    *,
+    endpoint_id: str,
+    device_id: str,
+    call_id: str,
+    negotiated: Any,
+    video_direction: str,
+    sip_event: str,
+) -> None:
+    """Publish one committed media renegotiation to the browser owner."""
+
+    from .websocket_api import _fire_call_event, _ha_softphone_store
+
+    store = _ha_softphone_store(hass, endpoint_id)
+    if str(store.get("call_id") or "") != call_id:
+        return
+    video = negotiated.video_format
+    video_active = bool(video is not None and video_direction != "inactive")
+    store.update(
+        {
+            "audio_direction": negotiated.local_audio_direction,
+            "audio_connection_held": negotiated.remote_audio_connection_held,
+            "video_active": video_active,
+            "video_requested": video is not None,
+            "video_negotiated": video is not None,
+            "video_status": "active" if video_active else "inactive",
+            "video_failure_reason": "",
+            "video_format": video.wire_token() if video is not None else "",
+            "video_send_format": (
+                negotiated.send_video_format.wire_token()
+                if negotiated.send_video_format is not None
+                else ""
+            ),
+            "video_receive_format": (
+                negotiated.recv_video_format.wire_token()
+                if negotiated.recv_video_format is not None
+                else ""
+            ),
+            "video_direction": video_direction,
+            "video_connection_held": negotiated.remote_video_connection_held,
+            "last_sip_event": sip_event,
+            "media_renegotiations": int(store.get("media_renegotiations") or 0) + 1,
+        }
+    )
+    _fire_call_event(
+        hass,
+        dict(store, endpoint_id=endpoint_id, device_id=device_id),
+        "session",
+    )

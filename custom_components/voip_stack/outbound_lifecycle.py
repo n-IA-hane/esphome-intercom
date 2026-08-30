@@ -87,6 +87,107 @@ def _ha_peer_name(hass: HomeAssistant) -> str:
     return (hass.config.location_name or "").strip() or HA_PEER_FALLBACK_NAME
 
 
+def publish_outbound_sip_result(
+    hass: HomeAssistant,
+    *,
+    client,
+    result: str,
+    target: str,
+    endpoint_id: str,
+    local_name: str,
+    target_device_id: str,
+    sip_uri: str,
+    video_requested: bool,
+    video_failure_reason: str,
+) -> str:
+    """Commit and project one provisional or final outbound SIP result."""
+
+    public_result = sip_public_state(result)
+    if public_result not in {CallState.REMOTE_RINGING.value, CallState.IN_CALL.value}:
+        return public_result
+    registry = call_registry(hass)
+    session = registry.upsert(
+        client.dialog_ids.call_id,
+        state=public_result,
+        owner="ha_softphone",
+        caller=local_name,
+        callee=target,
+        route_kind="direct",
+        endpoint_id=endpoint_id,
+    )
+    common = {
+        "direction": "outgoing",
+        "target_device_id": target_device_id,
+        "last_sip_event": "SIP_RESPONSE",
+        "sip_uri": sip_uri,
+        "sip_transport": str(getattr(client, "signaling_transport", "udp")).lower(),
+    }
+    if public_result == CallState.REMOTE_RINGING.value:
+        publish_phone_projection(
+            hass,
+            session,
+            endpoint_id,
+            peer_name=target,
+            sip_status_code=180,
+            **common,
+        )
+        return public_result
+    if client.dialog is None:
+        return public_result
+
+    dialog = client.dialog
+    connected_party = str(getattr(client, "connected_party", "") or target).strip()
+    video_active = bool(
+        dialog.video_format is not None
+        and dialog.local_video_direction != "inactive"
+    )
+    status = (
+        "degraded"
+        if video_failure_reason
+        else "active"
+        if video_active
+        else "rejected"
+        if video_requested
+        else "inactive"
+    )
+    failure = video_failure_reason or (
+        "remote_video_rejected" if video_requested and not video_active else ""
+    )
+    publish_phone_projection(
+        hass,
+        session,
+        endpoint_id,
+        peer_name=connected_party,
+        connected_party=connected_party,
+        selected_tx_format=dialog.send_format.audio_format.wire_token(),
+        selected_rx_format=dialog.recv_format.audio_format.wire_token(),
+        selected_tx_rtp_format=dialog.send_format.wire_token(),
+        selected_rx_rtp_format=dialog.recv_format.wire_token(),
+        audio_direction=dialog.local_audio_direction,
+        audio_connection_held=dialog.remote_audio_connection_held,
+        video_active=video_active,
+        video_requested=video_requested,
+        video_negotiated=video_active,
+        video_status=status,
+        video_failure_reason=failure,
+        video_format=(dialog.video_format.wire_token() if dialog.video_format else ""),
+        video_send_format=(
+            dialog.send_video_format.wire_token()
+            if dialog.send_video_format is not None
+            else ""
+        ),
+        video_receive_format=(
+            dialog.recv_video_format.wire_token()
+            if dialog.recv_video_format is not None
+            else ""
+        ),
+        video_direction=dialog.local_video_direction,
+        sip_status_code=200,
+        **common,
+    )
+    return public_result
+
+
 async def async_track_outbound_sip_client(
     hass: HomeAssistant,
     *,
@@ -162,83 +263,28 @@ async def async_track_outbound_sip_client(
             )
             final = "error"
         public_final = sip_public_state(final)
-        connected_party = str(
-            getattr(client, "connected_party", "") or target
-        ).strip()
         if registry.sip_client_for(client.dialog_ids.call_id) is not client:
             # Hangup/replacement already revoked this watcher. A queued final
             # response must never resurrect a detached call in the HA store.
             return
         if public_final == CallState.IN_CALL.value and client.dialog is not None:
-            video_active = bool(
-                client.dialog.video_format is not None
-                and client.dialog.local_video_direction != "inactive"
-            )
-            video_status = (
-                "degraded"
-                if video_failure_reason
-                else "active"
-                if video_active
-                else "rejected"
-                if video_requested
-                else "inactive"
-            )
-            final_video_failure_reason = video_failure_reason or (
-                "remote_video_rejected"
-                if video_requested and not video_active
-                else ""
-            )
-            session = registry.upsert(
-                client.dialog_ids.call_id,
-                state=CallState.IN_CALL.value,
-                owner="ha_softphone",
-                caller=local_name,
-                callee=target,
-                route_kind="direct",
-                endpoint_id=endpoint_id,
-            )
             registry.add_leg(
                 client.dialog_ids.call_id,
                 client.dialog_ids.call_id,
                 role="ha_softphone",
                 state=CallState.IN_CALL.value,
             )
-            publish_phone_projection(
+            publish_outbound_sip_result(
                 hass,
-                session,
-                endpoint_id, peer_name=connected_party,
-                connected_party=connected_party, direction="outgoing",
+                client=client,
+                result=final,
+                target=target,
+                endpoint_id=endpoint_id,
+                local_name=local_name,
                 target_device_id=target_device_id,
-                selected_tx_format=client.dialog.send_format.audio_format.wire_token(),
-                selected_rx_format=client.dialog.recv_format.audio_format.wire_token(),
-                selected_tx_rtp_format=client.dialog.send_format.wire_token(),
-                selected_rx_rtp_format=client.dialog.recv_format.wire_token(),
-                audio_direction=client.dialog.local_audio_direction,
-                audio_connection_held=client.dialog.remote_audio_connection_held,
-                video_active=video_active,
-                video_requested=video_requested,
-                video_negotiated=video_active,
-                video_status=video_status,
-                video_failure_reason=final_video_failure_reason,
-                video_format=(
-                    client.dialog.video_format.wire_token()
-                    if client.dialog.video_format is not None
-                    else ""
-                ),
-                video_send_format=(
-                    client.dialog.send_video_format.wire_token()
-                    if client.dialog.send_video_format is not None
-                    else ""
-                ),
-                video_receive_format=(
-                    client.dialog.recv_video_format.wire_token()
-                    if client.dialog.recv_video_format is not None
-                    else ""
-                ),
-                video_direction=client.dialog.local_video_direction,
-                sip_status_code=200,
-                last_sip_event="SIP_RESPONSE",
                 sip_uri=sip_uri,
+                video_requested=video_requested,
+                video_failure_reason=video_failure_reason,
             )
         elif public_final not in {
             CallState.RINGING.value,

@@ -27,6 +27,7 @@ from .media_ports import (
 )
 from .media_session_updates import (
     commit_audio_session_update,
+    commit_softphone_projection_update,
     commit_video_session_update,
 )
 from .runtime_data import endpoint_directory, require_runtime_data
@@ -44,7 +45,6 @@ from .sip_bridge import (
 )
 from .sip_listener import SipInvite, SipInviteResult
 from .session_cleanup import async_wait_for_cleanup
-from .websocket_api import _fire_call_event, _ha_softphone_store
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -644,58 +644,15 @@ async def async_prepare_media_update(
                     reservation.release()
                 media["local_video_rtp_port"] = 0
             media["video_failure_reason"] = ""
-            store = _ha_softphone_store(hass, media_endpoint_id)
-            if str(store.get("call_id") or "") == call_id:
-                store.update(
-                    {
-                        "audio_direction": updated.local_audio_direction,
-                        "audio_connection_held": updated.remote_audio_connection_held,
-                        "video_active": bool(
-                            updated_video is not None
-                            and video_direction != "inactive"
-                        ),
-                        "video_requested": bool(updated_video is not None),
-                        "video_negotiated": bool(updated_video is not None),
-                        "video_status": (
-                            "active"
-                            if updated_video is not None
-                            and video_direction != "inactive"
-                            else "inactive"
-                        ),
-                        "video_failure_reason": "",
-                        "video_format": (
-                            updated_video.wire_token()
-                            if updated_video is not None
-                            else ""
-                        ),
-                        "video_send_format": (
-                            updated.send_video_format.wire_token()
-                            if updated.send_video_format is not None
-                            else ""
-                        ),
-                        "video_receive_format": (
-                            updated.recv_video_format.wire_token()
-                            if updated.recv_video_format is not None
-                            else ""
-                        ),
-                        "video_direction": video_direction,
-                        "video_connection_held": updated.remote_video_connection_held,
-                        "last_sip_event": method,
-                        "media_renegotiations": int(
-                            store.get("media_renegotiations") or 0
-                        )
-                        + 1,
-                    }
-                )
-                _fire_call_event(
-                    hass,
-                    dict(
-                        store,
-                        endpoint_id=media_endpoint_id,
-                        device_id=media_device_id,
-                    ),
-                    "session",
-                )
+            commit_softphone_projection_update(
+                hass,
+                endpoint_id=media_endpoint_id,
+                device_id=media_device_id,
+                call_id=call_id,
+                negotiated=updated,
+                video_direction=video_direction,
+                sip_event=method,
+            )
 
         async def _rollback_softphone_update() -> None:
             _release_staged_video()

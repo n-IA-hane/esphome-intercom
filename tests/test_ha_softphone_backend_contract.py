@@ -528,9 +528,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         outbound = _function_body(
             self.softphone_originate, "async_originate_browser_call"
         )
-        initial_result = outbound.index(
-            'if public_result == CallState.REMOTE_RINGING.value or result == "ringing":'
-        )
+        initial_result = outbound.index("publish_outbound_sip_result(")
         watcher = outbound.index("await _track_outbound_sip_client(")
         self.assertLess(initial_result, watcher)
         self.assertIn("fast peer can place 180 and 200", outbound)
@@ -543,11 +541,10 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
         self.assertIn('getattr(target_endpoint, "device_id", "")', outbound)
         self.assertIn('entry_metadata.get("device_id")', outbound)
-        self.assertEqual(
+        self.assertGreaterEqual(
             outbound.count("target_device_id=target_device_id"),
-            4,
+            2,
         )
-        self.assertGreaterEqual(outbound.count("publish_phone_projection("), 3)
         tracker = _function_body(
             self.outbound_lifecycle,
             "async_track_outbound_sip_client",
@@ -556,10 +553,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             'target_device_id: str = ""',
             self.outbound_lifecycle,
         )
-        self.assertGreaterEqual(
-            tracker.count("target_device_id=target_device_id"),
-            2,
-        )
+        self.assertIn("target_device_id=target_device_id", tracker)
 
     def test_final_200_commits_registry_before_publishing_in_call(self) -> None:
         tracker = _function_body(
@@ -575,15 +569,20 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             "registry.sip_client_for(client.dialog_ids.call_id) is not client",
             watcher,
         )
-        self.assertIn("registry.upsert(", accepted)
         self.assertIn("registry.add_leg(", accepted)
-        self.assertIn("publish_phone_projection(", accepted)
+        self.assertIn("publish_outbound_sip_result(", accepted)
         self.assertNotIn("CallProjectionEvent.phone(", accepted)
         self.assertLess(
             accepted.index("registry.add_leg("),
-            accepted.index("publish_phone_projection("),
+            accepted.index("publish_outbound_sip_result("),
         )
-        self.assertIn("state=CallState.IN_CALL.value", accepted)
+        projection = _function_body(
+            self.outbound_lifecycle,
+            "publish_outbound_sip_result",
+        )
+        self.assertIn("registry.upsert(", projection)
+        self.assertIn("state=public_result", projection)
+        self.assertIn("publish_phone_projection(", projection)
 
     def test_outbound_call_claims_source_and_physical_destination_atomically(
         self,
@@ -653,9 +652,14 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             media_update,
         )
         self.assertNotIn("previous_video_direction", media_update)
-        self.assertIn('"video_active": bool(', media_update)
+        updates = (
+            ROOT
+            / "custom_components"
+            / "voip_stack"
+            / "media_session_updates.py"
+        ).read_text()
+        self.assertIn('"video_active": video_active', updates)
         self.assertIn("media_endpoint_id = str(", media_update)
-        self.assertIn("_ha_softphone_store(hass, media_endpoint_id)", media_update)
         self.assertIn("endpoint_id=media_endpoint_id", media_update)
         self.assertNotIn("_ha_softphone_store(hass)", media_update)
 
@@ -679,7 +683,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
         outbound = _function_body(
             self.outbound_lifecycle,
-            "async_track_outbound_sip_client",
+            "publish_outbound_sip_result",
         )
         self.assertIn('getattr(client, "connected_party", "") or target', outbound)
         self.assertIn("peer_name=connected_party", outbound)
@@ -852,7 +856,13 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
         self.assertIn("commit_audio_session_update(", outbound)
         self.assertIn("commit_video_session_update(", outbound)
-        self.assertIn('"video_active": bool(', outbound)
+        updates = (
+            ROOT
+            / "custom_components"
+            / "voip_stack"
+            / "media_session_updates.py"
+        ).read_text()
+        self.assertIn('"video_active": video_active', updates)
 
     def test_ha_originated_ring_group_exposes_browser_audio_through_existing_relay(
         self,

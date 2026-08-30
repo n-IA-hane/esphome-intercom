@@ -44,7 +44,6 @@ from .esphome_actions import async_resolve_target_device as _resolve_target_devi
 from .fsm import (
     CallState,
     TerminalReason,
-    sip_public_state as _sip_public_state,
 )
 from .media_ports import (
     allocate_sip_rtp_port as _allocate_sip_rtp_port,
@@ -53,12 +52,14 @@ from .media_ports import (
 from .media_offer_answer import validate_direct_video_reoffer
 from .media_session_updates import (
     commit_audio_session_update,
+    commit_softphone_projection_update,
     commit_video_session_update,
 )
 from .outbound_lifecycle import (
     attach_outbound_connected_identity_state,
     async_prepare_ha_outbound_call as _async_prepare_ha_outbound_call,
     async_track_outbound_sip_client as _track_outbound_sip_client,
+    publish_outbound_sip_result,
 )
 from .peer_snapshot import async_advertise_host as _ha_advertise_host
 from .phone_endpoint import (
@@ -85,10 +86,7 @@ from .sip_runtime import (
 from .softphone_commands import (
     bind_service_call_controller as _bind_service_call_controller,
 )
-from .websocket_api import (
-    _fire_call_event,
-    _ha_softphone_store,
-)
+from .websocket_api import _ha_softphone_store
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -668,56 +666,15 @@ async def async_originate_browser_call(
                 video_session.removed = True
                 video_session.media_generation += 1
                 video_session.update_event.set()
-            store = _ha_softphone_store(hass, endpoint_id)
-            if str(store.get("call_id") or "") == call_id:
-                store.update(
-                    {
-                        "audio_direction": updated.local_audio_direction,
-                        "audio_connection_held": updated.remote_audio_connection_held,
-                        "video_active": bool(
-                            updated_video is not None
-                            and updated.local_video_direction != "inactive"
-                        ),
-                        "video_requested": bool(updated_video is not None),
-                        "video_negotiated": bool(updated_video is not None),
-                        "video_status": (
-                            "active"
-                            if updated_video is not None
-                            and updated.local_video_direction != "inactive"
-                            else "inactive"
-                        ),
-                        "video_failure_reason": "",
-                        "video_format": (
-                            updated_video.wire_token() if updated_video else ""
-                        ),
-                        "video_send_format": (
-                            updated.send_video_format.wire_token()
-                            if updated.send_video_format is not None
-                            else ""
-                        ),
-                        "video_receive_format": (
-                            updated.recv_video_format.wire_token()
-                            if updated.recv_video_format is not None
-                            else ""
-                        ),
-                        "video_direction": updated.local_video_direction,
-                        "video_connection_held": updated.remote_video_connection_held,
-                        "last_sip_event": method,
-                        "media_renegotiations": int(
-                            store.get("media_renegotiations") or 0
-                        )
-                        + 1,
-                    }
-                )
-                _fire_call_event(
-                    hass,
-                    dict(
-                        store,
-                        endpoint_id=endpoint_id,
-                        device_id=source_device_id,
-                    ),
-                    "session",
-                )
+            commit_softphone_projection_update(
+                hass,
+                endpoint_id=endpoint_id,
+                device_id=source_device_id,
+                call_id=call_id,
+                negotiated=updated,
+                video_direction=updated.local_video_direction,
+                sip_event=method,
+            )
 
         return _commit
 
@@ -855,87 +812,24 @@ async def async_originate_browser_call(
         and route.entry.metadata.get("registered")
     ):
         await _mark_sip_account_unreachable(hass, route.entry.id)
-    public_result = _sip_public_state(result)
-    if public_result in {CallState.REMOTE_RINGING.value, CallState.IN_CALL.value}:
-        session = registry.upsert(
-            client.dialog_ids.call_id,
-            state=public_result,
-            owner="ha_softphone",
-            caller=local_name,
-            callee=display_target,
-            route_kind="direct",
-        )
     # Publish the first result before starting the detached final-response
     # watcher. A fast peer can place 180 and 200 on the socket back-to-back:
     # if the watcher runs first it publishes IN_CALL, then this coroutine used
     # to regress the same call to REMOTE_RINGING from the earlier 180 result.
     # Keeping the signaling order here makes the backend snapshot monotonic;
     # the card remains a plain mirror of that authoritative state.
-    if public_result == CallState.REMOTE_RINGING.value or result == "ringing":
-        publish_phone_projection(
-            hass,
-            session,
-            endpoint_id, peer_name=display_target, direction="outgoing",
-                target_device_id=target_device_id, sip_status_code=180,
-                last_sip_event="SIP_RESPONSE", sip_uri=route_uri,
-                sip_transport=client.signaling_transport.lower(),
-        )
-    elif public_result == CallState.IN_CALL.value and client.dialog is not None:
-        connected_party = str(client.connected_party or display_target).strip()
-        video_active = bool(
-            client.dialog.video_format is not None
-            and client.dialog.local_video_direction != "inactive"
-        )
-        video_status = (
-            "degraded"
-            if video_failure_reason
-            else "active"
-            if video_active
-            else "rejected"
-            if video_enabled
-            else "inactive"
-        )
-        final_video_failure_reason = video_failure_reason or (
-            "remote_video_rejected" if video_enabled and not video_active else ""
-        )
-        publish_phone_projection(
-            hass,
-            session,
-            endpoint_id, peer_name=connected_party,
-            connected_party=connected_party, direction="outgoing",
-            target_device_id=target_device_id,
-            selected_tx_format=client.dialog.send_format.audio_format.wire_token(),
-            selected_rx_format=client.dialog.recv_format.audio_format.wire_token(),
-            selected_tx_rtp_format=client.dialog.send_format.wire_token(),
-            selected_rx_rtp_format=client.dialog.recv_format.wire_token(),
-            audio_direction=client.dialog.local_audio_direction,
-            audio_connection_held=client.dialog.remote_audio_connection_held,
-            video_active=video_active,
-            video_requested=video_enabled,
-            video_negotiated=video_active,
-            video_status=video_status,
-            video_failure_reason=final_video_failure_reason,
-            video_format=(
-                client.dialog.video_format.wire_token()
-                if client.dialog.video_format
-                else ""
-            ),
-            video_send_format=(
-                client.dialog.send_video_format.wire_token()
-                if client.dialog.send_video_format is not None
-                else ""
-            ),
-            video_receive_format=(
-                client.dialog.recv_video_format.wire_token()
-                if client.dialog.recv_video_format is not None
-                else ""
-            ),
-            video_direction=client.dialog.local_video_direction,
-            sip_status_code=200,
-            last_sip_event="SIP_RESPONSE",
-            sip_uri=route_uri,
-            sip_transport=client.signaling_transport.lower(),
-        )
+    publish_outbound_sip_result(
+        hass,
+        client=client,
+        result=result,
+        target=display_target,
+        endpoint_id=endpoint_id,
+        local_name=local_name,
+        target_device_id=target_device_id,
+        sip_uri=route_uri,
+        video_requested=video_enabled,
+        video_failure_reason=video_failure_reason,
+    )
     await _track_outbound_sip_client(
         hass,
         client=client,
