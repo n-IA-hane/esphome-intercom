@@ -9,6 +9,18 @@ HA_CREATE_BACKUP="${HA_CREATE_BACKUP:-0}"
 LOCAL_COMPONENT_DIR="custom_components/voip_stack"
 REMOTE_STAGE="/tmp/voip-stack-deploy-${USER:-codex}-$$"
 
+tree_digest() {
+  local directory="$1"
+  (
+    cd "$directory"
+    find . -type f ! -name '*.pyc' ! -path '*/__pycache__/*' -print0 |
+      sort -z |
+      xargs -0 sha256sum |
+      sha256sum |
+      awk '{print $1}'
+  )
+}
+
 usage() {
   cat <<'EOF'
 Usage: tools/deploy_ha_voip_stack.sh
@@ -44,6 +56,8 @@ if [[ ! -f "$LOCAL_COMPONENT_DIR/manifest.json" ]]; then
   exit 2
 fi
 
+LOCAL_TREE_SHA256="$(tree_digest "$LOCAL_COMPONENT_DIR")"
+
 cleanup() {
   ssh "$HA_HOST" "rm -rf -- '$REMOTE_STAGE'" >/dev/null 2>&1 || true
 }
@@ -69,6 +83,19 @@ ssh "$HA_HOST" "
   sudo -n mkdir -p '$HA_COMPONENT_DIR'
   sudo -n rsync -a --delete --exclude='__pycache__/' '$REMOTE_STAGE/' '$HA_COMPONENT_DIR/'
   sudo -n chown -R hass:hass '$HA_COMPONENT_DIR'
+  remote_tree_sha256=\$(
+    cd '$HA_COMPONENT_DIR'
+    find . -type f ! -name '*.pyc' ! -path '*/__pycache__/*' -print0 |
+      sort -z |
+      xargs -0 sha256sum |
+      sha256sum |
+      awk '{print \$1}'
+  )
+  if [ \"\$remote_tree_sha256\" != '$LOCAL_TREE_SHA256' ]; then
+    echo 'VoIP Stack deployment hash mismatch.' >&2
+    exit 1
+  fi
+  echo 'VoIP Stack tree SHA256: $LOCAL_TREE_SHA256'
   restart_marker=\$(date -u '+%Y-%m-%d %H:%M:%S')
   sudo -n systemctl restart '$HA_SERVICE'
   for attempt in \$(seq 1 120); do
