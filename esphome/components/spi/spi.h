@@ -358,6 +358,7 @@ class SPIComponent final : public Component {
     this->interface_ = interface;
     this->using_hw_ = true;
   }
+  SPIInterface get_interface() const { return this->interface_; }
 
   void set_interface_name(const char *name) { this->interface_name_ = name; }
 

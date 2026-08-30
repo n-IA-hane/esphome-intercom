@@ -26,6 +26,13 @@ def test_audio_dependencies_match_recorded_esphome_dev() -> None:
     assert "CONFIG_MP3_DECODER_PREFER_PSRAM" not in source
 
 
+def test_audio_keeps_upstream_certificate_bundle_setup() -> None:
+    source = (COMPONENTS / "audio" / "__init__.py").read_text()
+
+    assert "require_certificate_bundle," in source
+    assert "require_certificate_bundle()" in source
+
+
 def test_voice_assistant_keeps_upstream_backpressure_and_speaker_drain() -> None:
     source = (COMPONENTS / "voice_assistant" / "voice_assistant.cpp").read_text()
 
@@ -77,3 +84,6 @@ def test_spi_matches_the_upstream_opt_in_psram_dma_contract() -> None:
     assert 'cg.add_define("USE_SPI_PSRAM_DMA")' in schema
     assert SPI_UPSTREAM_MERGE_SHA in upstream
     assert "ESP-IDF 5.5" in upstream
+    assert "SPIInterface get_interface() const" in (
+        COMPONENTS / "spi" / "spi.h"
+    ).read_text()
