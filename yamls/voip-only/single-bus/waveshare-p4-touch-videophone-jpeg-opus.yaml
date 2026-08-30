@@ -26,6 +26,18 @@ voip_stack:
     tx:
       codec: opus
       frame_ms: 20
+    tx_formats:
+      - codec: opus
+        sample_rate: 16000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 10
     rx:
       codec: opus
       frame_ms: 20
+    rx_formats:
+      - codec: opus
+        sample_rate: 48000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 10

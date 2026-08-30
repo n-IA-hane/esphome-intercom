@@ -440,7 +440,8 @@ voip_stack:
   audio:
     # VoIP-only has enough PSRAM and flash for Opus. The local mic remains
     # 16 kHz mono and the speaker boundary remains 48 kHz mono; SDP uses the
-    # RFC 7587 opus/48000/2 wire mapping. PCM stays available as fallback.
+    # RFC 7587 opus/48000/2 wire mapping. This firmware advertises Opus only;
+    # incompatible direct peers can be routed through HA for transcoding.
     tx:
       codec: opus
       sample_rate: 16000
@@ -453,46 +454,19 @@ voip_stack:
         pcm_format: s16le
         channels: 1
         frame_ms: 10
-      - sample_rate: 16000
-        pcm_format: s16le
-        channels: 1
-        frame_ms: 10
     rx:
       codec: opus
       sample_rate: 48000
       pcm_format: s16le
       channels: 1
       frame_ms: 20
-    # Additional accepted RX formats for direct ESP-to-ESP calls. These are valid
-    # only because speaker: voip_speaker_input points at the resampler; do
-    # not advertise additional formats when wiring voip_stack directly to a
-    # fixed-rate mixer input.
+    # The 10 ms alternative is still Opus. A firmware never mixes codecs.
     rx_formats:
       - codec: opus
         sample_rate: 48000
         pcm_format: s16le
         channels: 1
         frame_ms: 10
-      - sample_rate: 48000
-        pcm_format: s16le
-        channels: 1
-        frame_ms: 10
-      - sample_rate: 32000
-        pcm_format: s16le
-        channels: 1
-        frame_ms: 16
-      - sample_rate: 16000
-        pcm_format: s16le
-        channels: 1
-        frame_ms: 10
-      - sample_rate: 16000
-        pcm_format: s16le
-        channels: 1
-        frame_ms: 16
-      - sample_rate: 16000
-        pcm_format: s16le
-        channels: 1
-        frame_ms: 32
   microphone: mic_main
   speaker: voip_speaker_input
   ringing_timeout: 30s

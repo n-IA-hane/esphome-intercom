@@ -44,6 +44,12 @@ P4_FULL_JPEG_PACKAGE = ROOT / "packages" / "voip" / "p4_full_video_jpeg.yaml"
 HA_PHONE_PACKAGE = ROOT / "packages" / "voip" / "ha_phone.yaml"
 VOIP_ONLY_PACKAGE = ROOT / "packages" / "voip_only.yaml"
 P4_VIDEOPHONE_BASE = ROOT / "packages" / "voip" / "waveshare_p4_touch_videophone_base.yaml"
+P4_JPEG_OPUS = (
+    YAMLS
+    / "voip-only"
+    / "single-bus"
+    / "waveshare-p4-touch-videophone-jpeg-opus.yaml"
+)
 RINGTONE_ORCHESTRATION = ROOT / "packages" / "runtime" / "voip_ringtone_orchestration.yaml"
 RUNTIME_MEDIA_PLAYER = (
     ROOT
@@ -109,6 +115,18 @@ def test_maintained_ws3_profile_does_not_enable_debug_entities() -> None:
     assert "packages/voip/debug.yaml" not in WS3_FULL_AFE.read_text()
 
 
+@pytest.mark.parametrize("path", (SPOTPEAR_VOIP_ONLY, P4_JPEG_OPUS))
+def test_opus_profiles_do_not_advertise_pcm_fallback(path: Path) -> None:
+    block = _voip_stack_block(path.read_text())
+    assert "codec: opus" in block
+    for section_name in ("tx_formats", "rx_formats"):
+        section = _format_section(block, section_name)
+        assert section
+        entries = re.split(r"(?m)^      - ", section)[1:]
+        assert entries
+        assert all(re.search(r"(?m)^codec:\s*opus\s*$", entry) for entry in entries)
+
+
 def test_flac_ringtone_drains_naturally_behind_source_local_ducking() -> None:
     """Answering must silence only the ringtone while FLAC reaches EOF."""
     media = RUNTIME_MEDIA_PLAYER.read_text()
@@ -156,6 +174,8 @@ def test_resampling_profiles_accept_direct_esp_16khz_10ms() -> None:
         block = _voip_stack_block(path.read_text())
         rx_formats = _format_section(block, "rx_formats")
         if not rx_formats:
+            continue
+        if "codec: opus" in block:
             continue
         if not _has_s16le_mono_format(rx_formats, 16000, 10):
             missing.append(str(path.relative_to(ROOT)))
