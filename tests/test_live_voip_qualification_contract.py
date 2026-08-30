@@ -122,6 +122,32 @@ class LiveVoipQualificationContractTest(unittest.TestCase):
                 {"commit": "abc123", "dirty": True},
             )
 
+    def test_active_call_ids_merge_runtime_and_media_owners(self) -> None:
+        self.assertEqual(
+            runner.active_call_ids(
+                {
+                    "active_call_ids": ["call-a"],
+                    "rtp_relays": {"call-a": {}, "call-b": {}},
+                }
+            ),
+            {"call-a", "call-b"},
+        )
+
+    def test_new_call_selection_rejects_unrelated_concurrent_calls(self) -> None:
+        ws = SimpleNamespace(
+            softphone_state=AsyncMock(
+                return_value={
+                    "active_call_ids": ["old", "wanted", "unrelated"],
+                    "rtp_relays": {},
+                }
+            )
+        )
+
+        with self.assertRaisesRegex(AssertionError, "multiple calls"):
+            asyncio.run(
+                runner.wait_new_call_id(ws, {"old"}, timeout=0.01)
+            )
+
     def test_matrix_covers_real_ha_and_esp_paths(self) -> None:
         scenarios = runner.SCENARIOS
         self.assertIn("ha_to_esp_extension_answer_hangup", scenarios)

@@ -137,6 +137,42 @@ def norm(value: Any) -> str:
     return str(value or "").strip().lower().replace(" ", "_")
 
 
+def active_call_ids(state: dict[str, Any]) -> set[str]:
+    """Return every authoritative or media-backed call in one snapshot."""
+
+    return {
+        str(call_id)
+        for call_id in (
+            *(state.get("active_call_ids") or ()),
+            *(state.get("rtp_relays") or {}).keys(),
+        )
+        if str(call_id)
+    }
+
+
+async def wait_new_call_id(
+    ws: Any,
+    existing_call_ids: set[str],
+    *,
+    timeout: float = 12.0,
+) -> str:
+    """Return the single call generation created after a captured baseline."""
+
+    deadline = time.monotonic() + timeout
+    last: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        last = await ws.softphone_state()
+        created = active_call_ids(last) - existing_call_ids
+        if len(created) == 1:
+            return created.pop()
+        if len(created) > 1:
+            raise AssertionError(
+                f"multiple calls appeared after baseline: {sorted(created)}"
+            )
+        await asyncio.sleep(0.2)
+    raise AssertionError(f"no new call appeared after baseline: {last}")
+
+
 async def maybe_await(result: Any) -> None:
     if hasattr(result, "__await__"):
         await result
@@ -578,20 +614,28 @@ async def wait_phonebook_contains(
     last: dict[str, Any] | None = None
     while time.monotonic() < deadline:
         last = await ha.state("sensor.voip_phonebook")
-        raw = last.get("attributes", {}).get("roster_json")
-        if raw:
-            payload = json.loads(raw)
-            contacts = payload.get("contacts") or []
-            for item in contacts:
-                values = {
-                    str(item.get("id") or ""),
-                    str(item.get("name") or ""),
-                    str(item.get("extension") or ""),
-                }
-                if target in values:
-                    return item
+        if contact := phonebook_contact(last, target):
+            return contact
         await asyncio.sleep(0.35)
     raise AssertionError(f"phonebook did not expose {target!r}; last={last}")
+
+
+def phonebook_contact(state: dict[str, Any], target: str) -> dict[str, Any] | None:
+    """Return one exact phonebook match from a sensor state payload."""
+
+    raw = state.get("attributes", {}).get("roster_json")
+    if not raw:
+        return None
+    payload = json.loads(raw)
+    for item in payload.get("contacts") or []:
+        values = {
+            str(item.get("id") or ""),
+            str(item.get("name") or ""),
+            str(item.get("extension") or ""),
+        }
+        if target in values:
+            return item
+    return None
 
 
 async def wait_phonebook_group_member(
@@ -653,7 +697,10 @@ async def wait_esp_voip_state(
         wanted_norm = {norm(item) for item in wanted}
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
-            state = await ctx.ha.state(ctx.esp.spec.ha_state_entity)
+            try:
+                state = await ctx.ha.state(ctx.esp.spec.ha_state_entity)
+            except AssertionError:
+                raise err from None
             value = state.get("state")
             ctx.esp.values["voip_state"] = value
             if norm(value) in wanted_norm:
@@ -1470,12 +1517,12 @@ async def run(args: argparse.Namespace) -> int:
                     start = time.monotonic()
                     burst_deadline = 0.0
                     scenario_index = len(results) + 1
-                    if args.runtime_heap_sample:
+                    if args.runtime_heap_sample and "capture_runtime_heap" in esp.services:
                         await esp.service(
                             "capture_runtime_heap",
                             {"reason": f"{scenario_index}_{scenario.id}_before"},
                         )
-                    if args.runtime_heap_trace:
+                    if args.runtime_heap_trace and "capture_runtime_snapshot" in esp.services:
                         await esp.service(
                             "capture_runtime_snapshot",
                             {"reason": f"{scenario.id}_before"},
@@ -1485,7 +1532,7 @@ async def run(args: argparse.Namespace) -> int:
                         and args.runtime_heap_trace_start == "scenario"
                     ):
                         await ctx.start_heap_trace(scenario.id)
-                    if args.runtime_burst_samples > 0:
+                    if args.runtime_burst_samples > 0 and "start_runtime_burst" in esp.services:
                         await esp.service(
                             "start_runtime_burst",
                             {

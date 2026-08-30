@@ -6,7 +6,7 @@ out_dir=${1:?usage: run_p4_wildix_pcap_gate.sh OUT_DIR [runner arguments...]}
 shift
 
 ha_ssh=${HA_SSH_ALIAS:-hass}
-p4_host=${P4_HOST:-192.168.1.57}
+p4_host=${P4_HOST:?set P4_HOST to the current P4 address}
 wildix_host=${WILDIX_HOST:-tecnodata2q23xb.wildixin.com}
 wildix_ip=$(getent ahostsv4 "$wildix_host" | awk 'NR == 1 { print $1 }')
 [[ -n $wildix_ip ]] || { printf '%s\n' "cannot resolve Wildix capture host" >&2; exit 2; }

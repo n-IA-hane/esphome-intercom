@@ -26,9 +26,11 @@ from live_voip_qualification import (  # noqa: E402
     DEFAULT_TOKEN_FILE,
     EspApi,
     HaWs,
+    active_call_ids,
     candidate_revision,
     norm,
     qualification_token,
+    wait_new_call_id,
 )
 
 
@@ -45,13 +47,15 @@ async def wait_media(
     *,
     video: bool,
     timeout: float,
+    call_id: str,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last: dict[str, Any] = {}
     while time.monotonic() < deadline:
         last = await ws.softphone_state()
         relays = dict(last.get("rtp_relays") or {})
-        for call_id, relay in relays.items():
+        relay = relays.get(call_id)
+        if isinstance(relay, dict):
             audio_ok = all(
                 int(relay.get(counter) or 0) > 10
                 for counter in (
@@ -112,11 +116,12 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             if not video_switch:
                 raise AssertionError("P4 firmware does not expose a video-send switch")
-            original_volume = float(esp.values.get("master_volume") or 1)
+            raw_volume = esp.values.get("master_volume")
+            original_volume = float(raw_volume) if raw_volume is not None else None
             original_video = norm(esp.values.get(video_switch)) == "on"
-            await esp.number("master_volume", 1.0)
-            await esp.switch(video_switch, False)
             try:
+                await esp.number("master_volume", 1.0)
+                await esp.switch(video_switch, False)
                 peer = await asyncio.to_thread(
                     BareSip,
                     args.wildix_config,
@@ -126,16 +131,24 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 # Preserve the user's dial string exactly. Numeric Wildix
                 # extensions and explicit service codes have different
                 # dial-plan semantics and must not be silently rewritten.
+                before = await ws.softphone_state()
+                existing_call_ids = active_call_ids(before)
                 await esp.service("start_call", {"dest": args.destination})
                 await wait_peer(peer, "Incoming call", 18)
                 peer.command("/accept")
                 await wait_peer(peer, "Call established", 12)
                 await wait_esp(esp, {"in_call"})
+                call_id = await wait_new_call_id(ws, existing_call_ids)
                 # Exercise the standard established-dialog direction change:
                 # remove local video, hold an audio-only interval, then add it
                 # again through re-INVITE.
                 await esp.switch(video_switch, False)
-                audio = await wait_media(ws, video=False, timeout=12)
+                audio = await wait_media(
+                    ws,
+                    video=False,
+                    timeout=12,
+                    call_id=call_id,
+                )
 
                 # Stay beyond the firmware media-watchdog interval. A transport
                 # that merely reached 200 OK but carries no RTP must fail here.
@@ -145,7 +158,12 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 video: dict[str, Any] = {"video": {}}
                 if not args.audio_only:
                     await esp.switch(video_switch, True)
-                    video = await wait_media(ws, video=True, timeout=18)
+                    video = await wait_media(
+                        ws,
+                        video=True,
+                        timeout=18,
+                        call_id=call_id,
+                    )
                     await asyncio.sleep(args.video_hold)
                     await wait_esp(esp, {"in_call"}, timeout=2)
 
@@ -199,8 +217,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                     await asyncio.to_thread(peer.close)
                 with suppress(Exception):
                     await esp.switch(video_switch, original_video)
-                with suppress(Exception):
-                    await esp.number("master_volume", original_volume)
+                if original_volume is not None:
+                    with suppress(Exception):
+                        await esp.number("master_volume", original_volume)
 
 
 def main() -> int:
@@ -210,7 +229,7 @@ def main() -> int:
     parser.add_argument("--token-file", type=Path, default=DEFAULT_TOKEN_FILE)
     parser.add_argument("--auth-file", type=Path, default=DEFAULT_AUTH_FILE)
     parser.add_argument("--insecure", action="store_true")
-    parser.add_argument("--p4-host", default="192.168.1.57")
+    parser.add_argument("--p4-host", required=True)
     parser.add_argument("--destination", default="426")
     parser.add_argument(
         "--wildix-config",
