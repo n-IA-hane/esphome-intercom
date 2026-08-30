@@ -2029,6 +2029,90 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
         if self.on_terminated is not None:
             await self.on_terminated(call_id, "remote_hangup")
 
+    async def _handle_cancel_request(self, request, addr) -> None:
+        """Cancel one matching pending INVITE transaction."""
+
+        call_id = request.header("Call-ID")
+        pending = self.pending_invites.get(call_id)
+        completed = self.completed_invites.get(call_id)
+        transaction = pending or (
+            completed if completed is not None and completed.cancelled else None
+        )
+        try:
+            incoming_cseq = sip.parse_cseq(request.header("CSeq"))
+            pending_cseq = (
+                sip.parse_cseq(transaction.request.header("CSeq"))
+                if transaction is not None
+                else None
+            )
+            incoming_vias = request.header_values("Via")
+            incoming_branch = sip.parse_via(
+                incoming_vias[0] if incoming_vias else ""
+            ).branch
+            pending_vias = (
+                transaction.request.header_values("Via")
+                if transaction is not None
+                else []
+            )
+            pending_branch = sip.parse_via(
+                pending_vias[0] if pending_vias else ""
+            ).branch
+            matches = bool(
+                pending_cseq is not None
+                and incoming_cseq.method == "CANCEL"
+                and pending_cseq.method == "INVITE"
+                and incoming_cseq.number == pending_cseq.number
+                and incoming_branch
+                and incoming_branch == pending_branch
+            )
+        except (TypeError, ValueError, sip.SipError):
+            matches = False
+        if transaction is None or transaction.addr[0] != addr[0] or not matches:
+            self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
+            return
+        if pending is None:
+            self._send_response(request, addr, 200, "OK")
+            return
+        pending.cancelled = True
+        self._cancel_pending_expiry(pending)
+        pending.status = 487
+        pending.reason = "Request Terminated"
+        pending.decline_reason = "cancelled"
+        self.pending_invites.pop(call_id, None)
+        self._remember_completed(self.completed_invites, call_id, pending)
+        self._send_response(request, addr, 200, "OK")
+        if self._send_response(
+            pending.request,
+            pending.addr,
+            487,
+            "Request Terminated",
+            to_tag=pending.to_tag,
+            decline_reason="cancelled",
+        ):
+            self._arm_invite_non2xx(call_id, pending)
+        if self.on_terminated is not None:
+            await self.on_terminated(call_id, "cancelled")
+
+    async def _handle_ack_request(self, request, addr) -> None:
+        """Consume a final-response ACK without creating application state."""
+
+        call_id = request.header("Call-ID")
+        completed = self.completed_invites.get(call_id)
+        if (
+            completed is not None
+            and completed.status >= 300
+            and matches_invite_error_ack(request, completed.request)
+        ):
+            self._cancel_invite_non2xx(completed)
+            self.completed_invites.pop(call_id, None)
+            return
+        dialog = self.active_dialogs.get(call_id)
+        if dialog is not None and dialog.invite_2xx.acknowledge(
+            request, lambda ack: _same_dialog_ack(ack, dialog, addr)
+        ):
+            if await self._accept_delayed_offer_ack(call_id, dialog, request, addr):
+                self._arm_connected_identity(call_id, dialog)
+
     async def _handle_datagram(self, data: bytes, addr) -> None:
         try:
             request = sip.parse_message(data)
@@ -2228,88 +2312,13 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             await self._handle_info_request(request, addr, request_cseq)
             return
         if request.method == "CANCEL":
-            call_id = request.header("Call-ID")
-            pending = self.pending_invites.get(call_id)
-            completed = self.completed_invites.get(call_id)
-            invite_transaction = pending or (completed if completed is not None and completed.cancelled else None)
-            # Match the transaction and originating host, but do not pin the
-            # source port: NATs and SIP proxies may legitimately rewrite it.
-            try:
-                incoming_cseq = sip.parse_cseq(request.header("CSeq"))
-                pending_cseq = (
-                    sip.parse_cseq(invite_transaction.request.header("CSeq"))
-                    if invite_transaction is not None
-                    else None
-                )
-                incoming_vias = request.header_values("Via")
-                incoming_branch = sip.parse_via(incoming_vias[0] if incoming_vias else "").branch
-                pending_vias = invite_transaction.request.header_values("Via") if invite_transaction is not None else []
-                pending_branch = (
-                    sip.parse_via(pending_vias[0] if pending_vias else "").branch
-                    if invite_transaction is not None
-                    else ""
-                )
-                same_transaction = (
-                    pending_cseq is not None
-                    and incoming_cseq.method == "CANCEL"
-                    and pending_cseq.method == "INVITE"
-                    and incoming_cseq.number == pending_cseq.number
-                    and bool(incoming_branch)
-                    and incoming_branch == pending_branch
-                )
-            except (TypeError, ValueError, sip.SipError):
-                same_transaction = False
-            if invite_transaction is None or invite_transaction.addr[0] != addr[0] or not same_transaction:
-                self._send_response(request, addr, 481, "Call/Transaction Does Not Exist")
-                return
-            if pending is None:
-                self._send_response(request, addr, 200, "OK")
-                return
-            pending.cancelled = True
-            self._cancel_pending_expiry(pending)
-            pending.status = 487
-            pending.reason = "Request Terminated"
-            pending.decline_reason = "cancelled"
-            self.pending_invites.pop(call_id, None)
-            self._remember_completed(self.completed_invites, call_id, pending)
-            self._send_response(request, addr, 200, "OK")
-            final_sent = self._send_response(
-                pending.request,
-                pending.addr,
-                487,
-                "Request Terminated",
-                to_tag=pending.to_tag,
-                decline_reason="cancelled",
-            )
-            if final_sent:
-                self._arm_invite_non2xx(call_id, pending)
-            if self.on_terminated is not None:
-                await self.on_terminated(call_id, "cancelled")
+            await self._handle_cancel_request(request, addr)
             return
         if request.method == "BYE":
             await self._handle_bye_request(request, addr)
             return
         if request.method == "ACK":
-            call_id = request.header("Call-ID")
-            completed = self.completed_invites.get(call_id)
-            if (
-                completed is not None
-                and completed.status >= 300
-                and matches_invite_error_ack(request, completed.request)
-            ):
-                self._cancel_invite_non2xx(completed)
-                self.completed_invites.pop(call_id, None)
-                return
-            dialog = self.active_dialogs.get(call_id)
-            if dialog is not None and dialog.invite_2xx.acknowledge(
-                request,
-                lambda ack: _same_dialog_ack(ack, dialog, addr),
-            ):
-                if not await self._accept_delayed_offer_ack(
-                    call_id, dialog, request, addr
-                ):
-                    return
-                self._arm_connected_identity(call_id, dialog)
+            await self._handle_ack_request(request, addr)
             return
         call_id = request.header("Call-ID")
         existing_dialog = self.active_dialogs.get(call_id)
