@@ -79,6 +79,24 @@ inbound bridges.
 - Spotpear and WS3 profiles keep their large audio and signaling allocations
   reusable instead of rebuilding them for every call.
 
+## Call ownership and cleanup are now centralized
+
+Home Assistant now keeps one authoritative owner for each call generation.
+Routing, forwarding, browser phones, registered SIP clients, media bridges and
+termination all commit through the same lifecycle primitives instead of
+maintaining partially independent state paths.
+
+The shared cleanup barrier closes call legs, RTP relays, video transcoders,
+timers and port reservations before the endpoint becomes reusable. Delayed
+callbacks from an older call generation cannot alter a newer call that reused
+the same public identity.
+
+Dial targets, phonebook entries and service aliases now use canonical parsers
+and tables. Registered contacts also preserve the signaling transport observed
+during REGISTER. This prevents a large video INVITE from being changed to TCP
+when the selected registered endpoint is explicitly reachable only through
+its UDP binding.
+
 ## Qualification completed for the initial candidate
 
 - 1673 software tests, 4 intentionally deselected tests, 140 parameterized
@@ -93,6 +111,22 @@ inbound bridges.
   zero relay drops.
 - SIP INFO and RFC 4733 DTMF passed in both directions, including the complete
   `0-9*#` keypad sequence.
+
+## Final development-head validation
+
+- 1686 software tests passed, with 4 intentional deselections and 133
+  parameterized subtests.
+- 92 Home Assistant runtime tests passed.
+- Real P4 and WS3 calls passed in both direct directions beyond the media
+  watchdog, followed by complete idle cleanup.
+- Zoiper Android and X-Bees completed audio and video calls with P4 in both
+  directions, including audio-first calls that enabled video in-dialog.
+- The WS3 Full PCM profile remained in call while media playback, Micro Wake
+  Word and a TTS request exercised the shared runtime controller.
+
+Spotpear Opus hardware evidence belongs to the earlier qualified Opus
+candidate described above. Spotpear was offline during the final development
+head validation and is not falsely reported as retested on that later commit.
 
 ## Upgrade notes
 
