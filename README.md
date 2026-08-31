@@ -200,7 +200,8 @@ separate user mode.
 An endpoint must have at least one real media direction. Maintained Full
 profiles use uncompressed PCM for audio. Compact VoIP-only profiles may compile
 additional codecs when their hardware budget permits it; the Spotpear VoIP-only
-profile currently negotiates Opus and retains PCM fallback. Standard S3
+profile currently advertises Opus only. Incompatible direct peers can route
+through Home Assistant for transcoding. Standard S3
 profiles are audio-only, while qualified ESP32-P4 videophone profiles compile
 exactly one video codec, JPEG or H.264. HA performs format conversion when two
 SIP legs do not share a compatible codec.

@@ -26,8 +26,9 @@ codec diagnostics automatically.
 
 The standalone VoIP component can now negotiate RFC 7587 Opus in addition to
 its existing PCM formats. The Spotpear VoIP-only profile prefers mono Opus at
-48 kHz RTP clock and 20 ms packet time, retains a 10 ms Opus alternative and
-keeps L16 PCM as a fallback for direct calls to existing ESP phones.
+48 kHz RTP clock and 20 ms packet time, with a 10 ms Opus alternative. The
+firmware advertises Opus only. Incompatible direct peers can route through Home
+Assistant, which performs the required transcoding.
 
 Opus is intentionally optional and compile-time gated. Full profiles continue
 using the proven PCM configuration because wake word detection, AFE, Voice
