@@ -1,0 +1,407 @@
+# =============================================================================
+# WAVESHARE ESP32-S3 AUDIO BOARD - VoIP-only AEC + Opus
+# =============================================================================
+# A compact SIP phone profile for the Waveshare ESP32-S3-AUDIO-Board. It keeps
+# only VoIP, single-mic AEC, local ringtone and the seven-LED status ring.
+#
+# ESP-to-ESP calls use the unified phonebook from HA.
+#
+# Audio pipeline:
+#   ES7210 TDM slot 0 mic + slot 1 playback reference -> esp_aec -> Opus TX
+#   Opus RX -> 48 kHz resampler/mixer -> ES8311 -> NS4150B amplifier
+#
+# =============================================================================
+
+# =============================================================================
+# PROJECT SETUP
+# =============================================================================
+
+substitutions:
+  # Hardware identity stays stable across YAML updates so HA entities and
+  # ESPHome build cache are reused.
+  name: waveshare-s3
+  friendly_name: Waveshare S3 Audio
+
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
+  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/dev/"
+
+  # ---------------------------------------------------------------------------
+  # Pinout: shared ES7210/ES8311 TDM bus
+  # ---------------------------------------------------------------------------
+  i2s_mclk_pin: GPIO12
+  i2s_bclk_pin: GPIO13
+  i2s_lrclk_pin: GPIO14
+  i2s_din_pin: GPIO15
+  i2s_dout_pin: GPIO16
+
+  codec_i2c_sda_pin: GPIO11
+  codec_i2c_scl_pin: GPIO10
+
+  # ---------------------------------------------------------------------------
+  # Seven-pixel status ring
+  # ---------------------------------------------------------------------------
+  status_led_pin: GPIO38
+  status_led_num_leds: "7"
+  status_led_chipset: WS2812
+  status_led_rgb_order: RGB
+
+packages:
+  core: github://n-IA-hane/esphome-intercom/packages/voip_only.yaml@dev
+  voip_entities_full_duplex: github://n-IA-hane/esphome-intercom/packages/voip/entities_full_duplex.yaml@dev
+  call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
+  voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
+  speaker_mute: github://n-IA-hane/esphome-intercom/packages/voip/speaker_mute.yaml@dev
+  s3_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32s3_base.yaml@dev
+  native_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native.yaml@dev
+  status_led: github://n-IA-hane/esphome-intercom/packages/led/status_ws2812_ring.yaml@dev
+  audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@dev
+  audio_stack_aec_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/aec_controls.yaml@dev
+  speaker_power: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/speaker_power_switch.yaml@dev
+
+# =============================================================================
+# BOARD AND MEMORY
+# =============================================================================
+
+# Device identity exposed to ESPHome, HA and the shared VoIP phonebook.
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  platformio_options:
+    board_build.flash_mode: dio
+
+# ESP32-S3R8 target with 16 MB flash and octal PSRAM.
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    advanced:
+      compiler_optimization: PERF
+    sdkconfig_options:
+      # Allow mbedtls to allocate its working buffers in PSRAM.
+      CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: "y"
+      # Route ESP-IDF stdout (and ESPHome logger when hardware_uart=USB_SERIAL_JTAG)
+      # to the built-in USB-Serial-JTAG peripheral. Required on boards where the
+      # USB-C connector is wired to the S3's native USB-Serial-JTAG (e.g. Freenove,
+      # bare ESP32-S3-DevKitC-1) rather than to an external USB-UART chip.
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+
+# Opus and the VoIP task stacks use PSRAM while the realtime I2S task remains
+# in internal RAM.
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+# Persist user settings without excessive flash writes.
+
+preferences:
+  flash_write_interval: 5min
+
+# =============================================================================
+# EXTERNAL COMPONENTS
+# =============================================================================
+
+# Project components for the Waveshare TDM AEC and Opus VoIP path.
+
+external_components:
+  - source: ${voip_stack_components_source}
+    components: [voip_stack]
+  - source: ${audio_stack_components_source}
+    components: [esp_audio_stack, esp_aec]
+
+# =============================================================================
+# CONNECTIVITY
+# =============================================================================
+
+# =============================================================================
+# VoIP signaling: voip_stack owns SIP INVITE/answer/hangup.
+# The YAML below only wires audio devices, LED feedback and local buttons.
+# =============================================================================
+
+# Normal Wi-Fi client mode. Power save is disabled for low-latency SIP/RTP and
+# reliable HA API updates.
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: NONE
+
+# OTA update endpoint used by ESPHome Dashboard and `esphome upload`.
+
+ota:
+  - platform: esphome
+
+# USB Serial/JTAG logger. VoIP domains stay visible at INFO; noisy entity
+# domains stay WARN for normal field use.
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+  # DEBUG keeps SIP signaling + AEC/AFE/i2s lifecycle visible.
+  # Mute chatty ESPHome built-ins below; project components stay at DEBUG.
+  level: INFO
+  logs:
+    voip_stack: INFO
+    voip_stack.fsm: INFO
+    voip_stack.tcp: INFO
+    voip_stack.udp: INFO
+    voip_stack.audio: INFO
+    voip_stack.settings: INFO
+    sensor: WARN
+    text_sensor: WARN
+    binary_sensor: WARN
+    switch: WARN
+    number: WARN
+    button: WARN
+    api: WARN
+    api.connection: WARN
+    component: WARN
+
+# =============================================================================
+# AUDIO PIPELINE
+# =============================================================================
+
+i2c:
+  - id: internal_i2c
+    sda: ${codec_i2c_sda_pin}
+    scl: ${codec_i2c_scl_pin}
+    scan: false
+
+tca9555:
+  - id: io_expander
+    address: 0x20
+    i2c_id: internal_i2c
+
+esp_audio_stack:
+  id: audio_stack
+  i2s_lrclk_pin: ${i2s_lrclk_pin}
+  i2s_bclk_pin: ${i2s_bclk_pin}
+  i2s_mclk_pin: ${i2s_mclk_pin}
+  i2s_din_pin: ${i2s_din_pin}
+  i2s_dout_pin: ${i2s_dout_pin}
+  sample_rate: 48000
+  output_sample_rate: 16000
+  bits_per_sample: 16
+  slot_bit_width: 16
+  correct_dc_offset: true
+  processor_id: aec_processor
+  master_volume_min_db: -30.0
+  codec:
+    i2c_id: internal_i2c
+    input:
+      type: es7210
+      address: 0x40
+      mic_selected: 0x0F
+      gain_db: 24.0
+    output:
+      type: es8311
+      address: 0x18
+      use_mclk: true
+      no_dac_ref: true
+  use_tdm_reference: true
+  tdm_total_slots: 4
+  tdm_mic_slot: 0
+  tdm_ref_slot: 1
+  buffers_in_psram: true
+
+esp_aec:
+  id: aec_processor
+  sample_rate: 16000
+  filter_length: 4
+  mode: voip_high_perf
+
+microphone:
+  - platform: esp_audio_stack
+    id: mic_main
+    esp_audio_stack_id: audio_stack
+
+speaker:
+  - platform: esp_audio_stack
+    id: hw_speaker
+    esp_audio_stack_id: audio_stack
+    sample_rate: 48000
+    bits_per_sample: 16
+    timeout: 1s
+
+  - platform: mixer
+    id: audio_mixer
+    output_speaker: hw_speaker
+    num_channels: 1
+    source_speakers:
+      - id: voip_mixer_input
+        timeout: 10s
+        buffer_duration: 128ms
+      - id: ringtone_speaker_mix
+        timeout: 10s
+        buffer_duration: 100ms
+
+  - platform: resampler
+    id: voip_speaker_input
+    output_speaker: voip_mixer_input
+    buffer_duration: 128ms
+
+  - platform: resampler
+    id: ringtone_speaker
+    output_speaker: ringtone_speaker_mix
+
+audio_file:
+  - id: voip_ringing_sound
+    file: ${assets_base}assets/sounds/ringtone.flac
+
+media_source:
+  - platform: audio_file
+    id: ringtone_file_source
+
+media_player:
+  - platform: speaker_source
+    id: speaker_media_player
+    name: None
+    internal: true
+    volume_initial: 1.0
+    volume_min: 1.0
+    volume_max: 1.0
+    announcement_pipeline:
+      speaker: ringtone_speaker
+      format: FLAC
+      sample_rate: 48000
+      num_channels: 1
+      sources:
+        - ringtone_file_source
+
+# =============================================================================
+# MEDIA, ASSIST AND VOIP
+# =============================================================================
+
+# SIP: the HA phonebook subscription provides SIP contacts in the unified
+# roster. voip_stack.start auto-binds signaling and RTP to the selected
+# endpoint.
+
+voip_stack:
+  id: phone
+  task_stacks_in_psram: true
+  audio_task_stacks_in_psram: true
+  buffers_in_psram: true
+  signaling_buffers_in_psram: true
+  audio:
+    # This firmware advertises Opus only. Incompatible peers can route through
+    # HA for standards-based transcoding.
+    tx:
+      codec: opus
+      sample_rate: 16000
+      pcm_format: s16le
+      channels: 1
+      frame_ms: 20
+    tx_formats:
+      - codec: opus
+        sample_rate: 16000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 10
+    rx:
+      codec: opus
+      sample_rate: 48000
+      pcm_format: s16le
+      channels: 1
+      frame_ms: 20
+    rx_formats:
+      - codec: opus
+        sample_rate: 48000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 10
+  microphone: mic_main
+  speaker: voip_speaker_input
+  dc_offset_removal: false
+  ringing_timeout: 30s
+  delete_contact_missing_from:
+    updates_number: 1
+
+# =============================================================================
+# RUNTIME LOGIC AND ENTITIES
+# =============================================================================
+
+switch:
+  - platform: gpio
+    id: speaker_enable
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin:
+      tca9555: io_expander
+      number: 8
+      mode:
+        output: true
+
+select:
+  - platform: template
+    name: AEC Mode
+    id: aec_mode_select
+    icon: mdi:tune-vertical
+    # Stay inside the lightweight VoIP AEC engine.
+    options:
+      - "voip_low_cost"
+      - "voip_high_perf"
+    initial_option: "voip_high_perf"
+    optimistic: false
+    restore_value: true
+    set_action:
+      - if:
+          condition:
+            not:
+              voip_stack.is_idle:
+          then:
+            - logger.log:
+                level: WARN
+                format: "Cannot switch AEC mode during active VoIP call"
+          else:
+            - logger.log:
+                format: "Switching AEC mode to %s"
+                args: ['x.c_str()']
+            - esp_audio_stack.stop: audio_stack
+            - esp_aec.set_mode:
+                id: aec_processor
+                mode: !lambda 'return x;'
+            - esp_audio_stack.start: audio_stack
+      # Reflect actual live mode (covers rejection and silent hardware mode).
+      - lambda: |-
+          id(aec_mode_select).publish_state(id(aec_processor).get_mode_name());
+
+script:
+  - id: !extend update_status
+    then:
+      - if:
+          condition:
+            voip_stack.is_ringing:
+          then:
+            - script.execute: voip_ringing_loop
+          else:
+            - script.stop: voip_ringing_loop
+            - media_player.stop:
+                announcement: true
+
+  - id: voip_ringing_loop
+    mode: restart
+    then:
+      - while:
+          condition:
+            voip_stack.is_ringing:
+          then:
+            - media_player.play_media:
+                id: speaker_media_player
+                media_url: "audio-file://voip_ringing_sound"
+                announcement: true
+            - wait_until:
+                condition:
+                  media_player.is_announcing:
+                timeout: 2s
+            - wait_until:
+                condition:
+                  not:
+                    media_player.is_announcing:
+                timeout: 5s
+            - delay: 1s
