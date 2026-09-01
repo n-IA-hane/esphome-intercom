@@ -155,3 +155,36 @@ def test_revoked_refresh_falls_back_to_login_flow(
     token = json.loads(updated["origins"][0]["localStorage"][0]["value"])
     assert token["access_token"] == "new-access"
     assert login_calls == [("https://ha.example", "https://ha.example/")]
+
+
+def test_refresh_repairs_legacy_plain_language_value(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _storage(tmp_path / "storage.json", "https://ha.example")
+    document = json.loads(storage.read_text())
+    document["origins"][0]["localStorage"].append(
+        {"name": "selectedLanguage", "value": "en"}
+    )
+    storage.write_text(json.dumps(document))
+    credentials = tmp_path / "credentials"
+    credentials.write_text("refresh_token=valid\n")
+    monkeypatch.setattr(
+        auth,
+        "_request_token",
+        lambda _url, _fields: {"access_token": "new-access", "expires_in": 600},
+    )
+
+    auth.refresh_playwright_auth(
+        token_url="https://ha.example",
+        credentials_path=credentials,
+        storage_path=storage,
+        storage_hass_url="https://ha.example",
+    )
+
+    updated = json.loads(storage.read_text())
+    language = next(
+        item for item in updated["origins"][0]["localStorage"]
+        if item["name"] == "selectedLanguage"
+    )
+    assert json.loads(language["value"]) == "en"

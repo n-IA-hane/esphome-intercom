@@ -202,6 +202,15 @@ def refresh_playwright_auth(
         }
     )
     token_item["value"] = json.dumps(hass_tokens, separators=(",", ":"))
+    for origin in storage.get("origins", []):
+        if desired_origin and str(origin.get("origin") or "") != desired_origin:
+            continue
+        for item in origin.get("localStorage", []):
+            if item.get("name") == "selectedLanguage":
+                try:
+                    json.loads(str(item.get("value") or ""))
+                except json.JSONDecodeError:
+                    item["value"] = json.dumps(str(item.get("value") or "en"))
     temporary = storage_path.with_suffix(storage_path.suffix + ".tmp")
     temporary.write_text(json.dumps(storage, separators=(",", ":")))
     os.chmod(temporary, 0o600)
