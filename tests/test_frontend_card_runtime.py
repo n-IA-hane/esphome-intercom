@@ -862,6 +862,25 @@ assert.equal(card._applySoftphoneSnapshot({{
 
 // Pressing Answer sends the exact call service but does not invent an
 // in-call state before the backend publishes a final 200/answer snapshot.
+const surfaceReset = makeCard();
+surfaceReset._settingsOpen = true;
+surfaceReset._softphoneKeypadOpen = true;
+surfaceReset._applySoftphoneSnapshot({{
+  endpoint_id: "browser:office", device_id: "device-office",
+  state: "ringing", direction: "incoming", call_id: "surface-A",
+  caller: "Door", sequence: 1,
+}});
+assert.equal(surfaceReset._settingsOpen, false);
+assert.equal(surfaceReset._softphoneKeypadOpen, false);
+surfaceReset._settingsOpen = true;
+surfaceReset._softphoneKeypadOpen = true;
+surfaceReset._applySoftphoneSnapshot({{
+  ...surfaceReset._softphoneSnapshot,
+  state: "answering", sequence: 2,
+}});
+assert.equal(surfaceReset._settingsOpen, true);
+assert.equal(surfaceReset._softphoneKeypadOpen, true);
+
 const incoming = makeCard();
 incoming._applySoftphoneSnapshot({{
   endpoint_id: "browser:office", device_id: "device-office",

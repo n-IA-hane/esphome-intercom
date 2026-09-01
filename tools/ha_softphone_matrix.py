@@ -134,6 +134,31 @@ CLICK = r"""
 })
 """
 
+CONTROL_DIAGNOSTICS = r"""
+() => {
+  const deep = (selector, root = document) => {
+    const found = [...root.querySelectorAll(selector)];
+    for (const node of root.querySelectorAll("*")) if (node.shadowRoot) found.push(...deep(selector, node.shadowRoot));
+    return found;
+  };
+  const card = deep("voip-stack-card, intercom-card")
+    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
+  return {
+    snapshot: card?._softphoneSnapshot || {},
+    engine_state: window.__voipStackEngine?._state || "",
+    controller: !!card?._isSoftphoneController?.(),
+    settings_open: !!card?._settingsOpen,
+    keypad_open: !!card?._keypadOpen?.(),
+    buttons: [...(card?.shadowRoot?.querySelectorAll("button") || [])].map((button) => ({
+      text: (button.innerText || button.textContent || "").trim(),
+      hidden: !!button.hidden,
+      disabled: !!button.disabled,
+      displayed: button.offsetParent !== null,
+    })),
+  };
+}
+"""
+
 MEDIA_CONTROLS = r"""
 async () => {
   const deep = (selector, root = document) => {
@@ -710,7 +735,10 @@ def main() -> int:
                 active.append(caller)
                 ringing = matching(page, "ringing")
                 if not page.evaluate(CLICK, "Answer"):
-                    raise RuntimeError("Answer button unavailable")
+                    raise RuntimeError(
+                        "Answer button unavailable: "
+                        f"{page.evaluate(CONTROL_DIAGNOSTICS)}"
+                    )
                 answered = matching(page, "in_call")
                 caller.wait_for("Call established", 5)
                 if os.environ.get("EXPECT_VIDEO", "") == "1":
@@ -799,7 +827,10 @@ def main() -> int:
                 caller.dial(LOCAL_SIP_TARGET, wait_for="180 Ringing")
                 ringing = matching(page, "ringing")
                 if not page.evaluate(CLICK, "Answer"):
-                    raise RuntimeError("Answer button unavailable")
+                    raise RuntimeError(
+                        "Answer button unavailable: "
+                        f"{page.evaluate(CONTROL_DIAGNOSTICS)}"
+                    )
                 matching(page, "in_call")
                 caller.wait_for("Call established", 5)
                 caller.digits("5")
@@ -1067,7 +1098,10 @@ def main() -> int:
                 caller.dial(LOCAL_SIP_TARGET, wait_for="180 Ringing")
                 ringing = matching(page, "ringing")
                 if not page.evaluate(CLICK, "Answer"):
-                    raise RuntimeError("Answer button unavailable")
+                    raise RuntimeError(
+                        "Answer button unavailable: "
+                        f"{page.evaluate(CONTROL_DIAGNOSTICS)}"
+                    )
                 caller.wait_for("Call established", 5)
                 answered = matching(page, "in_call")
                 media_controls = page.evaluate(MEDIA_CONTROLS)

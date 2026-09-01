@@ -528,6 +528,14 @@ class VoipStackCard extends HTMLElement {
     const snapshot = this._normaliseSoftphoneSnapshot(payload);
     const current = this._softphoneSnapshot;
     if (!softphoneSnapshotSupersedes(current, snapshot)) return false;
+    const newCall = !!snapshot.call_id && (
+      snapshot.call_id !== String(current?.call_id || "") ||
+      Number(snapshot.generation || 0) !== Number(current?.generation || 0)
+    );
+    if (newCall) {
+      this._settingsOpen = false;
+      this._softphoneKeypadOpen = false;
+    }
     this._softphoneSnapshot = snapshot;
     this._softphoneDnd = !!snapshot.dnd;
     this._autoAnswer = !!snapshot.auto_answer;
