@@ -66,6 +66,99 @@ function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
   });
 }
 
+class WorkerAudioSocket {
+  constructor(url) {
+    this.readyState = WebSocket.CONNECTING;
+    this.bufferedAmount = 0;
+    this.binaryType = "arraybuffer";
+    this.onopen = null;
+    this.onmessage = null;
+    this.onerror = null;
+    this.onclose = null;
+    this.onstats = null;
+    this._closed = false;
+    this._worker = new Worker(
+      `/voip-stack/voip-stack-audio-worker.js?v=${encodeURIComponent(MODULE_VERSION)}`,
+    );
+    this._worker.onmessage = (event) => this._handleWorkerMessage(event.data || {});
+    this._worker.onerror = () => this.onerror?.();
+    this._worker.postMessage({ type: "connect", url });
+  }
+
+  _handleWorkerMessage(message) {
+    if (message.type === "open") {
+      this.readyState = WebSocket.OPEN;
+      this.onopen?.();
+    } else if (message.type === "message") {
+      this.onmessage?.({ data: message.data });
+    } else if (message.type === "stats") {
+      this.bufferedAmount = Number(message.buffered_amount || 0);
+      this.onstats?.(message);
+    } else if (message.type === "error") {
+      this.onerror?.();
+    } else if (message.type === "close") {
+      this.readyState = WebSocket.CLOSED;
+      this._finishClose(message);
+    }
+  }
+
+  _bind(node, workerType) {
+    if (!node || this.readyState === WebSocket.CLOSED) return;
+    const channel = new MessageChannel();
+    node.port.postMessage(
+      { type: "bind_media_port", port: channel.port1 },
+      [channel.port1],
+    );
+    this._worker.postMessage(
+      { type: workerType, port: channel.port2 },
+      [channel.port2],
+    );
+  }
+
+  bindPlayback(node) {
+    this._bind(node, "bind_playback");
+  }
+
+  bindCapture(node) {
+    this._bind(node, "bind_capture");
+  }
+
+  configureCapture(enabled, maxBufferedBytes) {
+    this._worker.postMessage({
+      type: "configure_capture",
+      enabled: Boolean(enabled),
+      max_buffered_bytes: Math.max(0, Number(maxBufferedBytes || 0)),
+    });
+  }
+
+  send(data) {
+    if (this.readyState !== WebSocket.OPEN) return;
+    this._worker.postMessage({ type: "send", data });
+  }
+
+  close() {
+    if (this.readyState === WebSocket.CLOSED || this._closed) return;
+    this._closed = true;
+    this.readyState = WebSocket.CLOSING;
+    this._worker.postMessage({ type: "close" });
+  }
+
+  _finishClose(event = {}) {
+    this._closed = true;
+    this.readyState = WebSocket.CLOSED;
+    this._worker.terminate();
+    this.onclose?.(event);
+    this.onclose = null;
+  }
+}
+
+function createAudioSocket(url) {
+  if (typeof Worker === "function" && typeof MessageChannel === "function") {
+    return new WorkerAudioSocket(url);
+  }
+  return new WebSocket(url);
+}
+
 function mediaClientInstanceId() {
   try {
     const existing = String(globalThis[MEDIA_CLIENT_GLOBAL_KEY] || "");
@@ -118,9 +211,8 @@ class VoipStackEngine extends EventTarget {
     this._captureSink = null;
     this._source = null;
     this._playbackNode = null;
-    this._playbackAnalyser = null;
     this._audioLevel = 0;
-    this._audioLevelFrame = 0;
+    this._lastAudioMessageAt = 0;
     this._microphoneSwitchGeneration = 0;
     this._outputSwitchGeneration = 0;
     this._mediaDevices = new BrowserMediaDevices();
@@ -1084,9 +1176,16 @@ class VoipStackEngine extends EventTarget {
     ) {
       throw new Error("Audio WebSocket superseded before connect");
     }
-    const ws = new WebSocket(wsUrl);
+    const ws = createAudioSocket(wsUrl);
     this._ws = ws;
     ws.binaryType = "arraybuffer";
+    ws.onstats = (stats) => {
+      if (this._ws !== ws) return;
+      this._stats.sent = Number(stats.sent || 0);
+      this._stats.received = Number(stats.received || 0);
+      this._stats.tx_dropped = Number(stats.tx_dropped || 0);
+      this._emit();
+    };
     let helloResolve;
     let helloReject;
     let helloSettled = false;
@@ -1244,6 +1343,22 @@ class VoipStackEngine extends EventTarget {
     if ((this._stats.sent & 31) === 0) this._emit();
   }
 
+  _captureBufferLimit(format = this._txFormat) {
+    if (!format) return 0;
+    const bytesPerSample = format.pcmFormat === "s16le" ? 2 :
+      format.pcmFormat === "s24le" ? 3 : 4;
+    const frameBytes = Math.ceil(
+      Number(format.sampleRate || 0) * Number(format.channels || 0) *
+      bytesPerSample * Number(format.frameMs || 0) / 1000,
+    );
+    const bytesPerSecond = Number(format.sampleRate || 0) *
+      Number(format.channels || 0) * bytesPerSample;
+    return Math.max(
+      frameBytes * MIN_AUDIO_WS_BUFFER_FRAMES,
+      Math.ceil(bytesPerSecond * MAX_AUDIO_WS_BUFFER_MS / 1000),
+    );
+  }
+
   _handleMessage(event) {
     if (typeof event.data === "string") {
       try {
@@ -1270,6 +1385,19 @@ class VoipStackEngine extends EventTarget {
       !this._playbackNode ||
       !this._canReceiveAudio()
     ) return;
+    const arrivedAt = performance.now();
+    if (this._lastAudioMessageAt > 0) {
+      const gap = arrivedAt - this._lastAudioMessageAt;
+      this._stats.max_ws_arrival_gap_ms = Math.max(
+        Number(this._stats.max_ws_arrival_gap_ms || 0),
+        gap,
+      );
+      if (gap >= 40) {
+        this._stats.ws_arrival_gaps_over_40ms =
+          Number(this._stats.ws_arrival_gaps_over_40ms || 0) + 1;
+      }
+    }
+    this._lastAudioMessageAt = arrivedAt;
     this._playbackNode.port.postMessage({ type: "audio", buffer: event.data, byteOffset: 1 }, [event.data]);
     this._stats.received++;
     if ((this._stats.received & 31) === 0) this._emit();
@@ -1291,45 +1419,6 @@ class VoipStackEngine extends EventTarget {
     } }));
   }
 
-  _startAudioLevel(analyser) {
-    this._stopAudioLevel();
-    if (!analyser) return;
-    const schedule = globalThis.requestAnimationFrame || window.requestAnimationFrame;
-    if (typeof schedule !== "function") return;
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.5;
-    const samples = new Float32Array(analyser.fftSize);
-    let lastSampleAt = 0;
-    let smoothed = 0;
-    const tick = (timestamp = performance.now()) => {
-      if (this._playbackAnalyser !== analyser) return;
-      if (timestamp - lastSampleAt >= 50) {
-        lastSampleAt = timestamp;
-        analyser.getFloatTimeDomainData(samples);
-        let power = 0;
-        for (const sample of samples) power += sample * sample;
-        const rms = Math.sqrt(power / samples.length);
-        const decibels = rms > 0 ? 20 * Math.log10(rms) : -100;
-        const target = rms < 0.003
-          ? 0
-          : Math.max(0, Math.min(1, (decibels + 50) / 35));
-        smoothed += (target - smoothed) * (target > smoothed ? 0.4 : 0.16);
-        this._emitAudioLevel(smoothed < 0.01 ? 0 : smoothed);
-      }
-      this._audioLevelFrame = schedule(tick);
-    };
-    this._audioLevelFrame = schedule(tick);
-  }
-
-  _stopAudioLevel() {
-    const cancel = globalThis.cancelAnimationFrame || window.cancelAnimationFrame;
-    if (this._audioLevelFrame && typeof cancel === "function") {
-      cancel(this._audioLevelFrame);
-    }
-    this._audioLevelFrame = 0;
-    this._emitAudioLevel(0);
-  }
-
   async _setupAudio(deviceInfo, negotiated = null, attachKey = "") {
     const audioMode = normaliseAudioMode(deviceInfo?.audio_mode);
     const audioDirection = normaliseAudioDirection(negotiated?.audio_direction);
@@ -1345,7 +1434,6 @@ class VoipStackEngine extends EventTarget {
       captureSink: null,
       source: null,
       playbackNode: null,
-      playbackAnalyser: null,
     };
     const assertCurrent = () => {
       if (
@@ -1428,16 +1516,10 @@ class VoipStackEngine extends EventTarget {
             event.data?.type !== "stats"
           ) return;
           this._stats = { ...this._stats, ...event.data };
+          this._emitAudioLevel(event.data.audio_level);
           this._emit();
         };
-        if (typeof resources.audioContext.createAnalyser === "function") {
-          resources.playbackAnalyser = resources.audioContext.createAnalyser();
-          resources.playbackNode
-            .connect(resources.playbackAnalyser)
-            .connect(resources.audioContext.destination);
-        } else {
-          resources.playbackNode.connect(resources.audioContext.destination);
-        }
+        resources.playbackNode.connect(resources.audioContext.destination);
       }
       assertCurrent();
       const previous = this._takeAudioResources();
@@ -1452,8 +1534,9 @@ class VoipStackEngine extends EventTarget {
       this._captureSink = resources.captureSink;
       this._source = resources.source;
       this._playbackNode = resources.playbackNode;
-      this._playbackAnalyser = resources.playbackAnalyser;
       this._audioReady = true;
+      this._ws?.bindCapture?.(this._captureNode);
+      this._ws?.bindPlayback?.(this._playbackNode);
       this._applyAudioDirection(audioDirection);
       if (resources.mediaStream) {
         const settings = resources.mediaStream.getAudioTracks?.()[0]?.getSettings?.() || {};
@@ -1465,7 +1548,6 @@ class VoipStackEngine extends EventTarget {
           String(resources.audioContext.sinkId || ""),
         );
       }
-      this._startAudioLevel(resources.playbackAnalyser);
       await this._disposeAudioResources(previous);
     } catch (err) {
       await this._disposeAudioResources(resources);
@@ -1524,6 +1606,7 @@ class VoipStackEngine extends EventTarget {
     let changed = nextDirection !== this._audioDirection;
     this._audioDirection = nextDirection;
     const enabled = this._canSendAudio();
+    this._ws?.configureCapture?.(enabled, this._captureBufferLimit());
     for (const track of this._mediaStream?.getAudioTracks?.() || []) {
       if (track.enabled !== enabled) {
         track.enabled = enabled;
@@ -1936,14 +2019,13 @@ class VoipStackEngine extends EventTarget {
   }
 
   _takeAudioResources() {
-    this._stopAudioLevel();
+    this._emitAudioLevel(0);
     const resources = {
       captureNode: this._captureNode,
       captureSink: this._captureSink,
       source: this._source,
       mediaStream: this._mediaStream,
       playbackNode: this._playbackNode,
-      playbackAnalyser: this._playbackAnalyser,
       audioContext: this._audioContext,
     };
     this._captureNode = null;
@@ -1951,7 +2033,7 @@ class VoipStackEngine extends EventTarget {
     this._source = null;
     this._mediaStream = null;
     this._playbackNode = null;
-    this._playbackAnalyser = null;
+    this._lastAudioMessageAt = 0;
     this._audioContext = null;
     this._audioFrameBuffer = null;
     return resources;
@@ -1963,7 +2045,6 @@ class VoipStackEngine extends EventTarget {
     try { resources.source?.disconnect(); } catch (_) {}
     try { resources.mediaStream?.getTracks?.().forEach((track) => track.stop()); } catch (_) {}
     try { resources.playbackNode?.disconnect(); } catch (_) {}
-    try { resources.playbackAnalyser?.disconnect(); } catch (_) {}
     if (resources.audioContext) {
       await settleWithin(resources.audioContext.close());
     }

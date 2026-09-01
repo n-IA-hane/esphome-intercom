@@ -56,11 +56,21 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._concealmentGain = 0;
     this._lastArrivalTime = 0;
     this._arrivalJitterSeconds = 0;
+    this._levelPower = 0;
+    this._levelSamples = 0;
+    this._previousInput = new Float32Array(this._format.channels);
+    this._hasPreviousInput = false;
 
-    this.port.onmessage = (event) => {
+    const receive = (event) => {
       const data = event.data;
-      if (data?.type === "audio" && data.buffer) this._push(data.buffer, data.byteOffset || 0);
+      if (data?.type === "audio" && data.buffer) {
+        this._push(data.buffer, data.byteOffset || 0);
+      } else if (data?.type === "bind_media_port" && data.port) {
+        data.port.onmessage = receive;
+        data.port.start?.();
+      }
     };
+    this.port.onmessage = receive;
   }
 
   _decode(view, sampleIndex) {
@@ -89,17 +99,33 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       this._framesDrop += framesToDrop;
     }
     const view = new DataView(buffer, byteOffset, frameBytes);
+    if (!this._hasPreviousInput) {
+      for (let ch = 0; ch < this._format.channels; ch++) {
+        this._previousInput[ch] = this._decode(view, ch);
+      }
+      this._hasPreviousInput = true;
+    }
     for (let i = 0; i < this._contextFrameSamples; i++) {
-      const srcPos = i * this._format.sampleRate / sampleRate;
+      // Keep one source sample across RTP frames. Resampling each frame in
+      // isolation clamps its final interpolation to the last sample and then
+      // jumps at the next frame, which is audible on 8 kHz G.711 calls.
+      const srcPos = i * this._format.frameSamples / this._contextFrameSamples;
       const base = Math.floor(srcPos);
       const frac = srcPos - base;
       for (let ch = 0; ch < this._format.channels; ch++) {
-        const a = this._decode(view, base * this._format.channels + ch);
-        const bIndex = Math.min(this._format.frameSamples - 1, base + 1);
-        const b = this._decode(view, bIndex * this._format.channels + ch);
+        const a = base === 0
+          ? this._previousInput[ch]
+          : this._decode(view, (base - 1) * this._format.channels + ch);
+        const b = this._decode(view, base * this._format.channels + ch);
         this._ring[this._write] = a + (b - a) * frac;
         this._write = (this._write + 1) % this._ring.length;
       }
+    }
+    for (let ch = 0; ch < this._format.channels; ch++) {
+      this._previousInput[ch] = this._decode(
+        view,
+        (this._format.frameSamples - 1) * this._format.channels + ch,
+      );
     }
     this._available += this._contextFrameSamples * this._format.channels;
     this._framesIn++;
@@ -154,6 +180,10 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
         const sample = this._ring[(this._read + Math.min(ch, this._format.channels - 1)) % this._ring.length];
         channels[ch][i] = sample;
         this._lastOutput[Math.min(ch, this._format.channels - 1)] = sample;
+        if (ch === 0) {
+          this._levelPower += sample * sample;
+          this._levelSamples++;
+        }
       }
       this._concealmentGain = 1;
       this._read = (this._read + this._format.channels) % this._ring.length;
@@ -164,6 +194,15 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._framesOut++;
     if (currentTime - this._lastStats >= 1) {
       this._lastStats = currentTime;
+      const rms = this._levelSamples > 0
+        ? Math.sqrt(this._levelPower / this._levelSamples)
+        : 0;
+      const decibels = rms > 0 ? 20 * Math.log10(rms) : -100;
+      const audioLevel = rms < 0.003
+        ? 0
+        : Math.max(0, Math.min(1, (decibels + 50) / 35));
+      this._levelPower = 0;
+      this._levelSamples = 0;
       if (
         this._targetStartFrames > this._minStartFrames &&
         currentTime - this._lastUnderrun >= STABLE_DECAY_SECONDS
@@ -180,6 +219,7 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
         jitter_target_frames: this._targetStartFrames,
         jitter_target_ms: this._targetStartFrames * this._format.frameMs,
         arrival_jitter_ms: Math.round(this._arrivalJitterSeconds * 10000) / 10,
+        audio_level: audioLevel,
       });
     }
     return true;

@@ -1831,6 +1831,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.json: list[dict] = []
                 self.binary: list[bytes] = []
+                self.binary_sent_at: list[float] = []
                 self.messages: asyncio.Queue = asyncio.Queue()
                 self.changed = asyncio.Event()
 
@@ -1840,6 +1841,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
             async def send_bytes(self, payload: bytes) -> None:
                 self.binary.append(bytes(payload))
+                self.binary_sent_at.append(asyncio.get_running_loop().time())
                 self.changed.set()
 
             def force_close(self) -> None:
@@ -1943,6 +1945,30 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             await wait_until(lambda: len(ws.binary) >= 2)
             self.assertEqual(audio_ws.decode_audio_frame(ws.binary[-1]), second_pcm)
 
+            burst_start = len(ws.binary)
+            for index in range(8):
+                burst_packet = rtp.build_packet(
+                    rtp.RtpPacket(
+                        payload_type=l16.payload_type,
+                        sequence=3 + index,
+                        timestamp=321 + (index + 1) * l16.rtp_timestamp_step,
+                        ssrc=8,
+                        payload=sip_client.RtpPayloadEncoder(l16).encode(second_pcm),
+                    )
+                )
+                await loop.sock_sendto(
+                    remote, burst_packet, ("127.0.0.1", local_port)
+                )
+            await wait_until(lambda: len(ws.binary) >= burst_start + 8)
+            burst_times = ws.binary_sent_at[burst_start : burst_start + 8]
+            burst_intervals = [
+                burst_times[index] - burst_times[index - 1]
+                for index in range(1, len(burst_times))
+            ]
+            self.assertGreater(burst_times[-1] - burst_times[0], 0.05)
+            self.assertGreater(min(burst_intervals), 0.004)
+            self.assertLess(max(burst_intervals), 0.040)
+
             await ws.messages.put(
                 types.SimpleNamespace(
                     type=WSMsgType.BINARY,
@@ -1964,6 +1990,17 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 if packet.payload_type == l16.payload_type:
                     decoded_tx = decoder.decode(packet.payload)
             self.assertEqual(decoded_tx, second_pcm)
+
+            # The outbound playout clock continues emitting PLC while this
+            # test exercises the independent RTP-to-browser direction. Drain
+            # those already queued datagrams before measuring a new TX burst.
+            while True:
+                try:
+                    await asyncio.wait_for(
+                        loop.sock_recv(remote, 65535), timeout=0.001
+                    )
+                except TimeoutError:
+                    break
 
             for _index in range(40):
                 await ws.messages.put(

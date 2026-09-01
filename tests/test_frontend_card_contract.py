@@ -130,7 +130,7 @@ class FrontendCardContractTest(unittest.TestCase):
     def test_hangup_pulse_uses_received_audio_without_fixed_button_size(self) -> None:
         engine = ENGINE.read_text()
         pulse = _method_body(self.source, "_applyHangupAudioLevel")
-        self.assertIn("createAnalyser", engine)
+        self.assertNotIn("createAnalyser", engine)
         self.assertIn('CustomEvent("audio-level"', engine)
         self.assertIn('"--voip-hangup-scale"', pulse)
         self.assertIn("scaleY(var(--voip-hangup-scale, 1))", self.view_source)
@@ -711,6 +711,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertNotIn("raw.slice(1)", engine)
         self.assertIn("byteOffset: 1", engine)
         self.assertIn("new DataView(buffer, byteOffset, frameBytes)", playback)
+        self.assertIn("audio_level: audioLevel", playback)
         self.assertIn("this._dropFrames = this._maxStartFrames + 1", playback)
         self.assertIn("if (underrunThisQuantum) this._started = false", playback)
         self.assertIn('pcmFormat === "s24le_in_s32") return view.getInt32(offset, true) / 8388608', playback)

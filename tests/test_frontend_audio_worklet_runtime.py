@@ -21,6 +21,78 @@ PROCESSOR = (
     / "frontend"
     / "voip-stack-processor.js"
 )
+PLAYBACK_PROCESSOR = PROCESSOR.with_name("voip-stack-playback-processor.js")
+
+
+@pytest.mark.parametrize(
+    ("input_rate", "frame_ms"),
+    ((8000, 20), (16000, 16), (48000, 20)),
+)
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_playback_resampling_is_continuous_across_rtp_frames(
+    input_rate: int,
+    frame_ms: int,
+) -> None:
+    script = rf'''
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+
+let Processor;
+class MockAudioWorkletProcessor {{
+  constructor() {{
+    this.port = {{ postMessage() {{}}, onmessage: null }};
+  }}
+}}
+const context = vm.createContext({{
+  AudioWorkletProcessor: MockAudioWorkletProcessor,
+  sampleRate: 48000,
+  currentTime: 1,
+  registerProcessor(_name, value) {{ Processor = value; }},
+  ArrayBuffer,
+  DataView,
+  Float32Array,
+  Math,
+  Number,
+  Object,
+  Error,
+}});
+vm.runInContext(fs.readFileSync({json.dumps(str(PLAYBACK_PROCESSOR))}, "utf8"), context);
+const processor = new Processor({{
+  processorOptions: {{
+    format: {{sampleRate: {input_rate}, frameMs: {frame_ms}, channels: 1, pcmFormat: "s16le"}},
+  }},
+}});
+const frameSamples = {input_rate} * {frame_ms} / 1000;
+const outputSamples = 48000 * {frame_ms} / 1000;
+let source = 0;
+for (let frame = 0; frame < 5; frame++) {{
+  const buffer = new ArrayBuffer(frameSamples * 2);
+  const view = new DataView(buffer);
+  for (let index = 0; index < frameSamples; index++, source++) {{
+    view.setInt16(index * 2, -8000 + source * 20, true);
+  }}
+  processor._push(buffer);
+}}
+const output = Array.from(processor._ring.slice(0, 5 * outputSamples));
+const differences = output.slice(1).map((value, index) =>
+  Math.abs(value - output[index]) * 32768
+);
+const boundaryIndexes = [1, 2, 3, 4].map((value) => value * outputSamples);
+const boundaries = boundaryIndexes.map((index) => differences[index - 1]);
+const excluded = new Set(boundaryIndexes.map((index) => index - 1));
+const ordinary = differences.filter((_value, index) => !excluded.has(index));
+ordinary.sort((left, right) => left - right);
+const median = ordinary[Math.floor(ordinary.length / 2)];
+assert.ok(Math.max(...boundaries) <= median * 2, {{boundaries, median}});
+'''
+    subprocess.run(
+        ["node", "--experimental-vm-modules", "--input-type=module", "-"],
+        input=script,
+        text=True,
+        check=True,
+        capture_output=True,
+    )
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")

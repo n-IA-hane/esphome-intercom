@@ -722,6 +722,11 @@ async def _run_audio_session(
         "tx_playout_late_discard": 0,
         "tx_playout_plc": 0,
         "tx_playout_rebuffer": 0,
+        "rx_playout_depth": 0,
+        "rx_playout_peak": 0,
+        "rx_playout_late_discard": 0,
+        "rx_playout_plc": 0,
+        "rx_playout_rebuffer": 0,
         "drop_direction": 0,
         "drop_connection_hold": 0,
         "dtmf_rx_events": 0,
@@ -735,6 +740,9 @@ async def _run_audio_session(
     last_counter_event = 0.0
     ws_send_lock = asyncio.Lock()
     media_state_lock = asyncio.Lock()
+    rx_frames: deque[bytes] = deque()
+    rx_ready = asyncio.Event()
+    rx_playout_generation = 0
     debug_capture = (
         _DebugAudioCapture(session.call_id, rx_format=session.recv_format, tx_format=session.send_format)
         if media_capture_enabled(hass)
@@ -823,6 +831,7 @@ async def _run_audio_session(
         nonlocal rtp_decoder, rtp_encoder
         nonlocal dtmf_decoder
         nonlocal debug_capture
+        nonlocal rx_playout_generation
         if generation == applied_media_generation:
             return
         async with media_state_lock:
@@ -848,6 +857,10 @@ async def _run_audio_session(
             latched_rtp_ssrc = None
             logged_first_rtp = False
             protocol.dropped_packets += drain_queue(queue)
+            rx_frames.clear()
+            rx_playout_generation += 1
+            rx_ready.set()
+            counters["rx_playout_rebuffer"] += 1
             rtp_decoder = next_decoder
             rtp_encoder = next_encoder
             dtmf_decoder = next_dtmf_decoder
@@ -888,97 +901,185 @@ async def _run_audio_session(
         nonlocal latched_rtp_source, latched_rtp_ssrc, logged_first_rtp
         nonlocal remote_rtp_host, remote_rtp_port
         observed_generation = int(session.media_generation)
-        while not closed.is_set():
-            if observed_generation != session.media_generation:
-                observed_generation = int(session.media_generation)
-                await refresh_media_state(observed_generation)
-            data, addr = await queue.get()
-            if observed_generation != session.media_generation:
-                observed_generation = int(session.media_generation)
-                await refresh_media_state(observed_generation)
-            if str(addr[0]) not in {session.remote_rtp_host, session.signaling_host}:
-                counters["drop_addr"] += 1
-                continue
-            try:
-                packet = rtp.parse_packet(data)
-                if (
-                    dtmf_decoder is not None
-                    and packet.payload_type == dtmf_decoder.payload_type
-                ):
-                    digit = dtmf_decoder.decode(data)
-                    event = telephone_event_code(digit)
-                    if (
-                        digit
-                        and event is not None
-                        and event in session.dtmf_events
-                        and session.on_dtmf is not None
-                    ):
-                        session.on_dtmf(digit)
-                        counters["dtmf_rx_events"] += 1
-                    continue
-                if not logged_first_rtp:
-                    _LOGGER.info(
-                        "HA softphone RTP RX first packet call_id=%s from=%s:%s payload_type=%s expected=%s bytes=%d",
-                        session.call_id,
-                        addr[0],
-                        addr[1],
-                        packet.payload_type,
-                        session.recv_format.payload_type,
-                        len(data),
-                    )
-                    logged_first_rtp = True
-                if packet.payload_type != session.recv_format.payload_type:
-                    counters["drop_payload_type"] += 1
-                    continue
-                if session.local_audio_direction not in {"recvonly", "sendrecv"}:
-                    counters["drop_direction"] += 1
-                    continue
-                if latched_rtp_ssrc is not None and packet.ssrc != latched_rtp_ssrc:
-                    counters["drop_addr"] += 1
-                    continue
-                try:
-                    rtp.validate_audio_payload_size(
-                        packet.payload,
-                        session.recv_format,
-                    )
-                except rtp.RtpError as err:
-                    counters["drop_payload_size"] += 1
-                    _LOGGER.debug("HA softphone RTP RX oversized audio drop: %s", err)
-                    continue
-                pcm = rtp_decoder.decode(packet.payload)
-                if not pcm:
-                    continue
-                source = (str(addr[0]), int(addr[1]))
-                if latched_rtp_source is None:
-                    latched_rtp_source = source
-                    latched_rtp_ssrc = packet.ssrc
-                    remote_rtp_host = source[0]
-                    remote_rtp_port = source[1]
-                elif source[0] != latched_rtp_source[0]:
-                    counters["drop_addr"] += 1
-                    continue
-                elif source[1] != latched_rtp_source[1]:
-                    # Preserve the SSRC latch while allowing a NAT mapping to
-                    # change its source port during a long-lived call.
-                    latched_rtp_source = source
-                    remote_rtp_port = source[1]
-                counters["rtp_rx"] += 1
-                counters["rtp_rx_bytes"] += len(data)
-                if debug_capture is not None:
-                    debug_capture.note_rtp_rx(loop.time(), pcm)
+        async def playout() -> None:
+            active_generation = rx_playout_generation
+            started = False
+            next_deadline = loop.time()
+            last_pcm = b""
+            plc_active = False
+            while not closed.is_set():
+                if active_generation != rx_playout_generation:
+                    active_generation = rx_playout_generation
+                    started = False
+                    last_pcm = b""
+                    plc_active = False
+
+                frame_ms = max(1, int(session.recv_format.audio_format.frame_ms))
+                frame_bytes = int(
+                    session.recv_format.audio_format.nominal_frame_bytes
+                )
+                target_frames = max(
+                    1, (_BROWSER_PLAYOUT_TARGET_MS + frame_ms - 1) // frame_ms
+                )
+                if not started:
+                    deadline = loop.time() + (_BROWSER_PLAYOUT_TARGET_MS / 1000)
+                    while len(rx_frames) < target_frames and loop.time() < deadline:
+                        rx_ready.clear()
+                        try:
+                            await asyncio.wait_for(
+                                rx_ready.wait(),
+                                timeout=max(0.001, deadline - loop.time()),
+                            )
+                        except TimeoutError:
+                            break
+                        if active_generation != rx_playout_generation:
+                            break
+                    if active_generation != rx_playout_generation:
+                        continue
+                    if not rx_frames:
+                        continue
+                    started = True
+                    next_deadline = loop.time()
+
+                if rx_frames:
+                    pcm = rx_frames.popleft()
+                    if plc_active:
+                        pcm = _fade_in_pcm_frame(
+                            pcm,
+                            int(session.recv_format.audio_format.sample_rate) * 2 // 1000,
+                        )
+                    last_pcm = pcm
+                    plc_active = False
+                else:
+                    pcm = _conceal_pcm_frame(last_pcm, frame_bytes)
+                    last_pcm = pcm
+                    plc_active = True
+                    counters["rx_playout_plc"] += 1
+
                 async with ws_send_lock:
                     await ws.send_bytes(encode_audio_frame(pcm))
                 if debug_capture is not None:
                     debug_capture.note_ws_send(loop.time())
                 counters["ws_tx"] += 1
+                counters["rx_playout_depth"] = len(rx_frames)
                 publish_counters()
-            except (ConnectionError, RuntimeError):
-                # A dead browser transport ends this media owner. Treating it
-                # as malformed RTP would leave a zombie UDP session spinning.
-                raise
-            except Exception as err:  # noqa: BLE001 - media path must stay alive on bad packets.
-                counters["drop_error"] += 1
-                _LOGGER.debug("HA softphone RTP RX drop: %s", err)
+                next_deadline += frame_ms / 1000
+                now = loop.time()
+                if next_deadline <= now:
+                    next_deadline = now + (frame_ms / 1000)
+                await asyncio.sleep(next_deadline - now)
+
+        playout_task = asyncio.create_task(playout())
+
+        def stop_receive_when_playout_ends(_task: asyncio.Task[None]) -> None:
+            if closed.is_set():
+                return
+            closed.set()
+            put_drop_oldest(queue, (b"", ("", 0)))
+
+        playout_task.add_done_callback(stop_receive_when_playout_ends)
+        try:
+            while not closed.is_set():
+                if observed_generation != session.media_generation:
+                    observed_generation = int(session.media_generation)
+                    await refresh_media_state(observed_generation)
+                data, addr = await queue.get()
+                if closed.is_set():
+                    break
+                if observed_generation != session.media_generation:
+                    observed_generation = int(session.media_generation)
+                    await refresh_media_state(observed_generation)
+                if str(addr[0]) not in {session.remote_rtp_host, session.signaling_host}:
+                    counters["drop_addr"] += 1
+                    continue
+                try:
+                    packet = rtp.parse_packet(data)
+                    if (
+                        dtmf_decoder is not None
+                        and packet.payload_type == dtmf_decoder.payload_type
+                    ):
+                        digit = dtmf_decoder.decode(data)
+                        event = telephone_event_code(digit)
+                        if (
+                            digit
+                            and event is not None
+                            and event in session.dtmf_events
+                            and session.on_dtmf is not None
+                        ):
+                            session.on_dtmf(digit)
+                            counters["dtmf_rx_events"] += 1
+                        continue
+                    if not logged_first_rtp:
+                        _LOGGER.info(
+                            "HA softphone RTP RX first packet call_id=%s from=%s:%s payload_type=%s expected=%s bytes=%d",
+                            session.call_id,
+                            addr[0],
+                            addr[1],
+                            packet.payload_type,
+                            session.recv_format.payload_type,
+                            len(data),
+                        )
+                        logged_first_rtp = True
+                    if packet.payload_type != session.recv_format.payload_type:
+                        counters["drop_payload_type"] += 1
+                        continue
+                    if session.local_audio_direction not in {"recvonly", "sendrecv"}:
+                        counters["drop_direction"] += 1
+                        continue
+                    if latched_rtp_ssrc is not None and packet.ssrc != latched_rtp_ssrc:
+                        counters["drop_addr"] += 1
+                        continue
+                    try:
+                        rtp.validate_audio_payload_size(
+                            packet.payload,
+                            session.recv_format,
+                        )
+                    except rtp.RtpError as err:
+                        counters["drop_payload_size"] += 1
+                        _LOGGER.debug("HA softphone RTP RX oversized audio drop: %s", err)
+                        continue
+                    pcm = rtp_decoder.decode(packet.payload)
+                    if not pcm:
+                        continue
+                    source = (str(addr[0]), int(addr[1]))
+                    if latched_rtp_source is None:
+                        latched_rtp_source = source
+                        latched_rtp_ssrc = packet.ssrc
+                        remote_rtp_host = source[0]
+                        remote_rtp_port = source[1]
+                    elif source[0] != latched_rtp_source[0]:
+                        counters["drop_addr"] += 1
+                        continue
+                    elif source[1] != latched_rtp_source[1]:
+                        # Preserve the SSRC latch while allowing a NAT mapping to
+                        # change its source port during a long-lived call.
+                        latched_rtp_source = source
+                        remote_rtp_port = source[1]
+                    counters["rtp_rx"] += 1
+                    counters["rtp_rx_bytes"] += len(data)
+                    if debug_capture is not None:
+                        debug_capture.note_rtp_rx(loop.time(), pcm)
+                    rx_frames.append(pcm)
+                    frame_ms = max(1, int(session.recv_format.audio_format.frame_ms))
+                    max_frames = max(1, _BROWSER_PLAYOUT_MAX_MS // frame_ms)
+                    while len(rx_frames) > max_frames:
+                        rx_frames.popleft()
+                        counters["rx_playout_late_discard"] += 1
+                    counters["rx_playout_depth"] = len(rx_frames)
+                    counters["rx_playout_peak"] = max(
+                        counters["rx_playout_peak"], len(rx_frames)
+                    )
+                    rx_ready.set()
+                except (ConnectionError, RuntimeError):
+                    # A dead browser transport ends this media owner. Treating it
+                    # as malformed RTP would leave a zombie UDP session spinning.
+                    raise
+                except Exception as err:  # noqa: BLE001 - media path must stay alive on bad packets.
+                    counters["drop_error"] += 1
+                    _LOGGER.debug("HA softphone RTP RX drop: %s", err)
+        finally:
+            playout_task.cancel()
+            await asyncio.gather(playout_task, return_exceptions=True)
 
     rx_task = asyncio.create_task(rtp_to_ws())
     call_ended, remove_call_listener = _listen_for_call_end(
@@ -1194,7 +1295,9 @@ async def _run_audio_session(
         _LOGGER.info(
             "HA softphone audio websocket detached call_id=%s ws_rx=%d rtp_tx=%d rtp_rx=%d ws_tx=%d "
             "drop_addr=%d drop_pt=%d drop_size=%d drop_error=%d drop_rx_queue=%d "
-            "drop_tx_queue=%d tx_error=%d playout_peak=%d late_discard=%d plc=%d rebuffer=%d",
+            "drop_tx_queue=%d tx_error=%d tx_playout_peak=%d tx_late_discard=%d "
+            "tx_plc=%d tx_rebuffer=%d rx_playout_peak=%d rx_late_discard=%d "
+            "rx_plc=%d rx_rebuffer=%d",
             session.call_id,
             counters["ws_rx"],
             counters["rtp_tx"],
@@ -1211,6 +1314,10 @@ async def _run_audio_session(
             counters["tx_playout_late_discard"],
             counters["tx_playout_plc"],
             counters["tx_playout_rebuffer"],
+            counters["rx_playout_peak"],
+            counters["rx_playout_late_discard"],
+            counters["rx_playout_plc"],
+            counters["rx_playout_rebuffer"],
         )
         if debug_capture is not None:
             _schedule_debug_capture_write(hass, debug_capture, counters)
