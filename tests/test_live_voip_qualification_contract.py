@@ -48,10 +48,12 @@ class LiveVoipQualificationContractTest(unittest.TestCase):
     def test_default_group_names_are_unique_to_the_selected_run(self) -> None:
         args = SimpleNamespace(
             esp="p4",
+            esp_extension=None,
             ring_group=None,
             conference_group=None,
         )
         runner.apply_isolated_group_defaults(args, stamp="123456")
+        self.assertEqual(args.esp_extension, "9123456")
         self.assertEqual(args.ring_group, "q-p4-ring-123456")
         self.assertEqual(
             args.conference_group,

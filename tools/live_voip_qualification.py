@@ -1555,9 +1555,11 @@ def apply_isolated_group_defaults(
     *,
     stamp: str | None = None,
 ) -> None:
-    """Keep group scenarios isolated from other live household endpoints."""
+    """Keep mutable test routes isolated from live household endpoints."""
 
     suffix = stamp or datetime.now(UTC).strftime("%H%M%S")
+    if not args.esp_extension:
+        args.esp_extension = f"9{suffix[-6:]}"
     if not args.ring_group:
         args.ring_group = f"q-{args.esp}-ring-{suffix}"
     if not args.conference_group:
@@ -1784,7 +1786,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--allow-trunk", action="store_true")
-    parser.add_argument("--esp-extension", default="1000")
+    parser.add_argument(
+        "--esp-extension",
+        help="temporary isolated ESP extension (default: unique per run)",
+    )
     parser.add_argument("--ha-extension", default="666")
     parser.add_argument(
         "--ring-group",
