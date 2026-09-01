@@ -2501,12 +2501,6 @@ class VoipStackCard extends HTMLElement {
     let hangupSucceeded = false;
 
     try {
-      const deviceInfo = this._activeDeviceInfo || await this._getDeviceInfo();
-      if (!deviceInfo?.device_id) {
-        throw new Error("Device not found");
-      }
-      this._activeDeviceInfo = deviceInfo;
-
       if (wasSoftphone) {
         await settleServiceWithin(
           this._hass.callService("voip_stack", "hangup", {
@@ -2517,6 +2511,11 @@ class VoipStackCard extends HTMLElement {
           "Hangup request timed out; you can retry.",
         );
       } else {
+        const deviceInfo = this._activeDeviceInfo || await this._getDeviceInfo();
+        if (!deviceInfo?.device_id) {
+          throw new Error("Device not found");
+        }
+        this._activeDeviceInfo = deviceInfo;
         // Mirror mode: Hangup is the ESP's Decline button. Firmware maps
         // decline during in_call to stop(), and idle is a no-op.
         await this._pressEspButton(this._declineButtonEntityId, "Decline");
