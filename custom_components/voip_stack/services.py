@@ -82,6 +82,24 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         },
         extra=vol.PREVENT_EXTRA,
     )
+    send_dtmf_schema = vol.Schema(
+        {
+            **phone_selector_fields,
+            vol.Optional("call_id", default=""): SHORT_TEXT,
+            vol.Required("digits"): vol.All(
+                cv.string,
+                vol.Match(r"^[0-9*#A-Da-d]+$"),
+                vol.Length(min=1, max=64),
+            ),
+            vol.Optional("duration_ms", default=160): vol.All(
+                vol.Coerce(int), vol.Range(min=40, max=5000)
+            ),
+            vol.Optional("gap_ms", default=80): vol.All(
+                vol.Coerce(int), vol.Range(min=40, max=5000)
+            ),
+        },
+        extra=vol.PREVENT_EXTRA,
+    )
     sip_call_schema = vol.Schema(
         {
             **phone_selector_fields,
@@ -254,6 +272,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         "answer": ServiceSpec(sip_answer_schema),
         "decline": ServiceSpec(sip_decline_schema),
         "hangup": ServiceSpec(sip_hangup_schema),
+        "send_dtmf": ServiceSpec(send_dtmf_schema),
         "call": ServiceSpec(sip_call_schema, SupportsResponse.OPTIONAL),
         "forward": ServiceSpec(sip_forward_schema),
         "transfer": ServiceSpec(sip_transfer_schema, SupportsResponse.OPTIONAL),

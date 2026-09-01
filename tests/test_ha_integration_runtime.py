@@ -172,6 +172,60 @@ async def test_transfer_service_returns_the_refer_subscription_result(
     transfer.assert_awaited_once()
 
 
+async def test_send_dtmf_service_uses_the_active_browser_media_owner(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepare_integration_dependencies(hass)
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+
+    from custom_components import voip_stack
+
+    sent: list[tuple[str, int]] = []
+
+    def send_dtmf(digit: str, duration: int) -> bool:
+        sent.append((digit, duration))
+        return True
+
+    session = SimpleNamespace(
+        call_id="active-call",
+        send_dtmf=send_dtmf,
+    )
+    runtime = SimpleNamespace(
+        media=SimpleNamespace(
+            sessions_for=lambda channel: {"active-call": session}
+            if channel == "audio"
+            else {}
+        )
+    )
+    endpoint = SimpleNamespace(name="Test", entity_ids=())
+    monkeypatch.setattr(voip_stack, "_runtime_data", lambda _hass: runtime)
+    monkeypatch.setattr(
+        voip_stack,
+        "_service_browser_endpoint",
+        lambda _hass, _call, strict: ("browser:test", endpoint),
+    )
+    authorize = AsyncMock()
+    monkeypatch.setattr(voip_stack, "_require_phone_service_control", authorize)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "send_dtmf",
+        {
+            "device_id": "device-test",
+            "call_id": "active-call",
+            "digits": "1#",
+            "duration_ms": 40,
+            "gap_ms": 40,
+        },
+        blocking=True,
+    )
+
+    assert sent == [("1", 40), ("#", 40)]
+    authorize.assert_awaited_once()
+
+
 async def test_default_phone_call_state_keeps_its_historical_entity_id(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,

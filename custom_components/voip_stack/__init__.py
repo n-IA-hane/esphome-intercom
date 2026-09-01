@@ -5,6 +5,7 @@ control is expressed in SIP/SDP/RTP terms only; logical targets are resolved by
 the central phonebook and routed through HA as SIP dialogs when needed.
 """
 
+import asyncio
 import logging
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
@@ -183,6 +184,49 @@ async def _handle_sip_decline_service(call: ServiceCall) -> None:
 
 async def _handle_sip_hangup_service(call: ServiceCall) -> None:
     await _control_phone(call, PhoneOperation.HANGUP)
+
+
+async def _handle_send_dtmf_service(call: ServiceCall) -> None:
+    """Send digits through the active HA browser media owner."""
+
+    runtime = _runtime_data(call.hass)
+    if runtime is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="phone_unavailable",
+            translation_placeholders={"phone": "VoIP Stack"},
+        )
+    endpoint_id, endpoint = _service_browser_endpoint(call.hass, call, strict=True)
+    await _require_phone_service_control(call.hass, call, endpoint=endpoint)
+    sessions = runtime.media.sessions_for("audio")
+    call_id = str(call.data.get("call_id") or "").strip()
+    session = sessions.get(call_id) if call_id else None
+    if session is None:
+        registry = _call_registry(call.hass)
+        candidates = []
+        for item in sessions.values():
+            owner = registry.get_session(str(getattr(item, "call_id", "") or ""))
+            if owner is not None and owner.metadata.get("endpoint_id") == endpoint_id:
+                candidates.append(item)
+        session = candidates[0] if len(candidates) == 1 else None
+    sender = getattr(session, "send_dtmf", None)
+    if session is None or not callable(sender):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="phone_unavailable",
+            translation_placeholders={"phone": str(getattr(endpoint, "name", "") or endpoint_id)},
+        )
+    duration_ms = int(call.data.get("duration_ms") or 160)
+    gap_ms = int(call.data.get("gap_ms") or 80)
+    for index, digit in enumerate(str(call.data["digits"]).upper()):
+        if not sender(digit, duration_ms):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="phone_unavailable",
+                translation_placeholders={"phone": str(getattr(endpoint, "name", "") or endpoint_id)},
+            )
+        if index + 1 < len(str(call.data["digits"])):
+            await asyncio.sleep((duration_ms + gap_ms) / 1000)
 
 
 async def _control_phone(call: ServiceCall, operation: PhoneOperation) -> None:
@@ -435,6 +479,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "answer": _handle_sip_answer_service,
             "decline": _handle_sip_decline_service,
             "hangup": _handle_sip_hangup_service,
+            "send_dtmf": _handle_send_dtmf_service,
             **phonebook_handlers,
             "set_dnd": _handle_set_dnd_service,
             "set_auto_answer": _handle_set_auto_answer_service,

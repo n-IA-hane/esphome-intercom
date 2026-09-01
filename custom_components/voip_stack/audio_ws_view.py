@@ -119,6 +119,7 @@ class _SoftphoneMediaSession:
     send_dtmf_clock_rate: int = 8000
     send_dtmf_events: frozenset[int] = frozenset()
     send_dtmf_info: Callable[[str], Any] | None = None
+    send_dtmf: Callable[[str, int], bool] | None = None
     on_dtmf: Callable[[str], None] | None = None
     conference_room: str = ""
     conference_queue: asyncio.Queue[bytes] | None = None
@@ -1188,6 +1189,20 @@ async def _run_audio_session(
                     emit=emit,
                 )
 
+        def request_dtmf(digit: str, duration_ms: int = 160) -> bool:
+            value = str(digit or "").strip().upper()
+            if telephone_event_code(value) is None or closed.is_set():
+                return False
+            task = asyncio.create_task(
+                send_dtmf(value, duration_ms),
+                name=f"voip-browser-dtmf-{session.call_id}-{value}",
+            )
+            dtmf_tasks.add(task)
+            task.add_done_callback(dtmf_tasks.discard)
+            return True
+
+        session.send_dtmf = request_dtmf
+
         async def playout() -> None:
             nonlocal sequence, timestamp, last_pcm, plc_active
             started = False
@@ -1282,15 +1297,11 @@ async def _run_audio_session(
                         digit = str(control.get("digit") or "").strip().upper()
                         if telephone_event_code(digit) is None:
                             raise ValueError("unsupported DTMF digit")
-                        task = asyncio.create_task(
-                            send_dtmf(
-                                digit,
-                                int(control.get("duration_ms") or 160),
-                            ),
-                            name=f"voip-browser-dtmf-{session.call_id}-{digit}",
-                        )
-                        dtmf_tasks.add(task)
-                        task.add_done_callback(dtmf_tasks.discard)
+                        if not request_dtmf(
+                            digit,
+                            int(control.get("duration_ms") or 160),
+                        ):
+                            raise ValueError("DTMF media owner is unavailable")
                     except (TypeError, ValueError, json.JSONDecodeError) as err:
                         _LOGGER.debug("HA softphone DTMF control rejected: %s", err)
                     continue
@@ -1369,6 +1380,7 @@ async def _run_audio_session(
         remove_call_listener()
         if active_sessions.get(session.call_id) is session:
             active_sessions.pop(session.call_id, None)
+        session.send_dtmf = None
         for task in (rx_task, browser_task, lifetime_task, update_task):
             task.cancel()
         for task in tuple(dtmf_tasks):

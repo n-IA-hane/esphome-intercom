@@ -397,6 +397,59 @@ hangup:
           selector:
             text:
 
+send_dtmf:
+  name: Send DTMF
+  description: Send RFC 4733 digits on an established Home Assistant phone call, with SIP INFO fallback when required by the peer.
+  fields:
+    device_id:
+      name: Phone
+      description: Home Assistant phone that owns the active call.
+      required: false
+      selector:
+        device:
+          filter:
+            - integration: voip_stack
+    digits:
+      name: Digits
+      description: One or more DTMF symbols, 0 to 9, star, hash or A to D.
+      required: true
+      selector:
+        text:
+    duration_ms:
+      name: Duration
+      description: Duration of each digit in milliseconds.
+      required: false
+      default: 160
+      selector:
+        number:
+          min: 40
+          max: 5000
+          step: 10
+          unit_of_measurement: ms
+          mode: box
+    gap_ms:
+      name: Gap
+      description: Silence between consecutive digits in milliseconds.
+      required: false
+      default: 80
+      selector:
+        number:
+          min: 40
+          max: 5000
+          step: 10
+          unit_of_measurement: ms
+          mode: box
+    advanced:
+      name: Advanced options
+      description: Select a specific concurrent call.
+      collapsed: true
+      fields:
+        call_id:
+          name: Call ID
+          required: false
+          selector:
+            text:
+
 add_contact:
   name: Add Phonebook Contact
   description: Add or replace one manual contact in the central JSON phonebook.
