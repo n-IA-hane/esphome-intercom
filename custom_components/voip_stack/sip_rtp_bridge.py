@@ -29,6 +29,7 @@ from .debug_capture import (
 from .dtmf import (
     RtpDtmfDecoder,
     build_telephone_event_payload,
+    send_rtp_dtmf_event,
     telephone_event_code,
 )
 from .core.sdp import RtpPcmFormat, audio_format_to_rtp
@@ -38,7 +39,6 @@ from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder
 _LOGGER = logging.getLogger(__name__)
 _DEBUG_CAPTURE_SECONDS = 8
 _RTP_IP_TOS = 0xB8
-_DTMF_UPDATE_SECONDS = 0.05
 
 
 def _normalized_audio_fmtp(fmt: RtpPcmFormat) -> tuple[tuple[str, str], ...]:
@@ -832,7 +832,7 @@ class SipRtpRelay:
             )
             audio_timestamp_at_start = destination.timestamp
 
-            def _send(*, elapsed_ms: int, marker: bool, end: bool) -> bool:
+            async def _send(duration: int, marker: bool, end: bool) -> bool:
                 current = self.right if destination_side == "right" else self.left
                 if (
                     current is not destination
@@ -841,7 +841,6 @@ class SipRtpRelay:
                     or destination.connection_held
                 ):
                     return False
-                duration = max(1, round(elapsed_ms * event_rate / 1000))
                 if shared_clock:
                     sequence = destination.sequence
                     ssrc = destination.ssrc
@@ -860,7 +859,7 @@ class SipRtpRelay:
                         ssrc=ssrc,
                         payload=build_telephone_event_payload(
                             digit,
-                            duration=min(duration, 0xFFFF),
+                            duration=duration,
                             end=end,
                         ),
                         marker=marker,
@@ -868,23 +867,13 @@ class SipRtpRelay:
                 )
                 return self._send_audio_packet(destination_side, packet)
 
-            if not _send(elapsed_ms=1, marker=True, end=False):
+            if not await send_rtp_dtmf_event(
+                digit,
+                clock_rate=event_rate,
+                duration_ms=duration_ms,
+                emit=_send,
+            ):
                 return
-            elapsed_ms = 0
-            while elapsed_ms < duration_ms:
-                step_ms = min(round(_DTMF_UPDATE_SECONDS * 1000), duration_ms - elapsed_ms)
-                await asyncio.sleep(step_ms / 1000)
-                elapsed_ms += step_ms
-                if not _send(
-                    elapsed_ms=elapsed_ms,
-                    marker=False,
-                    end=elapsed_ms >= duration_ms,
-                ):
-                    return
-            for _repeat in range(2):
-                await asyncio.sleep(_DTMF_UPDATE_SECONDS)
-                if not _send(elapsed_ms=duration_ms, marker=False, end=True):
-                    return
 
             if shared_clock:
                 expected_audio_delta = round(duration_ms * audio_rate / 1000)
