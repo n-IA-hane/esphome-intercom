@@ -67,6 +67,35 @@ SIP URIs without an explicit remote port now use the scheme default, 5060 for
 unrelated destination port in direct calls, forwarding, groups, conferences or
 inbound bridges.
 
+## The HA phone now has an in-call keypad
+
+The Home Assistant card reuses its normal keypad during an established call.
+Digits entered while idle still build a destination. Digits entered during a
+call are sent through the negotiated telephone-event payload, with SIP INFO
+available for compatible peers. Hangup remains visible in the keypad view and
+the card returns to its ordinary terminal screen when either side ends the
+call.
+
+Each new dialog also resets temporary card surfaces. An Options or keypad view
+left open by the previous call can no longer hide Answer and Decline on the
+next incoming call.
+
+The same operation is available as the `voip_stack.send_dtmf` Home Assistant
+action. ESP phones advertise DTMF only when their firmware contains the new
+RFC 4733 implementation, so audio-only firmware does not gain a fictional
+capability.
+
+## Browser audio follows RTP cadence without crackling
+
+The browser receive path now separates network packet arrival from Web Audio
+rendering. A bounded worker reassembles incoming PCM into the exact blocks
+requested by the audio clock. Packet bursts, WebSocket message boundaries and
+RTP packet time therefore no longer become audible gaps or crackling.
+
+The worker is paced by the browser audio clock, keeps bounded carry state and
+reports real input, output and underrun counters. It does not guess a larger
+timeout or grow a buffer until the symptom disappears.
+
 ## Home Assistant and ESP component cleanup
 
 - DNS resolver imports and resolver initialization run outside the HA event
@@ -78,6 +107,9 @@ inbound bridges.
   removed.
 - Spotpear and WS3 profiles keep their large audio and signaling allocations
   reusable instead of rebuilding them for every call.
+- HA and ESP log one warning when their coordinated VoIP Stack versions do not
+  match. The warning is deliberately emitted once per mismatch instead of on
+  every state update.
 
 ## Call ownership and cleanup are now centralized
 
@@ -97,36 +129,23 @@ during REGISTER. This prevents a large video INVITE from being changed to TCP
 when the selected registered endpoint is explicitly reachable only through
 its UDP binding.
 
-## Qualification completed for the initial candidate
+## Current candidate qualification
 
-- 1673 software tests, 4 intentionally deselected tests, 140 parameterized
-  subtests and 90 Home Assistant runtime tests passed.
-- The ESP VoIP component passed 128 focused behavior and contract tests.
-- Real Spotpear and WS3 calls passed in both directions with clean hangup and
-  final idle state.
-- Opus passed directly through Asterisk and through Home Assistant at 48 kHz
-  RTP clock and 20 ms packet time with zero RTP sequence loss in the captured
-  calls.
-- A PCM client and an Opus Spotpear completed bidirectional HA transcoding with
-  zero relay drops.
+- 1696 software tests passed, with 4 intentional deselections and 133
+  parameterized subtests.
+- 95 Home Assistant runtime tests passed.
+- The complete local SIP laboratory passed caller and callee hangup, CANCEL,
+  manual answer and decline, auto answer, forwarding, two browser subscribers,
+  registered SIP clients, video added in-dialog and final resource cleanup.
+- Browser playback consumed 49 measured input frames and produced 338 audio
+  render blocks with zero underruns in the registered video call witness.
 - SIP INFO and RFC 4733 DTMF passed in both directions, including the complete
   `0-9*#` keypad sequence.
 
-## Final development-head validation
-
-- 1686 software tests passed, with 4 intentional deselections and 133
-  parameterized subtests.
-- 92 Home Assistant runtime tests passed.
-- Real P4 and WS3 calls passed in both direct directions beyond the media
-  watchdog, followed by complete idle cleanup.
-- Zoiper Android and X-Bees completed audio and video calls with P4 in both
-  directions, including audio-first calls that enabled video in-dialog.
-- The WS3 Full PCM profile remained in call while media playback, Micro Wake
-  Word and a TTS request exercised the shared runtime controller.
-
-Spotpear Opus hardware evidence belongs to the earlier qualified Opus
-candidate described above. Spotpear was offline during the final development
-head validation and is not falsely reported as retested on that later commit.
+Real-device and Android results from earlier candidates remain useful
+regression witnesses, but they are not presented as qualification of the
+current commit. The final release candidate will repeat the applicable P4,
+WS3, Spotpear and Android paths before promotion.
 
 ## Upgrade notes
 
