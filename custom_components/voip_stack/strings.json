@@ -213,6 +213,10 @@
     "duplicate_extension": {
       "title": "Multiple phones use the same extension",
       "description": "Extension {extension} is assigned to: {phones}. Assign a unique extension to each phone so calls have one unambiguous destination."
+    },
+    "esphome_version_mismatch": {
+      "title": "VoIP Stack versions do not match",
+      "description": "{phone} runs ESP VoIP Stack {esp_version}, while Home Assistant runs {ha_version}. Update the older side before diagnosing call problems."
     }
   },
   "exceptions": {

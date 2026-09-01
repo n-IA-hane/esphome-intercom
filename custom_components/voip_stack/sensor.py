@@ -36,7 +36,9 @@ from .endpoint_entity_manager import (
 )
 from .peer_snapshot import async_build_peer_snapshot
 from .peer import Peer
+from .roster import dump_roster_json
 from .runtime_data import require_runtime_data
+from .const import INTEGRATION_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -258,7 +260,9 @@ class VoipPhonebookSensor(SensorEntity):
         self.entity_id = "sensor.voip_phonebook"
         self._attr_native_value = "0 entries"
         self._phonebook = ""
-        self._roster_json = '{"version":2,"capabilities":["extension","ring_group","conference_group","conference_ring"],"contacts":[]}'
+        self._roster_json = dump_roster_json(
+            [], voip_stack_version=INTEGRATION_VERSION
+        )
         self._count = 0
         self._tracked_entities: set[str] = set()
         self._known_esp_peers: dict[str, Peer] = {}
@@ -400,7 +404,6 @@ class VoipPhonebookSensor(SensorEntity):
             registered_roster_entries,
         )
         from .endpoint_routing import roster_from_peers
-        from .roster import dump_roster_json
         from .repairs import async_sync_duplicate_extension_issues
 
         peers = self._stable_phonebook_peers(await async_build_peer_snapshot(self.hass))
@@ -412,7 +415,10 @@ class VoipPhonebookSensor(SensorEntity):
             self.hass, roster_entries, self._duplicate_extension_issue_ids
         )
         phonebook = ",".join(entries)
-        roster_json = dump_roster_json(roster_entries)
+        roster_json = dump_roster_json(
+            roster_entries,
+            voip_stack_version=INTEGRATION_VERSION,
+        )
         visible_count = len(roster_entries)
         new_value = (
             f"{visible_count} entry"

@@ -136,7 +136,13 @@ class GroupAggregationTest(unittest.TestCase):
         self.assertEqual(parsed[0].metadata["group_type"], groups.GROUP_TYPE_CONFERENCE)
         self.assertEqual(parsed[0].metadata["ring_members"], ["Kitchen"])
 
-        payload = json.loads(roster.dump_roster_json([entry]))
+        payload = json.loads(
+            roster.dump_roster_json(
+                [entry],
+                voip_stack_version="2026.9.1-dev",
+            )
+        )
+        assert payload["voip_stack_version"] == "2026.9.1-dev"
         self.assertEqual(payload["version"], 2)
         self.assertIn("conference_group", payload["capabilities"])
         self.assertIn("ring_group", payload["capabilities"])

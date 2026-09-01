@@ -198,6 +198,16 @@ def _sdp_features(extras: list[str]) -> list[str]:
     return []
 
 
+def _stack_version(extras: list[str]) -> str:
+    """Return the ESP VoIP component version, when advertised."""
+
+    for token in extras:
+        key, separator, value = token.partition("=")
+        if separator and key.strip().casefold() in {"stack_version", "sv"}:
+            return value.strip()[:32]
+    return ""
+
+
 def parse_voip_endpoint(value: str | None) -> dict | None:
     """Parse the project endpoint standard published by ESP voip_stack.
 
@@ -275,6 +285,7 @@ def parse_voip_endpoint(value: str | None) -> dict | None:
         "sip_audio_tx_formats": sip_audio_tx_formats,
         "sip_audio_rx_formats": sip_audio_rx_formats,
         "sdp_features": _sdp_features(extras),
+        "stack_version": _stack_version(extras),
     }
 
 
@@ -402,6 +413,7 @@ class VoipDeviceResolver:
                 "sip_audio_tx_formats": list(endpoint.get("sip_audio_tx_formats") or []),
                 "sip_audio_rx_formats": list(endpoint.get("sip_audio_rx_formats") or []),
                 "sdp_features": sdp_features,
+                "stack_version": endpoint.get("stack_version") or "",
                 "sip_video_codec": endpoint.get("sip_video_codec") or "",
                 "camera_entity_id": camera_entity_id,
                 "capabilities": sorted(capabilities),

@@ -213,6 +213,10 @@
     "duplicate_extension": {
       "title": "Mehrere Telefone verwenden dieselbe Nebenstelle",
       "description": "Die Nebenstelle {extension} ist folgenden Telefonen zugewiesen: {phones}. Weisen Sie jedem Telefon eine eindeutige Nebenstelle zu."
+    },
+    "esphome_version_mismatch": {
+      "title": "Die VoIP-Stack-Versionen stimmen nicht überein",
+      "description": "{phone} verwendet ESP VoIP Stack {esp_version}, Home Assistant verwendet jedoch {ha_version}. Aktualisieren Sie die ältere Seite, bevor Sie Anrufprobleme untersuchen."
     }
   },
   "exceptions": {

@@ -108,6 +108,19 @@ class SipEndpointParseTest(unittest.TestCase):
         self.assertEqual(parsed["extras"], [])
         self.assertEqual(parsed["sip_video_codec"], "")
 
+    def test_parses_component_version_from_compact_extra(self) -> None:
+        endpoint = (
+            "Spotpear | 192.168.1.31 | 5060 | 40000 | "
+            "full_duplex | 16000:s16le:1:10 | 48000:s16le:1:10 | "
+            "sip_udp | 101 | sf=t1 | sv=2026.9.1-dev"
+        )
+
+        parsed = device_resolver.parse_voip_endpoint(endpoint)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed["stack_version"], "2026.9.1-dev")
+
     def test_parses_forward_compatible_endpoint_extras(self) -> None:
         base = (
             "Spotpear | 192.168.1.31 | 5060 | 40000 | "

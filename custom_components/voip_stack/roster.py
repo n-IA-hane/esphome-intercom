@@ -7,7 +7,6 @@ import json
 from urllib.parse import unquote
 from typing import Any
 
-
 class RosterError(ValueError):
     """Invalid roster data."""
 
@@ -82,7 +81,11 @@ def parse_roster_json(value: str | bytes | dict[str, Any] | list[dict[str, Any]]
     return out
 
 
-def dump_roster_json(entries: list[RosterEntry]) -> str:
+def dump_roster_json(
+    entries: list[RosterEntry],
+    *,
+    voip_stack_version: str = "",
+) -> str:
     payload = {
         "version": 2,
         "capabilities": ["extension", "ring_group", "conference_group", "conference_ring"],
@@ -102,6 +105,8 @@ def dump_roster_json(entries: list[RosterEntry]) -> str:
             for entry in entries
         ],
     }
+    if voip_stack_version:
+        payload["voip_stack_version"] = voip_stack_version
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 

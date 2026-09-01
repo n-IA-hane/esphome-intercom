@@ -213,6 +213,10 @@
     "duplicate_extension": {
       "title": "Vários telefones usam o mesmo ramal",
       "description": "O ramal {extension} está atribuído a: {phones}. Atribua um ramal exclusivo a cada telefone para evitar destinos ambíguos."
+    },
+    "esphome_version_mismatch": {
+      "title": "As versões do VoIP Stack não correspondem",
+      "description": "{phone} usa o ESP VoIP Stack {esp_version}, enquanto o Home Assistant usa {ha_version}. Atualize o lado mais antigo antes de diagnosticar problemas de chamada."
     }
   },
   "exceptions": {

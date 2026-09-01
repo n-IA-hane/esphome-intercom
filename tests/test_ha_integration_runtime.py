@@ -739,6 +739,43 @@ async def test_esphome_call_control_repair_tracks_missing_actions(
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
+async def test_esphome_version_repair_warns_once_and_clears(
+    hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.voip_stack.const import INTEGRATION_VERSION
+    from custom_components.voip_stack.repairs import (
+        ESPHOME_VERSION_ISSUE_PREFIX,
+        async_sync_esphome_version_issue,
+    )
+
+    device = {
+        "device_id": "spotpear",
+        "name": "Spotpear",
+        "stack_version": "2026.8.0",
+    }
+    issue_id = f"{ESPHOME_VERSION_ISSUE_PREFIX}spotpear"
+
+    async_sync_esphome_version_issue(hass, device)
+    async_sync_esphome_version_issue(hass, device)
+
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.translation_placeholders == {
+        "phone": "Spotpear",
+        "ha_version": INTEGRATION_VERSION,
+        "esp_version": "2026.8.0",
+    }
+    assert caplog.text.count("VoIP Stack version mismatch for Spotpear") == 1
+
+    device["stack_version"] = INTEGRATION_VERSION
+    async_sync_esphome_version_issue(hass, device)
+
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
 async def test_duplicate_extension_repair_tracks_phonebook_ambiguity(
     hass: HomeAssistant,
 ) -> None:

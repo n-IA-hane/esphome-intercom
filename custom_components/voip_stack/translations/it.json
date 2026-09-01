@@ -213,6 +213,10 @@
     "duplicate_extension": {
       "title": "Più telefoni usano lo stesso interno",
       "description": "L'interno {extension} è assegnato a: {phones}. Assegna un interno univoco a ogni telefono per evitare destinazioni ambigue."
+    },
+    "esphome_version_mismatch": {
+      "title": "Le versioni di VoIP Stack non corrispondono",
+      "description": "{phone} usa ESP VoIP Stack {esp_version}, mentre Home Assistant usa {ha_version}. Aggiorna il lato meno recente prima di diagnosticare problemi di chiamata."
     }
   },
   "exceptions": {
