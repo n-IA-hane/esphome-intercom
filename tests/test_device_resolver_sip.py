@@ -178,6 +178,33 @@ class SipEndpointParseTest(unittest.TestCase):
         )
         self.assertEqual(parsed["sdp_features"], ["directional_audio_v1"])
 
+    def test_parses_multiple_compact_sdp_features(self) -> None:
+        endpoint = (
+            "Spotpear | 192.168.1.31 | 5060 | 40000 | full_duplex |  |  | "
+            "sip_udp | 101 | sf=d1,t1"
+        )
+
+        parsed = device_resolver.parse_voip_endpoint(endpoint)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(
+            parsed["sdp_features"],
+            ["directional_audio_v1", "dtmf_rfc4733_v1"],
+        )
+
+    def test_ignores_unknown_compact_sdp_features(self) -> None:
+        endpoint = (
+            "Spotpear | 192.168.1.31 | 5060 | 40000 | full_duplex |  |  | "
+            "sip_udp | 101 | sf=future,t1"
+        )
+
+        parsed = device_resolver.parse_voip_endpoint(endpoint)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed["sdp_features"], ["dtmf_rfc4733_v1"])
+
     def test_parses_transitional_pcm_and_compact_codec_endpoint(self) -> None:
         endpoint = (
             "Spotpear Ball v2 | 192.168.1.31 | 5060 | 40000 | full_duplex | "

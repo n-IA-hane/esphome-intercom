@@ -1007,7 +1007,7 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         ),
         "connected_cards": connected_cards,
         "capabilities": (
-            sorted(endpoint.capabilities) if endpoint is not None else ["audio", "dtmf"]
+            sorted(endpoint.capabilities) if endpoint is not None else ["audio"]
         ),
         "session_device_id": store.get("session_device_id", ""),
         "dnd": _ha_softphone_dnd(hass, endpoint_id),
@@ -1392,7 +1392,7 @@ async def _get_voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
         previous = registry.get(endpoint_id)
         capabilities = frozenset(
             str(value).strip().casefold()
-            for value in (device.get("capabilities") or ("audio", "dtmf"))
+            for value in (device.get("capabilities") or ("audio",))
             if str(value).strip()
         )
         endpoint = PhoneEndpoint(

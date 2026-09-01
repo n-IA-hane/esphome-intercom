@@ -111,7 +111,7 @@ async def async_require_phone_service_control(
                 kind=EndpointKind.ESPHOME,
                 device_id=device_id,
                 entity_ids=entities,
-                capabilities=frozenset({"audio", "dtmf"}),
+                capabilities=frozenset(device.get("capabilities") or {"audio"}),
             )
     if endpoint is not None:
         await async_require_service_endpoint_control(hass, call, endpoint)

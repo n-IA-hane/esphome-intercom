@@ -176,20 +176,25 @@ def _sip_audio_formats(extras: list[str], direction: str) -> list[str]:
 def _sdp_features(extras: list[str]) -> list[str]:
     """Return explicitly advertised, versioned SDP extensions."""
 
+    compact_features = {
+        "d1": "directional_audio_v1",
+        "t1": "dtmf_rfc4733_v1",
+    }
+    supported = frozenset(compact_features.values())
     for token in extras:
         key, separator, value = token.partition("=")
         normalized_key = key.strip().casefold()
         if not separator or normalized_key not in {"sdp_features", "sf"}:
             continue
-        if normalized_key == "sf" and value.strip().casefold() == "d1":
-            return ["directional_audio_v1"]
-        return [
-            feature
-            for feature in (
-                item.strip().casefold() for item in value.split(";")
-            )
-            if feature in {"directional_audio_v1"}
-        ]
+        separators = value.replace(",", ";")
+        features = []
+        for item in separators.split(";"):
+            feature = item.strip().casefold()
+            if normalized_key == "sf":
+                feature = compact_features.get(feature, "")
+            if feature in supported and feature not in features:
+                features.append(feature)
+        return features
     return []
 
 
@@ -369,7 +374,10 @@ class VoipDeviceResolver:
             conference_group = self._state_value(entities.get("voip_conference_groups"))
             extension = self._state_value(entities.get("voip_extension")) or endpoint.get("extension") or ""
             camera_entity_id = entities.get("camera", "")
-            capabilities = {"audio", "dtmf"}
+            sdp_features = list(endpoint.get("sdp_features") or [])
+            capabilities = {"audio"}
+            if "dtmf_rfc4733_v1" in sdp_features:
+                capabilities.add("dtmf")
             if endpoint.get("sip_video_codec"):
                 capabilities.add("video")
             if camera_entity_id:
@@ -393,7 +401,7 @@ class VoipDeviceResolver:
                 "rx_formats": _format_tokens(endpoint["rx_formats"]),
                 "sip_audio_tx_formats": list(endpoint.get("sip_audio_tx_formats") or []),
                 "sip_audio_rx_formats": list(endpoint.get("sip_audio_rx_formats") or []),
-                "sdp_features": list(endpoint.get("sdp_features") or []),
+                "sdp_features": sdp_features,
                 "sip_video_codec": endpoint.get("sip_video_codec") or "",
                 "camera_entity_id": camera_entity_id,
                 "capabilities": sorted(capabilities),
