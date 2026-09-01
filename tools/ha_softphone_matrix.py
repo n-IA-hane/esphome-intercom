@@ -243,7 +243,7 @@ class BareSip:
             if headless_audio:
                 replacements = {
                     "audio_player": "audio_player\t\taubridge,nil",
-                    "audio_source": "audio_source\t\tausine,10",
+                    "audio_source": "audio_source\t\tausine,440",
                     "audio_alert": "audio_alert\t\taubridge,nil",
                 }
                 for key, value in replacements.items():

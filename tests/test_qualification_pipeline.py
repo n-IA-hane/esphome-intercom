@@ -46,6 +46,15 @@ def test_browser_gate_sanitizes_baresip_artifact_names() -> None:
     assert "SIPP_TARGET_EXTENSION=${HA_LAB_BROWSER_EXTENSION:-2601}" in gate
 
 
+def test_browser_audio_oracle_uses_an_in_band_source() -> None:
+    matrix = (
+        Path(__file__).parents[1] / "tools/ha_softphone_matrix.py"
+    ).read_text(encoding="utf-8")
+
+    assert '"audio_source": "audio_source\\t\\tausine,440"' in matrix
+    assert "ausine,10" not in matrix
+
+
 def _candidate(head: str) -> dict[str, object]:
     payload = {
         "schema_version": 1,
