@@ -134,6 +134,22 @@ CLICK = r"""
 })
 """
 
+CLICK_KEYPAD_DIGIT = r"""
+(async (digit) => {
+  const deep = (selector, root = document) => {
+    const found = [...root.querySelectorAll(selector)];
+    for (const node of root.querySelectorAll("*")) if (node.shadowRoot) found.push(...deep(selector, node.shadowRoot));
+    return found;
+  };
+  const card = deep("voip-stack-card, intercom-card")
+    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
+  const button = card?._els?.keypadKeys?.[digit];
+  if (!button || button.hidden || button.disabled || button.offsetParent === null) return false;
+  button.click();
+  return true;
+})
+"""
+
 CONTROL_DIAGNOSTICS = r"""
 () => {
   const deep = (selector, root = document) => {
@@ -264,13 +280,14 @@ class BareSip:
         headless_audio: bool = False,
         dtmf_mode: str = "",
         video_codec: str = "",
+        echo_dtmf: bool = False,
     ) -> None:
         TEST_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
         if dtmf_mode and dtmf_mode not in {"auto", "info", "rtpevent"}:
             raise ValueError(f"unsupported bareSIP DTMF mode: {dtmf_mode}")
         self._temporary_config: tempfile.TemporaryDirectory[str] | None = None
         runtime_config = config
-        if headless_audio or dtmf_mode or video_codec:
+        if headless_audio or dtmf_mode or video_codec or echo_dtmf:
             self._temporary_config = tempfile.TemporaryDirectory(
                 prefix="voip-baresip-headless-"
             )
@@ -278,6 +295,15 @@ class BareSip:
             shutil.copytree(config, runtime_config, dirs_exist_ok=True)
             config_path = runtime_config / "config"
             content = config_path.read_text(encoding="utf-8")
+
+            def enable_module(module: str, *, application: bool = False) -> None:
+                nonlocal content
+                directive = "module_app" if application else "module"
+                pattern = rf"(?m)^\s*#?(?:module|module_app)\s+{re.escape(module)}\s*$"
+                replacement = f"{directive}\t\t{module}"
+                updated, count = re.subn(pattern, replacement, content, count=1)
+                content = updated if count else f"{content.rstrip()}\n{replacement}\n"
+
             if headless_audio:
                 replacements = {
                     "audio_player": "audio_player\t\taubridge,nil",
@@ -292,12 +318,7 @@ class BareSip:
                         count=1,
                     )
                 for module in ("aubridge.so", "ausine.so"):
-                    content = re.sub(
-                        rf"(?m)^\s*#?module\s+{re.escape(module)}\s*$",
-                        f"module\t\t\t{module}",
-                        content,
-                        count=1,
-                    )
+                    enable_module(module)
             if video_codec:
                 codec = video_codec.strip().upper()
                 if codec not in {"H264", "VP8"}:
@@ -315,12 +336,7 @@ class BareSip:
                     count=1,
                 )
                 for module in ("avcodec.so", "vp8.so", "fakevideo.so"):
-                    content = re.sub(
-                        rf"(?m)^\s*#?module\s+{re.escape(module)}\s*$",
-                        f"module\t\t\t{module}",
-                        content,
-                        count=1,
-                    )
+                    enable_module(module)
                 if codec == "H264":
                     content = re.sub(
                         r"(?m)^\s*#?avcodec_keyint\s+.*$",
@@ -328,6 +344,9 @@ class BareSip:
                         content,
                         count=1,
                     )
+            if echo_dtmf:
+                enable_module("aubridge.so")
+                enable_module("echo.so", application=True)
             config_path.write_text(content, encoding="utf-8")
             if dtmf_mode or video_codec:
                 accounts_path = runtime_config / "accounts"
@@ -362,6 +381,8 @@ class BareSip:
         self.call_established = False
         try:
             self.wait_for("registered successfully", 8)
+            if echo_dtmf:
+                self.command("/loglevel")
         except BaseException:
             # Construction failures occur before callers can append this
             # instance to their cleanup list. Own the child from the moment it
@@ -798,7 +819,6 @@ def main() -> int:
                     raise RuntimeError("Answer button unavailable")
                 matching(page, "in_call")
                 observed_digits: list[str] = []
-                observed: dict[str, Any] = {}
                 for digit in "0123456789*#":
                     caller.digits(digit)
                     observed = wait_dtmf_event(
@@ -951,11 +971,75 @@ def main() -> int:
                     mode="rtpevent", digits="9", transport="rtp_event"
                 ),
             )
+
+            def outbound_rfc4733_dtmf_keypad() -> dict[str, Any]:
+                callee = BareSip(
+                    LOCAL_CONFIG,
+                    headless_audio=True,
+                    dtmf_mode="rtpevent",
+                    echo_dtmf=True,
+                )
+                active.append(callee)
+                service(
+                    "voip_stack",
+                    "call",
+                    {
+                        "destination": LOCAL_REGISTERED_TARGET,
+                        "device_id": phone_device_id,
+                    },
+                )
+                calling = wait_card(
+                    page,
+                    lambda item: (
+                        item["backend"]["state"]
+                        in {"calling", "remote_ringing", "in_call"}
+                        and item["card"]["state"] == item["backend"]["state"]
+                        and item["backend"]["call_id"] == item["card"]["call_id"]
+                    ),
+                    12,
+                    "outbound registered SIP ringing",
+                )
+                matching(page, "in_call")
+                if not page.evaluate(CLICK, "Keypad"):
+                    raise RuntimeError(
+                        "in-call Keypad button unavailable: "
+                        f"{page.evaluate(CONTROL_DIAGNOSTICS)}"
+                    )
+                controls = page.evaluate(CONTROL_DIAGNOSTICS)
+                displayed = {
+                    item["text"]
+                    for item in controls.get("buttons", [])
+                    if item.get("displayed") and not item.get("hidden")
+                }
+                if not controls.get("keypad_open"):
+                    raise RuntimeError(f"in-call keypad did not open: {controls}")
+                if not {"Contacts", "Options", "Hangup"}.issubset(displayed):
+                    raise RuntimeError(f"in-call controls disappeared: {controls}")
+                observed_digits: list[str] = []
+                observed: dict[str, Any] = {}
+                for digit in "0123456789*#":
+                    if not page.evaluate(CLICK_KEYPAD_DIGIT, digit):
+                        raise RuntimeError(
+                            f"keypad digit {digit} unavailable: "
+                            f"{page.evaluate(CONTROL_DIAGNOSTICS)}"
+                        )
+                    callee.wait_for(f"relaying DTMF event: key = '{digit}'", 5)
+                    observed_digits.append(digit)
+                callee.hangup()
+                idle = matching(page, "idle")
+                if page.evaluate(CONTROL_DIAGNOSTICS).get("keypad_open"):
+                    raise RuntimeError("keypad remained open after remote hangup")
+                return {
+                    "call_id": calling["backend"]["call_id"],
+                    "digits": "".join(observed_digits),
+                    "transport": "rtp_event",
+                    "oracle": "baresip_echo_receive_callback",
+                    "terminal": idle["card"]["terminal_reason"],
+                }
+
             case(
                 "outbound_rfc4733_dtmf_keypad",
-                lambda: outbound_dtmf_event(
-                    mode="rtpevent", digits="0123456789*#", transport="rtp_event"
-                ),
+                outbound_rfc4733_dtmf_keypad,
             )
 
             def decline_from_card() -> dict[str, Any]:
