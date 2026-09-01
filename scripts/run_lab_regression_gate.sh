@@ -33,7 +33,9 @@ printf 'candidate=%s\n' "$(git rev-parse HEAD)"
   --require caller_bye \
   --require callee_bye
 
-SIPP_CAPTURE_DIR="$CAPTURE_DIR/cancel" ./scripts/run_sipp_lab.sh >/dev/null
+SIPP_TARGET_EXTENSION=${HA_LAB_BROWSER_EXTENSION:-2601} \
+  SIPP_CAPTURE_DIR="$CAPTURE_DIR/cancel" \
+  ./scripts/run_sipp_lab.sh >/dev/null
 
 (
   cd "$CAPTURE_DIR"

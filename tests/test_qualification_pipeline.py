@@ -43,6 +43,7 @@ def test_browser_gate_sanitizes_baresip_artifact_names() -> None:
 
     assert 'find "$CAPTURE_DIR" -type f -print0' in gate
     assert "tr ':<>\"|*?' '_______'" in gate
+    assert "SIPP_TARGET_EXTENSION=${HA_LAB_BROWSER_EXTENSION:-2601}" in gate
 
 
 def _candidate(head: str) -> dict[str, object]:
