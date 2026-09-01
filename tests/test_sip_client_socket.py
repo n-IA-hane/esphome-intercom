@@ -1897,6 +1897,12 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         )
         try:
             await wait_until(lambda: bool(ws.json))
+            await ws.messages.put(
+                types.SimpleNamespace(
+                    type=WSMsgType.TEXT,
+                    data='{"type":"playback_ready"}',
+                )
+            )
             first_pcm = bytes(
                 (index % 251 for index in range(pcma.audio_format.nominal_frame_bytes))
             )
@@ -2070,6 +2076,8 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             remote.close()
 
     async def test_audio_websocket_projects_negotiated_rfc4733_once(self) -> None:
+        from aiohttp import WSMsgType
+
         audio_ws_view = _load_audio_ws_runtime_module()
         audio_sessions: dict[str, object] = {}
         audio_ws_view.require_runtime_data = lambda _hass: types.SimpleNamespace(
@@ -2147,6 +2155,12 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             while not ws.json and loop.time() < deadline:
                 await asyncio.sleep(0.01)
             self.assertTrue(ws.json)
+            await ws.messages.put(
+                types.SimpleNamespace(
+                    type=WSMsgType.TEXT,
+                    data='{"type":"playback_ready"}',
+                )
+            )
             for sequence, end in ((1, False), (2, True), (3, True)):
                 packet = rtp.build_packet(
                     rtp.RtpPacket(
