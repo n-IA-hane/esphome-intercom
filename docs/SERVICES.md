@@ -105,6 +105,23 @@ Hang up the selected phone's active call or a specific `call_id`.
 It stops SIP client legs, relay/media reservations, pending invites and HA
 softphone media where applicable.
 
+### `voip_stack.send_dtmf`
+
+Send one or more DTMF keys through an established HA browser-phone call.
+VoIP Stack uses negotiated RFC 4733 telephone events and falls back to
+in-dialog SIP INFO only when the active SIP leg supports that path.
+
+Fields:
+
+- `digits`: one or more keys from `0-9`, `*`, `#` and `A-D`.
+- `call_id`: optional when the selected phone owns exactly one media call.
+- `duration_ms`: key duration, default 160 ms.
+- `gap_ms`: pause between multiple keys, default 80 ms.
+
+The card's in-call keypad uses the same active media owner. This action does
+not redial, transfer or pass the keys through the initial trunk extension
+router.
+
 ### `voip_stack.set_dnd`
 
 Enable or disable DND on the selected HA softphone.
