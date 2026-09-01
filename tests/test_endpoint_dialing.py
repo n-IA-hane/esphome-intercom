@@ -143,6 +143,33 @@ def test_registered_udp_contact_keeps_observed_transport(
     assert entry is not None
 
 
+def test_registered_udp_transport_survives_a_dialplan_uri_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialer, _created, _reused = _dialer(monkeypatch)
+    reservation = SimpleNamespace(ports=(12000, 12002), release=Mock())
+    entry = RosterEntry(
+        id="video_sink",
+        name="Video Sink",
+        sip_uri="sip:video_sink@192.0.2.80:5062",
+        metadata={"registered": True, "sip_transport": "udp"},
+    )
+
+    leg = dialer.prepare_outbound_leg(
+        member="video_sink",
+        peers=[],
+        roster_entries=[entry],
+        local_name="Caller",
+        local_rtp_port_index=1,
+        uri_override="sip:video_sink@192.0.2.80:5062",
+        roster_entry_override=entry,
+        port_reservation=reservation,
+    )
+
+    assert leg is not None
+    assert str(leg.uri) == "sip:video_sink@192.0.2.80:5062;transport=udp"
+
+
 def test_peer_uri_preserves_tls_and_ipv6_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

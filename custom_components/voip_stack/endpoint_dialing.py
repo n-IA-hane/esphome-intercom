@@ -43,6 +43,26 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+def _with_registered_transport(uri, entry: RosterEntry | None):
+    """Preserve the signaling transport of a live registrar binding."""
+
+    metadata = (entry.metadata if entry is not None else {}) or {}
+    transport = str(metadata.get("sip_transport") or "").strip().lower()
+    if (
+        not metadata.get("registered")
+        or transport not in {"udp", "tcp", "tls"}
+        or any(str(key).lower() == "transport" for key, _value in uri.params)
+    ):
+        return uri
+    return type(uri)(
+        user=uri.user,
+        host=uri.host,
+        port=uri.port,
+        params=(*uri.params, ("transport", transport)),
+        scheme=uri.scheme,
+    )
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OutboundLegPolicy:
     """Policy differences applied by the common outbound-leg builder."""
@@ -92,26 +112,7 @@ class EndpointDialer:
         if entry is None:
             return None, None, None
         if entry.sip_uri:
-            uri = parse_sip_uri(entry.sip_uri)
-            registered_transport = str(
-                (entry.metadata or {}).get("sip_transport") or ""
-            ).strip().lower()
-            if (
-                bool((entry.metadata or {}).get("registered"))
-                and registered_transport in {"udp", "tcp", "tls"}
-                and not any(
-                    str(key).lower() == "transport"
-                    for key, _value in uri.params
-                )
-            ):
-                uri = type(uri)(
-                    user=uri.user,
-                    host=uri.host,
-                    port=uri.port,
-                    params=(*uri.params, ("transport", registered_transport)),
-                    scheme=uri.scheme,
-                )
-            return uri, None, entry
+            return _with_registered_transport(parse_sip_uri(entry.sip_uri), entry), None, entry
         if not entry.metadata.get("local_ha") and entry.address:
             bridge_port = int(
                 entry.port
@@ -175,6 +176,8 @@ class EndpointDialer:
         )
         member_entry = roster_entry_override or member_entry
         uri = parse_sip_uri(uri_override) if uri_override else resolved_uri
+        if uri is not None:
+            uri = _with_registered_transport(uri, member_entry)
         if uri is None or self.route_resolver.is_local_listener_uri(uri):
             return None
         owns_ports = port_reservation is None
