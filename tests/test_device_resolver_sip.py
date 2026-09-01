@@ -121,6 +121,24 @@ class SipEndpointParseTest(unittest.TestCase):
         assert parsed is not None
         self.assertEqual(parsed["stack_version"], "2026.9.1-dev")
 
+    def test_parses_companion_media_capabilities(self) -> None:
+        parsed = device_resolver.parse_voip_capabilities(
+            "at=l/16/1/10 | ar=l/48/1/10,l/16/1/16 | "
+            "sf=d1,t1 | sv=2026.9.1-dev | video=jpeg"
+        )
+
+        self.assertEqual(parsed["sip_audio_tx_formats"], ["L16/16000/1/10"])
+        self.assertEqual(
+            parsed["sip_audio_rx_formats"],
+            ["L16/48000/1/10", "L16/16000/1/16"],
+        )
+        self.assertEqual(
+            parsed["sdp_features"],
+            ["directional_audio_v1", "dtmf_rfc4733_v1"],
+        )
+        self.assertEqual(parsed["stack_version"], "2026.9.1-dev")
+        self.assertEqual(parsed["sip_video_codec"], "jpeg")
+
     def test_parses_forward_compatible_endpoint_extras(self) -> None:
         base = (
             "Spotpear | 192.168.1.31 | 5060 | 40000 | "
@@ -280,6 +298,10 @@ class SipEndpointParseTest(unittest.TestCase):
                 unique_id="abc-text_sensor-voip_endpoint",
             ),
             SimpleNamespace(
+                entity_id="sensor.renamed_capabilities",
+                unique_id="abc-text_sensor-voip_capabilities",
+            ),
+            SimpleNamespace(
                 entity_id="text.renamed_extension",
                 unique_id="abc-text-voip_extension",
             ),
@@ -308,6 +330,9 @@ class SipEndpointParseTest(unittest.TestCase):
         collected = device_resolver.VoipDeviceResolver._collect_entities(entities)
 
         self.assertEqual(collected["voip_endpoint"], "sensor.renamed_endpoint")
+        self.assertEqual(
+            collected["voip_capabilities"], "sensor.renamed_capabilities"
+        )
         self.assertEqual(collected["voip_extension"], "text.renamed_extension")
         self.assertEqual(collected["voip_ring_groups"], "text.renamed_ring_groups")
         self.assertEqual(
@@ -330,6 +355,9 @@ class SipEndpointParseTest(unittest.TestCase):
         class FakeEntityRegistry:
             entities = {
                 "sensor.ws3_voip_endpoint": FakeEntity("sensor.ws3_voip_endpoint"),
+                "sensor.ws3_voip_capabilities": FakeEntity(
+                    "sensor.ws3_voip_capabilities"
+                ),
                 "text.ws3_voip_extension": FakeEntity("text.ws3_voip_extension"),
                 "text.ws3_voip_ring_groups": FakeEntity("text.ws3_voip_ring_groups"),
                 "text.ws3_voip_conference_groups": FakeEntity("text.ws3_voip_conference_groups"),
@@ -362,6 +390,11 @@ class SipEndpointParseTest(unittest.TestCase):
             def get(self, entity_id):
                 if entity_id == "sensor.ws3_voip_endpoint":
                     return FakeState(self.value)
+                if entity_id == "sensor.ws3_voip_capabilities":
+                    return FakeState(
+                        "at=l/16/1/10 | ar=l/48/1/10 | "
+                        "sf=d1,t1 | sv=2026.9.1-dev | video=jpeg"
+                    )
                 if entity_id == "text.ws3_voip_extension":
                     return FakeState("999")
                 if entity_id == "text.ws3_voip_ring_groups":
@@ -413,6 +446,9 @@ class SipEndpointParseTest(unittest.TestCase):
         self.assertEqual(devices[0]["name"], "Waveshare S3 Audio")
         self.assertEqual(devices[0]["sip_uri_user"], "waveshare-s3")
         self.assertEqual(devices[0]["extension"], "999")
+        self.assertEqual(devices[0]["stack_version"], "2026.9.1-dev")
+        self.assertEqual(devices[0]["sip_video_codec"], "jpeg")
+        self.assertEqual(devices[0]["sip_audio_tx_formats"], ["L16/16000/1/10"])
         self.assertEqual(devices[0]["conference_group"], "CG Casa")
         self.assertEqual(devices[0]["ring_group"], "RG Casa")
         self.assertTrue(devices[0]["conference_ring"])

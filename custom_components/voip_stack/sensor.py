@@ -109,6 +109,7 @@ def _is_voip_roster_entity(entity_id: str) -> bool:
         for token in (
             "voip_state",
             "voip_endpoint",
+            "voip_capabilities",
             "voip_ring_groups",
             "voip_conference_groups",
             "voip_ring_on_conference",

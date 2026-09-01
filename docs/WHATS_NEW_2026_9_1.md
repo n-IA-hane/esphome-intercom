@@ -111,6 +111,12 @@ timeout or grow a buffer until the symptom disappears.
   match. The warning is deliberately emitted once per mismatch instead of on
   every state update.
 
+ESP discovery now keeps the stable SIP route separate from the complete media
+contract. The route state retains a backward-compatible PCM format, while a
+bounded diagnostic state carries directional RTP codecs, DTMF support, video
+codec and component version. Large P4 profiles therefore remain discoverable
+instead of exceeding Home Assistant's 255-character entity-state limit.
+
 ## Call ownership and cleanup are now centralized
 
 Home Assistant now keeps one authoritative owner for each call generation.

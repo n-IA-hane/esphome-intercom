@@ -8,7 +8,8 @@
 #
 # `voip_stack:` alone is the SIP/RTP engine and works headless with static
 # contacts. These entities are the HA-facing surface:
-#   - endpoint: discovery and SIP/audio capabilities for the central dialplan
+#   - endpoint: stable SIP route and backward-compatible PCM discovery
+#   - capabilities: complete directional RTP, DTMF, version and video contract
 #   - state/caller/destination/last_reason/contacts: ESP mirror card state
 #   - extension/ring/conference groups: PBX metadata editable from HA
 #
@@ -21,6 +22,12 @@ text_sensor:
     type: endpoint
     id: voip_endpoint
     name: VoIP Endpoint
+
+  - platform: voip_stack
+    type: capabilities
+    id: voip_capabilities
+    name: VoIP Capabilities
+    entity_category: diagnostic
 
   - platform: voip_stack
     type: state

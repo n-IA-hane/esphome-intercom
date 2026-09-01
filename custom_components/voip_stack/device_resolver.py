@@ -21,6 +21,7 @@ from .runtime_data import runtime_data
 _LOGGER = logging.getLogger(__name__)
 _ENTITY_ROLE_TOKENS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("voip_endpoint", ("voip_endpoint",)),
+    ("voip_capabilities", ("voip_capabilities",)),
     ("voip_state", ("voip_state",)),
     ("voip_extension", ("voip_extension",)),
     ("voip_transport", ("voip_transport",)),
@@ -40,6 +41,7 @@ _ENTITY_ROLE_TOKENS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 _ENTITY_ROLE_DOMAINS: dict[str, frozenset[str]] = {
     "voip_endpoint": frozenset({"sensor", "text_sensor"}),
+    "voip_capabilities": frozenset({"sensor", "text_sensor"}),
     "voip_state": frozenset({"sensor", "text_sensor"}),
     "voip_extension": frozenset({"text"}),
     "voip_transport": frozenset({"sensor", "text_sensor"}),
@@ -206,6 +208,19 @@ def _stack_version(extras: list[str]) -> str:
         if separator and key.strip().casefold() in {"stack_version", "sv"}:
             return value.strip()[:32]
     return ""
+
+
+def parse_voip_capabilities(value: str | None) -> dict[str, object]:
+    """Parse the bounded companion state carrying directional SIP media."""
+
+    extras = [part.strip() for part in str(value or "").split("|") if part.strip()]
+    return {
+        "sip_audio_tx_formats": _sip_audio_formats(extras, "tx"),
+        "sip_audio_rx_formats": _sip_audio_formats(extras, "rx"),
+        "sdp_features": _sdp_features(extras),
+        "stack_version": _stack_version(extras),
+        "sip_video_codec": _sip_video_codec(extras),
+    }
 
 
 def parse_voip_endpoint(value: str | None) -> dict | None:
@@ -375,6 +390,18 @@ class VoipDeviceResolver:
                     device.name or esphome_id or device_id,
                 )
                 continue
+            capabilities_entity_id = entities.get("voip_capabilities")
+            capabilities_state = (
+                self.hass.states.get(capabilities_entity_id)
+                if capabilities_entity_id
+                else None
+            )
+            media = parse_voip_capabilities(
+                capabilities_state.state if capabilities_state else None
+            )
+            for key, value in media.items():
+                if value:
+                    endpoint[key] = value
             route_id = self.route_id_for_host(endpoint["host"])
             sip_uri_user = self.sip_uri_user_for_host(endpoint["host"], device)
             if not route_id:
