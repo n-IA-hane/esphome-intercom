@@ -468,6 +468,16 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertNotIn("async def ws_to_rtp()", audio_ws)
         self.assertNotIn("tx_queue: asyncio.Queue[bytes]", audio_ws)
 
+    def test_softphone_rx_starts_on_the_real_browser_playback_clock(self) -> None:
+        audio_ws = (
+            ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
+        ).read_text()
+        body = _function_body(audio_ws, "_run_audio_session")
+        self.assertIn("browser_playback_ready = asyncio.Event()", body)
+        self.assertIn("await browser_playback_ready.wait()", body)
+        self.assertIn('control.get("type") == "playback_ready"', body)
+        self.assertIn("rx_frames.clear()", body)
+
     def test_softphone_tx_uses_negotiated_rtp_timestamp_clock(self) -> None:
         audio_ws = (
             ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"

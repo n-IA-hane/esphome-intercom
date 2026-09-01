@@ -60,6 +60,7 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._levelSamples = 0;
     this._previousInput = new Float32Array(this._format.channels);
     this._hasPreviousInput = false;
+    this._playbackReady = false;
 
     const receive = (event) => {
       const data = event.data;
@@ -157,6 +158,10 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     const channels = outputs?.[0] || [];
     if (!channels.length) return true;
 
+    if (!this._playbackReady) {
+      this._playbackReady = true;
+      this.port.postMessage({ type: "playback_ready" });
+    }
     let underrunThisQuantum = false;
     for (let i = 0; i < channels[0].length; i++) {
       if (!this._started) {

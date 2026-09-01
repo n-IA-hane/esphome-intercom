@@ -94,8 +94,6 @@ globalThis.onmessage = (event) => {
           { type: "audio", buffer, byteOffset: 1 },
           [buffer],
         );
-      } else {
-        globalThis.postMessage({ type: "message", data: buffer }, [buffer]);
       }
       if ((received & 31) === 0) publishStats();
     };

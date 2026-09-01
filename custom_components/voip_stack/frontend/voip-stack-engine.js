@@ -1427,6 +1427,7 @@ class VoipStackEngine extends EventTarget {
     const { capture, playback } = desiredAudioPaths(audioMode, audioDirection);
     const setupGeneration = ++this._audioSetupGeneration;
     const expectedCallId = this._callId;
+    let playbackReady = false;
     const resources = {
       audioContext: null,
       mediaStream: null,
@@ -1511,10 +1512,16 @@ class VoipStackEngine extends EventTarget {
           },
         );
         resources.playbackNode.port.onmessage = (event) => {
-          if (
-            this._playbackNode !== resources.playbackNode ||
-            event.data?.type !== "stats"
-          ) return;
+          if (event.data?.type === "playback_ready") {
+            if (setupGeneration !== this._audioSetupGeneration) return;
+            playbackReady = true;
+            if (this._playbackNode === resources.playbackNode) {
+              this._sendControl({ type: "playback_ready" });
+            }
+            return;
+          }
+          if (this._playbackNode !== resources.playbackNode) return;
+          if (event.data?.type !== "stats") return;
           this._stats = { ...this._stats, ...event.data };
           this._emitAudioLevel(event.data.audio_level);
           this._emit();
@@ -1538,6 +1545,7 @@ class VoipStackEngine extends EventTarget {
       this._ws?.bindCapture?.(this._captureNode);
       this._ws?.bindPlayback?.(this._playbackNode);
       this._applyAudioDirection(audioDirection);
+      if (playbackReady) this._sendControl({ type: "playback_ready" });
       if (resources.mediaStream) {
         const settings = resources.mediaStream.getAudioTracks?.()[0]?.getSettings?.() || {};
         this._mediaDevices.setActive("audioinput", settings.deviceId || "");

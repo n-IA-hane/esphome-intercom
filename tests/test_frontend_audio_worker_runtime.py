@@ -72,6 +72,12 @@ vm.runInContext(fs.readFileSync({json.dumps(str(WORKER))}, "utf8"), context);
 context.onmessage({{data: {{type: "connect", url: "ws://lab/audio"}}}});
 activeSocket.readyState = MockWebSocket.OPEN;
 activeSocket.onopen();
+const staleInbound = new Uint8Array([1, 7, 7, 7]).buffer;
+activeSocket.onmessage({{data: staleInbound}});
+assert.equal(
+  workerMessages.some((message) => message.type === "message" && message.data === staleInbound),
+  false,
+);
 context.onmessage({{data: {{type: "bind_playback", port: playback}}}});
 context.onmessage({{data: {{type: "bind_capture", port: capture}}}});
 context.onmessage({{data: {{type: "configure_capture", enabled: true, max_buffered_bytes: 4096}}}});

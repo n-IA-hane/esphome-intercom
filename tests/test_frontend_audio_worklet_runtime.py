@@ -41,7 +41,8 @@ import assert from "assert/strict";
 let Processor;
 class MockAudioWorkletProcessor {{
   constructor() {{
-    this.port = {{ postMessage() {{}}, onmessage: null }};
+    this.messages = [];
+    this.port = {{ postMessage: (message) => this.messages.push(message), onmessage: null }};
   }}
 }}
 const context = vm.createContext({{
@@ -85,6 +86,9 @@ const ordinary = differences.filter((_value, index) => !excluded.has(index));
 ordinary.sort((left, right) => left - right);
 const median = ordinary[Math.floor(ordinary.length / 2)];
 assert.ok(Math.max(...boundaries) <= median * 2, {{boundaries, median}});
+processor.process([], [[new Float32Array(128)]]);
+processor.process([], [[new Float32Array(128)]]);
+assert.equal(processor.messages.filter((message) => message.type === "playback_ready").length, 1);
 '''
     subprocess.run(
         ["node", "--experimental-vm-modules", "--input-type=module", "-"],

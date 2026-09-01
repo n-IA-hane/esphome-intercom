@@ -768,6 +768,7 @@ async def _run_audio_session(
     dtmf_tasks: set[asyncio.Task[None]] = set()
     rx_frames: deque[bytes] = deque()
     rx_ready = asyncio.Event()
+    browser_playback_ready = asyncio.Event()
     rx_playout_generation = 0
     debug_capture = (
         _DebugAudioCapture(session.call_id, rx_format=session.recv_format, tx_format=session.send_format)
@@ -928,6 +929,7 @@ async def _run_audio_session(
         nonlocal remote_rtp_host, remote_rtp_port
         observed_generation = int(session.media_generation)
         async def playout() -> None:
+            await browser_playback_ready.wait()
             active_generation = rx_playout_generation
             started = False
             next_deadline = loop.time()
@@ -1292,6 +1294,10 @@ async def _run_audio_session(
                 if msg.type == WSMsgType.TEXT:
                     try:
                         control = json.loads(str(msg.data))
+                        if control.get("type") == "playback_ready":
+                            rx_frames.clear()
+                            browser_playback_ready.set()
+                            continue
                         if control.get("type") != "dtmf":
                             continue
                         digit = str(control.get("digit") or "").strip().upper()
