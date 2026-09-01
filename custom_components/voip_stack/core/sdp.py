@@ -1232,6 +1232,18 @@ def _rtp_encoding_key(fmt: RtpPcmFormat) -> tuple[str, int, int]:
     return (fmt.encoding.upper(), fmt.sample_rate, fmt.channels)
 
 
+def _audio_rtpmap_lines(fmt: RtpPcmFormat) -> list[str]:
+    lines = [
+        f"a=rtpmap:{fmt.payload_type} {fmt.encoding}/{fmt.sample_rate}/{fmt.channels}"
+    ]
+    if fmt.encoding == "OPUS":
+        opus_fmtp = str(fmt.fmtp or "").strip() or (
+            "stereo=0;sprop-stereo=0;maxaveragebitrate=28000"
+        )
+        lines.append(f"a=fmtp:{fmt.payload_type} {opus_fmtp}")
+    return lines
+
+
 def _dedupe_rtp_offer_encodings(
     formats: list[RtpPcmFormat] | tuple[RtpPcmFormat, ...],
 ) -> list[RtpPcmFormat]:
@@ -1577,14 +1589,7 @@ def build_offer_directional(
         f"m=audio {int(media_port)} RTP/AVP {payloads}",
     ]
     for fmt in rtp_formats:
-        lines.append(
-            f"a=rtpmap:{fmt.payload_type} {fmt.encoding}/{fmt.sample_rate}/{fmt.channels}"
-        )
-        if fmt.encoding == "OPUS":
-            opus_fmtp = str(fmt.fmtp or "").strip() or (
-                "stereo=0;sprop-stereo=0;maxaveragebitrate=28000"
-            )
-            lines.append(f"a=fmtp:{fmt.payload_type} {opus_fmtp}")
+        lines.extend(_audio_rtpmap_lines(fmt))
         if allow_directional_payloads and audio_direction == "sendrecv":
             flow = directional_flows.get(_rtp_encoding_key(fmt))
             if flow is not None:
@@ -3268,14 +3273,7 @@ def build_answer_directional(
     payloads = " ".join(payload_values)
     audio_lines = [f"m=audio {int(media_port)} RTP/AVP {payloads}"]
     for fmt in selected:
-        audio_lines.append(
-            f"a=rtpmap:{fmt.payload_type} {fmt.encoding}/{fmt.sample_rate}/{fmt.channels}"
-        )
-        if fmt.encoding == "OPUS":
-            opus_fmtp = str(fmt.fmtp or "").strip() or (
-                "stereo=0;sprop-stereo=0;maxaveragebitrate=28000"
-            )
-            audio_lines.append(f"a=fmtp:{fmt.payload_type} {opus_fmtp}")
+        audio_lines.extend(_audio_rtpmap_lines(fmt))
         if format_direction == "sendrecv" and directional_payloads:
             send_match = _rtp_contract_key(fmt) == _rtp_contract_key(send)
             recv_match = _rtp_contract_key(fmt) == _rtp_contract_key(recv)
