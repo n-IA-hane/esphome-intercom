@@ -4,6 +4,11 @@
 # A compact SIP phone profile for the Waveshare ESP32-S3-AUDIO-Board. It keeps
 # only VoIP, single-mic AEC, local ringtone and the seven-LED status ring.
 #
+# This development profile requires the VoIP Stack 2026.9.1-dev Home Assistant
+# integration or newer. Earlier releases reject its Opus-only endpoint
+# advertisement, so the ESP stays online in ESPHome but is absent from the
+# central VoIP phonebook.
+#
 # ESP-to-ESP calls use the unified phonebook from HA.
 #
 # Audio pipeline:

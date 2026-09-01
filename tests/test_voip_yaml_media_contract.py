@@ -50,6 +50,9 @@ P4_JPEG_OPUS = (
     / "single-bus"
     / "waveshare-p4-touch-videophone-jpeg-opus.yaml"
 )
+WS3_VOIP_OPUS = (
+    YAMLS / "voip-only" / "single-bus" / "waveshare-s3-voip-opus.yaml"
+)
 RINGTONE_ORCHESTRATION = ROOT / "packages" / "runtime" / "voip_ringtone_orchestration.yaml"
 RUNTIME_MEDIA_PLAYER = (
     ROOT
@@ -115,7 +118,9 @@ def test_maintained_ws3_profile_does_not_enable_debug_entities() -> None:
     assert "packages/voip/debug.yaml" not in WS3_FULL_AFE.read_text()
 
 
-@pytest.mark.parametrize("path", (SPOTPEAR_VOIP_ONLY, P4_JPEG_OPUS))
+@pytest.mark.parametrize(
+    "path", (SPOTPEAR_VOIP_ONLY, P4_JPEG_OPUS, WS3_VOIP_OPUS)
+)
 def test_opus_profiles_do_not_advertise_pcm_fallback(path: Path) -> None:
     block = _voip_stack_block(path.read_text())
     assert "codec: opus" in block
