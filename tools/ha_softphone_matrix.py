@@ -112,22 +112,26 @@ async () => {
 """
 
 CLICK = r"""
-(label) => {
+(async (label) => {
   const deep = (selector, root = document) => {
     const found = [...root.querySelectorAll(selector)];
     for (const node of root.querySelectorAll("*")) if (node.shadowRoot) found.push(...deep(selector, node.shadowRoot));
     return found;
   };
-  const card = deep("voip-stack-card, intercom-card")
-    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
-  if (!card?.shadowRoot) return false;
-  const button = [...card.shadowRoot.querySelectorAll("button")].find((item) =>
-    (item.innerText || item.textContent || "").trim() === label && !item.hidden && !item.disabled && item.offsetParent !== null
-  );
-  if (!button) return false;
-  button.click();
-  return true;
-}
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const card = deep("voip-stack-card, intercom-card")
+      .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
+    const button = [...(card?.shadowRoot?.querySelectorAll("button") || [])].find((item) =>
+      (item.innerText || item.textContent || "").trim() === label && !item.hidden && !item.disabled && item.offsetParent !== null
+    );
+    if (button) {
+      button.click();
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return false;
+})
 """
 
 MEDIA_CONTROLS = r"""
