@@ -53,6 +53,7 @@ def test_browser_audio_oracle_uses_an_in_band_source() -> None:
 
     assert '"audio_source": "audio_source\\t\\tausine,440"' in matrix
     assert "ausine,10" not in matrix
+    assert 'audioContext.setSinkId({ type: "none" })' in matrix
 
 
 def _candidate(head: str) -> dict[str, object]:

@@ -151,6 +151,11 @@ async () => {
   const panel = root.querySelector("#voip-settings-panel");
   const selects = [...(panel?.querySelectorAll("select") || [])];
   const state = window.__voipStackEngine?.mediaDeviceState || {};
+  const audioContext = window.__voipStackEngine?._audioContext;
+  if (typeof audioContext?.setSinkId === "function") {
+    await audioContext.setSinkId({ type: "none" });
+    await audioContext.resume();
+  }
   const microphone = state.devices?.audioinput?.[0]?.deviceId || "";
   if (microphone) await card._selectMediaDevice("audioinput", microphone);
   let hangupScale = 1;
@@ -167,6 +172,10 @@ async () => {
     microphones: state.devices?.audioinput?.length || 0,
     cameras: state.devices?.videoinput?.length || 0,
     active_microphone: window.__voipStackEngine?.mediaDeviceState?.active?.audioinput || "",
+    audio_level: Number(window.__voipStackEngine?.audioLevel || 0),
+    playback_frames_in: Number(window.__voipStackEngine?._stats?.frames_in || 0),
+    playback_frames_out: Number(window.__voipStackEngine?._stats?.frames_out || 0),
+    playback_underruns: Number(window.__voipStackEngine?._stats?.underruns || 0),
     hangup_scale: hangupScale,
     state: card._softphoneSnapshot?.state || "",
   };
