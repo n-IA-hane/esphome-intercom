@@ -15,6 +15,10 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
+def test_hil_uses_the_p4_l16_audio_profile() -> None:
+    assert MODULE.P4_AUDIO_CODEC == "l16-16k"
+
+
 def valid_result() -> dict[str, object]:
     return {
         "ok": True,

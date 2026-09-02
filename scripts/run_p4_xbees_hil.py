@@ -40,19 +40,18 @@ from run_p4_wildix_hil import (  # noqa: E402
 )
 
 
-def load_xbees_modules(lab_root: Path) -> tuple[Any, Any]:
+def load_xbees_driver(lab_root: Path) -> Any:
     """Load the preserved Android lab only after validating its location."""
 
     lab_root = lab_root.expanduser().resolve()
-    required = (lab_root / "xbees_driver.py", lab_root / "xbees_stress.py")
+    required = (lab_root / "xbees_driver.py",)
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise RuntimeError(f"Android X-Bees lab is incomplete: {missing}")
     sys.path.insert(0, str(lab_root))
     driver = importlib.import_module("xbees_driver")
-    stress = importlib.import_module("xbees_stress")
     driver.preflight()
-    return driver, stress
+    return driver
 
 
 async def wait_esp(esp: EspApi, wanted: set[str], timeout: float = 18) -> None:
@@ -60,7 +59,7 @@ async def wait_esp(esp: EspApi, wanted: set[str], timeout: float = 18) -> None:
 
 
 async def run(args: argparse.Namespace) -> dict[str, Any]:
-    xb, stress = load_xbees_modules(args.android_lab)
+    xb = load_xbees_driver(args.android_lab)
     token = qualification_token(args)
     ha = HaRest(args.ha_url, token, insecure=args.insecure)
     spec = replace(DEFAULT_ESPS["p4"], host=args.p4_host)
@@ -140,7 +139,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                     await wait_esp(esp, {"in_call"}, timeout=2)
                     terminal_side = "xbees" if cycle % 2 else "p4"
                     if terminal_side == "xbees":
-                        await asyncio.to_thread(stress.xbees_hangup)
+                        await asyncio.to_thread(xb.hangup)
                     else:
                         await esp.service("hangup_call")
                     quiescent = await wait_quiescent(ws, esp)
@@ -179,7 +178,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                     with suppress(Exception):
                         await esp.service("hangup_call")
                 with suppress(Exception):
-                    await asyncio.to_thread(stress.xbees_hangup)
+                    await asyncio.to_thread(xb.hangup)
                 with suppress(Exception):
                     await asyncio.to_thread(xb.ensure_inbox)
                 with suppress(Exception):
@@ -225,10 +224,17 @@ def main() -> int:
     try:
         result = asyncio.run(run(args))
     except BaseException as error:
+        try:
+            candidate = candidate_revision()
+        except RuntimeError:
+            candidate = {
+                "qualifying": False,
+                "error": "candidate identity unavailable",
+            }
         result = {
             "status": "failed",
             "error": f"{type(error).__name__}: {error}",
-            "candidate": candidate_revision(),
+            "candidate": candidate,
             "timestamp": datetime.now(UTC).isoformat(),
         }
     args.output.parent.mkdir(parents=True, exist_ok=True)

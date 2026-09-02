@@ -27,6 +27,14 @@ def row(time: float, sequence: int, timestamp: int) -> str:
     )
 
 
+def row_with_payload(
+    time: float, sequence: int, timestamp: int, payload_type: int
+) -> str:
+    columns = row(time, sequence, timestamp).split("\t")
+    columns[6] = str(payload_type)
+    return "\t".join(columns)
+
+
 def test_continuous_rtp_wrap_reports_no_loss() -> None:
     streams = MODULE.analyze_rows(
         (
@@ -59,7 +67,20 @@ def test_rtp_gap_and_duplicate_are_reported_independently() -> None:
     assert streams[0]["packets"] == 4
 
 
-def test_sdp_audio_clock_rates_bind_payload_to_advertised_port(
+def test_shared_ssrc_payload_switch_is_not_reported_as_packet_loss() -> None:
+    streams = MODULE.analyze_rows(
+        (
+            row_with_payload(0.00, 10, 1000, 8),
+            row_with_payload(0.02, 11, 1000, 101),
+            row_with_payload(0.04, 12, 1160, 8),
+        )
+    )
+
+    audio = next(item for item in streams if item["payload_type"] == 8)
+    assert audio["lost_packets"] == 0
+
+
+def test_sdp_audio_formats_bind_payload_to_advertised_port(
     monkeypatch, tmp_path
 ) -> None:
     class Result:
@@ -70,9 +91,28 @@ def test_sdp_audio_clock_rates_bind_payload_to_advertised_port(
 
     monkeypatch.setattr(MODULE.subprocess, "run", lambda *args, **kwargs: Result())
 
-    assert MODULE._sdp_audio_clock_rates("tshark", tmp_path / "call.pcap") == {
-        ("192.0.2.1", 40000, 97): 16000,
+    assert MODULE._sdp_audio_formats("tshark", tmp_path / "call.pcap") == {
+        ("192.0.2.1", 40000, 97): (16000, "l16"),
     }
+
+
+def test_telephone_event_is_not_evaluated_as_audio_or_video_loss() -> None:
+    streams = [
+        {
+            "source": "192.0.2.1:40000",
+            "destination": "192.0.2.2:40002",
+            "media_type": "event",
+            "lost_packets": 2,
+        }
+    ]
+
+    assert not MODULE.evaluate_streams(
+        streams,
+        require_streams=1,
+        max_audio_loss=0,
+        max_video_loss=0,
+        max_cadence_ratio=1.25,
+    )
 
 
 def test_video_sequence_gap_is_optional_during_direction_change() -> None:

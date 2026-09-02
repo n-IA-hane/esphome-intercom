@@ -16,6 +16,8 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from live_voip_qualification import DEFAULT_ESPS, EspApi, norm  # noqa: E402
 
+P4_AUDIO_CODEC = "l16-16k"
+
 
 def validate_peer_result(result: object, codec: str = "h264") -> dict[str, object]:
     """Require signaling and media evidence from both directions."""
@@ -94,6 +96,8 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             args.codec,
             "--direction",
             "sendrecv",
+            "--audio-codec",
+            P4_AUDIO_CODEC,
             "--add-video-after",
             "1",
             "--expect-reinvite-status",

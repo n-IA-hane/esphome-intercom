@@ -38,11 +38,19 @@ def _extended_sequence(sequence: int, previous: int | None, cycle: int) -> tuple
 
 def analyze_rows(rows: Iterable[str]) -> list[dict[str, Any]]:
     streams: dict[tuple[str, ...], dict[str, Any]] = {}
+    flow_sequences: dict[tuple[str, ...], set[int]] = {}
+    flow_state: dict[tuple[str, ...], tuple[int | None, int]] = {}
     for raw in rows:
         columns = raw.rstrip("\n").split("\t")
         if len(columns) != len(FIELDS) or not all(columns):
             continue
         key = tuple(columns[1:7])
+        flow_key = tuple(columns[1:6])
+        sequence = int(columns[7])
+        previous, cycle = flow_state.get(flow_key, (None, 0))
+        extended, cycle = _extended_sequence(sequence, previous, cycle)
+        flow_state[flow_key] = (sequence, cycle)
+        flow_sequences.setdefault(flow_key, set()).add(extended)
         stream = streams.setdefault(
             key,
             {
@@ -56,20 +64,17 @@ def analyze_rows(rows: Iterable[str]) -> list[dict[str, Any]]:
             },
         )
         stream["times"].append(float(columns[0]))
-        stream["sequences"].append(int(columns[7]))
+        stream["sequences"].append(extended)
         stream["timestamps"].append(int(columns[8]))
 
     evidence: list[dict[str, Any]] = []
-    for stream in streams.values():
-        extended: list[int] = []
-        previous: int | None = None
-        cycle = 0
-        for sequence in stream.pop("sequences"):
-            value, cycle = _extended_sequence(sequence, previous, cycle)
-            extended.append(value)
-            previous = sequence
+    for key, stream in streams.items():
+        extended = stream.pop("sequences")
         unique = set(extended)
-        expected = max(unique) - min(unique) + 1
+        first, last = min(unique), max(unique)
+        flow_unique = flow_sequences[key[:5]]
+        received_in_range = sum(first <= item <= last for item in flow_unique)
+        expected = last - first + 1
         times = stream.pop("times")
         timestamps = stream.pop("timestamps")
         timestamp_steps = [
@@ -85,7 +90,10 @@ def analyze_rows(rows: Iterable[str]) -> list[dict[str, Any]]:
             {
                 **stream,
                 "packets": len(extended),
-                "lost_packets": expected - len(unique),
+                # Payload types on one SSRC share a sequence-number space.
+                # A telephone-event packet between two audio packets is not
+                # a lost audio packet merely because it has another PT.
+                "lost_packets": expected - received_in_range,
                 "duplicate_packets": len(extended) - len(unique),
                 "duration_seconds": round(times[-1] - times[0], 6),
                 "mean_delta_ms": round(sum(deltas) / len(deltas), 6)
@@ -115,22 +123,28 @@ def analyze_pcap(path: Path) -> list[dict[str, Any]]:
         text=True,
     )
     streams = analyze_rows(result.stdout.splitlines())
-    clock_rates = _sdp_audio_clock_rates(tshark, path)
+    audio_formats = _sdp_audio_formats(tshark, path)
     for stream in streams:
         source_host, source_port = stream["source"].rsplit(":", 1)
-        clock_rate = clock_rates.get(
+        audio_format = audio_formats.get(
             (source_host, int(source_port), stream["payload_type"])
         )
-        if clock_rate is None:
+        if audio_format is None:
             stream["media_type"] = "video"
+            continue
+        clock_rate, encoding = audio_format
+        if encoding == "telephone-event":
+            stream["media_type"] = "event"
+            stream["clock_rate"] = clock_rate
             continue
         stream["media_type"] = "audio"
         expected_delta = 1000 * stream["timestamp_step"] / clock_rate
         stream["clock_rate"] = clock_rate
         stream["expected_delta_ms"] = round(expected_delta, 6)
-        stream["cadence_ratio"] = round(
-            stream["mean_delta_ms"] / expected_delta, 6
-        )
+        if expected_delta > 0:
+            stream["cadence_ratio"] = round(
+                stream["mean_delta_ms"] / expected_delta, 6
+            )
     return streams
 
 
@@ -149,7 +163,13 @@ def evaluate_streams(
         failures.append(f"expected at least {require_streams} RTP streams")
     for stream in streams:
         media_type = stream.get("media_type", "video")
-        loss_limit = max_audio_loss if media_type == "audio" else max_video_loss
+        loss_limit = (
+            max_audio_loss
+            if media_type == "audio"
+            else max_video_loss
+            if media_type == "video"
+            else None
+        )
         if loss_limit is not None and stream["lost_packets"] > loss_limit:
             failures.append(
                 f"{stream['source']}->{stream['destination']} lost "
@@ -164,10 +184,10 @@ def evaluate_streams(
     return failures
 
 
-def _sdp_audio_clock_rates(
+def _sdp_audio_formats(
     tshark: str,
     path: Path,
-) -> dict[tuple[str, int, int], int]:
+) -> dict[tuple[str, int, int], tuple[int, str]]:
     result = subprocess.run(
         [
             tshark,
@@ -189,7 +209,7 @@ def _sdp_audio_clock_rates(
         stderr=subprocess.PIPE,
         text=True,
     )
-    rates: dict[tuple[str, int, int], int] = {}
+    formats: dict[tuple[str, int, int], tuple[int, str]] = {}
     for row in result.stdout.splitlines():
         columns = row.split("\t")
         if len(columns) != 3:
@@ -200,18 +220,21 @@ def _sdp_audio_clock_rates(
             continue
         port = int(audio.group(1))
         payloads = {int(item) for item in audio.group(2).split()}
-        for payload, clock in re.findall(
-            r"rtpmap:(\d+) [^/,]+/(\d+)(?:/\d+)?",
+        for payload, encoding, clock in re.findall(
+            r"rtpmap:(\d+) ([^/,]+)/([0-9]+)(?:/\d+)?",
             attributes,
             flags=re.IGNORECASE,
         ):
             payload_type = int(payload)
             if payload_type in payloads:
-                rates[(source, port, payload_type)] = int(clock)
+                formats[(source, port, payload_type)] = (
+                    int(clock),
+                    encoding.lower(),
+                )
         for payload in (0, 8, 9):
             if payload in payloads:
-                rates.setdefault((source, port, payload), 8000)
-    return rates
+                formats.setdefault((source, port, payload), (8000, "static"))
+    return formats
 
 
 def _sha256(path: Path) -> str:
