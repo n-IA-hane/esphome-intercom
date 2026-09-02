@@ -1328,6 +1328,22 @@ async def _run_audio_session(
                         if control.get("type") == "playback_ready":
                             browser_playback_ready.set()
                             continue
+                        if control.get("type") == "playback_timing":
+                            _LOGGER.warning(
+                                "HA softphone browser playback underrun call_id=%s "
+                                "count=%d buffered=%d target=%d ws_gap=%.1fms "
+                                "worklet_arrival_gap=%.1fms worklet_delivery_gap=%.1fms "
+                                "clock=%dppm",
+                                session.call_id,
+                                max(0, int(control.get("underruns") or 0)),
+                                max(0, int(control.get("buffered_frames") or 0)),
+                                max(0, int(control.get("jitter_target_frames") or 0)),
+                                max(0.0, float(control.get("max_ws_arrival_gap_ms") or 0.0)),
+                                max(0.0, float(control.get("max_worklet_arrival_gap_ms") or 0.0)),
+                                max(0.0, float(control.get("max_worklet_delivery_gap_ms") or 0.0)),
+                                int(control.get("clock_recovery_ppm") or 0),
+                            )
+                            continue
                         if control.get("type") != "dtmf":
                             continue
                         digit = str(control.get("digit") or "").strip().upper()

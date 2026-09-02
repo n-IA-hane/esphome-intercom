@@ -99,7 +99,7 @@ for (let frame = 0; frame < 20; frame++) {{
   timed._push(new ArrayBuffer(frameSamples * 2), 0, 1000 + frame * {frame_ms});
 }}
 assert.equal(timed._arrivalJitterMs, 0);
-assert.equal(timed._targetStartFrames, timed._minStartFrames);
+assert.equal(timed._targetStartFrames, Math.ceil(240 / {frame_ms}));
 assert.equal(timed._maxArrivalGapMs, {frame_ms});
 assert.equal(timed._arrivalGapsOver40Ms, 0);
 
@@ -108,10 +108,25 @@ const androidOutput = new Processor({{
     format: {{sampleRate: {input_rate}, frameMs: {frame_ms}, channels: 1, pcmFormat: "s16le"}},
   }},
 }});
-    assert.equal(
-      androidOutput._minStartFrames,
-      Math.ceil(80 / {frame_ms}),
-    );
+assert.equal(androidOutput._minStartFrames, Math.ceil(80 / {frame_ms}));
+context.currentTime = 2;
+androidOutput._push(new ArrayBuffer(frameSamples * 2), 0, 2000);
+context.currentTime = 2.216;
+androidOutput._push(new ArrayBuffer(frameSamples * 2), 0, 2216);
+assert.equal(
+  androidOutput._targetStartFrames,
+  Math.min(androidOutput._maxStartFrames, Math.ceil((216 + 80) / {frame_ms})),
+);
+const learnedTarget = androidOutput._targetStartFrames;
+androidOutput._lastUnderrun = 0;
+androidOutput._lastJitterSpike = 0;
+androidOutput._lastStats = 0;
+context.currentTime = 20;
+androidOutput.process([], [[new Float32Array(128)]]);
+assert.equal(androidOutput._targetStartFrames, learnedTarget - 1);
+context.currentTime = 21;
+androidOutput.process([], [[new Float32Array(128)]]);
+assert.equal(androidOutput._targetStartFrames, learnedTarget - 1);
 '''
     subprocess.run(
         ["node", "--experimental-vm-modules", "--input-type=module", "-"],

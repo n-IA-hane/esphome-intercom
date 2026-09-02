@@ -88,99 +88,6 @@ function rejectAfter(promise, timeoutMs, message) {
   });
 }
 
-class WorkerAudioSocket {
-  constructor(url) {
-    this.readyState = WebSocket.CONNECTING;
-    this.bufferedAmount = 0;
-    this.binaryType = "arraybuffer";
-    this.onopen = null;
-    this.onmessage = null;
-    this.onerror = null;
-    this.onclose = null;
-    this.onstats = null;
-    this._closed = false;
-    this._worker = new Worker(
-      `/voip-stack/voip-stack-audio-worker.js?v=${encodeURIComponent(MODULE_VERSION)}`,
-    );
-    this._worker.onmessage = (event) => this._handleWorkerMessage(event.data || {});
-    this._worker.onerror = () => this.onerror?.();
-    this._worker.postMessage({ type: "connect", url });
-  }
-
-  _handleWorkerMessage(message) {
-    if (message.type === "open") {
-      this.readyState = WebSocket.OPEN;
-      this.onopen?.();
-    } else if (message.type === "message") {
-      this.onmessage?.({ data: message.data });
-    } else if (message.type === "stats") {
-      this.bufferedAmount = Number(message.buffered_amount || 0);
-      this.onstats?.(message);
-    } else if (message.type === "error") {
-      this.onerror?.();
-    } else if (message.type === "close") {
-      this.readyState = WebSocket.CLOSED;
-      this._finishClose(message);
-    }
-  }
-
-  _bind(node, workerType) {
-    if (!node || this.readyState === WebSocket.CLOSED) return;
-    const channel = new MessageChannel();
-    node.port.postMessage(
-      { type: "bind_media_port", port: channel.port1 },
-      [channel.port1],
-    );
-    this._worker.postMessage(
-      { type: workerType, port: channel.port2 },
-      [channel.port2],
-    );
-  }
-
-  bindPlayback(node) {
-    this._bind(node, "bind_playback");
-  }
-
-  bindCapture(node) {
-    this._bind(node, "bind_capture");
-  }
-
-  configureCapture(enabled, maxBufferedBytes) {
-    this._worker.postMessage({
-      type: "configure_capture",
-      enabled: Boolean(enabled),
-      max_buffered_bytes: Math.max(0, Number(maxBufferedBytes || 0)),
-    });
-  }
-
-  send(data) {
-    if (this.readyState !== WebSocket.OPEN) return;
-    this._worker.postMessage({ type: "send", data });
-  }
-
-  close() {
-    if (this.readyState === WebSocket.CLOSED || this._closed) return;
-    this._closed = true;
-    this.readyState = WebSocket.CLOSING;
-    this._worker.postMessage({ type: "close" });
-  }
-
-  _finishClose(event = {}) {
-    this._closed = true;
-    this.readyState = WebSocket.CLOSED;
-    this._worker.terminate();
-    this.onclose?.(event);
-    this.onclose = null;
-  }
-}
-
-function createAudioSocket(url) {
-  if (typeof Worker === "function" && typeof MessageChannel === "function") {
-    return new WorkerAudioSocket(url);
-  }
-  return new WebSocket(url);
-}
-
 function mediaClientInstanceId() {
   try {
     const existing = String(globalThis[MEDIA_CLIENT_GLOBAL_KEY] || "");
@@ -1322,18 +1229,9 @@ class VoipStackEngine extends EventTarget {
     ) {
       throw new Error("Audio WebSocket superseded before connect");
     }
-    const ws = createAudioSocket(wsUrl);
+    const ws = new WebSocket(wsUrl);
     this._ws = ws;
     ws.binaryType = "arraybuffer";
-    ws.onstats = (stats) => {
-      if (this._ws !== ws) return;
-      this._stats.sent = Number(stats.sent || 0);
-      this._stats.received = Number(stats.received || 0);
-      this._stats.tx_dropped = Number(stats.tx_dropped || 0);
-      this._stats.max_capture_gap_ms = Number(stats.max_capture_gap_ms || 0);
-      this._stats.capture_gaps_over_40ms = Number(stats.capture_gaps_over_40ms || 0);
-      this._emit();
-    };
     let helloResolve;
     let helloReject;
     let helloSettled = false;
@@ -1675,7 +1573,20 @@ class VoipStackEngine extends EventTarget {
           }
           if (this._playbackNode !== resources.playbackNode) return;
           if (event.data?.type !== "stats") return;
+          const previousUnderruns = Number(this._stats.underruns || 0);
           this._stats = { ...this._stats, ...event.data };
+          if (Number(this._stats.underruns || 0) > previousUnderruns) {
+            this._sendControl({
+              type: "playback_timing",
+              underruns: Number(this._stats.underruns || 0),
+              buffered_frames: Number(this._stats.buffered_frames || 0),
+              jitter_target_frames: Number(this._stats.jitter_target_frames || 0),
+              max_ws_arrival_gap_ms: Number(this._stats.max_ws_arrival_gap_ms || 0),
+              max_worklet_arrival_gap_ms: Number(this._stats.max_arrival_gap_ms || 0),
+              max_worklet_delivery_gap_ms: Number(this._stats.max_delivery_gap_ms || 0),
+              clock_recovery_ppm: Number(this._stats.clock_recovery_ppm || 0),
+            });
+          }
           this._emitAudioLevel(event.data.audio_level);
           this._emit();
         };
@@ -1695,8 +1606,6 @@ class VoipStackEngine extends EventTarget {
       this._source = resources.source;
       this._playbackNode = resources.playbackNode;
       this._audioReady = true;
-      this._ws?.bindCapture?.(this._captureNode);
-      this._ws?.bindPlayback?.(this._playbackNode);
       this._applyAudioDirection(audioDirection);
       if (playbackReady) this._sendControl({ type: "playback_ready" });
       if (resources.mediaStream) {

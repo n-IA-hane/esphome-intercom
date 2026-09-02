@@ -2,6 +2,7 @@ const PCM_FORMATS = Object.freeze(["s16le", "s24le", "s24le_in_s32", "s32le"]);
 const FRAME_MS = Object.freeze([10, 16, 20, 32]);
 const BUFFER_CAPACITY_SECONDS = 1.28;
 const MIN_START_LATENCY_MS = 80;
+const DEFAULT_START_LATENCY_MS = 240;
 const MAX_START_LATENCY_MS = 320;
 const JITTER_SAFETY_MULTIPLIER = 4;
 const STABLE_DECAY_SECONDS = 12;
@@ -64,30 +65,36 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._framesDrop = 0;
     this._underruns = 0;
     this._lastStats = 0;
-    this._targetStartFrames = this._minStartFrames;
+    this._targetStartFrames = Math.min(
+      this._maxStartFrames,
+      Math.max(
+        this._minStartFrames,
+        Math.ceil(DEFAULT_START_LATENCY_MS / this._format.frameMs),
+      ),
+    );
     this._lastUnderrun = 0;
+    this._lastTargetDecay = 0;
+    this._lastJitterSpike = 0;
     this._lastOutput = new Float32Array(this._format.channels);
     this._concealmentGain = 0;
     this._lastArrivalTime = 0;
     this._arrivalJitterMs = 0;
     this._maxArrivalGapMs = 0;
     this._arrivalGapsOver40Ms = 0;
+    this._lastDeliveryTimeMs = 0;
+    this._maxDeliveryGapMs = 0;
     this._levelPower = 0;
     this._levelSamples = 0;
     this._previousInput = new Float32Array(this._format.channels);
     this._hasPreviousInput = false;
     this._playbackReady = false;
 
-    const receive = (event) => {
+    this.port.onmessage = (event) => {
       const data = event.data;
       if (data?.type === "audio" && data.buffer) {
         this._push(data.buffer, data.byteOffset || 0, data.arrivalMs);
-      } else if (data?.type === "bind_media_port" && data.port) {
-        data.port.onmessage = receive;
-        data.port.start?.();
       }
     };
-    this.port.onmessage = receive;
   }
 
   _decode(view, sampleIndex) {
@@ -107,6 +114,22 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     if (byteOffset < 0 || buffer.byteLength - byteOffset !== frameBytes) return;
     const frameSamples = this._contextFrameSamples * this._format.channels;
     this._updateArrivalJitter(arrivalMs);
+    const deliveryTimeMs = currentTime * 1000;
+    if (this._lastDeliveryTimeMs > 0) {
+      const deliveryGapMs = deliveryTimeMs - this._lastDeliveryTimeMs;
+      this._maxDeliveryGapMs = Math.max(this._maxDeliveryGapMs, deliveryGapMs);
+      if (deliveryGapMs >= 40) {
+        this._lastJitterSpike = currentTime;
+        const adaptiveFrames = Math.ceil(
+          (deliveryGapMs + MIN_START_LATENCY_MS) / this._format.frameMs,
+        );
+        this._targetStartFrames = Math.max(
+          this._targetStartFrames,
+          Math.min(this._maxStartFrames, adaptiveFrames),
+        );
+      }
+    }
+    this._lastDeliveryTimeMs = deliveryTimeMs;
     if (this._available >= frameSamples * this._dropFrames) {
       const queuedFrames = Math.floor(this._available / frameSamples);
       const framesToDrop = Math.max(1, queuedFrames - this._maxStartFrames);
@@ -284,9 +307,12 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       this._levelSamples = 0;
       if (
         this._targetStartFrames > this._minStartFrames &&
-        currentTime - this._lastUnderrun >= STABLE_DECAY_SECONDS
+        currentTime - this._lastUnderrun >= STABLE_DECAY_SECONDS &&
+        currentTime - this._lastJitterSpike >= STABLE_DECAY_SECONDS &&
+        currentTime - this._lastTargetDecay >= STABLE_DECAY_SECONDS
       ) {
         this._targetStartFrames--;
+        this._lastTargetDecay = currentTime;
       }
       this.port.postMessage({
         type: "stats",
@@ -300,6 +326,7 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
         arrival_jitter_ms: Math.round(this._arrivalJitterMs * 10) / 10,
         max_arrival_gap_ms: Math.round(this._maxArrivalGapMs * 10) / 10,
         arrival_gaps_over_40ms: this._arrivalGapsOver40Ms,
+        max_delivery_gap_ms: Math.round(this._maxDeliveryGapMs * 10) / 10,
         clock_recovery_rate: Math.round(this._playbackRate * 1000000) / 1000000,
         clock_recovery_ppm: Math.round((this._playbackRate - 1) * 1000000),
         audio_level: audioLevel,

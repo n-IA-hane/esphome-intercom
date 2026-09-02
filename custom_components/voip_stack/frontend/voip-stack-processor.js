@@ -70,13 +70,6 @@ class RecorderProcessor extends AudioWorkletProcessor {
     this._writeSample = 0;
     this._position = 0;
     this._lastSample = 0;
-    this._mediaPort = null;
-    this.port.onmessage = (event) => {
-      if (event.data?.type !== "bind_media_port" || !event.data.port) return;
-      this._mediaPort = event.data.port;
-      this._mediaPort.start?.();
-    };
-
     this._ratio = sampleRate / this._format.sampleRate;
     const antiAliasEnabled = options?.processorOptions?.antiAlias !== false;
     // The disabled path exists for comparison and legacy troubleshooting. The
@@ -126,7 +119,7 @@ class RecorderProcessor extends AudioWorkletProcessor {
     if (this._writeSample !== this._format.frameSamples) return;
 
     const frame = this._buffer;
-    (this._mediaPort || this.port).postMessage({ type: "audio", buffer: frame });
+    this.port.postMessage({ type: "audio", buffer: frame });
     this._bufferIndex = (this._bufferIndex + 1) % this._buffers.length;
     this._buffer = this._buffers[this._bufferIndex];
     this._view = this._views[this._bufferIndex];
