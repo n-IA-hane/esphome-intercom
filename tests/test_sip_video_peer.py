@@ -192,10 +192,11 @@ def test_opus_audio_file_fails_closed_instead_of_sending_silence() -> None:
     assert "Opus silence profile" in completed.stderr
 
 
-def test_softphone_matrix_uses_the_public_device_selector() -> None:
+def test_softphone_matrix_originates_card_media_cases_through_the_card() -> None:
     source = SOFTPHONE_MATRIX.read_text()
 
-    assert '"device_id": phone_device_id' in source
+    assert "page.evaluate(START_CARD_CALL, LOCAL_REGISTERED_TARGET)" in source
+    assert "await card._startCall()" in source
     assert '{"destination": "Codex", "endpoint_id": "default"}' not in source
 
 

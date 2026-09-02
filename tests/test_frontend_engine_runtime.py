@@ -325,6 +325,15 @@ const controllerDefault = {{ isConnected: true }};
 const controllerKitchen = {{ isConnected: true }};
 assert.equal(isolated.claimSoftphoneController(controllerDefault, "default"), true);
 assert.equal(isolated.claimSoftphoneController(controllerKitchen, "kitchen"), true);
+const abandonedIntent = {{}};
+assert.equal(
+  isolated.tryAcquireMediaIntent("kitchen", abandonedIntent, controllerKitchen),
+  true,
+);
+assert.equal(isolated.releaseSoftphoneController(controllerKitchen, "kitchen"), true);
+const replacementIntent = {{}};
+assert.equal(isolated.tryAcquireMediaIntent("kitchen", replacementIntent, controllerDefault), true);
+assert.equal(isolated.releaseMediaIntent(replacementIntent), true);
 
 // Register the in-flight media attach before its body starts. Engine state
 // listeners can synchronously re-enter resumeSession() while _connect() tears
@@ -371,18 +380,6 @@ await stableMetadata.resumeSession(
 );
 assert.equal(metadataReconnects, 0);
 assert.equal(stableMetadata._callId, "stable-call");
-
-// A brand-new page has no sessionStorage claim, but an authoritative in-call
-// snapshot may recover that exact endpoint once. A newer call on the same
-// logical phone replaces a stale, unattached claim instead of becoming a
-// permanent spectator.
-const recovered = new Engine();
-assert.equal(recovered.ownsSoftphoneSession("fresh-call", "kitchen"), false);
-assert.equal(recovered.tryRecoverSoftphoneSession("fresh-call", "kitchen"), true);
-assert.equal(recovered.ownsSoftphoneSession("fresh-call", "kitchen"), true);
-assert.equal(recovered.tryRecoverSoftphoneSession("replacement-call", "kitchen"), true);
-assert.equal(recovered.ownsSoftphoneSession("fresh-call", "kitchen"), false);
-assert.equal(recovered.ownsSoftphoneSession("replacement-call", "kitchen"), true);
 
 // A permanently removed endpoint is surfaced once as unavailable and is not
 // retried forever by the global subscription timer.
@@ -769,6 +766,35 @@ assert.equal(supersededRequests[0].service_data.destination, "peer");
 assert.equal(supersededServices.length, 1);
 assert.equal(supersededServices[0][2].call_id, "orphan-B");
 
+// Home Assistant service responses use the canonical v2 phone + call shape.
+// Normalize it once before ownership and media attach instead of relying on a
+// later state event to recover a call that this page already originated.
+const canonicalReply = new Engine();
+canonicalReply._hass = {{
+  callWS: async () => ({{ response: {{
+    schema_version: 2,
+    success: true,
+    operation: "originate",
+    phone: {{ device_id: "phone-device", name: "Casa" }},
+    call: {{ call_id: "canonical-call", state: "in_call", destination: "peer" }},
+  }} }}),
+}};
+let canonicalAttach = null;
+canonicalReply.resumeSession = async (_info, deviceId, payload) => {{
+  canonicalAttach = {{ deviceId, payload }};
+  return true;
+}};
+const canonicalResult = await canonicalReply.startHaSoftphone(
+  {{ name: "peer" }},
+  {{ endpoint_id: "default", device_id: "phone-device" }},
+  {{ endpoint_id: "default" }},
+);
+assert.equal(canonicalResult.call_id, "canonical-call");
+assert.equal(canonicalResult.state, "in_call");
+assert.equal(canonicalReply.ownsSoftphoneSession("canonical-call", "default"), true);
+assert.equal(canonicalAttach.deviceId, "phone-device");
+assert.equal(canonicalAttach.payload.call_id, "canonical-call");
+
 // Browser capture/playback follows the negotiated local SDP direction. A
 // recvonly answer must not ask for microphone permission; hold/resume and
 // direction expansion rebuild atomically when a path is added or removed.
@@ -787,6 +813,8 @@ context.navigator.mediaDevices = {{
 class RuntimeAudioContext {{
   constructor() {{
     this.state = "running";
+    this.baseLatency = 0.09;
+    this.outputLatency = 0.21;
     this.destination = {{}};
     this.audioWorklet = {{ addModule: async () => {{}} }};
   }}
@@ -800,8 +828,9 @@ class RuntimeAudioContext {{
   async close() {{ this.state = "closed"; }}
 }}
 class RuntimeWorkletNode {{
-  constructor(_context, name) {{
+  constructor(_context, name, options) {{
     this.name = name;
+    this.options = options;
     this.port = {{ onmessage: null, postMessage() {{}} }};
   }}
   connect(target) {{ return target; }}
@@ -822,6 +851,7 @@ await audio._setupAudio({{ audio_mode: "full_duplex" }}, pcm);
 assert.equal(microphoneRequests, 0);
 assert.equal(audio._captureNode, null);
 assert.equal(audio._playbackNode?.name, "voip-stack-playback-processor");
+assert.equal(audio._playbackNode.options.processorOptions.renderLeadMs, 300);
 
 await audio._reconcileAudioMedia({{ ...pcm, audio_direction: "sendrecv" }});
 assert.equal(microphoneRequests, 1);
@@ -922,6 +952,21 @@ await audioOnlyReconcile._ensureVideo({{
   video_active: false,
 }});
 assert.equal(redundantVideoCloses, 0);
+
+// A partial call-service response has no media fields. It must not be treated
+// as an explicit audio-only update that closes an already active video path.
+const partialVideoState = new Engine();
+partialVideoState._callId = "partial-video";
+let partialVideoCloses = 0;
+partialVideoState._video = {{
+  active: true,
+  callId: "partial-video",
+  async close() {{ partialVideoCloses++; }},
+}};
+await partialVideoState._ensureVideo({{
+  call_id: "partial-video", endpoint_id: "default", state: "in_call",
+}});
+assert.equal(partialVideoCloses, 0);
 
 // Starting the next audio-only call must wait until camera/encoder teardown
 // from the previous video call has completed in the browser process.

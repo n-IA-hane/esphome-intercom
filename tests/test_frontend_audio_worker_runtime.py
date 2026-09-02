@@ -31,6 +31,7 @@ import assert from "assert/strict";
 
 const workerMessages = [];
 let activeSocket;
+let nowMs = 1234;
 class MockWebSocket {{
   static CONNECTING = 0;
   static OPEN = 1;
@@ -62,6 +63,7 @@ const context = vm.createContext({{
   String,
   Boolean,
   Math,
+  performance: {{now: () => nowMs}},
   globalThis: null,
 }});
 context.globalThis = context;
@@ -87,12 +89,22 @@ activeSocket.onmessage({{data: inbound}});
 assert.equal(playback.messages.length, 1);
 assert.equal(playback.messages[0].buffer, inbound);
 assert.equal(playback.messages[0].byteOffset, 1);
+assert.equal(playback.messages[0].arrivalMs, 1234);
 assert.equal(workerMessages.some((message) => message.type === "message" && message.data === inbound), false);
 
 capture.onmessage({{data: {{type: "audio", buffer: new Uint8Array([9, 8, 7]).buffer}}}});
 assert.deepEqual(Array.from(activeSocket.sent[0]), [1, 9, 8, 7]);
+nowMs += 50;
+capture.onmessage({{data: {{type: "audio", buffer: new Uint8Array([6, 5, 4]).buffer}}}});
 context.onmessage({{data: {{type: "send", data: "control"}}}});
-assert.equal(activeSocket.sent[1], "control");
+assert.deepEqual(JSON.parse(activeSocket.sent[1]), {{type: "capture_timing", gap_ms: 50}});
+assert.equal(activeSocket.sent[2][0], 1);
+assert.equal(activeSocket.sent[3], "control");
+context.onmessage({{data: {{type: "configure_capture", enabled: true, max_buffered_bytes: 4096}}}});
+for (let i = 0; i < 30; i++) capture.onmessage({{data: {{type: "audio", buffer: new Uint8Array([3]).buffer}}}});
+const stats = workerMessages.filter((message) => message.type === "stats").at(-1);
+assert.equal(stats.max_capture_gap_ms, 50);
+assert.equal(stats.capture_gaps_over_40ms, 1);
 '''
     subprocess.run(
         ["node", "--experimental-vm-modules", "--input-type=module", "-"],

@@ -59,13 +59,11 @@ class FrontendCardContractTest(unittest.TestCase):
     def test_esp_contact_call_is_a_pure_button_press(self) -> None:
         body = _method_body(self.source, "async _startCall")
         self.assertIn("const softphoneAction = this._isHaSoftphoneMode()", body)
-        esp_branch = body.split("if (softphoneAction)", 1)[1]
-        esp_branch = esp_branch.split("catch (err)", 1)[0]
-        self.assertIn('this._pressEspButton(this._callButtonEntityId, "Call")', esp_branch)
-        self.assertIn("this._mirrorKeypadOpen", esp_branch)
-        self.assertIn('this._hass.callService(domain, service, { dest: manualTarget })', esp_branch)
-        self.assertNotIn("_startP2P", esp_branch)
-        self.assertNotIn("destination === this._getHaName()", esp_branch)
+        self.assertIn('this._pressEspButton(this._callButtonEntityId, "Call")', body)
+        self.assertIn("this._mirrorKeypadOpen", body)
+        self.assertIn('this._hass.callService(domain, service, { dest: manualTarget })', body)
+        self.assertNotIn("_startP2P", body)
+        self.assertNotIn("destination === this._getHaName()", body)
 
     def test_esp_keypad_has_separate_manual_buffer_and_never_writes_destination(self) -> None:
         self.assertIn("this._mirrorManualTarget", self.source)
@@ -92,11 +90,9 @@ class FrontendCardContractTest(unittest.TestCase):
     def test_esp_answer_call_is_a_pure_button_press(self) -> None:
         body = _method_body(self.source, "async _answer")
         self.assertIn("const softphoneAction = this._isHaSoftphoneMode()", body)
-        esp_branch = body.split("if (softphoneAction)", 1)[1]
-        esp_branch = esp_branch.split("catch (err)", 1)[0]
-        self.assertIn('this._pressEspButton(this._callButtonEntityId, "Call")', esp_branch)
-        self.assertNotIn("answer_esp_call", esp_branch)
-        self.assertNotIn("voip_stack/answer", esp_branch)
+        self.assertIn('this._pressEspButton(this._callButtonEntityId, "Call")', body)
+        self.assertNotIn("answer_esp_call", body)
+        self.assertNotIn("voip_stack/answer", body)
 
     def test_ha_softphone_mode_is_the_only_softphone_context(self) -> None:
         body = _method_body(self.source, "_isSoftphoneContext")

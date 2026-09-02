@@ -459,8 +459,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         ).read_text()
         self.assertIn("async def browser_to_rtp()", audio_ws)
         self.assertIn("async def playout()", audio_ws)
-        self.assertIn("_BROWSER_PLAYOUT_TARGET_MS = 60", audio_ws)
-        self.assertIn("_BROWSER_PLAYOUT_MAX_MS = 200", audio_ws)
+        self.assertIn("_BROWSER_PLAYOUT_DEFAULT_MS = 150", audio_ws)
+        self.assertIn("max_frames * 4 // 5", audio_ws)
+        self.assertIn("_BROWSER_PLAYOUT_MAX_MS = 500", audio_ws)
         self.assertIn("_conceal_pcm_frame(", audio_ws)
         self.assertIn('counters["tx_playout_late_discard"]', audio_ws)
         self.assertIn("payload = rtp_encoder.encode(pcm)", audio_ws)
@@ -468,7 +469,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertNotIn("async def ws_to_rtp()", audio_ws)
         self.assertNotIn("tx_queue: asyncio.Queue[bytes]", audio_ws)
 
-    def test_softphone_rx_starts_on_the_real_browser_playback_clock(self) -> None:
+    def test_softphone_rx_has_one_browser_playback_clock(self) -> None:
         audio_ws = (
             ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
         ).read_text()
@@ -476,7 +477,8 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("browser_playback_ready = asyncio.Event()", body)
         self.assertIn("await browser_playback_ready.wait()", body)
         self.assertIn('control.get("type") == "playback_ready"', body)
-        self.assertIn("rx_frames.clear()", body)
+        self.assertIn("await ws.send_bytes(encode_audio_frame(pcm))", body)
+        self.assertNotIn("rx_frames", body)
 
     def test_softphone_tx_uses_negotiated_rtp_timestamp_clock(self) -> None:
         audio_ws = (

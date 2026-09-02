@@ -242,7 +242,6 @@ class VoipStackEngine extends EventTarget {
     this._sessionAttachPromise = null;
     this._mediaClientId = mediaClientInstanceId();
     this._mediaIntent = null;
-    this._mediaRecoveryAttempts = new Set();
     // Media ownership belongs to the page-level engine, not to one Lovelace
     // element. Home Assistant may recreate a card while an outbound call is
     // ringing; the replacement must still be able to attach that call's media.
@@ -444,14 +443,17 @@ class VoipStackEngine extends EventTarget {
     );
   }
 
-  tryAcquireMediaIntent(endpointId, token = null) {
+  tryAcquireMediaIntent(endpointId, token = null, owner = null) {
     const selected = String(endpointId || "").trim();
     if (!token || !selected) return false;
     if (this._mediaIntent) {
       return this._mediaIntent.token === token;
     }
-    if (this.hasOwnedSoftphoneSessionForOtherEndpoint(selected)) return false;
-    this._mediaIntent = { endpointId: selected, token };
+    const unresolvedEndpoint = selected === "preferred" || selected.startsWith("device:");
+    if (unresolvedEndpoint) {
+      if (this.active || [...this._ownedSoftphoneCalls.values()].some(Boolean)) return false;
+    } else if (this.hasOwnedSoftphoneSessionForOtherEndpoint(selected)) return false;
+    this._mediaIntent = { endpointId: selected, token, owner };
     return true;
   }
 
@@ -555,28 +557,6 @@ class VoipStackEngine extends EventTarget {
     );
   }
 
-  tryRecoverSoftphoneSession(callId, endpointId) {
-    const wanted = String(callId || "").trim();
-    const endpoint = String(endpointId || "").trim();
-    if (!wanted || !endpoint || this._pageHiding) return false;
-    if (
-      this.active &&
-      this._endpointId === endpoint &&
-      this._callId === wanted
-    ) return true;
-    const attemptKey = `${endpoint}|${wanted}`;
-    if (this._mediaRecoveryAttempts.has(attemptKey)) {
-      return this.ownsSoftphoneSession(wanted, endpoint);
-    }
-    if (this.hasOwnedSoftphoneSessionForOtherEndpoint(endpoint)) return false;
-    if (this._mediaRecoveryAttempts.size >= 256) {
-      this._mediaRecoveryAttempts.delete(this._mediaRecoveryAttempts.values().next().value);
-    }
-    this._mediaRecoveryAttempts.add(attemptKey);
-    this.claimSoftphoneSession(wanted, endpoint);
-    return true;
-  }
-
   claimSoftphoneController(owner, endpointId) {
     if (!owner || owner.isConnected === false) return false;
     const endpoint = String(endpointId || "").trim();
@@ -591,6 +571,7 @@ class VoipStackEngine extends EventTarget {
     const endpoint = String(endpointId || "").trim();
     if (!owner || this._softphoneControllers.get(endpoint) !== owner) return false;
     this._softphoneControllers.delete(endpoint);
+    if (this._mediaIntent?.owner === owner) this._mediaIntent = null;
     this._emit();
     return true;
   }
@@ -1184,6 +1165,8 @@ class VoipStackEngine extends EventTarget {
       this._stats.sent = Number(stats.sent || 0);
       this._stats.received = Number(stats.received || 0);
       this._stats.tx_dropped = Number(stats.tx_dropped || 0);
+      this._stats.max_capture_gap_ms = Number(stats.max_capture_gap_ms || 0);
+      this._stats.capture_gaps_over_40ms = Number(stats.capture_gaps_over_40ms || 0);
       this._emit();
     };
     let helloResolve;
@@ -1398,7 +1381,12 @@ class VoipStackEngine extends EventTarget {
       }
     }
     this._lastAudioMessageAt = arrivedAt;
-    this._playbackNode.port.postMessage({ type: "audio", buffer: event.data, byteOffset: 1 }, [event.data]);
+    this._playbackNode.port.postMessage({
+      type: "audio",
+      buffer: event.data,
+      byteOffset: 1,
+      arrivalMs: arrivedAt,
+    }, [event.data]);
     this._stats.received++;
     if ((this._stats.received & 31) === 0) this._emit();
   }
@@ -1508,7 +1496,13 @@ class VoipStackEngine extends EventTarget {
           "voip-stack-playback-processor",
           {
             outputChannelCount: [formats.rx.channels],
-            processorOptions: { format: formats.rx },
+            processorOptions: {
+              format: formats.rx,
+              renderLeadMs: 1000 * (
+                Number(resources.audioContext.baseLatency || 0) +
+                Number(resources.audioContext.outputLatency || 0)
+              ),
+            },
           },
         );
         resources.playbackNode.port.onmessage = (event) => {
@@ -1748,13 +1742,22 @@ class VoipStackEngine extends EventTarget {
     if (deviceId) request.service_data.device_id = deviceId;
     const serviceReply = await this._hass.callWS(request);
     const reply = serviceReply?.response || serviceReply || {};
-    endpointId = String(reply?.endpoint_id || reply?.phone?.endpoint_id || endpointId).trim();
-    deviceId = String(reply?.device_id || reply?.phone?.device_id || deviceId).trim();
+    const callReply = reply?.call && typeof reply.call === "object" ? reply.call : reply;
+    const phoneReply = reply?.phone && typeof reply.phone === "object" ? reply.phone : reply;
+    endpointId = String(phoneReply.endpoint_id || endpointId).trim();
+    deviceId = String(phoneReply.device_id || deviceId).trim();
     if (!endpointId || !deviceId) {
       throw new Error("Call service did not resolve a Home Assistant phone");
     }
-    const state = String(reply?.state || "").toLowerCase();
-    const callId = String(reply?.call_id || "");
+    const state = String(callReply.state || "").toLowerCase();
+    const callId = String(callReply.call_id || "");
+    const sessionReply = {
+      ...reply,
+      ...phoneReply,
+      ...callReply,
+      endpoint_id: endpointId,
+      device_id: deviceId,
+    };
     if (typeof context.shouldAbort === "function" && context.shouldAbort()) {
       if (
         callId &&
@@ -1766,11 +1769,11 @@ class VoipStackEngine extends EventTarget {
           reason: "superseded",
         }).catch(() => {});
       }
-      return { ...(reply || {}), superseded: true };
+      return { ...sessionReply, superseded: true };
     }
     if (!["calling", "connecting", "remote_ringing", "ringing", "in_call"].includes(state)) {
       this._setState("IDLE");
-      return reply;
+      return sessionReply;
     }
     this.claimSoftphoneSession(callId, endpointId);
     if (state === "in_call") {
@@ -1781,9 +1784,9 @@ class VoipStackEngine extends EventTarget {
         endpoint_id: endpointId,
         audio_mode: target?.audio_mode || softphoneInfo?.audio_mode || "full_duplex",
       };
-      await this.resumeSession(mediaInfo, deviceId, { ...(reply || {}), endpoint_id: endpointId });
+      await this.resumeSession(mediaInfo, deviceId, sessionReply);
     }
-    return reply;
+    return sessionReply;
   }
 
   get mediaClientId() {
@@ -1895,6 +1898,10 @@ class VoipStackEngine extends EventTarget {
       statePayload?.endpoint_id || this._endpointId || "",
     ).trim();
     if (!wantedCallId || !wantedEndpoint) return;
+    // Service responses identify the call before the authoritative media
+    // snapshot arrives. A missing field means "unchanged"; only an explicit
+    // false removes an active video path.
+    if (!Object.prototype.hasOwnProperty.call(statePayload, "video_active")) return;
     const wantedVideoKey = `${wantedEndpoint}|${wantedCallId}`;
     if (
       this._videoHangupSuspendedKey &&

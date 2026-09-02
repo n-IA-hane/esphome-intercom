@@ -112,21 +112,19 @@ const engine = {{
     }}
     return this.active && this.endpointId !== endpointId;
   }},
-  tryAcquireMediaIntent(endpointId = "default", token = null) {{
+  tryAcquireMediaIntent(endpointId = "default", token = null, owner = null) {{
     if (!token) return false;
     if (this.mediaIntent) return this.mediaIntent.token === token;
-    if (this.hasOwnedSoftphoneSessionForOtherEndpoint(endpointId)) return false;
-    this.mediaIntent = {{ endpointId, token }};
+    const unresolvedEndpoint = endpointId === "preferred" || endpointId.startsWith("device:");
+    if (unresolvedEndpoint) {{
+      if (this.active || [...this.ownedSoftphoneCalls.values()].some(Boolean)) return false;
+    }} else if (this.hasOwnedSoftphoneSessionForOtherEndpoint(endpointId)) return false;
+    this.mediaIntent = {{ endpointId, token, owner }};
     return true;
   }},
   releaseMediaIntent(token) {{
     if (!token || this.mediaIntent?.token !== token) return false;
     this.mediaIntent = null;
-    return true;
-  }},
-  tryRecoverSoftphoneSession(callId, endpointId = "default") {{
-    if (!callId || this.hasOwnedSoftphoneSessionForOtherEndpoint(endpointId)) return false;
-    this.claimSoftphoneSession(callId, endpointId);
     return true;
   }},
   async close(reason) {{
@@ -428,6 +426,17 @@ engine.mediaCleanupPending = false;
 engine.resumeSession = savedResumeSession;
 engine.releaseSoftphoneSession("stopping-call", "default");
 
+// A terminal event for call A cannot release the page-level media claim for
+// a newer call B while B is still between SIP answer and WebSocket attach.
+const delayedTerminalCard = makeCard();
+engine.claimSoftphoneSession("new-call", "default");
+engine.active = false;
+delayedTerminalCard._cleanupAfterTerminalSession({{
+  endpoint_id: "default", state: "idle", call_id: "old-call",
+}});
+assert.equal(engine.ownsSoftphoneSession("new-call", "default"), true);
+engine.releaseSoftphoneSession("new-call", "default");
+
 // Enabling Auto Answer on a HA browser phone must prove microphone access for
 // the local phone, regardless of the remote destination selected in the
 // dialer. That successful user-gesture acquisition is authoritative even when
@@ -552,8 +561,9 @@ const defaultCard = makeCard();
 defaultCard._onSoftphoneState({{ state: "ringing", call_id: "legacy" }});
 assert.equal(defaultCard._softphoneSnapshot, null);
 
-// A newly opened page can adopt authoritative media for an already answered
-// call even when it did not initiate or answer the dialog locally.
+// A newly opened page observes an already answered call without stealing its
+// media or risking a hangup. Only the page that called, answered, auto-answered
+// or retained its sessionStorage claim may attach the browser pipeline.
 engine.ownedSoftphoneCalls.clear();
 engine.active = false;
 let recoveredMediaCalls = 0;
@@ -568,9 +578,8 @@ recoveredCard._onSoftphoneState({{
   call_id: "already-answered", capabilities: ["audio"], sequence: 1,
 }});
 await Promise.resolve();
-assert.equal(engine.ownsSoftphoneSession("already-answered", "kitchen"), true);
-assert.equal(recoveredMediaCalls, 1);
-engine.releaseSoftphoneSession("already-answered", "kitchen");
+assert.equal(engine.ownsSoftphoneSession("already-answered", "kitchen"), false);
+assert.equal(recoveredMediaCalls, 0);
 engine.resumeSession = async () => true;
 
 // Device-only card identity is immutable across backend resolution. Local

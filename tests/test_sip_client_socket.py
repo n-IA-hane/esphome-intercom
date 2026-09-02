@@ -1970,20 +1970,26 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 )
             await wait_until(lambda: len(ws.binary) >= burst_start + 8)
             burst_times = ws.binary_sent_at[burst_start : burst_start + 8]
-            burst_intervals = [
-                burst_times[index] - burst_times[index - 1]
-                for index in range(1, len(burst_times))
-            ]
-            self.assertGreater(burst_times[-1] - burst_times[0], 0.05)
-            self.assertGreater(min(burst_intervals), 0.004)
-            self.assertLess(max(burst_intervals), 0.040)
+            # RTP arrival timing is preserved. The browser AudioWorklet owns
+            # playback cadence, so HA must not add a second playout clock.
+            self.assertLess(burst_times[-1] - burst_times[0], 0.05)
 
+            # Browser capture reports its actual delivery cadence before the
+            # first frame. The RTP playout starts with enough queued audio to
+            # survive that cadence instead of immediately collapsing into PLC.
             await ws.messages.put(
                 types.SimpleNamespace(
-                    type=WSMsgType.BINARY,
-                    data=audio_ws.encode_audio_frame(second_pcm),
+                    type=WSMsgType.TEXT,
+                    data='{"type":"capture_timing","gap_ms":100}',
                 )
             )
+            for _index in range(15):
+                await ws.messages.put(
+                    types.SimpleNamespace(
+                        type=WSMsgType.BINARY,
+                        data=audio_ws.encode_audio_frame(second_pcm),
+                    )
+                )
             await asyncio.sleep(0.05)
             if runtime.done():
                 self.fail(f"audio runtime ended during re-INVITE: {runtime.exception()!r}")

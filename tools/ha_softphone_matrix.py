@@ -150,6 +150,23 @@ CLICK_KEYPAD_DIGIT = r"""
 })
 """
 
+START_CARD_CALL = r"""
+async (destination) => {
+  const deep = (selector, root = document) => {
+    const found = [...root.querySelectorAll(selector)];
+    for (const node of root.querySelectorAll("*")) if (node.shadowRoot) found.push(...deep(selector, node.shadowRoot));
+    return found;
+  };
+  const card = deep("voip-stack-card, intercom-card")
+    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
+  if (!card?._startCall) return false;
+  card._softphoneKeypadOpen = true;
+  card._setManualTarget(destination);
+  await card._startCall();
+  return true;
+}
+"""
+
 CONTROL_DIAGNOSTICS = r"""
 () => {
   const deep = (selector, root = document) => {
@@ -916,14 +933,8 @@ def main() -> int:
                     dtmf_mode=mode,
                 )
                 active.append(callee)
-                service(
-                    "voip_stack",
-                    "call",
-                    {
-                        "destination": LOCAL_REGISTERED_TARGET,
-                        "device_id": phone_device_id,
-                    },
-                )
+                if not page.evaluate(START_CARD_CALL, LOCAL_REGISTERED_TARGET):
+                    raise RuntimeError("card could not originate the DTMF call")
                 calling = wait_card(
                     page,
                     lambda item: (
@@ -980,14 +991,8 @@ def main() -> int:
                     echo_dtmf=True,
                 )
                 active.append(callee)
-                service(
-                    "voip_stack",
-                    "call",
-                    {
-                        "destination": LOCAL_REGISTERED_TARGET,
-                        "device_id": phone_device_id,
-                    },
-                )
+                if not page.evaluate(START_CARD_CALL, LOCAL_REGISTERED_TARGET):
+                    raise RuntimeError("card could not originate the keypad call")
                 calling = wait_card(
                     page,
                     lambda item: (

@@ -9,6 +9,11 @@ let sent = 0;
 let received = 0;
 let txDropped = 0;
 let txFrame = null;
+let lastCaptureArrivalMs = 0;
+let maxCaptureGapMs = 0;
+let captureGapsOver40Ms = 0;
+let lastCaptureGapMs = 0;
+let reportedCaptureGapMs = 0;
 
 function publishStats() {
   globalThis.postMessage({
@@ -17,11 +22,20 @@ function publishStats() {
     received,
     tx_dropped: txDropped,
     buffered_amount: Number(socket?.bufferedAmount || 0),
+    max_capture_gap_ms: Math.round(maxCaptureGapMs * 10) / 10,
+    capture_gaps_over_40ms: captureGapsOver40Ms,
   });
 }
 
 function sendAudio(buffer) {
   if (!captureEnabled || socket?.readyState !== WebSocket.OPEN || !buffer?.byteLength) return;
+  if (lastCaptureGapMs >= 40) {
+    const gapBucketMs = Math.ceil(lastCaptureGapMs / 10) * 10;
+    if (gapBucketMs > reportedCaptureGapMs) {
+      socket.send(JSON.stringify({ type: "capture_timing", gap_ms: gapBucketMs }));
+      reportedCaptureGapMs = gapBucketMs;
+    }
+  }
   if (maxBufferedBytes > 0 && socket.bufferedAmount >= maxBufferedBytes) {
     txDropped++;
     if ((txDropped & 31) === 1) publishStats();
@@ -42,7 +56,16 @@ function bindCapturePort(port) {
   capturePort = port;
   if (!capturePort) return;
   capturePort.onmessage = (event) => {
-    if (event.data?.type === "audio") sendAudio(event.data.buffer);
+    if (event.data?.type !== "audio") return;
+    const now = Number(globalThis.performance?.now?.()) || 0;
+    if (now > 0 && lastCaptureArrivalMs > 0) {
+      const gap = now - lastCaptureArrivalMs;
+      lastCaptureGapMs = gap;
+      maxCaptureGapMs = Math.max(maxCaptureGapMs, gap);
+      if (gap >= 40) captureGapsOver40Ms++;
+    }
+    lastCaptureArrivalMs = now;
+    sendAudio(event.data.buffer);
   };
   capturePort.start?.();
 }
@@ -65,6 +88,7 @@ globalThis.onmessage = (event) => {
     closeSocket();
     const active = new WebSocket(String(message.url || ""));
     socket = active;
+    reportedCaptureGapMs = 0;
     active.binaryType = "arraybuffer";
     active.onopen = () => {
       if (socket === active) globalThis.postMessage({ type: "open" });
@@ -91,7 +115,12 @@ globalThis.onmessage = (event) => {
       received++;
       if (playbackPort) {
         playbackPort.postMessage(
-          { type: "audio", buffer, byteOffset: 1 },
+          {
+            type: "audio",
+            buffer,
+            byteOffset: 1,
+            arrivalMs: globalThis.performance?.now?.(),
+          },
           [buffer],
         );
       }

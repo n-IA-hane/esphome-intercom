@@ -413,6 +413,20 @@ class VoipStackCard extends HTMLElement {
     );
   }
 
+  async _acquireSoftphoneMediaIntent() {
+    if (!this._getSoftphoneEndpointId()) await this._loadSoftphoneState();
+    const endpointId = this._getSoftphoneEndpointId();
+    const reservationId = endpointId || this._softphoneRuntimeKey();
+    const token = {};
+    if (
+      (endpointId && this._otherPhoneOwnsBrowserMedia()) ||
+      !voipStackEngine.tryAcquireMediaIntent(reservationId, token, this)
+    ) {
+      throw new Error("This browser is already handling another phone call.");
+    }
+    return token;
+  }
+
   _isSoftphoneController() {
     return this.isConnected && this._isHaSoftphoneMode() &&
       voipStackEngine.claimSoftphoneController(this, this._softphoneRuntimeKey());
@@ -448,11 +462,7 @@ class VoipStackCard extends HTMLElement {
     // A delayed initial-state read from a card that HA is replacing must not
     // tear down a newer call owned by the page-level engine.
     if (ownedCallId && terminalCallId && terminalCallId !== ownedCallId) {
-      const activelyAttached = voipStackEngine.active &&
-        voipStackEngine.endpointId === endpointId &&
-        voipStackEngine.callId === ownedCallId;
-      if (activelyAttached) return;
-      voipStackEngine.releaseSoftphoneSession("", endpointId);
+      return;
     }
     if (!this._autoAnswerCallId || this._autoAnswerCallId === terminalCallId) {
       this._autoAnswering = false;
@@ -582,10 +592,7 @@ class VoipStackCard extends HTMLElement {
     if (this._stopping || voipStackEngine.mediaCleanupPending) return;
     const endpointId = this._getSoftphoneEndpointId();
     const callId = String(snapshot.call_id || "");
-    if (!this._ownsSoftphoneMedia(snapshot) && !voipStackEngine.tryRecoverSoftphoneSession(
-      callId,
-      endpointId,
-    )) return;
+    if (!this._ownsSoftphoneMedia(snapshot)) return;
     // One browser tab has one microphone/output pipeline. Keep a concurrent
     // call on another logical phone visible, but never let its card oscillate
     // the shared media socket away from the endpoint already attached here.
@@ -2224,19 +2231,14 @@ class VoipStackCard extends HTMLElement {
   async _startCall() {
     if (this._starting || this._stopping) return;
     const softphoneAction = this._isHaSoftphoneMode();
-    const mediaIntentToken = softphoneAction ? {} : null;
-    if (
-      softphoneAction &&
-      (
-        this._otherPhoneOwnsBrowserMedia() ||
-        !voipStackEngine.tryAcquireMediaIntent(
-          this._getSoftphoneEndpointId(),
-          mediaIntentToken,
-        )
-      )
-    ) {
-      this._showError("This browser is already handling another phone call.");
-      return;
+    let mediaIntentToken = null;
+    if (softphoneAction) {
+      try {
+        mediaIntentToken = await this._acquireSoftphoneMediaIntent();
+      } catch (err) {
+        this._showError(err.message || String(err));
+        return;
+      }
     }
     const operationId = ++this._callOperationId;
     this._starting = true;
@@ -2273,7 +2275,10 @@ class VoipStackCard extends HTMLElement {
         voipStackEngine.endpointId === this._getSoftphoneEndpointId() &&
         (!voipStackEngine.callId || voipStackEngine.callId === this._sessionCallId())
       ) await voipStackEngine.close("start_error");
-      else await this._cleanup();
+      else {
+        await this._cleanup();
+        if (softphoneAction) await this._loadSoftphoneState();
+      }
     } finally {
       if (mediaIntentToken) voipStackEngine.releaseMediaIntent(mediaIntentToken);
       if (operationId === this._callOperationId) {
@@ -2345,19 +2350,14 @@ class VoipStackCard extends HTMLElement {
       ? String(options.callId || this._sessionCallId() || "")
       : "";
     if (softphoneAction && !callId) return;
-    const mediaIntentToken = softphoneAction ? {} : null;
-    if (
-      softphoneAction &&
-      (
-        this._otherPhoneOwnsBrowserMedia() ||
-        !voipStackEngine.tryAcquireMediaIntent(
-          this._getSoftphoneEndpointId(),
-          mediaIntentToken,
-        )
-      )
-    ) {
-      this._showError("This browser is already handling another phone call.");
-      return;
+    let mediaIntentToken = null;
+    if (softphoneAction) {
+      try {
+        mediaIntentToken = await this._acquireSoftphoneMediaIntent();
+      } catch (err) {
+        this._showError(err.message || String(err));
+        return;
+      }
     }
     const operationId = ++this._callOperationId;
     this._starting = true;
