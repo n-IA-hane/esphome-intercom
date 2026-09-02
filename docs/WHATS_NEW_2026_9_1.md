@@ -96,6 +96,23 @@ The worker is paced by the browser audio clock, keeps bounded carry state and
 reports real input, output and underrun counters. It does not guess a larger
 timeout or grow a buffer until the symptom disappears.
 
+## More resilient embedded registration and call control
+
+The SIP registrar accepts the equivalent Digest URI form used by some embedded
+door stations when the request omits port 5060 but the signed Digest URI states
+it explicitly. The exception is deliberately narrow: the SIP user, host, URI
+parameters and effective port must still match, and the Digest response is
+verified against the exact URI signed by the client. Different ports or URI
+parameters remain rejected.
+
+During an active browser call, the shared softphone engine now checks the Home
+Assistant connection and recovers through the official connection API after a
+confirmed half-open WebSocket. Hangup and Decline use the same engine-owned
+terminal operation, reconnect once when transport failure is confirmed, then
+read the authoritative call state before deciding whether a retry is needed.
+The monitor is suspended while an Android page is hidden, so normal Companion
+app lifecycle transitions do not cause a false reconnect.
+
 ## Home Assistant and ESP component cleanup
 
 - DNS resolver imports and resolver initialization run outside the HA event
@@ -137,7 +154,7 @@ its UDP binding.
 
 ## Current candidate qualification
 
-- 1696 software tests passed, with 4 intentional deselections and 133
+- 1700 software tests passed, with 4 intentional deselections and 133
   parameterized subtests.
 - 95 Home Assistant runtime tests passed.
 - The complete local SIP laboratory passed caller and callee hangup, CANCEL,
@@ -147,11 +164,19 @@ its UDP binding.
   render blocks with zero underruns in the registered video call witness.
 - SIP INFO and RFC 4733 DTMF passed in both directions, including the complete
   `0-9*#` keypad sequence.
+- An Android call through the deployed Home Assistant instance exchanged 775
+  receive and 762 transmit RTP audio packets with WS3, with zero PLC, late
+  discard, queue drop or terminal resource leak.
+- The current P4 JPEG profile completed an Android audio and video call with
+  sendrecv media. Browser diagnostics reported 1526 receive and 1504 transmit
+  audio packets, zero audio PLC or queue drops, and zero video loss, reorder or
+  access-unit queue drops. P4 presented 74 of 75 admitted JPEG frames and
+  returned every call-scoped resource to zero after hangup.
 
-Real-device and Android results from earlier candidates remain useful
-regression witnesses, but they are not presented as qualification of the
-current commit. The final release candidate will repeat the applicable P4,
-WS3, Spotpear and Android paths before promotion.
+The P4 camera is configured for 10 FPS, but this Android witness produced about
+4.6 encoded and presented frames per second. The result proves stable media and
+physical presentation for this call, not achievement of the configured maximum
+frame rate.
 
 ## Upgrade notes
 
