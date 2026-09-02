@@ -10,6 +10,33 @@ media capabilities, compatible legs avoid unnecessary transcoding, the HA
 phone can operate an IVR, and browser audio follows its own clock instead of
 hoping the UI thread remains in a generous mood.
 
+## The HA phone now has an in-call keypad
+
+The Home Assistant card reuses its normal keypad during an established call.
+Digits entered while idle still build a destination. Digits entered during a
+call are sent through the negotiated telephone-event payload, with SIP INFO
+available for compatible peers. Hangup remains visible in the keypad view and
+the card returns to its ordinary terminal screen when either side ends the
+call.
+
+Each new dialog also resets temporary card surfaces. An Options or keypad view
+left open by the previous call can no longer hide Answer and Decline on the
+next incoming call.
+
+The same operation is available as the `voip_stack.send_dtmf` Home Assistant
+action. ESP phones advertise DTMF only when their firmware contains the new
+RFC 4733 implementation, so audio-only firmware does not gain a fictional
+capability.
+
+<p align="center">
+  <img src="images/ha-softphone-in-call-keypad-2026-9-1.jpg" width="420" alt="In-call DTMF keypad in the Home Assistant phone"/>
+</p>
+
+The keypad replaces the normal call view only while it is needed. `Hangup`
+remains available, `Contacts` returns to destination selection, and remote or
+local hangup restores the ordinary terminal screen. It is a telephone keypad,
+not a modal dungeon with no exit.
+
 ## ESPHome phones now publish their real codec capabilities
 
 An ESPHome endpoint can advertise ordered transmit and receive RTP formats,
@@ -73,33 +100,6 @@ SIP URIs without an explicit remote port now use the scheme default, 5060 for
 `sip` and 5061 for `sips`. HA's local listener port is no longer reused as an
 unrelated destination port in direct calls, forwarding, groups, conferences or
 inbound bridges.
-
-## The HA phone now has an in-call keypad
-
-The Home Assistant card reuses its normal keypad during an established call.
-Digits entered while idle still build a destination. Digits entered during a
-call are sent through the negotiated telephone-event payload, with SIP INFO
-available for compatible peers. Hangup remains visible in the keypad view and
-the card returns to its ordinary terminal screen when either side ends the
-call.
-
-Each new dialog also resets temporary card surfaces. An Options or keypad view
-left open by the previous call can no longer hide Answer and Decline on the
-next incoming call.
-
-The same operation is available as the `voip_stack.send_dtmf` Home Assistant
-action. ESP phones advertise DTMF only when their firmware contains the new
-RFC 4733 implementation, so audio-only firmware does not gain a fictional
-capability.
-
-<p align="center">
-  <img src="images/ha-softphone-in-call-keypad-2026-9-1.jpg" width="420" alt="In-call DTMF keypad in the Home Assistant phone"/>
-</p>
-
-The keypad replaces the normal call view only while it is needed. `Hangup`
-remains available, `Contacts` returns to destination selection, and remote or
-local hangup restores the ordinary terminal screen. It is a telephone keypad,
-not a modal dungeon with no exit.
 
 ## Browser audio follows RTP cadence without crackling
 
