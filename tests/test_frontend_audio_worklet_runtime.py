@@ -106,13 +106,12 @@ assert.equal(timed._arrivalGapsOver40Ms, 0);
 const androidOutput = new Processor({{
   processorOptions: {{
     format: {{sampleRate: {input_rate}, frameMs: {frame_ms}, channels: 1, pcmFormat: "s16le"}},
-    renderLeadMs: 90.8333333333,
   }},
 }});
-assert.equal(
-  androidOutput._minStartFrames,
-  Math.ceil((80 + 90.8333333333) / {frame_ms}),
-);
+    assert.equal(
+      androidOutput._minStartFrames,
+      Math.ceil(80 / {frame_ms}),
+    );
 '''
     subprocess.run(
         ["node", "--experimental-vm-modules", "--input-type=module", "-"],

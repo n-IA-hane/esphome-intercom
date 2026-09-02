@@ -942,7 +942,7 @@ await audio._setupAudio({{ audio_mode: "full_duplex" }}, pcm);
 assert.equal(microphoneRequests, 0);
 assert.equal(audio._captureNode, null);
 assert.equal(audio._playbackNode?.name, "voip-stack-playback-processor");
-assert.equal(audio._playbackNode.options.processorOptions.renderLeadMs, 300);
+assert.equal("renderLeadMs" in audio._playbackNode.options.processorOptions, false);
 
 await audio._reconcileAudioMedia({{ ...pcm, audio_direction: "sendrecv" }});
 assert.equal(microphoneRequests, 1);

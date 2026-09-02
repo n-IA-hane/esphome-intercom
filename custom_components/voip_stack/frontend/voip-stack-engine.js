@@ -1661,13 +1661,7 @@ class VoipStackEngine extends EventTarget {
           "voip-stack-playback-processor",
           {
             outputChannelCount: [formats.rx.channels],
-            processorOptions: {
-              format: formats.rx,
-              renderLeadMs: 1000 * (
-                Number(resources.audioContext.baseLatency || 0) +
-                Number(resources.audioContext.outputLatency || 0)
-              ),
-            },
+            processorOptions: { format: formats.rx },
           },
         );
         resources.playbackNode.port.onmessage = (event) => {

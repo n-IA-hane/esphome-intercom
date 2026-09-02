@@ -3,7 +3,6 @@ const FRAME_MS = Object.freeze([10, 16, 20, 32]);
 const BUFFER_CAPACITY_SECONDS = 1.28;
 const MIN_START_LATENCY_MS = 80;
 const MAX_START_LATENCY_MS = 320;
-const MAX_RENDER_LEAD_MS = 500;
 const JITTER_SAFETY_MULTIPLIER = 4;
 const STABLE_DECAY_SECONDS = 12;
 const PLC_DECAY_PER_SAMPLE = 0.9997;
@@ -36,19 +35,15 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
     this._format = normaliseFormat(options?.processorOptions?.format);
-    this._renderLeadMs = Math.min(
-      MAX_RENDER_LEAD_MS,
-      Math.max(0, Number(options?.processorOptions?.renderLeadMs) || 0),
-    );
     this._contextFrameSamples = Math.max(1, Math.round(this._format.frameSamples * sampleRate / this._format.sampleRate));
     this._capacityFrames = Math.max(8, Math.ceil((BUFFER_CAPACITY_SECONDS * 1000) / this._format.frameMs));
     this._minStartFrames = Math.max(
       2,
-      Math.ceil((MIN_START_LATENCY_MS + this._renderLeadMs) / this._format.frameMs),
+      Math.ceil(MIN_START_LATENCY_MS / this._format.frameMs),
     );
     this._maxStartFrames = Math.max(
       this._minStartFrames,
-      Math.ceil((MAX_START_LATENCY_MS + this._renderLeadMs) / this._format.frameMs),
+      Math.ceil(MAX_START_LATENCY_MS / this._format.frameMs),
     );
     this._dropFrames = this._maxStartFrames + 1;
     this._ring = new Float32Array(this._contextFrameSamples * this._format.channels * this._capacityFrames);
@@ -239,7 +234,6 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
         underruns: this._underruns,
         jitter_target_frames: this._targetStartFrames,
         jitter_target_ms: this._targetStartFrames * this._format.frameMs,
-        render_lead_ms: Math.round(this._renderLeadMs * 10) / 10,
         arrival_jitter_ms: Math.round(this._arrivalJitterMs * 10) / 10,
         max_arrival_gap_ms: Math.round(this._maxArrivalGapMs * 10) / 10,
         arrival_gaps_over_40ms: this._arrivalGapsOver40Ms,
