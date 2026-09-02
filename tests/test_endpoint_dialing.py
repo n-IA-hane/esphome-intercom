@@ -42,7 +42,14 @@ def test_directional_rtp_profile_never_reuses_payload_for_different_formats() ->
         assert by_payload.setdefault(item.payload_type, wire) == wire
 
 
-def test_esphome_opus_profile_prefers_20ms_and_keeps_10ms_fallback() -> None:
+def test_esphome_opus_profile_prefers_20ms_and_keeps_10ms_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        endpoint_routing,
+        "common_sip_codecs",
+        lambda: frozenset({"OPUS"}),
+    )
     peer = Peer(
         name="Spotpear",
         host="192.0.2.31",
