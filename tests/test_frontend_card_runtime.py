@@ -141,6 +141,9 @@ const engine = {{
   async resumeSession() {{ return true; }},
   async prepareVideoCameraPermission() {{ cameraPermissionChecks++; return false; }},
   async prepareAudioCall() {{ audioPermissionChecks++; return true; }},
+  async callSoftphoneTerminalService(service, data) {{
+    serviceCalls.push(["voip_stack", service, data]);
+  }},
   async startHaSoftphone() {{ throw new Error("not configured"); }},
 }};
 
@@ -1152,9 +1155,11 @@ engine.claimSoftphoneSession("hangup-rejected", "default");
 engine.active = true;
 engine.endpointId = "default";
 engine.callId = "hangup-rejected";
-rejectedHangup._hass.callService = async () => {{ throw new Error("hangup denied"); }};
+const originalTerminalService = engine.callSoftphoneTerminalService;
+engine.callSoftphoneTerminalService = async () => {{ throw new Error("hangup denied"); }};
 rejectedHangup._loadSoftphoneState = async () => {{}};
 await rejectedHangup._hangup();
+engine.callSoftphoneTerminalService = originalTerminalService;
 assert.equal(engine.ownsSoftphoneSession("hangup-rejected", "default"), true);
 assert.match(rejectedHangup._errorMsg, /hangup denied/i);
 """

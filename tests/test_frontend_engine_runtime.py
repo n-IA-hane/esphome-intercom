@@ -410,6 +410,97 @@ assert.equal(missingRetrySchedules, 0);
 assert.equal(missingStates.at(-1).state, "unavailable");
 assert.equal(missingStates.at(-1).terminal_reason, "unknown_endpoint");
 
+// Terminal call control owns half-open recovery at page level. A transport
+// failure forces the official HA reconnect, refreshes authoritative state and
+// retries exactly once only when the same call is still active.
+const resilient = new Engine();
+const resilientConnection = new EventTarget();
+let reconnects = 0;
+let terminalAttempts = 0;
+let stateReads = 0;
+let activeState = {{ endpoint_id: "kitchen", call_id: "call-1", state: "in_call" }};
+resilientConnection.reconnect = (force) => {{
+  assert.equal(force, true);
+  reconnects++;
+  setTimeout(() => resilientConnection.dispatchEvent(new Event("ready")), 0);
+}};
+resilientConnection.sendMessagePromise = async () => {{ stateReads++; return activeState; }};
+resilient._busConnection = resilientConnection;
+resilient._hass = {{
+  connection: resilientConnection,
+  callService: async () => {{
+    terminalAttempts++;
+    if (terminalAttempts === 1) throw new Error("WebSocket connection lost");
+  }},
+}};
+await resilient.callSoftphoneTerminalService(
+  "hangup",
+  {{ device_id: "device-kitchen", call_id: "call-1" }},
+  {{ endpoint_id: "kitchen" }},
+);
+assert.equal(reconnects, 1);
+assert.equal(terminalAttempts, 2);
+assert.ok(stateReads >= 1);
+
+// If the first command reached HA but its reply was lost, the post-reconnect
+// snapshot is terminal and a duplicate Hangup is not sent.
+terminalAttempts = 0;
+activeState = {{ endpoint_id: "kitchen", call_id: "", state: "idle" }};
+resilient._hass.callService = async () => {{
+  terminalAttempts++;
+  throw new Error("WebSocket connection lost");
+}};
+await resilient.callSoftphoneTerminalService(
+  "hangup",
+  {{ device_id: "device-kitchen", call_id: "call-2" }},
+  {{ endpoint_id: "kitchen" }},
+);
+assert.equal(terminalAttempts, 1);
+
+// A real backend rejection is not a transport fault and must not reconnect.
+const reconnectsBeforeRejection = reconnects;
+resilient._hass.callService = async () => {{ throw new Error("hangup denied"); }};
+await assert.rejects(
+  resilient.callSoftphoneTerminalService(
+    "hangup",
+    {{ device_id: "device-kitchen", call_id: "call-3" }},
+    {{ endpoint_id: "kitchen" }},
+  ),
+  /hangup denied/,
+);
+assert.equal(reconnects, reconnectsBeforeRejection);
+
+// The active-call health monitor is shared by the engine. Two failed pings
+// trigger one reconnect; an idle snapshot stops the monitor.
+const health = new Engine();
+const healthConnection = new EventTarget();
+let healthReconnects = 0;
+healthConnection.ping = async () => {{ throw new Error("stale socket"); }};
+healthConnection.reconnect = () => {{
+  healthReconnects++;
+  setTimeout(() => healthConnection.dispatchEvent(new Event("ready")), 0);
+}};
+healthConnection.sendMessagePromise = async () => ({{
+  endpoint_id: "office", call_id: "health-call", state: "idle",
+}});
+health._busConnection = healthConnection;
+health._hass = {{ connection: healthConnection }};
+health._softphoneScopeSubscriptions.set("endpoint:office", {{
+  key: "endpoint:office",
+  selector: {{ endpoint_id: "office", device_id: "" }},
+  refs: 1, unsub: null, pending: false, invalid: false,
+}});
+health._onSoftphoneState({{
+  endpoint_id: "office", call_id: "health-call", state: "in_call",
+}}, {{ endpoint_id: "office" }});
+await health._runConnectionHealthCheck();
+await health._runConnectionHealthCheck();
+assert.equal(healthReconnects, 1);
+health._onSoftphoneState({{
+  endpoint_id: "office", call_id: "", state: "idle",
+}}, {{ endpoint_id: "office" }});
+assert.equal(health._connectionHealthTimer, null);
+
 // Permission probing is independent from preference storage: camera intent is
 // supplied by the authoritative logical-phone snapshot.
 let mediaRequests = 0;

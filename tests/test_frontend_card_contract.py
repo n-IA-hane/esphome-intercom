@@ -341,14 +341,14 @@ class FrontendCardContractTest(unittest.TestCase):
 
         decline = _method_body(self.source, "async _decline")
         ha_decline = decline.split("if (softphoneAction)", 1)[1].split("} else {", 1)[0]
-        self.assertIn('"voip_stack", "decline"', ha_decline)
+        self.assertIn('callSoftphoneTerminalService("decline"', ha_decline)
         self.assertIn("...this._softphoneServiceScope()", ha_decline)
         self.assertIn("call_id: callId", ha_decline)
         self.assertNotIn("this._sessionDeviceId()", ha_decline)
 
         hangup = _method_body(self.source, "async _hangup")
         softphone_hangup = hangup.split("if (wasSoftphone)", 1)[1].split("} else {", 1)[0]
-        self.assertIn('"voip_stack", "hangup"', softphone_hangup)
+        self.assertIn('callSoftphoneTerminalService("hangup"', softphone_hangup)
         self.assertIn("...this._softphoneServiceScope()", softphone_hangup)
         self.assertIn("call_id: callId", softphone_hangup)
         self.assertNotIn("this._sessionDeviceId()", softphone_hangup)
@@ -488,7 +488,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._sessionCallId() !== callId", answer)
         self.assertIn("this._sessionCallId() !== callId", decline)
         self.assertIn("const ownedCallId = String(voipStackEngine.softphoneCallId", hangup)
-        self.assertIn("settleServiceWithin(", hangup)
+        self.assertIn("callSoftphoneTerminalService(", hangup)
         self.assertIn("voipStackEngine.suspendVideoForHangup(", hangup)
         self.assertLess(
             hangup.index("voipStackEngine.suspendVideoForHangup("),

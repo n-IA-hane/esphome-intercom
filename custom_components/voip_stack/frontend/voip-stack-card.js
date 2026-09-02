@@ -45,27 +45,6 @@ const {
   buildUnconfiguredCardSkeleton,
 } = await import(`./voip-stack-card-view.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 await import(`./voip-stack-card-editor.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-const HANGUP_SERVICE_TIMEOUT_MS = 3000;
-
-function settleServiceWithin(promise, timeoutMs, timeoutMessage) {
-  let timer;
-  const schedule = globalThis.setTimeout || globalThis.window?.setTimeout;
-  const cancel = globalThis.clearTimeout || globalThis.window?.clearTimeout;
-  if (!schedule) return Promise.resolve(promise);
-  return Promise.race([
-    Promise.resolve(promise),
-    new Promise((_, reject) => {
-      timer = schedule(
-        () => reject(new Error(timeoutMessage)),
-        timeoutMs,
-      );
-    }),
-  ]).finally(() => {
-    if (timer && cancel) cancel(timer);
-  });
-}
-
-
 // Lazy gate for verbose logs. Errors and warnings always emit.
 // Enable in the browser console with localStorage.voip_debug = "1".
 const _ic_dbg = (() => {
@@ -2483,13 +2462,13 @@ class VoipStackCard extends HTMLElement {
       if (!deviceInfo?.device_id) throw new Error("Device not found");
       if (softphoneAction) {
         if (this._sessionCallId() !== callId) return;
-        await this._hass.callService("voip_stack", "decline", {
+        await voipStackEngine.callSoftphoneTerminalService("decline", {
           ...this._softphoneServiceScope(),
           call_id: callId,
           status: 603,
           reason: "Decline",
           decline_reason: "declined",
-        });
+        }, this._softphoneRequestScope());
       } else {
         await this._pressEspButton(this._declineButtonEntityId, "Decline");
       }
@@ -2527,14 +2506,10 @@ class VoipStackCard extends HTMLElement {
 
     try {
       if (wasSoftphone) {
-        await settleServiceWithin(
-          this._hass.callService("voip_stack", "hangup", {
-            ...this._softphoneServiceScope(),
-            call_id: callId,
-          }),
-          HANGUP_SERVICE_TIMEOUT_MS,
-          "Hangup request timed out; you can retry.",
-        );
+        await voipStackEngine.callSoftphoneTerminalService("hangup", {
+          ...this._softphoneServiceScope(),
+          call_id: callId,
+        }, this._softphoneRequestScope());
       } else {
         const deviceInfo = this._activeDeviceInfo || await this._getDeviceInfo();
         if (!deviceInfo?.device_id) {

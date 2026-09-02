@@ -28,6 +28,9 @@ const { BrowserMediaDevices, exactDeviceConstraint } = await import(
 const CONTROL_ACK_TIMEOUT_MS = 3000;
 const AUDIO_NEGOTIATION_TIMEOUT_MS = 3000;
 const BUS_SUBSCRIBE_RETRY_MS = 2000;
+const CALL_CONTROL_TIMEOUT_MS = 3000;
+const CONNECTION_PING_TIMEOUT_MS = 4000;
+const CONNECTION_HEALTH_INTERVAL_MS = 5000;
 const SOFTPHONE_MEDIA_SESSIONS_KEY = "voip_stack_owned_softphone_calls";
 const MEDIA_CLIENT_GLOBAL_KEY = "__voipStackMediaClientId";
 const MEDIA_CLIENT_SESSION_KEY = "voip_stack_media_client_id";
@@ -60,6 +63,25 @@ function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
     Promise.resolve(promise).catch(() => {}),
     new Promise((resolve) => {
       timer = schedule(resolve, timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timer && cancel) cancel(timer);
+  });
+}
+
+function rejectAfter(promise, timeoutMs, message) {
+  let timer;
+  const schedule = globalThis.setTimeout || globalThis.window?.setTimeout;
+  const cancel = globalThis.clearTimeout || globalThis.window?.clearTimeout;
+  if (!schedule) return Promise.resolve(promise);
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_, reject) => {
+      timer = schedule(() => {
+        const error = new Error(message);
+        error.code = "voip_stack_timeout";
+        reject(error);
+      }, timeoutMs);
     }),
   ]).finally(() => {
     if (timer && cancel) cancel(timer);
@@ -228,6 +250,10 @@ class VoipStackEngine extends EventTarget {
     this._busUnsub = null;
     this._busSubscribePending = false;
     this._busSubscribeRetryTimer = null;
+    this._connectionHealthTimer = null;
+    this._connectionHealthPending = null;
+    this._connectionPingFailures = 0;
+    this._connectionRecoveryPromise = null;
     this._callSubscribers = new Set();
     this._softphoneSubscribers = new Set();
     this._lastEvents = new Map();
@@ -275,12 +301,14 @@ class VoipStackEngine extends EventTarget {
 
     window.addEventListener("pagehide", () => {
       this._pageHiding = true;
+      this._syncConnectionHealthMonitor();
       this._ringtoneRequests.clear();
       this._stopRingtone();
       void this.close("pagehide");
     });
     window.addEventListener("pageshow", () => {
       this._pageHiding = false;
+      this._syncConnectionHealthMonitor();
       this._emit();
     });
   }
@@ -306,6 +334,141 @@ class VoipStackEngine extends EventTarget {
       this._busConnection = conn;
     }
     this._ensureBusSubscriptions(conn);
+    this._syncConnectionHealthMonitor();
+  }
+
+  _activeSubscribedSoftphoneState() {
+    for (const record of this._softphoneScopeSubscriptions.values()) {
+      for (const state of this._lastSoftphoneStates.values()) {
+        if (
+          softphoneStateMatches(state, record.selector) &&
+          ACTIVE_SOFTPHONE_STATES.has(String(state.state || "").toLowerCase())
+        ) return true;
+      }
+    }
+    return false;
+  }
+
+  _syncConnectionHealthMonitor() {
+    const active = !this._pageHiding &&
+      typeof this._busConnection?.ping === "function" &&
+      this._activeSubscribedSoftphoneState();
+    if (!active) {
+      if (this._connectionHealthTimer) clearInterval(this._connectionHealthTimer);
+      this._connectionHealthTimer = null;
+      this._connectionPingFailures = 0;
+      return;
+    }
+    if (this._connectionHealthTimer) return;
+    this._connectionHealthTimer = setInterval(
+      () => void this._runConnectionHealthCheck(),
+      CONNECTION_HEALTH_INTERVAL_MS,
+    );
+  }
+
+  async _recoverConnection() {
+    if (this._connectionRecoveryPromise) return this._connectionRecoveryPromise;
+    const connection = this._busConnection;
+    if (!connection?.reconnect) throw new Error("Home Assistant connection cannot reconnect");
+    const recovery = (async () => {
+      let cleanup = () => {};
+      const ready = new Promise((resolve, reject) => {
+        const onReady = () => resolve();
+        const onError = (event) => reject(event?.detail || new Error("Home Assistant reconnection failed"));
+        cleanup = () => {
+          connection.removeEventListener?.("ready", onReady);
+          connection.removeEventListener?.("reconnect-error", onError);
+        };
+        connection.addEventListener?.("ready", onReady);
+        connection.addEventListener?.("reconnect-error", onError);
+      });
+      try {
+        connection.reconnect(true);
+        await rejectAfter(ready, CALL_CONTROL_TIMEOUT_MS * 4, "Home Assistant reconnection timed out");
+      } finally {
+        cleanup();
+      }
+    })();
+    this._connectionRecoveryPromise = recovery;
+    try {
+      await recovery;
+    } finally {
+      if (this._connectionRecoveryPromise === recovery) this._connectionRecoveryPromise = null;
+    }
+  }
+
+  async _runConnectionHealthCheck() {
+    if (this._connectionHealthPending || !this._activeSubscribedSoftphoneState()) return;
+    const check = (async () => {
+      try {
+        await rejectAfter(
+          this._busConnection?.ping?.(),
+          CONNECTION_PING_TIMEOUT_MS,
+          "Home Assistant connection ping timed out",
+        );
+        this._connectionPingFailures = 0;
+      } catch (_) {
+        this._connectionPingFailures++;
+        if (this._connectionPingFailures < 2) return;
+        this._connectionPingFailures = 0;
+        try { await this._recoverConnection(); } catch (err) {
+          console.warn("voip-stack-engine: active-call connection recovery failed", err);
+        }
+      }
+    })();
+    this._connectionHealthPending = check;
+    try { await check; }
+    finally {
+      if (this._connectionHealthPending === check) this._connectionHealthPending = null;
+    }
+  }
+
+  async _softphoneState(selector = {}) {
+    const connection = this._busConnection || this._hass?.connection;
+    if (!connection?.sendMessagePromise) return null;
+    const normalised = normaliseSoftphoneSelector(selector);
+    const request = { type: "voip_stack/ha_softphone_state" };
+    if (normalised.endpoint_id) request.endpoint_id = normalised.endpoint_id;
+    if (normalised.device_id) request.device_id = normalised.device_id;
+    return connection.sendMessagePromise(request);
+  }
+
+  async callSoftphoneTerminalService(service, data, selector = {}) {
+    const request = () => rejectAfter(
+      this._hass.callService("voip_stack", service, data),
+      CALL_CONTROL_TIMEOUT_MS,
+      `${service === "hangup" ? "Hangup" : "Decline"} request timed out`,
+    );
+    try {
+      return await request();
+    } catch (firstError) {
+      const errorCode = String(firstError?.code || "").toLowerCase();
+      const errorMessage = String(firstError?.message || firstError).toLowerCase();
+      if (
+        errorCode !== "voip_stack_timeout" &&
+        !errorCode.includes("connection") &&
+        !/websocket|socket closed|connection lost|not connected/.test(errorMessage)
+      ) {
+        throw firstError;
+      }
+      await this._recoverConnection();
+      const callId = String(data?.call_id || "");
+      const state = await this._softphoneState(selector);
+      if (
+        String(state?.call_id || "") !== callId ||
+        !ACTIVE_SOFTPHONE_STATES.has(String(state?.state || "").toLowerCase())
+      ) return;
+      try {
+        return await request();
+      } catch (retryError) {
+        const finalState = await this._softphoneState(selector);
+        if (
+          String(finalState?.call_id || "") !== callId ||
+          !ACTIVE_SOFTPHONE_STATES.has(String(finalState?.state || "").toLowerCase())
+        ) return;
+        throw retryError;
+      }
+    }
   }
 
   _scheduleBusSubscriptionRetry(conn) {
@@ -1022,6 +1185,7 @@ class VoipStackEngine extends EventTarget {
       if (!softphoneStateMatches(state, selector)) continue;
       try { cb(state); } catch (err) { console.error("voip-stack-engine softphone subscriber", err); }
     }
+    this._syncConnectionHealthMonitor();
   }
 
   subscribeSoftphoneState(cb, selector = {}) {
@@ -1056,6 +1220,7 @@ class VoipStackEngine extends EventTarget {
       if (this._softphoneScopeSubscriptions.get(key) === record) {
         this._softphoneScopeSubscriptions.delete(key);
       }
+      this._syncConnectionHealthMonitor();
     };
   }
 
