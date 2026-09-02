@@ -59,15 +59,16 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         port: int = 5062,
         transport: str = "UDP",
         supported: str = "",
+        request_uri: str = "sip:192.168.1.10",
+        digest_uri: str = "",
     ) -> sip.SipMessage:
-        request_uri = "sip:192.168.1.10"
         challenge = registrar._challenge()[1]
         authorization = sip_auth.build_digest_authorization(
             challenge_header=challenge,
             username=username,
             password=password,
             method="REGISTER",
-            uri=request_uri,
+            uri=digest_uri or request_uri,
         )
         headers = [
             ("Via", f"SIP/2.0/{transport} {host}:{port};branch=z9hG4bK{call_id};rport"),
@@ -85,6 +86,66 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         return sip.parse_message(
             sip.build_request("REGISTER", request_uri, headers, b"")
         )
+
+    async def test_digest_uri_accepts_only_an_explicit_default_listener_port(
+        self,
+    ) -> None:
+        registrar = sip_registrar.SipRegistrar(
+            enabled=True,
+            accounts=[sip_registrar.SipAccount("Mobotix", "Mobotix", "secret")],
+            local_ip="192.168.1.10",
+            local_sip_port=5060,
+        )
+        accepted = self._authorized_register(
+            registrar,
+            username="Mobotix",
+            password="secret",
+            call_id="mobotix-default-port",
+            cseq=1,
+            contacts=["<sip:Mobotix@192.0.2.50:5062>"],
+            request_uri="sip:192.168.1.10",
+            digest_uri="sip:192.168.1.10:5060",
+        )
+        rejected = self._authorized_register(
+            registrar,
+            username="Mobotix",
+            password="secret",
+            call_id="mobotix-wrong-port",
+            cseq=1,
+            contacts=["<sip:Mobotix@192.0.2.50:5062>"],
+            request_uri="sip:192.168.1.10",
+            digest_uri="sip:192.168.1.10:5070",
+        )
+        rejected_parameter = self._authorized_register(
+            registrar,
+            username="Mobotix",
+            password="secret",
+            call_id="mobotix-wrong-parameter",
+            cseq=1,
+            contacts=["<sip:Mobotix@192.0.2.50:5062>"],
+            request_uri="sip:192.168.1.10",
+            digest_uri="sip:192.168.1.10:5060;transport=tcp",
+        )
+
+        accepted_response = await registrar.handle_register(
+            accepted,
+            ("192.0.2.50", 5062),
+            "UDP",
+        )
+        rejected_response = await registrar.handle_register(
+            rejected,
+            ("192.0.2.50", 5062),
+            "UDP",
+        )
+        rejected_parameter_response = await registrar.handle_register(
+            rejected_parameter,
+            ("192.0.2.50", 5062),
+            "UDP",
+        )
+
+        self.assertEqual(accepted_response.status, 200)
+        self.assertEqual(rejected_response.status, 401)
+        self.assertEqual(rejected_parameter_response.status, 401)
 
     def test_digest_nonce_cache_is_bounded(self) -> None:
         registrar = sip_registrar.SipRegistrar(

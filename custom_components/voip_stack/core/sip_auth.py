@@ -208,6 +208,37 @@ def build_digest_authorization(
     return "Digest " + ", ".join(rendered)
 
 
+def digest_uri_matches_request(digest_uri: str, request_uri: str) -> bool:
+    """Bind Digest to the same SIP resource without requiring byte identity.
+
+    RFC 3261 section 22.4 permits the two values to differ. Embedded phones
+    commonly spell the default listener port explicitly in ``digest-uri``.
+    Keep the relaxation narrow: aliases and genuinely different ports remain
+    distinct resources.
+    """
+
+    left = str(digest_uri or "").strip()
+    right = str(request_uri or "").strip()
+    if not left or not right:
+        return False
+    if hmac.compare_digest(left, right):
+        return True
+    try:
+        from .sip import parse_sip_uri, sip_default_port, sip_hosts_equal
+
+        digest = parse_sip_uri(left)
+        request = parse_sip_uri(right)
+    except (ImportError, ValueError):
+        return False
+    return bool(
+        digest.scheme == request.scheme
+        and hmac.compare_digest(digest.user, request.user)
+        and sip_hosts_equal(digest.host, request.host)
+        and sip_default_port(digest) == sip_default_port(request)
+        and digest.params == request.params
+    )
+
+
 def verify_digest_authorization(
     *,
     authorization_header: str,
@@ -226,11 +257,12 @@ def verify_digest_authorization(
     qop = params.get("qop", "").lower()
     cnonce = params.get("cnonce", "")
     nc = params.get("nc", "")
+    digest_uri = params.get("uri", "")
     if (
         params.get("username", "").casefold() != username.casefold()
         or params.get("realm") != realm
         or params.get("nonce") != nonce
-        or params.get("uri") != uri
+        or not digest_uri_matches_request(digest_uri, uri)
         or algorithm.removesuffix("-SESS") not in _HASH_NAMES
         or qop not in {"auth", "auth-int"}
         or not cnonce
@@ -254,7 +286,7 @@ def verify_digest_authorization(
             username=username,
             password=password,
             method=method,
-            uri=uri,
+            uri=digest_uri,
             nonce_count=nonce_count,
             cnonce=cnonce,
             body=body,
