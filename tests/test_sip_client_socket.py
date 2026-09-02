@@ -1897,12 +1897,54 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         )
         try:
             await wait_until(lambda: bool(ws.json))
+            pcma_encoder = sip_client.RtpPayloadEncoder(pcma)
+            pcma_decoder = sip_client.RtpPayloadDecoder(pcma)
+            preroll_expected: list[bytes] = []
+            for sequence in range(1, 8):
+                pcm = bytes([sequence]) * pcma.audio_format.nominal_frame_bytes
+                payload = pcma_encoder.encode(pcm)
+                preroll_expected.append(pcma_decoder.decode(payload))
+                packet = rtp.build_packet(
+                    rtp.RtpPacket(
+                        payload_type=pcma.payload_type,
+                        sequence=sequence,
+                        timestamp=sequence * 160,
+                        ssrc=7,
+                        payload=payload,
+                    )
+                )
+                await loop.sock_sendto(
+                    remote, packet, ("127.0.0.1", local_port)
+                )
+            await asyncio.sleep(0.1)
+            self.assertEqual(ws.binary, [])
             await ws.messages.put(
                 types.SimpleNamespace(
                     type=WSMsgType.TEXT,
                     data='{"type":"playback_ready"}',
                 )
             )
+            live_pcm = bytes([8]) * pcma.audio_format.nominal_frame_bytes
+            live_payload = pcma_encoder.encode(live_pcm)
+            live_packet = rtp.build_packet(
+                rtp.RtpPacket(
+                    payload_type=pcma.payload_type,
+                    sequence=8,
+                    timestamp=8 * 160,
+                    ssrc=7,
+                    payload=live_payload,
+                )
+            )
+            await loop.sock_sendto(
+                remote, live_packet, ("127.0.0.1", local_port)
+            )
+            await wait_until(lambda: len(ws.binary) >= 5)
+            self.assertEqual(
+                [audio_ws.decode_audio_frame(frame) for frame in ws.binary],
+                [*preroll_expected[-4:], pcma_decoder.decode(live_payload)],
+            )
+            ws.binary.clear()
+            ws.binary_sent_at.clear()
             first_pcm = bytes(
                 (index % 251 for index in range(pcma.audio_format.nominal_frame_bytes))
             )

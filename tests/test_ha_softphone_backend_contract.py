@@ -475,9 +475,11 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         ).read_text()
         body = _function_body(audio_ws, "_run_audio_session")
         self.assertIn("browser_playback_ready = asyncio.Event()", body)
-        self.assertIn("await browser_playback_ready.wait()", body)
+        self.assertIn("browser_preroll: deque[bytes] = deque()", body)
+        self.assertIn("if not browser_playback_ready.is_set()", body)
+        self.assertIn('counters["rx_playout_late_discard"]', body)
         self.assertIn('control.get("type") == "playback_ready"', body)
-        self.assertIn("await ws.send_bytes(encode_audio_frame(pcm))", body)
+        self.assertIn("await ws.send_bytes(pending)", body)
         self.assertNotIn("rx_frames", body)
 
     def test_softphone_tx_uses_negotiated_rtp_timestamp_clock(self) -> None:

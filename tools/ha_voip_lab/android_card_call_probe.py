@@ -75,6 +75,7 @@ async def _run(args: argparse.Namespace) -> list[dict[str, Any]]:
 
         for cycle in range(1, args.cycles + 1):
             active: dict[str, Any] | None = None
+            timeline: list[dict[str, Any]] = []
             try:
                 await card.evaluate(
                     """(element, target) => {
@@ -109,10 +110,29 @@ async def _run(args: argparse.Namespace) -> list[dict[str, Any]]:
                         round(max(0.0, args.duration - before_reload) * 1_000)
                     )
                 else:
-                    await page.wait_for_timeout(round(args.duration * 1_000))
+                    deadline = asyncio.get_running_loop().time() + args.duration
+                    while asyncio.get_running_loop().time() < deadline:
+                        await page.wait_for_timeout(
+                            round(
+                                min(
+                                    1.0,
+                                    max(0.0, deadline - asyncio.get_running_loop().time()),
+                                )
+                                * 1_000
+                            )
+                        )
+                        timeline.append(
+                            await card.evaluate(
+                                """(element) => ({
+                                    elapsed_ms: Math.round(performance.now()),
+                                    state: element._softphoneSnapshot?.state || '',
+                                    stats: {...(globalThis.__voipStackEngine?._stats || {})},
+                                })"""
+                            )
+                        )
                 await _wait_state(card, "in_call", timeout=0.5)
                 active = await card.evaluate(
-                    """(element) => ({
+                    """(element, timeline) => ({
                         snapshot: element._softphoneSnapshot,
                         error: element._errorMsg || '',
                         engine: {
@@ -121,7 +141,9 @@ async def _run(args: argparse.Namespace) -> list[dict[str, Any]]:
                             endpoint_id: globalThis.__voipStackEngine?.endpointId,
                             stats: globalThis.__voipStackEngine?._stats,
                         },
-                    })"""
+                        timeline,
+                    })""",
+                    timeline,
                 )
             finally:
                 async def cleanup_call() -> None:

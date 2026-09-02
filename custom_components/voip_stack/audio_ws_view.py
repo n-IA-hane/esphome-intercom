@@ -810,6 +810,11 @@ async def _run_audio_session(
     dtmf_send_lock = asyncio.Lock()
     dtmf_tasks: set[asyncio.Task[None]] = set()
     browser_playback_ready = asyncio.Event()
+    browser_preroll: deque[bytes] = deque()
+    browser_preroll_max_frames = max(
+        2,
+        math.ceil(80 / max(1, int(session.recv_format.audio_format.frame_ms))),
+    )
     debug_capture = (
         _DebugAudioCapture(session.call_id, rx_format=session.recv_format, tx_format=session.send_format)
         if media_capture_enabled(hass)
@@ -898,6 +903,7 @@ async def _run_audio_session(
         nonlocal rtp_decoder, rtp_encoder
         nonlocal dtmf_decoder
         nonlocal debug_capture
+        nonlocal browser_preroll_max_frames
         if generation == applied_media_generation:
             return
         async with media_state_lock:
@@ -923,6 +929,13 @@ async def _run_audio_session(
             latched_rtp_ssrc = None
             logged_first_rtp = False
             protocol.dropped_packets += drain_queue(queue)
+            browser_preroll.clear()
+            browser_preroll_max_frames = max(
+                2,
+                math.ceil(
+                    80 / max(1, int(session.recv_format.audio_format.frame_ms))
+                ),
+            )
             counters["rx_playout_rebuffer"] += 1
             rtp_decoder = next_decoder
             rtp_encoder = next_encoder
@@ -1067,15 +1080,29 @@ async def _run_audio_session(
                 )
                 if debug_capture is not None:
                     debug_capture.note_rtp_rx(loop.time(), pcm)
-                await browser_playback_ready.wait()
+                encoded = encode_audio_frame(pcm)
+                if not browser_playback_ready.is_set():
+                    if len(browser_preroll) >= browser_preroll_max_frames:
+                        browser_preroll.popleft()
+                        counters["rx_playout_late_discard"] += 1
+                    browser_preroll.append(encoded)
+                    counters["rx_playout_depth"] = len(browser_preroll)
+                    counters["rx_playout_peak"] = max(
+                        counters["rx_playout_peak"], len(browser_preroll)
+                    )
+                    publish_counters()
+                    continue
+                pending_frames = tuple(browser_preroll)
+                browser_preroll.clear()
                 async with ws_send_lock:
-                    await ws.send_bytes(encode_audio_frame(pcm))
-                if debug_capture is not None:
-                    debug_capture.note_ws_send(loop.time())
-                counters["ws_tx"] += 1
-                counters["rx_playout_depth"] = queue.qsize()
+                    for pending in (*pending_frames, encoded):
+                        await ws.send_bytes(pending)
+                        if debug_capture is not None:
+                            debug_capture.note_ws_send(loop.time())
+                        counters["ws_tx"] += 1
+                counters["rx_playout_depth"] = 0
                 counters["rx_playout_peak"] = max(
-                    counters["rx_playout_peak"], queue.qsize()
+                    counters["rx_playout_peak"], len(pending_frames) + 1
                 )
                 publish_counters()
             except (ConnectionError, RuntimeError):

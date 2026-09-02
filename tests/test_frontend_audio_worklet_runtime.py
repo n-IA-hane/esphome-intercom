@@ -123,6 +123,97 @@ const androidOutput = new Processor({{
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_playback_clock_recovery_bounds_buffer_without_drops() -> None:
+    script = rf'''
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+
+let Processor;
+class MockAudioWorkletProcessor {{
+  constructor() {{
+    this.messages = [];
+    this.port = {{ postMessage: (message) => this.messages.push(message), onmessage: null }};
+  }}
+}}
+const context = vm.createContext({{
+  AudioWorkletProcessor: MockAudioWorkletProcessor,
+  sampleRate: 48000,
+  currentTime: 0,
+  registerProcessor(_name, value) {{ Processor = value; }},
+  ArrayBuffer,
+  DataView,
+  Float32Array,
+  Math,
+  Number,
+  Object,
+  Error,
+}});
+vm.runInContext(fs.readFileSync({json.dumps(str(PLAYBACK_PROCESSOR))}, "utf8"), context);
+
+function run(sourceRateMultiplier) {{
+  const processor = new Processor({{
+    processorOptions: {{
+      format: {{sampleRate: 16000, frameMs: 16, channels: 1, pcmFormat: "s16le"}},
+    }},
+  }});
+  const frameSamples = 256;
+  const frame = new ArrayBuffer(frameSamples * 2);
+  const view = new DataView(frame);
+  for (let index = 0; index < frameSamples; index++) {{
+    view.setInt16(index * 2, Math.round(12000 * Math.sin(2 * Math.PI * index / 80)), true);
+  }}
+  let sourceFrames = 0;
+  let maxBuffered = 0;
+  const quanta = Math.round(60 * 48000 / 128);
+  for (let quantum = 0; quantum < quanta; quantum++) {{
+    sourceFrames += 128 / 48000 * 1000 / 16 * sourceRateMultiplier;
+    while (sourceFrames >= 1) {{
+      processor._push(frame.slice(0), 0, quantum * 128 / 48);
+      sourceFrames--;
+    }}
+    context.currentTime = quantum * 128 / 48000;
+    processor.process([], [[new Float32Array(128)]]);
+    maxBuffered = Math.max(maxBuffered, processor._available / processor._contextFrameSamples);
+  }}
+  return {{
+    processor,
+    buffered: processor._available / processor._contextFrameSamples,
+    maxBuffered,
+  }};
+}}
+
+const matched = run(1);
+assert.equal(matched.processor._framesDrop, 0);
+assert.equal(matched.processor._underruns, 0);
+assert.ok(Math.abs(matched.processor._playbackRate - 1) < 0.001);
+assert.ok(matched.buffered <= matched.processor._targetStartFrames + 2, JSON.stringify({{buffered: matched.buffered, target: matched.processor._targetStartFrames, rate: matched.processor._playbackRate}}));
+
+const faster = run(1.01);
+assert.equal(faster.processor._framesDrop, 0);
+assert.equal(faster.processor._underruns, 0);
+assert.ok(faster.processor._playbackRate <= 1.015, faster.processor._playbackRate);
+assert.ok(faster.processor._clockRecoveryIntegral > 0.005, faster.processor._clockRecoveryIntegral);
+assert.ok(faster.buffered <= faster.processor._targetStartFrames + 3, JSON.stringify({{buffered: faster.buffered, target: faster.processor._targetStartFrames, rate: faster.processor._playbackRate}}));
+assert.ok(faster.maxBuffered < faster.processor._dropFrames, JSON.stringify({{maxBuffered: faster.maxBuffered, drop: faster.processor._dropFrames}}));
+
+const slower = run(0.995);
+assert.equal(slower.processor._framesDrop, 0);
+assert.equal(slower.processor._underruns, 0);
+assert.ok(slower.processor._playbackRate < 0.998, slower.processor._playbackRate);
+assert.ok(slower.processor._playbackRate >= 0.985, slower.processor._playbackRate);
+assert.ok(slower.buffered >= slower.processor._targetStartFrames - 2, JSON.stringify({{buffered: slower.buffered, target: slower.processor._targetStartFrames, rate: slower.processor._playbackRate}}));
+'''
+    subprocess.run(
+        ["node", "--experimental-vm-modules", "--input-type=module", "-"],
+        input=script,
+        text=True,
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
 def test_microphone_anti_alias_filter_is_effective_and_optional() -> None:
     script = rf'''
 import fs from "fs";

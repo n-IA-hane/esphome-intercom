@@ -6,6 +6,11 @@ const MAX_START_LATENCY_MS = 320;
 const JITTER_SAFETY_MULTIPLIER = 4;
 const STABLE_DECAY_SECONDS = 12;
 const PLC_DECAY_PER_SAMPLE = 0.9997;
+const CLOCK_RECOVERY_DEADBAND_FRAMES = 1;
+const CLOCK_RECOVERY_PROPORTIONAL_GAIN = 0.001;
+const CLOCK_RECOVERY_INTEGRAL_GAIN = 0.0000005;
+const CLOCK_RECOVERY_MAX_RATE = 0.015;
+const CLOCK_RECOVERY_SMOOTHING = 0.005;
 
 function normaliseFormat(value) {
   if (!value) throw new Error("playback worklet requires negotiated PCM format");
@@ -50,6 +55,9 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._read = 0;
     this._write = 0;
     this._available = 0;
+    this._readFraction = 0;
+    this._playbackRate = 1;
+    this._clockRecoveryIntegral = 0;
     this._started = false;
     this._framesIn = 0;
     this._framesOut = 0;
@@ -173,6 +181,41 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       this._playbackReady = true;
       this.port.postMessage({ type: "playback_ready" });
     }
+    const availableFrameSamples = this._available / this._format.channels;
+    const targetFrameSamples = this._targetStartFrames * this._contextFrameSamples;
+    const errorFrames = (availableFrameSamples - targetFrameSamples) / this._contextFrameSamples;
+    const controlledError = Math.abs(errorFrames) <= CLOCK_RECOVERY_DEADBAND_FRAMES
+      ? 0
+      : errorFrames - Math.sign(errorFrames) * CLOCK_RECOVERY_DEADBAND_FRAMES;
+    this._clockRecoveryIntegral = Math.max(
+      -CLOCK_RECOVERY_MAX_RATE,
+      Math.min(
+        CLOCK_RECOVERY_MAX_RATE,
+        this._clockRecoveryIntegral + controlledError * CLOCK_RECOVERY_INTEGRAL_GAIN,
+      ),
+    );
+    let correction = Math.max(
+      -CLOCK_RECOVERY_MAX_RATE,
+      Math.min(
+        CLOCK_RECOVERY_MAX_RATE,
+        this._clockRecoveryIntegral + controlledError * CLOCK_RECOVERY_PROPORTIONAL_GAIN,
+      ),
+    );
+    if (
+      (correction > 0 && errorFrames <= CLOCK_RECOVERY_DEADBAND_FRAMES) ||
+      (correction < 0 && errorFrames >= -CLOCK_RECOVERY_DEADBAND_FRAMES)
+    ) {
+      correction = 0;
+    }
+    const desiredRate = 1 + correction;
+    if (
+      (this._playbackRate > 1 && errorFrames <= CLOCK_RECOVERY_DEADBAND_FRAMES) ||
+      (this._playbackRate < 1 && errorFrames >= -CLOCK_RECOVERY_DEADBAND_FRAMES)
+    ) {
+      this._playbackRate = 1;
+    } else {
+      this._playbackRate += (desiredRate - this._playbackRate) * CLOCK_RECOVERY_SMOOTHING;
+    }
     let underrunThisQuantum = false;
     for (let i = 0; i < channels[0].length; i++) {
       if (!this._started) {
@@ -192,21 +235,41 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
         this._concealmentGain *= PLC_DECAY_PER_SAMPLE;
         continue;
       }
+      const nextFrameOffset = this._available >= this._format.channels * 2
+        ? this._format.channels
+        : 0;
       for (let ch = 0; ch < channels.length; ch++) {
-        const sample = this._ring[(this._read + Math.min(ch, this._format.channels - 1)) % this._ring.length];
+        const inputChannel = Math.min(ch, this._format.channels - 1);
+        const currentSample = this._ring[(this._read + inputChannel) % this._ring.length];
+        const nextSample = this._ring[
+          (this._read + nextFrameOffset + inputChannel) % this._ring.length
+        ];
+        const sample = currentSample + (nextSample - currentSample) * this._readFraction;
         channels[ch][i] = sample;
-        this._lastOutput[Math.min(ch, this._format.channels - 1)] = sample;
+        this._lastOutput[inputChannel] = sample;
         if (ch === 0) {
           this._levelPower += sample * sample;
           this._levelSamples++;
         }
       }
       this._concealmentGain = 1;
-      this._read = (this._read + this._format.channels) % this._ring.length;
-      this._available -= this._format.channels;
+      this._readFraction += this._playbackRate;
+      const consumedFrames = Math.floor(this._readFraction);
+      this._readFraction -= consumedFrames;
+      const consumedSamples = Math.min(
+        this._available,
+        consumedFrames * this._format.channels,
+      );
+      this._read = (this._read + consumedSamples) % this._ring.length;
+      this._available -= consumedSamples;
     }
 
-    if (underrunThisQuantum) this._started = false;
+    if (underrunThisQuantum) {
+      this._started = false;
+      this._readFraction = 0;
+      this._playbackRate = 1;
+      this._clockRecoveryIntegral = 0;
+    }
     this._framesOut++;
     if (currentTime - this._lastStats >= 1) {
       this._lastStats = currentTime;
@@ -237,6 +300,8 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
         arrival_jitter_ms: Math.round(this._arrivalJitterMs * 10) / 10,
         max_arrival_gap_ms: Math.round(this._maxArrivalGapMs * 10) / 10,
         arrival_gaps_over_40ms: this._arrivalGapsOver40Ms,
+        clock_recovery_rate: Math.round(this._playbackRate * 1000000) / 1000000,
+        clock_recovery_ppm: Math.round((this._playbackRate - 1) * 1000000),
         audio_level: audioLevel,
       });
     }
