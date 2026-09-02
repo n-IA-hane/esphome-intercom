@@ -437,11 +437,6 @@ async def async_originate_browser_call(
     remote_rx_formats = _roster_entry_formats(
         route.entry, "rx_formats"
     ) or _device_formats(dest_device, "rx_formats")
-    sip_send_formats, sip_recv_formats = _sip_target_audio_profile(
-        remote_tx_formats=remote_tx_formats,
-        remote_rx_formats=remote_rx_formats,
-        target=target,
-    )
     rtp_audio_profile = _sip_target_rtp_audio_profile(
         None,
         route.entry,
@@ -454,6 +449,12 @@ async def async_originate_browser_call(
     elif rtp_audio_profile is not None:
         sip_send_formats = list(rtp_audio_profile.send_formats)
         sip_recv_formats = list(rtp_audio_profile.recv_formats)
+    else:
+        sip_send_formats, sip_recv_formats = _sip_target_audio_profile(
+            remote_tx_formats=remote_tx_formats,
+            remote_rx_formats=remote_rx_formats,
+            target=target,
+        )
     entry_metadata = dict(route.entry.metadata or {}) if route.entry is not None else {}
     target_device_id = str(
         getattr(target_endpoint, "device_id", "")

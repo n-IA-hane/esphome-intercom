@@ -567,6 +567,19 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         )
         self.assertIn("target_device_id=target_device_id", tracker)
 
+    def test_explicit_rtp_profile_skips_obsolete_pcm_hint_narrowing(self) -> None:
+        """An ESP RTP profile owns its formats without a discarded warning path."""
+
+        outbound = _function_body(
+            self.softphone_originate, "async_originate_browser_call"
+        )
+        profile_branch = outbound.index("elif rtp_audio_profile is not None:")
+        fallback_branch = outbound.index(
+            "sip_send_formats, sip_recv_formats = _sip_target_audio_profile("
+        )
+        self.assertLess(profile_branch, fallback_branch)
+        self.assertIn("else:\n        sip_send_formats, sip_recv_formats", outbound)
+
     def test_final_200_commits_registry_before_publishing_in_call(self) -> None:
         tracker = _function_body(
             self.outbound_lifecycle,
