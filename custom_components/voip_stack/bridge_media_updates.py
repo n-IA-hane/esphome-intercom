@@ -62,6 +62,38 @@ class BridgeMediaUpdateBinder:
             except (TypeError, ValueError):
                 return None
 
+            def reject_added_video() -> PreparedDialogMediaUpdate:
+                """Commit the valid audio update and reject only the new video m-line."""
+
+                async def commit() -> None:
+                    if not registry.is_generation_current(
+                        source_call_id,
+                        call_generation,
+                    ):
+                        raise RuntimeError(
+                            "SIP bridge media update belongs to a terminated call"
+                        )
+                    if relay.right is not previous_audio_peer:
+                        raise RuntimeError(
+                            "SIP bridge media owner changed before commit"
+                        )
+                    commit_audio()
+                    _LOGGER.info(
+                        "SIP bridge outbound %s committed audio-only update "
+                        "source_call_id=%s dest_call_id=%s remote_rtp=%s:%s",
+                        method,
+                        source_call_id,
+                        client.dialog_ids.call_id,
+                        updated.remote_rtp_host,
+                        updated.remote_rtp_port,
+                    )
+
+                return PreparedDialogMediaUpdate(
+                    commit,
+                    answer_video_format=None,
+                    answer_video_rtp_port=0,
+                )
+
             video_relay = getattr(relay, "video_relay", None)
             previous_video_peer = video_relay.right if video_relay is not None else None
             previous_video = previous.video_format
@@ -133,8 +165,9 @@ class BridgeMediaUpdateBinder:
                             raise RuntimeError("incompatible video addition")
                         await video_relay.start()
                     except (OSError, RuntimeError, TypeError, ValueError) as err:
+                        restored = True
                         if source_reinvite is not None:
-                            await source_reinvite.restore(
+                            restored = await source_reinvite.restore(
                                 local_video_rtp_port=0,
                                 video_formats=source_video_formats,
                             )
@@ -152,6 +185,8 @@ class BridgeMediaUpdateBinder:
                             client.dialog_ids.call_id,
                             err,
                         )
+                        if adding_video and restored:
+                            return reject_added_video()
                         return None
                 if video_relay is None:
                     return None

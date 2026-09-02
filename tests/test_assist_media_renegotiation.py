@@ -575,6 +575,166 @@ def test_bridge_activates_video_when_initial_offer_was_recvonly() -> None:
     assert answer_calls[-1]["video_direction"] == "sendrecv"
 
 
+def test_bridge_rejects_new_video_only_when_destination_is_audio_only() -> None:
+    """A source video re-offer must preserve an established audio bridge."""
+
+    answer_calls: list[dict] = []
+    session = types.SimpleNamespace(generation=14)
+    registry = types.SimpleNamespace(
+        preanswered={},
+        softphone_media={},
+        relays={},
+        sessions={"source": session},
+        sip_clients={},
+        bridge_for=lambda _call_id: ("source", "destination"),
+        resolve_session_id=lambda call_id: call_id,
+        is_generation_current=lambda call_id, generation: (
+            call_id == "source" and generation == 14
+        ),
+        resource_for=lambda call_id, kind: (
+            registry.relays.get(call_id) if kind == "relay" else None
+        ),
+        sip_client_for=lambda call_id: registry.sip_clients.get(call_id),
+    )
+    module, _assist = _load_module(registry, answer_calls)
+    const = sys.modules[f"{PACKAGE}.const"]
+    const.CONF_SIP_VIDEO = "sip_video"
+    const.CONF_VIDEO_TRANSCODING = "video_transcoding"
+    _module(
+        "config",
+        transport_config=lambda _hass: {
+            "sip_video": True,
+            "video_transcoding": True,
+        },
+    )
+
+    class Reservation:
+        ports = (43000, 43002)
+
+        def detach(self) -> None:
+            return None
+
+    class VideoRelay:
+        left_port = 43000
+        right_port = 43002
+
+        def __init__(self) -> None:
+            self.stopped = False
+
+        async def start(self) -> None:
+            raise AssertionError("rejected video relay must not start")
+
+        async def stop(self) -> None:
+            self.stopped = True
+
+    staged_video_relay = VideoRelay()
+    media_ports = sys.modules[f"{PACKAGE}.media_ports"]
+    media_ports.release_sip_rtp_port_pair = lambda *_args: None
+    media_ports.reserve_sip_video_relay_media = lambda _hass: (
+        Reservation(),
+        (None, None, None, None),
+    )
+
+    old_left = types.SimpleNamespace(name="old-left")
+    old_right = types.SimpleNamespace(name="old-right")
+    new_left = types.SimpleNamespace(
+        outbound_rtp_format="audio-send",
+        inbound_rtp_format="audio-receive",
+    )
+    new_right = types.SimpleNamespace(can_send=True, can_receive=True)
+
+    class Relay:
+        left_port = 41000
+
+        def __init__(self) -> None:
+            self.left = old_left
+            self.right = old_right
+            self.video_relay = None
+
+        def prepare_peer_reconfiguration(self, side, peer):
+            previous_peer = getattr(self, side)
+
+            def commit() -> None:
+                assert getattr(self, side) is previous_peer
+                setattr(self, side, peer)
+
+            return commit
+
+        def attach_video_relay(self, _video_relay) -> None:
+            raise AssertionError("rejected video relay must not attach")
+
+    relay = Relay()
+    registry.relays["source"] = relay
+    destination_dialog = types.SimpleNamespace(remote_host="192.0.2.20")
+    candidate = types.SimpleNamespace(video_format=None)
+
+    class Client:
+        def __init__(self) -> None:
+            self.dialog = destination_dialog
+            self.committed = False
+
+        async def async_prepare_video_reinvite(self, **_kwargs):
+            return candidate
+
+        def commit_prepared_reinvite(self, previous, staged) -> bool:
+            assert previous is destination_dialog
+            assert staged is candidate
+            self.committed = True
+            return True
+
+        def abort_prepared_reinvite(self, *_args) -> None:
+            raise AssertionError("accepted audio update was rolled back")
+
+    client = Client()
+    registry.sip_clients["destination"] = client
+    sip_bridge = sys.modules[f"{PACKAGE}.sip_bridge"]
+    sip_bridge.build_pending_invite_video_relay = lambda *_args, **_kwargs: (
+        staged_video_relay
+    )
+    sip_bridge.configure_answered_invite_video_relay = lambda *_args, **_kwargs: None
+    sip_bridge.dialog_rtp_peer = lambda _dialog: new_right
+    sip_bridge.invite_rtp_peer = lambda _invite, **_kwargs: new_left
+    sip_bridge.video_bridge_offer_formats = lambda *_args, **_kwargs: ("vp8",)
+    module.invite_rtp_peer = lambda _invite: new_left
+
+    video = types.SimpleNamespace(direction="recvonly")
+    previous = types.SimpleNamespace(call_id="source", video_format=None)
+    updated = types.SimpleNamespace(
+        call_id="source",
+        video_format=video,
+        recv_video_format=video,
+        answer_video_format=video,
+        remote_video_connection_held=False,
+        send_format="audio-send",
+        recv_format="audio-receive",
+        remote_sdp=b"audio-with-unsupported-video",
+        remote_audio_direction="sendrecv",
+        remote_audio_connection_held=False,
+    )
+
+    result = asyncio.run(
+        module._prepare_bridge_video_contract_change(
+            types.SimpleNamespace(),
+            "192.0.2.10",
+            previous,
+            updated,
+            relay,
+        )
+    )
+
+    assert result.status == 200
+    assert answer_calls[-1]["video_port"] == 0
+    assert answer_calls[-1]["video_direction"] == "inactive"
+    assert staged_video_relay.stopped is True
+    assert relay.left is old_left
+    assert relay.right is old_right
+    asyncio.run(result.commit())
+    assert client.committed is True
+    assert relay.left is new_left
+    assert relay.right is new_right
+    assert relay.video_relay is None
+
+
 def test_bridge_video_removal_updates_both_dialogs_and_stops_media() -> None:
     answer_calls: list[dict] = []
     session = types.SimpleNamespace(generation=11)

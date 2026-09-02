@@ -98,6 +98,7 @@ async def _prepare_bridge_video_contract_change(
     destination_dialog = client.dialog
     enable_transcoding = bool(cfg.get(CONF_VIDEO_TRANSCODING, False))
     staged_video_relay = None
+    video_addition_rejected = False
     if adding_video:
         if current_video_relay is not None:
             return SipInviteResult(488, "Not Acceptable Here")
@@ -176,10 +177,23 @@ async def _prepare_bridge_video_contract_change(
                 enable_transcoding=enable_transcoding,
             )
             if video_answer is None:
-                return SipInviteResult(488, "Not Acceptable Here")
-            answer_video_format = video_answer.video_format
-            answer_video_direction = video_answer.direction
-            await staged_video_relay.start()
+                # RFC 3264 permits rejecting a newly offered media stream
+                # with a zero port while accepting the rest of the offer.
+                # Keep the established audio bridge instead of rejecting the
+                # whole re-INVITE when the destination is audio-only.
+                await staged_video_relay.stop()
+                staged_video_relay = None
+                video_addition_rejected = True
+                _LOGGER.info(
+                    "SIP bridge declined unsupported video addition "
+                    "call_id=%s destination_call_id=%s; audio remains active",
+                    updated.call_id,
+                    dest_call_id,
+                )
+            else:
+                answer_video_format = video_answer.video_format
+                answer_video_direction = video_answer.direction
+                await staged_video_relay.start()
         elif retaining_video:
             if candidate.video_format is None:
                 return SipInviteResult(488, "Not Acceptable Here")
@@ -238,7 +252,7 @@ async def _prepare_bridge_video_contract_change(
             ),
             video_port=(
                 int(staged_video_relay.left_port)
-                if adding_video
+                if adding_video and not video_addition_rejected
                 else int(current_video_relay.left_port)
                 if retaining_video
                 else 0
@@ -292,7 +306,7 @@ async def _prepare_bridge_video_contract_change(
                 destination_dialog, candidate
             ):
                 raise RuntimeError("SIP destination re-INVITE owner changed")
-            if adding_video:
+            if adding_video and not video_addition_rejected:
                 relay.attach_video_relay(staged_video_relay)
             elif removing_video:
                 relay.video_relay = None

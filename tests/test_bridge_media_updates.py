@@ -572,6 +572,94 @@ def test_destination_reinvite_can_add_video_to_audio_only_bridge(
     assert staged.stopped is False
 
 
+def test_destination_reinvite_rejects_only_video_for_audio_only_source(
+    bridge_media_updates,
+    monkeypatch,
+) -> None:
+    """An unsupported new video stream must not tear down established audio."""
+
+    registry = _Registry()
+
+    class AudioOnlyEndpoint:
+        async def async_prepare_video_reinvite(self, *_args, **_kwargs):
+            return None
+
+    hass = SimpleNamespace(registry=registry, endpoint=AudioOnlyEndpoint())
+    old_audio = object()
+    new_audio = object()
+    relay = _Relay(old_audio)
+    client = SimpleNamespace(
+        dialog_ids=SimpleNamespace(call_id="dest-audio-only"),
+        on_media_update=None,
+    )
+    updated_video = SimpleNamespace(direction="recvonly", passthrough=True)
+    updated = SimpleNamespace(
+        audio_peer=new_audio,
+        video_peer=SimpleNamespace(send_format="vp8-rx", recv_format="vp8-tx"),
+        video_format=updated_video,
+        recv_video_format="vp8-tx",
+        remote_video_connection_held=False,
+        remote_video_rtp_port=42000,
+        remote_host="198.51.100.20",
+        remote_rtp_host="198.51.100.20",
+        remote_rtp_port=41000,
+        remote_audio_direction="sendrecv",
+    )
+
+    class Reservation:
+        ports = (43000, 43002)
+
+        def __init__(self) -> None:
+            self.released = False
+
+        def detach(self) -> None:
+            raise AssertionError("rejected video reservation must not detach")
+
+        def release(self) -> None:
+            self.released = True
+
+    reservation = Reservation()
+    sockets = (SimpleNamespace(close=lambda: None),) * 4
+    monkeypatch.setattr(
+        bridge_media_updates,
+        "reserve_sip_video_relay_media",
+        lambda _hass: (reservation, sockets),
+    )
+    package = bridge_media_updates.__package__
+    config = ModuleType(f"{package}.config")
+    config.transport_config = lambda _hass: {
+        "sip_video": True,
+        "video_transcoding": False,
+    }
+    const = ModuleType(f"{package}.const")
+    const.CONF_SIP_VIDEO = "sip_video"
+    const.CONF_VIDEO_TRANSCODING = "video_transcoding"
+    monkeypatch.setitem(sys.modules, config.__name__, config)
+    monkeypatch.setitem(sys.modules, const.__name__, const)
+
+    bridge_media_updates.BridgeMediaUpdateBinder(hass).attach(
+        client,
+        relay,
+        source_call_id="call-1",
+    )
+    prepared = asyncio.run(
+        client.on_media_update(
+            SimpleNamespace(video_format=None),
+            updated,
+            "INVITE",
+        )
+    )
+
+    assert prepared is not None
+    assert prepared.answer_video_format is None
+    assert prepared.answer_video_rtp_port == 0
+    assert reservation.released is True
+    assert relay.right is old_audio
+    asyncio.run(prepared.commit())
+    assert relay.right is new_audio
+    assert relay.video_relay is None
+
+
 def test_destination_reinvite_removes_video_from_both_bridge_legs(
     bridge_media_updates,
 ) -> None:
