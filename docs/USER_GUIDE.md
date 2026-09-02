@@ -127,7 +127,7 @@ ESP calls the selected destination through the route published by Home
 Assistant. Direct ESP-to-ESP SIP remains possible when the phonebook contains a
 direct route.
 
-The public actions are:
+The everyday phone actions are:
 
 | Action | Purpose |
 | --- | --- |
@@ -135,11 +135,23 @@ The public actions are:
 | `voip_stack.answer` | Answer a pending call |
 | `voip_stack.decline` | Reject a pending call |
 | `voip_stack.hangup` | End the selected call |
+| `voip_stack.send_dtmf` | Send keypad digits through an established HA phone call |
 | `voip_stack.forward` | Redirect a pending or ringing HA-owned call |
 | `voip_stack.transfer` | Transfer an established call with SIP REFER |
 | `voip_stack.set_dnd` | Change DND on an HA phone |
 | `voip_stack.set_auto_answer` | Persist Auto Answer for an HA phone |
 | `voip_stack.set_send_video` | Persist default camera transmission |
+
+During an established HA browser-phone call, press **Keypad** to send DTMF to
+an IVR or another compatible endpoint. The same keys compose a destination
+while idle. In-call digits use negotiated RFC 4733 telephone events, with SIP
+INFO available only when the active leg supports it. The keypad keeps Hangup
+visible and closes automatically when the call ends.
+
+Extended information on the card shows media counters, including the current
+browser playback buffer and underruns. These are diagnostics, not a second call
+state: the backend remains the authoritative owner of ringing, answer and
+hangup.
 
 ## Add more Home Assistant phones
 
@@ -286,6 +298,7 @@ as `target`, `source` or `entity_id` into the current phone actions.
 ## Detailed references
 
 - [Automation cookbook](AUTOMATION_DIALPLAN.md)
+- [What is new in 2026.9.1-dev](WHATS_NEW_2026_9_1.md)
 - [What is new in 2026.9.0](WHATS_NEW_2026_9_0.md)
 - [Deployment guide](DEPLOYMENT_GUIDE.md)
 - [Home Assistant actions](SERVICES.md)

@@ -77,18 +77,13 @@ Each ESPHome component ships its own README with the full option list, YAML snip
   post-processor mic output. On AEC/AFE profiles, its standard ESPHome
   microphone facade is the cleaned stream consumed by MWW, Voice Assistant and
   VoIP while media/TTS keeps playing through the speaker.
-- Full-experience media now uses ESPHome's source-based `speaker_source` path:
-  HA media, announcements, local files and optional Sendspin streams feed one
-  media player before the mixer arbitrates with VoIP and Voice Assistant.
-  All maintained profiles use the official ESPHome `speaker` interface and
-  `speaker_source` media player; the former local `speaker` fork is retired.
 - [`runtime_controller`](https://github.com/n-IA-hane/esphome-runtime-controller), a generic
   YAML-programmed reducer used by maintained full-experience profiles to derive
   LED, LVGL/display, audio ducking, ringtone and timer policies from one state
   snapshot. It is control-plane only and does not process audio samples.
 - [`esp_aec`](https://github.com/n-IA-hane/esphome-audio-stack/tree/main/esphome/components/esp_aec), standalone ESP-SR echo cancellation.
 - [`esp_afe`](https://github.com/n-IA-hane/esphome-audio-stack/tree/main/esphome/components/esp_afe), the full Espressif AFE pipeline (AEC + NS + VAD + AGC, optional dual-mic Speech Enhancement).
-- internal shared audio primitives used privately by the local media/voice
-  component forks and by the split audio-stack repository.
+- internal shared audio primitives used privately by the coordinated media and
+  voice components.
 - `voip_simulator`, an internal test/simulation component used by the virtual
   device harness. It is not a production YAML component.

@@ -198,13 +198,13 @@ separate user mode.
 | `speaker_only` | speaker RX | Paging or announcement target |
 
 An endpoint must have at least one real media direction. Maintained Full
-profiles use uncompressed PCM for audio. Compact VoIP-only profiles may compile
-additional codecs when their hardware budget permits it; the Spotpear VoIP-only
-profile currently advertises Opus only. Incompatible direct peers can route
-through Home Assistant for transcoding. Standard S3
-profiles are audio-only, while qualified ESP32-P4 videophone profiles compile
-exactly one video codec, JPEG or H.264. HA performs format conversion when two
-SIP legs do not share a compatible codec.
+profiles use uncompressed PCM for audio. Qualified VoIP-only profiles may
+instead compile one compressed codec when their hardware budget permits it;
+current Spotpear, WS3 and P4 JPEG development profiles can advertise Opus only.
+Incompatible direct peers can route through Home Assistant for transcoding.
+Standard S3 profiles are audio-only, while qualified ESP32-P4 videophone
+profiles compile exactly one video codec, JPEG or H.264. HA performs format
+conversion when two SIP legs do not share a compatible codec.
 
 Opus is not currently enabled in Full profiles. A complete Full build already
 combines AFE or AEC, wake word detection, Voice Assistant, LVGL and media
@@ -541,6 +541,12 @@ Before every upgrade:
 
 Never assume an automation still has the same contract merely because the
 integration loaded successfully.
+
+The active development preview is
+[`2026.9.1-dev`](docs/WHATS_NEW_2026_9_1.md). It adds real ESP codec
+capabilities, optional Opus for qualified VoIP-only profiles, in-call DTMF and
+more resilient browser audio. The stable release remains `2026.9.0`; choose the
+preview when testing is part of the plan rather than an unpleasant surprise.
 
 ## What's new in `2026.9.0`
 

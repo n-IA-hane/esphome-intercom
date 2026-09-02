@@ -129,6 +129,8 @@ The following profiles have distinct, qualified media roles:
   dual-microphone AFE and the full Voice Assistant runtime;
 - [`waveshare-p4-touch-videophone-jpeg.yaml`](voip-only/single-bus/waveshare-p4-touch-videophone-jpeg.yaml)
   is the lightweight bidirectional RTP/JPEG videophone;
+- [`waveshare-p4-touch-videophone-jpeg-opus.yaml`](voip-only/single-bus/waveshare-p4-touch-videophone-jpeg-opus.yaml)
+  keeps the lightweight JPEG video path and uses Opus-only audio;
 - [`waveshare-p4-touch-videophone-h264.yaml`](voip-only/single-bus/waveshare-p4-touch-videophone-h264.yaml)
   is the lightweight bidirectional H.264 videophone.
 

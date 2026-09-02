@@ -183,8 +183,9 @@ If digits arrive and do not resolve, HA terminates the answered leg with
 ## Media
 
 An ESP advertises only the codecs compiled into its selected profile. Maintained
-Full profiles accept compatible PCM SDP. Compact profiles may also advertise
-Opus when explicitly configured, as in the Spotpear VoIP-only profile.
+Full profiles accept compatible PCM SDP. Compact profiles may instead advertise
+Opus when explicitly configured, as in the Spotpear, WS3 and P4 JPEG VoIP-only
+development profiles.
 Unsupported codecs or oversized or unsupported formats must receive a SIP
 failure such as `488 Not Acceptable Here`.
 

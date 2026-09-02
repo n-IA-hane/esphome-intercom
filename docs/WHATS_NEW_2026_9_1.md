@@ -1,8 +1,14 @@
-# 2026.9.1-dev pre-release: standard SIP codec negotiation
+# 2026.9.1-dev pre-release: cleaner audio, real codecs and in-call DTMF
 
 `2026.9.1-dev` starts the next active development cycle. The stable release
 remains `2026.9.0`. These notes will grow as further features and fixes enter
 the candidate.
+
+This revision makes the phone system less interested in special cases and more
+interested in behaving like a phone system. ESP endpoints publish their real
+media capabilities, compatible legs avoid unnecessary transcoding, the HA
+phone can operate an IVR, and browser audio follows its own clock instead of
+hoping the UI thread remains in a generous mood.
 
 ## ESPHome phones now publish their real codec capabilities
 
@@ -25,10 +31,11 @@ codec diagnostics automatically.
 ## Opus is optional in compact ESP profiles
 
 The standalone VoIP component can now negotiate RFC 7587 Opus in addition to
-its existing PCM formats. The Spotpear VoIP-only profile prefers mono Opus at
-48 kHz RTP clock and 20 ms packet time, with a 10 ms Opus alternative. The
-firmware advertises Opus only. Incompatible direct peers can route through Home
-Assistant, which performs the required transcoding.
+its existing PCM formats. Qualified Spotpear, WS3 and P4 JPEG VoIP-only
+development profiles prefer mono Opus at 48 kHz RTP clock and 20 ms packet
+time, with a 10 ms Opus alternative. Each firmware advertises Opus only.
+Incompatible direct peers can route through Home Assistant, which performs the
+required transcoding.
 
 Opus is intentionally optional and compile-time gated. Full profiles continue
 using the proven PCM configuration because wake word detection, AFE, Voice
@@ -45,9 +52,9 @@ pseudostack. Keeping those working sets in PSRAM is too slow under the complete
 AFE, wake word, LVGL and media workload, while moving them to internal memory
 leaves too little DMA-capable RAM for the display and audio hardware.
 
-For now, maintained Full profiles therefore remain PCM-only. The Spotpear
-VoIP-only profile has enough remaining resources for bidirectional Opus and did
-not show the same runtime limitation. A future Full Opus profile remains
+For now, maintained Full profiles therefore remain PCM-only. Qualified
+VoIP-only profiles have enough remaining resources for bidirectional Opus and
+did not show the same runtime limitation. A future Full Opus profile remains
 possible if the codec working-memory contract or the available hardware budget
 improves, but it will require complete real-device concurrency qualification.
 
@@ -85,16 +92,35 @@ action. ESP phones advertise DTMF only when their firmware contains the new
 RFC 4733 implementation, so audio-only firmware does not gain a fictional
 capability.
 
+<p align="center">
+  <img src="images/ha-softphone-in-call-keypad-2026-9-1.jpg" width="420" alt="In-call DTMF keypad in the Home Assistant phone"/>
+</p>
+
+The keypad replaces the normal call view only while it is needed. `Hangup`
+remains available, `Contacts` returns to destination selection, and remote or
+local hangup restores the ordinary terminal screen. It is a telephone keypad,
+not a modal dungeon with no exit.
+
 ## Browser audio follows RTP cadence without crackling
 
 The browser receive path now separates network packet arrival from Web Audio
-rendering. A bounded worker reassembles incoming PCM into the exact blocks
-requested by the audio clock. Packet bursts, WebSocket message boundaries and
-RTP packet time therefore no longer become audible gaps or crackling.
+rendering. The page WebSocket sends negotiated PCM frames directly to the
+playback AudioWorklet, removing the former Worker and MessageChannel hop. The
+worklet converts RTP frame cadence into the exact render blocks requested by
+the browser audio clock.
 
-The worker is paced by the browser audio clock, keeps bounded carry state and
-reports real input, output and underrun counters. It does not guess a larger
-timeout or grow a buffer until the symptom disappears.
+An adaptive, bounded jitter buffer absorbs packet bursts and short Android
+WebView scheduling stalls. It starts with a conservative reserve, learns only
+from delivery gaps that exceed the current protection, and releases surplus
+one frame at a time after a stable interval. This prevents both failure modes:
+draining to an unrealistically small buffer after a few quiet seconds, and
+growing to the maximum because ordinary message batching kept resetting the
+recovery timer.
+
+The same path reports input, output, drop, buffer and underrun counters.
+Underrun diagnostics distinguish network arrival gaps from delivery stalls
+inside the WebView, so a bad scheduler is no longer framed for a crime
+committed by RTP.
 
 ## More resilient embedded registration and call control
 
@@ -172,6 +198,10 @@ its UDP binding.
   audio packets, zero audio PLC or queue drops, and zero video loss, reorder or
   access-unit queue drops. P4 presented 74 of 75 admitted JPEG frames and
   returned every call-scoped resource to zero after hangup.
+- A physical OnePlus Nord 5 Companion call held browser playback at zero
+  underruns after the direct WebSocket-to-AudioWorklet path and bounded adaptive
+  reserve were deployed. The buffer absorbed measured WebView delivery stalls
+  instead of converting them into periodic audio gaps.
 
 The P4 camera is configured for 10 FPS, but this Android witness produced about
 4.6 encoded and presented frames per second. The result proves stable media and
@@ -184,17 +214,17 @@ The former local `speaker` fork is no longer shipped. Custom YAMLs that still
 request it from this repository must migrate to the official ESPHome speaker
 interface and `speaker_source` media player before rebuilding.
 
-The Spotpear VoIP-only codec configuration requires the matching
+The Opus-only codec configurations require the matching
 `esphome-voip-stack@dev` component. Maintained development YAMLs already point
 to the coordinated `dev` branches.
 
 ## Known issue
 
-On a OnePlus Nord 5, browser softphone receive audio can develop gaps when the
-display uses a high refresh rate, especially during touch or orientation
-changes. The same phone is stable at 60 Hz. This remains a post-release device
-and Chromium scheduling investigation, and the current workaround is to use
-the 60 Hz display mode for Chrome or the Home Assistant Companion app.
+High-refresh-rate operation on the OnePlus Nord 5 still needs separate
+qualification, especially during touch and orientation changes. The current
+physical validation used the stable 60 Hz mode. The adaptive buffer fixes the
+independent periodic scheduling gaps observed at 60 Hz, but it is not evidence
+that every 120 Hz WebView lifecycle path is now qualified.
 
 ## Installation and feedback
 

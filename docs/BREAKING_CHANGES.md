@@ -6,6 +6,35 @@ an earlier development contract instead of carrying two parallel APIs. The
 config-entry migration preserves supported persisted settings, but copied card
 YAML and automations cannot be migrated by Home Assistant automatically.
 
+## 2026.9.1-dev: upgrade checklist
+
+1. Restart Home Assistant after installing the updated integration.
+2. Reset the browser or Companion frontend cache so the new card and audio
+   worklets are loaded together.
+3. If a custom ESPHome YAML imports this repository's removed local `speaker`
+   fork, migrate it as described below before compiling.
+
+Codec negotiation, the in-call keypad and the adaptive browser jitter buffer
+do not require automation changes. Maintained YAMLs already contain the
+coordinated component sources for this development release.
+
+## 2026.9.1-dev: local speaker fork removed
+
+The project no longer ships its historical fork of ESPHome's `speaker`
+component. Maintained YAMLs use the official ESPHome speaker interface and the
+`speaker_source` media player.
+
+Custom YAMLs that explicitly fetched `speaker` from this repository must:
+
+1. remove that component from the local `external_components` selection;
+2. use the official ESPHome `speaker` platform for the hardware output;
+3. use `speaker_source` where media playback needs the shared speaker path;
+4. revalidate pause, resume, ringtone, TTS and VoIP ownership on the physical
+   device.
+
+This migration removes a parallel implementation. It does not remove speaker
+output or require maintained profiles to surrender any feature to the void.
+
 ## 2026.9.0: upgrade checklist
 
 If you use only the standard HACS integration and its visual card editor, the

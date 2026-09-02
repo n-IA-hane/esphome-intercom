@@ -63,9 +63,11 @@ as `16000:s16le:1:16`, `16000:s16le:1:32`, `16000:s16le:1:20`, or
 `48000:s16le:1:10`. A call also needs one common packet time across the selected
 TX and RX directions; rates may differ, but `frame_ms`/`ptime` must match.
 
-ESP devices are PCM-only. HA softphone/trunk legs can negotiate common VoIP
-codecs where supported, but the bridge must still be able to convert the ESP
-leg to a compatible PCM format.
+Maintained Full ESP profiles are PCM-only. Codec-enabled VoIP-only profiles may
+instead advertise a single compressed codec such as Opus. HA softphone and
+trunk legs can negotiate common VoIP codecs where supported, but every bridged
+direction still needs either a compatible wire format or an available
+conversion path.
 
 ## HA cannot route a name
 
@@ -196,6 +198,31 @@ the dialog if that ACK never arrives.
   remote audio but cannot send local microphone audio back.
 - If one browser works and another does not, check which browser owns the HA
   softphone media WebSocket for that active call.
+
+## Browser audio crackles or reports underruns
+
+The HA card exposes `Buf` and `Und` when extended information is enabled.
+`Buf` is the current bounded playback reserve in negotiated audio frames;
+`Und` counts occasions where the browser audio clock requested data after that
+reserve was exhausted.
+
+- Check HA logs for `browser playback underrun`. The diagnostic separates the
+  WebSocket arrival gap from the AudioWorklet delivery gap.
+- A rising `Und` with clean RTP counters points to browser or WebView delivery,
+  not automatically to the SIP peer or network.
+- A buffer that rises after a delivery stall is expected. It should stabilize
+  and recover gradually after a genuinely quiet interval, not fall by one
+  frame every second and not remain pinned at its maximum.
+- After upgrading the frontend, restart HA and reset only the frontend cache.
+  A Companion WebView may restart a few seconds later; do not count that
+  deliberate reconnect as a steady-call scheduling failure.
+- Android refresh rate, touch, orientation changes and battery policy can
+  influence WebView scheduling. Record those conditions with the exact call
+  time instead of describing the route only as "mobile".
+
+Do not hide repeated underruns by increasing an arbitrary timeout. Capture the
+negotiated packet time, RTP counters, WebSocket gap, worklet delivery gap and
+buffer target from the same call.
 
 ## Trunk does not register
 

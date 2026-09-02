@@ -1,11 +1,14 @@
-# voip-pcm/1
+# ESP VoIP SIP/RTP profile
 
-`voip-pcm/1` is the VoIP Stack profile.
+This document defines the SIP, SDP and RTP contract implemented by ESP VoIP
+phones. `voip-pcm/1` is the historical name of its linear-PCM media contract;
+codec-enabled VoIP-only firmware can now select another compile-time media
+contract, currently Opus.
 
-It is a SIP/SDP/RTP profile, not a proprietary intercom protocol. ESP devices
-act as SIP user agents and exchange RTP PCM media. Home Assistant may provide
-roster distribution, routing, bridging and optional provider trunk registration,
-but direct ESP-to-ESP calls must work when a SIP URI is known.
+It is not a proprietary intercom protocol. ESP devices act as SIP user agents
+and exchange the RTP media advertised by their firmware. Home Assistant may
+provide roster distribution, routing, bridging and optional provider trunk
+registration, but direct ESP-to-ESP calls must work when a SIP URI is known.
 
 ## Security and registration
 
@@ -152,8 +155,10 @@ ESP media capabilities are compile-time profile choices. Full profiles are
 currently PCM-only. Compact VoIP-only profiles may also include Opus when the
 device has enough flash, internal memory and PSRAM bandwidth.
 
-- Mandatory: RTP `L16`
-- Optional: RTP `L24`, only when packed as RTP L24
+- PCM contract: RTP `L16` is mandatory; RTP `L24` is optional and uses packed
+  RTP L24
+- Opus-only contract: RFC 7587 Opus is mandatory and PCM is not advertised as
+  an implicit fallback
 - Dynamic payload types: `96..127`
 - SDP uses `a=rtpmap`, `a=ptime`, `a=maxptime`
 - SDP must not use `a=fmtp` for packet time
@@ -164,10 +169,11 @@ ESP must convert at the RTP boundary:
 - internal `S16LE` to RTP `L16` network byte order
 - internal `S24LE_IN_S32` to packed RTP `L24` network byte order
 
-The Spotpear VoIP-only profile implements Opus and advertises it through normal
-SDP capability negotiation. Other compressed codecs such as PCMU, PCMA, Speex,
-GSM and G.722 are not currently implemented on ESP. An ESP returns `488 Not
-Acceptable Here` when an offer has no codec compatible with that firmware.
+Qualified Spotpear, WS3 and P4 JPEG VoIP-only profiles implement Opus and
+advertise it through normal SDP capability negotiation. Other compressed
+codecs such as PCMU, PCMA, Speex, GSM and G.722 are not currently implemented
+on ESP. An ESP returns `488 Not Acceptable Here` when an offer has no codec
+compatible with that firmware.
 
 Do not add Opus to a Full profile merely because it compiles. The complete
 Spotpear Full workload could not sustain simultaneous Opus encode and decode

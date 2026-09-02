@@ -176,9 +176,11 @@ of bypassing an intervening proxy.
 SDP offer/answer negotiates RTP. RTP media is always UDP, even when SIP
 signaling uses TCP.
 
-ESP devices are PCM-only endpoints. The supported ESP profile is linear PCM
-with network byte order on RTP; incompatible SDP receives `488 Not Acceptable
-Here` or the equivalent terminal reason.
+ESP media is selected at compile time. Maintained Full profiles use linear PCM;
+codec-enabled VoIP-only profiles may instead advertise one compressed codec,
+currently Opus. PCM uses network byte order at the RTP boundary. An endpoint
+returns `488 Not Acceptable Here` or the equivalent terminal reason when the
+offer contains no format implemented by that firmware.
 
 HA can accept richer media on softphone/trunk legs when it has a bidirectional
 converter for the selected codec. Optional codecs are capability-gated and are
@@ -189,9 +191,9 @@ best-quality-per-leg:
   PCM as its own capability permits;
 - G.722 uses the RFC 3551 8 kHz RTP timestamp clock while decoding to 16 kHz
   mono PCM inside HA;
-- an ESP speaker leg should receive 48 kHz PCM when its speaker path supports
+- a PCM ESP speaker leg should receive 48 kHz when its speaker path supports
   it;
-- an ESP AFE/AEC mic leg can still transmit 16 kHz PCM because that is the
+- a Full ESP AFE/AEC mic leg can still transmit 16 kHz PCM because that is the
   processor output surface;
 - the HA bridge converts between leg formats instead of forcing the whole call
   to the lowest common endpoint where a per-leg bridge is possible.

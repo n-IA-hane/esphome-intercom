@@ -9,12 +9,13 @@ ESPHome's IDF Component Manager when users build their own firmware.
 The repositories ship YAML, ESPHome components and source code. They do not
 ship prebuilt firmware binaries for these Espressif audio components.
 
-## ESPHome compatibility forks in 2026.9.0
+## Current ESPHome compatibility forks
 
 Maintained YAMLs source the following project-owned compatibility components
-from `esphome-intercom@main`. Each fork records its upstream ESPHome baseline
-in the component directory and preserves upstream behavior unless its option is
-enabled explicitly.
+from the coordinated `esphome-intercom` branch selected by that profile:
+`main` for stable YAMLs and `dev` for development YAMLs. Each fork records its
+upstream ESPHome baseline in the component directory and preserves upstream
+behavior unless its option is enabled explicitly.
 
 | Component | Local reason | Public compatibility |
 |---|---|---|

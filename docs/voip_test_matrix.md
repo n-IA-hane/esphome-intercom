@@ -7,9 +7,12 @@ agree. Counters alone are not proof of audible bidirectional audio.
 ## Global gates
 
 - No ESP firmware compile or OTA before local implementation and host checks.
-- `voip-pcm/1` profile documented and kept in sync with code.
-- ESP audio remains RTP PCM L16/L24. Optional P4 video is compile-gated to one
-  encoded codec, JPEG or H.264, and is absent from audio-only firmware.
+- ESP SIP/SDP/RTP profile documented and kept in sync with the PCM and optional
+  compile-time codec contracts.
+- ESP audio remains RTP. PCM profiles use L16/L24; qualified VoIP-only profiles
+  may instead compile Opus without an implicit PCM fallback. Optional P4 video
+  is compile-gated to one encoded codec, JPEG or H.264, and is absent from
+  audio-only firmware.
 - ESP endpoints use no Digest auth, send no `WWW-Authenticate`, and require no
   `Authorization` or `REGISTER`. HA may authenticate its optional trunk and
   local registrar accounts; neither mechanism gates all inbound INVITEs.

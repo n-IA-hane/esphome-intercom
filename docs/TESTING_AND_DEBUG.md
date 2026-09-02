@@ -384,6 +384,23 @@ WAV/JSON data can still contain private conversation audio and call metadata:
 disable media capture after the test and remove retained artifacts according to
 the deployment's privacy policy.
 
+Browser playback underruns produce one bounded warning containing
+`buffered`, `target`, `ws_gap`, `worklet_arrival_gap`,
+`worklet_delivery_gap` and `clock`. Interpret them together:
+
+- `ws_gap` measures page WebSocket delivery cadence;
+- `worklet_delivery_gap` includes scheduling between the page and
+  AudioWorklet;
+- `buffered` is observed after the worklet resumes and may already include the
+  newly delivered burst;
+- `target` is the adaptive reserve in negotiated frames;
+- `clock` is the current bounded playback-rate correction in parts per
+  million.
+
+Clean RTP counters with a much larger worklet delivery gap identify a browser
+or WebView scheduling stall. They do not prove a network loss merely because
+the speaker went quiet.
+
 ## Serial and device debug
 
 For ESP debug:
