@@ -8,6 +8,7 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from playwright.async_api import Locator, async_playwright
 
@@ -21,14 +22,23 @@ async def _wait_state(card: Locator, wanted: str, timeout: float = 20.0) -> None
     raise TimeoutError(f"HA card did not reach {wanted!r}")
 
 
-def _local_storage(path: Path, origin: str) -> dict[str, str]:
+def _local_storage(path: Path, url: str) -> dict[str, str]:
     state = json.loads(path.read_text(encoding="utf-8"))
-    entry = next(item for item in state["origins"] if item["origin"] == origin)
+    parsed = urlsplit(url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    entry = next(
+        (item for item in state["origins"] if item["origin"] == origin),
+        None,
+    )
+    if entry is None:
+        raise RuntimeError(f"storage state has no credentials for {origin}")
     return {item["name"]: item["value"] for item in entry["localStorage"]}
 
 
 async def _run(args: argparse.Namespace) -> list[dict[str, Any]]:
     storage = _local_storage(args.storage_state, args.ha_url)
+    parsed_url = urlsplit(args.ha_url)
+    storage_origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
     results: list[dict[str, Any]] = []
     console_messages: list[dict[str, str]] = []
     async with async_playwright() as playwright:
@@ -41,12 +51,12 @@ async def _run(args: argparse.Namespace) -> list[dict[str, Any]]:
             if await candidate.locator("voip-stack-card").count():
                 page = candidate
                 break
-        await page.goto(args.ha_url, wait_until="domcontentloaded")
-        await page.evaluate(
-            "(values) => Object.entries(values).forEach(([key, value]) => localStorage.setItem(key, value))",
-            storage,
+        await page.context.add_init_script(
+            f"if (location.origin === {json.dumps(storage_origin)}) "
+            "Object.entries(" + json.dumps(storage) + ").forEach(([key, value]) => "
+            "localStorage.setItem(key, value));"
         )
-        await page.reload(wait_until="domcontentloaded")
+        await page.goto(args.ha_url, wait_until="domcontentloaded")
         page.on(
             "console",
             lambda message: console_messages.append(
@@ -79,6 +89,15 @@ async def _run(args: argparse.Namespace) -> list[dict[str, Any]]:
                     timeout=30.0,
                 )
                 await _wait_state(card, "in_call")
+                for digit in args.dtmf:
+                    sent = await card.evaluate(
+                        "(element, value) => { element._pressKeypadKey(value); "
+                        "return !element._errorMsg; }",
+                        digit,
+                    )
+                    if not sent:
+                        raise RuntimeError(f"DTMF {digit!r} was rejected by the card")
+                    await asyncio.sleep(0.2)
                 if args.reload_after > 0:
                     before_reload = min(args.reload_after, args.duration)
                     await page.wait_for_timeout(round(before_reload * 1_000))
@@ -112,10 +131,19 @@ async def _run(args: argparse.Namespace) -> list[dict[str, Any]]:
                         )
                         != "idle"
                     ):
-                        await asyncio.wait_for(
-                            card.evaluate("(element) => element._hangup()"),
-                            timeout=10.0,
-                        )
+                        if args.offline_hangup:
+                            await page.context.set_offline(True)
+                            pending = asyncio.create_task(
+                                card.evaluate("(element) => element._hangup()")
+                            )
+                            await asyncio.sleep(3.5)
+                            await page.context.set_offline(False)
+                            await asyncio.wait_for(pending, timeout=15.0)
+                        else:
+                            await asyncio.wait_for(
+                                card.evaluate("(element) => element._hangup()"),
+                                timeout=10.0,
+                            )
                         await _wait_state(card, "idle", timeout=10.0)
 
                 cleanup_task = asyncio.create_task(cleanup_call())
@@ -150,6 +178,8 @@ def main() -> None:
     parser.add_argument("--settle", type=float, default=5.0)
     parser.add_argument("--cycles", type=int, default=1)
     parser.add_argument("--reload-after", type=float, default=0.0)
+    parser.add_argument("--offline-hangup", action="store_true")
+    parser.add_argument("--dtmf", default="")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     results = asyncio.run(_run(args))
