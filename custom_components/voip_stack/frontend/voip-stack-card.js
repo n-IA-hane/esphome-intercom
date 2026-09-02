@@ -1901,7 +1901,10 @@ class VoipStackCard extends HTMLElement {
     els.keypadBtn.hidden = !(
       (showCall || inCallDtmf) && showRuntimeOptions && canUseKeypad
     );
-    els.keypadBtn.textContent = this._t(keypadOpen ? "Contacts" : "Keypad");
+    const keypadButtonLabel = this._t(keypadOpen ? "Contacts" : "Keypad");
+    els.keypadLabel.textContent = keypadButtonLabel;
+    els.keypadBtn.setAttribute("aria-label", keypadButtonLabel);
+    els.keypadBtn.title = keypadButtonLabel;
     els.keypadBtn.setAttribute("aria-expanded", String((showCall || inCallDtmf) && keypadOpen));
     els.settingsBtn.hidden = !showRuntimeOptions;
     els.settingsPanel.hidden = !showSettingsPanel;

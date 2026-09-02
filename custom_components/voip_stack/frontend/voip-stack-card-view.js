@@ -400,12 +400,14 @@ export function buildMainCardSkeleton(cardVersion) {
       }
       .settings-panel[hidden] { display: none; }
       .settings-label-icon { display: none; }
+      .keypad-label-icon { display: none; }
       .video-active:not(.settings-open) .runtime-controls {
         position: absolute;
         z-index: 4;
         right: 0;
         bottom: 0;
         height: clamp(50px, 16%, 58px);
+        gap: 0;
         margin: 0;
       }
       .video-active:not(.settings-open) .runtime-controls .settings-btn {
@@ -419,11 +421,18 @@ export function buildMainCardSkeleton(cardVersion) {
         background: transparent;
       }
       .video-active:not(.settings-open) .runtime-controls .settings-label { display: none; }
+      .video-active:not(.settings-open) .runtime-controls .keypad-label { display: none; }
       .video-active:not(.settings-open) .runtime-controls .settings-label-icon {
         display: inline-flex;
         --mdc-icon-size: 23px;
       }
-      .video-active:not(.settings-open) .voip-button.hangup { padding-right: 68px; }
+      .video-active:not(.settings-open) .runtime-controls .keypad-label-icon {
+        display: inline-flex;
+        --mdc-icon-size: 23px;
+      }
+      .video-active:not(.settings-open) .voip-button.hangup {
+        padding-right: calc(2 * clamp(50px, 16vw, 58px));
+      }
       .card.settings-open {
         overflow: auto;
         background: var(--voip-stack-card-surface);
@@ -745,7 +754,14 @@ export function buildMainCardSkeleton(cardVersion) {
     const keypadBtn = document.createElement("button");
     keypadBtn.type = "button";
     keypadBtn.className = "settings-btn";
-    keypadBtn.textContent = translate("Keypad");
+    const keypadLabel = document.createElement("span");
+    keypadLabel.className = "keypad-label";
+    keypadLabel.textContent = translate("Keypad");
+    const keypadLabelIcon = document.createElement("ha-icon");
+    keypadLabelIcon.className = "keypad-label-icon";
+    keypadLabelIcon.setAttribute("icon", "mdi:dialpad");
+    keypadBtn.appendChild(keypadLabel);
+    keypadBtn.appendChild(keypadLabelIcon);
     keypadBtn.setAttribute("aria-controls", "voip-keypad-panel");
     keypadBtn.setAttribute("aria-expanded", "false");
     runtimeControls.appendChild(keypadBtn);
@@ -927,7 +943,7 @@ export function buildMainCardSkeleton(cardVersion) {
       keypadPanel, keypadInput, keypadKeys,
       answerBtn, declineBtn, hangupBtn, hangupState, hangupPeer, hangupStats, hangupDuration, callBtn, placeholderBtn,
       statusIndicator, statusText, statusReason,
-      runtimeControls, keypadBtn, settingsBtn, settingsPanel,
+      runtimeControls, keypadBtn, keypadLabel, settingsBtn, settingsPanel,
       autoAnswerRow, autoAnswerCheckbox, dndRow, dndCheckbox, ringtoneRow, ringtoneCheckbox,
       microphoneAntiAliasRow, microphoneAntiAliasCheckbox,
       videoCameraRow, videoCameraCheckbox,
