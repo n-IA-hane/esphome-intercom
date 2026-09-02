@@ -162,12 +162,11 @@ esphome:
   # Required by the mipi_spi S3BOX display model, per the stock
   # esp32-s3-box-3.yaml reference this hardware profile is derived from.
   min_version: 2026.4.0
-  platformio_options:
-    board_build.flash_mode: dio
 
 # ESP32-S3-BOX-3 target and ESP-IDF tuning.
 
 esp32:
+  flash_mode: dio
   board: esp32s3box
   flash_size: 16MB
   cpu_frequency: 240MHz
@@ -247,9 +246,6 @@ wifi:
 api:
 
 # OTA update endpoint used by ESPHome Dashboard and `esphome upload`.
-
-ota:
-  - platform: esphome
 
 # USB Serial/JTAG logger. VoIP and audio domains stay visible at INFO; noisy
 # entity domains stay WARN for normal field use.

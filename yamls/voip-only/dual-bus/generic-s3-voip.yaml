@@ -82,12 +82,11 @@ packages:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
-  platformio_options:
-    board_build.flash_mode: dio
 
 # ESP32-S3 target and ESP-IDF tuning for the no-codec dual-bus reference.
 
 esp32:
+  flash_mode: dio
   board: freenove_esp32_s3_wroom
   variant: esp32s3
   framework:

@@ -74,12 +74,11 @@ packages:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
-  platformio_options:
-    board_build.flash_mode: dio
 
 # ESP32-S3R8 target with 16 MB flash and octal PSRAM.
 
 esp32:
+  flash_mode: dio
   board: esp32-s3-devkitc-1
   variant: esp32s3
   flash_size: 16MB

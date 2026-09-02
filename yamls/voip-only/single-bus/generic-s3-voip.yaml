@@ -82,12 +82,11 @@ packages:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
-  platformio_options:
-    board_build.flash_mode: dio
 
 # ESP32-S3 target and ESP-IDF tuning for the no-codec single-bus reference.
 
 esp32:
+  flash_mode: dio
   board: esp32-s3-devkitc-1
   variant: esp32s3
   framework:

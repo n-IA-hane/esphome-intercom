@@ -18,7 +18,7 @@ light:
     name: ${status_led_name}
     pin: ${status_led_pin}
     num_leds: ${status_led_num_leds}
-    rgb_order: ${status_led_rgb_order}
+    channel_colors: ${status_led_rgb_order}
     chipset: WS2812
     default_transition_length: 0ms
     effects:

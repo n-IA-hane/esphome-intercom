@@ -102,12 +102,11 @@ packages:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
-  platformio_options:
-    board_build.flash_mode: dio
 
 # ESP32-S3 target and ESP-IDF tuning for the no-codec full-experience profile.
 
 esp32:
+  flash_mode: dio
   board: esp32-s3-devkitc-1
   variant: esp32s3
   flash_size: 8MB
@@ -167,10 +166,6 @@ wifi:
 # Home Assistant native API for entities, service actions and phonebook sync.
 
 api:
-
-# OTA update endpoint used by ESPHome Dashboard and `esphome upload`.
-ota:
-  - platform: esphome
 
 # USB Serial/JTAG logger. VoIP and audio domains stay visible at INFO; noisy
 # entity domains stay WARN for normal field use.

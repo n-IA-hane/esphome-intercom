@@ -102,12 +102,11 @@ packages:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
-  platformio_options:
-    board_build.flash_mode: dio
 
 # ESP32-S3 target and ESP-IDF tuning for the experimental single-mic AFE profile.
 
 esp32:
+  flash_mode: dio
   board: esp32-s3-devkitc-1
   flash_size: 16MB
   variant: esp32s3
@@ -167,10 +166,6 @@ wifi:
 # Home Assistant native API for entities, service actions and phonebook sync.
 
 api:
-
-# OTA update endpoint used by ESPHome Dashboard and `esphome upload`.
-ota:
-  - platform: esphome
 
 # USB Serial/JTAG logger. Keep project domains visible while this profile is
 # still marked untested.

@@ -19,7 +19,7 @@ light:
     pin: ${status_led_pin}
     chipset: ${status_led_chipset}
     num_leds: 1
-    rgb_order: ${status_led_rgb_order}
+    channel_colors: ${status_led_rgb_order}
     effects:
       - pulse:
           name: "Slow Pulse"

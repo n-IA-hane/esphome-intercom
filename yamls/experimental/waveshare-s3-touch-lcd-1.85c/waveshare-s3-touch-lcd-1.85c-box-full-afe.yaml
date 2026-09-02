@@ -257,12 +257,6 @@ api:
   on_client_connected:
     - script.execute: draw_display
 
-# OTA update endpoint used by ESPHome Dashboard and `esphome upload`.
-
-ota:
-  - platform: esphome
-    id: ota_esphome
-
 # USB Serial/JTAG logger. VoIP/audio domains stay visible at INFO; noisy entity
 # domains stay WARN for normal field use.
 

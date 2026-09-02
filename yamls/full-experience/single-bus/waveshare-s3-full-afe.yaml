@@ -111,12 +111,11 @@ packages:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
-  platformio_options:
-    board_build.flash_mode: dio
 
 # ESP32-S3 target and ESP-IDF tuning for the Waveshare S3 full AFE profile.
 
 esp32:
+  flash_mode: dio
   board: esp32-s3-devkitc-1
   flash_size: 16MB
   framework:
