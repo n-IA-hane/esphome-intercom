@@ -118,8 +118,12 @@ assert.equal(
   Math.min(androidOutput._maxStartFrames, Math.ceil((216 + 80) / {frame_ms})),
 );
 const learnedTarget = androidOutput._targetStartFrames;
+const learnedAt = androidOutput._lastJitterSpike;
+context.currentTime = 2.332;
+androidOutput._push(new ArrayBuffer(frameSamples * 2), 0, 2332);
+assert.equal(androidOutput._targetStartFrames, learnedTarget);
+assert.equal(androidOutput._lastJitterSpike, learnedAt);
 androidOutput._lastUnderrun = 0;
-androidOutput._lastJitterSpike = 0;
 androidOutput._lastStats = 0;
 context.currentTime = 20;
 androidOutput.process([], [[new Float32Array(128)]]);

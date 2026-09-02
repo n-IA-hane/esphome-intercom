@@ -119,14 +119,14 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       const deliveryGapMs = deliveryTimeMs - this._lastDeliveryTimeMs;
       this._maxDeliveryGapMs = Math.max(this._maxDeliveryGapMs, deliveryGapMs);
       if (deliveryGapMs >= 40) {
-        this._lastJitterSpike = currentTime;
         const adaptiveFrames = Math.ceil(
           (deliveryGapMs + MIN_START_LATENCY_MS) / this._format.frameMs,
         );
-        this._targetStartFrames = Math.max(
-          this._targetStartFrames,
-          Math.min(this._maxStartFrames, adaptiveFrames),
-        );
+        const boundedTarget = Math.min(this._maxStartFrames, adaptiveFrames);
+        if (boundedTarget > this._targetStartFrames) {
+          this._targetStartFrames = boundedTarget;
+          this._lastJitterSpike = currentTime;
+        }
       }
     }
     this._lastDeliveryTimeMs = deliveryTimeMs;
