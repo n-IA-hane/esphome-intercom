@@ -180,7 +180,7 @@ its UDP binding.
 
 ## Current candidate qualification
 
-- 1700 software tests passed, with 4 intentional deselections and 133
+- 1716 software tests passed, with 4 intentional deselections and 133
   parameterized subtests.
 - 95 Home Assistant runtime tests passed.
 - The complete local SIP laboratory passed caller and callee hangup, CANCEL,
@@ -198,6 +198,11 @@ its UDP binding.
   audio packets, zero audio PLC or queue drops, and zero video loss, reorder or
   access-unit queue drops. P4 presented 74 of 75 admitted JPEG frames and
   returned every call-scoped resource to zero after hangup.
+- A repeated Android matrix covered X-Bees to P4 twice, Zoiper to P4, P4 to
+  Zoiper and P4 to X-Bees. The combined capture contained 26 RTP streams with
+  zero packet loss. P4 audio held its negotiated 10 ms cadence in both
+  directions, including the 48 kHz browser leg, and final HA runtime ownership
+  returned completely to zero.
 - A physical OnePlus Nord 5 Companion call held browser playback at zero
   underruns after the direct WebSocket-to-AudioWorklet path and bounded adaptive
   reserve were deployed. The buffer absorbed measured WebView delivery stalls
