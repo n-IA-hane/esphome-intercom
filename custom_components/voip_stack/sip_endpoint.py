@@ -182,6 +182,30 @@ class SipEndpointManager:
                 await async_wait_for_cleanup(task)
             raise
 
+    def _server_options(self) -> dict[str, Any]:
+        """Return the signaling options shared by UDP and TCP servers."""
+
+        return {
+            "host": self.host,
+            "port": self.port,
+            "local_ip": self.local_ip,
+            "local_rtp_port": self.local_rtp_port,
+            "supported_formats": self.supported_formats,
+            "supported_send_formats": self.supported_send_formats,
+            "supported_recv_formats": self.supported_recv_formats,
+            "on_invite": self.on_invite,
+            "on_offerless_invite": self.on_offerless_invite,
+            "on_terminated": self.on_terminated,
+            "on_register": self.on_register,
+            "on_info": self.on_info,
+            "on_media_update": self.on_media_update,
+            "on_refer": self.on_refer,
+            "on_request": self.on_request,
+            "enable_video": self.enable_video,
+            "enable_video_transcoding": self.enable_video_transcoding,
+            "prefer_browser_video_send": self.prefer_browser_video_send,
+        }
+
     async def _start(self) -> bool:
         if not self.udp_enabled and not self.tcp_enabled:
             _LOGGER.error("Cannot start SIP endpoint manager: no signaling transport is enabled")
@@ -197,50 +221,14 @@ class SipEndpointManager:
         published = False
         try:
             if self.udp_enabled:
-                udp = SipUdpServer(
-                    host=self.host,
-                    port=self.port,
-                    local_ip=self.local_ip,
-                    local_rtp_port=self.local_rtp_port,
-                    supported_formats=self.supported_formats,
-                    supported_send_formats=self.supported_send_formats,
-                    supported_recv_formats=self.supported_recv_formats,
-                    on_invite=self.on_invite,
-                    on_offerless_invite=self.on_offerless_invite,
-                    on_terminated=self.on_terminated,
-                    on_register=self.on_register,
-                    on_info=self.on_info,
-                    on_media_update=self.on_media_update,
-                    on_refer=self.on_refer,
-                    on_request=self.on_request,
-                    enable_video=self.enable_video,
-                    enable_video_transcoding=self.enable_video_transcoding,
-                    prefer_browser_video_send=self.prefer_browser_video_send,
-                )
+                udp = SipUdpServer(**self._server_options())
                 if not await udp.start():
                     return False
 
             if self.tcp_enabled:
                 tcp = SipTcpServer(
-                    host=self.host,
-                    port=self.port,
-                    local_ip=self.local_ip,
-                    local_rtp_port=self.local_rtp_port,
-                    supported_formats=self.supported_formats,
-                    supported_send_formats=self.supported_send_formats,
-                    supported_recv_formats=self.supported_recv_formats,
-                    on_invite=self.on_invite,
-                    on_offerless_invite=self.on_offerless_invite,
-                    on_terminated=self.on_terminated,
-                    on_register=self.on_register,
-                    on_info=self.on_info,
-                    on_media_update=self.on_media_update,
-                    on_refer=self.on_refer,
-                    on_request=self.on_request,
+                    **self._server_options(),
                     on_flow_closed=self.on_flow_closed,
-                    enable_video=self.enable_video,
-                    enable_video_transcoding=self.enable_video_transcoding,
-                    prefer_browser_video_send=self.prefer_browser_video_send,
                 )
                 if not await tcp.start():
                     return False
