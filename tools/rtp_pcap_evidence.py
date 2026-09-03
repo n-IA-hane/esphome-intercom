@@ -58,6 +58,7 @@ def analyze_rows(rows: Iterable[str]) -> list[dict[str, Any]]:
                 "destination": f"{columns[3]}:{columns[4]}",
                 "ssrc": columns[5].lower(),
                 "payload_type": int(columns[6]),
+                "start_time": float(columns[0]),
                 "times": [],
                 "sequences": [],
                 "timestamps": [],
@@ -126,8 +127,10 @@ def analyze_pcap(path: Path) -> list[dict[str, Any]]:
     audio_formats = _sdp_audio_formats(tshark, path)
     for stream in streams:
         source_host, source_port = stream["source"].rsplit(":", 1)
-        audio_format = audio_formats.get(
-            (source_host, int(source_port), stream["payload_type"])
+        audio_format = _audio_format_at(
+            audio_formats,
+            (source_host, int(source_port), stream["payload_type"]),
+            stream["start_time"],
         )
         if audio_format is None:
             stream["media_type"] = "video"
@@ -187,7 +190,7 @@ def evaluate_streams(
 def _sdp_audio_formats(
     tshark: str,
     path: Path,
-) -> dict[tuple[str, int, int], tuple[int, str]]:
+) -> dict[tuple[str, int, int], list[tuple[float, int, str]]]:
     result = subprocess.run(
         [
             tshark,
@@ -197,6 +200,8 @@ def _sdp_audio_formats(
             "sdp",
             "-T",
             "fields",
+            "-e",
+            "frame.time_relative",
             "-e",
             "ip.src",
             "-e",
@@ -209,12 +214,12 @@ def _sdp_audio_formats(
         stderr=subprocess.PIPE,
         text=True,
     )
-    formats: dict[tuple[str, int, int], tuple[int, str]] = {}
+    formats: dict[tuple[str, int, int], list[tuple[float, int, str]]] = {}
     for row in result.stdout.splitlines():
         columns = row.split("\t")
-        if len(columns) != 3:
+        if len(columns) != 4:
             continue
-        source, media, attributes = columns
+        relative_time, source, media, attributes = columns
         audio = re.search(r"(?:^|,)audio (\d+) [^,\s]+((?: \d+)+)", media)
         if not source or audio is None:
             continue
@@ -227,14 +232,29 @@ def _sdp_audio_formats(
         ):
             payload_type = int(payload)
             if payload_type in payloads:
-                formats[(source, port, payload_type)] = (
-                    int(clock),
-                    encoding.lower(),
+                formats.setdefault((source, port, payload_type), []).append(
+                    (float(relative_time), int(clock), encoding.lower())
                 )
         for payload in (0, 8, 9):
             if payload in payloads:
-                formats.setdefault((source, port, payload), (8000, "static"))
+                key = (source, port, payload)
+                if key not in formats or formats[key][-1][0] != float(relative_time):
+                    formats.setdefault(key, []).append(
+                        (float(relative_time), 8000, "static")
+                    )
     return formats
+
+
+def _audio_format_at(
+    formats: dict[tuple[str, int, int], list[tuple[float, int, str]]],
+    key: tuple[str, int, int],
+    stream_start_time: float,
+) -> tuple[int, str] | None:
+    active = [item for item in formats.get(key, ()) if item[0] <= stream_start_time]
+    if not active:
+        return None
+    _, clock_rate, encoding = max(active, key=lambda item: item[0])
+    return clock_rate, encoding
 
 
 def _sha256(path: Path) -> str:

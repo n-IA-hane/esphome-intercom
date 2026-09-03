@@ -85,15 +85,31 @@ def test_sdp_audio_formats_bind_payload_to_advertised_port(
 ) -> None:
     class Result:
         stdout = (
-            "192.0.2.1\taudio 40000 RTP/AVP 97,video 40002 RTP/AVP 103"
+            "1.25\t192.0.2.1\taudio 40000 RTP/AVP 97,video 40002 RTP/AVP 103"
             "\trtpmap:97 L16/16000/1,rtpmap:103 H264/90000\n"
         )
 
     monkeypatch.setattr(MODULE.subprocess, "run", lambda *args, **kwargs: Result())
 
     assert MODULE._sdp_audio_formats("tshark", tmp_path / "call.pcap") == {
-        ("192.0.2.1", 40000, 97): (16000, "l16"),
+        ("192.0.2.1", 40000, 97): [(1.25, 16000, "l16")],
     }
+
+
+def test_audio_format_uses_sdp_active_when_rtp_stream_started() -> None:
+    formats = {
+        ("192.0.2.1", 40000, 96): [
+            (1.0, 16000, "l16"),
+            (100.0, 48000, "l16"),
+        ]
+    }
+
+    assert MODULE._audio_format_at(
+        formats, ("192.0.2.1", 40000, 96), 10.0
+    ) == (16000, "l16")
+    assert MODULE._audio_format_at(
+        formats, ("192.0.2.1", 40000, 96), 110.0
+    ) == (48000, "l16")
 
 
 def test_telephone_event_is_not_evaluated_as_audio_or_video_loss() -> None:
