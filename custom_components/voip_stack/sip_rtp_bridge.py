@@ -260,15 +260,13 @@ class SipRtpRelay:
         """Prepare converters without changing the live relay."""
 
         left_to_right_passthrough = bool(
-            not self.debug_capture
-            and _audio_payload_relay_compatible(
+            _audio_payload_relay_compatible(
                 left.inbound_rtp_format,
                 right.outbound_rtp_format,
             )
         )
         right_to_left_passthrough = bool(
-            not self.debug_capture
-            and _audio_payload_relay_compatible(
+            _audio_payload_relay_compatible(
                 right.inbound_rtp_format,
                 left.outbound_rtp_format,
             )
@@ -285,10 +283,10 @@ class SipRtpRelay:
             if right_to_left_passthrough
             else PcmFrameConverter(right.audio_format, left.outbound_audio_format),
             "left_decoder": None
-            if left_to_right_passthrough
+            if left_to_right_passthrough and not self.debug_capture
             else RtpPayloadDecoder(left.inbound_rtp_format),
             "right_decoder": None
-            if right_to_left_passthrough
+            if right_to_left_passthrough and not self.debug_capture
             else RtpPayloadDecoder(right.inbound_rtp_format),
             "left_encoder": None
             if right_to_left_passthrough
@@ -967,6 +965,15 @@ class SipRtpRelay:
                     packet.payload,
                     source.inbound_rtp_format,
                 )
+                if self.debug_capture:
+                    capture_decoder = (
+                        self.left_decoder if side == "left" else self.right_decoder
+                    )
+                    try:
+                        if capture_decoder is not None:
+                            self._capture_pcm(side, capture_decoder.decode(packet.payload))
+                    except Exception as err:  # noqa: BLE001 - capture cannot alter media.
+                        _LOGGER.debug("RTP debug capture drop side=%s: %s", side, err)
                 if source.rx_ssrc is None:
                     source.rx_ssrc = packet.ssrc
                     source.host = str(addr[0])

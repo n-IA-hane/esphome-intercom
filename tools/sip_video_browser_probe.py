@@ -636,6 +636,11 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--device-id",
+        default="",
+        help="bind the probe to one explicit Home Assistant phone device",
+    )
+    parser.add_argument(
         "--storage-state",
         default=DEFAULT_STORAGE_STATE,
         help="Playwright storage-state JSON for an authenticated HA user",
@@ -658,6 +663,12 @@ def main() -> int:
     parser.add_argument("--ring-timeout", type=float, default=60)
     parser.add_argument("--video-timeout", type=float, default=25)
     parser.add_argument("--hold-seconds", type=float, default=8)
+    parser.add_argument(
+        "--block-main-thread-ms",
+        type=int,
+        default=0,
+        help="block the page thread once during the call to qualify worker isolation",
+    )
     parser.add_argument("--viewport-width", type=int, default=1280)
     parser.add_argument("--viewport-height", type=int, default=900)
     parser.add_argument(
@@ -854,6 +865,17 @@ def main() -> int:
             **context_options,
             viewport={"width": args.viewport_width, "height": args.viewport_height},
         )
+        if args.device_id:
+            device_id = json.dumps(str(args.device_id))
+            context.add_init_script(
+                f"""
+                (() => {{
+                  const deviceId = {device_id};
+                  globalThis.__voipStackProbeDeviceId = deviceId;
+                  sessionStorage.setItem("voip-stack-probe-device-id", deviceId);
+                }})();
+                """
+            )
         # Lovelace can perform a same-view document reload while applying a
         # freshly versioned custom-card resource. Install the card locator in
         # every document so media qualification resumes after that handoff
@@ -1336,6 +1358,15 @@ def main() -> int:
                     polling=100,
                 )
             flowing = sample("video_flowing")
+            if args.block_main_thread_ms > 0:
+                page.evaluate(
+                    """duration => {
+                      const deadline = performance.now() + duration;
+                      while (performance.now() < deadline) {}
+                    }""",
+                    args.block_main_thread_ms,
+                )
+                sample("after_main_thread_block")
             if args.sample_interval > 0:
                 deadline = time.monotonic() + args.hold_seconds
                 sample_number = 0

@@ -29,7 +29,62 @@ from .voip_phase1_support import (
     types,
     unittest,
 )
+
+
+def _browser_audio_frame(
+    audio_ws,
+    payload: bytes,
+    *,
+    generation: int = 0,
+    sequence: int = 0,
+    timestamp: int = 0,
+) -> bytes:
+    return audio_ws.encode_audio_frame(
+        payload,
+        generation=generation,
+        sequence=sequence,
+        timestamp=timestamp,
+    )
+
+
 class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
+    def test_browser_audio_frame_preserves_timeline_and_rejects_trailing_data(self) -> None:
+        audio_ws = _load_intercom_module("audio_ws")
+        encoded = _browser_audio_frame(
+            audio_ws,
+            b"pcm",
+            generation=7,
+            sequence=65535,
+            timestamp=0xFFFFFFF0,
+        )
+
+        decoded = audio_ws.decode_audio_frame(encoded)
+        self.assertEqual(decoded.payload, b"pcm")
+        self.assertEqual(decoded.generation, 7)
+        self.assertEqual(decoded.sequence, 65535)
+        self.assertEqual(decoded.timestamp, 0xFFFFFFF0)
+        with self.assertRaises(ValueError):
+            audio_ws.decode_audio_frame(encoded + b"x")
+
+    def test_g722_rtp_clock_maps_to_decoded_pcm_timeline(self) -> None:
+        audio_ws_view = _load_audio_ws_runtime_module()
+
+        self.assertEqual(
+            audio_ws_view._rtp_to_pcm_timestamp(
+                1160, 1000, pcm_rate=16000, rtp_rate=8000
+            ),
+            320,
+        )
+        self.assertEqual(
+            audio_ws_view._rtp_to_pcm_timestamp(
+                0x00000010,
+                0xFFFFFFF0,
+                pcm_rate=16000,
+                rtp_rate=8000,
+            ),
+            64,
+        )
+
     async def test_browser_playout_plc_fades_out_and_recovers_without_a_step(self) -> None:
         audio_ws_view = _load_audio_ws_runtime_module()
         pcm = b"".join(
@@ -1081,11 +1136,15 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 self.messages = [
                     types.SimpleNamespace(
                         type=WSMsgType.BINARY,
-                        data=audio_ws.encode_audio_frame(bytes(expected + 1)),
+                        data=_browser_audio_frame(
+                            audio_ws, bytes(expected + 1), generation=1
+                        ),
                     ),
                     types.SimpleNamespace(
                         type=WSMsgType.BINARY,
-                        data=audio_ws.encode_audio_frame(browser_pcm),
+                        data=_browser_audio_frame(
+                            audio_ws, browser_pcm, generation=1
+                        ),
                     ),
                 ]
                 self.peer_frame_sent = asyncio.Event()
@@ -1129,7 +1188,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(bridge.sent, [browser_pcm])
         self.assertEqual(
-            [audio_ws.decode_audio_frame(frame) for frame in ws.binary],
+            [audio_ws.decode_audio_frame(frame).payload for frame in ws.binary],
             [peer_pcm],
         )
         self.assertEqual(ws.json[0]["media_transport"], "local_websocket")
@@ -1764,8 +1823,8 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
         frame = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
         expected = int(frame.audio_format.nominal_frame_bytes)
-        invalid = audio_ws.encode_audio_frame(bytes(expected + 1))
-        valid = audio_ws.encode_audio_frame(bytes(expected))
+        invalid = _browser_audio_frame(audio_ws, bytes(expected + 1))
+        valid = _browser_audio_frame(audio_ws, bytes(expected))
         ws = WebSocket(
             [
                 types.SimpleNamespace(type=WSMsgType.BINARY, data=invalid),
@@ -1795,7 +1854,10 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(manager.frames, [("conference:Ops", bytes(expected))])
         self.assertEqual(hass.store["tx_error"], 1)
-        self.assertLessEqual(audio_ws_view._MAX_BROWSER_AUDIO_MESSAGE_BYTES, 4096)
+        self.assertLessEqual(
+            audio_ws_view._MAX_BROWSER_AUDIO_MESSAGE_BYTES,
+            4096 + audio_ws.AUDIO_FRAME_HEADER_BYTES,
+        )
 
     async def test_audio_websocket_reinvite_rebuilds_live_encoder_and_decoder(self) -> None:
         audio_ws_view = _load_audio_ws_runtime_module()
@@ -1940,7 +2002,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             )
             await wait_until(lambda: len(ws.binary) >= 5)
             self.assertEqual(
-                [audio_ws.decode_audio_frame(frame) for frame in ws.binary],
+                [audio_ws.decode_audio_frame(frame).payload for frame in ws.binary],
                 [*preroll_expected[-4:], pcma_decoder.decode(live_payload)],
             )
             ws.binary.clear()
@@ -1972,7 +2034,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             await wait_until(lambda: bool(ws.binary))
             expected_first = sip_client.RtpPayloadDecoder(pcma).decode(first_payload)
             self.assertEqual(len(ws.binary), 1)
-            self.assertEqual(audio_ws.decode_audio_frame(ws.binary[-1]), expected_first)
+            self.assertEqual(audio_ws.decode_audio_frame(ws.binary[-1]).payload, expected_first)
 
             session.send_format = l16
             session.recv_format = l16
@@ -1994,7 +2056,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             )
             await loop.sock_sendto(remote, second_packet, ("127.0.0.1", local_port))
             await wait_until(lambda: len(ws.binary) >= 2)
-            self.assertEqual(audio_ws.decode_audio_frame(ws.binary[-1]), second_pcm)
+            self.assertEqual(audio_ws.decode_audio_frame(ws.binary[-1]).payload, second_pcm)
 
             burst_start = len(ws.binary)
             for index in range(8):
@@ -2016,20 +2078,17 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             # playback cadence, so HA must not add a second playout clock.
             self.assertLess(burst_times[-1] - burst_times[0], 0.05)
 
-            # Browser capture reports its actual delivery cadence before the
-            # first frame. The RTP playout starts with enough queued audio to
-            # survive that cadence instead of immediately collapsing into PLC.
-            await ws.messages.put(
-                types.SimpleNamespace(
-                    type=WSMsgType.TEXT,
-                    data='{"type":"capture_timing","gap_ms":100}',
-                )
-            )
             for _index in range(15):
                 await ws.messages.put(
                     types.SimpleNamespace(
                         type=WSMsgType.BINARY,
-                        data=audio_ws.encode_audio_frame(second_pcm),
+                        data=_browser_audio_frame(
+                            audio_ws,
+                            second_pcm,
+                            generation=session.media_generation,
+                            sequence=_index,
+                            timestamp=_index * l16.audio_format.nominal_frame_samples,
+                        ),
                     )
                 )
             await asyncio.sleep(0.05)
@@ -2063,7 +2122,13 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 await ws.messages.put(
                     types.SimpleNamespace(
                         type=WSMsgType.BINARY,
-                        data=audio_ws.encode_audio_frame(second_pcm),
+                        data=_browser_audio_frame(
+                            audio_ws,
+                            second_pcm,
+                            generation=session.media_generation,
+                            sequence=_index,
+                            timestamp=(15 + _index) * l16.audio_format.nominal_frame_samples,
+                        ),
                     )
                 )
             burst: list[rtp.RtpPacket] = []

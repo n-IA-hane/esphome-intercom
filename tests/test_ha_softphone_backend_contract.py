@@ -459,9 +459,11 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         ).read_text()
         self.assertIn("async def browser_to_rtp()", audio_ws)
         self.assertIn("async def playout()", audio_ws)
-        self.assertIn("_BROWSER_PLAYOUT_DEFAULT_MS = 150", audio_ws)
-        self.assertIn("max_frames * 4 // 5", audio_ws)
-        self.assertIn("_BROWSER_PLAYOUT_MAX_MS = 500", audio_ws)
+        self.assertIn("return min(3, max_frames)", audio_ws)
+        self.assertIn("_BROWSER_PLAYOUT_MAX_MS = 200", audio_ws)
+        self.assertIn(
+            "tx_frames[0].timestamp == expected_browser_timestamp", audio_ws
+        )
         self.assertIn("_conceal_pcm_frame(", audio_ws)
         self.assertIn('counters["tx_playout_late_discard"]', audio_ws)
         self.assertIn("payload = rtp_encoder.encode(pcm)", audio_ws)
@@ -488,10 +490,10 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         ).read_text()
         body = _function_body(audio_ws, "_run_audio_session")
         self.assertIn("session.send_format.rtp_timestamp_step", body)
-        self.assertNotIn(
-            "session.send_format.audio_format.nominal_frame_samples",
-            body,
+        self.assertIn(
+            "int(session.send_format.audio_format.nominal_frame_samples)", body
         )
+        self.assertIn("_rtp_to_pcm_timestamp(", body)
 
     def test_softphone_start_is_serialized_and_ring_group_claims_state_before_io(
         self,

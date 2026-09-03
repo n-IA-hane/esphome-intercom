@@ -20,7 +20,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .core import rtp
-from .audio_ws import decode_audio_frame, encode_audio_frame
+from .audio_ws import AUDIO_FRAME_HEADER_BYTES, AUDIO_FRAME_VERSION, decode_audio_frame, encode_audio_frame
 from .config import debug_mode, media_capture_enabled
 from .core.audio_format import HA_SIP_PCM_FORMATS
 from .debug_capture import (
@@ -67,20 +67,38 @@ _DEBUG_CAPTURE_SECONDS = 15
 _DEBUG_TIMING_MAX_SAMPLES = 4096
 _AUDIO_OWNER_HANDOFF_TIMEOUT = 5.0
 # The largest supported browser PCM frame is stereo 48 kHz/s16le/20 ms
-# (3,840 bytes) plus the one-byte framing tag.  Keep a small fixed ceiling so
+# (3,840 bytes) plus the versioned frame header. Keep a small fixed ceiling so
 # aiohttp never buffers multi-megabyte payloads on this real-time endpoint.
-_MAX_BROWSER_AUDIO_MESSAGE_BYTES = 4096
-_BROWSER_PLAYOUT_MAX_MS = 500
-_BROWSER_PLAYOUT_DEFAULT_MS = 150
+_MAX_BROWSER_AUDIO_MESSAGE_BYTES = 4096 + AUDIO_FRAME_HEADER_BYTES
+_BROWSER_PLAYOUT_MAX_MS = 200
 
 
 def _playout_target_frames(frame_ms: int) -> int:
-    """Use PJSIP's initial prefetch policy within our bounded capacity."""
+    """Start after three complete source frames, bounded by capacity."""
 
     value = max(1, int(frame_ms))
     max_frames = max(1, _BROWSER_PLAYOUT_MAX_MS // value)
-    default_frames = math.ceil(_BROWSER_PLAYOUT_DEFAULT_MS / value)
-    return max(1, min(default_frames, max_frames * 4 // 5))
+    return min(3, max_frames)
+
+
+def _timestamp_delta(value: int, reference: int) -> int:
+    """Return a signed 32-bit media timestamp delta."""
+
+    return ((int(value) - int(reference) + 0x80000000) & 0xFFFFFFFF) - 0x80000000
+
+
+def _rtp_to_pcm_timestamp(
+    value: int,
+    origin: int,
+    *,
+    pcm_rate: int,
+    rtp_rate: int,
+) -> int:
+    """Map an RTP clock onto the decoded PCM sample timeline."""
+
+    if pcm_rate <= 0 or rtp_rate <= 0:
+        raise ValueError("media clock rates must be positive")
+    return round(_timestamp_delta(value, origin) * pcm_rate / rtp_rate) & 0xFFFFFFFF
 
 
 async def _pace_playout(
@@ -405,6 +423,10 @@ class VoipAudioWebSocketView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.WebSocketResponse:
+        if str(request.query.get("audio_protocol") or "") != str(AUDIO_FRAME_VERSION):
+            raise web.HTTPBadRequest(
+                text="Browser audio protocol mismatch, reload the Home Assistant frontend"
+            )
         prepared = await async_prepare_media_websocket_request(
             request,
             active_session_resolver=_active_softphone_media_session,
@@ -620,6 +642,9 @@ async def _run_local_audio_session(
         "drop_tx_queue": 0,
         "tx_error": 0,
     }
+    media_generation = 1
+    send_sequence = 0
+    send_timestamp = 0
     await ws.send_json(
         {
             "state": "in_call",
@@ -633,24 +658,42 @@ async def _run_local_audio_session(
             "audio_direction": "sendrecv",
             "remote_connection_held": False,
             "media_transport": "local_websocket",
+            "audio_protocol": AUDIO_FRAME_VERSION,
+            "media_generation": media_generation,
         }
     )
 
     async def peer_to_browser() -> None:
+        nonlocal send_sequence, send_timestamp
         while True:
             pcm = await bridge.receive_audio(
                 lease.call_id,
                 lease.endpoint_id,
                 lease.token,
             )
-            await ws.send_bytes(encode_audio_frame(pcm))
+            await ws.send_bytes(
+                encode_audio_frame(
+                    pcm,
+                    generation=media_generation,
+                    sequence=send_sequence,
+                    timestamp=send_timestamp,
+                )
+            )
+            send_sequence = rtp.next_sequence(send_sequence)
+            send_timestamp = rtp.next_timestamp(
+                send_timestamp, audio_format.nominal_frame_samples
+            )
             counters["ws_tx"] += 1
 
     async def browser_to_peer() -> None:
         async for msg in ws:
             if msg.type == WSMsgType.BINARY:
                 try:
-                    pcm = decode_audio_frame(bytes(msg.data))
+                    frame = decode_audio_frame(bytes(msg.data))
+                    if frame.generation != media_generation:
+                        counters["tx_error"] += 1
+                        continue
+                    pcm = frame.payload
                     if len(pcm) != expected_bytes:
                         counters["drop_payload_size"] += 1
                         continue
@@ -788,9 +831,6 @@ async def _run_audio_session(
         "dtmf_rx_events": 0,
         "tx_ws_max_gap_ms": 0,
         "tx_ws_gaps_over_40ms": 0,
-        "tx_capture_timing_reports": 0,
-        "tx_capture_timing_first_ms": 0,
-        "tx_capture_timing_max_ms": 0,
         "tx_playout_target_frames": 0,
         "tx_playout_target_ms": 0,
     }
@@ -800,6 +840,8 @@ async def _run_audio_session(
     remote_rtp_host = str(session.remote_rtp_host)
     remote_rtp_port = int(session.remote_rtp_port)
     applied_media_generation = int(session.media_generation)
+    browser_rtp_timestamp_origin: int | None = None
+    browser_pcm_timestamp_origin = 0
     last_browser_audio_at = 0.0
     last_rtp_audio_at = 0.0
     first_rtp_audio_at = 0.0
@@ -892,6 +934,8 @@ async def _run_audio_session(
             "selected_rx_rtp_format": session.recv_format.wire_token(),
             "audio_direction": session.local_audio_direction,
             "remote_connection_held": session.remote_audio_connection_held,
+            "audio_protocol": AUDIO_FRAME_VERSION,
+            "media_generation": int(session.media_generation),
         }
         if message_type:
             payload["type"] = message_type
@@ -904,6 +948,7 @@ async def _run_audio_session(
         nonlocal dtmf_decoder
         nonlocal debug_capture
         nonlocal browser_preroll_max_frames
+        nonlocal browser_rtp_timestamp_origin, browser_pcm_timestamp_origin
         if generation == applied_media_generation:
             return
         async with media_state_lock:
@@ -930,6 +975,8 @@ async def _run_audio_session(
             logged_first_rtp = False
             protocol.dropped_packets += drain_queue(queue)
             browser_preroll.clear()
+            browser_rtp_timestamp_origin = None
+            browser_pcm_timestamp_origin = 0
             browser_preroll_max_frames = max(
                 2,
                 math.ceil(
@@ -979,6 +1026,7 @@ async def _run_audio_session(
         nonlocal remote_rtp_host, remote_rtp_port
         nonlocal last_rtp_audio_at
         nonlocal first_rtp_audio_at
+        nonlocal browser_rtp_timestamp_origin, browser_pcm_timestamp_origin
         observed_generation = int(session.media_generation)
         while not closed.is_set():
             if observed_generation != session.media_generation:
@@ -1080,7 +1128,24 @@ async def _run_audio_session(
                 )
                 if debug_capture is not None:
                     debug_capture.note_rtp_rx(loop.time(), pcm)
-                encoded = encode_audio_frame(pcm)
+                if browser_rtp_timestamp_origin is None:
+                    browser_rtp_timestamp_origin = packet.timestamp
+                    browser_pcm_timestamp_origin = 0
+                browser_timestamp = (
+                    browser_pcm_timestamp_origin
+                    + _rtp_to_pcm_timestamp(
+                        packet.timestamp,
+                        browser_rtp_timestamp_origin,
+                        pcm_rate=session.recv_format.audio_format.sample_rate,
+                        rtp_rate=session.recv_format.rtp_clock_rate,
+                    )
+                ) & 0xFFFFFFFF
+                encoded = encode_audio_frame(
+                    pcm,
+                    generation=int(session.media_generation),
+                    sequence=packet.sequence,
+                    timestamp=browser_timestamp,
+                )
                 if not browser_playback_ready.is_set():
                     if len(browser_preroll) >= browser_preroll_max_frames:
                         browser_preroll.popleft()
@@ -1139,7 +1204,7 @@ async def _run_audio_session(
         nonlocal sequence, timestamp, remote_rtp_host, remote_rtp_port
         nonlocal last_browser_audio_at
         observed_generation = int(session.media_generation)
-        tx_frames: deque[bytes] = deque()
+        tx_frames = deque()
         tx_ready = asyncio.Event()
         frame_ms = int(session.send_format.audio_format.frame_ms)
         target_frames = _playout_target_frames(frame_ms)
@@ -1149,6 +1214,7 @@ async def _run_audio_session(
         last_pcm = b""
         plc_active = False
         silence_pcm = bytes(int(session.send_format.audio_format.nominal_frame_bytes))
+        expected_browser_timestamp: int | None = None
 
         async def send_dtmf(digit: str, duration_ms: int) -> None:
             """Send one browser digit using RFC 4733, then SIP INFO fallback."""
@@ -1215,8 +1281,8 @@ async def _run_audio_session(
 
         async def playout() -> None:
             nonlocal sequence, timestamp, last_pcm, plc_active
+            nonlocal expected_browser_timestamp
             started = False
-            prefetching = False
             next_deadline = loop.time()
             while not closed.is_set():
                 if not started:
@@ -1226,22 +1292,24 @@ async def _run_audio_session(
                     if closed.is_set():
                         return
                     started = True
+                    expected_browser_timestamp = tx_frames[0].timestamp
                     next_deadline = loop.time()
 
-                if prefetching and len(tx_frames) >= target_frames:
-                    prefetching = False
+                while tx_frames and expected_browser_timestamp is not None:
+                    if _timestamp_delta(
+                        tx_frames[0].timestamp, expected_browser_timestamp
+                    ) >= 0:
+                        break
+                    tx_frames.popleft()
+                    counters["tx_playout_late_discard"] += 1
 
-                if prefetching:
-                    pcm = (
-                        silence_pcm
-                        if plc_active
-                        else _conceal_pcm_frame(last_pcm, len(silence_pcm))
-                    )
-                    last_pcm = pcm
-                    plc_active = True
-                    counters["tx_playout_plc"] += 1
-                elif tx_frames:
-                    pcm = tx_frames.popleft()
+                current_frame = None
+                if tx_frames and expected_browser_timestamp is not None:
+                    if tx_frames[0].timestamp == expected_browser_timestamp:
+                        current_frame = tx_frames.popleft()
+
+                if current_frame is not None:
+                    pcm = current_frame.payload
                     if plc_active:
                         pcm = _fade_in_pcm_frame(
                             pcm,
@@ -1257,7 +1325,6 @@ async def _run_audio_session(
                     )
                     last_pcm = pcm
                     plc_active = True
-                    prefetching = True
                     counters["tx_playout_plc"] += 1
 
                 if not (
@@ -1293,6 +1360,11 @@ async def _run_audio_session(
                 timestamp = rtp.next_timestamp(
                     timestamp, session.send_format.rtp_timestamp_step
                 )
+                if expected_browser_timestamp is not None:
+                    expected_browser_timestamp = rtp.next_timestamp(
+                        expected_browser_timestamp,
+                        int(session.send_format.audio_format.nominal_frame_samples),
+                    )
                 rtp_source.timestamp = timestamp
                 counters["tx_playout_depth"] = len(tx_frames)
                 publish_counters()
@@ -1304,27 +1376,6 @@ async def _run_audio_session(
                 if msg.type == WSMsgType.TEXT:
                     try:
                         control = json.loads(str(msg.data))
-                        if control.get("type") == "capture_timing":
-                            gap_ms = max(0.0, float(control.get("gap_ms") or 0.0))
-                            counters["tx_capture_timing_reports"] += 1
-                            if counters["tx_capture_timing_first_ms"] == 0:
-                                counters["tx_capture_timing_first_ms"] = round(
-                                    gap_ms, 1
-                                )
-                            counters["tx_capture_timing_max_ms"] = max(
-                                counters["tx_capture_timing_max_ms"], round(gap_ms, 1)
-                            )
-                            observed_target = min(
-                                max_frames,
-                                max(1, math.ceil(gap_ms / frame_ms) + 2),
-                            )
-                            if observed_target > target_frames:
-                                target_frames = observed_target
-                                counters["tx_playout_target_frames"] = target_frames
-                                counters["tx_playout_target_ms"] = (
-                                    target_frames * frame_ms
-                                )
-                            continue
                         if control.get("type") == "playback_ready":
                             browser_playback_ready.set()
                             continue
@@ -1366,6 +1417,7 @@ async def _run_audio_session(
                         observed_generation = int(session.media_generation)
                         await refresh_media_state(observed_generation)
                         tx_frames.clear()
+                        expected_browser_timestamp = None
                         frame_ms = int(session.send_format.audio_format.frame_ms)
                         target_frames = _playout_target_frames(frame_ms)
                         max_frames = max(
@@ -1386,22 +1438,28 @@ async def _run_audio_session(
                         )
                         if gap_ms >= 40:
                             counters["tx_ws_gaps_over_40ms"] += 1
-                        observed_target = min(
-                            max_frames,
-                            max(1, math.ceil(gap_ms / frame_ms) + 2),
-                        )
-                        if observed_target > target_frames:
-                            target_frames = observed_target
-                            counters["tx_playout_target_frames"] = target_frames
-                            counters["tx_playout_target_ms"] = target_frames * frame_ms
                     last_browser_audio_at = now
-                    pcm = decode_audio_frame(bytes(msg.data))
+                    frame = decode_audio_frame(bytes(msg.data))
+                    if frame.generation != observed_generation:
+                        counters["tx_playout_late_discard"] += 1
+                        continue
+                    pcm = frame.payload
                     expected = int(session.send_format.audio_format.nominal_frame_bytes)
                     if len(pcm) != expected:
                         raise ValueError(f"browser PCM frame has {len(pcm)} bytes, expected {expected}")
                     if debug_capture is not None:
                         debug_capture.note_ws_rx(loop.time(), pcm)
-                    tx_frames.append(pcm)
+                    if expected_browser_timestamp is not None and _timestamp_delta(
+                        frame.timestamp, expected_browser_timestamp
+                    ) < 0:
+                        counters["tx_playout_late_discard"] += 1
+                        continue
+                    if tx_frames and _timestamp_delta(
+                        frame.timestamp, tx_frames[-1].timestamp
+                    ) <= 0:
+                        counters["tx_playout_late_discard"] += 1
+                        continue
+                    tx_frames.append(frame)
                     while len(tx_frames) > max_frames:
                         tx_frames.popleft()
                         counters["tx_playout_late_discard"] += 1
@@ -1544,21 +1602,41 @@ async def _run_conference_audio_session(
             "selected_rx_format": session.recv_format.audio_format.wire_token(),
             "selected_tx_rtp_format": session.send_format.wire_token(),
             "selected_rx_rtp_format": session.recv_format.wire_token(),
+            "audio_protocol": AUDIO_FRAME_VERSION,
+            "media_generation": int(session.media_generation),
         }
     )
     _LOGGER.info("HA softphone conference websocket attached call_id=%s room=%s", session.call_id, session.conference_room)
 
     async def room_to_ws() -> None:
+        send_sequence = 0
+        send_timestamp = 0
         while not closed.is_set():
             pcm = await conference_queue.get()
-            await ws.send_bytes(encode_audio_frame(pcm))
+            await ws.send_bytes(
+                encode_audio_frame(
+                    pcm,
+                    generation=int(session.media_generation),
+                    sequence=send_sequence,
+                    timestamp=send_timestamp,
+                )
+            )
+            send_sequence = rtp.next_sequence(send_sequence)
+            send_timestamp = rtp.next_timestamp(
+                send_timestamp,
+                int(session.recv_format.audio_format.nominal_frame_samples),
+            )
             counters["ws_tx"] += 1
 
     async def browser_to_room() -> None:
         async for msg in ws:
             if msg.type == WSMsgType.BINARY:
                 try:
-                    pcm = decode_audio_frame(bytes(msg.data))
+                    frame = decode_audio_frame(bytes(msg.data))
+                    if frame.generation != int(session.media_generation):
+                        counters["tx_error"] += 1
+                        continue
+                    pcm = frame.payload
                     expected = int(
                         session.send_format.audio_format.nominal_frame_bytes
                     )

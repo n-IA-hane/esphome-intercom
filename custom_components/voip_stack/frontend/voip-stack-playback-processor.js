@@ -1,18 +1,17 @@
 const PCM_FORMATS = Object.freeze(["s16le", "s24le", "s24le_in_s32", "s32le"]);
 const FRAME_MS = Object.freeze([10, 16, 20, 32]);
 const BUFFER_CAPACITY_SECONDS = 0.32;
-const MIN_START_LATENCY_MS = 60;
-const DEFAULT_START_LATENCY_MS = 120;
+const INITIAL_START_FRAMES = 3;
 const MAX_START_LATENCY_MS = 240;
-const JITTER_SAFETY_MULTIPLIER = 4;
-const STABLE_DECAY_SECONDS = 4;
-const TARGET_DECAY_INTERVAL_SECONDS = 1;
+const STABLE_DECAY_SECONDS = 10;
+const LATE_WINDOW_SECONDS = 5;
+const LATE_EVENTS_TO_GROW = 3;
 const PLC_DECAY_PER_SAMPLE = 0.9997;
 const CLOCK_RECOVERY_DEADBAND_FRAMES = 1;
 const CLOCK_RECOVERY_PROPORTIONAL_GAIN = 0.001;
-const CLOCK_RECOVERY_INTEGRAL_GAIN = 0.0000005;
-const CLOCK_RECOVERY_MAX_RATE = 0.02;
-const CLOCK_RECOVERY_SMOOTHING = 0.005;
+const CLOCK_RECOVERY_MAX_RATE = 0.005;
+const SILENT_RECOVERY_MAX_RATE = 0.01;
+const CLOCK_RECOVERY_SMOOTHING = 0.01;
 
 function normaliseFormat(value) {
   if (!value) throw new Error("playback worklet requires negotiated PCM format");
@@ -44,10 +43,7 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._format = normaliseFormat(options?.processorOptions?.format);
     this._contextFrameSamples = Math.max(1, Math.round(this._format.frameSamples * sampleRate / this._format.sampleRate));
     this._capacityFrames = Math.max(8, Math.ceil((BUFFER_CAPACITY_SECONDS * 1000) / this._format.frameMs));
-    this._minStartFrames = Math.max(
-      2,
-      Math.ceil(MIN_START_LATENCY_MS / this._format.frameMs),
-    );
+    this._minStartFrames = INITIAL_START_FRAMES;
     this._maxStartFrames = Math.max(
       this._minStartFrames,
       Math.ceil(MAX_START_LATENCY_MS / this._format.frameMs),
@@ -59,28 +55,17 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._available = 0;
     this._readFraction = 0;
     this._playbackRate = 1;
-    this._clockRecoveryIntegral = 0;
     this._started = false;
     this._framesIn = 0;
     this._framesOut = 0;
     this._framesDrop = 0;
     this._underruns = 0;
     this._lastStats = 0;
-    this._targetStartFrames = Math.min(
-      this._maxStartFrames,
-      Math.max(
-        this._minStartFrames,
-        Math.ceil(DEFAULT_START_LATENCY_MS / this._format.frameMs),
-      ),
-    );
+    this._targetStartFrames = Math.min(this._maxStartFrames, this._minStartFrames);
     this._lastUnderrun = 0;
-    this._lastTargetDecay = 0;
-    this._lastJitterSpike = 0;
     this._lastOutput = new Float32Array(this._format.channels);
     this._concealmentGain = 0;
     this._lastArrivalTime = 0;
-    this._arrivalJitterMs = 0;
-    this._deliveryJitterMs = 0;
     this._maxArrivalGapMs = 0;
     this._arrivalGapsOver40Ms = 0;
     this._lastDeliveryTimeMs = 0;
@@ -90,17 +75,68 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._previousInput = new Float32Array(this._format.channels);
     this._hasPreviousInput = false;
     this._playbackReady = false;
+    this._generation = 0;
+    this._timelineReady = false;
+    this._playoutTimestamp = 0;
+    this._lateDiscard = 0;
+    this._timelineGaps = 0;
+    this._lateWindowStart = 0;
+    this._lateEvents = 0;
+    this._inUnderrun = false;
+    this._lastSilent = true;
 
     const receive = (event) => {
       const data = event.data;
       if (data?.type === "audio" && data.buffer) {
-        this._push(data.buffer, data.byteOffset || 0, data.arrivalMs);
+        this._push(
+          data.buffer,
+          data.byteOffset || 0,
+          data.arrivalMs,
+          data.generation,
+          data.sequence,
+          data.timestamp,
+        );
       } else if (data?.type === "bind_media_port" && data.port) {
         data.port.onmessage = receive;
         data.port.start?.();
+      } else if (data?.type === "configure_timeline") {
+        this._resetTimeline(Number(data.generation || 0) >>> 0);
       }
     };
     this.port.onmessage = receive;
+  }
+
+  _resetTimeline(generation) {
+    this._generation = generation;
+    this._timelineReady = false;
+    this._playoutTimestamp = 0;
+    this._read = 0;
+    this._write = 0;
+    this._available = 0;
+    this._readFraction = 0;
+    this._started = false;
+    this._inUnderrun = false;
+    this._playbackRate = 1;
+    this._targetStartFrames = Math.min(this._maxStartFrames, this._minStartFrames);
+    this._lateWindowStart = 0;
+    this._lateEvents = 0;
+    this._hasPreviousInput = false;
+  }
+
+  _timestampDelta(value, reference) {
+    const delta = ((Number(value) >>> 0) - (Number(reference) >>> 0)) >>> 0;
+    return delta > 0x7fffffff ? delta - 0x100000000 : delta;
+  }
+
+  _noteLateEvent() {
+    if (currentTime - this._lateWindowStart > LATE_WINDOW_SECONDS) {
+      this._lateWindowStart = currentTime;
+      this._lateEvents = 0;
+    }
+    if (++this._lateEvents < LATE_EVENTS_TO_GROW) return;
+    this._targetStartFrames = Math.min(this._maxStartFrames, this._targetStartFrames + 1);
+    this._lateWindowStart = currentTime;
+    this._lateEvents = 0;
   }
 
   _decode(view, sampleIndex) {
@@ -115,20 +151,70 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     return view.getInt32(offset, true) / 2147483648;
   }
 
-  _push(buffer, byteOffset = 0, arrivalMs) {
+  _appendSilence(sourceSamples) {
+    const samples = Math.round(
+      sourceSamples * sampleRate / this._format.sampleRate,
+    ) * this._format.channels;
+    if (samples <= 0) return true;
+    if (samples > this._ring.length - this._available) return false;
+    const first = Math.min(samples, this._ring.length - this._write);
+    this._ring.fill(0, this._write, this._write + first);
+    if (first < samples) this._ring.fill(0, 0, samples - first);
+    this._write = (this._write + samples) % this._ring.length;
+    this._available += samples;
+    return true;
+  }
+
+  _push(buffer, byteOffset = 0, arrivalMs, generation = this._generation, _sequence, timestamp) {
     const frameBytes = this._format.frameSamples * this._format.channels * this._format.bytesPerSample;
     if (byteOffset < 0 || buffer.byteLength - byteOffset !== frameBytes) return;
+    if ((Number(generation) >>> 0) !== this._generation) return;
+    const frameTimestamp = timestamp === undefined
+      ? (this._timelineReady
+        ? (Math.round(this._playoutTimestamp) + Math.round(
+          this._available / this._format.channels * this._format.sampleRate / sampleRate,
+        )) >>> 0
+        : 0)
+      : Number(timestamp) >>> 0;
+    if (!this._timelineReady) {
+      this._timelineReady = true;
+      this._playoutTimestamp = frameTimestamp;
+    } else {
+      const queuedContextSamples = this._available / this._format.channels;
+      const queuedSourceSamples = Math.round(
+        queuedContextSamples * this._format.sampleRate / sampleRate,
+      );
+      const expectedTimestamp = (
+        Math.round(this._playoutTimestamp) + queuedSourceSamples
+      ) >>> 0;
+      const delta = this._timestampDelta(frameTimestamp, expectedTimestamp);
+      if (delta < -this._format.frameSamples / 2) {
+        this._lateDiscard++;
+        this._noteLateEvent();
+        return;
+      }
+      if (delta > this._format.frameSamples / 2) {
+        this._timelineGaps += Math.max(
+          1,
+          Math.round(delta / this._format.frameSamples),
+        );
+        if (!this._appendSilence(delta)) {
+          this._read = 0;
+          this._write = 0;
+          this._available = 0;
+          this._readFraction = 0;
+          this._started = false;
+          this._playoutTimestamp = frameTimestamp;
+          this._hasPreviousInput = false;
+        }
+      }
+    }
     const frameSamples = this._contextFrameSamples * this._format.channels;
     this._updateArrivalJitter(arrivalMs);
     const deliveryTimeMs = currentTime * 1000;
     if (this._lastDeliveryTimeMs > 0) {
       const deliveryGapMs = deliveryTimeMs - this._lastDeliveryTimeMs;
       this._maxDeliveryGapMs = Math.max(this._maxDeliveryGapMs, deliveryGapMs);
-      if (deliveryGapMs >= 40) {
-        const deviation = Math.abs(deliveryGapMs - this._format.frameMs);
-        this._deliveryJitterMs += (deviation - this._deliveryJitterMs) / 16;
-        this._adaptTarget();
-      }
     }
     this._lastDeliveryTimeMs = deliveryTimeMs;
     if (this._available >= frameSamples * this._dropFrames) {
@@ -138,6 +224,9 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       this._read = (this._read + samplesToDrop) % this._ring.length;
       this._available -= samplesToDrop;
       this._framesDrop += framesToDrop;
+      this._playoutTimestamp = (
+        this._playoutTimestamp + framesToDrop * this._format.frameSamples
+      ) % 0x100000000;
     }
     const view = new DataView(buffer, byteOffset, frameBytes);
     if (!this._hasPreviousInput) {
@@ -182,28 +271,8 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       const arrivalGap = now - this._lastArrivalTime;
       this._maxArrivalGapMs = Math.max(this._maxArrivalGapMs, arrivalGap);
       if (arrivalGap >= 40) this._arrivalGapsOver40Ms++;
-      const expected = this._format.frameMs;
-      const deviation = Math.abs(arrivalGap - expected);
-      this._arrivalJitterMs += (deviation - this._arrivalJitterMs) / 16;
-      this._adaptTarget();
     }
     this._lastArrivalTime = now;
-  }
-
-  _adaptTarget() {
-    const jitterMs = Math.max(this._arrivalJitterMs, this._deliveryJitterMs);
-    const adaptiveFrames = Math.ceil(
-      (MIN_START_LATENCY_MS + jitterMs * JITTER_SAFETY_MULTIPLIER) /
-        this._format.frameMs,
-    );
-    const boundedTarget = Math.min(
-      this._maxStartFrames,
-      Math.max(this._minStartFrames, adaptiveFrames),
-    );
-    if (boundedTarget > this._targetStartFrames) {
-      this._targetStartFrames = boundedTarget;
-      this._lastJitterSpike = currentTime;
-    }
   }
 
   process(_inputs, outputs) {
@@ -220,26 +289,13 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     const controlledError = Math.abs(errorFrames) <= CLOCK_RECOVERY_DEADBAND_FRAMES
       ? 0
       : errorFrames - Math.sign(errorFrames) * CLOCK_RECOVERY_DEADBAND_FRAMES;
-    this._clockRecoveryIntegral = Math.max(
-      -CLOCK_RECOVERY_MAX_RATE,
-      Math.min(
-        CLOCK_RECOVERY_MAX_RATE,
-        this._clockRecoveryIntegral + controlledError * CLOCK_RECOVERY_INTEGRAL_GAIN,
-      ),
+    const recoveryLimit = this._lastSilent
+      ? SILENT_RECOVERY_MAX_RATE
+      : CLOCK_RECOVERY_MAX_RATE;
+    const correction = Math.max(
+      -recoveryLimit,
+      Math.min(recoveryLimit, controlledError * CLOCK_RECOVERY_PROPORTIONAL_GAIN),
     );
-    let correction = Math.max(
-      -CLOCK_RECOVERY_MAX_RATE,
-      Math.min(
-        CLOCK_RECOVERY_MAX_RATE,
-        this._clockRecoveryIntegral + controlledError * CLOCK_RECOVERY_PROPORTIONAL_GAIN,
-      ),
-    );
-    if (
-      (correction > 0 && errorFrames <= CLOCK_RECOVERY_DEADBAND_FRAMES) ||
-      (correction < 0 && errorFrames >= -CLOCK_RECOVERY_DEADBAND_FRAMES)
-    ) {
-      correction = 0;
-    }
     const desiredRate = 1 + correction;
     if (
       (this._playbackRate > 1 && errorFrames <= CLOCK_RECOVERY_DEADBAND_FRAMES) ||
@@ -258,16 +314,23 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       if (this._available < this._format.channels) {
         if (!underrunThisQuantum) {
           underrunThisQuantum = true;
-          this._underruns++;
-          this._lastUnderrun = currentTime;
-          this._targetStartFrames = Math.min(this._maxStartFrames, this._targetStartFrames + 2);
+          if (!this._inUnderrun) {
+            this._inUnderrun = true;
+            this._underruns++;
+            this._lastUnderrun = currentTime;
+            this._noteLateEvent();
+          }
         }
         for (let ch = 0; ch < channels.length; ch++) {
           channels[ch][i] = this._lastOutput[Math.min(ch, this._format.channels - 1)] * this._concealmentGain;
         }
         this._concealmentGain *= PLC_DECAY_PER_SAMPLE;
+        this._playoutTimestamp = (
+          this._playoutTimestamp + this._format.sampleRate / sampleRate
+        ) % 0x100000000;
         continue;
       }
+      this._inUnderrun = false;
       const nextFrameOffset = this._available >= this._format.channels * 2
         ? this._format.channels
         : 0;
@@ -295,13 +358,9 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       );
       this._read = (this._read + consumedSamples) % this._ring.length;
       this._available -= consumedSamples;
-    }
-
-    if (underrunThisQuantum) {
-      this._started = false;
-      this._readFraction = 0;
-      this._playbackRate = 1;
-      this._clockRecoveryIntegral = 0;
+      this._playoutTimestamp = (
+        this._playoutTimestamp + consumedFrames * this._format.sampleRate / sampleRate
+      ) % 0x100000000;
     }
     this._framesOut++;
     if (currentTime - this._lastStats >= 1) {
@@ -313,16 +372,16 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       const audioLevel = rms < 0.003
         ? 0
         : Math.max(0, Math.min(1, (decibels + 50) / 35));
+      this._lastSilent = rms < 0.003;
       this._levelPower = 0;
       this._levelSamples = 0;
       if (
         this._targetStartFrames > this._minStartFrames &&
         currentTime - this._lastUnderrun >= STABLE_DECAY_SECONDS &&
-        currentTime - this._lastJitterSpike >= STABLE_DECAY_SECONDS &&
-        currentTime - this._lastTargetDecay >= TARGET_DECAY_INTERVAL_SECONDS
+        currentTime - this._lateWindowStart >= STABLE_DECAY_SECONDS &&
+        this._lastSilent
       ) {
         this._targetStartFrames--;
-        this._lastTargetDecay = currentTime;
       }
       this.port.postMessage({
         type: "stats",
@@ -333,12 +392,13 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
         underruns: this._underruns,
         jitter_target_frames: this._targetStartFrames,
         jitter_target_ms: this._targetStartFrames * this._format.frameMs,
-        arrival_jitter_ms: Math.round(this._arrivalJitterMs * 10) / 10,
         max_arrival_gap_ms: Math.round(this._maxArrivalGapMs * 10) / 10,
         arrival_gaps_over_40ms: this._arrivalGapsOver40Ms,
         max_delivery_gap_ms: Math.round(this._maxDeliveryGapMs * 10) / 10,
         clock_recovery_rate: Math.round(this._playbackRate * 1000000) / 1000000,
         clock_recovery_ppm: Math.round((this._playbackRate - 1) * 1000000),
+        late_discard: this._lateDiscard,
+        timeline_gaps: this._timelineGaps,
         audio_level: audioLevel,
       });
     }

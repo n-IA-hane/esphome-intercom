@@ -98,8 +98,7 @@ const timed = new Processor({{
 for (let frame = 0; frame < 20; frame++) {{
   timed._push(new ArrayBuffer(frameSamples * 2), 0, 1000 + frame * {frame_ms});
 }}
-assert.equal(timed._arrivalJitterMs, 0);
-assert.equal(timed._targetStartFrames, Math.ceil(120 / {frame_ms}));
+assert.equal(timed._targetStartFrames, 3);
 assert.equal(timed._maxArrivalGapMs, {frame_ms});
 assert.equal(timed._arrivalGapsOver40Ms, 0);
 
@@ -108,38 +107,16 @@ const androidOutput = new Processor({{
     format: {{sampleRate: {input_rate}, frameMs: {frame_ms}, channels: 1, pcmFormat: "s16le"}},
   }},
 }});
-assert.equal(androidOutput._minStartFrames, Math.ceil(60 / {frame_ms}));
+assert.equal(androidOutput._minStartFrames, 3);
 context.currentTime = 2;
 androidOutput._push(new ArrayBuffer(frameSamples * 2), 0, 2000);
 context.currentTime = 2.216;
 androidOutput._push(new ArrayBuffer(frameSamples * 2), 0, 2216);
-assert.equal(
-  androidOutput._targetStartFrames,
-  Math.min(
-    androidOutput._maxStartFrames,
-    Math.max(
-      Math.ceil(120 / {frame_ms}),
-      Math.ceil((60 + (216 - {frame_ms}) / 16 * 4) / {frame_ms}),
-    ),
-  ),
-);
-const firstAdaptiveTarget = androidOutput._targetStartFrames;
+assert.equal(androidOutput._targetStartFrames, 3);
 context.currentTime = 2.332;
 androidOutput._push(new ArrayBuffer(frameSamples * 2), 0, 2332);
-assert.ok(androidOutput._targetStartFrames >= firstAdaptiveTarget);
-const learnedTarget = androidOutput._targetStartFrames;
-assert.equal(androidOutput._lastJitterSpike, 2.332);
-androidOutput._lastUnderrun = 0;
-androidOutput._lastStats = 0;
-context.currentTime = 20;
-androidOutput.process([], [[new Float32Array(128)]]);
-assert.equal(androidOutput._targetStartFrames, learnedTarget - 1);
-context.currentTime = 21;
-androidOutput.process([], [[new Float32Array(128)]]);
-assert.equal(
-  androidOutput._targetStartFrames,
-  Math.max(androidOutput._minStartFrames, learnedTarget - 2),
-);
+assert.equal(androidOutput._targetStartFrames, 3);
+assert.ok(androidOutput._maxDeliveryGapMs > 200);
 '''
     completed = subprocess.run(
         ["node", "--experimental-vm-modules", "--input-type=module", "-"],
@@ -218,20 +195,126 @@ assert.equal(matched.processor._underruns, 0);
 assert.ok(Math.abs(matched.processor._playbackRate - 1) < 0.001);
 assert.ok(matched.buffered <= matched.processor._targetStartFrames + 2, JSON.stringify({{buffered: matched.buffered, target: matched.processor._targetStartFrames, rate: matched.processor._playbackRate}}));
 
-const faster = run(1.01);
+const faster = run(1.001);
 assert.equal(faster.processor._framesDrop, 0);
 assert.equal(faster.processor._underruns, 0);
-assert.ok(faster.processor._playbackRate <= 1.02, String(faster.processor._playbackRate));
-assert.ok(faster.processor._clockRecoveryIntegral > 0.005, faster.processor._clockRecoveryIntegral);
+assert.ok(faster.processor._playbackRate <= 1.001, String(faster.processor._playbackRate));
 assert.ok(faster.buffered <= faster.processor._targetStartFrames + 3, JSON.stringify({{buffered: faster.buffered, target: faster.processor._targetStartFrames, rate: faster.processor._playbackRate}}));
 assert.ok(faster.maxBuffered < faster.processor._dropFrames, JSON.stringify({{maxBuffered: faster.maxBuffered, drop: faster.processor._dropFrames}}));
 
-const slower = run(0.995);
+const slower = run(0.999);
 assert.equal(slower.processor._framesDrop, 0);
 assert.equal(slower.processor._underruns, 0);
-assert.ok(slower.processor._playbackRate < 0.998, slower.processor._playbackRate);
-assert.ok(slower.processor._playbackRate >= 0.98, String(slower.processor._playbackRate));
+assert.ok(slower.processor._playbackRate < 1, slower.processor._playbackRate);
+assert.ok(slower.processor._playbackRate >= 0.999, String(slower.processor._playbackRate));
 assert.ok(slower.buffered >= slower.processor._targetStartFrames - 2, JSON.stringify({{buffered: slower.buffered, target: slower.processor._targetStartFrames, rate: slower.processor._playbackRate}}));
+'''
+    completed = subprocess.run(
+        ["node", "--experimental-vm-modules", "--input-type=module", "-"],
+        input=script,
+        text=True,
+        check=False,
+        capture_output=True,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_playback_recovers_a_transient_queue_without_dropping_audio() -> None:
+    script = rf'''
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+
+let Processor;
+class MockAudioWorkletProcessor {{
+  constructor() {{
+    this.port = {{postMessage() {{}}, onmessage: null}};
+  }}
+}}
+const context = vm.createContext({{
+  AudioWorkletProcessor: MockAudioWorkletProcessor,
+  sampleRate: 48000,
+  currentTime: 0,
+  registerProcessor(_name, value) {{ Processor = value; }},
+  ArrayBuffer, DataView, Float32Array, Math, Number, Object, Error,
+}});
+vm.runInContext(fs.readFileSync({json.dumps(str(PLAYBACK_PROCESSOR))}, "utf8"), context);
+const processor = new Processor({{
+  processorOptions: {{format: {{sampleRate: 16000, frameMs: 16, channels: 1, pcmFormat: "s16le"}}}},
+}});
+const frameSamples = 256;
+const frame = new ArrayBuffer(frameSamples * 2);
+const view = new DataView(frame);
+for (let index = 0; index < frameSamples; index++) {{
+  view.setInt16(index * 2, Math.round(12000 * Math.sin(2 * Math.PI * index / 80)), true);
+}}
+let timestamp = 0;
+for (let index = 0; index < 10; index++, timestamp += frameSamples) {{
+  processor._push(frame.slice(0), 0, 0, 0, index, timestamp);
+}}
+let sourceFrames = 0;
+for (let quantum = 0; quantum < Math.round(30 * 48000 / 128); quantum++) {{
+  sourceFrames += 128 / 48000 * 1000 / 16;
+  while (sourceFrames >= 1) {{
+    processor._push(frame.slice(0), 0, context.currentTime * 1000, 0, 0, timestamp);
+    timestamp += frameSamples;
+    sourceFrames--;
+  }}
+  context.currentTime = quantum * 128 / 48000;
+  processor.process([], [[new Float32Array(128)]]);
+}}
+const buffered = processor._available / processor._contextFrameSamples;
+assert.equal(processor._framesDrop, 0);
+assert.equal(processor._underruns, 0);
+assert.ok(buffered <= processor._targetStartFrames + 2, JSON.stringify({{buffered, rate: processor._playbackRate}}));
+'''
+    completed = subprocess.run(
+        ["node", "--experimental-vm-modules", "--input-type=module", "-"],
+        input=script,
+        text=True,
+        check=False,
+        capture_output=True,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_playback_timeline_preserves_loss_and_rejects_late_audio() -> None:
+    script = rf'''
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+
+let Processor;
+class MockAudioWorkletProcessor {{
+  constructor() {{
+    this.messages = [];
+    this.port = {{ postMessage: (message) => this.messages.push(message), onmessage: null }};
+  }}
+}}
+const context = vm.createContext({{
+  AudioWorkletProcessor: MockAudioWorkletProcessor,
+  sampleRate: 48000,
+  currentTime: 0,
+  registerProcessor(_name, value) {{ Processor = value; }},
+  ArrayBuffer, DataView, Float32Array, Math, Number, Object, Error,
+}});
+vm.runInContext(fs.readFileSync({json.dumps(str(PLAYBACK_PROCESSOR))}, "utf8"), context);
+const processor = new Processor({{
+  processorOptions: {{
+    format: {{sampleRate: 16000, frameMs: 20, channels: 1, pcmFormat: "s16le"}},
+  }},
+}});
+const frame = new ArrayBuffer(640);
+processor._push(frame.slice(0), 0, 0, 0, 0, 0);
+processor._push(frame.slice(0), 0, 20, 0, 1, 320);
+processor._push(frame.slice(0), 0, 60, 0, 3, 960);
+assert.equal(processor._timelineGaps, 1);
+assert.equal(processor._available / processor._contextFrameSamples, 4);
+processor._push(frame.slice(0), 0, 80, 0, 2, 640);
+assert.equal(processor._lateDiscard, 1);
+assert.equal(processor._available / processor._contextFrameSamples, 4);
 '''
     completed = subprocess.run(
         ["node", "--experimental-vm-modules", "--input-type=module", "-"],

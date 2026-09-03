@@ -813,6 +813,8 @@ class RuntimeWebSocket {{
         tx_format: "48000:s16le:1:20",
         rx_format: "48000:s16le:1:20",
         audio_direction: "sendrecv",
+        audio_protocol: 1,
+        media_generation: 1,
       }}) }});
     }}, 0);
   }}
@@ -820,6 +822,31 @@ class RuntimeWebSocket {{
   send() {{}}
 }}
 context.WebSocket = RuntimeWebSocket;
+context.MessageChannel = class MessageChannel {{
+  constructor() {{
+    this.port1 = {{ postMessage() {{}} }};
+    this.port2 = {{ postMessage() {{}} }};
+  }}
+}};
+context.Worker = class Worker {{
+  postMessage(message) {{
+    if (message.type === "connect") {{
+      this.socket = new context.WebSocket(message.url);
+      this.socket.onopen = () => this.onmessage?.({{ data: {{ type: "open" }} }});
+      this.socket.onmessage = (event) => this.onmessage?.({{
+        data: {{ type: "message", data: event.data }},
+      }});
+      this.socket.onclose = (event) => this.onmessage?.({{
+        data: {{ type: "close", code: event?.code || 1000 }},
+      }});
+    }} else if (message.type === "send") {{
+      this.socket?.send(message.data);
+    }} else if (message.type === "close") {{
+      this.socket?.close();
+    }}
+  }}
+  terminate() {{}}
+}};
 const connectA = connectRace._connect("device", "A", "kitchen").then(
   () => "A:ok",
   (err) => `A:${{err.message}}`,

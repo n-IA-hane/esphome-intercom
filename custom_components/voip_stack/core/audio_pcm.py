@@ -103,13 +103,22 @@ class _PolyphaseResampler:
         self._gather = self._history + center[:, None] - tap_index[None, :]
         self._coeffs = kernel[phase[:, None] + tap_index[None, :] * self._up]
         self._tail = np.zeros((channels, self._history), dtype=np.float64)
+        self._scratch = np.empty(
+            (channels, self._history + in_samples), dtype=np.float64
+        )
 
     def process(self, channels: np.ndarray) -> np.ndarray:
         if self._identity:
             return channels
-        x = np.concatenate([self._tail, channels], axis=1)
-        self._tail = x[:, -self._history:]
-        return np.einsum("ot,cot->co", self._coeffs, x[:, self._gather], optimize=True)
+        self._scratch[:, : self._history] = self._tail
+        self._scratch[:, self._history :] = channels
+        self._tail[:] = self._scratch[:, -self._history :]
+        return np.einsum(
+            "ot,cot->co",
+            self._coeffs,
+            self._scratch[:, self._gather],
+            optimize=True,
+        )
 
 
 class PcmFrameConverter:
@@ -125,7 +134,10 @@ class PcmFrameConverter:
         self._resampler = _PolyphaseResampler(
             src.sample_rate, dst.sample_rate, src.nominal_frame_samples, dst.channels
         )
-        self._pending = np.empty((dst.channels, 0), dtype=np.float64)
+        self._pending = np.empty(
+            (dst.channels, dst.nominal_frame_samples), dtype=np.float64
+        )
+        self._pending_samples = 0
 
     def _same_pcm_contract(self) -> bool:
         return (
@@ -152,12 +164,23 @@ class PcmFrameConverter:
         channels = _map_channels(_decode_frame(data, self.src), self.dst.channels)
         converted = self._resampler.process(channels)
         frame_samples = self.dst.nominal_frame_samples
-        if self._pending.shape[1] == 0 and converted.shape[1] == frame_samples:
-            return [_encode_frame(converted, self.dst)]
-        self._pending = np.concatenate([self._pending, converted], axis=1)
-
         out: list[bytes] = []
-        while self._pending.shape[1] >= frame_samples:
-            out.append(_encode_frame(self._pending[:, :frame_samples], self.dst))
-            self._pending = self._pending[:, frame_samples:]
+        offset = 0
+        if self._pending_samples:
+            copied = min(frame_samples - self._pending_samples, converted.shape[1])
+            self._pending[
+                :, self._pending_samples : self._pending_samples + copied
+            ] = converted[:, :copied]
+            self._pending_samples += copied
+            offset = copied
+            if self._pending_samples == frame_samples:
+                out.append(_encode_frame(self._pending, self.dst))
+                self._pending_samples = 0
+        while offset + frame_samples <= converted.shape[1]:
+            out.append(_encode_frame(converted[:, offset : offset + frame_samples], self.dst))
+            offset += frame_samples
+        remaining = converted.shape[1] - offset
+        if remaining:
+            self._pending[:, :remaining] = converted[:, offset:]
+            self._pending_samples = remaining
         return out

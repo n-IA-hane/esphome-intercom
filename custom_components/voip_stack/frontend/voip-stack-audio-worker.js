@@ -1,4 +1,7 @@
-const WS_AUDIO = 1;
+const AUDIO_FRAME_MAGIC = 0x56;
+const AUDIO_FRAME_VERSION = 1;
+const AUDIO_FRAME_TYPE = 1;
+const AUDIO_FRAME_HEADER_BYTES = 16;
 const STATS_INTERVAL_MS = 1000;
 
 let socket = null;
@@ -9,6 +12,7 @@ let maxBufferedBytes = 0;
 let sent = 0;
 let received = 0;
 let txDropped = 0;
+let rxDropped = 0;
 let txFrame = null;
 let statsTimer = null;
 let lastCaptureAt = 0;
@@ -21,6 +25,7 @@ function publishStats() {
     sent,
     received,
     tx_dropped: txDropped,
+    rx_dropped: rxDropped,
     buffered_amount: Number(socket?.bufferedAmount || 0),
     max_capture_gap_ms: Math.round(maxCaptureGapMs * 10) / 10,
     capture_gaps_over_40ms: captureGapsOver40Ms,
@@ -37,17 +42,26 @@ function stopStats() {
   statsTimer = null;
 }
 
-function sendAudio(buffer) {
+function sendAudio(message) {
+  const buffer = message?.buffer;
   if (!captureEnabled || socket?.readyState !== WebSocket.OPEN || !buffer?.byteLength) return;
   if (maxBufferedBytes > 0 && socket.bufferedAmount >= maxBufferedBytes) {
     txDropped++;
     return;
   }
-  if (!txFrame || txFrame.byteLength !== buffer.byteLength + 1) {
-    txFrame = new Uint8Array(buffer.byteLength + 1);
+  if (!txFrame || txFrame.byteLength !== buffer.byteLength + AUDIO_FRAME_HEADER_BYTES) {
+    txFrame = new Uint8Array(buffer.byteLength + AUDIO_FRAME_HEADER_BYTES);
   }
-  txFrame[0] = WS_AUDIO;
-  txFrame.set(new Uint8Array(buffer), 1);
+  const header = new DataView(txFrame.buffer, 0, AUDIO_FRAME_HEADER_BYTES);
+  header.setUint8(0, AUDIO_FRAME_MAGIC);
+  header.setUint8(1, AUDIO_FRAME_VERSION);
+  header.setUint8(2, AUDIO_FRAME_TYPE);
+  header.setUint8(3, 0);
+  header.setUint32(4, Number(message.generation || 0) >>> 0);
+  header.setUint16(8, Number(message.sequence || 0) & 0xffff);
+  header.setUint32(10, Number(message.timestamp || 0) >>> 0);
+  header.setUint16(14, buffer.byteLength);
+  txFrame.set(new Uint8Array(buffer), AUDIO_FRAME_HEADER_BYTES);
   socket.send(txFrame);
   sent++;
 }
@@ -65,7 +79,7 @@ function bindCapturePort(port) {
       if (gap >= 40) captureGapsOver40Ms++;
     }
     lastCaptureAt = now;
-    sendAudio(event.data.buffer);
+    sendAudio(event.data);
   };
   capturePort.start?.();
 }
@@ -114,16 +128,34 @@ globalThis.onmessage = (event) => {
         return;
       }
       const buffer = socketEvent.data;
+      if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < AUDIO_FRAME_HEADER_BYTES) {
+        rxDropped++;
+        return;
+      }
+      const header = new DataView(buffer, 0, AUDIO_FRAME_HEADER_BYTES);
+      const payloadBytes = header.getUint16(14);
+      if (
+        header.getUint8(0) !== AUDIO_FRAME_MAGIC ||
+        header.getUint8(1) !== AUDIO_FRAME_VERSION ||
+        header.getUint8(2) !== AUDIO_FRAME_TYPE ||
+        payloadBytes !== buffer.byteLength - AUDIO_FRAME_HEADER_BYTES
+      ) {
+        rxDropped++;
+        return;
+      }
       received++;
       if (playbackPort) {
         playbackPort.postMessage({
           type: "audio",
           buffer,
-          byteOffset: 1,
+          byteOffset: AUDIO_FRAME_HEADER_BYTES,
+          generation: header.getUint32(4),
+          sequence: header.getUint16(8),
+          timestamp: header.getUint32(10),
           arrivalMs: globalThis.performance?.now?.(),
         }, [buffer]);
       } else {
-        globalThis.postMessage({ type: "message", data: buffer }, [buffer]);
+        rxDropped++;
       }
     };
     return;

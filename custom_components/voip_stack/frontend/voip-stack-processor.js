@@ -67,10 +67,19 @@ class RecorderProcessor extends AudioWorkletProcessor {
     this._position = 0;
     this._lastSample = 0;
     this._mediaPort = null;
+    this._generation = 0;
+    this._sequence = 0;
+    this._timestamp = 0;
     this.port.onmessage = (event) => {
-      if (event.data?.type !== "bind_media_port" || !event.data.port) return;
-      this._mediaPort = event.data.port;
-      this._mediaPort.start?.();
+      if (event.data?.type === "bind_media_port" && event.data.port) {
+        this._mediaPort = event.data.port;
+        this._mediaPort.start?.();
+      } else if (event.data?.type === "configure_timeline") {
+        this._generation = Number(event.data.generation || 0) >>> 0;
+        this._sequence = 0;
+        this._timestamp = 0;
+        this._writeSample = 0;
+      }
     };
     this._ratio = sampleRate / this._format.sampleRate;
     const antiAliasEnabled = options?.processorOptions?.antiAlias !== false;
@@ -121,7 +130,15 @@ class RecorderProcessor extends AudioWorkletProcessor {
     if (this._writeSample !== this._format.frameSamples) return;
 
     const frame = this._buffer;
-    (this._mediaPort || this.port).postMessage({ type: "audio", buffer: frame });
+    (this._mediaPort || this.port).postMessage({
+      type: "audio",
+      buffer: frame,
+      generation: this._generation,
+      sequence: this._sequence,
+      timestamp: this._timestamp,
+    });
+    this._sequence = (this._sequence + 1) & 0xffff;
+    this._timestamp = (this._timestamp + this._format.frameSamples) >>> 0;
     this._writeSample = 0;
   }
 

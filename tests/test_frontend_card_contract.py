@@ -682,12 +682,19 @@ class FrontendCardContractTest(unittest.TestCase):
             / "frontend"
             / "voip-stack-processor.js"
         ).read_text()
+        worker = (
+            ROOT
+            / "custom_components"
+            / "voip_stack"
+            / "frontend"
+            / "voip-stack-audio-worker.js"
+        ).read_text()
 
-        self.assertIn("this._ws.bufferedAmount >= maxBufferedBytes", engine)
-        self.assertIn("const maxBufferedBytes = this._captureBufferLimit();", engine)
+        self.assertIn("socket.bufferedAmount >= maxBufferedBytes", worker)
+        self.assertIn("max_buffered_bytes", engine)
         self.assertNotIn("const TX_BUFFER_POOL", capture)
         self.assertNotIn("this._buffers", capture)
-        self.assertIn("this._stats.tx_dropped++", engine)
+        self.assertIn("txDropped++", worker)
         self.assertIn("if (this._ws !== ws) return", engine)
         self.assertIn("if (this._connectPromise === connectPromise)", engine)
         self.assertIn("connectGeneration !== this._connectGeneration ||", engine)
@@ -713,13 +720,14 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._endpointId === endpointId", setup)
         self.assertIn("this._callId === callId", setup)
         self.assertNotIn("raw.slice(1)", engine)
-        self.assertIn("byteOffset: 1", engine)
+        self.assertIn("byteOffset: AUDIO_FRAME_HEADER_BYTES", worker)
         self.assertIn("new DataView(buffer, byteOffset, frameBytes)", playback)
         self.assertIn("audio_level: audioLevel", playback)
         self.assertIn("this._dropFrames = this._maxStartFrames + 1", playback)
-        self.assertIn("if (underrunThisQuantum) {", playback)
-        self.assertIn("this._started = false", playback)
-        self.assertIn("this._clockRecoveryIntegral = 0", playback)
+        self.assertIn("if (!underrunThisQuantum) {", playback)
+        self.assertIn("this._inUnderrun = true", playback)
+        self.assertNotIn("_clockRecoveryIntegral", playback)
+        self.assertIn("controlledError * CLOCK_RECOVERY_PROPORTIONAL_GAIN", playback)
         self.assertIn('pcmFormat === "s24le_in_s32") return view.getInt32(offset, true) / 8388608', playback)
         self.assertIn("s * 0x800000 : s * 0x7fffff", capture)
         self.assertNotIn("0x7fffff00", capture)
@@ -756,8 +764,9 @@ class FrontendCardContractTest(unittest.TestCase):
         ).read_text()
         self.assertIn('this._audioDirection = "sendrecv"', engine)
         self.assertIn("negotiated?.audio_direction", engine)
-        self.assertIn("if (!this._canSendAudio()) return", engine)
-        self.assertIn("!this._canReceiveAudio()", engine)
+        self.assertIn("this._ws?.configureCapture?.(enabled", engine)
+        self.assertIn("this._ws?.bindCapture?.(this._captureNode)", engine)
+        self.assertIn("this._ws?.bindPlayback?.(this._playbackNode)", engine)
         self.assertIn("void this._reconcileAudioMedia(msg)", engine)
         self.assertIn("desiredAudioPaths(audioMode, audioDirection)", engine)
         self.assertIn("Audio WebSocket negotiation timed out", engine)

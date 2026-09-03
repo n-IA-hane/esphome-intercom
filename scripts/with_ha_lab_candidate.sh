@@ -92,4 +92,7 @@ ln -s "$candidate_component" "$component_link.candidate"
 mv -Tf "$component_link.candidate" "$component_link"
 install -m 0644 "$candidate_package" "$package_file"
 restart_ha
+export HA_URL="$ha_url/lovelace/test"
+export PLAYWRIGHT_STORAGE_STATE="$lab_root/playwright-storage.json"
+export HA_PLAYWRIGHT_REFRESH_CREDENTIALS="$lab_root/.credentials"
 "$@"

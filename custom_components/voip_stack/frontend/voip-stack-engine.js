@@ -1,4 +1,4 @@
-const WS_AUDIO = 1;
+const AUDIO_PROTOCOL_VERSION = 1;
 const WS_SUBSCRIBE_CALL_EVENTS = "voip_stack/subscribe_call_events";
 const WS_SUBSCRIBE_HA_SOFTPHONE = "voip_stack/subscribe_ha_softphone_state";
 const MODULE_VERSION = (() => {
@@ -37,8 +37,7 @@ const MEDIA_CLIENT_SESSION_KEY = "voip_stack_media_client_id";
 const MEDIA_RECONNECT_ATTEMPTS = 3;
 const MEDIA_RECONNECT_DELAY_MS = 250;
 const MEDIA_CLEANUP_TIMEOUT_MS = 750;
-const MAX_AUDIO_WS_BUFFER_MS = 120;
-const MIN_AUDIO_WS_BUFFER_FRAMES = 4;
+const AUDIO_WS_BACKPRESSURE_FRAMES = 2;
 const ACTIVE_SOFTPHONE_STATES = new Set([
   "calling",
   "remote_ringing",
@@ -176,12 +175,10 @@ class WorkerAudioSocket {
 }
 
 function createAudioSocket(url) {
-  if (typeof Worker === "function" && typeof MessageChannel === "function") {
-    try {
-      return new WorkerAudioSocket(url);
-    } catch (_) {}
+  if (typeof Worker !== "function" || typeof MessageChannel !== "function") {
+    throw new Error("This browser does not provide the Worker features required for calls.");
   }
-  return new WebSocket(url);
+  return new WorkerAudioSocket(url);
 }
 
 function mediaClientInstanceId() {
@@ -288,7 +285,6 @@ class VoipStackEngine extends EventTarget {
     this._ringtoneRequests = new Map();
     this._ringtoneContext = null;
     this._ringtoneTimer = null;
-    this._audioFrameBuffer = null;
     this._video = null;
     this._videoLoadPromise = null;
     this._videoCanvas = null;
@@ -1332,7 +1328,7 @@ class VoipStackEngine extends EventTarget {
 
   async _wsUrl(deviceId, callId, endpointId) {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const path = `/api/voip_stack/ws?device_id=${encodeURIComponent(deviceId)}&endpoint_id=${encodeURIComponent(endpointId)}&call_id=${encodeURIComponent(callId)}&client_id=${encodeURIComponent(this._mediaClientId)}`;
+    const path = `/api/voip_stack/ws?device_id=${encodeURIComponent(deviceId)}&endpoint_id=${encodeURIComponent(endpointId)}&call_id=${encodeURIComponent(callId)}&client_id=${encodeURIComponent(this._mediaClientId)}&audio_protocol=${AUDIO_PROTOCOL_VERSION}`;
     const signed = await this._hass.callWS({ type: "auth/sign_path", path });
     return `${proto}//${window.location.host}${signed.path || path}`;
   }
@@ -1456,6 +1452,9 @@ class VoipStackEngine extends EventTarget {
           AUDIO_NEGOTIATION_TIMEOUT_MS,
         )),
       ]);
+      if (Number(negotiated?.audio_protocol) !== AUDIO_PROTOCOL_VERSION) {
+        throw new Error("Browser audio protocol mismatch, reload Home Assistant");
+      }
       if (
         connectGeneration !== this._connectGeneration ||
         this._ws !== ws ||
@@ -1518,28 +1517,6 @@ class VoipStackEngine extends EventTarget {
     return !!msg?.error || ["in_call", "idle", "error"].includes(String(msg?.state || "").toLowerCase());
   }
 
-  _sendAudio(buffer) {
-    if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return;
-    if (!this._canSendAudio()) return;
-    const bytes = new Uint8Array(buffer);
-    if (!bytes.byteLength) return;
-    const maxBufferedBytes = this._captureBufferLimit();
-    if (this._ws.bufferedAmount >= maxBufferedBytes) {
-      this._stats.tx_dropped++;
-      if ((this._stats.tx_dropped & 31) === 1) this._emit();
-      return;
-    }
-    if (!this._audioFrameBuffer || this._audioFrameBuffer.byteLength !== bytes.byteLength + 1) {
-      this._audioFrameBuffer = new Uint8Array(bytes.byteLength + 1);
-    }
-    const frame = this._audioFrameBuffer;
-    frame[0] = WS_AUDIO;
-    frame.set(bytes, 1);
-    this._ws.send(frame);
-    this._stats.sent++;
-    if ((this._stats.sent & 31) === 0) this._emit();
-  }
-
   _captureBufferLimit(format = this._txFormat) {
     if (!format) return 0;
     const bytesPerSample = format.pcmFormat === "s16le" ? 2 :
@@ -1548,12 +1525,7 @@ class VoipStackEngine extends EventTarget {
       Number(format.sampleRate || 0) * Number(format.channels || 0) *
       bytesPerSample * Number(format.frameMs || 0) / 1000,
     );
-    const bytesPerSecond = Number(format.sampleRate || 0) *
-      Number(format.channels || 0) * bytesPerSample;
-    return Math.max(
-      frameBytes * MIN_AUDIO_WS_BUFFER_FRAMES,
-      Math.ceil(bytesPerSecond * MAX_AUDIO_WS_BUFFER_MS / 1000),
-    );
+    return frameBytes * AUDIO_WS_BACKPRESSURE_FRAMES;
   }
 
   _handleMessage(event) {
@@ -1575,34 +1547,6 @@ class VoipStackEngine extends EventTarget {
       } catch (_) {}
       return;
     }
-    const raw = new Uint8Array(event.data);
-    if (
-      raw[0] !== WS_AUDIO ||
-      raw.byteLength < 2 ||
-      !this._playbackNode ||
-      !this._canReceiveAudio()
-    ) return;
-    const arrivedAt = performance.now();
-    if (this._lastAudioMessageAt > 0) {
-      const gap = arrivedAt - this._lastAudioMessageAt;
-      this._stats.max_ws_arrival_gap_ms = Math.max(
-        Number(this._stats.max_ws_arrival_gap_ms || 0),
-        gap,
-      );
-      if (gap >= 40) {
-        this._stats.ws_arrival_gaps_over_40ms =
-          Number(this._stats.ws_arrival_gaps_over_40ms || 0) + 1;
-      }
-    }
-    this._lastAudioMessageAt = arrivedAt;
-    this._playbackNode.port.postMessage({
-      type: "audio",
-      buffer: event.data,
-      byteOffset: 1,
-      arrivalMs: arrivedAt,
-    }, [event.data]);
-    this._stats.received++;
-    if ((this._stats.received & 31) === 0) this._emit();
   }
 
   _createAudioContext() {
@@ -1669,12 +1613,10 @@ class VoipStackEngine extends EventTarget {
             antiAlias: microphoneAntiAlias,
           },
         });
-        resources.captureNode.port.onmessage = (event) => {
-          if (
-            this._captureNode === resources.captureNode &&
-            event.data?.type === "audio"
-          ) this._sendAudio(event.data.buffer);
-        };
+        resources.captureNode.port.postMessage({
+          type: "configure_timeline",
+          generation: Number(negotiated?.media_generation || 0),
+        });
         resources.source.connect(resources.captureNode);
         resources.captureSink = resources.audioContext.createGain();
         resources.captureSink.gain.value = 0;
@@ -1695,6 +1637,10 @@ class VoipStackEngine extends EventTarget {
             processorOptions: { format: formats.rx },
           },
         );
+        resources.playbackNode.port.postMessage({
+          type: "configure_timeline",
+          generation: Number(negotiated?.media_generation || 0),
+        });
         resources.playbackNode.port.onmessage = (event) => {
           if (event.data?.type === "playback_ready") {
             if (setupGeneration !== this._audioSetupGeneration) return;
@@ -2277,7 +2223,6 @@ class VoipStackEngine extends EventTarget {
     this._playbackNode = null;
     this._lastAudioMessageAt = 0;
     this._audioContext = null;
-    this._audioFrameBuffer = null;
     return resources;
   }
 

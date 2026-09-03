@@ -13,6 +13,7 @@ from .voip_phase1_support import (
     contextlib,
     dtmf,
     patch,
+    rtp,
     sdp,
     sip,
     sip_auth,
@@ -549,6 +550,44 @@ class SipProtocolBugFixTest(unittest.TestCase):
 
 
 class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
+    async def test_debug_capture_does_not_disable_compatible_payload_relay(self) -> None:
+        fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        relay = sip_rtp_bridge.SipRtpRelay(
+            left=sip_rtp_bridge.RtpPeer("127.0.0.2", 40000, 96, fmt),
+            right=sip_rtp_bridge.RtpPeer("127.0.0.3", 41000, 96, fmt),
+            left_port=42000,
+            right_port=42002,
+            debug_capture=True,
+            capture_name="passthrough-capture",
+        )
+
+        self.assertTrue(relay.left_to_right_passthrough)
+        self.assertIsNotNone(relay.left_decoder)
+
+        class Transport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((bytes(data), addr))
+
+        destination = Transport()
+        relay.right_transport = destination  # type: ignore[assignment]
+        pcm = bytes(fmt.nominal_frame_bytes)
+        packet = rtp.build_packet(
+            rtp.RtpPacket(
+                payload_type=96,
+                sequence=1,
+                timestamp=320,
+                ssrc=7,
+                payload=pcm,
+            )
+        )
+        relay.handle_packet("left", packet, ("127.0.0.2", 40000))
+
+        self.assertEqual(rtp.parse_packet(destination.sent[0][0]).payload, pcm)
+        self.assertEqual(relay._capture_buffers["left"], pcm)
+
     async def test_trunk_start_schedules_rfc_registration_without_blocking_setup(
         self,
     ) -> None:
