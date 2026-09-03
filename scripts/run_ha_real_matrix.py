@@ -729,7 +729,7 @@ def _registered_local_trunk(
 
     try:
         time.sleep(0.15)
-        if process.poll() is not None:
+        if process.poll() not in {None, 0}:
             output, _ = process.communicate()
             raise RuntimeError(f"local SIPp trunk did not start: {output[-2000:]}")
         yield contact_target

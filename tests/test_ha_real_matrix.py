@@ -282,3 +282,45 @@ def test_local_trunk_uses_absolute_sipp_scenario_with_relative_output(
     scenario = Path(commands[0][commands[0].index("-sf") + 1])
     assert scenario.is_absolute()
     assert scenario == workdir / "local-trunk-register.xml"
+
+
+def test_local_trunk_accepts_a_register_that_completes_before_startup_probe(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = load_runner()
+    (tmp_path / "local-trunk-register_1_messages.log").write_text(
+        "Contact: <sip:sipp@127.0.0.1:45123>\n",
+        encoding="utf-8",
+    )
+
+    class Process:
+        returncode = 0
+
+        def poll(self):
+            return self.returncode
+
+        def communicate(self, timeout=None):
+            return "Successful call", None
+
+    socket_outputs = iter(
+        (
+            'UNCONN 0 0 0.0.0.0:15060 0.0.0.0:* users:(("hass",pid=1,fd=1))',
+            '\n'.join(
+                (
+                    'UNCONN 0 0 0.0.0.0:15060 0.0.0.0:* users:(("hass",pid=1,fd=1))',
+                    'UNCONN 0 0 0.0.0.0:45123 0.0.0.0:* users:(("hass",pid=1,fd=2))',
+                )
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: type("Result", (), {"stdout": next(socket_outputs)})(),
+    )
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: Process())
+    monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
+
+    with runner._registered_local_trunk(tmp_path, 19999) as contact_target:
+        assert contact_target() == ("127.0.0.1", 45123)
