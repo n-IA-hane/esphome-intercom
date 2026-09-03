@@ -98,7 +98,8 @@ const timed = new Processor({{
 for (let frame = 0; frame < 20; frame++) {{
   timed._push(new ArrayBuffer(frameSamples * 2), 0, 1000 + frame * {frame_ms});
 }}
-assert.equal(timed._targetStartFrames, 3);
+const minimumStartFrames = Math.ceil(80 / {frame_ms});
+assert.equal(timed._targetStartFrames, minimumStartFrames);
 assert.equal(timed._maxArrivalGapMs, {frame_ms});
 assert.equal(timed._arrivalGapsOver40Ms, 0);
 
@@ -107,15 +108,17 @@ const androidOutput = new Processor({{
     format: {{sampleRate: {input_rate}, frameMs: {frame_ms}, channels: 1, pcmFormat: "s16le"}},
   }},
 }});
-assert.equal(androidOutput._minStartFrames, 3);
+assert.equal(androidOutput._minStartFrames, minimumStartFrames);
 context.currentTime = 2;
 androidOutput._push(new ArrayBuffer(frameSamples * 2), 0, 2000);
 context.currentTime = 2.216;
 androidOutput._push(new ArrayBuffer(frameSamples * 2), 0, 2216);
-assert.equal(androidOutput._targetStartFrames, 3);
+assert.ok(androidOutput._targetStartFrames > minimumStartFrames);
+const targetAfterFirstBurst = androidOutput._targetStartFrames;
 context.currentTime = 2.332;
 androidOutput._push(new ArrayBuffer(frameSamples * 2), 0, 2332);
-assert.equal(androidOutput._targetStartFrames, 3);
+assert.ok(androidOutput._targetStartFrames >= targetAfterFirstBurst);
+assert.ok(androidOutput._targetStartFrames <= androidOutput._maxStartFrames);
 assert.ok(androidOutput._maxDeliveryGapMs > 200);
 '''
     completed = subprocess.run(
@@ -268,6 +271,65 @@ const buffered = processor._available / processor._contextFrameSamples;
 assert.equal(processor._framesDrop, 0);
 assert.equal(processor._underruns, 0);
 assert.ok(buffered <= processor._targetStartFrames + 2, JSON.stringify({{buffered, rate: processor._playbackRate}}));
+'''
+    completed = subprocess.run(
+        ["node", "--experimental-vm-modules", "--input-type=module", "-"],
+        input=script,
+        text=True,
+        check=False,
+        capture_output=True,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_playback_rebuffers_after_a_real_underflow() -> None:
+    script = rf'''
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+
+let Processor;
+class MockAudioWorkletProcessor {{
+  constructor() {{
+    this.port = {{postMessage() {{}}, onmessage: null}};
+  }}
+}}
+const context = vm.createContext({{
+  AudioWorkletProcessor: MockAudioWorkletProcessor,
+  sampleRate: 48000,
+  currentTime: 0,
+  registerProcessor(_name, value) {{ Processor = value; }},
+  ArrayBuffer, DataView, Float32Array, Math, Number, Object, Error,
+}});
+vm.runInContext(fs.readFileSync({json.dumps(str(PLAYBACK_PROCESSOR))}, "utf8"), context);
+const processor = new Processor({{
+  processorOptions: {{format: {{sampleRate: 16000, frameMs: 16, channels: 1, pcmFormat: "s16le"}}}},
+}});
+const frameSamples = 256;
+const frame = new ArrayBuffer(frameSamples * 2);
+let timestamp = 0;
+for (let index = 0; index < processor._targetStartFrames; index++, timestamp += frameSamples) {{
+  processor._push(frame.slice(0), 0, index * 16, 0, index, timestamp);
+}}
+for (let quantum = 0; quantum < 80; quantum++) {{
+  context.currentTime = quantum * 128 / 48000;
+  processor.process([], [[new Float32Array(128)]]);
+}}
+assert.equal(processor._underruns, 1);
+assert.equal(processor._started, false);
+const discardedBeforeRecovery = processor._lateDiscard;
+for (let index = 0; index < processor._targetStartFrames; index++, timestamp += frameSamples) {{
+  processor._push(frame.slice(0), 0, 250 + index * 16, 0, index + 8, timestamp);
+}}
+assert.equal(processor._lateDiscard, discardedBeforeRecovery);
+assert.equal(processor._started, true);
+const underrunsBeforeRecovery = processor._underruns;
+for (let quantum = 80; quantum < 84; quantum++) {{
+  context.currentTime = quantum * 128 / 48000;
+  processor.process([], [[new Float32Array(128)]]);
+}}
+assert.equal(processor._underruns, underrunsBeforeRecovery);
 '''
     completed = subprocess.run(
         ["node", "--experimental-vm-modules", "--input-type=module", "-"],

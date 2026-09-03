@@ -1,11 +1,10 @@
 const PCM_FORMATS = Object.freeze(["s16le", "s24le", "s24le_in_s32", "s32le"]);
 const FRAME_MS = Object.freeze([10, 16, 20, 32]);
 const BUFFER_CAPACITY_SECONDS = 0.32;
-const INITIAL_START_FRAMES = 3;
-const MAX_START_LATENCY_MS = 240;
-const STABLE_DECAY_SECONDS = 10;
-const LATE_WINDOW_SECONDS = 5;
-const LATE_EVENTS_TO_GROW = 3;
+const MIN_START_LATENCY_MS = 80;
+const MAX_START_LATENCY_MS = 160;
+const JITTER_SAFETY_MULTIPLIER = 4;
+const STABLE_DECAY_SECONDS = 12;
 const PLC_DECAY_PER_SAMPLE = 0.9997;
 const CLOCK_RECOVERY_DEADBAND_FRAMES = 1;
 const CLOCK_RECOVERY_PROPORTIONAL_GAIN = 0.001;
@@ -43,7 +42,7 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._format = normaliseFormat(options?.processorOptions?.format);
     this._contextFrameSamples = Math.max(1, Math.round(this._format.frameSamples * sampleRate / this._format.sampleRate));
     this._capacityFrames = Math.max(8, Math.ceil((BUFFER_CAPACITY_SECONDS * 1000) / this._format.frameMs));
-    this._minStartFrames = INITIAL_START_FRAMES;
+    this._minStartFrames = Math.max(2, Math.ceil(MIN_START_LATENCY_MS / this._format.frameMs));
     this._maxStartFrames = Math.max(
       this._minStartFrames,
       Math.ceil(MAX_START_LATENCY_MS / this._format.frameMs),
@@ -66,6 +65,8 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._lastOutput = new Float32Array(this._format.channels);
     this._concealmentGain = 0;
     this._lastArrivalTime = 0;
+    this._arrivalJitterMs = 0;
+    this._adaptiveStartFrames = this._minStartFrames;
     this._maxArrivalGapMs = 0;
     this._arrivalGapsOver40Ms = 0;
     this._lastDeliveryTimeMs = 0;
@@ -80,8 +81,6 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._playoutTimestamp = 0;
     this._lateDiscard = 0;
     this._timelineGaps = 0;
-    this._lateWindowStart = 0;
-    this._lateEvents = 0;
     this._inUnderrun = false;
     this._lastSilent = true;
 
@@ -118,25 +117,15 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._inUnderrun = false;
     this._playbackRate = 1;
     this._targetStartFrames = Math.min(this._maxStartFrames, this._minStartFrames);
-    this._lateWindowStart = 0;
-    this._lateEvents = 0;
+    this._lastArrivalTime = 0;
+    this._arrivalJitterMs = 0;
+    this._adaptiveStartFrames = this._minStartFrames;
     this._hasPreviousInput = false;
   }
 
   _timestampDelta(value, reference) {
     const delta = ((Number(value) >>> 0) - (Number(reference) >>> 0)) >>> 0;
     return delta > 0x7fffffff ? delta - 0x100000000 : delta;
-  }
-
-  _noteLateEvent() {
-    if (currentTime - this._lateWindowStart > LATE_WINDOW_SECONDS) {
-      this._lateWindowStart = currentTime;
-      this._lateEvents = 0;
-    }
-    if (++this._lateEvents < LATE_EVENTS_TO_GROW) return;
-    this._targetStartFrames = Math.min(this._maxStartFrames, this._targetStartFrames + 1);
-    this._lateWindowStart = currentTime;
-    this._lateEvents = 0;
   }
 
   _decode(view, sampleIndex) {
@@ -190,7 +179,10 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       const delta = this._timestampDelta(frameTimestamp, expectedTimestamp);
       if (delta < -this._format.frameSamples / 2) {
         this._lateDiscard++;
-        this._noteLateEvent();
+        this._targetStartFrames = Math.min(
+          this._maxStartFrames,
+          this._targetStartFrames + 1,
+        );
         return;
       }
       if (delta > this._format.frameSamples / 2) {
@@ -271,6 +263,22 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       const arrivalGap = now - this._lastArrivalTime;
       this._maxArrivalGapMs = Math.max(this._maxArrivalGapMs, arrivalGap);
       if (arrivalGap >= 40) this._arrivalGapsOver40Ms++;
+      const deviation = Math.abs(arrivalGap - this._format.frameMs);
+      this._arrivalJitterMs += (deviation - this._arrivalJitterMs) / 16;
+      this._adaptiveStartFrames = Math.min(
+        this._maxStartFrames,
+        Math.max(
+          this._minStartFrames,
+          Math.ceil(
+            (MIN_START_LATENCY_MS + this._arrivalJitterMs * JITTER_SAFETY_MULTIPLIER)
+              / this._format.frameMs,
+          ),
+        ),
+      );
+      this._targetStartFrames = Math.max(
+        this._targetStartFrames,
+        this._adaptiveStartFrames,
+      );
     }
     this._lastArrivalTime = now;
   }
@@ -308,7 +316,13 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     let underrunThisQuantum = false;
     for (let i = 0; i < channels[0].length; i++) {
       if (!this._started) {
-        for (const out of channels) out[i] = 0;
+        for (let ch = 0; ch < channels.length; ch++) {
+          const out = channels[ch];
+          out[i] = this._inUnderrun
+            ? this._lastOutput[Math.min(ch, this._format.channels - 1)] * this._concealmentGain
+            : 0;
+        }
+        if (this._inUnderrun) this._concealmentGain *= PLC_DECAY_PER_SAMPLE;
         continue;
       }
       if (this._available < this._format.channels) {
@@ -318,16 +332,22 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
             this._inUnderrun = true;
             this._underruns++;
             this._lastUnderrun = currentTime;
-            this._noteLateEvent();
+            this._targetStartFrames = Math.min(
+              this._maxStartFrames,
+              this._targetStartFrames + 2,
+            );
           }
+          // Match the receive-buffer behaviour used by established SIP
+          // clients: after an underflow, emit concealment while filling the
+          // same bounded buffer again. Advancing the media timestamp while
+          // empty makes every subsequently received frame look late and
+          // prevents recovery from a transport burst.
+          this._started = false;
         }
         for (let ch = 0; ch < channels.length; ch++) {
           channels[ch][i] = this._lastOutput[Math.min(ch, this._format.channels - 1)] * this._concealmentGain;
         }
         this._concealmentGain *= PLC_DECAY_PER_SAMPLE;
-        this._playoutTimestamp = (
-          this._playoutTimestamp + this._format.sampleRate / sampleRate
-        ) % 0x100000000;
         continue;
       }
       this._inUnderrun = false;
@@ -377,8 +397,8 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       this._levelSamples = 0;
       if (
         this._targetStartFrames > this._minStartFrames &&
+        this._targetStartFrames > this._adaptiveStartFrames &&
         currentTime - this._lastUnderrun >= STABLE_DECAY_SECONDS &&
-        currentTime - this._lateWindowStart >= STABLE_DECAY_SECONDS &&
         this._lastSilent
       ) {
         this._targetStartFrames--;
@@ -394,6 +414,7 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
         jitter_target_ms: this._targetStartFrames * this._format.frameMs,
         max_arrival_gap_ms: Math.round(this._maxArrivalGapMs * 10) / 10,
         arrival_gaps_over_40ms: this._arrivalGapsOver40Ms,
+        arrival_jitter_ms: Math.round(this._arrivalJitterMs * 10) / 10,
         max_delivery_gap_ms: Math.round(this._maxDeliveryGapMs * 10) / 10,
         clock_recovery_rate: Math.round(this._playbackRate * 1000000) / 1000000,
         clock_recovery_ppm: Math.round((this._playbackRate - 1) * 1000000),
