@@ -56,6 +56,50 @@ SET_MANUAL_TARGET = r"""
 }
 """
 
+CLICK_CALL_CONTROL = r"""
+async (action) => {
+  const deep = (selector, root = document) => {
+    const found = [...root.querySelectorAll(selector)];
+    for (const node of root.querySelectorAll("*")) if (node.shadowRoot) found.push(...deep(selector, node.shadowRoot));
+    return found;
+  };
+  const card = deep("voip-stack-card, intercom-card")
+    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
+  const button = action === "answer" ? card?._els?.answerBtn : card?._els?.callBtn;
+  if (!button || button.hidden || button.disabled) return false;
+  button.click();
+  return true;
+}
+"""
+
+CALL_CONTROL_STATE = r"""
+() => {
+  const deep = (selector, root = document) => {
+    const found = [...root.querySelectorAll(selector)];
+    for (const node of root.querySelectorAll("*")) if (node.shadowRoot) found.push(...deep(selector, node.shadowRoot));
+    return found;
+  };
+  const card = deep("voip-stack-card, intercom-card")
+    .find((item) => (item.config?.mode || item.config?.card_mode || "") === "ha_softphone");
+  const button = card?._els?.callBtn;
+  return {
+    config: card?.config || {},
+    snapshot: card?._softphoneSnapshot || {},
+    endpoint_id: card?._getSoftphoneEndpointId?.() || "",
+    target: card?._getSoftphoneTargetDevice?.() || null,
+    manual_target: card?._manualTarget?.() || "",
+    keypad_open: Boolean(card?._softphoneKeypadOpen),
+    browser_media_busy: Boolean(card?._otherPhoneOwnsBrowserMedia?.()),
+    button: button ? {
+      hidden: Boolean(button.hidden),
+      disabled: Boolean(button.disabled),
+      displayed: button.offsetParent !== null,
+      text: String(button.textContent || "").trim(),
+    } : null,
+  };
+}
+"""
+
 ENGINE_STATS = """() => ({
   state: String(globalThis.__voipStackEngine?.state || ""),
   call_id: String(globalThis.__voipStackEngine?.callId || ""),
@@ -101,14 +145,13 @@ BROWSER_MEDIA_BUSY = r"""
 def _load_runtime_dependencies() -> None:
     """Load Playwright only after command-line help has been handled."""
 
-    global CLICK, HA_BASE, SET_AUTO_ANSWER, SET_SEND_VIDEO  # noqa: PLW0603
+    global HA_BASE, SET_AUTO_ANSWER, SET_SEND_VIDEO  # noqa: PLW0603
     global context_kwargs, sync_playwright, wait_card  # noqa: PLW0603
 
     try:
         from playwright.sync_api import sync_playwright as playwright_factory
         from ha_playwright_auth import context_kwargs as browser_context_kwargs
         from ha_softphone_matrix import (
-            CLICK as click_script,
             HA_BASE as matrix_ha_base,
             SET_AUTO_ANSWER as set_auto_answer_script,
             SET_SEND_VIDEO as set_send_video_script,
@@ -121,7 +164,6 @@ def _load_runtime_dependencies() -> None:
 
     sync_playwright = playwright_factory
     context_kwargs = browser_context_kwargs
-    CLICK = click_script
     HA_BASE = matrix_ha_base
     SET_AUTO_ANSWER = set_auto_answer_script
     SET_SEND_VIDEO = set_send_video_script
@@ -204,8 +246,24 @@ def _wait_video(page: Any, label: str) -> dict[str, Any]:
         video = (last.get("stats") or {}).get("video") or {}
         if (
             last.get("video_active")
-            and int(video.get("sent") or 0) > 0
-            and int(video.get("received") or 0) > 0
+            and int(video.get("sent") or 0) >= 10
+            and int(video.get("received") or 0) >= 10
+        ):
+            return last
+        page.wait_for_timeout(100)
+    raise RuntimeError(f"timeout waiting for {label}: {last}")
+
+
+def _wait_audio(page: Any, label: str) -> dict[str, Any]:
+    deadline = time.monotonic() + 12
+    last: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        last = page.evaluate(ENGINE_STATS) or {}
+        stats = last.get("stats") or {}
+        if (
+            int(stats.get("sent") or 0) >= 50
+            and int(stats.get("received") or 0) >= 50
+            and int(stats.get("underruns") or 0) == 0
         ):
             return last
         page.wait_for_timeout(100)
@@ -283,8 +341,11 @@ def main() -> int:
                     raise RuntimeError(
                         f"{selected_target} is not selectable from {caller_name}"
                     )
-                if not caller.evaluate(CLICK, "Call"):
-                    raise RuntimeError(f"Call unavailable on {caller_name}")
+                if not caller.evaluate(CLICK_CALL_CONTROL, "call"):
+                    raise RuntimeError(
+                        f"Call unavailable on {caller_name}: "
+                        f"{caller.evaluate(CALL_CONTROL_STATE)}"
+                    )
                 outgoing = wait_card(
                     caller,
                     lambda item: (
@@ -311,14 +372,21 @@ def main() -> int:
                 if incoming["backend"]["call_id"] != call_id:
                     raise RuntimeError("local endpoints received different Call-IDs")
                 if not auto_answer:
-                    if not callee.evaluate(CLICK, "Answer"):
+                    if not callee.evaluate(CLICK_CALL_CONTROL, "answer"):
                         raise RuntimeError(f"Answer unavailable on {callee_name}")
                 _state(caller, "in_call", f"{name}: caller in call")
                 _state(callee, "in_call", f"{name}: callee in call")
-                media: dict[str, Any] = {}
+                media: dict[str, Any] = {
+                    caller_name: _wait_audio(caller, f"{caller_name} audio"),
+                    callee_name: _wait_audio(callee, f"{callee_name} audio"),
+                }
                 if arguments.expect_video:
-                    media[caller_name] = _wait_video(caller, f"{caller_name} video")
-                    media[callee_name] = _wait_video(callee, f"{callee_name} video")
+                    media[caller_name]["video_gate"] = _wait_video(
+                        caller, f"{caller_name} video"
+                    )
+                    media[callee_name]["video_gate"] = _wait_video(
+                        callee, f"{callee_name} video"
+                    )
                 if not hangup.evaluate(HANGUP):
                     raise RuntimeError("Hangup unavailable")
                 _state(caller, "idle", f"{name}: caller idle")
@@ -389,8 +457,10 @@ def main() -> int:
                 raise RuntimeError("failed to enable Auto Answer on Casa")
             if not test.evaluate(SET_TARGET, "Casa"):
                 raise RuntimeError("Casa is not selectable from Test")
-            if not test.evaluate(CLICK, "Call"):
-                raise RuntimeError("Call unavailable on Test")
+            if not test.evaluate(CLICK_CALL_CONTROL, "call"):
+                raise RuntimeError(
+                    f"Call unavailable on Test: {test.evaluate(CALL_CONTROL_STATE)}"
+                )
             _state(test, "in_call", "navigation cleanup: Test in call")
             _state(casa, "in_call", "navigation cleanup: Casa in call")
             if arguments.expect_video:
