@@ -73,6 +73,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         async with EspApi(spec, capture_info_logs=True) as esp:
             original_volume = float(esp.values.get("master_volume") or 0)
             original_auto = norm(esp.values.get("auto_answer")) == "on"
+            original_video = norm(esp.values.get("send_video")) == "on"
             original_extension = str(esp.values.get("voip_extension") or "")
             try:
                 existing = phonebook_contact(
@@ -85,6 +86,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                     )
                 await esp.number("master_volume", 1.0)
                 await esp.switch("auto_answer", True)
+                await esp.switch("send_video", False)
                 await esp.text("voip_extension", args.destination)
                 contact = await wait_phonebook_contains(
                     ha, args.destination, timeout=args.registration_settle
@@ -131,6 +133,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                     await asyncio.to_thread(zoiper.hangup)
                 with suppress(Exception):
                     await esp.switch("auto_answer", original_auto)
+                with suppress(Exception):
+                    await esp.switch("send_video", original_video)
                 with suppress(Exception):
                     await esp.number("master_volume", original_volume)
                 if original_extension != args.destination:

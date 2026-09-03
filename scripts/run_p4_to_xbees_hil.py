@@ -42,12 +42,10 @@ async def run(args: argparse.Namespace) -> dict:
     async with HaWs(args.ha_url, token, insecure=args.insecure) as ws:
         async with EspApi(spec, capture_info_logs=True) as esp:
             original_volume = float(esp.values.get("master_volume") or 0)
+            original_video = norm(esp.values.get("send_video")) == "on"
             try:
                 await esp.number("master_volume", 1.0)
-                if norm(esp.values.get("send_video")) == "on":
-                    raise AssertionError(
-                        "P4 Send Video is unexpectedly active before the call"
-                    )
+                await esp.switch("send_video", False)
                 before = await ws.softphone_state()
                 await esp.service("start_call", {"dest": args.extension})
                 await esp.wait(
@@ -89,6 +87,8 @@ async def run(args: argparse.Namespace) -> dict:
                     await asyncio.to_thread(xbees.ensure_inbox)
                 with suppress(Exception):
                     await esp.number("master_volume", original_volume)
+                with suppress(Exception):
+                    await esp.switch("send_video", original_video)
 
 
 def main() -> int:

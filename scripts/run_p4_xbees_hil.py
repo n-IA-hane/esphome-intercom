@@ -75,6 +75,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             raw_volume = esp.values.get("master_volume")
             original_volume = float(raw_volume) if raw_volume is not None else None
             original_auto = norm(esp.values.get("auto_answer")) == "on"
+            original_video = norm(esp.values.get(video_switch)) == "on"
             original_extension = str(esp.values.get("voip_extension") or "")
             try:
                 current_phonebook = await ha.state("sensor.voip_phonebook")
@@ -89,6 +90,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                     )
                 await esp.number("master_volume", 1.0)
                 await esp.switch("auto_answer", True)
+                await esp.switch(video_switch, False)
                 if original_extension != args.destination:
                     await esp.text("voip_extension", args.destination)
                 contact = await wait_phonebook_contains(
@@ -183,6 +185,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                     await asyncio.to_thread(xb.ensure_inbox)
                 with suppress(Exception):
                     await esp.switch("auto_answer", original_auto)
+                with suppress(Exception):
+                    await esp.switch(video_switch, original_video)
                 if original_volume is not None:
                     with suppress(Exception):
                         await esp.number("master_volume", original_volume)
