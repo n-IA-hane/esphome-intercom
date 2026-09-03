@@ -145,7 +145,13 @@ const context = vm.createContext({{
   window: {{
     location: {{ protocol: "https:", host: "ha.example" }},
     isSecureContext: true,
-    AudioContext: class AudioContext {{}},
+    AudioContext: class AudioContext {{
+      constructor() {{
+        this.state = "running";
+        this.audioWorklet = {{ addModule: async () => {{}} }};
+      }}
+      async close() {{ this.state = "closed"; }}
+    }},
     addEventListener() {{}},
     setInterval,
     clearInterval,
@@ -181,6 +187,9 @@ context.navigator.mediaDevices = {{
   }},
 }};
 assert.equal(await audioPreflight.prepareAudioCall(), true);
+assert.equal(audioTrackStops, 0);
+assert.ok(audioPreflight._preparedAudio?.mediaStream);
+await audioPreflight.discardPreparedAudio();
 assert.equal(audioTrackStops, 1);
 
 // sessionStorage is only a reload/handoff hint. A backend snapshot is
@@ -963,6 +972,23 @@ await sendOnly._setupAudio(
 assert.equal(microphoneRequests, 2);
 assert.equal(sendOnly._captureNode?.name, "voip-stack-processor");
 assert.equal(sendOnly._playbackNode, null);
+
+// The user gesture prepares the actual browser audio resources. Attaching the
+// negotiated call consumes that preparation instead of opening the microphone
+// and loading both worklets a second time after SIP answer.
+const prepared = new Engine();
+const requestsBeforePrepare = microphoneRequests;
+await prepared.prepareAudioCall();
+const preparedContext = prepared._preparedAudio.audioContext;
+prepared._callId = "prepared-call";
+await prepared._setupAudio(
+  {{ audio_mode: "full_duplex" }},
+  {{ ...pcm, call_id: "prepared-call", audio_direction: "sendrecv" }},
+);
+assert.equal(microphoneRequests, requestsBeforePrepare + 1);
+assert.equal(prepared._audioContext, preparedContext);
+assert.equal(prepared._preparedAudio, null);
+await prepared.close("test");
 
 // Reapplying an unchanged negotiated direction is a no-op. Card listeners
 // call reconcileSession() from engine state events, so emitting here would

@@ -88,6 +88,102 @@ function rejectAfter(promise, timeoutMs, message) {
   });
 }
 
+class WorkerAudioSocket {
+  constructor(url) {
+    this.readyState = WebSocket.CONNECTING;
+    this.bufferedAmount = 0;
+    this.binaryType = "arraybuffer";
+    this.onopen = null;
+    this.onmessage = null;
+    this.onerror = null;
+    this.onclose = null;
+    this.onstats = null;
+    this._closed = false;
+    this._worker = new Worker(
+      `/voip-stack/voip-stack-audio-worker.js?v=${encodeURIComponent(MODULE_VERSION)}`,
+    );
+    this._worker.onmessage = (event) => this._handleWorkerMessage(event.data || {});
+    this._worker.onerror = () => this.onerror?.();
+    this._worker.postMessage({ type: "connect", url });
+  }
+
+  _handleWorkerMessage(message) {
+    if (message.type === "open") {
+      this.readyState = WebSocket.OPEN;
+      this.onopen?.();
+    } else if (message.type === "message") {
+      this.onmessage?.({ data: message.data });
+    } else if (message.type === "stats") {
+      this.bufferedAmount = Number(message.buffered_amount || 0);
+      this.onstats?.(message);
+    } else if (message.type === "error") {
+      this.onerror?.();
+    } else if (message.type === "close") {
+      this._finishClose(message);
+    }
+  }
+
+  _bind(node, workerType) {
+    if (!node || this.readyState === WebSocket.CLOSED) return;
+    const channel = new MessageChannel();
+    node.port.postMessage(
+      { type: "bind_media_port", port: channel.port1 },
+      [channel.port1],
+    );
+    this._worker.postMessage(
+      { type: workerType, port: channel.port2 },
+      [channel.port2],
+    );
+  }
+
+  bindPlayback(node) {
+    this._bind(node, "bind_playback");
+  }
+
+  bindCapture(node) {
+    this._bind(node, "bind_capture");
+  }
+
+  configureCapture(enabled, maxBufferedBytes) {
+    this._worker.postMessage({
+      type: "configure_capture",
+      enabled: Boolean(enabled),
+      max_buffered_bytes: Math.max(0, Number(maxBufferedBytes || 0)),
+    });
+  }
+
+  send(data) {
+    if (this.readyState === WebSocket.OPEN) {
+      this._worker.postMessage({ type: "send", data });
+    }
+  }
+
+  close() {
+    if (this.readyState === WebSocket.CLOSED || this._closed) return;
+    this._closed = true;
+    this.readyState = WebSocket.CLOSING;
+    this._worker.postMessage({ type: "close" });
+  }
+
+  _finishClose(event = {}) {
+    if (this.readyState === WebSocket.CLOSED) return;
+    this._closed = true;
+    this.readyState = WebSocket.CLOSED;
+    this._worker.terminate();
+    this.onclose?.(event);
+    this.onclose = null;
+  }
+}
+
+function createAudioSocket(url) {
+  if (typeof Worker === "function" && typeof MessageChannel === "function") {
+    try {
+      return new WorkerAudioSocket(url);
+    } catch (_) {}
+  }
+  return new WebSocket(url);
+}
+
 function mediaClientInstanceId() {
   try {
     const existing = String(globalThis[MEDIA_CLIENT_GLOBAL_KEY] || "");
@@ -134,6 +230,7 @@ class VoipStackEngine extends EventTarget {
     this._lastSessionPayload = null;
     this._audioReady = false;
     this._audioSetupGeneration = 0;
+    this._preparedAudio = null;
     this._mediaStream = null;
     this._audioContext = null;
     this._captureNode = null;
@@ -875,23 +972,75 @@ class VoipStackEngine extends EventTarget {
     if (!AudioContextCtor || typeof globalThis.AudioWorkletNode !== "function") {
       throw new Error("This browser does not provide the Web Audio features required for calls.");
     }
-    if (!needsMicrophone) return true;
-    if (!navigator.mediaDevices?.getUserMedia) {
+    if (needsMicrophone && !navigator.mediaDevices?.getUserMedia) {
       throw new Error("Microphone access is unavailable in this browser or Home Assistant app.");
     }
-    let stream = null;
+    await this.discardPreparedAudio();
+    const resources = {
+      audioContext: null,
+      mediaStream: null,
+      captureModuleLoaded: false,
+      playbackModuleLoaded: false,
+    };
     try {
-      stream = await this._openAudioInput(
-        this._mediaDevices.preference("audioinput"),
-        { processing: false },
+      await this._completeAudioResources(resources, {
+        microphone: needsMicrophone,
+        captureModule: true,
+        playbackModule: true,
+      });
+      this._preparedAudio = resources;
+      return true;
+    } catch (err) {
+      await this._disposeAudioResources(resources);
+      throw err;
+    }
+  }
+
+  _takePreparedAudio() {
+    const resources = this._preparedAudio;
+    this._preparedAudio = null;
+    return resources;
+  }
+
+  async discardPreparedAudio() {
+    await this._disposeAudioResources(this._takePreparedAudio() || {});
+  }
+
+  async _completeAudioResources(resources, wanted, assertCurrent = () => {}) {
+    if (!resources.audioContext) {
+      resources.audioContext = this._createAudioContext();
+      if (resources.audioContext.state === "suspended") {
+        await resources.audioContext.resume();
+        assertCurrent();
+      }
+      const output = this._mediaDevices.preference("audiooutput");
+      if (output && typeof resources.audioContext.setSinkId === "function") {
+        await resources.audioContext.setSinkId(output).catch(() => {});
+        assertCurrent();
+      }
+    }
+    if (wanted.microphone && !resources.mediaStream) {
+      resources.mediaStream = await this._openAudioInput(
+        this._mediaDevices.preference("audioinput"), { processing: true },
       );
-      if (!stream?.getAudioTracks?.()[0]) {
+      assertCurrent();
+      if (!resources.mediaStream?.getAudioTracks?.()[0]) {
         throw new Error("No microphone audio track is available.");
       }
-      return true;
-    } finally {
-      for (const track of stream?.getTracks?.() || []) track.stop();
     }
+    const modules = [];
+    if (wanted.captureModule && !resources.captureModuleLoaded) {
+      modules.push(resources.audioContext.audioWorklet.addModule(
+        `/voip-stack/voip-stack-processor.js?v=${encodeURIComponent(MODULE_VERSION)}`,
+      ).then(() => { resources.captureModuleLoaded = true; }));
+    }
+    if (wanted.playbackModule && !resources.playbackModuleLoaded) {
+      modules.push(resources.audioContext.audioWorklet.addModule(
+        `/voip-stack/voip-stack-playback-processor.js?v=${encodeURIComponent(MODULE_VERSION)}`,
+      ).then(() => { resources.playbackModuleLoaded = true; }));
+    }
+    await Promise.all(modules);
+    assertCurrent();
   }
 
   suspendVideoForHangup(
@@ -1212,7 +1361,7 @@ class VoipStackEngine extends EventTarget {
       return this._connectPromise;
     }
     const connectGeneration = ++this._connectGeneration;
-    await this.close("switch", true, true);
+    await this.close("switch", true, true, true);
     if (connectGeneration !== this._connectGeneration) {
       throw new Error("Audio WebSocket superseded before connect");
     }
@@ -1229,9 +1378,18 @@ class VoipStackEngine extends EventTarget {
     ) {
       throw new Error("Audio WebSocket superseded before connect");
     }
-    const ws = new WebSocket(wsUrl);
+    const ws = createAudioSocket(wsUrl);
     this._ws = ws;
     ws.binaryType = "arraybuffer";
+    ws.onstats = (stats) => {
+      if (this._ws !== ws) return;
+      this._stats.sent = Number(stats.sent || 0);
+      this._stats.received = Number(stats.received || 0);
+      this._stats.tx_dropped = Number(stats.tx_dropped || 0);
+      this._stats.max_capture_gap_ms = Number(stats.max_capture_gap_ms || 0);
+      this._stats.capture_gaps_over_40ms = Number(stats.capture_gaps_over_40ms || 0);
+      this._emit();
+    };
     let helloResolve;
     let helloReject;
     let helloSettled = false;
@@ -1365,14 +1523,7 @@ class VoipStackEngine extends EventTarget {
     if (!this._canSendAudio()) return;
     const bytes = new Uint8Array(buffer);
     if (!bytes.byteLength) return;
-    const bytesPerSample = this._txFormat?.pcmFormat === "s16le" ? 2 :
-      this._txFormat?.pcmFormat === "s24le" ? 3 : 4;
-    const bytesPerSecond = Number(this._txFormat?.sampleRate || 0) *
-      Number(this._txFormat?.channels || 0) * bytesPerSample;
-    const maxBufferedBytes = Math.max(
-      bytes.byteLength * MIN_AUDIO_WS_BUFFER_FRAMES,
-      Math.ceil(bytesPerSecond * MAX_AUDIO_WS_BUFFER_MS / 1000),
-    );
+    const maxBufferedBytes = this._captureBufferLimit();
     if (this._ws.bufferedAmount >= maxBufferedBytes) {
       this._stats.tx_dropped++;
       if ((this._stats.tx_dropped & 31) === 1) this._emit();
@@ -1479,13 +1630,16 @@ class VoipStackEngine extends EventTarget {
     const setupGeneration = ++this._audioSetupGeneration;
     const expectedCallId = this._callId;
     let playbackReady = false;
+    const prepared = this._takePreparedAudio();
     const resources = {
-      audioContext: null,
-      mediaStream: null,
+      audioContext: prepared?.audioContext || null,
+      mediaStream: prepared?.mediaStream || null,
       captureNode: null,
       captureSink: null,
       source: null,
       playbackNode: null,
+      captureModuleLoaded: Boolean(prepared?.captureModuleLoaded),
+      playbackModuleLoaded: Boolean(prepared?.playbackModuleLoaded),
     };
     const assertCurrent = () => {
       if (
@@ -1501,33 +1655,13 @@ class VoipStackEngine extends EventTarget {
 
     try {
       assertCurrent();
-      if (capture || playback) {
-        resources.audioContext = this._createAudioContext();
-        if (resources.audioContext.state === "suspended") {
-          await resources.audioContext.resume();
-          assertCurrent();
-        }
-        const output = this._mediaDevices.preference("audiooutput");
-        if (output && typeof resources.audioContext.setSinkId === "function") {
-          try {
-            await resources.audioContext.setSinkId(output);
-            assertCurrent();
-          } catch (_) {
-            await resources.audioContext.setSinkId("").catch(() => {});
-          }
-        }
-      }
+      if (capture || playback) await this._completeAudioResources(resources, {
+        microphone: capture,
+        captureModule: capture,
+        playbackModule: playback,
+      }, assertCurrent);
 
       if (capture) {
-        resources.mediaStream = await this._openAudioInput(
-          this._mediaDevices.preference("audioinput"),
-          { processing: true },
-        );
-        assertCurrent();
-        await resources.audioContext.audioWorklet.addModule(
-          `/voip-stack/voip-stack-processor.js?v=${encodeURIComponent(MODULE_VERSION)}`,
-        );
-        assertCurrent();
         resources.source = resources.audioContext.createMediaStreamSource(resources.mediaStream);
         resources.captureNode = new AudioWorkletNode(resources.audioContext, "voip-stack-processor", {
           processorOptions: {
@@ -1547,13 +1681,12 @@ class VoipStackEngine extends EventTarget {
         resources.captureNode
           .connect(resources.captureSink)
           .connect(resources.audioContext.destination);
+      } else if (resources.mediaStream) {
+        for (const track of resources.mediaStream.getTracks?.() || []) track.stop();
+        resources.mediaStream = null;
       }
 
       if (playback) {
-        await resources.audioContext.audioWorklet.addModule(
-          `/voip-stack/voip-stack-playback-processor.js?v=${encodeURIComponent(MODULE_VERSION)}`,
-        );
-        assertCurrent();
         resources.playbackNode = new AudioWorkletNode(
           resources.audioContext,
           "voip-stack-playback-processor",
@@ -1606,6 +1739,8 @@ class VoipStackEngine extends EventTarget {
       this._source = resources.source;
       this._playbackNode = resources.playbackNode;
       this._audioReady = true;
+      this._ws?.bindCapture?.(this._captureNode);
+      this._ws?.bindPlayback?.(this._playbackNode);
       this._applyAudioDirection(audioDirection);
       if (playbackReady) this._sendControl({ type: "playback_ready" });
       if (resources.mediaStream) {
@@ -1840,6 +1975,7 @@ class VoipStackEngine extends EventTarget {
       return { ...sessionReply, superseded: true };
     }
     if (!["calling", "connecting", "remote_ringing", "ringing", "in_call"].includes(state)) {
+      await this.discardPreparedAudio();
       this._setState("IDLE");
       return sessionReply;
     }
@@ -2064,7 +2200,12 @@ class VoipStackEngine extends EventTarget {
     this._stats = { sent: 0, received: 0, tx_dropped: 0, buffered_frames: 0, frames_drop: 0, underruns: 0 };
   }
 
-  async close(_reason = "", preserveAttach = false, preserveConnect = false) {
+  async close(
+    _reason = "",
+    preserveAttach = false,
+    preserveConnect = false,
+    preservePreparedAudio = false,
+  ) {
     const previousCleanup = this._mediaCleanupPromise;
     let finishCleanup;
     const currentCleanup = new Promise((resolve) => { finishCleanup = resolve; });
@@ -2085,10 +2226,14 @@ class VoipStackEngine extends EventTarget {
       // New sessions wait on the page-level cleanup gate and cannot overlap
       // camera/encoder/AudioContext destruction from the previous call.
       const audioCleanup = this._cleanupAudio("close");
+      const preparedCleanup = preservePreparedAudio
+        ? Promise.resolve()
+        : this.discardPreparedAudio();
       const videoCleanup = this._video ? this._video.close() : Promise.resolve();
       await settleWithin(Promise.allSettled([
         previousCleanup || Promise.resolve(),
         audioCleanup,
+        preparedCleanup,
         videoCleanup,
       ]));
     } finally {
@@ -2142,7 +2287,7 @@ class VoipStackEngine extends EventTarget {
     try { resources.source?.disconnect(); } catch (_) {}
     try { resources.mediaStream?.getTracks?.().forEach((track) => track.stop()); } catch (_) {}
     try { resources.playbackNode?.disconnect(); } catch (_) {}
-    if (resources.audioContext) {
+    if (typeof resources.audioContext?.close === "function") {
       await settleWithin(resources.audioContext.close());
     }
   }

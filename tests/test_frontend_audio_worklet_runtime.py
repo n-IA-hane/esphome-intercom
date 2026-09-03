@@ -99,7 +99,7 @@ for (let frame = 0; frame < 20; frame++) {{
   timed._push(new ArrayBuffer(frameSamples * 2), 0, 1000 + frame * {frame_ms});
 }}
 assert.equal(timed._arrivalJitterMs, 0);
-assert.equal(timed._targetStartFrames, Math.ceil(240 / {frame_ms}));
+assert.equal(timed._targetStartFrames, Math.ceil(120 / {frame_ms}));
 assert.equal(timed._maxArrivalGapMs, {frame_ms});
 assert.equal(timed._arrivalGapsOver40Ms, 0);
 
@@ -108,21 +108,27 @@ const androidOutput = new Processor({{
     format: {{sampleRate: {input_rate}, frameMs: {frame_ms}, channels: 1, pcmFormat: "s16le"}},
   }},
 }});
-assert.equal(androidOutput._minStartFrames, Math.ceil(80 / {frame_ms}));
+assert.equal(androidOutput._minStartFrames, Math.ceil(60 / {frame_ms}));
 context.currentTime = 2;
 androidOutput._push(new ArrayBuffer(frameSamples * 2), 0, 2000);
 context.currentTime = 2.216;
 androidOutput._push(new ArrayBuffer(frameSamples * 2), 0, 2216);
 assert.equal(
   androidOutput._targetStartFrames,
-  Math.min(androidOutput._maxStartFrames, Math.ceil((216 + 80) / {frame_ms})),
+  Math.min(
+    androidOutput._maxStartFrames,
+    Math.max(
+      Math.ceil(120 / {frame_ms}),
+      Math.ceil((60 + (216 - {frame_ms}) / 16 * 4) / {frame_ms}),
+    ),
+  ),
 );
-const learnedTarget = androidOutput._targetStartFrames;
-const learnedAt = androidOutput._lastJitterSpike;
+const firstAdaptiveTarget = androidOutput._targetStartFrames;
 context.currentTime = 2.332;
 androidOutput._push(new ArrayBuffer(frameSamples * 2), 0, 2332);
-assert.equal(androidOutput._targetStartFrames, learnedTarget);
-assert.equal(androidOutput._lastJitterSpike, learnedAt);
+assert.ok(androidOutput._targetStartFrames >= firstAdaptiveTarget);
+const learnedTarget = androidOutput._targetStartFrames;
+assert.equal(androidOutput._lastJitterSpike, 2.332);
 androidOutput._lastUnderrun = 0;
 androidOutput._lastStats = 0;
 context.currentTime = 20;
@@ -130,15 +136,19 @@ androidOutput.process([], [[new Float32Array(128)]]);
 assert.equal(androidOutput._targetStartFrames, learnedTarget - 1);
 context.currentTime = 21;
 androidOutput.process([], [[new Float32Array(128)]]);
-assert.equal(androidOutput._targetStartFrames, learnedTarget - 1);
+assert.equal(
+  androidOutput._targetStartFrames,
+  Math.max(androidOutput._minStartFrames, learnedTarget - 2),
+);
 '''
-    subprocess.run(
+    completed = subprocess.run(
         ["node", "--experimental-vm-modules", "--input-type=module", "-"],
         input=script,
         text=True,
-        check=True,
+        check=False,
         capture_output=True,
     )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
@@ -211,7 +221,7 @@ assert.ok(matched.buffered <= matched.processor._targetStartFrames + 2, JSON.str
 const faster = run(1.01);
 assert.equal(faster.processor._framesDrop, 0);
 assert.equal(faster.processor._underruns, 0);
-assert.ok(faster.processor._playbackRate <= 1.015, faster.processor._playbackRate);
+assert.ok(faster.processor._playbackRate <= 1.02, String(faster.processor._playbackRate));
 assert.ok(faster.processor._clockRecoveryIntegral > 0.005, faster.processor._clockRecoveryIntegral);
 assert.ok(faster.buffered <= faster.processor._targetStartFrames + 3, JSON.stringify({{buffered: faster.buffered, target: faster.processor._targetStartFrames, rate: faster.processor._playbackRate}}));
 assert.ok(faster.maxBuffered < faster.processor._dropFrames, JSON.stringify({{maxBuffered: faster.maxBuffered, drop: faster.processor._dropFrames}}));
@@ -220,16 +230,17 @@ const slower = run(0.995);
 assert.equal(slower.processor._framesDrop, 0);
 assert.equal(slower.processor._underruns, 0);
 assert.ok(slower.processor._playbackRate < 0.998, slower.processor._playbackRate);
-assert.ok(slower.processor._playbackRate >= 0.985, slower.processor._playbackRate);
+assert.ok(slower.processor._playbackRate >= 0.98, String(slower.processor._playbackRate));
 assert.ok(slower.buffered >= slower.processor._targetStartFrames - 2, JSON.stringify({{buffered: slower.buffered, target: slower.processor._targetStartFrames, rate: slower.processor._playbackRate}}));
 '''
-    subprocess.run(
+    completed = subprocess.run(
         ["node", "--experimental-vm-modules", "--input-type=module", "-"],
         input=script,
         text=True,
-        check=True,
+        check=False,
         capture_output=True,
     )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")

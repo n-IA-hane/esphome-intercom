@@ -1,6 +1,5 @@
 const PCM_FORMATS = Object.freeze(["s16le", "s24le", "s24le_in_s32", "s32le"]);
 const FRAME_MS = Object.freeze([10, 16, 20, 32]);
-const TX_BUFFER_POOL = 4;
 // Fourth-order Butterworth (two cascaded biquads) Q values. Keep this filter
 // before decimation: sampling first irreversibly folds microphone energy above
 // the destination Nyquist frequency back into the audible passband.
@@ -62,14 +61,17 @@ class RecorderProcessor extends AudioWorkletProcessor {
     super();
     this._format = normaliseFormat(options?.processorOptions?.format);
     this._frameBytes = this._format.frameSamples * this._format.channels * this._format.bytesPerSample;
-    this._buffers = Array.from({ length: TX_BUFFER_POOL }, () => new ArrayBuffer(this._frameBytes));
-    this._views = this._buffers.map((buffer) => new DataView(buffer));
-    this._bufferIndex = 0;
-    this._buffer = this._buffers[this._bufferIndex];
-    this._view = this._views[this._bufferIndex];
+    this._buffer = new ArrayBuffer(this._frameBytes);
+    this._view = new DataView(this._buffer);
     this._writeSample = 0;
     this._position = 0;
     this._lastSample = 0;
+    this._mediaPort = null;
+    this.port.onmessage = (event) => {
+      if (event.data?.type !== "bind_media_port" || !event.data.port) return;
+      this._mediaPort = event.data.port;
+      this._mediaPort.start?.();
+    };
     this._ratio = sampleRate / this._format.sampleRate;
     const antiAliasEnabled = options?.processorOptions?.antiAlias !== false;
     // The disabled path exists for comparison and legacy troubleshooting. The
@@ -119,10 +121,7 @@ class RecorderProcessor extends AudioWorkletProcessor {
     if (this._writeSample !== this._format.frameSamples) return;
 
     const frame = this._buffer;
-    this.port.postMessage({ type: "audio", buffer: frame });
-    this._bufferIndex = (this._bufferIndex + 1) % this._buffers.length;
-    this._buffer = this._buffers[this._bufferIndex];
-    this._view = this._views[this._bufferIndex];
+    (this._mediaPort || this.port).postMessage({ type: "audio", buffer: frame });
     this._writeSample = 0;
   }
 

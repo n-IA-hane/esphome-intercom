@@ -684,6 +684,9 @@ class FrontendCardContractTest(unittest.TestCase):
         ).read_text()
 
         self.assertIn("this._ws.bufferedAmount >= maxBufferedBytes", engine)
+        self.assertIn("const maxBufferedBytes = this._captureBufferLimit();", engine)
+        self.assertNotIn("const TX_BUFFER_POOL", capture)
+        self.assertNotIn("this._buffers", capture)
         self.assertIn("this._stats.tx_dropped++", engine)
         self.assertIn("if (this._ws !== ws) return", engine)
         self.assertIn("if (this._connectPromise === connectPromise)", engine)
@@ -730,7 +733,7 @@ class FrontendCardContractTest(unittest.TestCase):
         after_setup = setup.split("await this._setupAudio(", 1)[1]
         self.assertIn("this._sessionAttachKey !== attachKey", after_setup)
         self.assertNotIn('await this.close("superseded", true)', after_setup)
-        self.assertIn('await this.close("switch", true, true)', engine)
+        self.assertIn('await this.close("switch", true, true, true)', engine)
         self.assertIn("const connectGeneration = ++this._connectGeneration", engine)
         self.assertIn("connectGeneration !== this._connectGeneration", engine)
         self.assertIn('if (!preserveAttach) this._sessionAttachKey = ""', engine)

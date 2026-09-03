@@ -1,16 +1,17 @@
 const PCM_FORMATS = Object.freeze(["s16le", "s24le", "s24le_in_s32", "s32le"]);
 const FRAME_MS = Object.freeze([10, 16, 20, 32]);
-const BUFFER_CAPACITY_SECONDS = 1.28;
-const MIN_START_LATENCY_MS = 80;
-const DEFAULT_START_LATENCY_MS = 240;
-const MAX_START_LATENCY_MS = 320;
+const BUFFER_CAPACITY_SECONDS = 0.32;
+const MIN_START_LATENCY_MS = 60;
+const DEFAULT_START_LATENCY_MS = 120;
+const MAX_START_LATENCY_MS = 240;
 const JITTER_SAFETY_MULTIPLIER = 4;
-const STABLE_DECAY_SECONDS = 12;
+const STABLE_DECAY_SECONDS = 4;
+const TARGET_DECAY_INTERVAL_SECONDS = 1;
 const PLC_DECAY_PER_SAMPLE = 0.9997;
 const CLOCK_RECOVERY_DEADBAND_FRAMES = 1;
 const CLOCK_RECOVERY_PROPORTIONAL_GAIN = 0.001;
 const CLOCK_RECOVERY_INTEGRAL_GAIN = 0.0000005;
-const CLOCK_RECOVERY_MAX_RATE = 0.015;
+const CLOCK_RECOVERY_MAX_RATE = 0.02;
 const CLOCK_RECOVERY_SMOOTHING = 0.005;
 
 function normaliseFormat(value) {
@@ -79,6 +80,7 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._concealmentGain = 0;
     this._lastArrivalTime = 0;
     this._arrivalJitterMs = 0;
+    this._deliveryJitterMs = 0;
     this._maxArrivalGapMs = 0;
     this._arrivalGapsOver40Ms = 0;
     this._lastDeliveryTimeMs = 0;
@@ -89,12 +91,16 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._hasPreviousInput = false;
     this._playbackReady = false;
 
-    this.port.onmessage = (event) => {
+    const receive = (event) => {
       const data = event.data;
       if (data?.type === "audio" && data.buffer) {
         this._push(data.buffer, data.byteOffset || 0, data.arrivalMs);
+      } else if (data?.type === "bind_media_port" && data.port) {
+        data.port.onmessage = receive;
+        data.port.start?.();
       }
     };
+    this.port.onmessage = receive;
   }
 
   _decode(view, sampleIndex) {
@@ -119,14 +125,9 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       const deliveryGapMs = deliveryTimeMs - this._lastDeliveryTimeMs;
       this._maxDeliveryGapMs = Math.max(this._maxDeliveryGapMs, deliveryGapMs);
       if (deliveryGapMs >= 40) {
-        const adaptiveFrames = Math.ceil(
-          (deliveryGapMs + MIN_START_LATENCY_MS) / this._format.frameMs,
-        );
-        const boundedTarget = Math.min(this._maxStartFrames, adaptiveFrames);
-        if (boundedTarget > this._targetStartFrames) {
-          this._targetStartFrames = boundedTarget;
-          this._lastJitterSpike = currentTime;
-        }
+        const deviation = Math.abs(deliveryGapMs - this._format.frameMs);
+        this._deliveryJitterMs += (deviation - this._deliveryJitterMs) / 16;
+        this._adaptTarget();
       }
     }
     this._lastDeliveryTimeMs = deliveryTimeMs;
@@ -184,16 +185,25 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       const expected = this._format.frameMs;
       const deviation = Math.abs(arrivalGap - expected);
       this._arrivalJitterMs += (deviation - this._arrivalJitterMs) / 16;
-      const adaptiveFrames = Math.ceil(
-        (MIN_START_LATENCY_MS + this._arrivalJitterMs * JITTER_SAFETY_MULTIPLIER) /
-          this._format.frameMs,
-      );
-      this._targetStartFrames = Math.max(
-        this._targetStartFrames,
-        Math.min(this._maxStartFrames, Math.max(this._minStartFrames, adaptiveFrames)),
-      );
+      this._adaptTarget();
     }
     this._lastArrivalTime = now;
+  }
+
+  _adaptTarget() {
+    const jitterMs = Math.max(this._arrivalJitterMs, this._deliveryJitterMs);
+    const adaptiveFrames = Math.ceil(
+      (MIN_START_LATENCY_MS + jitterMs * JITTER_SAFETY_MULTIPLIER) /
+        this._format.frameMs,
+    );
+    const boundedTarget = Math.min(
+      this._maxStartFrames,
+      Math.max(this._minStartFrames, adaptiveFrames),
+    );
+    if (boundedTarget > this._targetStartFrames) {
+      this._targetStartFrames = boundedTarget;
+      this._lastJitterSpike = currentTime;
+    }
   }
 
   process(_inputs, outputs) {
@@ -309,7 +319,7 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
         this._targetStartFrames > this._minStartFrames &&
         currentTime - this._lastUnderrun >= STABLE_DECAY_SECONDS &&
         currentTime - this._lastJitterSpike >= STABLE_DECAY_SECONDS &&
-        currentTime - this._lastTargetDecay >= STABLE_DECAY_SECONDS
+        currentTime - this._lastTargetDecay >= TARGET_DECAY_INTERVAL_SECONDS
       ) {
         this._targetStartFrames--;
         this._lastTargetDecay = currentTime;

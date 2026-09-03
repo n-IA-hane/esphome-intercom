@@ -2298,7 +2298,10 @@ class VoipStackCard extends HTMLElement {
     };
     this._activeDeviceInfo = sessionInfo;
     await voipStackEngine.prepareAudioCall({ needsMicrophone: true });
-    if (operationId !== this._callOperationId) return;
+    if (operationId !== this._callOperationId) {
+      await voipStackEngine.discardPreparedAudio();
+      return;
+    }
     let sendVideo = Boolean(
       this._softphoneSupportsVideo() &&
       this._targetSupportsVideo(target) &&
@@ -2310,7 +2313,10 @@ class VoipStackCard extends HTMLElement {
         endpointId: this._getSoftphoneEndpointId(),
       });
     }
-    if (operationId !== this._callOperationId) return;
+    if (operationId !== this._callOperationId) {
+      await voipStackEngine.discardPreparedAudio();
+      return;
+    }
     const reply = await voipStackEngine.startHaSoftphone(target, sessionInfo, {
       ...scope,
       callee,
@@ -2372,7 +2378,10 @@ class VoipStackCard extends HTMLElement {
         if (
           operationId !== this._callOperationId ||
           this._sessionCallId() !== callId
-        ) return;
+        ) {
+          await voipStackEngine.discardPreparedAudio();
+          return;
+        }
         // A peer such as Wildix commonly establishes audio first and adds
         // video with an in-dialog re-INVITE.  A manual answer must preserve
         // the user's existing Send Camera choice for that later offer; auto
@@ -2390,7 +2399,10 @@ class VoipStackCard extends HTMLElement {
           !["ringing", "incoming"].includes(
             String(this._softphoneSnapshot?.state || "").toLowerCase()
           )
-        ) return;
+        ) {
+          await voipStackEngine.discardPreparedAudio();
+          return;
+        }
         this._activeDeviceInfo = {
           ...(deviceInfo || {}),
           ...this._softphoneRequestScope(),
