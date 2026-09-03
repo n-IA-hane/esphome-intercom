@@ -82,6 +82,15 @@ def _format_section(block: str, name: str) -> str:
     return tail if next_peer is None else tail[: next_peer.start()]
 
 
+def _top_level_block(text: str, name: str) -> str:
+    match = re.search(rf"(?m)^{re.escape(name)}:\n", text)
+    if match is None:
+        return ""
+    tail = text[match.end() :]
+    next_top_level = re.search(r"(?m)^\S", tail)
+    return tail if next_top_level is None else tail[: next_top_level.start()]
+
+
 def _has_s16le_mono_format(section: str, sample_rate: int, frame_ms: int) -> bool:
     entries = re.split(r"(?m)^      - ", section)
     return any(
@@ -116,6 +125,28 @@ def test_physical_phone_presets_use_complete_ha_phone_package() -> None:
 
 def test_maintained_ws3_profile_does_not_enable_debug_entities() -> None:
     assert "packages/voip/debug.yaml" not in WS3_FULL_AFE.read_text()
+
+
+def test_ws3_afe_workers_cannot_preempt_realtime_audio_consumers() -> None:
+    """The 64 ms AFE workers must not starve the 10 ms VoIP speaker path."""
+    text = WS3_FULL_AFE.read_text()
+    afe = _top_level_block(text, "esp_afe")
+    priorities = {
+        name: int(value)
+        for name, value in re.findall(
+            r"(?m)^  (task_priority|feed_task_priority|fetch_task_priority):\s*(\d+)\s*$",
+            afe,
+        )
+    }
+
+    assert priorities.keys() == {
+        "task_priority",
+        "feed_task_priority",
+        "fetch_task_priority",
+    }
+    # The VoIP speaker consumer runs at priority 15. Raising a 64 ms AFE
+    # producer above it caused received 10 ms RTP frames to play in bursts.
+    assert max(priorities.values()) < 15
 
 
 @pytest.mark.parametrize(

@@ -56,9 +56,127 @@ class SdpPcmProfileTest(unittest.TestCase):
             allow_directional_payloads=True,
         )
 
-        self.assertIn("m=audio 40000 RTP/AVP 97 96", offer)
+        self.assertIn("m=audio 40000 RTP/AVP 96 97", offer)
         self.assertIn("a=x-voip-stack-flow:97 recv\r\n", offer)
         self.assertIn("a=x-voip-stack-flow:96 send\r\n", offer)
+
+    def test_directional_codec_and_ptime_matrix_round_trips(self) -> None:
+        symmetric = (
+            sdp.RtpPcmFormat(96, "L16", 16000, 1, 10),
+            sdp.RtpPcmFormat(96, "L16", 16000, 1, 16),
+            sdp.RtpPcmFormat(96, "L16", 16000, 1, 20),
+            sdp.RtpPcmFormat(96, "L16", 16000, 1, 32),
+            sdp.RtpPcmFormat(96, "L16", 32000, 1, 10),
+            sdp.RtpPcmFormat(96, "L16", 48000, 1, 10),
+            sdp.RtpPcmFormat(98, "OPUS", 48000, 2, 10),
+            sdp.RtpPcmFormat(98, "OPUS", 48000, 2, 20),
+        )
+        asymmetric = (
+            (
+                sdp.RtpPcmFormat(99, "L16", 48000, 1, 10),
+                sdp.RtpPcmFormat(96, "L16", 16000, 1, 16),
+            ),
+            (
+                sdp.RtpPcmFormat(99, "L16", 32000, 1, 16),
+                sdp.RtpPcmFormat(96, "L16", 16000, 1, 32),
+            ),
+            (
+                sdp.RtpPcmFormat(99, "OPUS", 48000, 2, 20),
+                sdp.RtpPcmFormat(96, "L16", 16000, 1, 10),
+            ),
+        )
+
+        for wire in symmetric:
+            with self.subTest(kind="symmetric", wire=wire.wire_token()):
+                offer = sdp.build_offer_directional(
+                    "192.0.2.1",
+                    "192.0.2.1",
+                    40000,
+                    [wire.audio_format],
+                    [wire.audio_format],
+                    send_rtp_formats=(wire,),
+                    recv_rtp_formats=(wire,),
+                    allow_directional_payloads=True,
+                )
+                selected = sdp.negotiate_directional(
+                    offer, [wire.audio_format], [wire.audio_format]
+                )
+                self.assertIsNotNone(selected)
+                assert selected is not None
+                self.assertEqual(selected.send.wire_token(), wire.wire_token())
+                self.assertEqual(selected.recv.wire_token(), wire.wire_token())
+
+        for local_send, local_recv in asymmetric:
+            with self.subTest(
+                kind="asymmetric",
+                send=local_send.wire_token(),
+                recv=local_recv.wire_token(),
+            ):
+                offer = sdp.build_offer_directional(
+                    "192.0.2.1",
+                    "192.0.2.1",
+                    40000,
+                    [local_send.audio_format],
+                    [local_recv.audio_format],
+                    send_rtp_formats=(local_send,),
+                    recv_rtp_formats=(local_recv,),
+                    allow_directional_payloads=True,
+                )
+                remote = sdp.negotiate_directional(
+                    offer,
+                    [local_recv.audio_format],
+                    [local_send.audio_format],
+                )
+                self.assertIsNotNone(remote)
+                assert remote is not None
+                answer = sdp.build_answer_directional(
+                    "192.0.2.2",
+                    "192.0.2.2",
+                    41000,
+                    remote.send,
+                    remote.recv,
+                    remote_sdp=offer,
+                )
+                negotiated = sdp.negotiate_answer_directional(
+                    answer,
+                    [local_send.audio_format],
+                    [local_recv.audio_format],
+                    local_offer_sdp=offer,
+                )
+                self.assertIsNotNone(negotiated)
+                assert negotiated is not None
+                self.assertEqual(
+                    negotiated.send.audio_format, local_send.audio_format
+                )
+                self.assertEqual(
+                    negotiated.recv.audio_format, local_recv.audio_format
+                )
+
+        ws3_send = sdp.RtpPcmFormat(99, "L16", 48000, 1, 10)
+        ws3_send_fallback = sdp.RtpPcmFormat(100, "L16", 16000, 1, 10)
+        ws3_recv = sdp.RtpPcmFormat(96, "L16", 16000, 1, 16)
+        offer = sdp.build_offer_directional(
+            "192.0.2.1",
+            "192.0.2.1",
+            40000,
+            [ws3_send.audio_format, ws3_send_fallback.audio_format],
+            [ws3_recv.audio_format],
+            send_rtp_formats=(ws3_send, ws3_send_fallback),
+            recv_rtp_formats=(ws3_recv,),
+            allow_directional_payloads=True,
+        )
+        self.assertIn("a=x-voip-stack-ptime:100 10\r\n", offer)
+        self.assertIn("a=x-voip-stack-ptime:96 16\r\n", offer)
+        self.assertIn("m=audio 40000 RTP/AVP 99 96 100", offer)
+        remote = sdp.negotiate_directional(
+            offer,
+            [ws3_recv.audio_format],
+            [ws3_send.audio_format, ws3_send_fallback.audio_format],
+        )
+        self.assertIsNotNone(remote)
+        assert remote is not None
+        self.assertEqual(remote.send.audio_format, ws3_recv.audio_format)
+        self.assertEqual(remote.recv.audio_format, ws3_send.audio_format)
 
     def test_explicit_offer_advertises_one_payload_per_rtp_encoding(self) -> None:
         opus_20 = sdp.RtpPcmFormat(98, "OPUS", 48000, 2, 20)
