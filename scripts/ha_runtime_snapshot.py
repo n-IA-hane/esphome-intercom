@@ -17,9 +17,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ha-url", required=True)
     parser.add_argument("--auth-file", type=Path, required=True)
+    parser.add_argument(
+        "--storage-state",
+        type=Path,
+        help="Playwright storage state for the selected Home Assistant origin",
+    )
     args = parser.parse_args()
     os.environ["HA_URL"] = args.ha_url
     os.environ["HA_PLAYWRIGHT_REFRESH_CREDENTIALS"] = str(args.auth_file)
+    if args.storage_state is not None:
+        os.environ["PLAYWRIGHT_STORAGE_STATE"] = str(args.storage_state)
     token = ha_token()
     print(json.dumps(asyncio.run(runtime_quiescence(args.ha_url, token))))
     return 0
