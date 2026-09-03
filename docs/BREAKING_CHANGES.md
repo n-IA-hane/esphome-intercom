@@ -117,6 +117,11 @@ longer treats call/decline buttons as remote-control actions and no longer
 uses `decline_call` as a substitute for hangup. Rebuild and flash custom
 firmware that included only the older entity package.
 
+`packages/voip/ha_phone.yaml` is not deprecated. The component owns the native
+VoIP operations, while this canonical package exposes them as ESPHome API
+actions and joins the HA-managed phonebook. Maintained YAMLs already include
+the appropriate complete package or runtime variant.
+
 The remaining changes in this section apply only to custom frontends, not to
 the bundled card. Custom frontends must use the current scoped
 `voip_stack/subscribe_ha_softphone` WebSocket request. The card no longer
