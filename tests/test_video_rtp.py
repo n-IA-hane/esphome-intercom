@@ -892,6 +892,35 @@ class VideoTransportTest(unittest.TestCase):
 
 
 class H264SdpTest(unittest.TestCase):
+    def test_default_offer_prefers_browser_native_constrained_baseline(self) -> None:
+        """A first-match SIP peer must select an H.264 profile we can encode."""
+
+        offered = sdp.DEFAULT_VIDEO_FORMATS
+        first_h264 = next(item for item in offered if item.encoding == "H264")
+        self.assertEqual(
+            sdp._h264_profile_level(first_h264.profile_level_id)[0],
+            "constrained-baseline",
+        )
+
+        answer = (
+            "v=0\r\n"
+            "o=- 1 1 IN IP4 192.0.2.20\r\n"
+            "s=-\r\n"
+            "c=IN IP4 192.0.2.20\r\n"
+            "t=0 0\r\n"
+            f"m=video 40002 RTP/AVP {first_h264.payload_type} 104\r\n"
+            f"a=rtpmap:{first_h264.payload_type} H264/90000\r\n"
+            f"a=fmtp:{first_h264.payload_type} "
+            "packetization-mode=1;profile-level-id=42e01f\r\n"
+            "a=rtpmap:104 VP8/90000\r\n"
+            "a=sendrecv\r\n"
+        )
+        selected = sdp.negotiate_video_answer_directional(answer, offered)
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.send.encoding, "H264")
+        self.assertEqual(selected.recv.encoding, "H264")
+
     AUDIO_FORMATS = [audio_format.AudioFormat(16000, "s16le", 1, 20)]
 
     def test_browser_can_send_and_receive_standard_rtp_jpeg(self) -> None:
@@ -1031,7 +1060,7 @@ class H264SdpTest(unittest.TestCase):
             "level-asymmetry-allowed=1",
             offer,
         )
-        self.assertIn("m=video 40002 RTP/AVP 103 105 104 26", offer)
+        self.assertIn("m=video 40002 RTP/AVP 105 103 104 26", offer)
         self.assertIn("a=fmtp:104 max-fr=20;max-fs=3600", offer)
 
     def test_h264_sdp_serialization_preserves_complete_fmtp_contract(self) -> None:

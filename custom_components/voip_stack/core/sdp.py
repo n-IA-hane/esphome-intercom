@@ -395,8 +395,8 @@ CONSTRAINED_BASELINE_H264_FORMAT = RtpH264Format(
     profile_level_id="42c01f",
 )
 DEFAULT_VIDEO_FORMATS = (
-    DEFAULT_H264_FORMAT,
     CONSTRAINED_BASELINE_H264_FORMAT,
+    DEFAULT_H264_FORMAT,
     RtpVideoFormat(
         payload_type=104,
         encoding="VP8",

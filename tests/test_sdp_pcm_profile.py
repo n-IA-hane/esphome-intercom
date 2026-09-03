@@ -779,9 +779,11 @@ class SdpPcmProfileTest(unittest.TestCase):
             video_port=42000,
             video_formats=sdp.DEFAULT_VIDEO_FORMATS[:1],
         ).replace("c=IN IP4 192.0.2.10", "c=IN IP4 0.0.0.0", 1)
+        video_payload = sdp.DEFAULT_VIDEO_FORMATS[0].payload_type
         offer = offer.replace(
-            "m=video 42000 RTP/AVP 103\r\n",
-            "m=video 42000 RTP/AVP 103\r\nc=IN IP4 192.0.2.30\r\n",
+            f"m=video 42000 RTP/AVP {video_payload}\r\n",
+            f"m=video 42000 RTP/AVP {video_payload}\r\n"
+            "c=IN IP4 192.0.2.30\r\n",
         )
 
         self.assertTrue(sdp.parse_sdp(offer)["connection_held"])
