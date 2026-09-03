@@ -107,7 +107,10 @@ class QualificationPackage:
             "input_text.voip_qualification_destination",
             "input_text.voip_qualification_false_destination",
             "input_text.voip_qualification_forward_destination",
+            "input_text.voip_qualification_last_decision",
             "input_text.voip_qualification_last_forward",
+            "automation.voip_qualification_route_decision",
+            "automation.voip_qualification_ringing_forward",
         )
         self.original = {entity: self.api.state(entity)["state"] for entity in entities}
         for entity_id in (
@@ -121,6 +124,20 @@ class QualificationPackage:
                     "turn_on",
                     {"entity_id": automation["entity_id"]},
                 )
+        self.api.service(
+            "input_boolean",
+            "turn_off",
+            {"entity_id": "input_boolean.voip_qualification_forward_enabled"},
+        )
+        for entity_id in (
+            "input_text.voip_qualification_last_decision",
+            "input_text.voip_qualification_last_forward",
+        ):
+            self.api.service(
+                "input_text",
+                "set_value",
+                {"entity_id": entity_id, "value": ""},
+            )
         self.api.service(
             "input_boolean",
             "turn_on",
@@ -273,7 +290,7 @@ class QualificationPackage:
     def __exit__(self, *_args: object) -> None:
         for entity_id, value in self.original.items():
             domain = entity_id.partition(".")[0]
-            if domain == "input_boolean":
+            if domain in {"automation", "input_boolean"}:
                 self.api.service(
                     domain,
                     "turn_on" if value == "on" else "turn_off",

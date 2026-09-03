@@ -100,6 +100,55 @@ def test_external_dtmf_contracts_have_real_executors() -> None:
         assert case_name in path.read_text(encoding="utf-8")
 
 
+def test_qualification_package_restores_helpers_and_automation_state() -> None:
+    runner = load_runner()
+    states = {
+        entity_id: "off"
+        for entity_id in (
+            "input_boolean.voip_qualification_enabled",
+            "input_boolean.voip_qualification_condition",
+            "input_boolean.voip_qualification_forward_enabled",
+            "automation.voip_qualification_route_decision",
+            "automation.voip_qualification_ringing_forward",
+        )
+    }
+    states.update(
+        {
+            "input_select.voip_qualification_route_action": "no_action",
+            "input_select.voip_qualification_false_route_action": "no_action",
+            "input_select.voip_qualification_forward_failure": "resume",
+            "input_text.voip_qualification_expected_origin": "",
+            "input_text.voip_qualification_expected_caller": "",
+            "input_text.voip_qualification_expected_target": "",
+            "input_text.voip_qualification_destination": "",
+            "input_text.voip_qualification_false_destination": "",
+            "input_text.voip_qualification_forward_destination": "",
+            "input_text.voip_qualification_last_decision": "old decision",
+            "input_text.voip_qualification_last_forward": "old forward",
+        }
+    )
+
+    class Api:
+        def state(self, entity_id):
+            return {"entity_id": entity_id, "state": states[entity_id]}
+
+        def service(self, domain, service, data):
+            entity_id = data["entity_id"]
+            if domain in {"automation", "input_boolean"}:
+                states[entity_id] = "on" if service == "turn_on" else "off"
+            elif domain == "input_select":
+                states[entity_id] = data["option"]
+            else:
+                states[entity_id] = data["value"]
+
+    original = dict(states)
+    with runner.QualificationPackage(Api()) as package:
+        package.select("forward", destination="video_sink")
+        package.forward("video_sink")
+
+    assert states == original
+
+
 def test_dtmf_peer_uses_early_media_rfc4733_and_preserves_bind_host(
     tmp_path: Path,
 ) -> None:
