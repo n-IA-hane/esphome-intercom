@@ -416,7 +416,7 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
         ROOT / "packages" / "board" / "esp32p4_c6_sdio.yaml"
     ).read_text()
     assert 'CONFIG_ESP_HOSTED_DFLT_TASK_FROM_SPIRAM: "y"' in hosted
-    assert 'CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY: "y"' in hosted
+    assert 'CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM: "y"' in hosted
     assert 'CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE: "20"' in hosted
     assert 'CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE: "20"' in hosted
     assert "platform: esp32_hosted" not in hosted

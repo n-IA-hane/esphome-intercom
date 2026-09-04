@@ -20,7 +20,7 @@ esp32:
       # ESP-IDF rejects external buffers passed to xTaskCreateStatic unless
       # this companion gate is enabled. Hosted uses exactly that API for the
       # PSRAM stacks above, so the two options are one indivisible contract.
-      CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY: "y"
+      CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM: "y"
       # Keep WiFi/LwIP packet storage out of the internal heap used by the
       # hosted SDIO RX copy and the concurrent audio/video DMA pipelines.
       # This is ESP-IDF's supported allocation policy and retains internal
