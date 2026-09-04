@@ -524,6 +524,22 @@ Before every upgrade:
 Never assume an automation still has the same contract merely because the
 integration loaded successfully.
 
+## What's new in `2026.9.1-dev`
+
+The current development candidate adds an in-call keypad to the Home Assistant
+phone. The same keypad still composes destinations while idle, then sends DTMF
+during an established call so IVR menus can finally be operated without
+reaching for another telephone.
+
+The browser playback path also distinguishes intentional RTP silence from an
+actual delivery interruption. Temporary keypad and Options views are reset for
+each new dialog, so they cannot hide Answer or Decline on the next incoming
+call.
+
+These changes do not alter the ESP audio engine or the maintained full-profile
+codec choice. Full profiles remain PCM while compact VoIP-only Opus support is
+qualified separately.
+
 ## What's new in `2026.9.0`
 
 `2026.9.0` turns the development work after `2026.8.0` into one coordinated

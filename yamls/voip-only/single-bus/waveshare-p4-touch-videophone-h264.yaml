@@ -29,8 +29,8 @@ substitutions:
   p4_afe_fetch_task_priority: "20"
 
 packages:
-  base: github://n-IA-hane/esphome-intercom/packages/voip/waveshare_p4_touch_videophone_base.yaml@main
-  video: github://n-IA-hane/esphome-intercom/packages/voip/p4_video_h264.yaml@main
+  base: github://n-IA-hane/esphome-intercom/packages/voip/waveshare_p4_touch_videophone_base.yaml@dev
+  video: github://n-IA-hane/esphome-intercom/packages/voip/p4_video_h264.yaml@dev
 
 # Codec profiles have different managed-component graphs and therefore must
 # not reuse generated CMake components from another profile.
