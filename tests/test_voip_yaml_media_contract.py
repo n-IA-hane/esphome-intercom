@@ -127,8 +127,8 @@ def test_maintained_ws3_profile_does_not_enable_debug_entities() -> None:
     assert "packages/voip/debug.yaml" not in WS3_FULL_AFE.read_text()
 
 
-def test_ws3_afe_workers_drain_each_realtime_capture_frame() -> None:
-    """The asynchronous AFE workers must keep up during full-duplex calls."""
+def test_ws3_audio_workers_keep_the_qualified_core_and_priority_split() -> None:
+    """AFE must not compete with the I2S owner or paced RTP workers."""
     text = WS3_FULL_AFE.read_text()
     afe = _top_level_block(text, "esp_afe")
     priorities = {
@@ -139,14 +139,14 @@ def test_ws3_afe_workers_drain_each_realtime_capture_frame() -> None:
         )
     }
 
-    # At the upstream priority-5 defaults, an active WS3 call filled the GMF
-    # input ring and lost roughly one 64 ms microphone frame out of three.
-    # Priority 20 was qualified with 32/32 input, feed and fetch frames while
-    # the independent 10 ms speaker path remained free of underruns.
+    # The blocking AFE workers use the upstream low priority. Core 0 is owned
+    # by the priority-19 I2S task, while native VoIP RTP runs on Core 1.
+    # Raising every AFE worker to 20 was shown to starve one direction or the
+    # other depending on affinity.
     assert priorities == {
-        "task_priority": 20,
-        "feed_task_priority": 20,
-        "fetch_task_priority": 20,
+        "task_priority": 5,
+        "feed_task_priority": 5,
+        "fetch_task_priority": 5,
     }
 
 
