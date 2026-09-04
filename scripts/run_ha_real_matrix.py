@@ -803,6 +803,10 @@ def main() -> int:
         raise RuntimeError(
             "Home Assistant is not running the checked-in qualification package"
         )
+    # Fail before creating artifacts or touching the shared HA laboratory. A
+    # candidate identity is part of the qualification precondition, not report
+    # decoration discovered after the complete matrix has already run.
+    candidate = candidate_revision()
     run_dir = args.out_dir / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir.mkdir(parents=True, exist_ok=False)
     delayed_cancel = run_dir / "inbound-cancel-after-forward-delay.xml"
@@ -1295,7 +1299,7 @@ def main() -> int:
     artifact = {
         "schema_version": 1,
         "created_at": datetime.now(UTC).isoformat(),
-        "candidate": candidate_revision(),
+        "candidate": candidate,
         "qualification_package_sha256": package_hash,
         "home_assistant": api.get("/api/config").get("version"),
         "external_executable_contracts": EXTERNAL_EXECUTABLE_CONTRACTS,

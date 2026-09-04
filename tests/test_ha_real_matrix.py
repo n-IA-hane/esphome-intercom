@@ -230,6 +230,16 @@ def test_runner_resolves_phone_policy_entities_instead_of_naming_the_lab() -> No
     assert "switch.voip_stack_lab_do_not_disturb" not in source
 
 
+def test_runner_validates_candidate_before_touching_the_lab() -> None:
+    source = (ROOT / "scripts/run_ha_real_matrix.py").read_text(encoding="utf-8")
+
+    main = source[source.index("def main() -> int:") :]
+    assert main.index("candidate = candidate_revision()") < main.index(
+        "run_dir.mkdir"
+    )
+    assert '"candidate": candidate,' in main
+
+
 def test_peer_live_wrapper_requires_explicit_policy_endpoint(
     tmp_path: Path,
 ) -> None:
