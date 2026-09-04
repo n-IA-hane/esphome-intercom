@@ -132,7 +132,7 @@ def test_ws3_audio_workers_keep_the_qualified_core_and_priority_split() -> None:
     text = WS3_FULL_AFE.read_text()
     audio_stack = _top_level_block(text, "esp_audio_stack")
     afe = _top_level_block(text, "esp_afe")
-    assert re.search(r"(?m)^  task_priority:\s*17\s*$", audio_stack)
+    assert re.search(r"(?m)^  task_priority:\s*19\s*$", audio_stack)
     priorities = {
         name: int(value)
         for name, value in re.findall(
@@ -141,13 +141,15 @@ def test_ws3_audio_workers_keep_the_qualified_core_and_priority_split() -> None:
         )
     }
 
-    # Preserve the qualified full-duplex split: the AFE workers stay above the
-    # I2S owner so capture deadlines are not exposed as missing audio frames.
+    # Preserve the Espressif worker layout qualified on the real WS3. Raising
+    # all AFE workers above the I2S owner starves microphone production in
+    # short bursts even though SIP and RTP remain established.
     assert priorities == {
-        "task_priority": 20,
-        "feed_task_priority": 20,
-        "fetch_task_priority": 20,
+        "task_priority": 5,
+        "feed_task_priority": 5,
+        "fetch_task_priority": 5,
     }
+    assert "output_prebuffer_frames" not in afe
 
 
 @pytest.mark.parametrize(
