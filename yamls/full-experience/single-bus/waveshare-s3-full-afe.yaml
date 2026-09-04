@@ -248,7 +248,7 @@ esp_audio_stack:
   id: audio_stack
   # WS3 full AFE profile:
   # - audio_stack is the non-network realtime I2S bridge: Core 0 / priority 19
-  #   stays below Wi-Fi and above lwIP while the short RTP pacer runs at 21.
+  #   stays below Wi-Fi and above lwIP.
   # - audio_stack task stack in PSRAM saves ~8 KB internal heap.
   # - component frame buffers in PSRAM preserve internal/DMA heap for Wi-Fi,
   #   TLS, I2S DMA and esp-sr internals.
@@ -258,7 +258,7 @@ esp_audio_stack:
   # codec-dev default ~-50 dB floor. Keep 0% as mute, but make 70% usable.
   master_volume_min_db: -30.0
   task_core: 0
-  task_priority: 17
+  task_priority: 19
   task_stack_size: 8192
   i2s_lrclk_pin: ${i2s_lrclk_pin}
   i2s_bclk_pin: ${i2s_bclk_pin}
@@ -297,25 +297,18 @@ esp_afe:
   aec_nlp_level: normal
   memory_alloc_mode: more_psram
   # Espressif layout:
-  # - The I2S owner stays below the AFE workers so feed and fetch deadlines are
-  #   not exposed as complete missing microphone frames.
+  # - SE/BSS keeps the low-priority blocking worker layout used by Espressif.
   # - GMF AFE manager feed/fetch tasks stay on different cores, as Espressif's
   #   own GMF troubleshooting recommends for avoiding AFE task WDT.
   task_core: 1
-  task_priority: 20
+  task_priority: 5
   ringbuf_size: 8
   feed_task_core: 0
-  feed_task_priority: 20
+  feed_task_priority: 5
   feed_task_stack_size: 3072
   fetch_task_core: 1
-  fetch_task_priority: 20
+  fetch_task_priority: 5
   fetch_task_stack_size: 3072
-  # Keep two already processed GMF frames in reserve. The dual-mic AFE runs
-  # asynchronously; without this bounded reserve, ordinary scheduler jitter
-  # is published as a complete 64 ms zero-filled microphone frame. One frame
-  # is sufficient for capture-only operation but not for measured full-duplex
-  # playback, where the official GMF workers can deliver output in short bursts.
-  output_prebuffer_frames: 2
   se_enabled: true
   ns_enabled: true
   vad_enabled: true
