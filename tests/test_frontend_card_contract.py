@@ -682,19 +682,20 @@ class FrontendCardContractTest(unittest.TestCase):
             / "frontend"
             / "voip-stack-processor.js"
         ).read_text()
-        worker = (
-            ROOT
-            / "custom_components"
-            / "voip_stack"
-            / "frontend"
-            / "voip-stack-audio-worker.js"
-        ).read_text()
-
-        self.assertIn("socket.bufferedAmount >= maxBufferedBytes", worker)
-        self.assertIn("max_buffered_bytes", engine)
+        self.assertIn("this._ws.bufferedAmount >= this._captureBufferLimit()", engine)
+        self.assertNotIn("WorkerAudioSocket", engine)
+        self.assertFalse(
+            (
+                ROOT
+                / "custom_components"
+                / "voip_stack"
+                / "frontend"
+                / "voip-stack-audio-worker.js"
+            ).exists()
+        )
         self.assertNotIn("const TX_BUFFER_POOL", capture)
         self.assertNotIn("this._buffers", capture)
-        self.assertIn("txDropped++", worker)
+        self.assertIn("this._stats.tx_dropped++", engine)
         self.assertIn("if (this._ws !== ws) return", engine)
         self.assertIn("if (this._connectPromise === connectPromise)", engine)
         self.assertIn("connectGeneration !== this._connectGeneration ||", engine)
@@ -720,7 +721,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("this._endpointId === endpointId", setup)
         self.assertIn("this._callId === callId", setup)
         self.assertNotIn("raw.slice(1)", engine)
-        self.assertIn("byteOffset: AUDIO_FRAME_HEADER_BYTES", worker)
+        self.assertIn("byteOffset: AUDIO_FRAME_HEADER_BYTES", engine)
         self.assertIn("new DataView(buffer, byteOffset, frameBytes)", playback)
         self.assertIn("audio_level: audioLevel", playback)
         self.assertIn("this._dropFrames = this._maxStartFrames + 1", playback)
@@ -764,9 +765,9 @@ class FrontendCardContractTest(unittest.TestCase):
         ).read_text()
         self.assertIn('this._audioDirection = "sendrecv"', engine)
         self.assertIn("negotiated?.audio_direction", engine)
-        self.assertIn("this._ws?.configureCapture?.(enabled", engine)
-        self.assertIn("this._ws?.bindCapture?.(this._captureNode)", engine)
-        self.assertIn("this._ws?.bindPlayback?.(this._playbackNode)", engine)
+        self.assertIn("this._sendAudioFrame(event.data)", engine)
+        self.assertIn("this._playbackNode.port.postMessage({", engine)
+        self.assertIn("const enabled = this._canSendAudio()", engine)
         self.assertIn("void this._reconcileAudioMedia(msg)", engine)
         self.assertIn("desiredAudioPaths(audioMode, audioDirection)", engine)
         self.assertIn("Audio WebSocket negotiation timed out", engine)
