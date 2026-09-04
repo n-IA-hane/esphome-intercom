@@ -56,6 +56,8 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._concealmentGain = 0;
     this._lastArrivalTime = 0;
     this._arrivalJitterSeconds = 0;
+    this._previousInput = new Float32Array(this._format.channels);
+    this._hasPreviousInput = false;
 
     this.port.onmessage = (event) => {
       const data = event.data;
@@ -89,17 +91,30 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       this._framesDrop += framesToDrop;
     }
     const view = new DataView(buffer, byteOffset, frameBytes);
+    if (!this._hasPreviousInput) {
+      for (let ch = 0; ch < this._format.channels; ch++) {
+        this._previousInput[ch] = this._decode(view, ch);
+      }
+      this._hasPreviousInput = true;
+    }
     for (let i = 0; i < this._contextFrameSamples; i++) {
-      const srcPos = i * this._format.sampleRate / sampleRate;
+      const srcPos = i * this._format.frameSamples / this._contextFrameSamples;
       const base = Math.floor(srcPos);
       const frac = srcPos - base;
       for (let ch = 0; ch < this._format.channels; ch++) {
-        const a = this._decode(view, base * this._format.channels + ch);
-        const bIndex = Math.min(this._format.frameSamples - 1, base + 1);
-        const b = this._decode(view, bIndex * this._format.channels + ch);
+        const a = base === 0
+          ? this._previousInput[ch]
+          : this._decode(view, (base - 1) * this._format.channels + ch);
+        const b = this._decode(view, base * this._format.channels + ch);
         this._ring[this._write] = a + (b - a) * frac;
         this._write = (this._write + 1) % this._ring.length;
       }
+    }
+    for (let ch = 0; ch < this._format.channels; ch++) {
+      this._previousInput[ch] = this._decode(
+        view,
+        (this._format.frameSamples - 1) * this._format.channels + ch,
+      );
     }
     this._available += this._contextFrameSamples * this._format.channels;
     this._framesIn++;

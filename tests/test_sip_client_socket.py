@@ -1886,6 +1886,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             send_format=pcma,
             recv_format=pcma,
             signaling_host="127.0.0.1",
+            send_dtmf_payload_type=101,
+            send_dtmf_clock_rate=8000,
+            send_dtmf_events=frozenset(range(16)),
         )
         hass = Hass()
         ws = WebSocket()
@@ -2007,6 +2010,27 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             self.assertGreater(burst_arrivals[-1] - burst_arrivals[0], 0.30)
             self.assertGreater(min(intervals), 0.004)
             self.assertLess(max(intervals), 0.040)
+
+            await ws.messages.put(
+                types.SimpleNamespace(
+                    type=WSMsgType.TEXT,
+                    data='{"type":"dtmf","digit":"5","duration_ms":40}',
+                )
+            )
+            dtmf_packets: list[rtp.RtpPacket] = []
+            deadline = loop.time() + 1.0
+            while len(dtmf_packets) < 4:
+                data = await asyncio.wait_for(
+                    loop.sock_recv(remote, 65535),
+                    timeout=max(0.01, deadline - loop.time()),
+                )
+                packet = rtp.parse_packet(data)
+                if packet.payload_type == 101:
+                    dtmf_packets.append(packet)
+            self.assertTrue(dtmf_packets[0].marker)
+            self.assertEqual({packet.timestamp for packet in dtmf_packets}, {dtmf_packets[0].timestamp})
+            self.assertEqual(dtmf_packets[0].payload[0], 5)
+            self.assertEqual([bool(packet.payload[1] & 0x80) for packet in dtmf_packets], [False, True, True, True])
         finally:
             await ws.messages.put(None)
             await asyncio.wait_for(runtime, timeout=1)

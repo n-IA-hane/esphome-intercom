@@ -1841,6 +1841,8 @@ class VoipStackCard extends HTMLElement {
       els.hangupDuration.textContent = this._formatVideoCallDuration();
     }
     const keypadOpen = this._keypadOpen();
+    const inCallDtmf = softphoneMode &&
+      espState.toLowerCase() === "in_call" && showHangup;
     els.destRow.hidden = !showCall || keypadOpen;
     els.destValue.textContent = this._contactCyclerDestination(destination);
     if (els.destSelect) {
@@ -1849,10 +1851,15 @@ class VoipStackCard extends HTMLElement {
       this._renderSoftphoneDestinationSelect(els.destSelect);
     }
     if (els.keypadPanel) {
-      els.keypadPanel.hidden = !(showCall && keypadOpen);
+      els.keypadPanel.hidden = !((showCall || inCallDtmf) && keypadOpen);
       els.keypadInput.value = this._manualTarget();
+      els.keypadInput.hidden = inCallDtmf;
       for (const btn of Object.values(els.keypadKeys || {})) {
         btn.disabled = buttonDisabled;
+      }
+      if (inCallDtmf) {
+        if (els.keypadKeys.Clear) els.keypadKeys.Clear.disabled = true;
+        if (els.keypadKeys["⌫"]) els.keypadKeys["⌫"].disabled = true;
       }
     }
     const hideContactCycler = softphoneMode || keypadOpen;
@@ -1896,9 +1903,11 @@ class VoipStackCard extends HTMLElement {
     els.card.classList.toggle("settings-open", showSettingsPanel);
     const canUseKeypad = softphoneMode || !!this._startCallService;
     els.runtimeControls.hidden = !showRuntimeOptions;
-    els.keypadBtn.hidden = !(showCall && showRuntimeOptions && canUseKeypad);
+    els.keypadBtn.hidden = !(
+      (showCall || inCallDtmf) && showRuntimeOptions && canUseKeypad
+    );
     els.keypadBtn.textContent = this._t(keypadOpen ? "Contacts" : "Keypad");
-    els.keypadBtn.setAttribute("aria-expanded", String(showCall && keypadOpen));
+    els.keypadBtn.setAttribute("aria-expanded", String((showCall || inCallDtmf) && keypadOpen));
     els.settingsBtn.hidden = !showRuntimeOptions;
     els.settingsPanel.hidden = !showSettingsPanel;
     els.settingsBtn.setAttribute("aria-expanded", String(showSettingsPanel));
@@ -2164,6 +2173,14 @@ class VoipStackCard extends HTMLElement {
   }
 
   _pressKeypadKey(key) {
+    const inCallDtmf = this._isHaSoftphoneMode() &&
+      String(this._softphoneSnapshot?.state || "").toLowerCase() === "in_call";
+    if (inCallDtmf) {
+      if (key !== "Clear" && key !== "⌫" && !voipStackEngine.sendDtmf(key)) {
+        this._showError("DTMF is unavailable for this call.");
+      }
+      return;
+    }
     if (key === "Clear") {
       this._setManualTarget("");
     } else if (key === "⌫") {

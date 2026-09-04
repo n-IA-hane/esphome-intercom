@@ -8,7 +8,7 @@ import re
 import socket
 import struct
 import time
-from typing import Callable
+from typing import Awaitable, Callable
 
 from .core.rtp import parse_packet
 
@@ -87,6 +87,36 @@ def build_telephone_event_payload(
         raise ValueError("telephone-event volume must be between 0 and 63")
     flags = (0x80 if end else 0) | int(volume)
     return struct.pack("!BBH", event, flags, int(duration))
+
+
+async def send_rtp_dtmf_event(
+    digit: str,
+    *,
+    clock_rate: int,
+    duration_ms: int,
+    emit: Callable[[int, bool, bool], Awaitable[bool]],
+) -> bool:
+    """Pace one RFC 4733 event and repeat its final report three times."""
+
+    if telephone_event_code(digit) is None:
+        return False
+    rate = max(1, int(clock_rate))
+    duration_ms = max(40, min(5000, int(duration_ms)))
+    elapsed_ms = 0
+    if not await emit(1, True, False):
+        return False
+    while elapsed_ms < duration_ms:
+        step_ms = min(50, duration_ms - elapsed_ms)
+        await asyncio.sleep(step_ms / 1000)
+        elapsed_ms += step_ms
+        duration = min(0xFFFF, max(1, round(elapsed_ms * rate / 1000)))
+        if not await emit(duration, False, elapsed_ms >= duration_ms):
+            return False
+    for _repeat in range(2):
+        await asyncio.sleep(0.05)
+        if not await emit(duration, False, True):
+            return False
+    return True
 
 
 class RtpDtmfDecoder:
