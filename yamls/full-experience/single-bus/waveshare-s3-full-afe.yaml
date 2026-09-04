@@ -302,13 +302,10 @@ esp_afe:
   # - GMF AFE manager feed/fetch tasks stay on different cores, as Espressif's
   #   own GMF troubleshooting recommends for avoiding AFE task WDT.
   task_core: 1
-  task_priority: 5
   ringbuf_size: 8
   feed_task_core: 0
-  feed_task_priority: 5
   feed_task_stack_size: 3072
   fetch_task_core: 1
-  fetch_task_priority: 5
   fetch_task_stack_size: 3072
   # Keep two already processed GMF frames in reserve. The dual-mic AFE runs
   # asynchronously; without this bounded reserve, ordinary scheduler jitter

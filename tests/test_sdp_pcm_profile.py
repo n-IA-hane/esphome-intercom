@@ -56,7 +56,7 @@ class SdpPcmProfileTest(unittest.TestCase):
             allow_directional_payloads=True,
         )
 
-        self.assertIn("m=audio 40000 RTP/AVP 96 97", offer)
+        self.assertIn("m=audio 40000 RTP/AVP 97 96", offer)
         self.assertIn("a=x-voip-stack-flow:97 recv\r\n", offer)
         self.assertIn("a=x-voip-stack-flow:96 send\r\n", offer)
 
@@ -165,9 +165,9 @@ class SdpPcmProfileTest(unittest.TestCase):
             recv_rtp_formats=(ws3_recv,),
             allow_directional_payloads=True,
         )
-        self.assertIn("a=x-voip-stack-ptime:100 10\r\n", offer)
-        self.assertIn("a=x-voip-stack-ptime:96 16\r\n", offer)
-        self.assertIn("m=audio 40000 RTP/AVP 99 96 100", offer)
+        self.assertNotIn("a=x-voip-stack-ptime:", offer)
+        self.assertIn("a=ptime:16\r\n", offer)
+        self.assertIn("m=audio 40000 RTP/AVP 96 99", offer)
         remote = sdp.negotiate_directional(
             offer,
             [ws3_recv.audio_format],
@@ -177,6 +177,76 @@ class SdpPcmProfileTest(unittest.TestCase):
         assert remote is not None
         self.assertEqual(remote.send.audio_format, ws3_recv.audio_format)
         self.assertEqual(remote.recv.audio_format, ws3_send.audio_format)
+
+        answer = sdp.build_answer_directional(
+            "192.0.2.2",
+            "192.0.2.2",
+            41000,
+            remote.send,
+            remote.recv,
+            remote_sdp=offer,
+        )
+        self.assertNotIn("a=x-voip-stack-ptime:", answer)
+        self.assertIn("a=ptime:10\r\n", answer)
+        negotiated = sdp.negotiate_answer_directional(
+            answer,
+            [ws3_send.audio_format, ws3_send_fallback.audio_format],
+            [ws3_recv.audio_format],
+            local_offer_sdp=offer,
+        )
+        self.assertIsNotNone(negotiated)
+        assert negotiated is not None
+        self.assertEqual(negotiated.send.audio_format, ws3_send.audio_format)
+        self.assertEqual(negotiated.recv.audio_format, ws3_recv.audio_format)
+
+    def test_directional_same_codec_uses_standard_offer_answer_ptime(self) -> None:
+        local_send = sdp.RtpPcmFormat(99, "L16", 16000, 1, 10)
+        local_recv = sdp.RtpPcmFormat(96, "L16", 16000, 1, 16)
+        offer = sdp.build_offer_directional(
+            "192.0.2.1",
+            "192.0.2.1",
+            40000,
+            [local_send.audio_format],
+            [local_recv.audio_format],
+            send_rtp_formats=(local_send,),
+            recv_rtp_formats=(local_recv,),
+            allow_directional_payloads=True,
+        )
+        self.assertIn("m=audio 40000 RTP/AVP 96 97\r\n", offer)
+        self.assertIn("a=x-voip-stack-flow:96 sendrecv\r\n", offer)
+        self.assertIn("a=ptime:16\r\n", offer)
+        self.assertNotIn("a=x-voip-stack-ptime:", offer)
+
+        remote = sdp.negotiate_directional(
+            offer,
+            [local_recv.audio_format],
+            [local_send.audio_format],
+        )
+        self.assertIsNotNone(remote)
+        assert remote is not None
+        answer = sdp.build_answer_directional(
+            "192.0.2.2",
+            "192.0.2.2",
+            41000,
+            remote.send,
+            remote.recv,
+            remote_sdp=offer,
+        )
+        self.assertIn("m=audio 41000 RTP/AVP 96\r\n", answer)
+        self.assertIn("a=x-voip-stack-flow:96 sendrecv\r\n", answer)
+        self.assertIn("a=ptime:10\r\n", answer)
+        self.assertNotIn("a=x-voip-stack-ptime:", answer)
+
+        negotiated = sdp.negotiate_answer_directional(
+            answer,
+            [local_send.audio_format],
+            [local_recv.audio_format],
+            local_offer_sdp=offer,
+        )
+        self.assertIsNotNone(negotiated)
+        assert negotiated is not None
+        self.assertEqual(negotiated.send.audio_format, local_send.audio_format)
+        self.assertEqual(negotiated.recv.audio_format, local_recv.audio_format)
 
     def test_explicit_offer_advertises_one_payload_per_rtp_encoding(self) -> None:
         opus_20 = sdp.RtpPcmFormat(98, "OPUS", 48000, 2, 20)

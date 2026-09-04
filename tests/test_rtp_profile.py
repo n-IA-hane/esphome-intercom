@@ -573,6 +573,88 @@ class RtpPacketizationTest(unittest.IsolatedAsyncioTestCase):
         self.assertLess(output.sent[0][0] - started, 0.01)
         await relay.stop()
 
+    async def test_same_codec_ptime_change_repacketizes_without_pcm_conversion(self) -> None:
+        class Transport:
+            def __init__(self) -> None:
+                self.sent: list[bytes] = []
+
+            def sendto(self, data: bytes, _addr: tuple[str, int]) -> None:
+                self.sent.append(data)
+
+            def close(self) -> None:
+                pass
+
+        source = sdp.RtpPcmFormat(96, "L16", 16000, 1, 16)
+        destination = sdp.RtpPcmFormat(97, "L16", 16000, 1, 10)
+        left = sip_rtp_bridge.RtpPeer(
+            "192.0.2.10",
+            40000,
+            source.payload_type,
+            source.audio_format,
+            rtp_format=source,
+            send_rtp_format=source,
+        )
+        right = sip_rtp_bridge.RtpPeer(
+            "192.0.2.20",
+            41000,
+            destination.payload_type,
+            destination.audio_format,
+            rtp_format=destination,
+            send_rtp_format=destination,
+        )
+        relay = sip_rtp_bridge.SipRtpRelay(
+            left=left,
+            right=right,
+            left_port=42000,
+            right_port=42002,
+            debug=True,
+        )
+        output = Transport()
+        relay.right_transport = output  # type: ignore[assignment]
+        source_bytes = bytearray()
+
+        for sequence in range(5):
+            payload = bytes(
+                (index + sequence) & 0xFF
+                for index in range(rtp.audio_payload_size_limit(source))
+            )
+            source_bytes.extend(payload)
+            relay.handle_packet(
+                "left",
+                self._packet(source, sequence, payload),
+                (left.host, left.port),
+            )
+
+        await relay.stop()
+        packets = [rtp.parse_packet(raw) for raw in output.sent]
+        self.assertEqual(len(packets), 8)
+        self.assertEqual(b"".join(packet.payload for packet in packets), source_bytes)
+        self.assertEqual(
+            [packet.sequence for packet in packets],
+            list(range(packets[0].sequence, packets[0].sequence + 8)),
+        )
+        self.assertEqual(
+            [
+                (packets[index].timestamp - packets[index - 1].timestamp)
+                & 0xFFFFFFFF
+                for index in range(1, len(packets))
+            ],
+            [destination.rtp_timestamp_step] * 7,
+        )
+        snapshot = relay.snapshot()
+        self.assertEqual(snapshot["left_to_right_audio_path"], "repacketize")
+        self.assertNotIn("audio_transcoding", snapshot)
+
+    async def test_compressed_ptime_change_is_not_raw_repacketized(self) -> None:
+        source = sdp.RtpPcmFormat(111, "OPUS", 48000, 1, 20)
+        destination = sdp.RtpPcmFormat(112, "OPUS", 48000, 1, 10)
+        self.assertFalse(
+            sip_rtp_bridge._audio_payload_repacketize_compatible(
+                source,
+                destination,
+            )
+        )
+
     async def test_split_source_frame_preserves_rtp_timestamp_clock(self) -> None:
         loop = asyncio.get_running_loop()
 

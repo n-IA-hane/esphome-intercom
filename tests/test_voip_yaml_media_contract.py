@@ -139,14 +139,10 @@ def test_ws3_afe_workers_cannot_preempt_realtime_audio_consumers() -> None:
         )
     }
 
-    assert priorities.keys() == {
-        "task_priority",
-        "feed_task_priority",
-        "fetch_task_priority",
-    }
     # The VoIP speaker consumer runs at priority 15. Raising a 64 ms AFE
     # producer above it caused received 10 ms RTP frames to play in bursts.
-    assert max(priorities.values()) < 15
+    # An omitted value uses esp_audio_stack's validated priority 5 default.
+    assert all(value < 15 for value in priorities.values())
 
 
 @pytest.mark.parametrize(

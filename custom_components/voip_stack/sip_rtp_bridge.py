@@ -81,6 +81,22 @@ def _audio_payload_relay_compatible(
     )
 
 
+def _audio_payload_repacketize_compatible(
+    incoming: RtpPcmFormat,
+    outgoing: RtpPcmFormat,
+) -> bool:
+    """Return whether raw audio bytes only need packet-boundary changes."""
+
+    return bool(
+        incoming.frame_ms != outgoing.frame_ms
+        and incoming.encoding.upper() in {"PCMA", "PCMU", "L16", "L24", "PCM"}
+        and incoming.encoding.upper() == outgoing.encoding.upper()
+        and incoming.sample_rate == outgoing.sample_rate
+        and incoming.channels == outgoing.channels
+        and _normalized_audio_fmtp(incoming) == _normalized_audio_fmtp(outgoing)
+    )
+
+
 @dataclass(slots=True)
 class _PayloadRelayClock:
     source_base: int | None = None
@@ -93,6 +109,74 @@ class _PayloadRelayClock:
         return (
             self.destination_base + (int(source_timestamp) - self.source_base)
         ) & 0xFFFFFFFF
+
+
+class _PayloadRepacketizer:
+    """Reframe an uncompressed RTP byte stream with one bounded scratch buffer."""
+
+    __slots__ = (
+        "_bytes_per_timestamp",
+        "_buffer",
+        "_offset",
+        "_output_size",
+        "_pending_marker",
+        "_source_sequence",
+        "_source_timestamp",
+    )
+
+    def __init__(self, incoming: RtpPcmFormat, outgoing: RtpPcmFormat) -> None:
+        output_size = rtp.audio_payload_size_limit(outgoing)
+        if output_size <= 0 or output_size > rtp.MAX_RTP_PAYLOAD_BYTES:
+            raise ValueError("repacketized RTP payload exceeds the transport envelope")
+        bytes_per_sample = {
+            "PCMA": 1,
+            "PCMU": 1,
+            "L16": 2,
+            "PCM": 2,
+            "L24": 3,
+        }[incoming.encoding.upper()]
+        self._bytes_per_timestamp = bytes_per_sample * incoming.channels
+        self._buffer = bytearray(output_size)
+        self._offset = 0
+        self._output_size = output_size
+        self._pending_marker = False
+        self._source_sequence: int | None = None
+        self._source_timestamp: int | None = None
+
+    def push(self, packet: rtp.RtpPacket) -> list[tuple[bytes, bool]]:
+        payload = packet.payload
+        if not payload or len(payload) % self._bytes_per_timestamp:
+            raise ValueError("unaligned uncompressed RTP payload")
+        discontinuity = self._source_sequence is not None and (
+            packet.sequence != rtp.next_sequence(self._source_sequence)
+            or packet.timestamp != self._source_timestamp
+        )
+        if discontinuity:
+            self._offset = 0
+            self._pending_marker = True
+        if packet.marker:
+            self._pending_marker = True
+
+        outputs: list[tuple[bytes, bool]] = []
+        cursor = 0
+        while cursor < len(payload):
+            copied = min(self._output_size - self._offset, len(payload) - cursor)
+            self._buffer[self._offset : self._offset + copied] = payload[
+                cursor : cursor + copied
+            ]
+            self._offset += copied
+            cursor += copied
+            if self._offset == self._output_size:
+                outputs.append((bytes(self._buffer), self._pending_marker))
+                self._offset = 0
+                self._pending_marker = False
+
+        self._source_sequence = packet.sequence
+        self._source_timestamp = rtp.next_timestamp(
+            packet.timestamp,
+            len(payload) // self._bytes_per_timestamp,
+        )
+        return outputs
 
 @dataclass(slots=True)
 class RtpPeer:
@@ -271,28 +355,54 @@ class SipRtpRelay:
                 left.outbound_rtp_format,
             )
         )
+        left_to_right_repacketize = bool(
+            not left_to_right_passthrough
+            and _audio_payload_repacketize_compatible(
+                left.inbound_rtp_format,
+                right.outbound_rtp_format,
+            )
+        )
+        right_to_left_repacketize = bool(
+            not right_to_left_passthrough
+            and _audio_payload_repacketize_compatible(
+                right.inbound_rtp_format,
+                left.outbound_rtp_format,
+            )
+        )
         return {
             "left_to_right_passthrough": left_to_right_passthrough,
             "right_to_left_passthrough": right_to_left_passthrough,
             "left_to_right_clock": _PayloadRelayClock(),
             "right_to_left_clock": _PayloadRelayClock(),
+            "left_to_right_repacketizer": _PayloadRepacketizer(
+                left.inbound_rtp_format, right.outbound_rtp_format
+            )
+            if left_to_right_repacketize
+            else None,
+            "right_to_left_repacketizer": _PayloadRepacketizer(
+                right.inbound_rtp_format, left.outbound_rtp_format
+            )
+            if right_to_left_repacketize
+            else None,
             "left_to_right": None
-            if left_to_right_passthrough
+            if left_to_right_passthrough or left_to_right_repacketize
             else PcmFrameConverter(left.audio_format, right.outbound_audio_format),
             "right_to_left": None
-            if right_to_left_passthrough
+            if right_to_left_passthrough or right_to_left_repacketize
             else PcmFrameConverter(right.audio_format, left.outbound_audio_format),
             "left_decoder": None
-            if left_to_right_passthrough and not self.debug_capture
+            if (left_to_right_passthrough or left_to_right_repacketize)
+            and not self.debug_capture
             else RtpPayloadDecoder(left.inbound_rtp_format),
             "right_decoder": None
-            if right_to_left_passthrough and not self.debug_capture
+            if (right_to_left_passthrough or right_to_left_repacketize)
+            and not self.debug_capture
             else RtpPayloadDecoder(right.inbound_rtp_format),
             "left_encoder": None
-            if right_to_left_passthrough
+            if right_to_left_passthrough or right_to_left_repacketize
             else RtpPayloadEncoder(left.outbound_rtp_format),
             "right_encoder": None
-            if left_to_right_passthrough
+            if left_to_right_passthrough or left_to_right_repacketize
             else RtpPayloadEncoder(right.outbound_rtp_format),
             "dtmf_decoders": {
                 "left": RtpDtmfDecoder(left.dtmf_payload_type)
@@ -334,6 +444,8 @@ class SipRtpRelay:
         self.right_to_left_passthrough = state["right_to_left_passthrough"]
         self.left_to_right_clock = state["left_to_right_clock"]
         self.right_to_left_clock = state["right_to_left_clock"]
+        self.left_to_right_repacketizer = state["left_to_right_repacketizer"]
+        self.right_to_left_repacketizer = state["right_to_left_repacketizer"]
         self.left_to_right = state["left_to_right"]
         self.right_to_left = state["right_to_left"]
         self.left_decoder = state["left_decoder"]
@@ -1007,6 +1119,49 @@ class SipRtpRelay:
                     outgoing_timestamp,
                     dest.outbound_rtp_format.rtp_timestamp_step,
                 )
+            elif (
+                repacketizer := (
+                    self.left_to_right_repacketizer
+                    if side == "left"
+                    else self.right_to_left_repacketizer
+                )
+            ) is not None:
+                rtp.validate_audio_payload_size(packet.payload, source.inbound_rtp_format)
+                if self.debug_capture:
+                    capture_decoder = self.left_decoder if side == "left" else self.right_decoder
+                    try:
+                        if capture_decoder is not None:
+                            self._capture_pcm(side, capture_decoder.decode(packet.payload))
+                    except Exception as err:  # noqa: BLE001 - capture cannot alter media.
+                        _LOGGER.debug("RTP debug capture drop side=%s: %s", side, err)
+                if source.rx_ssrc is None:
+                    source.rx_ssrc = packet.ssrc
+                    source.host = str(addr[0])
+                    source.port = int(addr[1])
+                elif (str(addr[0]), int(addr[1])) != (source.host, int(source.port)):
+                    source.host = str(addr[0])
+                    source.port = int(addr[1])
+                outgoing = []
+                sequence = dest.sequence
+                timestamp = dest.timestamp
+                for payload, marker in repacketizer.push(packet):
+                    outgoing.append(
+                        rtp.build_packet(
+                            rtp.RtpPacket(
+                                payload_type=dest.outbound_payload_type,
+                                sequence=sequence,
+                                timestamp=timestamp,
+                                ssrc=dest.ssrc,
+                                payload=payload,
+                                marker=marker,
+                            )
+                        )
+                    )
+                    sequence = rtp.next_sequence(sequence)
+                    timestamp = rtp.next_timestamp(
+                        timestamp,
+                        dest.outbound_rtp_format.rtp_timestamp_step,
+                    )
             else:
                 decoder = self.left_decoder if side == "left" else self.right_decoder
                 if decoder is None:
@@ -1095,10 +1250,18 @@ class SipRtpRelay:
             "left_connection_held": self.left.connection_held,
             "right_connection_held": self.right.connection_held,
             "left_to_right_audio_path": (
-                "payload_relay" if self.left_to_right_passthrough else "transcode"
+                "payload_relay"
+                if self.left_to_right_passthrough
+                else "repacketize"
+                if self.left_to_right_repacketizer is not None
+                else "transcode"
             ),
             "right_to_left_audio_path": (
-                "payload_relay" if self.right_to_left_passthrough else "transcode"
+                "payload_relay"
+                if self.right_to_left_passthrough
+                else "repacketize"
+                if self.right_to_left_repacketizer is not None
+                else "transcode"
             ),
         }
         if self.video_relay is not None:
@@ -1114,7 +1277,12 @@ class SipRtpRelay:
                     if source_name == "left_to_right"
                     else self.right_to_left_passthrough
                 )
-                if not passthrough:
+                repacketizer = (
+                    self.left_to_right_repacketizer
+                    if source_name == "left_to_right"
+                    else self.right_to_left_repacketizer
+                )
+                if not passthrough and repacketizer is None:
                     incoming = source.inbound_rtp_format
                     outgoing = destination.outbound_rtp_format
                     needed.append(
