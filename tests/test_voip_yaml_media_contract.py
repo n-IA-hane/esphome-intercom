@@ -127,8 +127,8 @@ def test_maintained_ws3_profile_does_not_enable_debug_entities() -> None:
     assert "packages/voip/debug.yaml" not in WS3_FULL_AFE.read_text()
 
 
-def test_ws3_afe_workers_cannot_preempt_realtime_audio_consumers() -> None:
-    """The 64 ms AFE workers must not starve the 10 ms VoIP speaker path."""
+def test_ws3_afe_workers_drain_each_realtime_capture_frame() -> None:
+    """The asynchronous AFE workers must keep up during full-duplex calls."""
     text = WS3_FULL_AFE.read_text()
     afe = _top_level_block(text, "esp_afe")
     priorities = {
@@ -139,10 +139,15 @@ def test_ws3_afe_workers_cannot_preempt_realtime_audio_consumers() -> None:
         )
     }
 
-    # The VoIP speaker consumer runs at priority 15. Raising a 64 ms AFE
-    # producer above it caused received 10 ms RTP frames to play in bursts.
-    # An omitted value uses esp_audio_stack's validated priority 5 default.
-    assert all(value < 15 for value in priorities.values())
+    # At the upstream priority-5 defaults, an active WS3 call filled the GMF
+    # input ring and lost roughly one 64 ms microphone frame out of three.
+    # Priority 20 was qualified with 32/32 input, feed and fetch frames while
+    # the independent 10 ms speaker path remained free of underruns.
+    assert priorities == {
+        "task_priority": 20,
+        "feed_task_priority": 20,
+        "fetch_task_priority": 20,
+    }
 
 
 @pytest.mark.parametrize(
