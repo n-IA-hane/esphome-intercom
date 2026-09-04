@@ -124,6 +124,7 @@ def main() -> int:
         browser = playwright.chromium.launch(
             headless=True,
             executable_path="/usr/bin/chromium",
+            ignore_default_args=["--mute-audio"],
             args=[
                 "--use-fake-ui-for-media-stream",
                 "--use-fake-device-for-media-stream",
