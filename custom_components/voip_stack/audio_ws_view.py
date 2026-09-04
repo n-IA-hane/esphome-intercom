@@ -751,6 +751,8 @@ async def _run_audio_session(
     logged_first_rtp = False
     latched_rtp_source: tuple[str, int] | None = None
     latched_rtp_ssrc: int | None = None
+    last_audio_sequence: int | None = None
+    last_audio_timestamp: int | None = None
     remote_rtp_host = str(session.remote_rtp_host)
     remote_rtp_port = int(session.remote_rtp_port)
     applied_media_generation = int(session.media_generation)
@@ -845,6 +847,7 @@ async def _run_audio_session(
     async def refresh_media_state(generation: int) -> None:
         nonlocal applied_media_generation, remote_rtp_host, remote_rtp_port
         nonlocal latched_rtp_source, latched_rtp_ssrc, logged_first_rtp
+        nonlocal last_audio_sequence, last_audio_timestamp
         nonlocal rtp_decoder, rtp_encoder
         nonlocal dtmf_decoder
         nonlocal debug_capture
@@ -872,6 +875,8 @@ async def _run_audio_session(
             latched_rtp_source = None
             latched_rtp_ssrc = None
             logged_first_rtp = False
+            last_audio_sequence = None
+            last_audio_timestamp = None
             protocol.dropped_packets += drain_queue(queue)
             rtp_decoder = next_decoder
             rtp_encoder = next_encoder
@@ -912,6 +917,7 @@ async def _run_audio_session(
     async def rtp_to_ws() -> None:
         nonlocal latched_rtp_source, latched_rtp_ssrc, logged_first_rtp
         nonlocal remote_rtp_host, remote_rtp_port
+        nonlocal last_audio_sequence, last_audio_timestamp
         observed_generation = int(session.media_generation)
         while not closed.is_set():
             if observed_generation != session.media_generation:
@@ -987,11 +993,33 @@ async def _run_audio_session(
                     # change its source port during a long-lived call.
                     latched_rtp_source = source
                     remote_rtp_port = source[1]
+                sequence_delta = (
+                    (packet.sequence - last_audio_sequence) & 0xFFFF
+                    if last_audio_sequence is not None
+                    else 0
+                )
+                timestamp_delta = (
+                    (packet.timestamp - last_audio_timestamp) & 0xFFFFFFFF
+                    if last_audio_timestamp is not None
+                    else 0
+                )
+                expected_timestamp_delta = int(
+                    session.recv_format.rtp_timestamp_step
+                )
+                remote_silence_resume = (
+                    last_audio_sequence is not None
+                    and sequence_delta == 1
+                    and timestamp_delta > expected_timestamp_delta * 2
+                )
+                last_audio_sequence = packet.sequence
+                last_audio_timestamp = packet.timestamp
                 counters["rtp_rx"] += 1
                 counters["rtp_rx_bytes"] += len(data)
                 if debug_capture is not None:
                     debug_capture.note_rtp_rx(loop.time(), pcm)
                 async with ws_send_lock:
+                    if remote_silence_resume:
+                        await ws.send_json({"type": "remote_silence_resume"})
                     await ws.send_bytes(encode_audio_frame(pcm))
                 if debug_capture is not None:
                     debug_capture.note_ws_send(loop.time())

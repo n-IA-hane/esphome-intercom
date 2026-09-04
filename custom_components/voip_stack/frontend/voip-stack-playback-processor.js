@@ -56,11 +56,17 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._concealmentGain = 0;
     this._lastArrivalTime = 0;
     this._arrivalJitterSeconds = 0;
+    this._starvationPending = false;
+    this._remoteSilenceResume = false;
     this._previousInput = new Float32Array(this._format.channels);
     this._hasPreviousInput = false;
 
     this.port.onmessage = (event) => {
       const data = event.data;
+      if (data?.type === "remote_silence_resume") {
+        this._remoteSilenceResume = true;
+        return;
+      }
       if (data?.type === "audio" && data.buffer) this._push(data.buffer, data.byteOffset || 0);
     };
   }
@@ -81,6 +87,19 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     const frameBytes = this._format.frameSamples * this._format.channels * this._format.bytesPerSample;
     if (byteOffset < 0 || buffer.byteLength - byteOffset !== frameBytes) return;
     const frameSamples = this._contextFrameSamples * this._format.channels;
+    if (this._remoteSilenceResume) {
+      this._lastArrivalTime = 0;
+      this._hasPreviousInput = false;
+    }
+    if (this._starvationPending) {
+      if (!this._remoteSilenceResume) {
+        this._underruns++;
+        this._lastUnderrun = currentTime;
+        this._targetStartFrames = Math.min(this._maxStartFrames, this._targetStartFrames + 2);
+      }
+      this._starvationPending = false;
+    }
+    this._remoteSilenceResume = false;
     this._updateArrivalJitter();
     if (this._available >= frameSamples * this._dropFrames) {
       const queuedFrames = Math.floor(this._available / frameSamples);
@@ -155,9 +174,7 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       if (this._available < this._format.channels) {
         if (!underrunThisQuantum) {
           underrunThisQuantum = true;
-          this._underruns++;
-          this._lastUnderrun = currentTime;
-          this._targetStartFrames = Math.min(this._maxStartFrames, this._targetStartFrames + 2);
+          this._starvationPending = true;
         }
         for (let ch = 0; ch < channels.length; ch++) {
           channels[ch][i] = this._lastOutput[Math.min(ch, this._format.channels - 1)] * this._concealmentGain;

@@ -1258,6 +1258,9 @@ class VoipStackEngine extends EventTarget {
           void this._reconcileAudioMedia(msg);
         }
         if (msg.state) this._setState(String(msg.state).toUpperCase());
+        if (msg.type === "remote_silence_resume") {
+          this._playbackNode?.port.postMessage({ type: "remote_silence_resume" });
+        }
         if (msg.error) this.dispatchEvent(new CustomEvent("error", { detail: msg.error }));
         this._resolveControlWaiter(msg);
       } catch (_) {}
