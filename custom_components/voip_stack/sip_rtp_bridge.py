@@ -117,6 +117,8 @@ class _PayloadRepacketizer:
     __slots__ = (
         "_bytes_per_timestamp",
         "_buffer",
+        "_buffer_timestamp",
+        "_clock",
         "_offset",
         "_output_size",
         "_pending_marker",
@@ -137,13 +139,19 @@ class _PayloadRepacketizer:
         }[incoming.encoding.upper()]
         self._bytes_per_timestamp = bytes_per_sample * incoming.channels
         self._buffer = bytearray(output_size)
+        self._buffer_timestamp: int | None = None
+        self._clock = _PayloadRelayClock()
         self._offset = 0
         self._output_size = output_size
         self._pending_marker = False
         self._source_sequence: int | None = None
         self._source_timestamp: int | None = None
 
-    def push(self, packet: rtp.RtpPacket) -> list[tuple[bytes, bool]]:
+    def push(
+        self,
+        packet: rtp.RtpPacket,
+        destination_timestamp: int,
+    ) -> list[tuple[bytes, bool, int]]:
         payload = packet.payload
         if not payload or len(payload) % self._bytes_per_timestamp:
             raise ValueError("unaligned uncompressed RTP payload")
@@ -153,13 +161,20 @@ class _PayloadRepacketizer:
         )
         if discontinuity:
             self._offset = 0
+            self._buffer_timestamp = None
             self._pending_marker = True
         if packet.marker:
             self._pending_marker = True
 
-        outputs: list[tuple[bytes, bool]] = []
+        mapped_timestamp = self._clock.map(packet.timestamp, destination_timestamp)
+        outputs: list[tuple[bytes, bool, int]] = []
         cursor = 0
         while cursor < len(payload):
+            if self._offset == 0:
+                self._buffer_timestamp = rtp.next_timestamp(
+                    mapped_timestamp,
+                    cursor // self._bytes_per_timestamp,
+                )
             copied = min(self._output_size - self._offset, len(payload) - cursor)
             self._buffer[self._offset : self._offset + copied] = payload[
                 cursor : cursor + copied
@@ -167,8 +182,13 @@ class _PayloadRepacketizer:
             self._offset += copied
             cursor += copied
             if self._offset == self._output_size:
-                outputs.append((bytes(self._buffer), self._pending_marker))
+                if self._buffer_timestamp is None:
+                    raise RuntimeError("repacketizer timestamp is missing")
+                outputs.append(
+                    (bytes(self._buffer), self._pending_marker, self._buffer_timestamp)
+                )
                 self._offset = 0
+                self._buffer_timestamp = None
                 self._pending_marker = False
 
         self._source_sequence = packet.sequence
@@ -1144,7 +1164,11 @@ class SipRtpRelay:
                 outgoing = []
                 sequence = dest.sequence
                 timestamp = dest.timestamp
-                for payload, marker in repacketizer.push(packet):
+                for payload, marker, output_timestamp in repacketizer.push(
+                    packet,
+                    dest.timestamp,
+                ):
+                    timestamp = output_timestamp
                     outgoing.append(
                         rtp.build_packet(
                             rtp.RtpPacket(

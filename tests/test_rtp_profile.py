@@ -655,6 +655,22 @@ class RtpPacketizationTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    def test_repacketizer_preserves_source_clock_gap(self) -> None:
+        source = sdp.RtpPcmFormat(96, "L16", 16000, 1, 16)
+        destination = sdp.RtpPcmFormat(97, "L16", 16000, 1, 10)
+        repacketizer = sip_rtp_bridge._PayloadRepacketizer(source, destination)
+        payload = bytes(rtp.audio_payload_size_limit(source))
+        first = rtp.parse_packet(self._packet(source, 0, payload))
+        after_loss = rtp.parse_packet(self._packet(source, 2, payload))
+
+        first_output = repacketizer.push(first, 1000)
+        second_output = repacketizer.push(after_loss, 1160)
+
+        self.assertEqual(len(first_output), 1)
+        self.assertEqual(len(second_output), 1)
+        self.assertEqual((second_output[0][2] - first_output[0][2]) & 0xFFFFFFFF, 512)
+        self.assertTrue(second_output[0][1])
+
     async def test_split_source_frame_preserves_rtp_timestamp_clock(self) -> None:
         loop = asyncio.get_running_loop()
 
