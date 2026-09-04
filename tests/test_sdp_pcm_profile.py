@@ -187,7 +187,8 @@ class SdpPcmProfileTest(unittest.TestCase):
             remote_sdp=offer,
         )
         self.assertNotIn("a=x-voip-stack-ptime:", answer)
-        self.assertIn("a=ptime:10\r\n", answer)
+        self.assertIn("a=ptime:16\r\n", answer)
+        self.assertIn("a=maxptime:10\r\n", answer)
         negotiated = sdp.negotiate_answer_directional(
             answer,
             [ws3_send.audio_format, ws3_send_fallback.audio_format],
@@ -234,7 +235,8 @@ class SdpPcmProfileTest(unittest.TestCase):
         )
         self.assertIn("m=audio 41000 RTP/AVP 96\r\n", answer)
         self.assertIn("a=x-voip-stack-flow:96 sendrecv\r\n", answer)
-        self.assertIn("a=ptime:10\r\n", answer)
+        self.assertIn("a=ptime:16\r\n", answer)
+        self.assertIn("a=maxptime:10\r\n", answer)
         self.assertNotIn("a=x-voip-stack-ptime:", answer)
 
         negotiated = sdp.negotiate_answer_directional(
@@ -1642,35 +1644,41 @@ class SdpPcmProfileTest(unittest.TestCase):
 
     def test_esphome_directional_offer_and_answer_select_48k_to_esp_16k_from_esp(self) -> None:
         wide = audio_format.AudioFormat(48000, "s16le", 1, 10)
-        narrow = audio_format.AudioFormat(16000, "s16le", 1, 10)
+        narrow = audio_format.AudioFormat(16000, "s16le", 1, 16)
+        wide_rtp = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
+        narrow_rtp = sdp.RtpPcmFormat(98, "L16", 16000, 1, 16)
         offer = sdp.build_offer_directional(
             "192.0.2.10",
             "192.0.2.10",
             40000,
-            [wide, narrow],
             [narrow],
+            [wide],
+            send_rtp_formats=(narrow_rtp,),
+            recv_rtp_formats=(wide_rtp,),
             allow_directional_payloads=True,
         )
 
-        selected_by_esp = sdp.negotiate_directional(offer, [narrow], [wide])
-        self.assertIsNotNone(selected_by_esp)
-        self.assertEqual(selected_by_esp.send.audio_format, narrow)
-        self.assertEqual(selected_by_esp.recv.audio_format, wide)
+        selected_by_ha = sdp.negotiate_directional(offer, [wide], [narrow])
+        self.assertIsNotNone(selected_by_ha)
+        self.assertEqual(selected_by_ha.send.audio_format, wide)
+        self.assertEqual(selected_by_ha.recv.audio_format, narrow)
 
         answer = sdp.build_answer_directional(
             "192.0.2.20",
             "192.0.2.20",
             40002,
-            selected_by_esp.send,
-            selected_by_esp.recv,
+            selected_by_ha.send,
+            selected_by_ha.recv,
             remote_sdp=offer,
         )
-        selected_by_ha = sdp.negotiate_answer_directional(
+        self.assertIn("a=ptime:10\r\n", answer)
+        self.assertIn("a=maxptime:16\r\n", answer)
+        selected_by_esp = sdp.negotiate_answer_directional(
             answer,
-            [wide],
             [narrow],
+            [wide],
             local_offer_sdp=offer,
         )
-        self.assertIsNotNone(selected_by_ha)
-        self.assertEqual(selected_by_ha.send.audio_format, wide)
-        self.assertEqual(selected_by_ha.recv.audio_format, narrow)
+        self.assertIsNotNone(selected_by_esp)
+        self.assertEqual(selected_by_esp.send.audio_format, narrow)
+        self.assertEqual(selected_by_esp.recv.audio_format, wide)

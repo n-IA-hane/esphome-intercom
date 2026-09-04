@@ -3159,15 +3159,10 @@ def negotiate_answer_directional(
             answered_formats,
             local_send_preferred,
             local_recv_preferred,
-            local_receive_contracts=[
-                item
-                for item in offered_pcm_formats(
-                    local_offer_sdp,
-                    allow_dahua_pcm=allow_dahua_pcm,
-                )
-                if _audio_flow_attributes(local_offer_sdp).get(item.payload_type)
-                in {"recv", "sendrecv"}
-            ],
+            local_offer_contracts=offered_pcm_formats(
+                local_offer_sdp,
+                allow_dahua_pcm=allow_dahua_pcm,
+            ),
         )
         if explicit is not None:
             return explicit
@@ -3196,7 +3191,7 @@ def _negotiate_audio_flow_attributes(
     local_send_preferred: list[AudioFormat],
     local_recv_preferred: list[AudioFormat],
     *,
-    local_receive_contracts: list[RtpPcmFormat] | None = None,
+    local_offer_contracts: list[RtpPcmFormat] | None = None,
 ) -> RtpPcmDirection | None:
     """Apply the ESPHome directional payload extension when both flows exist."""
 
@@ -3218,7 +3213,26 @@ def _negotiate_audio_flow_attributes(
             selected
             for local in local_send_preferred
             for offered in remote_recv
-            if (selected := _rtp_compatible_audio(offered, local)) is not None
+            if (
+                selected := _rtp_compatible_audio(
+                    replace(
+                        next(
+                            (
+                                contract
+                                for contract in local_offer_contracts or ()
+                                if contract.payload_type == offered.payload_type
+                                and _same_rtp_audio_codec(contract, offered)
+                            ),
+                            offered,
+                        ),
+                        frame_ms=local.frame_ms,
+                        min_frame_ms=0,
+                        max_frame_ms=0,
+                    ),
+                    local,
+                )
+            )
+            is not None
         ),
         None,
     )
@@ -3233,7 +3247,7 @@ def _negotiate_audio_flow_attributes(
                         next(
                             (
                                 contract
-                                for contract in local_receive_contracts or ()
+                                for contract in local_offer_contracts or ()
                                 if contract.payload_type == offered.payload_type
                                 and _same_rtp_audio_codec(contract, offered)
                             ),
@@ -3368,7 +3382,7 @@ def build_answer_directional(
         )
     audio_lines.extend(
         [
-            f"a=ptime:{recv.frame_ms if format_direction != 'sendonly' else send.frame_ms}",
+            f"a=ptime:{send.frame_ms}",
             f"a=maxptime:{recv.frame_ms if format_direction != 'sendonly' else send.frame_ms}",
             f"a={audio_direction}",
         ]
