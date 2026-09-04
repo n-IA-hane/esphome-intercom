@@ -631,6 +631,22 @@ class GroupCallMatrixTest(unittest.TestCase):
         self.assertEqual(send, [audio_format(48000, "s16le", 1, 10)])
         self.assertEqual(recv, [audio_format(16000, "s16le", 1, 10)])
 
+    def test_sip_target_profile_preserves_directional_packet_times(self) -> None:
+        audio_format = endpoint_routing.AudioFormat
+        remote_formats = [
+            audio_format(16000, "s16le", 1, 16),
+            audio_format(16000, "s16le", 1, 10),
+        ]
+
+        send, recv = endpoint_routing.sip_target_audio_profile(
+            remote_tx_formats=remote_formats,
+            remote_rx_formats=remote_formats,
+            target="waveshare-s3",
+        )
+
+        self.assertEqual(send, remote_formats)
+        self.assertEqual(recv, remote_formats)
+
     def test_peer_lookup_accepts_standard_sip_routing_identities(self) -> None:
         endpoint = peer.Peer(
             name="Waveshare S3 Audio",

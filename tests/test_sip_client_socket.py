@@ -4680,6 +4680,94 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             original.body,
         )
 
+    async def test_listener_video_reinvite_preserves_asymmetric_esp_audio(self) -> None:
+        sent_offer = b""
+        wideband = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
+        narrowband = sdp.RtpPcmFormat(97, "L16", 16000, 1, 10)
+        answer_sdp = sdp.build_offer_directional(
+            "192.168.1.10",
+            "192.168.1.10",
+            40002,
+            [wideband.audio_format],
+            [narrowband.audio_format],
+            send_rtp_formats=(wideband,),
+            recv_rtp_formats=(narrowband,),
+            allow_directional_payloads=True,
+            video_port=40006,
+            video_formats=(sdp.DEFAULT_VIDEO_FORMATS[3],),
+            video_direction="recvonly",
+        )
+        request = sip.parse_message(
+            sip.build_request(
+                "INVITE",
+                "sip:426@192.168.1.10:5060",
+                [
+                    ("Via", "SIP/2.0/UDP 192.168.1.43:5060;branch=z9hG4bKp4"),
+                    ("From", "<sip:p4@192.168.1.43>;tag=remote"),
+                    ("To", "<sip:426@192.168.1.10>"),
+                    ("Contact", "<sip:p4@192.168.1.43:5060>"),
+                    ("Call-ID", "p4-video-reinvite"),
+                    ("CSeq", "2 INVITE"),
+                ],
+            )
+        )
+        invite = sip_listener.SipInvite(
+            source_host="192.168.1.43",
+            source_port=5060,
+            request_uri=sip.parse_sip_uri("sip:426@192.168.1.10:5060"),
+            caller_uri=sip.parse_sip_uri("sip:p4@192.168.1.43"),
+            target="426",
+            caller="P4",
+            call_id="p4-video-reinvite",
+            cseq="2 INVITE",
+            remote_sdp=b"",
+            send_format=wideband,
+            recv_format=wideband,
+            remote_rtp_host="192.168.1.43",
+            remote_rtp_port=40000,
+        )
+        endpoint = sip_listener.SipUdpEndpoint(
+            local_ip="192.168.1.10",
+            local_rtp_port=40002,
+            supported_formats=[wideband.audio_format, narrowband.audio_format],
+            on_invite=lambda _: None,  # type: ignore[arg-type]
+            send_override=lambda _data, _addr: True,
+            enable_video=True,
+        )
+        endpoint.active_dialogs[invite.call_id] = sip_listener._ActiveDialog(
+            request,
+            ("192.168.1.43", 5060),
+            "local",
+            3,
+            "UDP",
+            answer_sdp=answer_sdp,
+            invite=invite,
+        )
+
+        async def reject_reinvite(_call_id, _dialog, _method, **kwargs):
+            nonlocal sent_offer
+            sent_offer = kwargs["body"]
+            return sip.parse_message(
+                b"SIP/2.0 488 Not Acceptable Here\r\nContent-Length: 0\r\n\r\n"
+            )
+
+        endpoint._send_dialog_request = reject_reinvite  # type: ignore[method-assign]
+        candidate = await endpoint.async_prepare_video_reinvite(
+            invite.call_id,
+            local_video_rtp_port=40006,
+            video_formats=(sdp.DEFAULT_VIDEO_FORMATS[3],),
+        )
+
+        self.assertIsNone(candidate)
+        self.assertEqual(
+            [(item.payload_type, item.sample_rate) for item in sdp.offered_pcm_formats(sent_offer)],
+            [(97, 16000), (96, 48000)],
+        )
+        self.assertEqual(
+            sdp.audio_flow_attributes(sent_offer),
+            {97: "recv", 96: "send"},
+        )
+
     async def test_listener_delivers_in_dialog_sip_info_dtmf(self) -> None:
         sent: list[bytes] = []
         received: list[str] = []

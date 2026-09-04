@@ -1318,6 +1318,22 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             )
             if not current_audio_formats:
                 return None
+            current_send_rtp_formats = None
+            current_recv_rtp_formats = None
+            current_common_rtp_formats = current_audio_formats
+            if sdp.has_directional_audio_flow_attributes(current_local_sdp):
+                flows = sdp.audio_flow_attributes(current_local_sdp)
+                current_send_rtp_formats = tuple(
+                    item
+                    for item in current_audio_formats
+                    if flows.get(item.payload_type) in {"send", "sendrecv"}
+                )
+                current_recv_rtp_formats = tuple(
+                    item
+                    for item in current_audio_formats
+                    if flows.get(item.payload_type) in {"recv", "sendrecv"}
+                )
+                current_common_rtp_formats = None
             offer = sdp.build_offer_directional(
                 self.local_ip,
                 self.local_ip,
@@ -1332,7 +1348,9 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
                 # the local SDP that this UAS already committed.  Rebuilding
                 # it from directional runtime fields can select the opposite
                 # wire format on asymmetric ESP endpoints.
-                audio_rtp_formats=current_audio_formats,
+                audio_rtp_formats=current_common_rtp_formats,
+                send_rtp_formats=current_send_rtp_formats,
+                recv_rtp_formats=current_recv_rtp_formats,
                 allow_directional_payloads=(
                     sdp.has_directional_audio_flow_attributes(current_local_sdp)
                 ),

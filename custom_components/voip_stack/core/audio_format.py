@@ -65,7 +65,6 @@ class AudioFormat:
         return f"{self.sample_rate}:{self.pcm_format.value}:{self.channels}:{self.frame_ms}"
 
 
-PREFERRED_FRAME_MS = (10, 16, 20, 32)
 HA_SIP_PCM_FORMATS = (
     AudioFormat(48000, PcmFormat.S16LE, 2, 20),
     AudioFormat(48000, PcmFormat.S16LE, 1, 20),
@@ -123,7 +122,8 @@ def choose_common_frame_ms(*format_lists: list[AudioFormat]) -> int | None:
         available = frames if available is None else available & frames
     if not available:
         return None
-    for frame_ms in PREFERRED_FRAME_MS:
-        if frame_ms in available:
-            return frame_ms
-    return min(available)
+    return next(
+        fmt.frame_ms
+        for fmt in format_lists[0]
+        if fmt.frame_ms in available
+    )

@@ -258,7 +258,7 @@ esp_audio_stack:
   # codec-dev default ~-50 dB floor. Keep 0% as mute, but make 70% usable.
   master_volume_min_db: -30.0
   task_core: 0
-  task_priority: 19
+  task_priority: 17
   task_stack_size: 8192
   i2s_lrclk_pin: ${i2s_lrclk_pin}
   i2s_bclk_pin: ${i2s_bclk_pin}
@@ -297,19 +297,18 @@ esp_afe:
   aec_nlp_level: normal
   memory_alloc_mode: more_psram
   # Espressif layout:
-  # - The I2S owner remains the only high-priority audio task on Core 0.
-  # - Feed, fetch and manager stay at their low blocking priority. The native
-  #   VoIP network workers run on Core 1, so they cannot starve AFE input.
+  # - The I2S owner stays below the AFE workers so feed and fetch deadlines are
+  #   not exposed as complete missing microphone frames.
   # - GMF AFE manager feed/fetch tasks stay on different cores, as Espressif's
   #   own GMF troubleshooting recommends for avoiding AFE task WDT.
   task_core: 1
-  task_priority: 5
+  task_priority: 20
   ringbuf_size: 8
   feed_task_core: 0
-  feed_task_priority: 5
+  feed_task_priority: 20
   feed_task_stack_size: 3072
   fetch_task_core: 1
-  fetch_task_priority: 5
+  fetch_task_priority: 20
   fetch_task_stack_size: 3072
   # Keep two already processed GMF frames in reserve. The dual-mic AFE runs
   # asynchronously; without this bounded reserve, ordinary scheduler jitter

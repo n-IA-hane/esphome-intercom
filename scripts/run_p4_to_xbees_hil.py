@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 import json
 from pathlib import Path
 import sys
+import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +33,29 @@ from live_voip_qualification import (  # noqa: E402
     wait_new_relay_call_id,
 )
 from run_p4_wildix_hil import wait_media, wait_quiescent  # noqa: E402
+
+
+async def wait_p4_video_send(
+    ws: HaWs,
+    *,
+    call_id: str,
+    timeout: float = 20,
+) -> dict:
+    """Wait until the P4 send-only update is committed before another offer."""
+
+    deadline = time.monotonic() + timeout
+    last = {}
+    while time.monotonic() < deadline:
+        last = await ws.softphone_state()
+        relay = dict(last.get("rtp_relays") or {}).get(call_id) or {}
+        video = dict(relay.get("video") or {})
+        if (
+            int(video.get("left_rx_packets") or 0) > 0
+            and int(video.get("right_tx_packets") or 0) > 0
+        ):
+            return video
+        await asyncio.sleep(0.2)
+    raise AssertionError(f"P4 video-send update did not settle: {last}")
 
 
 async def run(args: argparse.Namespace) -> dict:
@@ -58,7 +82,7 @@ async def run(args: argparse.Namespace) -> dict:
                 audio = await wait_media(ws, video=False, timeout=20, call_id=call_id)
                 await esp.wait("voip_state", {"in_call"}, timeout=5)
                 await esp.switch("send_video", True)
-                await asyncio.sleep(1)
+                await wait_p4_video_send(ws, call_id=call_id)
                 await asyncio.to_thread(xbees.enable_video)
                 video = await wait_media(ws, video=True, timeout=25, call_id=call_id)
                 if args.screenshot is not None:

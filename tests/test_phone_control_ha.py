@@ -342,7 +342,12 @@ async def test_esphome_hangup_terminates_owned_pbx_session(
         "name": endpoint.name,
         "entities": {"decline": "button.p4_hangup"},
     }
-    session = SimpleNamespace(call_id="p4-call", live=True)
+    session = SimpleNamespace(
+        call_id="p4-call",
+        live=True,
+        endpoint_claims={endpoint.endpoint_id: "source"},
+        metadata={},
+    )
     registry = SimpleNamespace(
         sessions={"p4-call": session},
         resolve_session_id=lambda call_id: call_id,
@@ -382,3 +387,57 @@ async def test_esphome_hangup_terminates_owned_pbx_session(
     assert result.call_id == "p4-call"
     termination.terminate.assert_awaited_once()
     invoke.assert_not_awaited()
+
+
+async def test_esphome_hangup_survives_unavailable_native_entities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from custom_components.voip_stack import (
+        endpoint_lifecycle,
+        endpoint_termination,
+        phone_control,
+    )
+
+    endpoint = PhoneEndpoint(
+        endpoint_id="esphome:p4",
+        device_id="device-p4",
+        name="P4",
+        kind=EndpointKind.ESPHOME,
+        availability=EndpointAvailability.UNAVAILABLE,
+    )
+    endpoints = EndpointRegistry()
+    endpoints.register(endpoint)
+    session = SimpleNamespace(
+        call_id="p4-call",
+        live=True,
+        endpoint_claims={endpoint.endpoint_id: "source"},
+        metadata={},
+    )
+    registry = SimpleNamespace(
+        sessions={"p4-call": session},
+        resolve_session_id=lambda call_id: call_id,
+    )
+    termination = SimpleNamespace(terminate=AsyncMock(return_value=True))
+    resolve = AsyncMock(side_effect=AssertionError("native entities must not be read"))
+    monkeypatch.setattr(phone_control, "async_resolve_source_device", resolve)
+    monkeypatch.setattr(endpoint_lifecycle, "call_registry", lambda _hass: registry)
+    monkeypatch.setattr(
+        endpoint_termination,
+        "EndpointTerminationHandler",
+        lambda _hass: termination,
+    )
+    call = _call(MagicMock(), device_id=endpoint.device_id)
+
+    result = await PhoneAdapterRegistry(call.hass, endpoints).control(
+        call,
+        PhoneOperation.HANGUP,
+        CallControlRequest(
+            call_id="p4-call",
+            reason="local_hangup",
+            context=call.context,
+        ),
+    )
+
+    assert result.call_id == "p4-call"
+    termination.terminate.assert_awaited_once()
+    resolve.assert_not_awaited()

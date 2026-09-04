@@ -13,7 +13,6 @@ from .core.audio_format import (
     AudioFormat,
     HA_SIP_PCM_RX_FORMATS,
     HA_SIP_PCM_TX_FORMATS,
-    choose_common_frame_ms,
     parse_audio_format_list,
 )
 from .core import sdp
@@ -412,26 +411,9 @@ def sip_target_audio_profile(
         )
         return [], []
 
-    common_frame_ms = choose_common_frame_ms(send_candidates, recv_candidates)
-    if common_frame_ms is None:
-        _LOGGER.warning(
-            "No common SIP RTP packet time for %s (send=%s recv=%s)",
-            target,
-            [fmt.wire_token() for fmt in send_candidates],
-            [fmt.wire_token() for fmt in recv_candidates],
-        )
-        return [], []
-
-    send_candidates = [
-        fmt for fmt in send_candidates if fmt.frame_ms == common_frame_ms
-    ]
-    recv_candidates = [
-        fmt for fmt in recv_candidates if fmt.frame_ms == common_frame_ms
-    ]
     _LOGGER.debug(
-        "Directional SIP PCM profile for %s: ptime=%sms send=%s recv=%s",
+        "Directional SIP PCM profile for %s: send=%s recv=%s",
         target,
-        common_frame_ms,
         [fmt.wire_token() for fmt in send_candidates],
         [fmt.wire_token() for fmt in recv_candidates],
     )

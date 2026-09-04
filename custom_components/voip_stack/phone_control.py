@@ -213,25 +213,6 @@ class EspHomePhoneAdapter:
         call: ServiceCall,
     ) -> PhoneActionResult:
         device = phone.transport_data
-        if operation is PhoneOperation.HANGUP and request.call_id:
-            from .endpoint_lifecycle import call_registry
-            from .endpoint_session import TerminationIntent
-            from .endpoint_termination import EndpointTerminationHandler
-
-            registry = call_registry(call.hass)
-            session = registry.sessions.get(
-                registry.resolve_session_id(request.call_id)
-            )
-            if session is not None and session.live:
-                await EndpointTerminationHandler(call.hass).terminate(
-                    session.call_id,
-                    TerminationIntent.bye(request.reason or "local_hangup"),
-                )
-                return PhoneActionResult(
-                    operation=operation,
-                    phone=phone,
-                    call_id=session.call_id,
-                )
         action = {
             PhoneOperation.ANSWER: "answer_call",
             PhoneOperation.DECLINE: "decline_call",
@@ -315,12 +296,64 @@ class PhoneAdapterRegistry:
     ) -> PhoneActionResult:
         """Dispatch answer, decline or hangup through the selected phone."""
 
+        existing = await self._terminate_existing_esphome_call(
+            call,
+            operation,
+            request,
+        )
+        if existing is not None:
+            return existing
+
         phone = await self.resolve_source(call, operation)
         return await self._adapters[phone.kind].control(
             phone,
             operation,
             request,
             call=call,
+        )
+
+    async def _terminate_existing_esphome_call(
+        self,
+        call: ServiceCall,
+        operation: PhoneOperation,
+        request: CallControlRequest,
+    ) -> PhoneActionResult | None:
+        """Terminate an owned ESP call even after its HA entities disappear."""
+
+        if operation is not PhoneOperation.HANGUP or not request.call_id:
+            return None
+        from .endpoint_lifecycle import call_registry
+        from .endpoint_session import TerminationIntent
+        from .endpoint_termination import EndpointTerminationHandler
+
+        registry = call_registry(call.hass)
+        session = registry.sessions.get(
+            registry.resolve_session_id(request.call_id)
+        )
+        if session is None or not session.live:
+            return None
+        owner_ids = set(getattr(session, "endpoint_claims", {}))
+        endpoint_id = str(getattr(session, "metadata", {}).get("endpoint_id") or "")
+        if endpoint_id:
+            owner_ids.add(endpoint_id)
+        selector = str(call.data.get("device_id") or "").strip()
+        phone = self._endpoints.resolve(selector) if selector else None
+        if phone is None and len(owner_ids) == 1:
+            phone = self._endpoints.get(next(iter(owner_ids)))
+        if (
+            phone is None
+            or phone.kind is not EndpointKind.ESPHOME
+            or phone.endpoint_id not in owner_ids
+        ):
+            return None
+        await EndpointTerminationHandler(call.hass).terminate(
+            session.call_id,
+            TerminationIntent.bye(request.reason or "local_hangup"),
+        )
+        return PhoneActionResult(
+            operation=operation,
+            phone=self._endpoint_handle(phone, frozenset({PhoneOperation.HANGUP})),
+            call_id=session.call_id,
         )
 
     async def resolve_source(

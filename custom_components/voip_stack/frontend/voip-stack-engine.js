@@ -1,4 +1,8 @@
 const AUDIO_PROTOCOL_VERSION = 1;
+const AUDIO_FRAME_MAGIC = 0x56;
+const AUDIO_FRAME_VERSION = 1;
+const AUDIO_FRAME_TYPE = 1;
+const AUDIO_FRAME_HEADER_BYTES = 16;
 const WS_SUBSCRIBE_CALL_EVENTS = "voip_stack/subscribe_call_events";
 const WS_SUBSCRIBE_HA_SOFTPHONE = "voip_stack/subscribe_ha_softphone_state";
 const MODULE_VERSION = (() => {
@@ -175,10 +179,7 @@ class WorkerAudioSocket {
 }
 
 function createAudioSocket(url) {
-  if (typeof Worker !== "function" || typeof MessageChannel !== "function") {
-    throw new Error("This browser does not provide the Worker features required for calls.");
-  }
-  return new WorkerAudioSocket(url);
+  return new WebSocket(url);
 }
 
 function mediaClientInstanceId() {
@@ -1377,15 +1378,6 @@ class VoipStackEngine extends EventTarget {
     const ws = createAudioSocket(wsUrl);
     this._ws = ws;
     ws.binaryType = "arraybuffer";
-    ws.onstats = (stats) => {
-      if (this._ws !== ws) return;
-      this._stats.sent = Number(stats.sent || 0);
-      this._stats.received = Number(stats.received || 0);
-      this._stats.tx_dropped = Number(stats.tx_dropped || 0);
-      this._stats.max_capture_gap_ms = Number(stats.max_capture_gap_ms || 0);
-      this._stats.capture_gaps_over_40ms = Number(stats.capture_gaps_over_40ms || 0);
-      this._emit();
-    };
     let helloResolve;
     let helloReject;
     let helloSettled = false;
@@ -1528,6 +1520,29 @@ class VoipStackEngine extends EventTarget {
     return frameBytes * AUDIO_WS_BACKPRESSURE_FRAMES;
   }
 
+  _sendAudioFrame(message) {
+    if (!this._ws || this._ws.readyState !== WebSocket.OPEN || !this._canSendAudio()) return;
+    const payload = message?.buffer;
+    if (!(payload instanceof ArrayBuffer) || !payload.byteLength || payload.byteLength > 0xffff) return;
+    if (this._ws.bufferedAmount >= this._captureBufferLimit()) {
+      this._stats.tx_dropped++;
+      return;
+    }
+    const frame = new Uint8Array(AUDIO_FRAME_HEADER_BYTES + payload.byteLength);
+    const header = new DataView(frame.buffer, 0, AUDIO_FRAME_HEADER_BYTES);
+    header.setUint8(0, AUDIO_FRAME_MAGIC);
+    header.setUint8(1, AUDIO_FRAME_VERSION);
+    header.setUint8(2, AUDIO_FRAME_TYPE);
+    header.setUint8(3, 0);
+    header.setUint32(4, Number(message.generation || 0) >>> 0);
+    header.setUint16(8, Number(message.sequence || 0) & 0xffff);
+    header.setUint32(10, Number(message.timestamp || 0) >>> 0);
+    header.setUint16(14, payload.byteLength);
+    frame.set(new Uint8Array(payload), AUDIO_FRAME_HEADER_BYTES);
+    this._ws.send(frame);
+    this._stats.sent++;
+  }
+
   _handleMessage(event) {
     if (typeof event.data === "string") {
       try {
@@ -1547,6 +1562,40 @@ class VoipStackEngine extends EventTarget {
       } catch (_) {}
       return;
     }
+    if (!(event.data instanceof ArrayBuffer) || event.data.byteLength < AUDIO_FRAME_HEADER_BYTES) return;
+    const header = new DataView(event.data, 0, AUDIO_FRAME_HEADER_BYTES);
+    const payloadBytes = header.getUint16(14);
+    if (
+      header.getUint8(0) !== AUDIO_FRAME_MAGIC ||
+      header.getUint8(1) !== AUDIO_FRAME_VERSION ||
+      header.getUint8(2) !== AUDIO_FRAME_TYPE ||
+      payloadBytes !== event.data.byteLength - AUDIO_FRAME_HEADER_BYTES ||
+      !this._playbackNode ||
+      !this._canReceiveAudio()
+    ) return;
+    const arrivedAt = performance.now();
+    if (this._lastAudioMessageAt > 0) {
+      const gap = arrivedAt - this._lastAudioMessageAt;
+      this._stats.max_ws_arrival_gap_ms = Math.max(
+        Number(this._stats.max_ws_arrival_gap_ms || 0), gap,
+      );
+      if (gap >= 40) {
+        this._stats.ws_arrival_gaps_over_40ms =
+          Number(this._stats.ws_arrival_gaps_over_40ms || 0) + 1;
+      }
+    }
+    this._lastAudioMessageAt = arrivedAt;
+    this._playbackNode.port.postMessage({
+      type: "audio",
+      buffer: event.data,
+      byteOffset: AUDIO_FRAME_HEADER_BYTES,
+      generation: header.getUint32(4),
+      sequence: header.getUint16(8),
+      timestamp: header.getUint32(10),
+      arrivalMs: arrivedAt,
+    }, [event.data]);
+    this._stats.received++;
+    if ((this._stats.received & 31) === 0) this._emit();
   }
 
   _createAudioContext() {
@@ -1617,6 +1666,10 @@ class VoipStackEngine extends EventTarget {
           type: "configure_timeline",
           generation: Number(negotiated?.media_generation || 0),
         });
+        resources.captureNode.port.onmessage = (event) => {
+          if (this._captureNode !== resources.captureNode || event.data?.type !== "audio") return;
+          this._sendAudioFrame(event.data);
+        };
         resources.source.connect(resources.captureNode);
         resources.captureSink = resources.audioContext.createGain();
         resources.captureSink.gain.value = 0;
@@ -1685,8 +1738,6 @@ class VoipStackEngine extends EventTarget {
       this._source = resources.source;
       this._playbackNode = resources.playbackNode;
       this._audioReady = true;
-      this._ws?.bindCapture?.(this._captureNode);
-      this._ws?.bindPlayback?.(this._playbackNode);
       this._applyAudioDirection(audioDirection);
       if (playbackReady) this._sendControl({ type: "playback_ready" });
       if (resources.mediaStream) {
@@ -1757,7 +1808,6 @@ class VoipStackEngine extends EventTarget {
     let changed = nextDirection !== this._audioDirection;
     this._audioDirection = nextDirection;
     const enabled = this._canSendAudio();
-    this._ws?.configureCapture?.(enabled, this._captureBufferLimit());
     for (const track of this._mediaStream?.getAudioTracks?.() || []) {
       if (track.enabled !== enabled) {
         track.enabled = enabled;

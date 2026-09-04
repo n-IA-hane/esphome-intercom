@@ -130,7 +130,9 @@ def test_maintained_ws3_profile_does_not_enable_debug_entities() -> None:
 def test_ws3_audio_workers_keep_the_qualified_core_and_priority_split() -> None:
     """AFE must not compete with the I2S owner or paced RTP workers."""
     text = WS3_FULL_AFE.read_text()
+    audio_stack = _top_level_block(text, "esp_audio_stack")
     afe = _top_level_block(text, "esp_afe")
+    assert re.search(r"(?m)^  task_priority:\s*17\s*$", audio_stack)
     priorities = {
         name: int(value)
         for name, value in re.findall(
@@ -139,14 +141,12 @@ def test_ws3_audio_workers_keep_the_qualified_core_and_priority_split() -> None:
         )
     }
 
-    # The blocking AFE workers use the upstream low priority. Core 0 is owned
-    # by the priority-19 I2S task, while native VoIP RTP runs on Core 1.
-    # Raising every AFE worker to 20 was shown to starve one direction or the
-    # other depending on affinity.
+    # Preserve the qualified full-duplex split: the AFE workers stay above the
+    # I2S owner so capture deadlines are not exposed as missing audio frames.
     assert priorities == {
-        "task_priority": 5,
-        "feed_task_priority": 5,
-        "fetch_task_priority": 5,
+        "task_priority": 20,
+        "feed_task_priority": 20,
+        "fetch_task_priority": 20,
     }
 
 

@@ -598,6 +598,19 @@ async () => {
 }
 """
 
+SET_CAMERA_SEND = r"""
+async (enabled) => {
+  const card = globalThis.__voipStackProbeFindCard?.() || null;
+  if (!card?._toggleVideoCamera) return false;
+  await card._toggleVideoCamera(Boolean(enabled));
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (Boolean(card._softphoneSnapshot?.send_video) === Boolean(enabled)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return false;
+}
+"""
+
 START_OUTBOUND = r"""
 async (destination) => {
   const card = globalThis.__voipStackProbeFindCard?.() || null;
@@ -687,6 +700,11 @@ def main() -> int:
         "--send-camera",
         action="store_true",
         help="enable the card's Send Camera checkbox after the dialog connects",
+    )
+    parser.add_argument(
+        "--disable-send-camera",
+        action="store_true",
+        help="persistently disable Send Camera before placing the call",
     )
     parser.add_argument(
         "--fake-video-file",
@@ -1189,6 +1207,8 @@ def main() -> int:
 
         try:
             reload_rendered = 0
+            if args.disable_send_camera and not page.evaluate(SET_CAMERA_SEND, False):
+                raise RuntimeError("could not disable Send Camera before the call")
             if args.send_camera:
                 page.wait_for_function(
                     f"() => Boolean(({DEEP_CARD})()?._softphoneSnapshot?.video_camera_send_enabled)",
