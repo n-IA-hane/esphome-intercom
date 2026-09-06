@@ -60,6 +60,17 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._remoteSilenceResume = false;
     this._previousInput = new Float32Array(this._format.channels);
     this._hasPreviousInput = false;
+    this._levelFrames = 0;
+    this._historyFrames = 0;
+    this._overlapFrames = Math.max(1, Math.round(sampleRate * 0.005));
+    this._minMatchFrames = Math.max(1, Math.round(sampleRate * 0.0025));
+    this._maxMatchFrames = Math.max(this._minMatchFrames, Math.round(sampleRate * 0.015));
+    this._scaleOffset = 0;
+    this._scalePosition = 0;
+    this._scaleCorrelation = 1;
+    this._nextScaleTime = 0;
+    this._insertedFrames = 0;
+    this._removedFrames = 0;
 
     this.port.onmessage = (event) => {
       const data = event.data;
@@ -90,6 +101,8 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     if (this._remoteSilenceResume) {
       this._lastArrivalTime = 0;
       this._hasPreviousInput = false;
+      this._historyFrames = 0;
+      this._scaleOffset = 0;
     }
     if (this._starvationPending) {
       if (!this._remoteSilenceResume) {
@@ -108,6 +121,7 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       this._read = (this._read + samplesToDrop) % this._ring.length;
       this._available -= samplesToDrop;
       this._framesDrop += framesToDrop;
+      this._scaleOffset = 0;
     }
     const view = new DataView(buffer, byteOffset, frameBytes);
     if (!this._hasPreviousInput) {
@@ -139,6 +153,7 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._framesIn++;
     if (!this._started && this._available >= frameSamples * this._targetStartFrames) {
       this._started = true;
+      this._levelFrames = this._available / this._format.channels;
     }
   }
 
@@ -161,9 +176,53 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._lastArrivalTime = now;
   }
 
+  _trackPlayoutDelay(quantumFrames) {
+    const channels = this._format.channels;
+    const available = this._available / channels;
+    this._levelFrames += (available - this._levelFrames) *
+      (1 - Math.exp(-quantumFrames / (sampleRate * 0.1)));
+    if (this._scaleOffset || currentTime < this._nextScaleTime) return;
+    const target = this._targetStartFrames * this._contextFrameSamples;
+    const direction = this._levelFrames < target ? -1 :
+      this._levelFrames > target + sampleRate * 0.02 ? 1 : 0;
+    if (!direction || this._historyFrames < this._maxMatchFrames ||
+        available < this._overlapFrames + this._maxMatchFrames) return;
+    this._nextScaleTime = currentTime + 0.05;
+
+    // Like NetEQ's preemptive expansion/acceleration, align a short overlap
+    // in the existing ring. The source rate and normal read clock stay intact.
+    // One common offset preserves channel alignment; no audio buffer is added.
+    const stride = Math.max(1, Math.floor(sampleRate / 8000));
+    const ring = this._ring;
+    let bestOffset = this._minMatchFrames;
+    let bestCorrelation = -1;
+    for (let offset = this._minMatchFrames; offset <= this._maxMatchFrames; offset++) {
+      let cross = 0, energyA = 0, energyB = 0;
+      for (let i = 0; i < this._overlapFrames; i += stride) {
+        for (let ch = 0; ch < channels; ch++) {
+          const a = ring[(this._read + i * channels + ch) % ring.length];
+          const b = ring[(this._read + (i + direction * offset) * channels + ch + ring.length) % ring.length];
+          cross += a * b;
+          energyA += a * a;
+          energyB += b * b;
+        }
+      }
+      const energy = Math.sqrt(energyA * energyB);
+      const correlation = energy > 1e-12 ? cross / energy : 1;
+      if (correlation > bestCorrelation) {
+        bestCorrelation = correlation;
+        bestOffset = offset;
+      }
+    }
+    this._scaleOffset = direction * bestOffset;
+    this._scalePosition = 0;
+    this._scaleCorrelation = Math.max(0, Math.min(1, bestCorrelation));
+  }
+
   process(_inputs, outputs) {
     const channels = outputs?.[0] || [];
     if (!channels.length) return true;
+    if (this._started) this._trackPlayoutDelay(channels[0].length);
 
     let underrunThisQuantum = false;
     for (let i = 0; i < channels[0].length; i++) {
@@ -182,17 +241,44 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
         this._concealmentGain *= PLC_DECAY_PER_SAMPLE;
         continue;
       }
+      const blend = this._scaleOffset ?
+        (this._scalePosition + 1) / this._overlapFrames : 0;
+      const normal = 1 - blend;
+      const gain = this._scaleOffset ? 1 / Math.sqrt(
+        normal * normal + blend * blend + 2 * this._scaleCorrelation * normal * blend,
+      ) : 1;
       for (let ch = 0; ch < channels.length; ch++) {
-        const sample = this._ring[(this._read + Math.min(ch, this._format.channels - 1)) % this._ring.length];
+        const index = Math.min(ch, this._format.channels - 1);
+        let sample = this._ring[(this._read + index) % this._ring.length];
+        if (this._scaleOffset) {
+          const alternate = this._ring[(this._read + this._scaleOffset * this._format.channels +
+            index + this._ring.length) % this._ring.length];
+          sample = (normal * sample + blend * alternate) * gain;
+        }
         channels[ch][i] = sample;
         this._lastOutput[Math.min(ch, this._format.channels - 1)] = sample;
       }
       this._concealmentGain = 1;
       this._read = (this._read + this._format.channels) % this._ring.length;
       this._available -= this._format.channels;
+      this._historyFrames = Math.min(this._maxMatchFrames * 2, this._historyFrames + 1);
+      if (this._scaleOffset && ++this._scalePosition >= this._overlapFrames) {
+        const offset = this._scaleOffset;
+        this._read = (this._read + offset * this._format.channels + this._ring.length) % this._ring.length;
+        this._available -= offset * this._format.channels;
+        this._historyFrames += offset;
+        this._levelFrames -= offset;
+        if (offset < 0) this._insertedFrames -= offset;
+        else this._removedFrames += offset;
+        this._scaleOffset = 0;
+      }
     }
 
-    if (underrunThisQuantum) this._started = false;
+    if (underrunThisQuantum) {
+      this._started = false;
+      this._scaleOffset = 0;
+      this._historyFrames = 0;
+    }
     this._framesOut++;
     if (currentTime - this._lastStats >= 1) {
       this._lastStats = currentTime;
@@ -212,6 +298,8 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
         jitter_target_frames: this._targetStartFrames,
         jitter_target_ms: this._targetStartFrames * this._format.frameMs,
         arrival_jitter_ms: Math.round(this._arrivalJitterSeconds * 10000) / 10,
+        inserted_ms: Math.round(this._insertedFrames * 1000 / sampleRate),
+        removed_ms: Math.round(this._removedFrames * 1000 / sampleRate),
       });
     }
     return true;

@@ -713,7 +713,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertIn("byteOffset: 1", engine)
         self.assertIn("new DataView(buffer, byteOffset, frameBytes)", playback)
         self.assertIn("this._dropFrames = this._maxStartFrames + 1", playback)
-        self.assertIn("if (underrunThisQuantum) this._started = false", playback)
+        self.assertRegex(playback, r"if \(underrunThisQuantum\) \{\s*this\._started = false;")
         self.assertIn('pcmFormat === "s24le_in_s32") return view.getInt32(offset, true) / 8388608', playback)
         self.assertIn("s * 0x800000 : s * 0x7fffff", capture)
         self.assertNotIn("0x7fffff00", capture)
