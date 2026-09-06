@@ -69,6 +69,7 @@ const engineEvents = [];
 let cameraPermissionChecks = 0;
 let audioPermissionChecks = 0;
 const engine = {{
+  configure() {{}},
   active: false,
   callId: "",
   deviceId: "",
@@ -356,6 +357,22 @@ p4Mirror._render();
 assert.equal(p4Mirror._els.settingsBtn.hidden, false);
 assert.equal(p4Mirror._els.settingsPanel.hidden, false);
 assert.equal(p4Mirror._els.videoCameraRow.hidden, false);
+assert.equal(p4Mirror._els.videoCameraCheckbox.checked, true);
+// Service completion can precede the ESP state event. That later update must
+// repaint the checkbox on its own, without another click or call-state change.
+p4Mirror._voipStateEntityId = "sensor.p4_voip_state";
+p4Mirror._hass.states["sensor.p4_voip_state"] = {{ state: "in_call" }};
+p4Mirror._availableDevices = [{{ device_id: "device-p4", name: "P4" }}];
+p4Mirror._loadSharedRoster = () => {{}};
+await p4Mirror._toggleVideoCamera(false);
+p4Mirror.hass = {{ ...p4Mirror._hass, states: {{
+  ...p4Mirror._hass.states, "switch.p4_send_video": {{ state: "off" }},
+}} }};
+assert.equal(p4Mirror._els.videoCameraCheckbox.checked, false);
+await p4Mirror._toggleVideoCamera(true);
+p4Mirror.hass = {{ ...p4Mirror._hass, states: {{
+  ...p4Mirror._hass.states, "switch.p4_send_video": {{ state: "on" }},
+}} }};
 assert.equal(p4Mirror._els.videoCameraCheckbox.checked, true);
 for (const pendingState of ["calling", "ringing", "connecting"]) {{
   p4Mirror._getEspState = () => pendingState;

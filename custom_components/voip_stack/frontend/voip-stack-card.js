@@ -833,6 +833,7 @@ class VoipStackCard extends HTMLElement {
 
       for (const entityId of [
         this._autoAnswerSwitchEntityId,
+        this._videoSendSwitchEntityId,
         this._dndSwitchEntityId,
         this._ringGroupsTextEntityId,
         this._conferenceGroupsTextEntityId,
