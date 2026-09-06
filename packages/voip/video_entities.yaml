@@ -5,4 +5,7 @@ switch:
     voip_stack_id: phone
     video_send:
       name: Send Video
+      # Idle: preference for the next call. In call: SIP direction update.
+      # Disabling camera transmission preserves negotiated incoming video.
+      # The transport confirms changes; a rejected update restores its state.
       restore_mode: RESTORE_DEFAULT_ON

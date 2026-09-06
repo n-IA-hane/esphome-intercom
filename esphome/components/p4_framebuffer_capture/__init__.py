@@ -8,6 +8,7 @@ from esphome.const import CONF_DISPLAY_ID, CONF_ID, CONF_PORT
 CODEOWNERS = ["@n-IA-hane"]
 
 CONF_HOST = "host"
+CONF_DOWNSAMPLE = "downsample"
 
 p4_framebuffer_capture_ns = cg.esphome_ns.namespace("p4_framebuffer_capture")
 P4FramebufferCapture = p4_framebuffer_capture_ns.class_(
@@ -20,6 +21,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Required(CONF_DISPLAY_ID): cv.use_id(mipi_dsi_display.MipiDsi),
         cv.Required(CONF_HOST): cv.ipv4address,
         cv.Optional(CONF_PORT, default=19090): cv.port,
+        cv.Optional(CONF_DOWNSAMPLE, default=1): cv.one_of(1, 2, 4, int=True),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -32,3 +34,4 @@ async def to_code(config):
     cg.add(var.set_display(display))
     cg.add(var.set_host(str(config[CONF_HOST])))
     cg.add(var.set_port(config[CONF_PORT]))
+    cg.add(var.set_downsample(config[CONF_DOWNSAMPLE]))

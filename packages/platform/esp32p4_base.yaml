@@ -14,6 +14,16 @@
 # =============================================================================
 
 esp32:
+  # This board selects ESPHome's engineering-sample P4 target, including rev1.3.
+  # For production P4 rev3 silicon, replace the board selection with:
+  #   variant: esp32p4
+  #   engineering_sample: false
+  # Remove board: esp32-p4-evboard in that variant; keeping this ES board while
+  # declaring production silicon is inconsistent and ESPHome rejects it.
+  # Silicon-specific libraries are selected at compile time. Rebuild for the
+  # new board; an existing rev1.3 firmware does not switch libraries at runtime.
+  # Audio Stack uses esp_audio_effects ~1.3 on pre-v3 P4 because newer versions
+  # require instructions available on production silicon.
   board: esp32-p4-evboard
   variant: esp32p4
   flash_size: 32MB
@@ -23,6 +33,9 @@ esp32:
   cpu_frequency: 360MHz
   framework:
     type: esp-idf
+    # Omitting version uses the SDK selected by the installed ESPHome release.
+    # An explicit newer SDK is a separate candidate: qualify cold boot, restart,
+    # normal OTA and simultaneous audio/video before making it the default.
     advanced:
       compiler_optimization: PERF
       enable_idf_experimental_features: true

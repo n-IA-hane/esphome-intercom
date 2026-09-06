@@ -1890,7 +1890,9 @@ class VoipStackCard extends HTMLElement {
 
     // Reuse the normal Options surface during calls. The same control moves
     // into the video call bar, while the panel remains a real card view.
-    const inCallOptions = softphoneMode && (showAnswer || showHangup) && !this._stopping;
+    const inCallOptions = !this._stopping && (softphoneMode
+      ? (showAnswer || showHangup)
+      : !!this._videoSendSwitchEntityId && espState === "in_call");
     const showRuntimeOptions = (showCall && !this._starting && !this._stopping) || inCallOptions;
     const showSettingsPanel = showRuntimeOptions && this._settingsOpen;
     els.card.classList.toggle("settings-open", showSettingsPanel);

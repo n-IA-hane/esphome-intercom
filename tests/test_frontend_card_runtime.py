@@ -344,6 +344,25 @@ assert.equal(
   JSON.stringify(["switch", "turn_off", {{ entity_id: "switch.p4_send_video" }}]),
 );
 
+// The ESP accepts video direction changes during a call, so its mirror must
+// expose the same Options surface there as it does before dialing.
+const p4Mirror = makeCard();
+p4Mirror.config = {{ mode: "esp_mirror", device_id: "device-p4" }};
+p4Mirror._getEspState = () => "in_call";
+p4Mirror._videoSendSwitchEntityId = "switch.p4_send_video";
+p4Mirror._hass.states["switch.p4_send_video"] = {{ state: "on" }};
+p4Mirror._settingsOpen = true;
+p4Mirror._render();
+assert.equal(p4Mirror._els.settingsBtn.hidden, false);
+assert.equal(p4Mirror._els.settingsPanel.hidden, false);
+assert.equal(p4Mirror._els.videoCameraRow.hidden, false);
+assert.equal(p4Mirror._els.videoCameraCheckbox.checked, true);
+for (const pendingState of ["calling", "ringing", "connecting"]) {{
+  p4Mirror._getEspState = () => pendingState;
+  p4Mirror._render();
+  assert.equal(p4Mirror._els.settingsPanel.hidden, true);
+}}
+
 const card = makeCard();
 const antiAliasPreference = makeCard();
 assert.equal(antiAliasPreference._microphoneAntiAliasEnabled(), true);

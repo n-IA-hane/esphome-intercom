@@ -35,6 +35,11 @@ void P4FramebufferCapture::setup() {
     return;
   }
   this->snapshot_capacity_ = this->display_->get_frame_buffer_size();
+  if (this->downsample_ > 1) {
+    const size_t width = (this->display_->get_width_internal() + this->downsample_ - 1) / this->downsample_;
+    const size_t height = (this->display_->get_height_internal() + this->downsample_ - 1) / this->downsample_;
+    this->snapshot_capacity_ = width * height * sizeof(uint16_t);
+  }
   this->snapshot_ = static_cast<uint8_t *>(
       heap_caps_malloc(this->snapshot_capacity_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (this->snapshot_ == nullptr) {
@@ -61,6 +66,12 @@ void P4FramebufferCapture::capture() {
   this->snapshot_width_ = this->display_->get_width_internal();
   this->snapshot_height_ = this->display_->get_height_internal();
   this->snapshot_size_ = this->display_->get_frame_buffer_size();
+  const int source_width = this->snapshot_width_;
+  if (this->downsample_ > 1) {
+    this->snapshot_width_ = (this->snapshot_width_ + this->downsample_ - 1) / this->downsample_;
+    this->snapshot_height_ = (this->snapshot_height_ + this->downsample_ - 1) / this->downsample_;
+    this->snapshot_size_ = this->snapshot_width_ * this->snapshot_height_ * sizeof(uint16_t);
+  }
   if (this->snapshot_ == nullptr || this->snapshot_size_ > this->snapshot_capacity_) {
     this->capture_active_.store(false);
     ESP_LOGE(TAG, "Preallocated framebuffer snapshot is unavailable or too small");
@@ -69,8 +80,17 @@ void P4FramebufferCapture::capture() {
   // Button automations run on the ESPHome loop task. Copy here, before the
   // network task starts, so the capture is one coherent LVGL frame rather
   // than a 15-second mixture of later redraws.
-  std::memcpy(this->snapshot_, this->display_->get_frame_buffer(),
-              this->snapshot_size_);
+  if (this->downsample_ == 1) {
+    std::memcpy(this->snapshot_, this->display_->get_frame_buffer(), this->snapshot_size_);
+  } else {
+    const auto *source = reinterpret_cast<const uint16_t *>(this->display_->get_frame_buffer());
+    auto *target = reinterpret_cast<uint16_t *>(this->snapshot_);
+    for (int y = 0; y < this->snapshot_height_; ++y) {
+      for (int x = 0; x < this->snapshot_width_; ++x) {
+        *target++ = source[(y * this->downsample_) * source_width + x * this->downsample_];
+      }
+    }
+  }
   if (xTaskCreate(capture_task, "p4_fb_capture", 4096, this, 1, nullptr) !=
       pdPASS) {
     this->capture_active_.store(false);

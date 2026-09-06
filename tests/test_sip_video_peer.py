@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import types
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +62,25 @@ def test_video_removal_offer_keeps_rejected_media_without_rtcp_port() -> None:
     assert b"m=video 0 RTP/AVP 103\r\n" in offer
     assert b"a=inactive\r\n" in offer
     assert b"a=rtcp:1\r\n" not in offer
+
+
+def test_camera_direction_answer_preserves_media_and_advances_origin() -> None:
+    peer = _load_tool()
+    local = dict(local_ip="127.0.0.1", audio_port=40000, video_port=40002,
+                 codec="jpeg", video_profile="RTP/AVP", audio_codec="l16-16k")
+    previous = peer._offer(**local, direction="sendrecv")
+    for direction, expected in (("recvonly", "sendonly"), ("sendrecv", "sendrecv")):
+        offered = peer._offer(**local, direction=direction)
+        answer = peer._camera_direction_answer(offered, previous, version=2, **local)
+        assert peer.sdp.parse_video_sdp(answer)["direction"] == expected
+        assert peer.sdp.parse_sdp(answer) == peer.sdp.parse_sdp(previous)
+        assert b"o=- 1 2 IN IP4" in answer
+    changed_audio = peer._offer(**{**local, "audio_codec": "pcma"}, direction="recvonly")
+    with pytest.raises(ValueError, match="audio stream"):
+        peer._camera_direction_answer(changed_audio, previous, version=2, **local)
+    changed_port = peer._offer(**{**local, "video_port": 40004}, direction="recvonly")
+    with pytest.raises(ValueError, match="unchanged video format"):
+        peer._camera_direction_answer(changed_port, previous, version=2, **local)
 
 
 def test_dahua_profile_offer_uses_vendor_pcm_and_keeps_video() -> None:

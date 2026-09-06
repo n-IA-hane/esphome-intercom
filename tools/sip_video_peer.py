@@ -312,6 +312,22 @@ def _offer(
     return ("\r\n".join(lines) + "\r\n").encode()
 
 
+def _camera_direction_answer(offer: bytes, previous: bytes, *, version: int, **local) -> bytes:
+    """Answer a camera toggle without changing the running peer media sockets."""
+    if sdp.parse_sdp(offer) != sdp.parse_sdp(previous):
+        raise ValueError("camera toggle changed the negotiated audio stream")
+    video = sdp.parse_video_sdp(offer)
+    old_video = sdp.parse_video_sdp(previous)
+    if video is None or old_video is None:
+        raise ValueError("camera toggle requires an existing video stream")
+    direction = video.pop("direction")
+    old_video.pop("direction")
+    if video != old_video or direction not in {"recvonly", "sendrecv"}:
+        raise ValueError("peer supports only remote camera toggles with unchanged video format")
+    answer = _offer(direction=sdp.local_direction_for_remote(direction), **local)
+    return sdp.rewrite_sdp_origin(answer, 1, version).encode()
+
+
 def _request_headers(
     *,
     method: str,
@@ -1234,6 +1250,9 @@ async def async_main(args: argparse.Namespace) -> int:
         await _start_negotiated_video(parsed_video, initial_video_direction)
 
         call_deadline = loop.time() + args.duration
+        local_reinvite_cseq = ""
+        local_reinvite_response = b""
+        local_answer_version = 1
         cycle_started = loop.time()
         reinvite_at = cycle_started + max(0.0, args.add_video_after)
         activate_video_at = cycle_started + max(0.0, args.activate_video_after)
@@ -1545,12 +1564,32 @@ async def async_main(args: argparse.Namespace) -> int:
             if await _handle_connected_identity_update(message, addr):
                 continue
             if message.method == "INVITE" and args.answer_local_reinvite:
+                cseq = message.header("CSeq")
+                if cseq == local_reinvite_cseq:
+                    await loop.sock_sendto(sip_socket, local_reinvite_response, addr)
+                    continue
                 status = int(args.answer_local_reinvite)
-                reason = "Not Acceptable Here" if status == 488 else "Request Pending"
+                body = b""
+                headers = _response_headers(message)
+                if status == 200:
+                    try:
+                        body = _camera_direction_answer(
+                            message.body, response.body, version=local_answer_version + 1,
+                            local_ip=local_ip, audio_port=audio_port, video_port=video_port,
+                            codec=args.codec, video_profile=args.video_profile,
+                            audio_codec=args.audio_codec,
+                        )
+                        headers.append(("Content-Type", "application/sdp"))
+                        headers.append(("Contact", f"<sip:{args.user}@{local_ip}:{sip_port}>"))
+                        local_answer_version += 1
+                    except (ValueError, sdp.SdpError) as error:
+                        status = 488
+                        result.setdefault("local_reinvite_errors", []).append(str(error))
+                reason = {200: "OK", 488: "Not Acceptable Here", 491: "Request Pending"}[status]
+                local_reinvite_cseq = cseq
+                local_reinvite_response = sip.build_response(status, reason, headers, body)
                 await loop.sock_sendto(
-                    sip_socket,
-                    sip.build_response(status, reason, _response_headers(message)),
-                    addr,
+                    sip_socket, local_reinvite_response, addr,
                 )
                 result.setdefault("local_reinvite_responses", []).append(status)
                 continue
@@ -1763,9 +1802,9 @@ def main() -> int:
     parser.add_argument(
         "--answer-local-reinvite",
         type=int,
-        choices=(488, 491),
+        choices=(200, 488, 491),
         default=0,
-        help="answer a re-INVITE initiated by HA with this final SIP status",
+        help="answer peer re-INVITEs; 200 supports camera direction changes with unchanged media formats",
     )
     parser.add_argument(
         "--allow-audio-only",

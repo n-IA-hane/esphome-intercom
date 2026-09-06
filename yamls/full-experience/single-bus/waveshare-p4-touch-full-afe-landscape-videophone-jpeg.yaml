@@ -343,6 +343,9 @@ esp_video_camera:
   # SC202CS exposes 800x800 as its square native mode. Keep the native field so
   # the PPA only rotates the frame before hardware JPEG encoding.
   resolution: 800x800
+  # Outgoing camera resolution. Choose a mode supported by the attached sensor;
+  # this does not resize video received from a peer or change panel resolution.
+  # max_framerate is a capture limit, not a guarantee of transmitted/panel FPS.
   jpeg_quality: 10
   # Espressif's standard capture path is double-buffered. Two 800x800 RGB565
   # buffers preserve one 1.28 MB PSRAM extent for the concurrent JPEG encoder,
