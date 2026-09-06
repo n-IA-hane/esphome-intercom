@@ -56,9 +56,17 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._concealmentGain = 0;
     this._lastArrivalTime = 0;
     this._arrivalJitterSeconds = 0;
+    this._starvationPending = false;
+    this._remoteSilenceResume = false;
+    this._previousInput = new Float32Array(this._format.channels);
+    this._hasPreviousInput = false;
 
     this.port.onmessage = (event) => {
       const data = event.data;
+      if (data?.type === "remote_silence_resume") {
+        this._remoteSilenceResume = true;
+        return;
+      }
       if (data?.type === "audio" && data.buffer) this._push(data.buffer, data.byteOffset || 0);
     };
   }
@@ -79,6 +87,19 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     const frameBytes = this._format.frameSamples * this._format.channels * this._format.bytesPerSample;
     if (byteOffset < 0 || buffer.byteLength - byteOffset !== frameBytes) return;
     const frameSamples = this._contextFrameSamples * this._format.channels;
+    if (this._remoteSilenceResume) {
+      this._lastArrivalTime = 0;
+      this._hasPreviousInput = false;
+    }
+    if (this._starvationPending) {
+      if (!this._remoteSilenceResume) {
+        this._underruns++;
+        this._lastUnderrun = currentTime;
+        this._targetStartFrames = Math.min(this._maxStartFrames, this._targetStartFrames + 2);
+      }
+      this._starvationPending = false;
+    }
+    this._remoteSilenceResume = false;
     this._updateArrivalJitter();
     if (this._available >= frameSamples * this._dropFrames) {
       const queuedFrames = Math.floor(this._available / frameSamples);
@@ -89,17 +110,30 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       this._framesDrop += framesToDrop;
     }
     const view = new DataView(buffer, byteOffset, frameBytes);
+    if (!this._hasPreviousInput) {
+      for (let ch = 0; ch < this._format.channels; ch++) {
+        this._previousInput[ch] = this._decode(view, ch);
+      }
+      this._hasPreviousInput = true;
+    }
     for (let i = 0; i < this._contextFrameSamples; i++) {
-      const srcPos = i * this._format.sampleRate / sampleRate;
+      const srcPos = i * this._format.frameSamples / this._contextFrameSamples;
       const base = Math.floor(srcPos);
       const frac = srcPos - base;
       for (let ch = 0; ch < this._format.channels; ch++) {
-        const a = this._decode(view, base * this._format.channels + ch);
-        const bIndex = Math.min(this._format.frameSamples - 1, base + 1);
-        const b = this._decode(view, bIndex * this._format.channels + ch);
+        const a = base === 0
+          ? this._previousInput[ch]
+          : this._decode(view, (base - 1) * this._format.channels + ch);
+        const b = this._decode(view, base * this._format.channels + ch);
         this._ring[this._write] = a + (b - a) * frac;
         this._write = (this._write + 1) % this._ring.length;
       }
+    }
+    for (let ch = 0; ch < this._format.channels; ch++) {
+      this._previousInput[ch] = this._decode(
+        view,
+        (this._format.frameSamples - 1) * this._format.channels + ch,
+      );
     }
     this._available += this._contextFrameSamples * this._format.channels;
     this._framesIn++;
@@ -140,9 +174,7 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       if (this._available < this._format.channels) {
         if (!underrunThisQuantum) {
           underrunThisQuantum = true;
-          this._underruns++;
-          this._lastUnderrun = currentTime;
-          this._targetStartFrames = Math.min(this._maxStartFrames, this._targetStartFrames + 2);
+          this._starvationPending = true;
         }
         for (let ch = 0; ch < channels.length; ch++) {
           channels[ch][i] = this._lastOutput[Math.min(ch, this._format.channels - 1)] * this._concealmentGain;

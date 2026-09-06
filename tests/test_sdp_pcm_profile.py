@@ -19,6 +19,13 @@ from .voip_phase1_support import (
 
 
 class SdpPcmProfileTest(unittest.TestCase):
+    def test_standard_rtp_audio_capability_parser(self) -> None:
+        opus = sdp.parse_rtp_audio_capability("opus/48000/2/20", 106)
+        self.assertEqual(opus, sdp.RtpPcmFormat(106, "OPUS", 48000, 2, 20))
+        self.assertEqual(opus.audio_format.wire_token(), "48000:s16le:1:20")
+        with self.assertRaises(sdp.SdpError):
+            sdp.parse_rtp_audio_capability("opus/16000/1/20")
+
     def test_known_video_target_gets_narrow_codec_offer(self) -> None:
         jpeg = sdp.video_offer_formats_for_target_codec("jpeg")
         h264 = sdp.video_offer_formats_for_target_codec("h264")
@@ -52,6 +59,26 @@ class SdpPcmProfileTest(unittest.TestCase):
         self.assertIn("m=audio 40000 RTP/AVP 97 96", offer)
         self.assertIn("a=x-voip-stack-flow:97 recv\r\n", offer)
         self.assertIn("a=x-voip-stack-flow:96 send\r\n", offer)
+
+    def test_explicit_offer_advertises_one_payload_per_rtp_encoding(self) -> None:
+        opus_20 = sdp.RtpPcmFormat(98, "OPUS", 48000, 2, 20)
+        opus_10 = sdp.RtpPcmFormat(96, "OPUS", 48000, 2, 10)
+        pcm_10 = sdp.RtpPcmFormat(97, "L16", 16000, 1, 10)
+
+        offer = sdp.build_offer_directional(
+            "192.0.2.1",
+            "192.0.2.1",
+            40000,
+            [opus_20.audio_format, opus_10.audio_format, pcm_10.audio_format],
+            [opus_20.audio_format, opus_10.audio_format, pcm_10.audio_format],
+            send_rtp_formats=(opus_20, opus_10, pcm_10),
+            recv_rtp_formats=(opus_20, opus_10, pcm_10),
+            allow_directional_payloads=True,
+        )
+
+        self.assertEqual(offer.count(" OPUS/48000/2\r\n"), 1)
+        self.assertIn("a=ptime:20\r\n", offer)
+        self.assertIn(" L16/16000/1\r\n", offer)
 
     def test_video_offer_has_one_mapping_per_payload_type(self) -> None:
         local = [audio_format.AudioFormat(16000, "s16le", 1, 20)]
@@ -1369,6 +1396,7 @@ class SdpPcmProfileTest(unittest.TestCase):
             [wide.audio_format],
             [narrow.audio_format],
             audio_rtp_formats=(wide, narrow),
+            allow_directional_payloads=True,
         )
         answer = offer + (
             "a=x-voip-stack-flow:96 recv\r\n"
@@ -1408,6 +1436,24 @@ class SdpPcmProfileTest(unittest.TestCase):
         self.assertIn("a=x-voip-stack-flow:97 sendrecv\r\n", offer)
         self.assertIn("a=ptime:10\r\n", offer)
         self.assertNotIn("a=maxptime:", offer)
+
+    def test_explicit_directional_profile_prefers_48k_to_esp_with_16k_alternative(self) -> None:
+        wide = sdp.RtpPcmFormat(112, "L16", 48000, 1, 10)
+        narrow = sdp.RtpPcmFormat(96, "L16", 16000, 1, 10)
+        offer = sdp.build_offer_directional(
+            "192.0.2.1", "192.0.2.1", 40000,
+            [wide.audio_format, narrow.audio_format], [narrow.audio_format],
+            send_rtp_formats=(wide, narrow), recv_rtp_formats=(narrow,),
+            allow_directional_payloads=True,
+        )
+        formats = sdp.offered_pcm_formats(offer)
+        flows = sdp.audio_flow_attributes(offer)
+        # The ESP chooses the first compatible offered mapping in each direction.
+        peer_rx = next(fmt for fmt in formats if flows[fmt.payload_type] in {"send", "sendrecv"})
+        peer_tx = next(fmt for fmt in formats if flows[fmt.payload_type] in {"recv", "sendrecv"})
+        self.assertEqual(peer_rx.sample_rate, 48000)
+        self.assertEqual(peer_tx.sample_rate, 16000)
+        self.assertEqual((peer_rx.frame_ms, peer_tx.frame_ms), (10, 10))
 
     def test_standard_offer_does_not_advertise_one_way_codec_capabilities(self) -> None:
         wide = audio_format.AudioFormat(48000, "s16le", 1, 10)

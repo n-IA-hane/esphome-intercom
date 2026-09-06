@@ -79,6 +79,7 @@ from .route_abort import (
     async_abort_route,
 )
 from .core.sdp import build_answer_directional
+from .core.sip import sip_default_port
 from .session_cleanup import async_cleanup_sip_runtime
 from .service_errors import service_error as _service_error
 from .sip_client import SIP_TIMER_B
@@ -981,7 +982,7 @@ async def async_forward_existing_call(
                     else destination
                 ),
                 remote_host=bridge_uri.host,
-                remote_sip_port=bridge_uri.port or int(cfg["sip_port"]),
+                remote_sip_port=sip_default_port(bridge_uri),
                 request_uri=str(bridge_uri),
                 timeout=SIP_TIMER_B if bridge_to_trunk else 8.0,
             )

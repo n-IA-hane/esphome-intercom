@@ -1,26 +1,17 @@
 # =============================================================================
-# GENERIC ESP32-S3 VOIP - Dual I2S bus, no hardware codec
+# WAVESHARE ESP32-S3 AUDIO BOARD - VoIP-only AEC
 # =============================================================================
-# Generic SIP phone profile. It keeps the AEC-only audio pipeline small and
-# exposes standard SIP signaling plus RTP media through voip_stack.
+# A compact SIP phone profile for the Waveshare ESP32-S3-AUDIO-Board. It keeps
+# only VoIP, single-mic AEC, local ringtone and the seven-LED status ring.
+#
+# The maintained default uses Opus. This profile has enough memory because it
+# intentionally omits wake word, Voice Assistant and general media playback.
 #
 # ESP-to-ESP calls use the unified phonebook from HA.
 #
 # Audio pipeline:
-#   MEMS mic -> RX I2S bus -> esp_audio_stack (48kHz) -> esp_ae_rate_cvt -> esp_aec -> VoIP TX
-#   VoIP RX (16kHz) -> resampler -> esp_audio_stack -> TX I2S bus -> class-D amp
-#
-# HARDWARE (adapt GPIOs to YOUR board):
-#   - Board: Freenove ESP32-S3 WROOM N8R8, or equivalent S3 with octal PSRAM
-#   - Microphone: Any I2S MEMS mic on DIN pin
-#   - Speaker: Any I2S class-D amp on DOUT pin
-#   - Mic and speaker use separate I2S controllers. ESP32-S3 is master on both.
-#   - LED: SK6812/WS2812 RGB (optional)
-#
-# GPIO PINOUT (Freenove ESP32-S3 WROOM N8R8 example):
-#   RX I2S:  BCLK=GPIO9,  LRCLK=GPIO10, DIN=GPIO11 (mic)
-#   TX I2S:  BCLK=GPIO12, LRCLK=GPIO13, DOUT=GPIO14 (speaker)
-#   LED:         DATA=GPIO48
+#   ES7210 TDM slot 0 mic + slot 1 playback reference -> esp_aec -> Opus TX
+#   Opus RX -> 48 kHz resampler/mixer -> ES8311 -> NS4150B amplifier
 #
 # =============================================================================
 
@@ -31,34 +22,53 @@
 substitutions:
   # Hardware identity stays stable across YAML updates so HA entities and
   # ESPHome build cache are reused.
-  name: generic-s3-dual-bus
-  friendly_name: Generic S3 Dual Bus
+  name: waveshare-s3
+  friendly_name: Waveshare S3 Audio
 
   ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
   voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
   audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
+  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/dev/"
+
+  # One firmware advertises one codec. Opus is the maintained VoIP-only
+  # default and uses the mandatory RFC 7587 opus/48000/2 RTP mapping.
+  voip_audio_codec: opus
+  # These are codec PCM boundary rates, independent from the RTP clock.
+  # Opus accepts 8000/12000/16000/24000/48000 Hz. For 32000 Hz hardware,
+  # expose a supported rate through the microphone/speaker resampler below.
+  # PCM additionally accepts 32000 and 44100 Hz. No codec fallback is used.
+  voip_tx_sample_rate: "16000"
+  voip_rx_sample_rate: "48000"
+  voip_frame_ms: "20"
+
+  # Prefer uncompressed PCM instead:
+  # 1. Comment the four Opus substitutions above.
+  # 2. Uncomment the four substitutions below.
+  # 3. Uncomment audio.rx_formats below for direct PCM calls with 16 kHz peers.
+  # voip_audio_codec: pcm
+  # voip_tx_sample_rate: "16000"
+  # voip_rx_sample_rate: "48000"
+  # voip_frame_ms: "10"
 
   # ---------------------------------------------------------------------------
-  # Pinout: microphone I2S bus
+  # Pinout: shared ES7210/ES8311 TDM bus
   # ---------------------------------------------------------------------------
-  rx_i2s_bclk_pin: GPIO9
-  rx_i2s_lrclk_pin: GPIO10
-  rx_i2s_din_pin: GPIO11
+  i2s_mclk_pin: GPIO12
+  i2s_bclk_pin: GPIO13
+  i2s_lrclk_pin: GPIO14
+  i2s_din_pin: GPIO15
+  i2s_dout_pin: GPIO16
+
+  codec_i2c_sda_pin: GPIO11
+  codec_i2c_scl_pin: GPIO10
 
   # ---------------------------------------------------------------------------
-  # Pinout: speaker I2S bus
+  # Seven-pixel status ring
   # ---------------------------------------------------------------------------
-  tx_i2s_bclk_pin: GPIO12
-  tx_i2s_lrclk_pin: GPIO13
-  tx_i2s_dout_pin: GPIO14
-
-  # ---------------------------------------------------------------------------
-  # Pinout: speaker amplifier and optional status LED
-  # ---------------------------------------------------------------------------
-  speaker_enable_pin: GPIO18
-  status_led_pin: GPIO48
+  status_led_pin: GPIO38
+  status_led_num_leds: "7"
   status_led_chipset: WS2812
-  status_led_rgb_order: GRB
+  status_led_rgb_order: RGB
 
 packages:
   core: github://n-IA-hane/esphome-intercom/packages/voip_only.yaml@dev
@@ -68,10 +78,10 @@ packages:
   speaker_mute: github://n-IA-hane/esphome-intercom/packages/voip/speaker_mute.yaml@dev
   s3_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32s3_base.yaml@dev
   native_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native.yaml@dev
-  status_led: github://n-IA-hane/esphome-intercom/packages/led/status_ws2812_single.yaml@dev
+  status_led: github://n-IA-hane/esphome-intercom/packages/led/status_ws2812_ring.yaml@dev
   audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@dev
   audio_stack_aec_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/aec_controls.yaml@dev
-  speaker_power: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/speaker_power_output.yaml@dev
+  speaker_power: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/speaker_power_switch.yaml@dev
 
 # =============================================================================
 # BOARD AND MEMORY
@@ -82,14 +92,14 @@ packages:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
-  platformio_options:
-    board_build.flash_mode: dio
 
-# ESP32-S3 target and ESP-IDF tuning for the no-codec dual-bus reference.
+# ESP32-S3R8 target with 16 MB flash and octal PSRAM.
 
 esp32:
-  board: freenove_esp32_s3_wroom
+  flash_mode: dio
+  board: esp32-s3-devkitc-1
   variant: esp32s3
+  flash_size: 16MB
   framework:
     type: esp-idf
     advanced:
@@ -104,7 +114,8 @@ esp32:
       CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
       CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
 
-# PSRAM gives VoIP/audio buffers and TLS working memory room on generic boards.
+# Opus and the VoIP task stacks use PSRAM while the realtime I2S task remains
+# in internal RAM.
 
 psram:
   mode: octal
@@ -119,7 +130,7 @@ preferences:
 # EXTERNAL COMPONENTS
 # =============================================================================
 
-# Project components for the no-codec AEC VoIP path.
+# Project components for the Waveshare TDM AEC and VoIP path.
 
 external_components:
   - source: ${voip_stack_components_source}
@@ -129,6 +140,11 @@ external_components:
 
 # =============================================================================
 # CONNECTIVITY
+# =============================================================================
+
+# =============================================================================
+# VoIP signaling: voip_stack owns SIP INVITE/answer/hangup.
+# The YAML below only wires audio devices, LED feedback and local buttons.
 # =============================================================================
 
 # Normal Wi-Fi client mode. Power save is disabled for low-latency SIP/RTP and
@@ -149,8 +165,7 @@ ota:
 
 logger:
   hardware_uart: USB_SERIAL_JTAG
-  # DEBUG keeps SIP signaling + AEC/AFE/i2s lifecycle visible.
-  # Mute chatty ESPHome built-ins below; project components stay at DEBUG.
+  # INFO keeps call and AEC lifecycle visible without per-frame logging.
   level: INFO
   logs:
     voip_stack: INFO
@@ -170,57 +185,57 @@ logger:
     component: WARN
 
 # =============================================================================
-# OUTPUTS AND LIGHTS
-# =============================================================================
-
-# Optional amplifier enable pin for dual-bus class-D boards.
-
-output:
-  - platform: gpio
-    id: speaker_enable
-    pin: ${speaker_enable_pin}
-
-# =============================================================================
 # AUDIO PIPELINE
 # =============================================================================
 
-# =============================================================================
-# VoIP signaling: voip_stack owns SIP INVITE/answer/hangup.
-# The YAML below only wires audio devices, LED feedback and local buttons.
-# =============================================================================
+i2c:
+  - id: internal_i2c
+    sda: ${codec_i2c_sda_pin}
+    scl: ${codec_i2c_scl_pin}
+    scan: false
+
+tca9555:
+  - id: io_expander
+    address: 0x20
+    i2c_id: internal_i2c
 
 esp_audio_stack:
   id: audio_stack
-  rx_bus:
-    i2s_num: 0
-    i2s_lrclk_pin: ${rx_i2s_lrclk_pin}
-    i2s_bclk_pin: ${rx_i2s_bclk_pin}
-    i2s_din_pin: ${rx_i2s_din_pin}
-  tx_bus:
-    i2s_num: 1
-    i2s_lrclk_pin: ${tx_i2s_lrclk_pin}
-    i2s_bclk_pin: ${tx_i2s_bclk_pin}
-    i2s_dout_pin: ${tx_i2s_dout_pin}
+  i2s_lrclk_pin: ${i2s_lrclk_pin}
+  i2s_bclk_pin: ${i2s_bclk_pin}
+  i2s_mclk_pin: ${i2s_mclk_pin}
+  i2s_din_pin: ${i2s_din_pin}
+  i2s_dout_pin: ${i2s_dout_pin}
   sample_rate: 48000
   output_sample_rate: 16000
-  bits_per_sample: 32
-  slot_bit_width: 32
+  bits_per_sample: 16
+  slot_bit_width: 16
   correct_dc_offset: true
-  mic_channel: right
-  rx_slot_mode: stereo
   processor_id: aec_processor
-  # VoIP-only no-codec reference: keep the lighter previous-frame path.
-  # The full-experience Freenove profile uses ring_buffer for VA/media AEC
-  # tuning, but this preset only needs the hardware pin/channel fixes above.
-  aec_reference: previous_frame
+  master_volume_min_db: -30.0
+  codec:
+    i2c_id: internal_i2c
+    input:
+      type: es7210
+      address: 0x40
+      mic_selected: 0x0F
+      gain_db: 24.0
+    output:
+      type: es8311
+      address: 0x18
+      use_mclk: true
+      no_dac_ref: true
+  use_tdm_reference: true
+  tdm_total_slots: 4
+  tdm_mic_slot: 0
+  tdm_ref_slot: 1
   buffers_in_psram: true
-  audio_task_stack_in_psram: true
 
 esp_aec:
   id: aec_processor
   sample_rate: 16000
-  filter_length: 8
-  mode: fd_high_perf
+  filter_length: 4
+  mode: voip_high_perf
 
 microphone:
   - platform: esp_audio_stack
@@ -235,10 +250,50 @@ speaker:
     bits_per_sample: 16
     timeout: 1s
 
+  - platform: mixer
+    id: audio_mixer
+    output_speaker: hw_speaker
+    num_channels: 1
+    source_speakers:
+      - id: voip_mixer_input
+        timeout: 10s
+        buffer_duration: 128ms
+      - id: ringtone_speaker_mix
+        timeout: 10s
+        buffer_duration: 100ms
+
   - platform: resampler
     id: voip_speaker_input
-    output_speaker: hw_speaker
-    bits_per_sample: 16
+    output_speaker: voip_mixer_input
+    buffer_duration: 128ms
+
+  - platform: resampler
+    id: ringtone_speaker
+    output_speaker: ringtone_speaker_mix
+
+audio_file:
+  - id: voip_ringing_sound
+    file: ${assets_base}assets/sounds/ringtone.flac
+
+media_source:
+  - platform: audio_file
+    id: ringtone_file_source
+
+media_player:
+  - platform: speaker_source
+    id: speaker_media_player
+    name: None
+    internal: true
+    volume_initial: 1.0
+    volume_min: 1.0
+    volume_max: 1.0
+    announcement_pipeline:
+      speaker: ringtone_speaker
+      format: FLAC
+      sample_rate: 48000
+      num_channels: 1
+      sources:
+        - ringtone_file_source
 
 # =============================================================================
 # MEDIA, ASSIST AND VOIP
@@ -250,52 +305,33 @@ speaker:
 
 voip_stack:
   id: phone
+  task_stacks_in_psram: true
+  audio_task_stacks_in_psram: true
   buffers_in_psram: true
+  signaling_buffers_in_psram: true
   audio:
-    # Opus is the VoIP-only default. RTP uses opus/48000/2 (RFC7587);
-    # sample_rate/channels below describe the local mono PCM boundary.
+    # This firmware advertises exactly one codec. HA treats it as an ordinary
+    # SIP endpoint and transcodes only when the other leg is incompatible.
     tx:
-      codec: opus
-      sample_rate: 16000
+      codec: ${voip_audio_codec}
+      sample_rate: ${voip_tx_sample_rate}
       pcm_format: s16le
       channels: 1
-      frame_ms: 20
+      frame_ms: ${voip_frame_ms}
     rx:
-      codec: opus
-      sample_rate: 48000
+      codec: ${voip_audio_codec}
+      sample_rate: ${voip_rx_sample_rate}
       pcm_format: s16le
       channels: 1
-      frame_ms: 20
-  # To use PCM, comment the active audio block above and uncomment this one.
-  # Preserve the RX alternatives when using a resampler for direct ESP calls.
-  #audio:
-  #  tx_formats:
-  #    - sample_rate: 16000
-  #      pcm_format: s16le
-  #      channels: 1
-  #      frame_ms: 10
-  #  rx:
-  #    sample_rate: 48000
-  #    pcm_format: s16le
-  #    channels: 1
-  #    frame_ms: 10
-  #  rx_formats:
-  #    - sample_rate: 32000
-  #      pcm_format: s16le
-  #      channels: 1
-  #      frame_ms: 16
-  #    - sample_rate: 16000
-  #      pcm_format: s16le
-  #      channels: 1
-  #      frame_ms: 10
-  #    - sample_rate: 16000
-  #      pcm_format: s16le
-  #      channels: 1
-  #      frame_ms: 16
-  #    - sample_rate: 16000
-  #      pcm_format: s16le
-  #      channels: 1
-  #      frame_ms: 32
+      frame_ms: ${voip_frame_ms}
+    # PCM alternative only: prefer RX48k from HA, accept RX16k from ESP peers.
+    # This adds a PCM rate, never a second codec. Keep commented with Opus.
+    # rx_formats:
+    #   - codec: pcm
+    #     sample_rate: 16000
+    #     pcm_format: s16le
+    #     channels: 1
+    #     frame_ms: 10
   microphone: mic_main
   speaker: voip_speaker_input
   dc_offset_removal: false
@@ -308,17 +344,26 @@ voip_stack:
 # =============================================================================
 
 switch:
+  - platform: gpio
+    id: speaker_enable
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin:
+      tca9555: io_expander
+      number: 8
+      mode:
+        output: true
 
 select:
   - platform: template
     name: AEC Mode
     id: aec_mode_select
     icon: mdi:tune-vertical
-    # Keep runtime switching within the full-duplex AEC engine.
+    # Stay inside the lightweight VoIP AEC engine.
     options:
-      - "fd_low_cost"
-      - "fd_high_perf"
-    initial_option: "fd_high_perf"
+      - "voip_low_cost"
+      - "voip_high_perf"
+    initial_option: "voip_high_perf"
     optimistic: false
     restore_value: true
     set_action:
@@ -342,3 +387,38 @@ select:
       # Reflect actual live mode (covers rejection and silent hardware mode).
       - lambda: |-
           id(aec_mode_select).publish_state(id(aec_processor).get_mode_name());
+
+script:
+  - id: !extend update_status
+    then:
+      - if:
+          condition:
+            voip_stack.is_ringing:
+          then:
+            - script.execute: voip_ringing_loop
+          else:
+            - script.stop: voip_ringing_loop
+            - media_player.stop:
+                announcement: true
+
+  - id: voip_ringing_loop
+    mode: restart
+    then:
+      - while:
+          condition:
+            voip_stack.is_ringing:
+          then:
+            - media_player.play_media:
+                id: speaker_media_player
+                media_url: "audio-file://voip_ringing_sound"
+                announcement: true
+            - wait_until:
+                condition:
+                  media_player.is_announcing:
+                timeout: 2s
+            - wait_until:
+                condition:
+                  not:
+                    media_player.is_announcing:
+                timeout: 5s
+            - delay: 1s

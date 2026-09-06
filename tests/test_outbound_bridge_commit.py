@@ -9,6 +9,14 @@ import pytest
 pytestmark = pytest.mark.ha
 
 
+@pytest.fixture(autouse=True)
+def media_projection(monkeypatch):
+    from custom_components.voip_stack import call_projection
+    projection = MagicMock()
+    monkeypatch.setattr(call_projection, "publish_esp_media_route", projection)
+    return projection
+
+
 def _format(token: str):
     return SimpleNamespace(
         audio_format=SimpleNamespace(wire_token=lambda: token),
@@ -50,6 +58,7 @@ def _fixture():
         take_media=MagicMock(return_value=None),
     )
     relay = SimpleNamespace(
+        media_route="ha_transcoding",
         video_relay=None,
         start=AsyncMock(),
         stop=AsyncMock(),
@@ -69,7 +78,7 @@ def _pending_watchers() -> list[asyncio.Task]:
 
 
 @pytest.mark.asyncio
-async def test_commit_transfers_bridge_and_owns_destination_watcher(monkeypatch):
+async def test_commit_transfers_bridge_and_owns_destination_watcher(monkeypatch, media_projection):
     from custom_components.voip_stack import outbound_bridge_commit as module
     from custom_components.voip_stack.inbound_answer import AnswerCommitResult
 
@@ -114,6 +123,7 @@ async def test_commit_transfers_bridge_and_owns_destination_watcher(monkeypatch)
     winner.ports.detach.assert_called_once()
     registry.attach_relay.assert_called_once_with("source-call", relay)
     binder.attach.assert_called_once()
+    assert media_projection.call_args.args[1:] == ("source-call", "ha_transcoding")
     assert not _pending_watchers()
 
 

@@ -517,6 +517,7 @@ async def _start_audio_sender(
     duration: float,
     *,
     audio_codec: str,
+    audio_gain: float = 0.15,
 ):
     profile = AUDIO_PROFILES[audio_codec]
     input_args = (
@@ -543,7 +544,7 @@ async def _start_audio_sender(
         # Keep the qualification source bounded without loudnorm's analysis
         # latency and batching. The sender below owns the RTP packet clock.
         "-af",
-        "volume=0.15",
+        f"volume={audio_gain}",
         "-ac",
         "1",
         "-ar",
@@ -1158,6 +1159,7 @@ async def async_main(args: argparse.Namespace) -> int:
                 args.audio_file,
                 args.duration,
                 audio_codec=args.audio_codec,
+                audio_gain=args.audio_gain,
             )
             tasks = [
                 asyncio.create_task(
@@ -1799,6 +1801,8 @@ def main() -> int:
         help="video RTP profile; feedback attributes are emitted only for AVPF",
     )
     parser.add_argument("--answer-timeout", type=float, default=60.0)
+    parser.add_argument("--audio-gain", type=float, default=0.15,
+                        help="fixture gain before encoding (0 to 1); device volume is independent")
     parser.add_argument(
         "--answer-local-reinvite",
         type=int,
@@ -1880,6 +1884,8 @@ def main() -> int:
     )
     parser.add_argument("--out", default="/tmp/sip_video_peer.json")
     args = parser.parse_args()
+    if not 0.0 <= args.audio_gain <= 1.0:
+        parser.error("--audio-gain must be between 0 and 1")
     transition_times = [
         value
         for value in (

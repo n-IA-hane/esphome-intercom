@@ -77,7 +77,8 @@ class FrontendCardContractTest(unittest.TestCase):
         toggle = _method_body(self.source, "_toggleKeypad")
         self.assertIn("!this._isHaSoftphoneMode() && !this._startCallService", toggle)
         keypress = _method_body(self.source, "_pressKeypadKey")
-        self.assertNotIn("this._isHaSoftphoneMode()", keypress)
+        self.assertIn("voipStackEngine.sendDtmf(key)", keypress)
+        self.assertIn("inCallDtmf", keypress)
 
     def test_esp_manual_terminal_destination_does_not_replace_contact_cycler(self) -> None:
         render = _method_body(self.source, "_render")

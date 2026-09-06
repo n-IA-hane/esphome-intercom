@@ -388,6 +388,9 @@ class BridgeMediaUpdateBinder:
                 if removing_video:
                     relay.video_relay = None
                     await video_relay.stop()
+                from .call_projection import publish_esp_media_route
+
+                publish_esp_media_route(self.hass, source_call_id, relay.media_route)
                 _LOGGER.info(
                     "SIP bridge outbound %s committed source_call_id=%s "
                     "dest_call_id=%s remote_rtp=%s:%s audio_direction=%s "

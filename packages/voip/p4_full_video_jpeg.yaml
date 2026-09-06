@@ -17,12 +17,6 @@ substitutions:
   # bidirectional video uses one pacing contract.
   p4_sip_jpeg_fps: "10"
 
-globals:
-  - id: restore_mww_after_video_call
-    type: bool
-    restore_value: false
-    initial_value: "false"
-
 external_components:
   - source: ${voip_stack_components_source}
     components: [esp_jpeg_video_source, p4_video_renderer]
@@ -61,23 +55,8 @@ voip_stack:
     rtp_port: 40002
     offer_payload_type: 26
     max_rtp_payload: 1400
-  on_video_start:
-    - lambda: |-
-        id(restore_mww_after_video_call) = id(g_wake_word_enabled);
-    - if:
-        condition:
-          lambda: return id(restore_mww_after_video_call);
-        then:
-          - switch.turn_off: wake_word_switch
-  on_video_end:
-    - if:
-        condition:
-          lambda: return id(restore_mww_after_video_call);
-        then:
-          - globals.set:
-              id: restore_mww_after_video_call
-              value: "false"
-          - switch.turn_on: wake_word_switch
+  # MWW remains owned by its user/runtime controls. Starting video must not
+  # change the wake-word preference or introduce a second restoration path.
 
 lvgl:
   on_boot:

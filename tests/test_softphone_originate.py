@@ -120,6 +120,8 @@ def softphone_originate(monkeypatch):
             "device_formats": Mock(return_value=[]),
             "roster_entry_formats": Mock(return_value=[]),
             "sip_target_audio_profile": Mock(return_value=([], [])),
+            "sip_target_rtp_audio_profile": Mock(return_value=None),
+            "supports_directional_audio_payloads": Mock(return_value=False),
         },
         "esphome_actions": {
             "async_call_action": AsyncMock(),

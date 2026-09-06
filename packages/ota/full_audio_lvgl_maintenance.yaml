@@ -58,6 +58,6 @@ script:
           value: "false"
       - lvgl.resume:
       - esp_audio_stack.start: audio_stack
-      - voip_stack.start:
+      # VoIP stop only ends a call; start would dial the selected contact.
       - script.execute: start_mww_when_ready
       - script.execute: draw_display

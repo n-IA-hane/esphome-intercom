@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest import mock
 
 from .voip_phase1_support import (
     audio_format,
@@ -157,6 +158,112 @@ class RtpProfileTest(unittest.TestCase):
         relay.handle_packet("left", packet(0x9999), (left.host, 45004))
         self.assertEqual(left.port, 45002)
         self.assertEqual(len(output.sent), 2)
+
+    def test_debug_snapshot_reports_only_required_audio_transcoding(self) -> None:
+        opus = sdp.RtpPcmFormat(106, "OPUS", 48000, 2, 20)
+        pcm = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
+        left = sip_rtp_bridge.RtpPeer(
+            "192.0.2.10",
+            40000,
+            106,
+            opus.audio_format,
+            rtp_format=opus,
+            send_rtp_format=opus,
+        )
+        right = sip_rtp_bridge.RtpPeer(
+            "192.0.2.20",
+            41000,
+            96,
+            pcm.audio_format,
+            rtp_format=pcm,
+            send_rtp_format=pcm,
+        )
+        with (
+            mock.patch.object(sip_rtp_bridge, "RtpPayloadDecoder", return_value=object()),
+            mock.patch.object(sip_rtp_bridge, "RtpPayloadEncoder", return_value=object()),
+        ):
+            relay = sip_rtp_bridge.SipRtpRelay(
+                left=left,
+                right=right,
+                left_port=42000,
+                right_port=42002,
+                debug=True,
+            )
+        self.assertEqual(
+            relay.snapshot()["audio_transcoding"],
+            [
+                "left_to_right: OPUS/48000/2/20 -> L16/16000/1/20",
+                "right_to_left: L16/16000/1/20 -> OPUS/48000/2/20",
+            ],
+        )
+
+        compatible = sip_rtp_bridge.SipRtpRelay(
+            left=left, right=left, left_port=42004, right_port=42006, debug=True
+        )
+        self.assertNotIn("audio_transcoding", compatible.snapshot())
+
+    def test_compatible_opus_relay_preserves_payload_and_rewrites_header(self) -> None:
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.sent: list[tuple[bytes, tuple[str, int]]] = []
+
+            def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+                self.sent.append((data, addr))
+
+        left_format = sdp.RtpPcmFormat(106, "OPUS", 48000, 2, 20)
+        right_format = sdp.RtpPcmFormat(111, "OPUS", 48000, 2, 20)
+        left = sip_rtp_bridge.RtpPeer(
+            "192.0.2.10",
+            40000,
+            106,
+            left_format.audio_format,
+            rtp_format=left_format,
+            send_rtp_format=left_format,
+        )
+        right = sip_rtp_bridge.RtpPeer(
+            "192.0.2.20",
+            41000,
+            111,
+            right_format.audio_format,
+            rtp_format=right_format,
+            send_rtp_format=right_format,
+        )
+        relay = sip_rtp_bridge.SipRtpRelay(
+            left=left,
+            right=right,
+            left_port=42000,
+            right_port=42002,
+            debug=True,
+        )
+        output = FakeTransport()
+        relay.right_transport = output  # type: ignore[assignment]
+        source_payload = b"\xf8\xff\xfe"
+        source = rtp.RtpPacket(
+            payload_type=106,
+            marker=True,
+            sequence=27,
+            timestamp=123456,
+            ssrc=0x10203040,
+            payload=source_payload,
+        )
+
+        relay.handle_packet(
+            "left",
+            rtp.build_packet(source),
+            (left.host, left.port),
+        )
+
+        self.assertEqual(len(output.sent), 1)
+        forwarded = rtp.parse_packet(output.sent[0][0])
+        self.assertEqual(forwarded.payload, source_payload)
+        self.assertEqual(forwarded.payload_type, 111)
+        self.assertEqual(forwarded.ssrc, right.ssrc)
+        self.assertEqual(forwarded.marker, source.marker)
+        self.assertNotEqual(forwarded.sequence, source.sequence)
+        self.assertEqual(
+            relay.snapshot()["left_to_right_audio_path"],
+            "payload_relay",
+        )
 
     def test_relay_accepts_authenticated_signaling_host_for_nat_media(self) -> None:
         class FakeTransport:

@@ -98,7 +98,7 @@ def _is_ha_auth_url(value: str) -> bool:
     return path.startswith("/auth/") or path == "/auth"
 
 
-def _fake_media_args(video_file: Path | None = None) -> list[str]:
+def _fake_media_args(video_file: Path | None = None, audio_file: Path | None = None) -> list[str]:
     """Build deterministic Chromium media arguments for qualification."""
 
     args = [
@@ -107,6 +107,8 @@ def _fake_media_args(video_file: Path | None = None) -> list[str]:
     ]
     if video_file is not None:
         args.append(f"--use-file-for-fake-video-capture={video_file.resolve()}")
+    if audio_file is not None:
+        args.append(f"--use-file-for-fake-audio-capture={audio_file.resolve()}")
     return args
 
 DEEP_CARD = r"""
@@ -559,7 +561,7 @@ CLICK_HANGUP = r"""
 """
 
 CLICK_CAMERA_SEND = r"""
-async () => {
+async (enabled = true) => {
   const deep = (selector, root = document) => {
     const found = [...root.querySelectorAll(selector)];
     for (const node of root.querySelectorAll("*")) {
@@ -569,7 +571,6 @@ async () => {
   };
   const card = globalThis.__voipStackProbeFindCard?.() || null;
   if (!card) return false;
-  if (globalThis.__voipStackEngine?.videoCameraEnabled) return true;
   let root = card.shadowRoot || card;
   const settings = deep("button", root).find((item) => item.textContent.trim() === "Options");
   if (settings && !card._settingsOpen) {
@@ -581,7 +582,7 @@ async () => {
   }
   const checkbox = deep("#ha-softphone-video-camera-cb", root)[0];
   if (!checkbox || checkbox.closest("[hidden]")) return false;
-  if (!checkbox.checked) {
+  if (checkbox.checked !== enabled) {
     checkbox.click();
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -594,7 +595,7 @@ async () => {
   // Additional logical phones do not own the page-global engine while idle;
   // their camera preference is nevertheless authoritative on the card and is
   // handed to the engine when that endpoint starts or answers a call.
-  return Boolean(checkbox.checked);
+  return Boolean(checkbox.checked) === enabled;
 }
 """
 
@@ -758,7 +759,16 @@ def main() -> int:
         "--out",
         default="/tmp/sip_video_browser_probe.json",
     )
+    parser.add_argument("--fake-audio-file", type=Path)
+    parser.add_argument("--audio-capture-dir", type=Path)
+    parser.add_argument("--camera-send", choices=("on", "off"))
+    parser.add_argument("--verify-keypad", action="store_true")
+    parser.add_argument("--dtmf-digit", choices=tuple("0123456789*#ABCD"))
     args = parser.parse_args()
+    if args.dtmf_digit:
+        args.verify_keypad = True
+    if args.fake_audio_file is not None and not args.fake_audio_file.is_file():
+        parser.error("--fake-audio-file must be an existing PCM WAV file")
     if args.expect_audio_only and (args.send_camera or args.deny_camera):
         parser.error("--expect-audio-only cannot be combined with camera options")
     if args.expect_native_camera and not args.expect_audio_only:
@@ -836,11 +846,13 @@ def main() -> int:
         "websocket_events": [],
     }
     failure: BaseException | None = None
+    from ha_voip_lab.browser_audio_capture import BrowserAudioCapture
+    audio_capture = BrowserAudioCapture() if args.audio_capture_dir else None
     with sync_playwright() as playwright:
         launch_options = {
             "headless": True,
             "args": [
-                *_fake_media_args(args.fake_video_file),
+                *_fake_media_args(args.fake_video_file, args.fake_audio_file),
                 "--autoplay-policy=no-user-gesture-required",
                 f"--unsafely-treat-insecure-origin-as-secure={origin}",
             ],
@@ -989,6 +1001,13 @@ def main() -> int:
         cdp.on("Network.webSocketCreated", record_websocket_created)
         cdp.on("Network.webSocketClosed", record_websocket_closed)
         cdp.on("Network.webSocketFrameError", record_websocket_error)
+        if audio_capture is not None:
+            def capture_frame(event, direction):
+                request_id = str(event.get("requestId") or "")
+                if urlsplit(websocket_urls.get(request_id, "")).path == "/api/voip_stack/ws":
+                    audio_capture.record(request_id, direction, event.get("response") or {}, event.get("timestamp"))
+            cdp.on("Network.webSocketFrameReceived", lambda event: capture_frame(event, "rx"))
+            cdp.on("Network.webSocketFrameSent", lambda event: capture_frame(event, "tx"))
         page.goto(args.url, wait_until="domcontentloaded", timeout=30_000)
         if _is_ha_auth_url(page.url):
             raise RuntimeError(
@@ -1167,14 +1186,20 @@ def main() -> int:
 
         try:
             reload_rendered = 0
-            if args.send_camera:
+            if args.send_camera or args.camera_send is not None:
                 page.wait_for_function(
                     f"() => Boolean(({DEEP_CARD})()?._softphoneSnapshot?.video_camera_send_enabled)",
                     timeout=10_000,
                     polling=100,
                 )
-                if not page.evaluate(CLICK_CAMERA_SEND):
+                desired_camera = args.camera_send != "off"
+                if not page.evaluate(CLICK_CAMERA_SEND, desired_camera):
                     raise RuntimeError("Send Camera option was not available before the video call")
+                page.wait_for_function(
+                    f"() => (({DEEP_CARD})()?._softphoneSnapshot?.send_video) === {str(desired_camera).lower()}",
+                    timeout=10_000,
+                    polling=100,
+                )
             sample("ready")
             if args.outbound:
                 print(f"PLACING_VIDEO_CALL {args.outbound}", flush=True)
@@ -1261,6 +1286,29 @@ def main() -> int:
                     f"reason={connected.get('terminal_reason')!r} "
                     f"error={connected.get('card_error')!r}"
                 )
+            if args.verify_keypad:
+                result["keypad"] = page.evaluate("""async (digit) => {
+                  const card = globalThis.__voipStackProbeFindCard?.();
+                  const button = card?._els?.keypadBtn;
+                  if (!button || button.hidden) throw new Error('In-call keypad button missing');
+                  const wasOpen = card._keypadOpen();
+                  if (!wasOpen) button.click();
+                  await new Promise(resolve => requestAnimationFrame(resolve));
+                  const panel = card._els.keypadPanel;
+                  const visible = !panel.hidden && panel.getBoundingClientRect().height > 0;
+                  const hiddenDialTarget = card._els.keypadInput.hidden;
+                  const diagnostics = {visible, hiddenDialTarget, panelHidden: panel.hidden,
+                    height: panel.getBoundingClientRect().height, open: card._keypadOpen(),
+                    state: card._getEspState(), snapshotState: card._softphoneSnapshot?.state};
+                  if (digit && visible) {
+                    card._els.keypadKeys[digit].click();
+                    diagnostics.dtmfAttempted = digit;
+                  }
+                  if (!wasOpen) button.click();
+                  return diagnostics;
+                }""", args.dtmf_digit)
+                if not result['keypad']['visible'] or not result['keypad']['hiddenDialTarget']:
+                    raise RuntimeError(f"In-call DTMF keypad not displayed: {result['keypad']}")
             if args.reload_in_call:
                 finish_responsiveness_monitor("before_reload_in_call")
                 page.reload(wait_until="domcontentloaded", timeout=30_000)
@@ -1473,6 +1521,12 @@ def main() -> int:
                 result["responsiveness_error"] = (
                     f"{type(monitor_error).__name__}: {monitor_error}"
                 )
+            if audio_capture is not None:
+                audio_report = audio_capture.save(args.audio_capture_dir)
+                result["audio_capture"] = {"errors": audio_report["errors"], "streams": len(audio_report["streams"])}
+                if audio_report['errors']:
+                    failure = failure or RuntimeError('Browser audio capture failed')
+                    result['ok'] = False
             Path(args.out).write_text(json.dumps(result, indent=2, ensure_ascii=False))
             for line in console:
                 print(f"BROWSER {line}", flush=True)

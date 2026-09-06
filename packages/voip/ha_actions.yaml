@@ -1,6 +1,14 @@
 # Shared Home Assistant API actions for every managed VoIP phone.
 api:
   actions:
+    - action: set_media_route
+      variables:
+        call_id: string
+        route: string
+      then:
+        - voip_stack.set_media_route:
+            call_id: !lambda 'return call_id;'
+            route: !lambda 'return route;'
     - action: start_call
       variables:
         dest: string

@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant
 
 from .core import rtp
 from .audio_ws import decode_audio_frame, encode_audio_frame
+from .call_projection import publish_esp_media_route
 from .config import debug_mode, media_capture_enabled
 from .core.audio_format import HA_SIP_PCM_FORMATS
 from .debug_capture import (
@@ -34,7 +35,12 @@ from .debug_capture import (
     try_reserve_debug_capture_write,
     wav_pcm_payload,
 )
-from .dtmf import RtpDtmfDecoder, telephone_event_code
+from .dtmf import (
+    RtpDtmfDecoder,
+    build_telephone_event_payload,
+    send_rtp_dtmf_event,
+    telephone_event_code,
+)
 from .media_debug import merge_media_debug
 from .media_call_lifetime import (
     active_media_call,
@@ -110,6 +116,10 @@ class _SoftphoneMediaSession:
     remote_audio_connection_held: bool = False
     dtmf_payload_type: int | None = None
     dtmf_events: frozenset[int] = frozenset()
+    send_dtmf_payload_type: int | None = None
+    send_dtmf_clock_rate: int = 8000
+    send_dtmf_events: frozenset[int] = frozenset()
+    send_dtmf_info: Callable[[str], Any] | None = None
     on_dtmf: Callable[[str], None] | None = None
     conference_room: str = ""
     conference_queue: asyncio.Queue[bytes] | None = None
@@ -523,6 +533,15 @@ def _active_softphone_media_session(
                 dtmf_events=(
                     dtmf_format.events if dtmf_format is not None else frozenset()
                 ),
+                send_dtmf_payload_type=(
+                    dtmf_format.payload_type if dtmf_format is not None else None
+                ),
+                send_dtmf_clock_rate=(
+                    dtmf_format.sample_rate if dtmf_format is not None else 8000
+                ),
+                send_dtmf_events=(
+                    dtmf_format.events if dtmf_format is not None else frozenset()
+                ),
                 on_dtmf=_dtmf_callback("left"),
                 rtp_source=rtp_source,
             )
@@ -549,6 +568,10 @@ def _active_softphone_media_session(
                 ),
                 dtmf_payload_type=dialog.dtmf_payload_type,
                 dtmf_events=dialog.dtmf_events,
+                send_dtmf_payload_type=dialog.send_dtmf_payload_type,
+                send_dtmf_clock_rate=int(dialog.send_dtmf_clock_rate or 8000),
+                send_dtmf_events=dialog.send_dtmf_events or frozenset(),
+                send_dtmf_info=client.send_dtmf_info,
                 on_dtmf=_dtmf_callback("right"),
                 rtp_source=rtp_source,
             )
@@ -729,12 +752,17 @@ async def _run_audio_session(
     logged_first_rtp = False
     latched_rtp_source: tuple[str, int] | None = None
     latched_rtp_ssrc: int | None = None
+    last_audio_sequence: int | None = None
+    last_audio_timestamp: int | None = None
     remote_rtp_host = str(session.remote_rtp_host)
     remote_rtp_port = int(session.remote_rtp_port)
     applied_media_generation = int(session.media_generation)
     last_counter_event = 0.0
     ws_send_lock = asyncio.Lock()
     media_state_lock = asyncio.Lock()
+    rtp_send_lock = asyncio.Lock()
+    dtmf_send_lock = asyncio.Lock()
+    dtmf_tasks: set[asyncio.Task[None]] = set()
     debug_capture = (
         _DebugAudioCapture(session.call_id, rx_format=session.recv_format, tx_format=session.send_format)
         if media_capture_enabled(hass)
@@ -820,6 +848,7 @@ async def _run_audio_session(
     async def refresh_media_state(generation: int) -> None:
         nonlocal applied_media_generation, remote_rtp_host, remote_rtp_port
         nonlocal latched_rtp_source, latched_rtp_ssrc, logged_first_rtp
+        nonlocal last_audio_sequence, last_audio_timestamp
         nonlocal rtp_decoder, rtp_encoder
         nonlocal dtmf_decoder
         nonlocal debug_capture
@@ -847,6 +876,8 @@ async def _run_audio_session(
             latched_rtp_source = None
             latched_rtp_ssrc = None
             logged_first_rtp = False
+            last_audio_sequence = None
+            last_audio_timestamp = None
             protocol.dropped_packets += drain_queue(queue)
             rtp_decoder = next_decoder
             rtp_encoder = next_encoder
@@ -859,6 +890,13 @@ async def _run_audio_session(
                     tx_format=session.send_format,
                 )
             applied_media_generation = generation
+            publish_esp_media_route(hass, session.call_id, browser_media_route())
+
+    def browser_media_route() -> str:
+        return "direct" if all(
+            fmt.encoding.upper() in {"L8", "L16", "L24", "L32"}
+            for fmt in (session.send_format, session.recv_format)
+        ) else "ha_transcoding"
 
     try:
         await ws.send_json(negotiation_payload())
@@ -884,9 +922,11 @@ async def _run_audio_session(
         session.recv_format.audio_format.wire_token(),
         session.recv_format.wire_token(),
     )
+    publish_esp_media_route(hass, session.call_id, browser_media_route())
     async def rtp_to_ws() -> None:
         nonlocal latched_rtp_source, latched_rtp_ssrc, logged_first_rtp
         nonlocal remote_rtp_host, remote_rtp_port
+        nonlocal last_audio_sequence, last_audio_timestamp
         observed_generation = int(session.media_generation)
         while not closed.is_set():
             if observed_generation != session.media_generation:
@@ -962,11 +1002,33 @@ async def _run_audio_session(
                     # change its source port during a long-lived call.
                     latched_rtp_source = source
                     remote_rtp_port = source[1]
+                sequence_delta = (
+                    (packet.sequence - last_audio_sequence) & 0xFFFF
+                    if last_audio_sequence is not None
+                    else 0
+                )
+                timestamp_delta = (
+                    (packet.timestamp - last_audio_timestamp) & 0xFFFFFFFF
+                    if last_audio_timestamp is not None
+                    else 0
+                )
+                expected_timestamp_delta = int(
+                    session.recv_format.rtp_timestamp_step
+                )
+                remote_silence_resume = (
+                    last_audio_sequence is not None
+                    and sequence_delta == 1
+                    and timestamp_delta > expected_timestamp_delta * 2
+                )
+                last_audio_sequence = packet.sequence
+                last_audio_timestamp = packet.timestamp
                 counters["rtp_rx"] += 1
                 counters["rtp_rx_bytes"] += len(data)
                 if debug_capture is not None:
                     debug_capture.note_rtp_rx(loop.time(), pcm)
                 async with ws_send_lock:
+                    if remote_silence_resume:
+                        await ws.send_json({"type": "remote_silence_resume"})
                     await ws.send_bytes(encode_audio_frame(pcm))
                 if debug_capture is not None:
                     debug_capture.note_ws_send(loop.time())
@@ -1014,6 +1076,55 @@ async def _run_audio_session(
         plc_active = False
         silence_pcm = bytes(int(session.send_format.audio_format.nominal_frame_bytes))
 
+        async def send_dtmf(digit: str, duration_ms: int) -> None:
+            """Send one browser digit using RFC 4733, then SIP INFO fallback."""
+
+            nonlocal sequence
+            event = telephone_event_code(digit)
+            if (
+                event is None
+                or session.send_dtmf_payload_type is None
+                or event not in session.send_dtmf_events
+            ):
+                fallback = session.send_dtmf_info
+                if fallback is not None:
+                    result = fallback(digit)
+                    if asyncio.iscoroutine(result):
+                        await result
+                return
+            async with dtmf_send_lock:
+                event_rate = max(1, int(session.send_dtmf_clock_rate))
+                event_timestamp = timestamp
+
+                async def emit(duration: int, marker: bool, end: bool) -> bool:
+                    nonlocal sequence
+                    async with rtp_send_lock:
+                        packet = rtp.build_packet(
+                            rtp.RtpPacket(
+                                payload_type=int(session.send_dtmf_payload_type),
+                                sequence=sequence,
+                                timestamp=event_timestamp,
+                                ssrc=ssrc,
+                                payload=build_telephone_event_payload(
+                                    digit,
+                                    duration=duration,
+                                    end=end,
+                                ),
+                                marker=marker,
+                            )
+                        )
+                        transport.sendto(packet, (remote_rtp_host, remote_rtp_port))
+                        sequence = rtp.next_sequence(sequence)
+                        rtp_source.sequence = sequence
+                    return True
+
+                await send_rtp_dtmf_event(
+                    digit,
+                    clock_rate=event_rate,
+                    duration_ms=duration_ms,
+                    emit=emit,
+                )
+
         async def playout() -> None:
             nonlocal sequence, timestamp, last_pcm, plc_active
             started = False
@@ -1060,22 +1171,23 @@ async def _run_audio_session(
                 ):
                     payload = rtp_encoder.encode(pcm)
                     if payload:
-                        packet = rtp.build_packet(
-                            rtp.RtpPacket(
-                                payload_type=session.send_format.payload_type,
-                                sequence=sequence,
-                                timestamp=timestamp,
-                                ssrc=ssrc,
-                                payload=payload,
+                        async with rtp_send_lock:
+                            packet = rtp.build_packet(
+                                rtp.RtpPacket(
+                                    payload_type=session.send_format.payload_type,
+                                    sequence=sequence,
+                                    timestamp=timestamp,
+                                    ssrc=ssrc,
+                                    payload=payload,
+                                )
                             )
-                        )
-                        transport.sendto(packet, (remote_rtp_host, remote_rtp_port))
+                            transport.sendto(packet, (remote_rtp_host, remote_rtp_port))
+                            sequence = rtp.next_sequence(sequence)
+                            rtp_source.sequence = sequence
                         if debug_capture is not None:
                             debug_capture.note_rtp_tx(loop.time())
                         counters["rtp_tx"] += 1
                         counters["rtp_tx_bytes"] += len(packet)
-                        sequence = rtp.next_sequence(sequence)
-                        rtp_source.sequence = sequence
                 else:
                     counter = (
                         "drop_connection_hold"
@@ -1099,6 +1211,26 @@ async def _run_audio_session(
         playout_task = asyncio.create_task(playout())
         try:
             async for msg in ws:
+                if msg.type == WSMsgType.TEXT:
+                    try:
+                        control = json.loads(str(msg.data))
+                        if control.get("type") != "dtmf":
+                            continue
+                        digit = str(control.get("digit") or "").strip().upper()
+                        if telephone_event_code(digit) is None:
+                            raise ValueError("unsupported DTMF digit")
+                        task = asyncio.create_task(
+                            send_dtmf(
+                                digit,
+                                int(control.get("duration_ms") or 160),
+                            ),
+                            name=f"voip-browser-dtmf-{session.call_id}-{digit}",
+                        )
+                        dtmf_tasks.add(task)
+                        task.add_done_callback(dtmf_tasks.discard)
+                    except (TypeError, ValueError, json.JSONDecodeError) as err:
+                        _LOGGER.debug("HA softphone DTMF control rejected: %s", err)
+                    continue
                 if msg.type != WSMsgType.BINARY:
                     if msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR):
                         break
@@ -1176,6 +1308,8 @@ async def _run_audio_session(
             active_sessions.pop(session.call_id, None)
         for task in (rx_task, browser_task, lifetime_task, update_task):
             task.cancel()
+        for task in tuple(dtmf_tasks):
+            task.cancel()
         transport.close()
         caller_cancelled = False
         try:
@@ -1185,6 +1319,7 @@ async def _run_audio_session(
                     browser_task,
                     lifetime_task,
                     update_task,
+                    *tuple(dtmf_tasks),
                     return_exceptions=True,
                 )
             )

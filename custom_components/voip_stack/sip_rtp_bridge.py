@@ -40,6 +40,60 @@ _DEBUG_CAPTURE_SECONDS = 8
 _RTP_IP_TOS = 0xB8
 _DTMF_UPDATE_SECONDS = 0.05
 
+
+def _normalized_audio_fmtp(fmt: RtpPcmFormat) -> tuple[tuple[str, str], ...]:
+    """Return the receiver constraints that affect compressed relay safety."""
+
+    if fmt.encoding.upper() != "OPUS":
+        return ()
+    values: dict[str, str] = {"stereo": "0", "sprop-stereo": "0"}
+    for raw in str(fmt.fmtp or "").split(";"):
+        key, separator, value = raw.strip().partition("=")
+        if not separator:
+            continue
+        normalized = key.strip().casefold()
+        if normalized in {
+            "stereo",
+            "sprop-stereo",
+            "maxaveragebitrate",
+            "maxplaybackrate",
+            "sprop-maxcapturerate",
+            "cbr",
+            "useinbandfec",
+            "usedtx",
+        }:
+            values[normalized] = value.strip().casefold()
+    return tuple(sorted(values.items()))
+
+
+def _audio_payload_relay_compatible(
+    incoming: RtpPcmFormat,
+    outgoing: RtpPcmFormat,
+) -> bool:
+    """Return whether compressed payload bytes may cross unchanged."""
+
+    return bool(
+        incoming.encoding.upper() == outgoing.encoding.upper()
+        and incoming.sample_rate == outgoing.sample_rate
+        and incoming.channels == outgoing.channels
+        and incoming.frame_ms == outgoing.frame_ms
+        and _normalized_audio_fmtp(incoming) == _normalized_audio_fmtp(outgoing)
+    )
+
+
+@dataclass(slots=True)
+class _PayloadRelayClock:
+    source_base: int | None = None
+    destination_base: int = 0
+
+    def map(self, source_timestamp: int, destination_timestamp: int) -> int:
+        if self.source_base is None:
+            self.source_base = int(source_timestamp)
+            self.destination_base = int(destination_timestamp)
+        return (
+            self.destination_base + (int(source_timestamp) - self.source_base)
+        ) & 0xFFFFFFFF
+
 @dataclass(slots=True)
 class RtpPeer:
     host: str
@@ -153,6 +207,7 @@ class SipRtpRelay:
         right: RtpPeer,
         left_port: int,
         right_port: int,
+        debug: bool = False,
         debug_capture: bool = False,
         capture_name: str = "",
         on_release: Callable[[tuple[int, int]], None] | None = None,
@@ -163,6 +218,8 @@ class SipRtpRelay:
         self.right = right
         self.left_port = int(left_port)
         self.right_port = int(right_port)
+        self.debug = bool(debug)
+        self.debug_capture = bool(debug_capture)
         self.left_transport: asyncio.DatagramTransport | None = None
         self.right_transport: asyncio.DatagramTransport | None = None
         self._on_release = on_release
@@ -199,17 +256,52 @@ class SipRtpRelay:
         if debug_capture:
             self._prepare_debug_capture(capture_name)
 
-    @staticmethod
-    def _build_media_state(left: RtpPeer, right: RtpPeer) -> dict[str, Any]:
+    @property
+    def media_route(self) -> str:
+        """Describe the active audio processing, including capture conversion."""
+        video_transcoding = self.video_relay is not None and self.video_relay.transcoding
+        return "direct" if self.left_to_right_passthrough and self.right_to_left_passthrough and not video_transcoding else "ha_transcoding"
+
+    def _build_media_state(self, left: RtpPeer, right: RtpPeer) -> dict[str, Any]:
         """Prepare converters without changing the live relay."""
 
+        left_to_right_passthrough = bool(
+            not self.debug_capture
+            and _audio_payload_relay_compatible(
+                left.inbound_rtp_format,
+                right.outbound_rtp_format,
+            )
+        )
+        right_to_left_passthrough = bool(
+            not self.debug_capture
+            and _audio_payload_relay_compatible(
+                right.inbound_rtp_format,
+                left.outbound_rtp_format,
+            )
+        )
         return {
-            "left_to_right": PcmFrameConverter(left.audio_format, right.outbound_audio_format),
-            "right_to_left": PcmFrameConverter(right.audio_format, left.outbound_audio_format),
-            "left_decoder": RtpPayloadDecoder(left.inbound_rtp_format),
-            "right_decoder": RtpPayloadDecoder(right.inbound_rtp_format),
-            "left_encoder": RtpPayloadEncoder(left.outbound_rtp_format),
-            "right_encoder": RtpPayloadEncoder(right.outbound_rtp_format),
+            "left_to_right_passthrough": left_to_right_passthrough,
+            "right_to_left_passthrough": right_to_left_passthrough,
+            "left_to_right_clock": _PayloadRelayClock(),
+            "right_to_left_clock": _PayloadRelayClock(),
+            "left_to_right": None
+            if left_to_right_passthrough
+            else PcmFrameConverter(left.audio_format, right.outbound_audio_format),
+            "right_to_left": None
+            if right_to_left_passthrough
+            else PcmFrameConverter(right.audio_format, left.outbound_audio_format),
+            "left_decoder": None
+            if left_to_right_passthrough
+            else RtpPayloadDecoder(left.inbound_rtp_format),
+            "right_decoder": None
+            if right_to_left_passthrough
+            else RtpPayloadDecoder(right.inbound_rtp_format),
+            "left_encoder": None
+            if right_to_left_passthrough
+            else RtpPayloadEncoder(left.outbound_rtp_format),
+            "right_encoder": None
+            if left_to_right_passthrough
+            else RtpPayloadEncoder(right.outbound_rtp_format),
             "dtmf_decoders": {
                 "left": RtpDtmfDecoder(left.dtmf_payload_type)
                 if left.dtmf_payload_type is not None
@@ -246,6 +338,10 @@ class SipRtpRelay:
 
         self.left = left
         self.right = right
+        self.left_to_right_passthrough = state["left_to_right_passthrough"]
+        self.right_to_left_passthrough = state["right_to_left_passthrough"]
+        self.left_to_right_clock = state["left_to_right_clock"]
+        self.right_to_left_clock = state["right_to_left_clock"]
         self.left_to_right = state["left_to_right"]
         self.right_to_left = state["right_to_left"]
         self.left_decoder = state["left_decoder"]
@@ -878,42 +974,92 @@ class SipRtpRelay:
                 raise ValueError(f"payload type {packet.payload_type} != expected {source.payload_type}")
             if source.rx_ssrc is not None and packet.ssrc != source.rx_ssrc:
                 raise ValueError(f"SSRC {packet.ssrc} != latched {source.rx_ssrc}")
-            decoder = self.left_decoder if side == "left" else self.right_decoder
-            pcm = decoder.decode(packet.payload)
-            if not pcm:
-                return
-            if source.rx_ssrc is None:
-                source.rx_ssrc = packet.ssrc
-                source.host = str(addr[0])
-                source.port = int(addr[1])
-            elif (str(addr[0]), int(addr[1])) != (source.host, int(source.port)):
-                # Symmetric RTP: follow a valid same-SSRC NAT tuple rebind.
-                source.host = str(addr[0])
-                source.port = int(addr[1])
-            self._capture_pcm(side, pcm)
-            converter = self.left_to_right if side == "left" else self.right_to_left
-            converted_frames = converter.convert(pcm)
-            encoder = self.right_encoder if side == "left" else self.left_encoder
-            outgoing: list[bytes] = []
-            sequence = dest.sequence
-            timestamp = dest.timestamp
-            for frame in converted_frames:
-                outgoing.append(
+            passthrough = (
+                self.left_to_right_passthrough
+                if side == "left"
+                else self.right_to_left_passthrough
+            )
+            if passthrough:
+                rtp.validate_audio_payload_size(
+                    packet.payload,
+                    source.inbound_rtp_format,
+                )
+                if source.rx_ssrc is None:
+                    source.rx_ssrc = packet.ssrc
+                    source.host = str(addr[0])
+                    source.port = int(addr[1])
+                elif (str(addr[0]), int(addr[1])) != (
+                    source.host,
+                    int(source.port),
+                ):
+                    source.host = str(addr[0])
+                    source.port = int(addr[1])
+                clock = (
+                    self.left_to_right_clock
+                    if side == "left"
+                    else self.right_to_left_clock
+                )
+                outgoing_timestamp = clock.map(packet.timestamp, dest.timestamp)
+                outgoing = [
                     rtp.build_packet(
                         rtp.RtpPacket(
                             payload_type=dest.outbound_payload_type,
-                            sequence=sequence,
-                            timestamp=timestamp,
+                            sequence=dest.sequence,
+                            timestamp=outgoing_timestamp,
                             ssrc=dest.ssrc,
-                            payload=encoder.encode(frame),
+                            payload=packet.payload,
+                            marker=packet.marker,
                         )
                     )
-                )
-                sequence = rtp.next_sequence(sequence)
+                ]
+                sequence = rtp.next_sequence(dest.sequence)
                 timestamp = rtp.next_timestamp(
-                    timestamp,
+                    outgoing_timestamp,
                     dest.outbound_rtp_format.rtp_timestamp_step,
                 )
+            else:
+                decoder = self.left_decoder if side == "left" else self.right_decoder
+                if decoder is None:
+                    raise RuntimeError("RTP decoder missing for transcoding path")
+                pcm = decoder.decode(packet.payload)
+                if not pcm:
+                    return
+                if source.rx_ssrc is None:
+                    source.rx_ssrc = packet.ssrc
+                    source.host = str(addr[0])
+                    source.port = int(addr[1])
+                elif (str(addr[0]), int(addr[1])) != (source.host, int(source.port)):
+                    # Symmetric RTP: follow a valid same-SSRC NAT tuple rebind.
+                    source.host = str(addr[0])
+                    source.port = int(addr[1])
+                self._capture_pcm(side, pcm)
+                converter = self.left_to_right if side == "left" else self.right_to_left
+                if converter is None:
+                    raise RuntimeError("PCM converter missing for transcoding path")
+                converted_frames = converter.convert(pcm)
+                encoder = self.right_encoder if side == "left" else self.left_encoder
+                if encoder is None:
+                    raise RuntimeError("RTP encoder missing for transcoding path")
+                outgoing = []
+                sequence = dest.sequence
+                timestamp = dest.timestamp
+                for frame in converted_frames:
+                    outgoing.append(
+                        rtp.build_packet(
+                            rtp.RtpPacket(
+                                payload_type=dest.outbound_payload_type,
+                                sequence=sequence,
+                                timestamp=timestamp,
+                                ssrc=dest.ssrc,
+                                payload=encoder.encode(frame),
+                            )
+                        )
+                    )
+                    sequence = rtp.next_sequence(sequence)
+                    timestamp = rtp.next_timestamp(
+                        timestamp,
+                        dest.outbound_rtp_format.rtp_timestamp_step,
+                    )
         except Exception as err:
             self.dropped += 1
             _LOGGER.debug("RTP relay drop: %s", err)
@@ -958,9 +1104,38 @@ class SipRtpRelay:
             "right_direction": self._peer_direction(self.right),
             "left_connection_held": self.left.connection_held,
             "right_connection_held": self.right.connection_held,
+            "left_to_right_audio_path": (
+                "payload_relay" if self.left_to_right_passthrough else "transcode"
+            ),
+            "right_to_left_audio_path": (
+                "payload_relay" if self.right_to_left_passthrough else "transcode"
+            ),
         }
         if self.video_relay is not None:
             snapshot["video"] = self.video_relay.snapshot()
+        if self.debug:
+            needed = []
+            for source_name, source, destination in (
+                ("left_to_right", self.left, self.right),
+                ("right_to_left", self.right, self.left),
+            ):
+                passthrough = (
+                    self.left_to_right_passthrough
+                    if source_name == "left_to_right"
+                    else self.right_to_left_passthrough
+                )
+                if not passthrough:
+                    incoming = source.inbound_rtp_format
+                    outgoing = destination.outbound_rtp_format
+                    needed.append(
+                        f"{source_name}: {incoming.encoding.upper()}/"
+                        f"{incoming.sample_rate}/{incoming.channels}/"
+                        f"{incoming.frame_ms} -> {outgoing.encoding.upper()}/"
+                        f"{outgoing.sample_rate}/{outgoing.channels}/"
+                        f"{outgoing.frame_ms}"
+                    )
+            if needed:
+                snapshot["audio_transcoding"] = needed
         return snapshot
 
     @staticmethod

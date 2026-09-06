@@ -371,6 +371,8 @@ class SipCallClient:
         supported_formats: list[AudioFormat] | None = None,
         supported_send_formats: list[AudioFormat] | None = None,
         supported_recv_formats: list[AudioFormat] | None = None,
+        supported_send_rtp_formats: tuple[sdp.RtpPcmFormat, ...] | None = None,
+        supported_recv_rtp_formats: tuple[sdp.RtpPcmFormat, ...] | None = None,
         signaling_transport: str = "UDP",
         auth_username: str = "",
         username: str = "",
@@ -415,6 +417,16 @@ class SipCallClient:
             list(base_formats)
             if supported_recv_formats is None
             else list(supported_recv_formats)
+        )
+        self.supported_send_rtp_formats = (
+            tuple(supported_send_rtp_formats)
+            if supported_send_rtp_formats is not None
+            else None
+        )
+        self.supported_recv_rtp_formats = (
+            tuple(supported_recv_rtp_formats)
+            if supported_recv_rtp_formats is not None
+            else None
         )
         self.signaling_transport = (signaling_transport or "UDP").upper()
         self.auth_username = auth_username
@@ -1867,6 +1879,8 @@ class SipCallClient:
                 self.supported_recv_formats,
                 include_common_codecs=self.include_common_codecs,
                 include_dahua_pcm=self.include_dahua_pcm,
+                send_rtp_formats=self.supported_send_rtp_formats,
+                recv_rtp_formats=self.supported_recv_rtp_formats,
                 allow_directional_payloads=self.allow_directional_audio_payloads,
                 video_port=self.local_video_rtp_port,
                 video_format=self.video_format,
@@ -3362,6 +3376,23 @@ class SipCallClient:
                 )
                 if not current_audio_formats:
                     return None
+                current_send_rtp_formats = None
+                current_recv_rtp_formats = None
+                current_common_rtp_formats = current_audio_formats
+                if self.allow_directional_audio_payloads:
+                    flows = sdp.audio_flow_attributes(current.local_sdp_body)
+                    if flows:
+                        current_send_rtp_formats = tuple(
+                            item
+                            for item in current_audio_formats
+                            if flows.get(item.payload_type) in {"send", "sendrecv"}
+                        )
+                        current_recv_rtp_formats = tuple(
+                            item
+                            for item in current_audio_formats
+                            if flows.get(item.payload_type) in {"recv", "sendrecv"}
+                        )
+                        current_common_rtp_formats = None
                 offer = sdp.build_offer_directional(
                     self.local_ip,
                     self.local_ip,
@@ -3379,7 +3410,10 @@ class SipCallClient:
                     # Opus back through their decoded PCM shape would turn
                     # them into L16 and can make a standards-compliant peer
                     # reject an otherwise valid video-only session update.
-                    audio_rtp_formats=current_audio_formats,
+                    audio_rtp_formats=current_common_rtp_formats,
+                    send_rtp_formats=current_send_rtp_formats,
+                    recv_rtp_formats=current_recv_rtp_formats,
+                    allow_directional_payloads=self.allow_directional_audio_payloads,
                 )
                 offer = sdp.rewrite_sdp_origin(
                     offer, session_id, session_version

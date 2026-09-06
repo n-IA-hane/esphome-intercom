@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -23,7 +23,64 @@ def _runtime(monkeypatch):
         "require_runtime_data",
         lambda _hass: SimpleNamespace(sip=runtime, endpoints=endpoints),
     )
+    monkeypatch.setattr(call_projection, "runtime_data", call_projection.require_runtime_data)
     return runtime
+
+
+@pytest.mark.asyncio
+async def test_media_route_targets_each_physical_sip_leg_once(monkeypatch):
+    from custom_components.voip_stack import device_resolver, esphome_actions
+    runtime = SipEndpointRuntime()
+    runtime.activate()
+    data = SimpleNamespace(sip=runtime, endpoints=SimpleNamespace(
+        get=lambda endpoint_id: SimpleNamespace(device_id=f"device-{endpoint_id}")))
+    monkeypatch.setattr(call_projection, "require_runtime_data", lambda _hass: data)
+    monkeypatch.setattr(call_projection, "runtime_data", lambda _hass: data)
+    devices = [{"device_id": f"device-{name}"} for name in ("p4", "ws3")]
+    monkeypatch.setattr(device_resolver, "get_resolver", lambda _hass: SimpleNamespace(
+        list_devices=AsyncMock(return_value=devices)))
+    sink = AsyncMock()
+    monkeypatch.setattr(esphome_actions, "async_call_action", sink)
+    monkeypatch.setattr(esphome_actions, "has_action", lambda *_args: True)
+    session = runtime.upsert("source-call", state="in_call",
+                             source_endpoint_id="p4", dest_endpoint_id="ws3",
+                             bridge_dest_call_id="dest-call")
+    session.add_resource("relay:source-call", SimpleNamespace(media_route="ha_transcoding"),
+                         lambda _reason: None)
+    call_projection.publish_esp_media_route(object(), "source-call", "direct")
+    await asyncio.gather(*tuple(session.tasks))
+    assert { (call.args[1]["device_id"], call.args[3]["call_id"], call.args[3]["route"])
+             for call in sink.call_args_list } == {
+        ("device-p4", "source-call", "ha_transcoding"),
+        ("device-ws3", "dest-call", "ha_transcoding"),
+    }
+    call_projection.publish_esp_media_route(object(), "source-call", "direct")
+    await asyncio.gather(*tuple(session.tasks))
+    assert sink.await_count == 2
+    await session.terminate(TerminationIntent("local_hangup"))
+
+
+@pytest.mark.asyncio
+async def test_media_route_cannot_outlive_its_call_generation(monkeypatch):
+    from custom_components.voip_stack import device_resolver, esphome_actions
+    runtime = _runtime(monkeypatch)
+    lookup_started = asyncio.Event()
+    lookup_finish = asyncio.Event()
+    async def devices():
+        lookup_started.set()
+        await lookup_finish.wait()
+        return [{"device_id": "dev-1"}]
+    monkeypatch.setattr(device_resolver, "get_resolver", lambda _hass: SimpleNamespace(list_devices=devices))
+    sink = AsyncMock()
+    monkeypatch.setattr(esphome_actions, "async_call_action", sink)
+    monkeypatch.setattr(esphome_actions, "has_action", lambda *_args: True)
+    session = runtime.upsert("source-call", state="in_call", source_endpoint_id="p4")
+    call_projection.publish_esp_media_route(object(), "source-call", "ha_transcoding")
+    await lookup_started.wait()
+    await session.terminate(TerminationIntent("local_hangup"))
+    lookup_finish.set()
+    sink.assert_not_awaited()
+    assert not session.tasks
 
 
 def test_phone_projection_derives_authoritative_identity(monkeypatch) -> None:

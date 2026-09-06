@@ -22,6 +22,92 @@ PROCESSOR = (
     / "voip-stack-processor.js"
 )
 
+PLAYBACK_PROCESSOR = (
+    Path(__file__).resolve().parents[1]
+    / "custom_components"
+    / "voip_stack"
+    / "frontend"
+    / "voip-stack-playback-processor.js"
+)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_playback_distinguishes_packet_loss_from_remote_silence() -> None:
+    script = rf'''
+import fs from "fs";
+import vm from "vm";
+import assert from "assert/strict";
+
+let Processor;
+let now = 1;
+class MockAudioWorkletProcessor {{
+  constructor() {{
+    this.messages = [];
+    this.port = {{
+      postMessage: (message) => this.messages.push(message),
+      onmessage: null,
+    }};
+  }}
+}}
+const context = vm.createContext({{
+  AudioWorkletProcessor: MockAudioWorkletProcessor,
+  sampleRate: 48000,
+  registerProcessor(_name, value) {{ Processor = value; }},
+  ArrayBuffer,
+  DataView,
+  Float32Array,
+  Math,
+  Number,
+  Object,
+  Error,
+}});
+Object.defineProperty(context, "currentTime", {{ get: () => now }});
+vm.runInContext(fs.readFileSync({json.dumps(str(PLAYBACK_PROCESSOR))}, "utf8"), context);
+
+function audioFrame() {{
+  return new ArrayBuffer(320);
+}}
+function drain(processor) {{
+  const output = [[new Float32Array(128)]];
+  while (processor._started) {{
+    processor.process([], output);
+    now += 128 / 48000;
+  }}
+  assert.equal(processor._starvationPending, true);
+}}
+function fillToStart(processor) {{
+  while (!processor._started) {{
+    processor.port.onmessage({{data: {{type: "audio", buffer: audioFrame()}}}});
+    now += 0.01;
+  }}
+}}
+
+const loss = new Processor({{processorOptions: {{format: {{sampleRate: 16000, frameMs: 10, channels: 1, pcmFormat: "s16le"}}}}}});
+fillToStart(loss);
+drain(loss);
+const lossTarget = loss._targetStartFrames;
+loss.port.onmessage({{data: {{type: "audio", buffer: audioFrame()}}}});
+assert.equal(loss._underruns, 1);
+assert.equal(loss._targetStartFrames, lossTarget + 2);
+
+const silence = new Processor({{processorOptions: {{format: {{sampleRate: 16000, frameMs: 10, channels: 1, pcmFormat: "s16le"}}}}}});
+fillToStart(silence);
+drain(silence);
+const silenceTarget = silence._targetStartFrames;
+silence.port.onmessage({{data: {{type: "remote_silence_resume"}}}});
+silence.port.onmessage({{data: {{type: "audio", buffer: audioFrame()}}}});
+assert.equal(silence._underruns, 0);
+assert.equal(silence._targetStartFrames, silenceTarget);
+assert.equal(silence._hasPreviousInput, true);
+'''
+    subprocess.run(
+        ["node", "--experimental-vm-modules", "--input-type=module", "-"],
+        input=script,
+        text=True,
+        check=True,
+        capture_output=True,
+    )
+
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
 def test_microphone_anti_alias_filter_is_effective_and_optional() -> None:

@@ -32,6 +32,7 @@ def main() -> int:
     args = parser.parse_args()
     with socket.create_server((args.bind, args.port), reuse_port=False) as server:
         server.settimeout(30)
+        print("Framebuffer receiver ready", flush=True)
         connection, _ = server.accept()
         with connection:
             header = bytearray()

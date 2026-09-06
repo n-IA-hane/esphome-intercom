@@ -28,10 +28,9 @@ from .const import (
 )
 from .endpoint_lifecycle import call_registry as _call_registry
 from .endpoint_routing import (
-    peer_audio_formats as _peer_audio_formats,
     peer_for_target as _peer_for_target,
     roster_from_peers as _roster_from_peers,
-    sip_target_audio_profile as _sip_target_audio_profile,
+    sip_target_rtp_audio_profile as _sip_target_rtp_audio_profile,
 )
 from .fsm import TerminalReason
 from .inbound_routing.automation import (
@@ -113,10 +112,12 @@ async def route_invite(
     if caller_peer is not None and str(caller_peer.host) != str(invite.source_host):
         caller_peer = None
     if caller_peer is not None:
-        send_candidates, recv_candidates = _sip_target_audio_profile(
-            remote_tx_formats=_peer_audio_formats(caller_peer, "tx_formats"),
-            remote_rx_formats=_peer_audio_formats(caller_peer, "rx_formats"),
-            target=caller_peer.name,
+        caller_profile = _sip_target_rtp_audio_profile(caller_peer, None)
+        send_candidates = (
+            list(caller_profile.send_formats) if caller_profile is not None else []
+        )
+        recv_candidates = (
+            list(caller_profile.recv_formats) if caller_profile is not None else []
         )
         selected = sip_sdp.negotiate_directional(
             invite.remote_sdp,

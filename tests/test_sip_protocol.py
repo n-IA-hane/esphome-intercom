@@ -32,6 +32,14 @@ from .voip_phase1_support import (
 
 
 class SipProtocolBugFixTest(unittest.TestCase):
+    def test_uri_default_port_follows_sip_scheme(self) -> None:
+        self.assertEqual(sip.sip_default_port(sip.parse_sip_uri("sip:peer@example.test")), 5060)
+        self.assertEqual(sip.sip_default_port(sip.parse_sip_uri("sips:peer@example.test")), 5061)
+        self.assertEqual(
+            sip.sip_default_port(sip.parse_sip_uri("sip:peer@example.test:15060")),
+            15060,
+        )
+
     def test_dialog_headers_can_separate_via_flow_from_contact(self) -> None:
         ids = sip.SipDialogIds("register", "local", branch="z9hG4bKflow")
         headers = sip.dialog_headers(
@@ -2611,6 +2619,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_local_video_reinvite_preserves_full_audio_payload_space(self) -> None:
         client, current, sent, negotiated = self._confirmed_audio_client()
+        client.allow_directional_audio_payloads = True
         wideband = sdp.RtpPcmFormat(96, "L16", 48000, 1, 10)
         narrowband = sdp.RtpPcmFormat(98, "L16", 16000, 1, 10)
         current.local_sdp_body = sdp.build_offer_directional(
@@ -2619,7 +2628,9 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
             41000,
             [wideband.audio_format],
             [narrowband.audio_format],
-            audio_rtp_formats=(wideband, narrowband),
+            send_rtp_formats=(wideband,),
+            recv_rtp_formats=(narrowband,),
+            allow_directional_payloads=True,
         )
         current.send_format = wideband
         current.recv_format = wideband
@@ -2635,6 +2646,10 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [(item.payload_type, item.sample_rate) for item in offered],
             [(96, 48000), (98, 16000)],
+        )
+        self.assertEqual(
+            sdp.audio_flow_attributes(request.body),
+            {98: "recv", 96: "send"},
         )
         client.queue.put_nowait(
             (

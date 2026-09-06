@@ -29,6 +29,7 @@ class _Registry:
 
 
 class _Relay:
+    media_route = "direct"
     def __init__(self, right: object) -> None:
         self.right = right
         self.video_relay = None
@@ -192,6 +193,9 @@ def bridge_media_updates(monkeypatch):
             self.answer_video_rtp_port = answer_video_rtp_port
 
     dependencies = {
+        "call_projection": {
+            "publish_esp_media_route": lambda *_args: None,
+        },
         "endpoint_lifecycle": {
             "call_registry": lambda hass: hass.registry,
         },

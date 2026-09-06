@@ -27,6 +27,15 @@ text_sensor:
     id: voip_state
     name: VoIP State
 
+  # Uses the existing call lifecycle. Empty while idle or awaiting HA's
+  # committed media decision, otherwise direct or ha_transcoding.
+  # Attach on_value with !extend voip_media_route to update a display label
+  # directly from x; no extra in_call sensor or mirrored global is needed.
+  - platform: voip_stack
+    type: media_route
+    id: voip_media_route
+    name: VoIP Media Route
+
   - platform: voip_stack
     type: caller
     id: voip_caller

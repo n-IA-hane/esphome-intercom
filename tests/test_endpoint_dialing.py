@@ -13,10 +13,64 @@ ha_exceptions.ConfigEntryError = getattr(
 )
 
 from custom_components.voip_stack import endpoint_dialing  # noqa: E402
+from custom_components.voip_stack import endpoint_routing  # noqa: E402
 from custom_components.voip_stack.peer import Peer  # noqa: E402
 
 
 pytestmark = pytest.mark.ha
+
+
+def test_directional_rtp_profile_never_reuses_payload_for_different_formats() -> None:
+    peer = Peer(
+        name="Spotpear",
+        host="192.0.2.31",
+        sip_audio_tx_formats=("OPUS/48000/2/10", "L16/16000/1/10"),
+        sip_audio_rx_formats=(
+            "OPUS/48000/2/10",
+            "L16/48000/1/10",
+            "L16/16000/1/10",
+        ),
+        sdp_features=frozenset({"directional_audio_v1"}),
+    )
+    profile = endpoint_routing.sip_target_rtp_audio_profile(peer, None)
+    assert profile is not None
+    formats = (*profile.send_rtp_formats, *profile.recv_rtp_formats)
+    by_payload: dict[int, tuple[str, int, int, int]] = {}
+    for item in formats:
+        wire = (item.encoding, item.sample_rate, item.channels, item.frame_ms)
+        assert by_payload.setdefault(item.payload_type, wire) == wire
+
+
+def test_esphome_opus_profile_prefers_20ms_and_keeps_10ms_fallback() -> None:
+    peer = Peer(
+        name="Spotpear",
+        host="192.0.2.31",
+        sip_audio_tx_formats=(
+            "OPUS/48000/2/20",
+            "OPUS/48000/2/10",
+            "L16/16000/1/10",
+        ),
+        sip_audio_rx_formats=(
+            "OPUS/48000/2/20",
+            "OPUS/48000/2/10",
+            "L16/48000/1/10",
+        ),
+        sdp_features=frozenset({"directional_audio_v1"}),
+    )
+
+    profile = endpoint_routing.sip_target_rtp_audio_profile(peer, None)
+
+    assert profile is not None
+    assert [fmt.wire_token() for fmt in profile.send_rtp_formats] == [
+        "pt=98:OPUS/48000/2/20ms",
+        "pt=96:OPUS/48000/2/10ms",
+        "pt=99:L16/48000/1/10ms",
+    ]
+    assert [fmt.wire_token() for fmt in profile.recv_rtp_formats] == [
+        "pt=98:OPUS/48000/2/20ms",
+        "pt=96:OPUS/48000/2/10ms",
+        "pt=97:L16/16000/1/10ms",
+    ]
 
 
 def test_esphome_extension_is_the_authoritative_request_uri_user(
@@ -177,6 +231,7 @@ def test_directional_audio_extension_is_limited_to_esphome_peers(
         sip_uri_user="phone",
         tx_formats=["16000:s16le:1:10"],
         rx_formats=["48000:s16le:1:10"],
+        sdp_features=frozenset({"directional_audio_v1"}) if expected else frozenset(),
     )
 
     leg = dialer.prepare_outbound_leg(

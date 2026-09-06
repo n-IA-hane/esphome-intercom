@@ -37,6 +37,8 @@ from .endpoint_routing import (
     device_formats as _device_formats,
     roster_entry_formats as _roster_entry_formats,
     sip_target_audio_profile as _sip_target_audio_profile,
+    sip_target_rtp_audio_profile as _sip_target_rtp_audio_profile,
+    supports_directional_audio_payloads as _supports_directional_audio_payloads,
 )
 from .esphome_actions import async_resolve_target_device as _resolve_target_device
 from .fsm import (
@@ -180,7 +182,7 @@ async def async_originate_browser_call(
 ) -> None:
     """Originate a standards SIP call from one Home Assistant browser phone."""
     from .roster import parse_roster_json
-    from .core.sip import parse_sip_uri
+    from .core.sip import parse_sip_uri, sip_default_port
     from .sip_client import SIP_TIMER_B, SipCallClient
 
     hass: HomeAssistant = call.hass
@@ -453,9 +455,18 @@ async def async_originate_browser_call(
         remote_rx_formats=remote_rx_formats,
         target=target,
     )
+    rtp_audio_profile = _sip_target_rtp_audio_profile(
+        None,
+        route.entry,
+        dest_device,
+    )
     if use_trunk or use_registered_contact_codecs:
         sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
         sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
+        rtp_audio_profile = None
+    elif rtp_audio_profile is not None:
+        sip_send_formats = list(rtp_audio_profile.send_formats)
+        sip_recv_formats = list(rtp_audio_profile.recv_formats)
     entry_metadata = dict(route.entry.metadata or {}) if route.entry is not None else {}
     target_device_id = str(
         getattr(target_endpoint, "device_id", "")
@@ -571,6 +582,16 @@ async def async_originate_browser_call(
         local_rtp_port=local_rtp_port,
         supported_send_formats=sip_send_formats,
         supported_recv_formats=sip_recv_formats,
+        supported_send_rtp_formats=(
+            rtp_audio_profile.send_rtp_formats
+            if rtp_audio_profile is not None
+            else None
+        ),
+        supported_recv_rtp_formats=(
+            rtp_audio_profile.recv_rtp_formats
+            if rtp_audio_profile is not None
+            else None
+        ),
         signaling_transport=_sip_uri_transport(uri),
         auth_username=str(trunk_cfg.get(CONF_TRUNK_AUTH_USERNAME) or ""),
         username=str(trunk_cfg.get(CONF_TRUNK_USERNAME) or ""),
@@ -581,7 +602,14 @@ async def async_originate_browser_call(
         include_common_codecs=use_trunk
         or use_registered_contact_codecs
         or video_enabled,
-        allow_directional_audio_payloads=esphome_sip_endpoint,
+        allow_directional_audio_payloads=_supports_directional_audio_payloads(
+            None,
+            route.entry,
+        )
+        or bool(
+            rtp_audio_profile is not None
+            and "directional_audio_v1" in rtp_audio_profile.sdp_features
+        ),
         peer_user_agent=(
             str(entry_metadata.get("user_agent") or "")
             if use_registered_contact_codecs
@@ -799,7 +827,7 @@ async def async_originate_browser_call(
             target=uri.user,
             target_display_name=display_target,
             remote_host=uri.host,
-            remote_sip_port=uri.port or int(cfg["sip_port"]),
+            remote_sip_port=sip_default_port(uri),
             request_uri=str(uri),
             timeout=SIP_TIMER_B if use_trunk else 8.0,
         )

@@ -51,5 +51,5 @@ script:
           id: g_ota_in_progress
           value: "false"
       - esp_audio_stack.start: audio_stack
-      - voip_stack.start:
+      # The SIP listener remains available. Do not dial after an OTA failure.
       - script.execute: start_mww_when_ready

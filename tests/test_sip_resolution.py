@@ -109,8 +109,10 @@ async def test_system_resolver_configuration_runs_off_event_loop_once(
 
     offloaded: list[str] = []
 
-    async def offload(factory):
+    async def offload(factory, *args):
         offloaded.append(factory.__name__)
+        if factory is sip_resolution.importlib.import_module:
+            return sys.modules[args[0]]
         if factory is not Resolver:
             return None
         resolver = factory()
@@ -132,7 +134,7 @@ async def test_system_resolver_configuration_runs_off_event_loop_once(
 
     assert first == second == ((), 30.0)
     assert len(constructed) == 1
-    assert offloaded == ["<lambda>", "Resolver"]
+    assert offloaded == ["import_module", "<lambda>", "Resolver"]
     assert queries == [
         ("pbx.example", "SRV", False),
         ("pbx.example", "SRV", False),

@@ -1258,6 +1258,9 @@ class VoipStackEngine extends EventTarget {
           void this._reconcileAudioMedia(msg);
         }
         if (msg.state) this._setState(String(msg.state).toUpperCase());
+        if (msg.type === "remote_silence_resume") {
+          this._playbackNode?.port.postMessage({ type: "remote_silence_resume" });
+        }
         if (msg.error) this.dispatchEvent(new CustomEvent("error", { detail: msg.error }));
         this._resolveControlWaiter(msg);
       } catch (_) {}
@@ -1697,6 +1700,20 @@ class VoipStackEngine extends EventTarget {
 
   get mediaClientId() {
     return this._mediaClientId;
+  }
+
+  sendDtmf(digit, durationMs = 160) {
+    const value = String(digit || "").trim().toUpperCase();
+    if (!/^[0-9*#A-D]$/.test(value)) return false;
+    if (!this._ws || this._ws.readyState !== WebSocket.OPEN || !this._callId) {
+      return false;
+    }
+    this._sendControl({
+      type: "dtmf",
+      digit: value,
+      duration_ms: Math.max(40, Math.min(5000, Number(durationMs) || 160)),
+    });
+    return true;
   }
 
   async resumeSession(deviceInfo, sessionDeviceId, statePayload) {
