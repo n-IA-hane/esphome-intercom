@@ -65,7 +65,9 @@ void AudioStackCapture::raw_callback_(void *ctx, uint32_t kind, const uint8_t *d
 
 void AudioStackCapture::mic_callback_(void *ctx, const uint8_t *data, size_t bytes) {
   auto *self = static_cast<AudioStackCapture *>(ctx);
-  const uint16_t channels = self->stack_->get_num_channels();
+  // Mic callbacks carry post-processor mono PCM, independently of the TX
+  // bus slots. This is the same contract as ESPAudioStackMicrophone.
+  constexpr uint16_t channels = 1;
   self->record_(2, data, bytes, self->stack_->get_output_sample_rate(), channels, 16,
                 bytes / (channels * sizeof(int16_t)), esp_timer_get_time());
 }

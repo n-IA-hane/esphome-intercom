@@ -49,3 +49,12 @@ def test_missing_footer_is_not_a_successful_capture(tmp_path):
 def test_observer_overflow_invalidates_audio_qualification(tmp_path):
     with pytest.raises(ValueError, match="overflowed"):
         capture.receive_capture(FragmentedSocket(fixture(dropped=1)), tmp_path)
+
+
+def test_complete_footer_without_audio_is_not_a_successful_capture(tmp_path):
+    # Real failing Spotpear witness: a healthy capture connection with no
+    # microphone or speaker records because I2S never started.
+    stats = capture.STATS.pack(0, 0, 0, 0)
+    packet = b"ASTCAP1\n" + capture.HEADER.pack(0, 0, 0, 0, 0, 0, len(stats), 1000) + stats
+    with pytest.raises(ValueError, match="no audio or playback records"):
+        capture.receive_capture(FragmentedSocket(packet), tmp_path)

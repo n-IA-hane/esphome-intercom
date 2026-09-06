@@ -78,6 +78,8 @@ def receive_capture(connection, output: Path) -> dict:
                     raise ValueError("PCM format changed during one diagnostic capture")
                 writers[kind].writeframesraw(payload)
         report["finished_epoch"] = time.time()
+        if report["records"] == 0:
+            raise ValueError("audio capture contains no audio or playback records")
         if not report["valid"]:
             raise ValueError("diagnostic capture overflowed or had multiple producers")
         return report

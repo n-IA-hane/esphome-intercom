@@ -308,6 +308,9 @@ light:
 
 esp_audio_stack:
   id: audio_stack
+  # Application PCM scratch can use PSRAM. I2S DMA and the Audio Stack task
+  # remain internal, preserving enough internal memory at call startup.
+  buffers_in_psram: true
   i2s_lrclk_pin: ${i2s_lrclk_pin}
   i2s_bclk_pin: ${i2s_bclk_pin}
   i2s_mclk_pin: ${i2s_mclk_pin}
@@ -419,6 +422,11 @@ media_player:
 
 voip_stack:
   task_stacks_in_psram: true
+  # The two 12 KiB VoIP worker stacks and retained SIP messages must not
+  # consume the internal RAM needed by both I2S DMA channels. Audio Stack's
+  # own task, DMA geometry and realtime scheduling remain internal/unchanged.
+  audio_task_stacks_in_psram: true
+  signaling_buffers_in_psram: true
   buffers_in_psram: true
   id: phone
   # Optional local dial-plan alias published to HA. Keep it unique across your
