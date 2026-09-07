@@ -23,11 +23,6 @@ Each new dialog also resets temporary card surfaces. An Options or keypad view
 left open by the previous call can no longer hide Answer and Decline on the
 next incoming call.
 
-The same operation is available as the `voip_stack.send_dtmf` Home Assistant
-action. ESP phones advertise DTMF only when their firmware contains the new
-RFC 4733 implementation, so audio-only firmware does not gain a fictional
-capability.
-
 <p align="center">
   <img src="https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/dev/docs/images/ha-softphone-in-call-keypad-2026-9-1.jpg" width="420" alt="In-call DTMF keypad in the Home Assistant phone"/>
 </p>
@@ -36,6 +31,26 @@ The keypad replaces the normal call view only while it is needed. `Hangup`
 remains available, `Contacts` returns to destination selection, and remote or
 local hangup restores the ordinary terminal screen. It is a telephone keypad,
 not a modal dungeon with no exit.
+
+## Clearer controls and more reliable audio
+
+During a video call, the keypad is now a small icon beside Options. Both
+controls sit together without covering the call timer. The keypad remains
+available for automated menus, and Hangup stays accessible.
+
+Spotpear VoIP-only now uses the same round-screen dialer as the Full profile.
+The backspace icon renders correctly, and the clock and status icons hide
+while the dialer is open so they cannot overlap the call button.
+
+The Send Camera control refreshes correctly after changes. Browser-to-browser
+calls also update their video direction when a camera is enabled after the
+call starts. Local browser calls now deliver keypad digits through the shared
+DTMF event path.
+
+Audio processing preserves samples when the processing library returns a
+partial block. Stopping and restarting the audio pipeline is also more
+reliable, including during firmware updates. Assist calls no longer fail at
+audio setup when the media-route status is updated.
 
 ## ESPHome phones now publish their real codec capabilities
 
@@ -58,9 +73,10 @@ codec diagnostics automatically.
 ## Opus is optional in compact ESP profiles
 
 The standalone VoIP component can now negotiate RFC 7587 Opus in addition to
-its existing PCM formats. Qualified Spotpear, WS3 and P4 JPEG VoIP-only
-development profiles prefer mono Opus at 48 kHz RTP clock and 20 ms packet
-time, with a 10 ms Opus alternative. Each firmware advertises Opus only.
+its existing PCM formats. Spotpear and WS3 VoIP-only
+profiles use Opus by default. P4 and Full profiles remain PCM to preserve
+resources for their other features. Each firmware uses its selected codec;
+there is no silent fallback between PCM and Opus.
 Incompatible direct peers can route through Home Assistant, which performs the
 required transcoding.
 
@@ -71,19 +87,8 @@ budget. Codec selection therefore follows the selected product profile instead
 of silently adding compressed-codec dependencies to every firmware.
 
 This is a current hardware-resource limit, not a SIP interoperability limit.
-Real-device testing of an Opus-only Spotpear Full build showed that incoming RTP
-kept its required 20 ms cadence with no packet loss, while the device could only
-encode about 15 frames per second and decode about 20 frames per second instead
-of the required 50. The encoder and decoder each need a heavily accessed Opus
-pseudostack. Keeping those working sets in PSRAM is too slow under the complete
-AFE, wake word, LVGL and media workload, while moving them to internal memory
-leaves too little DMA-capable RAM for the display and audio hardware.
-
-For now, maintained Full profiles therefore remain PCM-only. Qualified
-VoIP-only profiles have enough remaining resources for bidirectional Opus and
-did not show the same runtime limitation. A future Full Opus profile remains
-possible if the codec working-memory contract or the available hardware budget
-improves, but it will require complete real-device concurrency qualification.
+Full profiles keep PCM so audio processing, wake word detection, the user
+interface and media playback can share the available CPU and memory.
 
 ## Packet time and SDP offers are smaller and more interoperable
 
@@ -145,9 +150,8 @@ app lifecycle transitions do not cause a false reconnect.
   loop, removing blocking-import warnings without changing RFC 3263 routing.
 - The SPI PSRAM DMA adapter now matches the implementation merged upstream in
   ESPHome pull request 18699.
-- Maintained YAMLs use ESPHome's official speaker interface and
-  `speaker_source` media player. The obsolete local speaker fork has been
-  removed.
+- Maintained YAMLs select the speaker adapter required by these profiles;
+  no manual migration to a different media-player component is required.
 - Spotpear and WS3 profiles keep their large audio and signaling allocations
   reusable instead of rebuilding them for every call.
 - HA and ESP log one warning when their coordinated VoIP Stack versions do not
@@ -178,46 +182,18 @@ during REGISTER. This prevents a large video INVITE from being changed to TCP
 when the selected registered endpoint is explicitly reachable only through
 its UDP binding.
 
-## Current candidate qualification
+## Development status
 
-- 1716 software tests passed, with 4 intentional deselections and 133
-  parameterized subtests.
-- 95 Home Assistant runtime tests passed.
-- The complete local SIP laboratory passed caller and callee hangup, CANCEL,
-  manual answer and decline, auto answer, forwarding, two browser subscribers,
-  registered SIP clients, video added in-dialog and final resource cleanup.
-- Browser playback consumed 49 measured input frames and produced 338 audio
-  render blocks with zero underruns in the registered video call witness.
-- SIP INFO and RFC 4733 DTMF passed in both directions, including the complete
-  `0-9*#` keypad sequence.
-- An Android call through the deployed Home Assistant instance exchanged 775
-  receive and 762 transmit RTP audio packets with WS3, with zero PLC, late
-  discard, queue drop or terminal resource leak.
-- The current P4 JPEG profile completed an Android audio and video call with
-  sendrecv media. Browser diagnostics reported 1526 receive and 1504 transmit
-  audio packets, zero audio PLC or queue drops, and zero video loss, reorder or
-  access-unit queue drops. P4 presented 74 of 75 admitted JPEG frames and
-  returned every call-scoped resource to zero after hangup.
-- A repeated Android matrix covered X-Bees to P4 twice, Zoiper to P4, P4 to
-  Zoiper and P4 to X-Bees. The combined capture contained 26 RTP streams with
-  zero packet loss. P4 audio held its negotiated 10 ms cadence in both
-  directions, including the 48 kHz browser leg, and final HA runtime ownership
-  returned completely to zero.
-- A physical OnePlus Nord 5 Companion call held browser playback at zero
-  underruns after the direct WebSocket-to-AudioWorklet path and bounded adaptive
-  reserve were deployed. The buffer absorbed measured WebView delivery stalls
-  instead of converting them into periodic audio gaps.
+Audio/video calls, call cancellation and cleanup, DTMF, forwarding and browser
+playback are covered by automated checks and selected device scenarios.
+Compatibility still depends on the device profile, peer codecs and route.
+Some Android, trunk and simultaneous-use combinations remain under evaluation.
 
-The P4 camera is configured for 10 FPS, but this Android witness produced about
-4.6 encoded and presented frames per second. The result proves stable media and
-physical presentation for this call, not achievement of the configured maximum
-frame rate.
+Configured camera FPS is a limit, not a promise for every resolution and
+workload. JPEG and H.264 are separate profiles and have different resource
+requirements. Keep `2026.9.0` if you need the stable release.
 
 ## Upgrade notes
-
-The former local `speaker` fork is no longer shipped. Custom YAMLs that still
-request it from this repository must migrate to the official ESPHome speaker
-interface and `speaker_source` media player before rebuilding.
 
 The Opus-only codec configurations require the matching
 `esphome-voip-stack@dev` component. Maintained development YAMLs already point
