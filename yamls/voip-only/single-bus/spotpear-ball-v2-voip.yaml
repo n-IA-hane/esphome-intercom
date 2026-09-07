@@ -145,6 +145,7 @@ esphome:
           id(g_settings_pages).push_back(id(settings_volumes_page)->obj);
           id(g_settings_pages).push_back(id(settings_mute_page)->obj);
           id(g_settings_pages).push_back(id(settings_aec_page)->obj);
+      - script.execute: layout_call_dialer
       - script.execute: draw_display
 
 # ESP32-S3 target used by Spotpear Ball v2.
@@ -616,7 +617,7 @@ lvgl:
   log_level: WARN
   top_layer:
     widgets:
-      # Clock + battery/wifi/HA status bar (always visible).
+      # Clock + battery/wifi/HA status bar (hidden while the dialer owns the disk).
       - label:
           id: top_clock_label
           align: TOP_MID
@@ -1003,11 +1004,12 @@ lvgl:
       on_swipe_up:
         - script.execute: call_to_settings
       widgets:
+        # Short tap removes one digit; long press clears the fixed dial buffer.
         - label:
             id: call_dial_value_label
             align: TOP_MID
             y: 16
-            width: 90
+            width: 1
             height: 26
             text: "Number / extension"
             text_color: 0xFFFFFF
@@ -1025,7 +1027,7 @@ lvgl:
             id: call_dial_row_123
             align: TOP_MID
             y: 46
-            width: 166
+            width: 1
             height: 31
             bg_opa: TRANSP
             border_width: 0
@@ -1053,7 +1055,7 @@ lvgl:
             id: call_dial_row_456
             align: TOP_MID
             y: 81
-            width: 206
+            width: 1
             height: 31
             bg_opa: TRANSP
             border_width: 0
@@ -1081,7 +1083,7 @@ lvgl:
             id: call_dial_row_789
             align: TOP_MID
             y: 116
-            width: 214
+            width: 1
             height: 31
             bg_opa: TRANSP
             border_width: 0
@@ -1109,7 +1111,7 @@ lvgl:
             id: call_dial_row_del0hash
             align: TOP_MID
             y: 151
-            width: 184
+            width: 1
             height: 31
             bg_opa: TRANSP
             border_width: 0
@@ -1144,13 +1146,15 @@ lvgl:
             id: call_dial_call_btn
             align: TOP_MID
             y: 187
-            width: 74
+            width: 1
             height: 43
             bg_color: 0x22C55E
             border_width: 0
             shadow_opa: TRANSP
             radius: 22
             gesture_bubble: true
+            # LVGL may still complete short_click when a vertical swipe starts
+            # on this control. Begin page-navigation swipes outside the handset.
             on_short_click:
               - script.execute: voip_dial_call
             widgets:
@@ -1606,6 +1610,49 @@ script:
             char buf[16];
             snprintf(buf, sizeof(buf), "\U000F06CB %d", count);
             return std::string(buf);
+
+  # Exact round dialer geometry from the full profile; computed once at boot.
+  - id: layout_call_dialer
+    then:
+      - lambda: |-
+          lv_disp_t *disp = lv_disp_get_default();
+          if (disp == nullptr) return;
+          const int w = lv_disp_get_hor_res(disp);
+          const int h = lv_disp_get_ver_res(disp);
+          if (w <= 0 || h <= 0) return;
+
+          const int cy = h / 2;
+          const int radius = std::min(w, h) / 2 - 4;
+          auto width_for_band = [&](int y, int height, int margin) -> int {
+            const int bottom = y + height - 1;
+            const int distance = std::max(std::abs(y - cy), std::abs(bottom - cy));
+            if (distance >= radius) return 1;
+
+            const int radius_sq = radius * radius;
+            const int distance_sq = distance * distance;
+            int half = static_cast<int>(
+                floorf(sqrtf(static_cast<float>(radius_sq - distance_sq)))
+            ) - margin;
+            if (half < 1) half = 1;
+            return half * 2;
+          };
+          auto fit_centered_band = [&](lv_obj_t *obj, int y, int height, int margin) {
+            const int width = width_for_band(y, height, margin);
+            lv_obj_set_size(obj, width, height);
+            lv_obj_align(obj, LV_ALIGN_TOP_MID, 0, y);
+          };
+
+          const int number_y = h * 16 / 240;
+          const int number_h = std::max(24, h * 26 / 240);
+          const int row_h = std::max(29, h * 31 / 240);
+          const int call_y = h * 187 / 240;
+          const int call_h = std::max(40, h * 43 / 240);
+          fit_centered_band(id(call_dial_value_label), number_y, number_h, 6);
+          fit_centered_band(id(call_dial_row_123)->obj, h * 46 / 240, row_h, 6);
+          fit_centered_band(id(call_dial_row_456)->obj, h * 81 / 240, row_h, 6);
+          fit_centered_band(id(call_dial_row_789)->obj, h * 116 / 240, row_h, 6);
+          fit_centered_band(id(call_dial_row_del0hash)->obj, h * 151 / 240, row_h, 6);
+          fit_centered_band(id(call_dial_call_btn), call_y, call_h, 2);
 
   - id: voip_dial_refresh
     then:
