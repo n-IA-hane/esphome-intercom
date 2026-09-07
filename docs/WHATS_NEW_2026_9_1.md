@@ -29,7 +29,7 @@ RFC 4733 implementation, so audio-only firmware does not gain a fictional
 capability.
 
 <p align="center">
-  <img src="images/ha-softphone-in-call-keypad-2026-9-1.jpg" width="420" alt="In-call DTMF keypad in the Home Assistant phone"/>
+  <img src="https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/dev/docs/images/ha-softphone-in-call-keypad-2026-9-1.jpg" width="420" alt="In-call DTMF keypad in the Home Assistant phone"/>
 </p>
 
 The keypad replaces the normal call view only while it is needed. `Hangup`
