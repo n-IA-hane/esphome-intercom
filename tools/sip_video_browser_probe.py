@@ -878,6 +878,7 @@ def main() -> int:
             launch_options["executable_path"] = args.chromium
         browser = playwright.chromium.launch(
             **launch_options,
+            ignore_default_args=["--mute-audio"],
         )
         context = browser.new_context(
             **context_options,
