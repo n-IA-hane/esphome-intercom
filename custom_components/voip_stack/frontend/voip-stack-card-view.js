@@ -403,13 +403,14 @@ export function buildMainCardSkeleton(cardVersion) {
       .video-active:not(.settings-open) .runtime-controls {
         position: absolute;
         z-index: 4;
-        right: 0;
+        right: 8px;
+        gap: 2px;
         bottom: 0;
         height: clamp(50px, 16%, 58px);
         margin: 0;
       }
       .video-active:not(.settings-open) .runtime-controls .settings-btn {
-        width: clamp(50px, 16vw, 58px);
+        width: 36px;
         height: 100%;
         margin: 0;
         padding: 0;
@@ -423,10 +424,10 @@ export function buildMainCardSkeleton(cardVersion) {
         display: inline-flex;
         --mdc-icon-size: 23px;
       }
-      .video-active:not(.settings-open) .voip-button.hangup { padding-right: 68px; }
+      .video-active:not(.settings-open) .voip-button.hangup { padding-right: 54px; }
       .video-active.keypad-available:not(.settings-open) .voip-button.hangup {
         /* Reserve both icon buttons and their gap so the timer cannot overlap. */
-        padding-right: calc(2 * clamp(50px, 16vw, 58px) + 18px);
+        padding-right: 92px;
       }
       .card.settings-open {
         overflow: auto;
