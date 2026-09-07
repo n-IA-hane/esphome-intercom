@@ -584,6 +584,7 @@ font:
     extras:
       - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
         glyphs:
+          - "\U000F006E" # backspace, used by the dialer row
           - "\U000F06CB" # contacts (address book)
 
   - file:
@@ -1569,6 +1570,15 @@ script:
             }
           }
           if (target == nullptr) return;
+          // Match the full profile: the dialer owns the complete visible disk.
+          // Restore both status labels on every other page, including ringing.
+          if (target == id(call_dialer_page)->obj) {
+            lv_obj_add_flag(id(top_clock_label), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(top_battery_label), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_clear_flag(id(top_clock_label), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(top_battery_label), LV_OBJ_FLAG_HIDDEN);
+          }
           if (target != lv_disp_get_scr_act(nullptr)) {
             lv_disp_load_scr(target);
             lv_obj_invalidate(lv_disp_get_scr_act(nullptr));
