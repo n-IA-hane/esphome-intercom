@@ -578,6 +578,21 @@ def _active_softphone_media_session(
     return None
 
 
+def _parse_browser_dtmf_control(payload: str) -> tuple[str, int] | None:
+    """Decode the shared browser control envelope for local and SIP calls."""
+    if len(payload) > 256:
+        raise ValueError("oversized browser control")
+    control = json.loads(payload)
+    if not isinstance(control, dict):
+        raise ValueError("browser control must be an object")
+    if control.get("type") != "dtmf":
+        return None
+    digit = str(control.get("digit") or "").strip().upper()
+    if telephone_event_code(digit) is None:
+        raise ValueError("unsupported DTMF digit")
+    return digit, int(control.get("duration_ms") or 160)
+
+
 async def _run_local_audio_session(
     hass: HomeAssistant,
     ws: web.WebSocketResponse,
@@ -593,6 +608,7 @@ async def _run_local_audio_session(
         "drop_payload_size": 0,
         "drop_tx_queue": 0,
         "tx_error": 0,
+        "dtmf_rx_events": 0,
     }
     await ws.send_json(
         {
@@ -644,6 +660,30 @@ async def _run_local_audio_session(
                         lease.endpoint_id,
                         exc_info=True,
                     )
+            elif msg.type == WSMsgType.TEXT:
+                try:
+                    parsed = _parse_browser_dtmf_control(str(msg.data))
+                    if parsed is None or not bridge.validate_media_lease(
+                        lease.call_id, lease.endpoint_id, lease.token
+                    ):
+                        continue
+                    snapshot = bridge.require_call(lease.call_id)
+                    store = _ha_softphone_store(hass, lease.endpoint_id)
+                    from .dtmf_events import publish_dtmf_event
+
+                    publish_dtmf_event(
+                        hass,
+                        call_id=lease.call_id,
+                        dest_call_id=lease.call_id,
+                        caller=str(store.get("caller") or ""),
+                        callee=str(store.get("callee") or ""),
+                        side=("left" if lease.endpoint_id.casefold() == snapshot.caller_endpoint_id.casefold() else "right"),
+                        digit=parsed[0],
+                        transport="websocket",
+                    )
+                    counters["dtmf_rx_events"] += 1
+                except (TypeError, ValueError) as err:
+                    _LOGGER.debug("Local softphone DTMF control rejected: %s", err)
             elif msg.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}:
                 return
 
@@ -1213,16 +1253,14 @@ async def _run_audio_session(
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
                     try:
-                        control = json.loads(str(msg.data))
-                        if control.get("type") != "dtmf":
+                        parsed = _parse_browser_dtmf_control(str(msg.data))
+                        if parsed is None:
                             continue
-                        digit = str(control.get("digit") or "").strip().upper()
-                        if telephone_event_code(digit) is None:
-                            raise ValueError("unsupported DTMF digit")
+                        digit, duration_ms = parsed
                         task = asyncio.create_task(
                             send_dtmf(
                                 digit,
-                                int(control.get("duration_ms") or 160),
+                                duration_ms,
                             ),
                             name=f"voip-browser-dtmf-{session.call_id}-{digit}",
                         )

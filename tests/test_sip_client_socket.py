@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import sys
+
 from .voip_phase1_support import (
     Path,
     _load_audio_ws_runtime_module,
@@ -1047,7 +1049,19 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         peer_pcm = bytes((index % 251 for index in range(expected)))
         browser_pcm = bytes((250 - (index % 251) for index in range(expected)))
 
+        events = []
+        dtmf_module = types.ModuleType(f"{audio_ws_view.__package__}.dtmf_events")
+        dtmf_module.publish_dtmf_event = lambda _hass, **payload: events.append(payload)
+        self.enterContext(patch.dict(sys.modules, {dtmf_module.__name__: dtmf_module}))
+
         class Bridge:
+            @staticmethod
+            def validate_media_lease(*_args):
+                return True
+
+            @staticmethod
+            def require_call(_call_id):
+                return types.SimpleNamespace(caller_endpoint_id="kitchen")
             def __init__(self) -> None:
                 self.sent: list[bytes] = []
                 self.peer_delivered = False
@@ -1083,6 +1097,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                 self.json: list[dict] = []
                 self.binary: list[bytes] = []
                 self.messages = [
+                    types.SimpleNamespace(type=WSMsgType.TEXT, data='{"type":"dtmf","digit":"5"}'),
+                    types.SimpleNamespace(type=WSMsgType.TEXT, data='{"type":"dtmf","digit":"X"}'),
+                    types.SimpleNamespace(type=WSMsgType.TEXT, data='[]'),
                     types.SimpleNamespace(
                         type=WSMsgType.BINARY,
                         data=audio_ws.encode_audio_frame(bytes(expected + 1)),
@@ -1131,6 +1148,9 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
             timeout=1,
         )
 
+        self.assertEqual([item["digit"] for item in events], ["5"])
+        self.assertEqual(events[0]["side"], "left")
+        self.assertEqual(hass.store["dtmf_rx_events"], 1)
         self.assertEqual(bridge.sent, [browser_pcm])
         self.assertEqual(
             [audio_ws.decode_audio_frame(frame) for frame in ws.binary],
