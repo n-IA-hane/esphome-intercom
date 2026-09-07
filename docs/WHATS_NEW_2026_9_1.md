@@ -52,6 +52,10 @@ partial block. Stopping and restarting the audio pipeline is also more
 reliable, including during firmware updates. Assist calls no longer fail at
 audio setup when the media-route status is updated.
 
+Cancelling a call while the other phone is still ringing now releases the
+reserved media ports as well. Repeated unanswered calls no longer leave those
+ports occupied and gradually reduce the resources available for new calls.
+
 ## ESPHome phones now publish their real codec capabilities
 
 An ESPHome endpoint can advertise ordered transmit and receive RTP formats,

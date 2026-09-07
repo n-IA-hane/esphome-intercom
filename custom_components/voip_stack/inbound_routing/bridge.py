@@ -260,6 +260,23 @@ async def route_sip_bridge(
                 err,
             )
 
+    # Pending media exists before an answered relay does. The call's cleanup
+    # barrier must own it even if CANCEL interrupts the final-answer waiter.
+    pending_media_name = f"pending_bridge_media:{source_relay_port}"
+
+    async def release_pending_media(_reason: str) -> None:
+        try:
+            if video_relay is not None:
+                await video_relay.stop()
+        finally:
+            bridge_ports.release()
+
+    if not registry.own_resource(
+        invite.call_id, pending_media_name, bridge_ports, release_pending_media
+    ):
+        await release_pending_media(TerminalReason.CANCELLED.value)
+        return SipInviteResult(487, "Request Terminated", to_tag="")
+
     client = SipCallClient(
         local_ip=local_ip,
         local_name=invite.caller or runtime.ha_peer_name(hass),
@@ -552,6 +569,10 @@ async def route_sip_bridge(
             return
         if committed is None:
             return
+        # The committed relay now owns these reservations and any video sockets.
+        registry.release_resource(
+            invite.call_id, pending_media_name, value=bridge_ports
+        )
         relay = committed.relay
         selected_video = (
             committed.video_answer.video_format
