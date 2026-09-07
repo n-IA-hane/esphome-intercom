@@ -33,6 +33,12 @@ esp32:
   cpu_frequency: 360MHz
   framework:
     type: esp-idf
+    # Qualified DIG-734 FIFO boundary repair, shared by JPEG and H.264.
+    components:
+      - name: esp_driver_ppa
+        source: https://github.com/n-IA-hane/esphome-intercom.git
+        ref: dev
+        path: idf_components/esp_driver_ppa
     # Omitting version uses the SDK selected by the installed ESPHome release.
     # An explicit newer SDK is a separate candidate: qualify cold boot, restart,
     # normal OTA and simultaneous audio/video before making it the default.

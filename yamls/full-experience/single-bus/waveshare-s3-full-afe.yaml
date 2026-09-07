@@ -158,7 +158,7 @@ external_components:
   - source: ${voip_stack_components_source}
     components: [voip_stack]
   - source: ${ext_components_source}
-    components: [audio_http, speaker, voice_assistant]
+    components: [audio_http, speaker, voice_assistant, ota]
   - source: ${runtime_controller_components_source}
     components: [runtime_controller]
   - source: ${audio_stack_components_source}
@@ -244,9 +244,8 @@ tca9555:
 esp_audio_stack:
   id: audio_stack
   # WS3 full AFE profile:
-  # - audio_stack is the non-network realtime I2S bridge: Core 0 / prio 19 is
-  #   below Wi-Fi prio 23 and above lwIP prio 18, matching ESP-IDF guidance
-  #   for time-critical tasks that do not perform TCP/IP work.
+  # - qualified full-load layout: Audio Stack runs on Core 1 / priority 19.
+  #   AFE feed stays on Core 0 and fetch on Core 1; rates and queues stay unchanged.
   # - audio_stack task stack in PSRAM saves ~8 KB internal heap.
   # - component frame buffers in PSRAM preserve internal/DMA heap for Wi-Fi,
   #   TLS, I2S DMA and esp-sr internals.
@@ -255,7 +254,7 @@ esp_audio_stack:
   # WS3 ES8311/NS4150 path drops perceived loudness too aggressively with the
   # codec-dev default ~-50 dB floor. Keep 0% as mute, but make 70% usable.
   master_volume_min_db: -30.0
-  task_core: 0
+  task_core: 1
   task_priority: 19
   task_stack_size: 8192
   i2s_lrclk_pin: ${i2s_lrclk_pin}
