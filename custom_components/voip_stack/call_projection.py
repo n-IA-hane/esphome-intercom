@@ -45,8 +45,13 @@ def publish_esp_media_route(hass: HomeAssistant, call_id: str, route: str) -> No
     session = data.sip.get_session(call_id)
     if session is None or not session.live or session.state != "in_call":
         return
-    if any(resource.name.startswith("relay:") and resource.value.media_route == "ha_transcoding"
-           for resource in session.resources):
+    # Local media endpoints such as Assist share relay lifecycle ownership,
+    # but do not expose a relay's media-route decision.
+    if any(
+        resource.name.startswith("relay:")
+        and getattr(resource.value, "media_route", None) == "ha_transcoding"
+        for resource in session.resources
+    ):
         route = "ha_transcoding"
     session.update_metadata(committed_media_route=route)
     token = session.token

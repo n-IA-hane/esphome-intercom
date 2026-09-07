@@ -61,6 +61,26 @@ async def test_media_route_targets_each_physical_sip_leg_once(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["direct", "ha_transcoding"])
+async def test_media_route_accepts_local_endpoint_resource_without_relay_route(monkeypatch, route):
+    runtime = SipEndpointRuntime()
+    runtime.activate()
+    data = SimpleNamespace(sip=runtime, endpoints=SimpleNamespace(get=lambda _id: None))
+    monkeypatch.setattr(call_projection, "runtime_data", lambda _hass: data)
+    session = runtime.upsert("assist-call", state="in_call")
+    # Assist endpoints share relay lifecycle ownership, not relay capabilities.
+    session.add_resource("relay:assist-call", SimpleNamespace(), lambda _reason: None)
+    call_projection.publish_esp_media_route(object(), "assist-call", route)
+    assert session.metadata["committed_media_route"] == route
+    assert session.live and session.state == "in_call"
+    session.add_resource("relay:transcoder", SimpleNamespace(media_route="ha_transcoding"),
+                         lambda _reason: None)
+    call_projection.publish_esp_media_route(object(), "assist-call", "direct")
+    assert session.metadata["committed_media_route"] == "ha_transcoding"
+    await session.terminate(TerminationIntent("local_hangup"))
+
+
+@pytest.mark.asyncio
 async def test_media_route_cannot_outlive_its_call_generation(monkeypatch):
     from custom_components.voip_stack import device_resolver, esphome_actions
     runtime = _runtime(monkeypatch)
