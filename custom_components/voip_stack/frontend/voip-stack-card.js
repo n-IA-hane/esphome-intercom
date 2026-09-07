@@ -1909,7 +1909,11 @@ class VoipStackCard extends HTMLElement {
     els.keypadBtn.hidden = !(
       (showCall || inCallDtmf) && showRuntimeOptions && canUseKeypad
     );
-    els.keypadBtn.textContent = this._t(keypadOpen ? "Contacts" : "Keypad");
+    const keypadLabel = this._t(keypadOpen ? "Contacts" : "Keypad");
+    els.keypadLabel.textContent = keypadLabel;
+    els.keypadBtn.setAttribute("aria-label", keypadLabel);
+    els.keypadBtn.title = keypadLabel;
+    els.card.classList.toggle("keypad-available", !els.keypadBtn.hidden);
     els.keypadBtn.setAttribute("aria-expanded", String((showCall || inCallDtmf) && keypadOpen));
     els.settingsBtn.hidden = !showRuntimeOptions;
     els.settingsPanel.hidden = !showSettingsPanel;

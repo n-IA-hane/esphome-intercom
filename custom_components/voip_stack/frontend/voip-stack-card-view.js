@@ -424,6 +424,10 @@ export function buildMainCardSkeleton(cardVersion) {
         --mdc-icon-size: 23px;
       }
       .video-active:not(.settings-open) .voip-button.hangup { padding-right: 68px; }
+      .video-active.keypad-available:not(.settings-open) .voip-button.hangup {
+        /* Reserve both icon buttons and their gap so the timer cannot overlap. */
+        padding-right: calc(2 * clamp(50px, 16vw, 58px) + 18px);
+      }
       .card.settings-open {
         overflow: auto;
         background: var(--voip-stack-card-surface);
@@ -745,7 +749,15 @@ export function buildMainCardSkeleton(cardVersion) {
     const keypadBtn = document.createElement("button");
     keypadBtn.type = "button";
     keypadBtn.className = "settings-btn";
-    keypadBtn.textContent = translate("Keypad");
+    const keypadLabel = document.createElement("span");
+    keypadLabel.className = "settings-label";
+    keypadLabel.textContent = translate("Keypad");
+    const keypadIcon = document.createElement("ha-icon");
+    keypadIcon.className = "settings-label-icon";
+    keypadIcon.setAttribute("icon", "mdi:dialpad");
+    keypadBtn.appendChild(keypadLabel);
+    keypadBtn.appendChild(keypadIcon);
+    keypadBtn.setAttribute("aria-label", translate("Keypad"));
     keypadBtn.setAttribute("aria-controls", "voip-keypad-panel");
     keypadBtn.setAttribute("aria-expanded", "false");
     runtimeControls.appendChild(keypadBtn);
@@ -927,7 +939,7 @@ export function buildMainCardSkeleton(cardVersion) {
       keypadPanel, keypadInput, keypadKeys,
       answerBtn, declineBtn, hangupBtn, hangupState, hangupPeer, hangupStats, hangupDuration, callBtn, placeholderBtn,
       statusIndicator, statusText, statusReason,
-      runtimeControls, keypadBtn, settingsBtn, settingsPanel,
+      runtimeControls, keypadBtn, keypadLabel, settingsBtn, settingsPanel,
       autoAnswerRow, autoAnswerCheckbox, dndRow, dndCheckbox, ringtoneRow, ringtoneCheckbox,
       microphoneAntiAliasRow, microphoneAntiAliasCheckbox,
       videoCameraRow, videoCameraCheckbox,

@@ -287,7 +287,7 @@ function elements() {{
     "answerBtn", "autoAnswerCheckbox", "autoAnswerRow", "callBtn", "card",
     "declineBtn", "destRow", "destSelect", "destValue", "destValueWrap",
     "dndCheckbox", "dndRow", "err", "hangupBtn", "hangupDuration",
-    "hangupPeer", "hangupState", "header", "headerName", "keypadBtn",
+    "hangupPeer", "hangupState", "header", "headerName", "keypadBtn", "keypadLabel",
     "keypadInput", "keypadPanel", "nextBtn", "offlinePanel", "placeholderBtn",
     "prevBtn", "ringtoneCheckbox", "ringtoneRow", "runtimeControls",
     "microphoneAntiAliasCheckbox", "microphoneAntiAliasRow",
