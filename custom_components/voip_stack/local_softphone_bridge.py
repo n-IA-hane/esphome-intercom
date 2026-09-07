@@ -566,6 +566,9 @@ class LocalSoftphoneBridge:
         else:
             call.callee_video_send = bool(enabled and call.video_enabled)
         snapshot = call.snapshot()
+        # Existing video owners must refresh their negotiated directions too.
+        for participant in (call.caller_endpoint_id, call.callee_endpoint_id):
+            put_drop_oldest(call.media_for(participant).video_control, "media_updated")
         self._emit(
             LocalBridgeEvent(
                 LocalBridgeEventType.VIDEO_UPDATED,

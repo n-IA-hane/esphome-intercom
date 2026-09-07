@@ -643,8 +643,7 @@ async def _run_local_video_session(
         "packetization_mode": 0,
         "format": "pt=103:VP8/90000",
     }
-    await ws.send_json(
-        {
+    negotiated = {
             "state": "in_call",
             "call_id": lease.call_id,
             **format_payload,
@@ -663,7 +662,7 @@ async def _run_local_video_session(
             "media_generation": 0,
             "media_transport": "local_websocket",
         }
-    )
+    await ws.send_json(negotiated)
     counters = {
         "video_access_units_tx": 0,
         "video_access_units_rx": 0,
@@ -686,26 +685,47 @@ async def _run_local_video_session(
     ws_send_lock = asyncio.Lock()
 
     async def peer_to_browser() -> None:
-        if not can_receive:
-            await bridge.wait_closed(lease.call_id)
-            return
         while True:
             frame = await bridge.receive_video(
                 lease.call_id,
                 lease.endpoint_id,
                 lease.token,
             )
+            if not can_receive:
+                counters["video_drop_direction"] += 1
+                continue
             async with ws_send_lock:
                 await ws.send_bytes(frame)
             counters["video_access_units_rx"] += 1
 
     async def controls_to_browser() -> None:
+        nonlocal direction, can_send, can_receive
         while True:
             control = await bridge.receive_video_control(
                 lease.call_id,
                 lease.endpoint_id,
                 lease.token,
             )
+            current = bridge.require_call(lease.call_id)
+            next_direction = current.video_direction_for(lease.endpoint_id)
+            if next_direction != direction:
+                direction = next_direction
+                can_send = direction in {"sendonly", "sendrecv"}
+                can_receive = direction in {"recvonly", "sendrecv"}
+                negotiated.update(
+                    type="media_update",
+                    direction=direction,
+                    can_send=can_send,
+                    can_receive=can_receive,
+                    camera_send_enabled=can_send,
+                    media_generation=negotiated["media_generation"] + 1,
+                )
+                async with ws_send_lock:
+                    await ws.send_json(dict(negotiated))
+                if can_receive:
+                    bridge.send_video_control(
+                        lease.call_id, lease.endpoint_id, lease.token, "force_key_frame"
+                    )
             if control == "force_key_frame":
                 async with ws_send_lock:
                     await ws.send_json({"type": "force_key_frame", "feedback": "local"})

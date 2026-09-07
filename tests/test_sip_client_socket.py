@@ -1297,6 +1297,174 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hass.store["video_access_units_tx"], 1)
         self.assertEqual(hass.store["video_access_units_rx"], 1)
 
+    async def test_local_video_websocket_refreshes_sendonly_without_reconnecting(
+        self,
+    ) -> None:
+        video_ws_view = _load_video_ws_runtime_module()
+        const = _load_intercom_module("const")
+        from aiohttp import WSMsgType
+
+        peer_frame = video_ws_view._VIDEO_HEADER.pack(
+            video_ws_view._VIDEO_ACCESS_UNIT,
+            0,
+            9000,
+        ) + b"peer-vp8"
+        browser_frame = video_ws_view._VIDEO_HEADER.pack(
+            video_ws_view._VIDEO_ACCESS_UNIT,
+            0,
+            18000,
+        ) + b"browser-vp8"
+
+        updated = asyncio.Event()
+
+        class Snapshot:
+            direction = "sendonly"
+
+            @staticmethod
+            def video_direction_for(_endpoint_id: str) -> str:
+                return Snapshot.direction
+
+        class Bridge:
+            def __init__(self) -> None:
+                self.sent: list[bytes] = []
+                self.controls: list[str] = []
+                self.peer_delivered = False
+                self.control_delivered = False
+                self.update_delivered = False
+                self.closed = asyncio.Event()
+
+            @staticmethod
+            def require_call(_call_id: str) -> Snapshot:
+                return Snapshot()
+
+            async def receive_video(
+                self,
+                _call_id: str,
+                _endpoint_id: str,
+                _token: str,
+            ) -> bytes:
+                await updated.wait()
+                if not self.peer_delivered:
+                    self.peer_delivered = True
+                    return peer_frame
+                await asyncio.Event().wait()
+                raise AssertionError("unreachable")
+
+            async def receive_video_control(
+                self,
+                _call_id: str,
+                _endpoint_id: str,
+                _token: str,
+            ) -> str:
+                if not self.update_delivered:
+                    self.update_delivered = True
+                    Snapshot.direction = "sendrecv"
+                    return "media_updated"
+                if not self.control_delivered:
+                    self.control_delivered = True
+                    return "force_key_frame"
+                await asyncio.Event().wait()
+                raise AssertionError("unreachable")
+
+            def send_video(
+                self,
+                _call_id: str,
+                _endpoint_id: str,
+                _token: str,
+                frame: bytes,
+            ) -> bool:
+                self.sent.append(bytes(frame))
+                return False
+
+            def send_video_control(
+                self,
+                _call_id: str,
+                _endpoint_id: str,
+                _token: str,
+                control: str,
+            ) -> bool:
+                self.controls.append(control)
+                return False
+
+            async def wait_closed(self, _call_id: str) -> None:
+                await self.closed.wait()
+
+        class WebSocket:
+            def __init__(self) -> None:
+                self.json: list[dict] = []
+                self.binary: list[bytes] = []
+                self.messages = [
+                    types.SimpleNamespace(type=WSMsgType.BINARY, data=b"bad"),
+                    types.SimpleNamespace(
+                        type=WSMsgType.BINARY,
+                        data=browser_frame,
+                    ),
+                    types.SimpleNamespace(
+                        type=WSMsgType.TEXT,
+                        data='{"type":"request_key_frame"}',
+                    ),
+                ]
+                self.peer_frame_sent = asyncio.Event()
+                self.control_sent = asyncio.Event()
+                self.forced_closed = False
+
+            async def send_json(self, payload: dict) -> None:
+                copied = dict(payload)
+                self.json.append(copied)
+                if copied.get("type") == "media_update":
+                    updated.set()
+                if copied.get("type") == "force_key_frame":
+                    self.control_sent.set()
+
+            async def send_bytes(self, payload: bytes) -> None:
+                self.binary.append(bytes(payload))
+                self.peer_frame_sent.set()
+
+            def force_close(self) -> None:
+                self.forced_closed = True
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if self.messages:
+                    return self.messages.pop(0)
+                await asyncio.gather(
+                    self.peer_frame_sent.wait(),
+                    self.control_sent.wait(),
+                )
+                raise StopAsyncIteration
+
+        lease = types.SimpleNamespace(
+            call_id="local-video",
+            endpoint_id="kitchen",
+            token="lease-token",
+        )
+        hass = types.SimpleNamespace(
+            data={const.DOMAIN: {const.CONF_DEBUG_MODE: False}},
+            store={"call_id": lease.call_id, "state": "in_call"},
+        )
+        bridge = Bridge()
+        ws = WebSocket()
+
+        await asyncio.wait_for(
+            video_ws_view._run_local_video_session(hass, ws, bridge, lease),
+            timeout=1,
+        )
+
+        self.assertEqual(bridge.sent, [browser_frame])
+        self.assertEqual(bridge.controls, ["force_key_frame", "force_key_frame"])
+        self.assertEqual(ws.binary, [peer_frame])
+        self.assertEqual(ws.json[0]["media_transport"], "local_websocket")
+        self.assertEqual(ws.json[0]["direction"], "sendonly")
+        self.assertTrue(any(item.get("type") == "media_update" and item["can_receive"] for item in ws.json))
+        self.assertTrue(
+            any(item.get("type") == "force_key_frame" for item in ws.json)
+        )
+        self.assertEqual(hass.store["video_drop_error"], 1)
+        self.assertEqual(hass.store["video_access_units_tx"], 1)
+        self.assertEqual(hass.store["video_access_units_rx"], 1)
+
     def test_video_udp_ingress_is_bounded_by_source_size_count_and_bytes(
         self,
     ) -> None:
