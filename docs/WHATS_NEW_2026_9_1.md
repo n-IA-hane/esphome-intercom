@@ -1,223 +1,129 @@
-# 2026.9.1-dev pre-release: cleaner audio, real codecs and in-call DTMF
+# 2026.9.1-dev: use automated phone menus, clearer controls and smoother calls
 
-`2026.9.1-dev` starts the next active development cycle. The stable release
-remains `2026.9.0`. These notes will grow as further features and fixes enter
-the candidate.
+This preview adds a keypad you can use during calls, improves audio playback,
+and makes the phone controls easier to use. `2026.9.0` remains the stable release.
 
-This revision makes the phone system less interested in special cases and more
-interested in behaving like a phone system. ESP endpoints publish their real
-media capabilities, compatible legs avoid unnecessary transcoding, the HA
-phone can operate an IVR, and browser audio follows its own clock instead of
-hoping the UI thread remains in a generous mood.
+## Use automated menus and extensions during a call
 
-## The HA phone now has an in-call keypad
+You can now interact with **IVRs, the automated phone menus that ask you to
+"press 1 for support" or "enter an extension"**, directly from the Home Assistant
+phone card.
 
-The Home Assistant card reuses its normal keypad during an established call.
-Digits entered while idle still build a destination. Digits entered during a
-call are sent through the negotiated telephone-event payload, with SIP INFO
-available for compatible peers. Hangup remains visible in the keypad view and
-the card returns to its ordinary terminal screen when either side ends the
-call.
+Call the service or switchboard, open the keypad, and press the requested
+numbers. The card sends the keypad signals, also called DTMF tones, to the
+other phone system. This lets you choose a department or enter an extension
+without leaving the call, when the receiving system supports those signals.
 
-Each new dialog also resets temporary card surfaces. An Options or keypad view
-left open by the previous call can no longer hide Answer and Decline on the
-next incoming call.
+Before a call, the keypad still lets you enter the number you want to dial.
+During a call, it controls the menu at the other end. The Hangup button remains
+available while the keypad is open.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/dev/docs/images/ha-softphone-in-call-keypad-2026-9-1.jpg" width="420" alt="In-call DTMF keypad in the Home Assistant phone"/>
+  <img src="https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/dev/docs/images/ha-softphone-in-call-keypad-2026-9-1.jpg" width="420" alt="Home Assistant phone keypad used during a call to select options in an automated phone menu"/>
 </p>
 
-The keypad replaces the normal call view only while it is needed. `Hangup`
-remains available, `Contacts` returns to destination selection, and remote or
-local hangup restores the ordinary terminal screen. It is a telephone keypad,
-not a modal dungeon with no exit.
+## Easier controls on the Home Assistant card
 
-## Clearer controls and more reliable audio
+- **Video calls:** open the keypad using the small icon beside Options. The two
+  icons sit close together and no longer cover the call timer.
+- **Incoming calls:** Answer and Decline appear even if you left the keypad or
+  Options open during the previous call.
+- **Send Camera:** the checkbox now reflects your selection correctly.
+- **Turning video on later:** in calls between browser phones, you can enable
+  the camera after starting with audio only, and the other person receives it.
+- **Calling Assist:** fixed an issue that could stop the call while its audio
+  was being set up.
 
-During a video call, the keypad is now a small icon beside Options. Both
-controls sit together without covering the call timer. The keypad remains
-available for automated menus, and Hangup stays accessible.
+## The same dialer on Spotpear Full and VoIP-only
 
-Spotpear VoIP-only now uses the same round-screen dialer as the Full profile.
-The backspace icon renders correctly, and the clock and status icons hide
-while the dialer is open so they cannot overlap the call button.
+Spotpear VoIP-only now has the same dialer layout as the Full profile, fitted
+to its round screen. The delete key shows the correct icon. The clock and
+status icons hide while the dialer is open, so they do not overlap the call
+button, and return when you leave it.
 
-The Send Camera control refreshes correctly after changes. Browser-to-browser
-calls also update their video direction when a camera is enabled after the
-call starts. Local browser calls now deliver keypad digits through the shared
-DTMF event path.
+This is the device's dialer for entering a destination. The in-call keypad for
+interacting with automated menus described above is on the Home Assistant card.
 
-Audio processing preserves samples when the processing library returns a
-partial block. Stopping and restarting the audio pipeline is also more
-reliable, including during firmware updates. Assist calls no longer fail at
-audio setup when the media-route status is updated.
+## Smoother audio and more reliable call endings
 
-Cancelling a call while the other phone is still ringing now releases the
-reserved media ports as well. Repeated unanswered calls no longer leave those
-ports occupied and gradually reduce the resources available for new calls.
+Browser audio playback handles uneven delivery more smoothly, reducing
+crackling and short gaps. Audio processing on ESP devices also preserves
+samples that could previously be dropped, and stopping or restarting audio
+is more reliable, including during firmware updates.
 
-## ESPHome phones now publish their real codec capabilities
+Cancelling a call before the other person answers now fully releases the
+resources it was using. This prevents repeated unanswered calls from gradually
+leaving fewer resources available for new calls.
 
-An ESPHome endpoint can advertise ordered transmit and receive RTP formats,
-including codec, sample rate, channels and packet time. Home Assistant uses
-that information in the same way it uses the capabilities of another SIP
-phone. The endpoint is no longer routed through a special hard-coded media
-profile merely because it is an ESP device.
+Call controls also handle interrupted connections to Home Assistant more
+reliably. Ending one call should not leave its screen or background work
+interfering with the next call.
 
-When both call legs negotiate a compatible compressed format, HA relays the
-payload without decoding and encoding it again. Payload type, RTP sequence,
-timestamp and SSRC are still rewritten for the destination dialog. When the
-legs are not compatible, the existing bounded media relay transcodes each
-direction independently.
+## Better compatibility with other SIP phones and switchboards
 
-Debug diagnostics report a transcoding path only when conversion is actually
-required. The normal production path does not enable media capture or verbose
-codec diagnostics automatically.
+ESPHome phones now tell Home Assistant which audio formats they actually
+support. Compatible devices can call each other directly. When two phones need
+different audio formats, Home Assistant can convert the audio between them;
+this conversion is called transcoding.
 
-## Opus is optional in compact ESP profiles
+Connection and sign-in fixes improve compatibility with some door stations,
+SIP phones and switchboards. Calls, forwarding and groups also handle SIP
+addresses without an explicitly specified port correctly. These changes improve
+interoperability, but do not mean every phone or provider has been tested.
 
-The standalone VoIP component can now negotiate RFC 7587 Opus in addition to
-its existing PCM formats. Spotpear and WS3 VoIP-only
-profiles use Opus by default. P4 and Full profiles remain PCM to preserve
-resources for their other features. Each firmware uses its selected codec;
-there is no silent fallback between PCM and Opus.
-Incompatible direct peers can route through Home Assistant, which performs the
-required transcoding.
+## Opus on supported VoIP-only devices; PCM on Full profiles and P4
 
-Opus is intentionally optional and compile-time gated. Full profiles continue
-using the proven PCM configuration because wake word detection, AFE, Voice
-Assistant, media playback, TTS and Sendspin already consume their hardware
-budget. Codec selection therefore follows the selected product profile instead
-of silently adding compressed-codec dependencies to every firmware.
+Opus and PCM are the two supported audio formats:
 
-This is a current hardware-resource limit, not a SIP interoperability limit.
-Full profiles keep PCM so audio processing, wake word detection, the user
-interface and media playback can share the available CPU and memory.
+- **Spotpear and WS3 VoIP-only profiles use Opus by default.** These profiles
+  focus on phone calls and have more resources available for audio compression.
+- **Full profiles and P4 keep PCM.** This leaves resources available for features
+  such as the voice assistant, wake word detection, music playback and video.
 
-## Packet time and SDP offers are smaller and more interoperable
+Each firmware uses the format selected in its configuration. If the other phone
+cannot use that format, the call needs Home Assistant to convert the audio;
+the ESP does not silently switch between Opus and PCM.
 
-Endpoints may support different packet times for the same wire codec. Offers
-now publish one payload for each actual RTP encoding and preserve the preferred
-packet time instead of repeating the same codec several times. The answerer
-selects a packet time supported by both transmit and receive paths.
+Use the maintained YAML for your device and profile so its component versions
+and audio settings stay together. No manual change to a different speaker
+component is required for these profiles.
 
-This keeps ordinary UDP INVITE requests below the LAN MTU in the validated
-profiles without treating TCP as the primary solution. TCP remains a normal
-standards-based transport or fallback when selected by the peer or route.
+## Other improvements
 
-SIP URIs without an explicit remote port now use the scheme default, 5060 for
-`sip` and 5061 for `sips`. HA's local listener port is no longer reused as an
-unrelated destination port in direct calls, forwarding, groups, conferences or
-inbound bridges.
+- Improved discovery of devices with larger audio/video configurations,
+  including P4 profiles.
+- Reduced blocking work during Home Assistant setup.
+- Updated ESP component integration and memory use for the maintained profiles.
+- A clearer warning when the Home Assistant integration and ESP component
+  versions do not match.
 
-## Browser audio follows RTP cadence without crackling
+## What is still being checked
 
-The browser receive path now separates network packet arrival from Web Audio
-rendering. The page WebSocket sends negotiated PCM frames directly to the
-playback AudioWorklet, removing the former Worker and MessageChannel hop. The
-worklet converts RTP frame cadence into the exact render blocks requested by
-the browser audio clock.
+This is a development preview. Some Android phones, external switchboards and
+combinations of simultaneous features still need further testing.
 
-An adaptive, bounded jitter buffer absorbs packet bursts and short Android
-WebView scheduling stalls. It starts with a conservative reserve, learns only
-from delivery gaps that exceed the current protection, and releases surplus
-one frame at a time after a stable interval. This prevents both failure modes:
-draining to an unrealistically small buffer after a few quiet seconds, and
-growing to the maximum because ordinary message batching kept resetting the
-recovery timer.
+JPEG and H.264 remain separate video profiles. Camera speed depends on the
+resolution, device and other features running at the same time; a configured
+frame rate is a maximum, not a guaranteed result.
 
-The same path reports input, output, drop, buffer and underrun counters.
-Underrun diagnostics distinguish network arrival gaps from delivery stalls
-inside the WebView, so a bad scheduler is no longer framed for a crime
-committed by RTP.
+On the **OnePlus Nord 5**, the current workaround is to use the display's
+**60 Hz mode**. Higher refresh rates can still affect calls in the Companion
+app and are not yet fully validated.
 
-## More resilient embedded registration and call control
+## Updating
 
-The SIP registrar accepts the equivalent Digest URI form used by some embedded
-door stations when the request omits port 5060 but the signed Digest URI states
-it explicitly. The exception is deliberately narrow: the SIP user, host, URI
-parameters and effective port must still match, and the Digest response is
-verified against the exact URI signed by the client. Different ports or URI
-parameters remain rejected.
+1. In HACS, open VoIP Stack, select **Redownload**, and choose **2026.9.1-dev**.
+2. Restart Home Assistant, then reload the browser or Companion app so it loads
+   the updated card. Clear its cache if the old controls still appear.
+3. For ESP firmware updates, use the maintained development YAML for your
+   device. The YAMLs reference the matching `@dev` components.
 
-During an active browser call, the shared softphone engine now checks the Home
-Assistant connection and recovers through the official connection API after a
-confirmed half-open WebSocket. Hangup and Decline use the same engine-owned
-terminal operation, reconnect once when transport failure is confirmed, then
-read the authoritative call state before deciding whether a retry is needed.
-The monitor is suspended while an Android page is hidden, so normal Companion
-app lifecycle transitions do not cause a false reconnect.
+Updating the Home Assistant integration does not flash your ESP devices.
 
-## Home Assistant and ESP component cleanup
+If something goes wrong, include the device models, who called whom, whether
+video was enabled, and what you expected to happen. If you attach logs, remove
+passwords and other private information first.
 
-- DNS resolver imports and resolver initialization run outside the HA event
-  loop, removing blocking-import warnings without changing RFC 3263 routing.
-- The SPI PSRAM DMA adapter now matches the implementation merged upstream in
-  ESPHome pull request 18699.
-- Maintained YAMLs select the speaker adapter required by these profiles;
-  no manual migration to a different media-player component is required.
-- Spotpear and WS3 profiles keep their large audio and signaling allocations
-  reusable instead of rebuilding them for every call.
-- HA and ESP log one warning when their coordinated VoIP Stack versions do not
-  match. The warning is deliberately emitted once per mismatch instead of on
-  every state update.
-
-ESP discovery now keeps the stable SIP route separate from the complete media
-contract. The route state retains a backward-compatible PCM format, while a
-bounded diagnostic state carries directional RTP codecs, DTMF support, video
-codec and component version. Large P4 profiles therefore remain discoverable
-instead of exceeding Home Assistant's 255-character entity-state limit.
-
-## Call ownership and cleanup are now centralized
-
-Home Assistant now keeps one authoritative owner for each call generation.
-Routing, forwarding, browser phones, registered SIP clients, media bridges and
-termination all commit through the same lifecycle primitives instead of
-maintaining partially independent state paths.
-
-The shared cleanup barrier closes call legs, RTP relays, video transcoders,
-timers and port reservations before the endpoint becomes reusable. Delayed
-callbacks from an older call generation cannot alter a newer call that reused
-the same public identity.
-
-Dial targets, phonebook entries and service aliases now use canonical parsers
-and tables. Registered contacts also preserve the signaling transport observed
-during REGISTER. This prevents a large video INVITE from being changed to TCP
-when the selected registered endpoint is explicitly reachable only through
-its UDP binding.
-
-## Development status
-
-Audio/video calls, call cancellation and cleanup, DTMF, forwarding and browser
-playback are covered by automated checks and selected device scenarios.
-Compatibility still depends on the device profile, peer codecs and route.
-Some Android, trunk and simultaneous-use combinations remain under evaluation.
-
-Configured camera FPS is a limit, not a promise for every resolution and
-workload. JPEG and H.264 are separate profiles and have different resource
-requirements. Keep `2026.9.0` if you need the stable release.
-
-## Upgrade notes
-
-The Opus-only codec configurations require the matching
-`esphome-voip-stack@dev` component. Maintained development YAMLs already point
-to the coordinated `dev` branches.
-
-## Known issue
-
-High-refresh-rate operation on the OnePlus Nord 5 still needs separate
-qualification, especially during touch and orientation changes. The current
-physical validation used the stable 60 Hz mode. The adaptive buffer fixes the
-independent periodic scheduling gaps observed at 60 Hz, but it is not evidence
-that every 120 Hz WebView lifecycle path is now qualified.
-
-## Installation and feedback
-
-In HACS, open VoIP Stack, use the three-dot menu, select Redownload and choose
-`2026.9.1-dev`. Restart Home Assistant and clear the browser or Companion app
-cache so the updated card module is loaded.
-
-When reporting a regression, include the exact test time, call direction,
-endpoint models, negotiated codecs and sanitized logs from INVITE through
-final cleanup.
-
+For setup instructions and technical details, see the
+[user guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/USER_GUIDE.md)
+and [P4 configuration guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/P4_HARDWARE_AND_MEDIA.md).
