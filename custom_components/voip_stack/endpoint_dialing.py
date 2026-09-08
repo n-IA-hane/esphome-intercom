@@ -19,6 +19,7 @@ from .endpoint_routing import (
     roster_entry_formats,
     sip_target_audio_profile,
     sip_target_rtp_audio_profile,
+    sip_target_has_unspecified_audio,
     supports_directional_audio_payloads,
 )
 from .media_ports import (
@@ -271,6 +272,7 @@ class EndpointDialer:
                 outbound_proxy=policy.outbound_proxy,
                 include_common_codecs=(
                     bridge_to_softphone or policy.force_common_audio
+                    or sip_target_has_unspecified_audio(peer_target, member_entry)
                 ),
                 allow_directional_audio_payloads=supports_directional_audio_payloads(
                     peer_target, member_entry

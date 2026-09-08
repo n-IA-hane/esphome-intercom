@@ -37,6 +37,7 @@ from .endpoint_routing import (
     device_formats as _device_formats,
     roster_entry_formats as _roster_entry_formats,
     sip_target_audio_profile as _sip_target_audio_profile,
+    sip_target_has_unspecified_audio,
     sip_target_rtp_audio_profile as _sip_target_rtp_audio_profile,
     supports_directional_audio_payloads as _supports_directional_audio_payloads,
 )
@@ -601,7 +602,8 @@ async def async_originate_browser_call(
         else "",
         include_common_codecs=use_trunk
         or use_registered_contact_codecs
-        or video_enabled,
+        or video_enabled
+        or sip_target_has_unspecified_audio(None, route.entry, dest_device),
         allow_directional_audio_payloads=_supports_directional_audio_payloads(
             None,
             route.entry,

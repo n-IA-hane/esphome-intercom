@@ -36,6 +36,7 @@ from ..endpoint_routing import (
     roster_entry_formats,
     sip_target_audio_profile,
     sip_target_rtp_audio_profile,
+    sip_target_has_unspecified_audio,
     supports_directional_audio_payloads,
 )
 from ..fsm import (
@@ -315,7 +316,10 @@ async def route_sip_bridge(
         outbound_proxy=str(trunk_config.get(CONF_TRUNK_OUTBOUND_PROXY) or "")
         if bridge_to_trunk
         else "",
-        include_common_codecs=bridge_to_trunk or bridge_to_softphone,
+        include_common_codecs=(
+            bridge_to_trunk or bridge_to_softphone
+            or sip_target_has_unspecified_audio(peer_target, decision.entry)
+        ),
         allow_directional_audio_payloads=supports_directional_audio_payloads(
             peer_target, decision.entry
         ),

@@ -1655,13 +1655,16 @@ def _common_codec_offer_formats(
         # Dahua UAC endpoints use dynamic PT 97 for signed 16-bit
         # little-endian samples.  It is intentionally not RFC 3551 L16.
         out.append(RtpPcmFormat(97, "PCM", 16000, 1, 20))
-    if (
-        include_common_codecs
-        and
-        "OPUS" in capabilities
-        and AudioFormat(48000, PcmFormat.S16LE, 2, 20) in format_set
-    ):
-        out.append(RtpPcmFormat(98, "OPUS", 48000, 2, 20))
+    if include_common_codecs and "OPUS" in capabilities:
+        # Keep the packet time of the available PCM profile. Native SIP offers
+        # use 10 ms; adding Opus must not retime their existing PCM payloads.
+        for frame_ms in (20, 10):
+            if any(
+                AudioFormat(48000, PcmFormat.S16LE, channels, frame_ms) in format_set
+                for channels in (1, 2)
+            ):
+                out.append(RtpPcmFormat(98, "OPUS", 48000, 2, frame_ms))
+                break
     if (
         include_common_codecs
         and

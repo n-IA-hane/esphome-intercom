@@ -127,6 +127,29 @@ def _assign_capability_payloads(
     return tuple(out)
 
 
+def sip_target_has_unspecified_audio(
+    peer: Peer | None, entry, device: dict | None = None
+) -> bool:
+    """Unregistered SIP targets need negotiation, not an implicit PCM-only policy."""
+    metadata = dict(getattr(entry, "metadata", None) or {})
+    info = dict(device or (peer.device if peer is not None else None) or {})
+    kind = str(
+        (peer.endpoint_kind if peer is not None else "")
+        or metadata.get("endpoint_kind")
+        or info.get("endpoint_kind")
+        or ""
+    )
+    if kind in {"esphome", "browser", "assist"}:
+        return False
+    return not any(
+        _rtp_capability_tokens(peer, entry, direction, device)
+        or peer_audio_formats(peer, direction + "_formats")
+        or roster_entry_formats(entry, direction + "_formats")
+        or device_formats(device, direction + "_formats")
+        for direction in ("tx", "rx")
+    )
+
+
 def sip_target_rtp_audio_profile(
     peer: Peer | None,
     entry,

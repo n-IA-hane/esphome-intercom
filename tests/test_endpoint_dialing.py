@@ -268,3 +268,43 @@ def test_failed_external_leg_keeps_caller_owned_reservation(
         )
 
     reservation.release.assert_not_called()
+
+
+def test_unregistered_sip_peer_offers_opus_without_losing_pcm10(monkeypatch):
+    """Registration must not decide codec support for an otherwise unknown SIP peer."""
+    from custom_components.voip_stack.core import sdp
+
+    monkeypatch.setattr(sdp, "common_sip_codecs", lambda: frozenset({"OPUS", "G722"}))
+    dialer, created, _ = _dialer(monkeypatch)
+    peer = Peer(name="Manual SIP", host="192.0.2.60", endpoint_kind="sip_account")
+    leg = dialer.prepare_outbound_leg(
+        member=peer.name, peers=[peer], roster_entries=[], local_name="Caller",
+        local_rtp_port_index=0,
+        port_reservation=SimpleNamespace(ports=(12000, 12002), release=Mock()),
+    )
+    assert leg is not None
+    assert created["include_common_codecs"] is True
+    offer = sdp.build_offer_directional(
+        "192.0.2.1", "192.0.2.1", 12000,
+        created["supported_send_formats"], created["supported_recv_formats"],
+        include_common_codecs=created["include_common_codecs"],
+    )
+    formats = sdp.offered_pcm_formats(offer)
+    assert any(f.encoding == "OPUS" and f.frame_ms == 10 for f in formats)
+    assert any(f.encoding == "L16" and f.sample_rate == 32000 and f.frame_ms == 10 for f in formats)
+    assert all(f.frame_ms == 10 for f in formats)
+
+
+@pytest.mark.parametrize("kind,tx,expected", [
+    ("esphome", None, False),
+    ("sip_account", None, True),
+    ("sip_account", ["16000:s16le:1:10"], False),
+])
+def test_unknown_codec_policy_preserves_declared_endpoint_constraints(kind, tx, expected):
+    peer = Peer(name="Phone", host="192.0.2.61", endpoint_kind=kind, tx_formats=tx)
+    assert endpoint_routing.sip_target_has_unspecified_audio(peer, None) is expected
+
+
+def test_declared_opus_capabilities_are_not_replaced_by_generic_offer():
+    peer = Peer(name="Opus", host="192.0.2.62", sip_audio_tx_formats=("OPUS/48000/2/20",))
+    assert endpoint_routing.sip_target_has_unspecified_audio(peer, None) is False

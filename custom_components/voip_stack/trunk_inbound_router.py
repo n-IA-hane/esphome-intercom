@@ -32,6 +32,7 @@ from .endpoint_routing import (
     roster_from_peers,
     sip_target_audio_profile,
     sip_target_rtp_audio_profile,
+    sip_target_has_unspecified_audio,
     supports_directional_audio_payloads,
 )
 from .fsm import (
@@ -517,6 +518,7 @@ async def async_route_trunk_invite(
             if rtp_audio_profile is not None
             else None
         ),
+        include_common_codecs=sip_target_has_unspecified_audio(peer_target, decision.entry),
         allow_directional_audio_payloads=supports_directional_audio_payloads(
             peer_target, decision.entry
         ),
