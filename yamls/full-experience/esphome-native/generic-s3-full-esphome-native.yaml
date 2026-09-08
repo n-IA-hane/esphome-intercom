@@ -340,6 +340,13 @@ voip_stack:
       pcm_format: s16le
       channels: 1
       frame_ms: 10
+    # Accept the peer's 16 kHz voice stream for direct ESP-to-ESP calls.
+    # voip_speaker_input resamples it to the existing 48 kHz speaker mixer.
+    rx_formats:
+      - sample_rate: 16000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 10
   microphone_source:
     id: voip_mic_source
     microphone: native_mic_raw

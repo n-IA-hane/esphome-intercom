@@ -999,3 +999,22 @@ def test_p4_video_boundaries_fail_closed() -> None:
     assert "this->active_bitrate_.store(this->bitrate_" in h264_source
     for source in (h264_config, renderer_config):
         assert "only_on_variant(supported=[VARIANT_ESP32P4])" in source
+
+
+def test_native_full_and_audio_stack_full_have_reciprocal_pcm_formats() -> None:
+    """A direct call needs a TX/RX intersection in both directions (discussion 113)."""
+    import yaml
+
+    def formats(profile: str, direction: str) -> set[tuple]:
+        text = (YAMLS / profile).read_text()
+        block = _voip_stack_block(text)
+        audio = yaml.safe_load("voip_stack:\n" + block)["voip_stack"]["audio"]
+        return {
+            (f["sample_rate"], f["pcm_format"], f["channels"], f["frame_ms"])
+            for f in [audio[direction], *audio.get(direction + "_formats", [])]
+        }
+
+    native = "full-experience/esphome-native/generic-s3-full-esphome-native.yaml"
+    other = "full-experience/single-bus/waveshare-s3-full-afe.yaml"
+    assert formats(native, "tx") & formats(other, "rx")
+    assert formats(other, "tx") & formats(native, "rx")
