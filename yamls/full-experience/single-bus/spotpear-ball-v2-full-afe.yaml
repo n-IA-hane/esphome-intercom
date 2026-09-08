@@ -201,10 +201,11 @@ esp32:
       # build, audio_task stack has its own headroom from task_stack_size.
       compiler_optimization: PERF
     sdkconfig_options:
-      # Keep the 8 MB PSRAM available to LVGL, audio, VoIP, MWW and Sendspin.
-      # This full image is too large to mirror its flash instructions and
-      # read-only data into PSRAM while retaining safe runtime headroom.
-      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: "n"
+      # Run instructions from the faster octal PSRAM to preserve full-duplex
+      # AFE/MWW/VoIP cadence. Text uses about 3.3 MB, leaving runtime headroom.
+      # Keep the larger read-only assets in flash; mirroring both would exhaust
+      # this board's 8 MB PSRAM. This does not require a different ESP-IDF version.
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: "y"
       CONFIG_SPIRAM_RODATA: "n"
       # Keep TLS handshake/config memory short-lived on full audio builds.
       CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: "y"
@@ -230,7 +231,7 @@ external_components:
   - source: ${runtime_controller_components_source}
     components: [runtime_controller]
   - source: ${audio_stack_components_source}
-    components: [esp_audio_stack, esp_afe]
+    components: [esp_audio_stack, esp_afe, resampler]
 
 # The reducer owns large bounded rule/configuration tables but never touches
 # them from ISR or DMA contexts. Keep those tables in PSRAM on this constrained
@@ -408,7 +409,8 @@ esp_afe:
   feed_task_priority: 5
   feed_task_stack_size: 3072
   fetch_task_core: 1
-  fetch_task_priority: 5
+  # Deliver processed frames before the lower-priority wake-word consumer.
+  fetch_task_priority: 10
   fetch_task_stack_size: 3072
   feed_buf_in_psram: false
   feed_ring_in_psram: true
@@ -425,6 +427,19 @@ microphone:
     esp_audio_stack_id: audio_stack
 
 speaker:
+  # Keep floating-point resampling on Core1, separate from AFE feed on Core0.
+  # IDF otherwise pins the task to whichever core first executes float code.
+  # Priority11 services real-time output ahead of MWW (8), below I2S and Wi-Fi/lwIP.
+  # Buffer sizes, 48kHz playback and 16kHz microphone processing stay unchanged.
+  - id: !extend media_speaker_input
+    task_core: 1
+    task_priority: 11
+  - id: !extend tts_speaker_input
+    task_core: 1
+    task_priority: 11
+  - id: !extend voip_speaker_input
+    task_core: 1
+    task_priority: 11
   - platform: esp_audio_stack
     id: hw_speaker
     esp_audio_stack_id: audio_stack
