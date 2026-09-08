@@ -280,6 +280,12 @@ substitutions:
   ai_avatar: my_assistant
 ```
 
+An optional community theme is also included: **`starfleet`**, contributed by
+[rvdv01](https://github.com/rvdv01) in
+[discussion #110](https://github.com/n-IA-hane/esphome-intercom/discussions/110).
+Set `ai_avatar: starfleet` in your own configuration to use it. Maintained YAMLs
+keep their current default. See the [theme preview and optional ringtone](assets/images/assistant/starfleet/README.md).
+
 This artwork represents the ESP device's own Voice Assistant state. It is
 unrelated to the optional HA Assist pipeline that SIP callers can dial as an
 extension.

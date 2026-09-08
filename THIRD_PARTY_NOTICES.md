@@ -59,3 +59,13 @@ products/SoCs.
 
 Images and videos under `docs/images/` are project documentation assets unless
 a file-specific notice says otherwise.
+
+## Community assistant assets
+
+The Starfleet-inspired artwork under `assets/images/assistant/starfleet/` and
+optional ringtone under `assets/sounds/starfleet/` were contributed by GitHub
+user [rvdv01](https://github.com/rvdv01) for inclusion in this project through
+[discussion #110](https://github.com/n-IA-hane/esphome-intercom/discussions/110).
+The original asset files are retained unchanged; provenance and usage are
+recorded in the theme's README. This attribution concerns the submitted
+artwork and audio, not ownership of the depicted Star Trek identifiers.
