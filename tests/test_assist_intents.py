@@ -89,6 +89,10 @@ def _load_assist_intents(monkeypatch):
     const.DOMAIN = "voip_stack"
     monkeypatch.setitem(sys.modules, const.__name__, const)
 
+    runtime = types.ModuleType(f"{PACKAGE}.runtime_data")
+    runtime.registration_data = lambda hass: hass.registration
+    monkeypatch.setitem(sys.modules, runtime.__name__, runtime)
+
     name = f"{PACKAGE}.assist_intents"
     spec = importlib.util.spec_from_file_location(name, MODULE)
     assert spec is not None and spec.loader is not None

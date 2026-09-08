@@ -757,3 +757,67 @@ async def test_v4_migration_marks_existing_phone_bootstrap_as_complete(
     assert entry.version == 5
     assert entry.data[CONF_INITIAL_PHONE_CREATED] is True
     assert not entry.subentries
+
+
+@pytest.mark.parametrize("device_id", ["spotpear-device", "p4-device"])
+async def test_assist_llm_discovers_and_executes_existing_voip_intents(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, device_id: str
+) -> None:
+    """Exercise real HA platform discovery and IntentTool dispatch, not a tool stub."""
+    from homeassistant.core import Context
+    from homeassistant.helpers import llm as llm_helper
+    from homeassistant.components import llm as llm_component
+
+    _prepare_integration_dependencies(hass)
+    assert await async_setup_component(hass, DOMAIN, {})
+    assert await async_setup_component(hass, "llm", {})
+    await hass.async_block_till_done()
+
+    from custom_components.voip_stack import assist_intents
+    from custom_components.voip_stack.llm import async_get_tools
+
+    context = llm_helper.LLMContext(
+        platform="openai_conversation", context=Context(), language="it",
+        assistant="conversation", device_id=device_id,
+    )
+    api = await llm_helper.async_get_api(hass, "assist", context)
+    assert not any(tool.name in assist_intents.INTENT_TYPES for tool in api.tools)
+
+    assist_intents.async_register_assist_intents(hass)
+    api = await llm_helper.async_get_api(hass, "assist", context)
+    tools = {tool.name: tool for tool in api.tools if tool.name in assist_intents.INTENT_TYPES}
+    assert set(tools) == set(assist_intents.INTENT_TYPES)
+    assert "VoipCall" in api.api_prompt
+    assert async_get_tools(hass, context, "unrelated_api") is None
+
+    origin = AsyncMock(return_value={"device_id": device_id, "name": "Satellite"})
+    monkeypatch.setattr(assist_intents, "_origin_device", origin)
+    monkeypatch.setattr(
+        assist_intents, "_resolve_contact_or_area",
+        AsyncMock(return_value=assist_intents.ContactResolution(canonical="Casa")),
+    )
+    monkeypatch.setattr(assist_intents, "_ha_peer_name", lambda _: "HA")
+    calls = []
+
+    async def record_call(call):
+        calls.append(call)
+
+    hass.services.async_register(DOMAIN, "call", record_call)
+    await tools["VoipCall"].async_call(
+        hass, llm_helper.ToolInput(tool_name="VoipCall", tool_args={"target": "casa"}), context
+    )
+    assert len(calls) == 1
+    assert calls[0].data == {"destination": "Casa", "device_id": device_id}
+    assert calls[0].context is context.context
+    received_intent = origin.await_args.args[0]
+    assert received_intent.device_id == device_id
+
+    context.device_id = None
+    assert async_get_tools(hass, context, "assist") is None
+    context.device_id = device_id
+    assist_intents.async_unregister_assist_intents(hass)
+    # The platform is cached by HA, but disabled intents must disappear immediately.
+    api = await llm_helper.async_get_api(hass, "assist", context)
+    assert not any(tool.name in assist_intents.INTENT_TYPES for tool in api.tools)
+    assert "VoipCall" not in api.api_prompt
+    assert llm_component.DATA_PLATFORMS in hass.data
