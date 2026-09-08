@@ -59,15 +59,16 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         port: int = 5062,
         transport: str = "UDP",
         supported: str = "",
+        request_uri: str = "sip:192.168.1.10",
+        digest_uri: str = "",
     ) -> sip.SipMessage:
-        request_uri = "sip:192.168.1.10"
         challenge = registrar._challenge()[1]
         authorization = sip_auth.build_digest_authorization(
             challenge_header=challenge,
             username=username,
             password=password,
             method="REGISTER",
-            uri=request_uri,
+            uri=digest_uri or request_uri,
         )
         headers = [
             ("Via", f"SIP/2.0/{transport} {host}:{port};branch=z9hG4bK{call_id};rport"),
@@ -85,6 +86,32 @@ class SipRegistrarTest(unittest.IsolatedAsyncioTestCase):
         return sip.parse_message(
             sip.build_request("REGISTER", request_uri, headers, b"")
         )
+
+    async def test_register_digest_tolerates_only_matching_default_port(self) -> None:
+        cases = [
+            ("sip:192.168.1.10", "sip:192.168.1.10:5060", 200),
+            ("sip:192.168.1.10:5060", "sip:192.168.1.10", 200),
+            ("sip:192.168.1.10", "sip:192.168.1.10:5062", 401),
+            ("sip:192.168.1.10", "sip:other@192.168.1.10:5060", 401),
+            ("sip:192.168.1.10", "sip:192.168.1.11:5060", 401),
+            ("sip:192.168.1.10", "sips:192.168.1.10:5061", 401),
+            ("sip:192.168.1.10;transport=udp", "sip:192.168.1.10:5060;transport=tcp", 401),
+            ("sip:192.168.1.10;transport=udp", "sip:192.168.1.10:5060;transport=udp", 200),
+        ]
+        for request_uri, digest_uri, expected in cases:
+            with self.subTest(request_uri=request_uri, digest_uri=digest_uri):
+                registrar = sip_registrar.SipRegistrar(
+                    enabled=True,
+                    accounts=[sip_registrar.SipAccount("door", "Door", "secret")],
+                    local_ip="192.168.1.10", local_sip_port=5060,
+                )
+                request = self._authorized_register(
+                    registrar, username="door", password="secret", call_id="port-case",
+                    cseq=1, contacts=["<sip:door@192.0.2.50:5062>"],
+                    request_uri=request_uri, digest_uri=digest_uri,
+                )
+                result = await registrar.handle_register(request, ("192.0.2.50", 5062), "UDP")
+                self.assertEqual(result.status, expected)
 
     def test_digest_nonce_cache_is_bounded(self) -> None:
         registrar = sip_registrar.SipRegistrar(

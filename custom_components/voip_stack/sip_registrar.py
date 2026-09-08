@@ -20,6 +20,27 @@ from .roster import RosterEntry
 
 
 _LOGGER = logging.getLogger(__name__)
+def _register_digest_uri_matches(auth_uri: str, request_uri: str) -> bool:
+    """Allow an omitted default port without changing the signed Digest URI."""
+    if auth_uri == request_uri:
+        return True
+    if any(char in auth_uri or char in request_uri for char in "<>\r\n\t "):
+        return False
+    try:
+        auth = sip.parse_sip_uri(auth_uri)
+        request = sip.parse_sip_uri(request_uri)
+    except (sip.SipError, ValueError):
+        return False
+    return (
+        (auth.port is None) != (request.port is None)
+        and auth.scheme == request.scheme
+        and auth.user == request.user
+        and auth.host.casefold() == request.host.casefold()
+        and auth.params == request.params
+        and sip.sip_default_port(auth) == sip.sip_default_port(request)
+    )
+
+
 REALM = "voip_stack"
 NONCE_TTL = 600.0
 MAX_ACTIVE_NONCES = 256
@@ -558,13 +579,16 @@ class SipRegistrar:
                 if nonce
                 else _AuthorizationStatus.INVALID
             )
+        auth_uri = params.get("uri", "")
+        if not _register_digest_uri_matches(auth_uri, request.uri):
+            return _AuthorizationStatus.INVALID
         try:
             _algorithm, cnonce, nonce_count = verify_digest_authorization(
                 authorization_header=request.header("Authorization"),
                 username=account.username,
                 password=account.password,
                 method="REGISTER",
-                uri=request.uri,
+                uri=auth_uri,
                 realm=REALM,
                 nonce=nonce,
                 body=request.body,
