@@ -163,6 +163,59 @@ await module.link(() => {{ throw new Error("unexpected import"); }});
 await module.evaluate();
 const Engine = module.namespace.VoipStackEngine;
 
+// Terminal control recovers only transport failures and preserves exact-call scope.
+for (const mode of ["retry", "already-ended", "new-call", "offline", "denied"]) {{
+  const control = new Engine();
+  control.claimSoftphoneSession("control-A", "control-endpoint");
+  control._callId = "control-A";
+  control._endpointId = "control-endpoint";
+  control._state = "IN_CALL";
+  let sends = 0, reconnects = 0, trackStops = 0;
+  control._mediaStream = {{ getTracks: () => [{{ stop() {{ trackStops++; }} }}] }};
+  const listeners = new Map();
+  const connection = {{
+    addEventListener(name, callback) {{ listeners.set(name, callback); }},
+    removeEventListener(name) {{ listeners.delete(name); }},
+    reconnect(force) {{
+      assert.equal(force, true); reconnects++;
+      if (mode === "offline") throw new Error("network unavailable");
+      if (mode === "new-call") {{
+        control.claimSoftphoneSession("control-B", "control-endpoint");
+        control._callId = "control-B";
+      }}
+      queueMicrotask(() => listeners.get("ready")?.());
+    }},
+  }};
+  control._hass = {{
+    connection,
+    async callService(domain, service, data) {{
+      assert.equal(domain, "voip_stack"); assert.equal(service, "hangup");
+      assert.equal(data.call_id, "control-A");
+      assert.equal("endpoint_id" in data, false);
+      sends++;
+      if (mode === "denied") throw new Error("service denied");
+      if (sends === 1) throw Object.assign(new Error("stalled"), {{ code: "voip_control_timeout" }});
+    }},
+    async callWS() {{
+      return {{ call_id: mode === "new-call" ? "control-B" : "control-A",
+        state: mode === "already-ended" ? "idle" : "in_call" }};
+    }},
+  }};
+  const operation = control.terminateSoftphoneCall("hangup", {{
+    call_id: "control-A", endpoint_id: "control-endpoint", device_id: "control-device",
+  }});
+  if (mode === "denied" || mode === "offline") {{
+    await assert.rejects(operation, mode === "denied" ? /service denied/ : /closed locally/);
+  }} else await operation;
+  assert.equal(sends, mode === "retry" ? 2 : 1);
+  assert.equal(reconnects, mode === "denied" ? 0 : 1);
+  assert.equal(trackStops, mode === "denied" || mode === "new-call" ? 0 : 1);
+  assert.equal(control._terminalControlRequests.size, 0);
+  assert.equal(listeners.size, 0);
+  if (mode === "new-call") assert.equal(control.softphoneCallIdFor("control-endpoint"), "control-B");
+  else assert.equal(control.ownsSoftphoneSession("control-A", "control-endpoint"), mode === "denied");
+}}
+
 // Browser media capability is checked before SIP Answer or Call. Missing
 // getUserMedia must fail here, not after a remote dialog has received 200 OK.
 const audioPreflight = new Engine();

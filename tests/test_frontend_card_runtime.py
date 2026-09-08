@@ -70,6 +70,14 @@ let cameraPermissionChecks = 0;
 let audioPermissionChecks = 0;
 const engine = {{
   configure() {{}},
+  async terminateSoftphoneCall(service, scope) {{
+    const {{ endpoint_id, ...data }} = scope;
+    serviceCalls.push(["voip_stack", service, data]);
+    this.releaseSoftphoneSession(scope.call_id, endpoint_id);
+    if (this.endpointId === endpoint_id && this.callId === scope.call_id) {{
+      await this.close("terminal_control");
+    }}
+  }},
   active: false,
   callId: "",
   deviceId: "",
@@ -1149,7 +1157,7 @@ engine.claimSoftphoneSession("hangup-rejected", "default");
 engine.active = true;
 engine.endpointId = "default";
 engine.callId = "hangup-rejected";
-rejectedHangup._hass.callService = async () => {{ throw new Error("hangup denied"); }};
+engine.terminateSoftphoneCall = async () => {{ throw new Error("hangup denied"); }};
 rejectedHangup._loadSoftphoneState = async () => {{}};
 await rejectedHangup._hangup();
 assert.equal(engine.ownsSoftphoneSession("hangup-rejected", "default"), true);

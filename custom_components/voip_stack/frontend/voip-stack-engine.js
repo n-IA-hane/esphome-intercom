@@ -66,6 +66,25 @@ function settleWithin(promise, timeoutMs = MEDIA_CLEANUP_TIMEOUT_MS) {
   });
 }
 
+function controlWithin(promise, timeoutMs = 3000) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error("Home Assistant did not respond.");
+        error.code = "voip_control_timeout";
+        reject(error);
+      }, timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+function isHaTransportFailure(error) {
+  return error === 3 || error?.code === "connection_lost" ||
+    error?.code === "voip_control_timeout";
+}
+
 function mediaClientInstanceId() {
   try {
     const existing = String(globalThis[MEDIA_CLIENT_GLOBAL_KEY] || "");
@@ -181,21 +200,32 @@ class VoipStackEngine extends EventTarget {
     this._mediaCleanupPromise = null;
     this._ownedSessionReconcilePromise = null;
     this._pageHiding = false;
+    this._controlHealthTimer = null;
+    this._controlHealthFailures = 0;
+    this._controlHealthBusy = false;
+    this._controlReconnectPromise = null;
+    this._terminalControlRequests = new Map();
 
     window.addEventListener("pagehide", () => {
       this._pageHiding = true;
+      this._syncControlHealthMonitor();
       this._ringtoneRequests.clear();
       this._stopRingtone();
       void this.close("pagehide");
     });
     window.addEventListener("pageshow", () => {
       this._pageHiding = false;
+      this._syncControlHealthMonitor();
       this._emit();
+    });
+    globalThis.document?.addEventListener("visibilitychange", () => {
+      this._syncControlHealthMonitor();
     });
   }
 
   configure(hass) {
     this._hass = hass;
+    this._syncControlHealthMonitor();
     if (this._video) this._video.configure(hass, this._mediaClientId);
     void this.reconcileOwnedSoftphoneSessions();
     const conn = hass?.connection || null;
@@ -329,6 +359,7 @@ class VoipStackEngine extends EventTarget {
     if (wanted) this._ownedSoftphoneCalls.set(endpoint, wanted);
     else this._ownedSoftphoneCalls.delete(endpoint);
     this._persistOwnedSoftphoneCalls();
+    this._syncControlHealthMonitor();
     return true;
   }
 
@@ -376,7 +407,125 @@ class VoipStackEngine extends EventTarget {
     if (!wanted || wanted === this._ownedSoftphoneCalls.get(endpoint)) {
       this._ownedSoftphoneCalls.delete(endpoint);
       this._persistOwnedSoftphoneCalls();
+      this._syncControlHealthMonitor();
     }
+  }
+
+  _syncControlHealthMonitor() {
+    const enabled = !this._pageHiding && !globalThis.document?.hidden &&
+      this._ownedSoftphoneCalls.size > 0 && !!this._hass?.connection?.ping;
+    if (!enabled) {
+      clearTimeout(this._controlHealthTimer);
+      this._controlHealthTimer = null;
+      this._controlHealthFailures = 0;
+      return;
+    }
+    if (this._controlHealthTimer !== null || this._controlHealthBusy) return;
+    this._controlHealthTimer = setTimeout(async () => {
+      this._controlHealthBusy = true;
+      const connection = this._hass.connection;
+      try {
+        await controlWithin(connection.ping());
+        this._controlHealthFailures = 0;
+        await this.reconcileOwnedSoftphoneSessions();
+      } catch (_) {
+        if (this._hass?.connection === connection && !this._pageHiding &&
+            !globalThis.document?.hidden && ++this._controlHealthFailures >= 2) {
+          const claims = [...this._ownedSoftphoneCalls.entries()];
+          try {
+            await this._reconnectHaControl();
+            await this.reconcileOwnedSoftphoneSessions();
+          } catch (_) {
+            for (const [endpointId, callId] of claims) {
+              if (this.ownsSoftphoneSession(callId, endpointId)) {
+                await this._releaseTerminalMedia(callId, endpointId);
+              }
+            }
+            this.dispatchEvent(new CustomEvent("error", {
+              detail: "Home Assistant is unreachable. Call media was closed locally.",
+            }));
+          }
+        }
+      } finally {
+        this._controlHealthBusy = false;
+        this._controlHealthTimer = null;
+        this._syncControlHealthMonitor();
+      }
+    }, 5000);
+    this._controlHealthTimer?.unref?.();
+  }
+
+  async _reconnectHaControl() {
+    if (this._controlReconnectPromise) return this._controlReconnectPromise;
+    const connection = this._hass?.connection;
+    if (!connection?.reconnect || !connection?.addEventListener) {
+      throw new Error("Home Assistant connection is unavailable.");
+    }
+    let ready;
+    const connected = new Promise((resolve) => { ready = resolve; });
+    connection.addEventListener("ready", ready);
+    const operation = (async () => {
+      try {
+        connection.reconnect(true);
+        await controlWithin(connected, 5000);
+        this._controlHealthFailures = 0;
+      } finally {
+        connection.removeEventListener("ready", ready);
+      }
+    })();
+    this._controlReconnectPromise = operation;
+    try { return await operation; }
+    finally {
+      if (this._controlReconnectPromise === operation) this._controlReconnectPromise = null;
+    }
+  }
+
+  async _releaseTerminalMedia(callId, endpointId) {
+    const owned = this.softphoneCallIdFor(endpointId);
+    if (owned && owned !== callId) return;
+    if (this._mediaRecoveryAttempts.size >= 256) {
+      this._mediaRecoveryAttempts.delete(this._mediaRecoveryAttempts.values().next().value);
+    }
+    this._mediaRecoveryAttempts.add(`${endpointId}|${callId}`);
+    this.releaseSoftphoneSession(callId, endpointId);
+    if (this._endpointId === endpointId && this._callId === callId) {
+      await this.close("terminal_control");
+      this._forceIdle();
+    }
+  }
+
+  async terminateSoftphoneCall(service, scope) {
+    if (!["hangup", "decline"].includes(service) || !scope.call_id || !scope.endpoint_id) {
+      throw new Error("A call identity is required to end a call.");
+    }
+    const { endpoint_id: _endpointId, ...serviceData } = scope;
+    const key = `${scope.endpoint_id}|${scope.call_id}`;
+    if (this._terminalControlRequests.has(key)) return this._terminalControlRequests.get(key);
+    const operation = (async () => {
+      try {
+        await controlWithin(this._hass.callService("voip_stack", service, serviceData));
+      } catch (error) {
+        if (!isHaTransportFailure(error)) throw error;
+        try {
+          await this._reconnectHaControl();
+          const state = await controlWithin(this._hass.callWS({
+            type: "voip_stack/ha_softphone_state", endpoint_id: scope.endpoint_id,
+          }));
+          if (String(state?.call_id || "") === scope.call_id &&
+              ACTIVE_SOFTPHONE_STATES.has(String(state?.state || "").toLowerCase())) {
+            await controlWithin(this._hass.callService("voip_stack", service, serviceData));
+          }
+        } catch (retryError) {
+          if (retryError?.code && !isHaTransportFailure(retryError)) throw retryError;
+          await this._releaseTerminalMedia(scope.call_id, scope.endpoint_id);
+          throw new Error("Home Assistant is unreachable. Call media was closed locally.");
+        }
+      }
+      await this._releaseTerminalMedia(scope.call_id, scope.endpoint_id);
+    })();
+    this._terminalControlRequests.set(key, operation);
+    try { return await operation; }
+    finally { if (this._terminalControlRequests.get(key) === operation) this._terminalControlRequests.delete(key); }
   }
 
   async reconcileOwnedSoftphoneSessions() {
@@ -391,10 +540,10 @@ class VoipStackEngine extends EventTarget {
       await Promise.all(claims.map(async ([endpointId, callId]) => {
         let state;
         try {
-          state = await this._hass.callWS({
+          state = await controlWithin(this._hass.callWS({
             type: "voip_stack/ha_softphone_state",
             endpoint_id: endpointId,
-          });
+          }));
         } catch (_) {
           // A network/config reload failure cannot prove the claim stale.
           return;

@@ -2476,13 +2476,11 @@ class VoipStackCard extends HTMLElement {
     this._render();
 
     try {
-      const deviceInfo = await this._getDeviceInfo();
-      if (operationId !== this._callOperationId) return;
-      if (!deviceInfo?.device_id) throw new Error("Device not found");
       if (softphoneAction) {
         if (this._sessionCallId() !== callId) return;
-        await this._hass.callService("voip_stack", "decline", {
+        await voipStackEngine.terminateSoftphoneCall("decline", {
           ...this._softphoneServiceScope(),
+          endpoint_id: this._getSoftphoneEndpointId(),
           call_id: callId,
           status: 603,
           reason: "Decline",
@@ -2521,55 +2519,25 @@ class VoipStackCard extends HTMLElement {
       );
     }
     this._render();
-    let hangupSucceeded = false;
 
     try {
-      const deviceInfo = this._activeDeviceInfo || await this._getDeviceInfo();
-      if (!deviceInfo?.device_id) {
-        throw new Error("Device not found");
-      }
-      this._activeDeviceInfo = deviceInfo;
-
       if (wasSoftphone) {
-        await settleServiceWithin(
-          this._hass.callService("voip_stack", "hangup", {
-            ...this._softphoneServiceScope(),
-            call_id: callId,
-          }),
-          HANGUP_SERVICE_TIMEOUT_MS,
-          "Hangup request timed out; you can retry.",
-        );
+        await voipStackEngine.terminateSoftphoneCall("hangup", {
+          ...this._softphoneServiceScope(),
+          endpoint_id: this._getSoftphoneEndpointId(),
+          call_id: callId,
+        });
       } else {
         // Mirror mode: Hangup is the ESP's Decline button. Firmware maps
         // decline during in_call to stop(), and idle is a no-op.
         await this._pressEspButton(this._declineButtonEntityId, "Decline");
       }
-      hangupSucceeded = true;
     } catch (err) {
       console.error("Hangup error:", err);
       this._showError(err.message || String(err));
     }
 
-    if (wasSoftphone && hangupSucceeded) {
-      const endpointId = this._getSoftphoneEndpointId();
-      const ownedCallId = String(voipStackEngine.softphoneCallIdFor(endpointId) || "");
-      if (!ownedCallId || ownedCallId === callId) {
-        // Relinquish the authoritative call before close() emits its local
-        // IDLE transition. Otherwise the controller listener can reconcile
-        // the still-live backend snapshot and immediately reattach call A
-        // while an intentional hangup is tearing it down.
-        voipStackEngine.releaseSoftphoneSession(callId, endpointId);
-        if (
-          voipStackEngine.endpointId === endpointId &&
-          (!callId || voipStackEngine.callId === callId)
-        ) void voipStackEngine.close("hangup");
-      }
-      else voipStackEngine.releaseSoftphoneSession(callId, endpointId);
-      if (operationId === this._callOperationId) await this._loadSoftphoneState();
-    } else if (wasSoftphone && operationId === this._callOperationId) {
-      // The service may not have reached HA, or its reply may have been lost.
-      // Keep the local media claim until the authoritative snapshot settles it
-      // so the user can retry Hangup instead of becoming a silent spectator.
+    if (wasSoftphone && operationId === this._callOperationId) {
       await this._loadSoftphoneState();
     }
 
@@ -3096,7 +3064,10 @@ class VoipStackCard extends HTMLElement {
         type: "voip_stack/ha_softphone_state",
         ...this._softphoneRequestScope(),
       };
-      const result = await connection.sendMessagePromise(request);
+      const result = await settleServiceWithin(
+        connection.sendMessagePromise(request), HANGUP_SERVICE_TIMEOUT_MS,
+        "Home Assistant did not respond to the call-state request.",
+      );
       if (!this._isHaSoftphoneMode() || this._hass?.connection !== connection) return;
       if (lifecycleGeneration !== this._lifecycleGeneration) return;
       if (this._softphoneStateEpoch !== requestEpoch) return;

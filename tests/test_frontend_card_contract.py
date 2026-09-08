@@ -345,14 +345,14 @@ class FrontendCardContractTest(unittest.TestCase):
 
         decline = _method_body(self.source, "async _decline")
         ha_decline = decline.split("if (softphoneAction)", 1)[1].split("} else {", 1)[0]
-        self.assertIn('"voip_stack", "decline"', ha_decline)
+        self.assertIn('voipStackEngine.terminateSoftphoneCall("decline"', ha_decline)
         self.assertIn("...this._softphoneServiceScope()", ha_decline)
         self.assertIn("call_id: callId", ha_decline)
         self.assertNotIn("this._sessionDeviceId()", ha_decline)
 
         hangup = _method_body(self.source, "async _hangup")
         softphone_hangup = hangup.split("if (wasSoftphone)", 1)[1].split("} else {", 1)[0]
-        self.assertIn('"voip_stack", "hangup"', softphone_hangup)
+        self.assertIn('voipStackEngine.terminateSoftphoneCall("hangup"', softphone_hangup)
         self.assertIn("...this._softphoneServiceScope()", softphone_hangup)
         self.assertIn("call_id: callId", softphone_hangup)
         self.assertNotIn("this._sessionDeviceId()", softphone_hangup)
@@ -487,18 +487,17 @@ class FrontendCardContractTest(unittest.TestCase):
         auto_answer = _method_body(self.source, "async _tryAutoAnswer")
 
         for body in (answer, decline, hangup):
-            self.assertLess(body.index("const callId ="), body.index("await this._getDeviceInfo()"))
+            self.assertLess(body.index("const callId ="), body.index("await "))
             self.assertIn("const operationId = ++this._callOperationId", body)
         self.assertIn("this._sessionCallId() !== callId", answer)
         self.assertIn("this._sessionCallId() !== callId", decline)
-        self.assertIn("const ownedCallId = String(voipStackEngine.softphoneCallId", hangup)
-        self.assertIn("settleServiceWithin(", hangup)
+        self.assertIn('voipStackEngine.terminateSoftphoneCall("hangup"', hangup)
         self.assertIn("voipStackEngine.suspendVideoForHangup(", hangup)
         self.assertLess(
             hangup.index("voipStackEngine.suspendVideoForHangup("),
-            hangup.index("await this._getDeviceInfo()"),
+            hangup.index("await voipStackEngine.terminateSoftphoneCall"),
         )
-        self.assertIn('void voipStackEngine.close("hangup")', hangup)
+        self.assertNotIn('void voipStackEngine.close("hangup")', hangup)
         self.assertIn("this._sessionCallId() !== callId", auto_answer)
         self.assertIn("await this._answer({ callId, videoPermission })", auto_answer)
 
