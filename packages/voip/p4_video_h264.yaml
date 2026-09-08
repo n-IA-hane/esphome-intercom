@@ -30,7 +30,7 @@ esp32:
       CONFIG_ESP_H264_HW_ENCODER_PREFER_DB_SPIRAM: "y"
 
 external_components:
-  - source: github://n-IA-hane/esphome-esp-video-camera@dev
+  - source: github://n-IA-hane/esphome-esp-video-camera@main
     components: [esp_video_camera]
   - source: ${voip_stack_components_source}
     components: [esp_h264_video_source, p4_video_renderer]

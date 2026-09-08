@@ -1,7 +1,7 @@
-# 2026.9.1-dev: use automated phone menus, clearer controls and smoother calls
+# 2026.9.1: use automated phone menus, clearer controls and smoother calls
 
-This preview adds a keypad you can use during calls, improves audio playback,
-and makes the phone controls easier to use. `2026.9.0` remains the stable release.
+This release adds a keypad you can use during calls, improves audio playback,
+and makes the phone controls easier to use.
 
 ## Use automated menus and extensions during a call
 
@@ -19,7 +19,7 @@ During a call, it controls the menu at the other end. The Hangup button remains
 available while the keypad is open.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/dev/docs/images/ha-softphone-in-call-keypad-2026-9-1.jpg" width="420" alt="Home Assistant phone keypad used during a call to select options in an automated phone menu"/>
+  <img src="https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/v2026.9.1/docs/images/ha-softphone-in-call-keypad-2026-9-1.jpg" width="420" alt="Home Assistant phone keypad used during a call to select options in an automated phone menu"/>
 </p>
 
 ## Easier controls on the Home Assistant card
@@ -88,6 +88,22 @@ Use the maintained YAML for your device and profile so its component versions
 and audio settings stay together. No manual change to a different speaker
 component is required for these profiles.
 
+## Optional Starfleet assistant theme
+
+Give your assistant a Starfleet-inspired look, with an animated home screen
+and matching listening, thinking, error and other assistant screens.
+
+Choose it in your own configuration with `ai_avatar: starfleet`. It is entirely
+optional: the maintained YAMLs keep their current default theme. A matching
+ringtone is also available separately; choosing the avatar does not change
+your ringtone automatically.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/v2026.9.1/assets/images/assistant/starfleet/idle_00.png" width="240" alt="Optional Starfleet assistant theme"/>
+</p>
+
+See the [theme preview and instructions](https://github.com/n-IA-hane/esphome-intercom/blob/v2026.9.1/assets/images/assistant/starfleet/README.md).
+
 ## Other improvements
 
 - Improved discovery of devices with larger audio/video configurations,
@@ -97,10 +113,10 @@ component is required for these profiles.
 - A clearer warning when the Home Assistant integration and ESP component
   versions do not match.
 
-## What is still being checked
+## Compatibility notes
 
-This is a development preview. Some Android phones, external switchboards and
-combinations of simultaneous features still need further testing.
+Compatibility can vary between Android phones and external switchboards.
+Not every device or combination of simultaneous features has been tested.
 
 JPEG and H.264 remain separate video profiles. Camera speed depends on the
 resolution, device and other features running at the same time; a configured
@@ -110,13 +126,20 @@ On the **OnePlus Nord 5**, the current workaround is to use the display's
 **60 Hz mode**. Higher refresh rates can still affect calls in the Companion
 app and are not yet fully validated.
 
+## Community credits
+
+Thank you to **[@rvdv01](https://github.com/rvdv01)** for creating and sharing
+the Starfleet assistant artwork and optional ringtone in
+[discussion #110](https://github.com/n-IA-hane/esphome-intercom/discussions/110).
+It is great to see the shared avatar format used for a community contribution!
+
 ## Updating
 
-1. In HACS, open VoIP Stack, select **Redownload**, and choose **2026.9.1-dev**.
+1. In HACS, open VoIP Stack and install the **2026.9.1** update.
 2. Restart Home Assistant, then reload the browser or Companion app so it loads
    the updated card. Clear its cache if the old controls still appear.
-3. For ESP firmware updates, use the maintained development YAML for your
-   device. The YAMLs reference the matching `@dev` components.
+3. For ESP firmware updates, use the maintained stable YAML for your
+   device. The YAMLs reference the matching `@main` components.
 
 Updating the Home Assistant integration does not flash your ESP devices.
 
@@ -125,5 +148,5 @@ video was enabled, and what you expected to happen. If you attach logs, remove
 passwords and other private information first.
 
 For setup instructions and technical details, see the
-[user guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/USER_GUIDE.md)
-and [P4 configuration guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/P4_HARDWARE_AND_MEDIA.md).
+[user guide](https://github.com/n-IA-hane/esphome-intercom/blob/v2026.9.1/docs/USER_GUIDE.md)
+and [P4 configuration guide](https://github.com/n-IA-hane/esphome-intercom/blob/v2026.9.1/docs/P4_HARDWARE_AND_MEDIA.md).

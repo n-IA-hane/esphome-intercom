@@ -54,11 +54,11 @@ substitutions:
 
   # Toggled by scripts/yaml_paths.sh between local (../../../...) and remote
   # release mode.
-  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
-  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
-  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/dev/"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@main"
+  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/main/"
 
   # Display dimensions (portrait)
   display_width: "800"
@@ -138,28 +138,28 @@ substitutions:
 # controller, phonebook sync, ESP AFE controls, LVGL dashboard and media assets.
 
 packages:
-  p4_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32p4_base.yaml@dev
-  p4_c6_sdio: github://n-IA-hane/esphome-intercom/packages/board/esp32p4_c6_sdio.yaml@dev
-  p4_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native_no_wifi_signal.yaml@dev
-  full_voice_voip_runtime: github://n-IA-hane/esphome-intercom/packages/presets/full_voice_voip_runtime.yaml@dev
-  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller_no_led.yaml@dev
-  voice_assistant_runtime_controls: github://n-IA-hane/esphome-intercom/packages/voice_assistant/runtime_controls.yaml@dev
-  call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
-  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api_runtime.yaml@dev
-  voice_assistant_local_commands: github://n-IA-hane/esphome-intercom/packages/voice_assistant/local_commands.yaml@dev
-  voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
-  phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
-  afe_entities: github://n-IA-hane/esphome-intercom/packages/esp_afe/dual_mic_entities.yaml@dev
-  audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@dev
-  speaker_power: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/speaker_power_output.yaml@dev
-  flac_codecs_psram: github://n-IA-hane/esphome-intercom/packages/audio/flac_codecs_psram.yaml@dev
-  sendspin_artwork: github://n-IA-hane/esphome-intercom/packages/media_player/sendspin_artwork.yaml@dev
-  lvgl_p4_ppa: github://n-IA-hane/esphome-intercom/packages/lvgl/p4_ppa.yaml@dev
-  p4_va_cleanup: github://n-IA-hane/esphome-intercom/packages/lvgl/p4_va_cleanup.yaml@dev
+  p4_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32p4_base.yaml@main
+  p4_c6_sdio: github://n-IA-hane/esphome-intercom/packages/board/esp32p4_c6_sdio.yaml@main
+  p4_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native_no_wifi_signal.yaml@main
+  full_voice_voip_runtime: github://n-IA-hane/esphome-intercom/packages/presets/full_voice_voip_runtime.yaml@main
+  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller_no_led.yaml@main
+  voice_assistant_runtime_controls: github://n-IA-hane/esphome-intercom/packages/voice_assistant/runtime_controls.yaml@main
+  call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@main
+  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api_runtime.yaml@main
+  voice_assistant_local_commands: github://n-IA-hane/esphome-intercom/packages/voice_assistant/local_commands.yaml@main
+  voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@main
+  phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@main
+  afe_entities: github://n-IA-hane/esphome-intercom/packages/esp_afe/dual_mic_entities.yaml@main
+  audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@main
+  speaker_power: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/speaker_power_output.yaml@main
+  flac_codecs_psram: github://n-IA-hane/esphome-intercom/packages/audio/flac_codecs_psram.yaml@main
+  sendspin_artwork: github://n-IA-hane/esphome-intercom/packages/media_player/sendspin_artwork.yaml@main
+  lvgl_p4_ppa: github://n-IA-hane/esphome-intercom/packages/lvgl/p4_ppa.yaml@main
+  p4_va_cleanup: github://n-IA-hane/esphome-intercom/packages/lvgl/p4_va_cleanup.yaml@main
   # No carousel (lvgl_settings_navigation) on P4: portrait 800x1280 holds all
   # settings in a single scrollable page. See packages/lvgl/lvgl_settings_p4_unified.yaml.
   # _boot package provides the settings_p4_sync_widgets script invoked from on_boot.
-  lvgl_settings_p4_boot: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_p4_unified_boot.yaml@dev
+  lvgl_settings_p4_boot: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_p4_unified_boot.yaml@main
 
 # =============================================================================
 # BOARD AND MEMORY

@@ -37,7 +37,7 @@ esp32:
     components:
       - name: esp_driver_ppa
         source: https://github.com/n-IA-hane/esphome-intercom.git
-        ref: dev
+        ref: main
         path: idf_components/esp_driver_ppa
     # Omitting version uses the SDK selected by the installed ESPHome release.
     # An explicit newer SDK is a separate candidate: qualify cold boot, restart,
