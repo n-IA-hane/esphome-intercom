@@ -281,3 +281,9 @@ def test_hacs_release_archive_ignores_generated_python_cache(tmp_path: Path) -> 
 
     with zipfile.ZipFile(output) as archive:
         assert not any("__pycache__" in name for name in archive.namelist())
+
+
+def test_media_backend_requirements_follow_home_assistant_stream() -> None:
+    manifest = json.loads((ROOT / "custom_components/voip_stack/manifest.json").read_text())
+    assert "stream" in manifest["after_dependencies"]
+    assert not any(requirement.startswith("av==") for requirement in manifest["requirements"])

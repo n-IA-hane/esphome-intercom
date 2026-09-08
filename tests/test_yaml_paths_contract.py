@@ -93,3 +93,11 @@ def test_remote_camera_source_follows_selected_ref(tmp_path: Path) -> None:
         "source: github://n-IA-hane/esphome-esp-video-camera@dev"
         in config.read_text()
     )
+
+
+def test_global_selection_preserves_private_local_overrides(tmp_path: Path) -> None:
+    tool = _load_yaml_paths()
+    maintained = tmp_path / "phone.yaml"
+    private = tmp_path / "phone-local.yaml"
+    assert tool.selected([maintained, private], None) == [maintained]
+    assert tool.selected([maintained, private], str(private)) == [private]

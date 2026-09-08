@@ -573,24 +573,16 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     source_config = (H264_SOURCE_COMPONENT / "__init__.py").read_text()
     assert 'add_idf_component(name="espressif/esp_jpeg"' not in renderer_config
     assert 'add_lv_use("image", "label")' in renderer_config
-    assert (
-        'repo="https://github.com/n-IA-hane/esp-h264-component.git"'
-        in renderer_config
-    )
-    assert 'ref="cabfb05c1e20b08975b21544d67f61f483d023f5"' in (
-        renderer_config
-    )
-    assert 'path="esp_h264"' in renderer_config
+    assert "voip_stack.add_h264_component()" in renderer_config
+    assert "voip_stack.add_h264_component()" in source_config
+    dependency_config = (VOIP_COMPONENTS / "voip_stack" / "__init__.py").read_text()
+    assert 'url="https://github.com/n-IA-hane/esp-h264-component.git"' in dependency_config
+    assert 'ref="cabfb05c1e20b08975b21544d67f61f483d023f5"' in dependency_config
+    assert 'name="espressif/esp_h264", path=str(repository / "esp_h264")' in dependency_config
     assert (
         'add_idf_component(name="espressif/esp_image_effects", ref="1.1.0")'
         in renderer_config
     )
-    assert (
-        'repo="https://github.com/n-IA-hane/esp-h264-component.git"'
-        in source_config
-    )
-    assert 'ref="cabfb05c1e20b08975b21544d67f61f483d023f5"' in source_config
-    assert 'path="esp_h264"' in source_config
     assert "--wrap=esp_h264_malloc_prefer" not in source_config
     assert "release_callback" in renderer_cpp
     assert "memcpy(slot.data, access_unit.data" not in renderer_cpp

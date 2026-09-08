@@ -4,6 +4,7 @@
   "after_dependencies": [
     "conversation",
     "esphome",
+    "stream",
     "stt",
     "tts"
   ],

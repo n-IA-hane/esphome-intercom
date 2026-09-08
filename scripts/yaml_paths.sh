@@ -43,7 +43,9 @@ def camera_files():
 
 def selected(files, only):
     if not only:
-        return files
+        # Private overrides are gitignored and must not be rewritten or audited
+        # as maintained profiles. An explicit --file still selects them.
+        return [path for path in files if not path.name.endswith("-local.yaml")]
     target = Path(only)
     target = (ROOT / target if not target.is_absolute() else target).resolve()
     return [path for path in files if path.resolve() == target]

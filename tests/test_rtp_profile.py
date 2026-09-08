@@ -556,7 +556,6 @@ class RtpPacketizationTest(unittest.IsolatedAsyncioTestCase):
         )
         output = TimedTransport()
         relay.left_transport = output  # type: ignore[assignment]
-        started = loop.time()
 
         for sequence in range(2):
             relay.handle_packet(
@@ -569,8 +568,12 @@ class RtpPacketizationTest(unittest.IsolatedAsyncioTestCase):
                 (right.host, right.port),
             )
 
-        self.assertEqual(len(output.sent), 1)
-        self.assertLess(output.sent[0][0] - started, 0.01)
+            # No await occurs between feeding input and checking output, so
+            # deferred/paced delivery cannot satisfy this assertion. Host CPU
+            # contention must not turn this into a wall-clock benchmark.
+            self.assertEqual(len(output.sent), sequence)
+
+        self.assertEqual(len(rtp.parse_packet(output.sent[0][1]).payload), 160)
         await relay.stop()
 
     async def test_split_source_frame_preserves_rtp_timestamp_clock(self) -> None:

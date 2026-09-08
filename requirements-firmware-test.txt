@@ -1,2 +1,2 @@
-esphome==2026.7.4
+esphome==2026.8.2
 voluptuous==0.16.0
