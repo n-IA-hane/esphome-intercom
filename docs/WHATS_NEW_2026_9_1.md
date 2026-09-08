@@ -88,7 +88,7 @@ Use the maintained YAML for your device and profile so its component versions
 and audio settings stay together. No manual change to a different speaker
 component is required for these profiles.
 
-## Optional Starfleet assistant theme
+## Starfleet: optional assistant theme
 
 Give your assistant a Starfleet-inspired look, with an animated home screen
 and matching listening, thinking, error and other assistant screens.
