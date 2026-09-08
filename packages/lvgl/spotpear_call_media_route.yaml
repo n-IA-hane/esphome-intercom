@@ -1,0 +1,26 @@
+# Shared call-route label for Spotpear Full and VoIP-only.
+# The existing VoIP media-route sensor is authoritative and clears on hangup.
+lvgl:
+  pages:
+    - id: !extend call_in_call_page
+      widgets:
+        - label:
+            id: call_media_route_label
+            align: TOP_MID
+            y: 31%
+            width: 80%
+            text: ""
+            text_color: 0xFFFFFF
+            text_font: font_info
+            text_align: CENTER
+
+text_sensor:
+  - id: !extend voip_media_route
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: call_media_route_label
+            text: !lambda |-
+              if (x == "direct") return std::string("Direct");
+              if (x == "ha_transcoding") return std::string("HA transcoding");
+              return std::string();

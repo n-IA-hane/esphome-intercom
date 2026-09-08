@@ -132,6 +132,7 @@ packages:
   runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller.yaml@dev
   voice_assistant_runtime_controls: github://n-IA-hane/esphome-intercom/packages/voice_assistant/runtime_controls.yaml@dev
   call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
+  call_media_route: github://n-IA-hane/esphome-intercom/packages/lvgl/spotpear_call_media_route.yaml@dev
   ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api_runtime.yaml@dev
   voice_assistant_local_commands: github://n-IA-hane/esphome-intercom/packages/voice_assistant/local_commands.yaml@dev
   ota_maintenance: github://n-IA-hane/esphome-intercom/packages/ota/full_audio_lvgl_maintenance.yaml@dev
