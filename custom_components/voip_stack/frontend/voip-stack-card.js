@@ -2521,13 +2521,13 @@ class VoipStackCard extends HTMLElement {
     this._render();
 
     try {
-      if (wasSoftphone) {
+      if (wasSoftphone && callId) {
         await voipStackEngine.terminateSoftphoneCall("hangup", {
           ...this._softphoneServiceScope(),
           endpoint_id: this._getSoftphoneEndpointId(),
           call_id: callId,
         });
-      } else {
+      } else if (!wasSoftphone) {
         // Mirror mode: Hangup is the ESP's Decline button. Firmware maps
         // decline during in_call to stop(), and idle is a no-op.
         await this._pressEspButton(this._declineButtonEntityId, "Decline");

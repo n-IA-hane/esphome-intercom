@@ -1145,6 +1145,17 @@ const degradedVideo = makeCard();
     assert.match(degradedVideo._els.statusReason.textContent, /Video unavailable/i);
 assert.match(degradedVideo._els.statusReason.textContent, /allocate video media/i);
 
+// Cancelling an outbound start before its reply has no call ID yet. Invalidate
+// the start operation without issuing an unscoped terminal command.
+const pendingStartCancel = makeCard();
+pendingStartCancel._starting = true;
+pendingStartCancel._loadSoftphoneState = async () => {{}};
+const beforePendingCancel = serviceCalls.length;
+await pendingStartCancel._hangup();
+assert.equal(serviceCalls.length, beforePendingCancel);
+assert.equal(pendingStartCancel._starting, false);
+assert.equal(pendingStartCancel._errorMsg, "");
+
 // A rejected Hangup keeps the exact call claim and attached media available
 // so the user can retry instead of silently becoming a spectator.
 const rejectedHangup = makeCard();

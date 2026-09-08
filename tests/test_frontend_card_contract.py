@@ -351,7 +351,7 @@ class FrontendCardContractTest(unittest.TestCase):
         self.assertNotIn("this._sessionDeviceId()", ha_decline)
 
         hangup = _method_body(self.source, "async _hangup")
-        softphone_hangup = hangup.split("if (wasSoftphone)", 1)[1].split("} else {", 1)[0]
+        softphone_hangup = hangup.split("if (wasSoftphone && callId)", 1)[1].split("} else if", 1)[0]
         self.assertIn('voipStackEngine.terminateSoftphoneCall("hangup"', softphone_hangup)
         self.assertIn("...this._softphoneServiceScope()", softphone_hangup)
         self.assertIn("call_id: callId", softphone_hangup)
