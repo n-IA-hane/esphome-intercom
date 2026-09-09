@@ -410,10 +410,19 @@ _SUPPORTED_RTCP_FEEDBACK = frozenset({"nack pli", "ccm fir"})
 def video_offer_formats_for_target_codec(
     codec: str,
     available: tuple[RtpVideoFormat, ...] | list[RtpVideoFormat] | None = None,
+    *,
+    compatibility_profile: str = "",
 ) -> tuple[RtpVideoFormat, ...]:
     """Return the narrowest honest offer for one advertised peer codec."""
 
     formats = tuple(DEFAULT_VIDEO_FORMATS if available is None else available)
+    if compatibility_profile == "dahua_vto":
+        # Explicit receive compatibility, never an inferred brand-wide default.
+        return tuple(
+            replace(fmt, profile_level_id=_RFC6184_DEFAULT_PROFILE_LEVEL_ID,
+                    packetization_mode=0, level_asymmetry_allowed=False)
+            for fmt in video_offer_formats_for_target_codec("H264", formats)
+        )
     normalized = str(codec or "").strip().upper()
     if normalized == "JPEG":
         return tuple(fmt for fmt in formats if fmt.encoding == "JPEG")[:1]

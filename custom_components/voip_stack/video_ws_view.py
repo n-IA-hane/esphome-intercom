@@ -589,7 +589,10 @@ def _active_video_session(
         signaling_host=str(dialog.remote_host),
         remote_video_payload_types=tuple(dialog.remote_video_payload_types),
         remote_connection_held=bool(dialog.remote_video_connection_held),
-        camera_send_enabled=client.video_direction in {"sendonly", "sendrecv"},
+        camera_send_enabled=(
+            getattr(client, "camera_send_authorized", True)
+            and client.video_direction in {"sendonly", "sendrecv"}
+        ),
         transcoding_enabled=transcode,
         debug_mode=debug,
         rtp_source=rtp_source,

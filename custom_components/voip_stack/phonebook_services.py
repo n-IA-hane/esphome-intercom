@@ -112,6 +112,7 @@ def build_phonebook_service_handlers(
         metadata = {
             key: metadata_value(key)
             for key in (
+                "sip_video_profile",
                 "transport",
                 "rtp_port",
                 "tx_rate",

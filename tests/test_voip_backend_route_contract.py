@@ -600,7 +600,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn(expected_gate, answer_service)
         self.assertIn('call.data.get("send_video", False)', call_service)
         self.assertIn(
-            'video_direction=("sendrecv" if camera_send_enabled else "recvonly")',
+            'video_direction=("sendrecv" if video_enabled else "recvonly")',
             call_service,
         )
         self.assertIn("allow_send=(", answer_service)

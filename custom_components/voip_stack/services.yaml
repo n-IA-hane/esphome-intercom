@@ -425,6 +425,17 @@ add_contact:
       required: false
       selector:
         text:
+    sip_video_profile:
+      name: Optional SIP video compatibility
+      description: Leave Default for normal SIP phones and ESPs. Dahua VTO enables legacy incoming H.264 video on outgoing calls and disables local camera transmission for this contact. SIP video must be enabled globally.
+      required: false
+      selector:
+        select:
+          options:
+            - label: Default
+              value: default
+            - label: Dahua VTO (receive video only)
+              value: dahua_vto
     extension:
       name: Optional Extension
       description: Optional local/internal dial-plan alias such as 101. Inbound DTMF and internal callers resolve this field before external numbers.

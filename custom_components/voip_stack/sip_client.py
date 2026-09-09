@@ -385,6 +385,7 @@ class SipCallClient:
         video_format: sdp.RtpVideoFormat | None = None,
         video_formats: tuple[sdp.RtpVideoFormat, ...] | list[sdp.RtpVideoFormat] | None = None,
         video_direction: str = "sendrecv",
+        camera_send_authorized: bool = True,
         generic_video_relay: bool = False,
         allow_video_transcoding: bool = False,
         media_reservation=None,
@@ -443,6 +444,7 @@ class SipCallClient:
         requested_video = tuple(video_formats or (() if video_format is None else (video_format,)))
         self.video_formats = requested_video if self.local_video_rtp_port > 0 else ()
         self.video_format = self.video_formats[0] if self.video_formats else None
+        self.camera_send_authorized = bool(camera_send_authorized)
         self.video_direction = str(video_direction or "sendrecv")
         self.generic_video_relay = bool(generic_video_relay)
         self.allow_video_transcoding = bool(allow_video_transcoding)
