@@ -146,7 +146,6 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
     )
     phonebook_add_schema = vol.Schema(
         {
-            vol.Optional("sip_video_profile"): vol.In(["default", "dahua_vto"]),
             vol.Required("name"): SHORT_TEXT,
             vol.Optional("id", default=""): SHORT_TEXT,
             vol.Optional("address", default=""): URI_TEXT,

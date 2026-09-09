@@ -509,19 +509,11 @@ async def async_originate_browser_call(
         and target_video_enabled
         and (use_trunk or not native_audio_endpoint or esphome_sip_endpoint)
     )
-    dahua_video_compatibility = bool(
+    video_enabled = bool(
         video_capable
-        and not use_trunk
-        and not native_audio_endpoint
-        and entry_metadata.get("sip_video_profile") == "dahua_vto"
-    )
-    camera_send_enabled = bool(
-        video_capable
-        and not dahua_video_compatibility
         and cfg.get(CONF_VIDEO_CAMERA_SEND, False)
         and call.data.get("send_video", False)
     )
-    video_enabled = camera_send_enabled or dahua_video_compatibility
     video_reservation = None
     video_rtp_socket = None
     video_rtcp_socket = None
@@ -551,8 +543,9 @@ async def async_originate_browser_call(
         video_offer_formats_for_target_codec,
     )
 
-    # Ordinary peers keep explicit camera intent. The opt-in VTO profile
-    # prepares reception without authorizing local camera transmission.
+    # An outgoing browser call adds video only for an explicit per-call camera
+    # intent. Incoming offers remain independently answerable as recvonly.
+    camera_send_enabled = video_enabled
     offered_video_formats = (
         tuple(
             item for item in DEFAULT_VIDEO_FORMATS if browser_video_send_supported(item)
@@ -568,7 +561,6 @@ async def async_originate_browser_call(
     offered_video_formats = video_offer_formats_for_target_codec(
         target_video_codec,
         offered_video_formats,
-        compatibility_profile="dahua_vto" if dahua_video_compatibility else "",
     )
 
     provider_identity = (
@@ -627,8 +619,7 @@ async def async_originate_browser_call(
         ),
         local_video_rtp_port=local_video_rtp_port,
         video_formats=offered_video_formats if video_enabled else (),
-        video_direction=("sendrecv" if video_enabled else "recvonly"),
-        camera_send_authorized=not dahua_video_compatibility,
+        video_direction=("sendrecv" if camera_send_enabled else "recvonly"),
         media_reservation=video_reservation,
         video_rtp_socket=video_rtp_socket,
         video_rtcp_socket=video_rtcp_socket,
