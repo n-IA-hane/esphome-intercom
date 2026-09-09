@@ -15,6 +15,50 @@ from custom_components.voip_stack import endpoint_runtime, trunk_inbound_router
 pytestmark = pytest.mark.ha
 
 
+@pytest.mark.parametrize("incoming_transport", ["TCP", "UDP"])
+@pytest.mark.parametrize("trunk_transport", ["TCP", "UDP"])
+async def test_inbound_bridge_constructs_client_with_trunk_transport(
+    monkeypatch, incoming_transport, trunk_transport,
+) -> None:
+    """Issue #108: an ESP's signaling transport cannot select the trunk leg."""
+    from custom_components.voip_stack.inbound_routing import bridge
+    from custom_components.voip_stack.sip_runtime import uri_transport
+
+    class ClientObserved(Exception):
+        pass
+
+    captured = {}
+
+    def client(**kwargs):
+        captured.update(kwargs)
+        raise ClientObserved
+
+    ports = SimpleNamespace(ports=(44000, 44002))
+    monkeypatch.setattr(bridge, "take_delayed_offer_ports", lambda *_: ports)
+    monkeypatch.setattr(bridge, "SipCallClient", client)
+    runtime = SimpleNamespace(
+        hass=object(), config={"sip_port": 15060}, local_ip="192.0.2.10",
+        sip_uri_transport=uri_transport, ha_peer_name=lambda *_: "HA",
+    )
+    invite = SimpleNamespace(
+        call_id="esp-trunk-108", caller="ESP", routing_caller="ESP",
+        target="12345", routing_target="12345", source_host="192.0.2.20",
+        source_port=5060, signaling_transport=incoming_transport, video_format=None,
+    )
+    decision = SimpleNamespace(target="12345", entry=None, sip_uri="")
+    with pytest.raises(ClientObserved):
+        await bridge.route_sip_bridge(
+            runtime=runtime, invite=invite, decision=decision, peers=[],
+            trunk_config={"trunk_server": "192.0.2.30", "trunk_port": 5060,
+                          "trunk_transport": trunk_transport, "trunk_username": "account"},
+            bridge_to_trunk=True, source_endpoint=None, target_endpoint=None,
+            resolved_callee="12345", trunk_invite=False,
+            registry=SimpleNamespace(own_resource=lambda *_: True),
+        )
+    assert captured["signaling_transport"].upper() == trunk_transport
+    assert captured["local_rtp_port"] == 44002
+
+
 @dataclass(frozen=True)
 class _TestInvite:
     received_via_trunk: bool

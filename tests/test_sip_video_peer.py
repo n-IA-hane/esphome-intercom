@@ -64,6 +64,36 @@ def test_video_removal_offer_keeps_rejected_media_without_rtcp_port() -> None:
     assert b"a=rtcp:1\r\n" not in offer
 
 
+@pytest.mark.parametrize("rate", [16000, 24000, 32000, 48000])
+def test_pcm_ten_ms_fixture_matches_its_wire_payload(rate):
+    peer = _load_tool()
+    name = f"l16-{rate // 1000}k-10"
+    profile = peer.AUDIO_PROFILES[name]
+    offer = peer._offer(local_ip="127.0.0.1", audio_port=40000, video_port=0,
+                        codec="audio", direction="sendrecv", video_profile="RTP/AVP",
+                        audio_codec=name)
+    parsed = peer.sdp.parse_sdp(offer)
+    assert parsed["rtpmap"][96] == ("L16", rate, 1)
+    assert parsed["ptime"] == 10
+    assert profile["frame_bytes"] == len(profile["silence"]) == rate // 100 * 2
+    assert profile["frame_bytes"] <= 1200
+
+
+def test_bidirectional_video_cannot_pass_with_only_audio_and_panel_packets():
+    peer = _load_tool()
+    result = {"audio_tx_packets": 2000, "audio_rx_packets": 2000,
+              "video_tx_required": True, "video_rx_required": True,
+              "video_tx_packets": 2000, "video_rx_packets": 0,
+              "video_rx_capture_backend": "rfc2435", "video_rx_frames": 0}
+    with pytest.raises(RuntimeError, match="video rx carried no RTP"):
+        peer._validate_media_flow(result)
+    result["video_rx_packets"] = 100
+    with pytest.raises(RuntimeError, match="no complete frame"):
+        peer._validate_media_flow(result)
+    result["video_rx_frames"] = 10
+    peer._validate_media_flow(result)
+
+
 def test_camera_direction_answer_preserves_media_and_advances_origin() -> None:
     peer = _load_tool()
     local = dict(local_ip="127.0.0.1", audio_port=40000, video_port=40002,

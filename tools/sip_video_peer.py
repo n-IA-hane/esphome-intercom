@@ -204,6 +204,38 @@ AUDIO_PROFILES = {
     },
 }
 
+# Native ESP PCM profiles use 10ms packets, including speaker-only 48kHz.
+# Keep the historical 16k/16ms fixture intact for its existing callers.
+for _rate in (16000, 24000, 32000, 48000):
+    _samples = _rate // 100
+    AUDIO_PROFILES[f"l16-{_rate // 1000}k-10"] = {
+        **AUDIO_PROFILES["l16-16k"],
+        "rtpmap": f"L16/{_rate}/1",
+        "ptime": 10,
+        "sample_rate": _rate,
+        "frame_samples": _samples,
+        "frame_bytes": _samples * 2,
+        "silence": bytes(_samples * 2),
+    }
+
+
+def _validate_media_flow(result: dict) -> None:
+    """Required negotiated streams must actually carry media."""
+    mode = result.get("peer_audio_mode", "full_duplex")
+    required_audio = {
+        "full_duplex": ("audio_tx_packets", "audio_rx_packets"),
+        "speaker_only": ("audio_tx_packets",),
+        "mic_only": ("audio_rx_packets",),
+    }[mode]
+    if any(result.get(key, 0) <= 0 for key in required_audio):
+        raise RuntimeError(f"established dialog did not retain required audio RTP ({mode})")
+    for direction in ("tx", "rx"):
+        if result.get(f"video_{direction}_required") and result.get(f"video_{direction}_packets", 0) <= 0:
+            raise RuntimeError(f"negotiated video {direction} carried no RTP")
+    if result.get("video_rx_required") and result.get("video_rx_capture_backend") == "rfc2435":
+        if result.get("video_rx_frames", 0) <= 0:
+            raise RuntimeError("negotiated JPEG receive stream produced no complete frame")
+
 
 def _local_ip(remote_host: str, remote_port: int) -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -907,6 +939,7 @@ async def async_main(args: argparse.Namespace) -> int:
         "ok": False,
         "codec": args.codec,
         "audio_codec": args.audio_codec,
+        "peer_audio_mode": getattr(args, "peer_audio_mode", "full_duplex"),
         "user_agent": peer_user_agent,
         "local_display_name": args.display_name,
         "initial_codec": initial_codec,
@@ -1186,6 +1219,13 @@ async def async_main(args: argparse.Namespace) -> int:
             nonlocal video_process, video_receiver_process, jpeg_recorder
             if parsed is None or video_socket is None or rtcp_socket is None:
                 return
+            remote_direction = parsed.get("direction", "sendrecv")
+            result["video_tx_required"] = result.get("video_tx_required", False) or (
+                direction in {"sendonly", "sendrecv"} and remote_direction in {"recvonly", "sendrecv"}
+            )
+            result["video_rx_required"] = result.get("video_rx_required", False) or (
+                direction in {"recvonly", "sendrecv"} and remote_direction in {"sendonly", "sendrecv"}
+            )
             if video_tasks or video_process is not None:
                 raise RuntimeError("video media is already active")
             capture_destination = None
@@ -1668,10 +1708,7 @@ async def async_main(args: argparse.Namespace) -> int:
             raise RuntimeError(
                 "call ended before the audio hold/resume cycle completed"
             )
-        if result["audio_tx_packets"] <= 0 or result["audio_rx_packets"] <= 0:
-            raise RuntimeError(
-                "established dialog did not retain bidirectional audio RTP"
-            )
+        _validate_media_flow(result)
         expected_connected_name = str(args.expect_connected_name or "").strip()
         if expected_connected_name and (
             result["connected_identity_name"] != expected_connected_name
@@ -1867,6 +1904,11 @@ def main() -> int:
         help="resume audio with sendrecv after this many seconds on hold",
     )
     parser.add_argument("--duration", type=float, default=15.0)
+    parser.add_argument(
+        "--peer-audio-mode", choices=("full_duplex", "speaker_only", "mic_only"),
+        default="full_duplex",
+        help="physical peer role; determines which RTP directions must be present",
+    )
     parser.add_argument(
         "--audio-file",
         default="",
