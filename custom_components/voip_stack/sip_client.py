@@ -2588,45 +2588,79 @@ class SipCallClient:
             dialog = self.dialog
             if dialog is None:
                 return None
-            try:
-                request = build_dialog_request(
-                    method,
-                    call_id=self.dialog_ids.call_id,
-                    local_tag=self.dialog_ids.local_tag,
-                    remote_tag=self.dialog_ids.remote_tag,
-                    cseq=self._next_dialog_cseq(),
-                    local_uri=dialog.local_uri,
-                    remote_uri=dialog.remote_uri,
-                    remote_target_uri=dialog.remote_target_uri,
-                    route_set=dialog.route_set,
-                    contact_uri=self._pending_contact_uri or dialog.local_uri,
-                    transport=self.signaling_transport,
-                    local_display_name=self.local_name,
-                    remote_display_name=self._dialog_remote_display_name,
-                    extra_headers=extra_headers,
-                    content_type=content_type,
-                    body=body,
-                )
-                next_host, next_port = self._dialog_next_hop(
-                    request.routing.next_hop_uri,
-                    dialog.remote_host,
-                    dialog.remote_sip_port,
-                )
-            except (TypeError, ValueError, sip.SipError):
-                return None
-            try:
-                return await self._run_built_dialog_request(
-                    request,
-                    next_host,
-                    next_port,
-                    method=method,
-                    timeout=timeout,
-                    active=lambda: self._dialog_is_current(dialog),
-                )
-            except ConnectionAbortedError:
-                raise
-            except (ConnectionError, OSError):
-                return None
+            deadline = asyncio.get_running_loop().time() + timeout
+            challenges = DigestChallengeTracker()
+            pending_auth: dict[str, tuple[str, int]] = {}
+            request = None
+            while self._dialog_is_current(dialog) and asyncio.get_running_loop().time() < deadline:
+                authorization = {}
+                for header, (challenge, count) in tuple(pending_auth.items()):
+                    assert request is not None
+                    authorization[header] = build_digest_authorization(
+                        challenge_header=challenge,
+                        username=self.username,
+                        auth_username=self.auth_username,
+                        password=self.password,
+                        method=method,
+                        uri=request.routing.request_uri,
+                        nonce_count=count + 1,
+                        body=body,
+                    )
+                    pending_auth[header] = (challenge, count + 1)
+                try:
+                    request = build_dialog_request(
+                        method,
+                        call_id=self.dialog_ids.call_id,
+                        local_tag=self.dialog_ids.local_tag,
+                        remote_tag=self.dialog_ids.remote_tag,
+                        cseq=self._next_dialog_cseq(),
+                        local_uri=dialog.local_uri,
+                        remote_uri=dialog.remote_uri,
+                        remote_target_uri=dialog.remote_target_uri,
+                        route_set=dialog.route_set,
+                        contact_uri=self._pending_contact_uri or dialog.local_uri,
+                        transport=self.signaling_transport,
+                        local_display_name=self.local_name,
+                        remote_display_name=self._dialog_remote_display_name,
+                        extra_headers=(*extra_headers, *authorization.items()),
+                        content_type=content_type,
+                        body=body,
+                    )
+                    next_host, next_port = self._dialog_next_hop(
+                        request.routing.next_hop_uri,
+                        dialog.remote_host,
+                        dialog.remote_sip_port,
+                    )
+                except (TypeError, ValueError, sip.SipError):
+                    return None
+                try:
+                    response = await self._run_built_dialog_request(
+                        request,
+                        next_host,
+                        next_port,
+                        method=method,
+                        timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
+                        active=lambda: self._dialog_is_current(dialog),
+                    )
+                except ConnectionAbortedError:
+                    raise
+                except (ConnectionError, OSError):
+                    return None
+                if response is None or response.status_code not in {401, 407} or not self.password:
+                    return response
+                header = "Proxy-Authorization" if response.status_code == 407 else "Authorization"
+                try:
+                    challenge = challenges.claim(
+                        header,
+                        response.header_values(
+                            "Proxy-Authenticate" if response.status_code == 407 else "WWW-Authenticate"
+                        ),
+                    )
+                except ValueError:
+                    _LOGGER.info("SIP %s authentication rejected", method)
+                    return response
+                pending_auth[header] = (challenge, 0)
+
         return None
 
     async def _run_built_dialog_request(
@@ -4246,9 +4280,9 @@ class SipCallClient:
                 self.dialog = None
         if response is None:
             return "timeout"
-        if 200 <= int(response.status_code or 0) < 300:
+        if 200 <= int(response.status_code or 0) < 300 or response.status_code == 481:
             return "remote_hangup"
-        return "remote_hangup"
+        return sip.sip_failure_reason(int(response.status_code or 0))
 
     def _start_bye_transaction(self, timeout: float = 1.5) -> asyncio.Task[str] | None:
         """Start exactly one BYE owner for the current confirmed dialog."""
