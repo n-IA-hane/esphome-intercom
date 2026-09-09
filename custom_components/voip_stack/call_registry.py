@@ -90,7 +90,6 @@ class CallRuntimeApi:
             if key in fields
         }
         participants.update(endpoint_claims)
-        participants.update(str(value).strip() for value in (metadata.get("ring_endpoint_ids") or ()))
         participants.discard("")
         if participants:
             fields["participant_endpoint_ids"] = sorted(participants)
@@ -217,11 +216,17 @@ class CallRuntimeApi:
         call_id = session.call_id
         self._remember_terminated(call_id, generation=session.generation)
         context = session.event_context
-        context.terminal_endpoint_ids = frozenset(
+        terminal_endpoints = set(
             self._event_identity_fields(session.metadata, session.endpoint_claims).get(
                 "participant_endpoint_ids", ()
             )
         )
+        terminal_endpoints.update(
+            str(value or "").strip()
+            for value in (session.metadata.get("ring_endpoint_ids") or ())
+        )
+        terminal_endpoints.discard("")
+        context.terminal_endpoint_ids = frozenset(terminal_endpoints)
         self._advance_event_context(context, session.state)
         self.terminated_call_ids[call_id] = (session.generation, context)
         for leg_id in tuple(session.legs):
