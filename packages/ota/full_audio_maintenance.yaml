@@ -12,6 +12,9 @@
 #   - script: start_mww_when_ready
 # =============================================================================
 
+packages:
+  ota_idf_backend: !include idf_backend.yaml
+
 ota:
   - platform: esphome
     id: ota_esphome

@@ -1,0 +1,8 @@
+# Shared OTA backend for the full audio profiles. Its watchdog allowance is
+# scoped to flash erase/validation and restored afterwards.
+substitutions:
+  ext_components_source: github://n-IA-hane/esphome-intercom@dev
+
+external_components:
+  - source: ${ext_components_source}
+    components: [ota]

@@ -12,6 +12,9 @@
 #   - scripts: ai_animation_loop, timer_alarm_loop, start_mww_when_ready, draw_display
 # =============================================================================
 
+packages:
+  ota_idf_backend: !include idf_backend.yaml
+
 ota:
   - platform: esphome
     on_begin:

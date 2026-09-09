@@ -3,6 +3,7 @@
 
 #include "esphome/components/md5/md5.h"
 #include "esphome/components/watchdog/watchdog.h"
+#include "esphome/core/application.h"
 #include "esphome/core/defines.h"
 #include "esphome/core/log.h"
 
@@ -159,7 +160,14 @@ OTAResponseTypes IDFOTABackend::end() {
     return OTA_RESPONSE_ERROR_UNSUPPORTED_OTA_TYPE;
   }
 #endif
+  App.feed_wdt();
+  const uint32_t verify_started = millis();
   esp_err_t err = esp_ota_end(this->update_handle_);
+  // Each IDF call validates the whole image. Report genuine progress between
+  // them so the second pass gets its own existing watchdog budget. Also feed
+  // after a failed pass before the scoped timeout restores the normal limit.
+  App.feed_wdt();
+  ESP_LOGI(TAG, "OTA image verification: %u ms", static_cast<unsigned>(millis() - verify_started));
   this->update_handle_ = 0;
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_ota_end failed (err=0x%X)", err);
@@ -197,7 +205,11 @@ OTAResponseTypes IDFOTABackend::end() {
       return OTA_RESPONSE_ERROR_VERSION_DOWNGRADE;
     }
 #endif
+    App.feed_wdt();
+    const uint32_t select_started = millis();
     err = esp_ota_set_boot_partition(this->partition_);
+    App.feed_wdt();
+    ESP_LOGI(TAG, "OTA boot partition verification: %u ms", static_cast<unsigned>(millis() - select_started));
     if (err == ESP_OK) {
       return OTA_RESPONSE_OK;
     }
