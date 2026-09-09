@@ -166,7 +166,12 @@ class BrowserPhoneAdapter:
             call,
             endpoint_id=phone.endpoint_id,
             endpoint=phone.transport_data,
+            allow_terminated=operation in {PhoneOperation.HANGUP, PhoneOperation.DECLINE},
         )
+        if command.already_terminated:
+            return PhoneActionResult(
+                operation=operation, phone=phone, call_id=command.call_id, state="idle"
+            )
         if operation is PhoneOperation.ANSWER:
             await async_answer_browser_call(call.hass, call, command)
         elif operation is PhoneOperation.DECLINE:

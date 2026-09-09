@@ -177,6 +177,23 @@ def test_browser_command_rejects_foreign_call(softphone_commands) -> None:
         )
 
 
+def test_terminal_retry_requires_retired_owner_and_explicit_permission(softphone_commands):
+    call = _call(endpoint_id="kitchen", call_id="finished")
+    endpoint = SimpleNamespace(device_id="device-kitchen", name="Kitchen")
+    softphone_commands.service_browser_endpoint = Mock(return_value=("kitchen", endpoint))
+    registry = SimpleNamespace(is_terminated_for_endpoint=Mock(return_value=True))
+    softphone_commands.call_registry = Mock(return_value=registry)
+    softphone_commands.call_belongs_to_endpoint = Mock(return_value=False)
+    softphone_commands.browser_endpoint_name = Mock(return_value="Kitchen")
+    command = asyncio.run(softphone_commands.async_resolve_browser_call_command(
+        call.hass, call, allow_terminated=True,
+    ))
+    assert command.already_terminated
+    registry.is_terminated_for_endpoint.assert_called_once_with("finished", "kitchen")
+    with pytest.raises(_ServiceValidationError):
+        asyncio.run(softphone_commands.async_resolve_browser_call_command(call.hass, call))
+
+
 def test_bind_controller_converts_registry_conflict(softphone_commands) -> None:
     registry = Mock()
     registry.bind_controller.side_effect = ValueError("stale generation")

@@ -738,6 +738,26 @@ class CallRegistryEventContextTest(unittest.TestCase):
             registry.is_terminated(f"call-{call_registry.MAX_TERMINATED_CALL_IDS}")
         )
 
+    def test_retired_owner_allows_only_its_terminal_retries(self) -> None:
+        registry = _registry()
+        original = registry.upsert(
+            "retry-call", state="in_call", owner="bridge",
+            endpoint_id="kitchen", ring_endpoint_ids=["office"],
+        )
+        generation = original.generation
+        asyncio.run(registry.terminate_call_wait("retry-call", reason="local_hangup"))
+        self.assertTrue(registry.is_terminated_for_endpoint("retry-call", "kitchen"))
+        self.assertTrue(registry.is_terminated_for_endpoint("retry-call", "office"))
+        self.assertFalse(registry.is_terminated_for_endpoint("retry-call", "bedroom"))
+        self.assertFalse(registry.is_terminated_for_endpoint("unknown", "kitchen"))
+        # A reused logical ID must use the new generation's owner.
+        current = registry.upsert(
+            "retry-call", state="ringing", owner="ha_softphone",
+            endpoint_id="bedroom",
+        )
+        self.assertGreater(current.generation, generation)
+        self.assertFalse(registry.is_terminated_for_endpoint("retry-call", "kitchen"))
+
     def test_generation_guards_async_transition_and_terminal_tombstone(self) -> None:
         registry = _registry()
         session = registry.upsert("call-1", state="ringing", owner="ha_softphone")

@@ -42,6 +42,7 @@ class BrowserCallCommand:
     device_id: str
     call_id: str
     registry: Any
+    already_terminated: bool = False
 
 
 def bind_service_call_controller(
@@ -69,6 +70,7 @@ async def async_resolve_browser_call_command(
     *,
     endpoint_id: str = "",
     endpoint=None,
+    allow_terminated: bool = False,
 ) -> BrowserCallCommand:
     """Resolve, authorize and scope one browser-phone call command."""
 
@@ -82,7 +84,11 @@ async def async_resolve_browser_call_command(
             or str(_ha_softphone_store(hass, endpoint_id).get("call_id") or "").strip()
         )
     registry = call_registry(hass)
-    if call_id and not call_belongs_to_endpoint(registry, call_id, endpoint_id):
+    already_terminated = bool(
+        call_id and allow_terminated
+        and registry.is_terminated_for_endpoint(call_id, endpoint_id)
+    )
+    if call_id and not already_terminated and not call_belongs_to_endpoint(registry, call_id, endpoint_id):
         raise ServiceValidationError(
             f"call_id {call_id} belongs to another phone endpoint"
         )
@@ -93,6 +99,7 @@ async def async_resolve_browser_call_command(
         device_id=str(getattr(endpoint, "device_id", "")),
         call_id=call_id,
         registry=registry,
+        already_terminated=already_terminated,
     )
 
 

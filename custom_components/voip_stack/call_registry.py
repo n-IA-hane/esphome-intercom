@@ -90,6 +90,7 @@ class CallRuntimeApi:
             if key in fields
         }
         participants.update(endpoint_claims)
+        participants.update(str(value).strip() for value in (metadata.get("ring_endpoint_ids") or ()))
         participants.discard("")
         if participants:
             fields["participant_endpoint_ids"] = sorted(participants)
@@ -216,6 +217,11 @@ class CallRuntimeApi:
         call_id = session.call_id
         self._remember_terminated(call_id, generation=session.generation)
         context = session.event_context
+        context.terminal_endpoint_ids = frozenset(
+            self._event_identity_fields(session.metadata, session.endpoint_claims).get(
+                "participant_endpoint_ids", ()
+            )
+        )
         self._advance_event_context(context, session.state)
         self.terminated_call_ids[call_id] = (session.generation, context)
         for leg_id in tuple(session.legs):
@@ -240,6 +246,13 @@ class CallRuntimeApi:
             self.terminated_call_ids.move_to_end(clean_call_id)
         while len(self.terminated_call_ids) > MAX_TERMINATED_CALL_IDS:
             self.terminated_call_ids.popitem(last=False)
+
+    def is_terminated_for_endpoint(self, call_id: str, endpoint_id: str) -> bool:
+        """Authorize a terminal no-op from the bounded, retired call owner."""
+        if not self.is_terminated(call_id):
+            return False
+        context = self.event_context(call_id)
+        return context is not None and endpoint_id in context.terminal_endpoint_ids
 
     def is_terminated(
         self,

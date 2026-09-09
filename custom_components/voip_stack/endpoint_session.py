@@ -228,6 +228,7 @@ class CallEventContext:
     connected_at: float = 0.0
     duration_seconds: int | None = None
     terminal_summary_claimed: bool = False
+    terminal_endpoint_ids: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(slots=True)
