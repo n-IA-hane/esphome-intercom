@@ -258,7 +258,9 @@ api:
   on_client_connected:
     - script.execute: draw_display
 
-# OTA update endpoint used by ESPHome Dashboard and `esphome upload`.
+# This experimental Full profile uses the factory-only partition CSV above.
+# Application updates require USB until a dual-slot layout has been qualified;
+# enabling the OTA endpoint below does not create a second application slot.
 
 ota:
   - platform: esphome
