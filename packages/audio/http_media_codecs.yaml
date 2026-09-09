@@ -1,0 +1,15 @@
+# HTTP URLs may contain MP3 announcements or WAV chimes even when Home Assistant
+# prefers FLAC. Compile those decoders explicitly, without format: NONE enabling
+# every decoder (including Opus). Include only in profiles with HTTP playback.
+substitutions:
+  ext_components_source: github://n-IA-hane/esphome-intercom@dev
+
+external_components:
+  - source: ${ext_components_source}
+    components: [audio_http]
+
+audio:
+  codecs:
+    mp3:
+      buffer_memory: psram
+    wav: {}

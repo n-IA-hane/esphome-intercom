@@ -138,6 +138,7 @@ substitutions:
 # controller, phonebook sync, ESP AFE controls, LVGL dashboard and media assets.
 
 packages:
+  http_media_codecs: github://n-IA-hane/esphome-intercom/packages/audio/http_media_codecs.yaml@dev
   p4_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32p4_base.yaml@dev
   p4_c6_sdio: github://n-IA-hane/esphome-intercom/packages/board/esp32p4_c6_sdio.yaml@dev
   p4_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native_no_wifi_signal.yaml@dev

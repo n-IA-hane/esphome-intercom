@@ -128,6 +128,7 @@ substitutions:
 # navigation, ESP AFE controls, mixer/media player and assets.
 
 packages:
+  http_media_codecs: github://n-IA-hane/esphome-intercom/packages/audio/http_media_codecs.yaml@dev
   full_voice_voip_runtime: github://n-IA-hane/esphome-intercom/packages/presets/full_voice_voip_runtime.yaml@dev
   runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller.yaml@dev
   voice_assistant_runtime_controls: github://n-IA-hane/esphome-intercom/packages/voice_assistant/runtime_controls.yaml@dev
