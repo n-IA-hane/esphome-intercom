@@ -24,6 +24,17 @@ def test_full_maintenance_composes_the_selected_ota_backend(name):
     assert providers[0]["source"] == "${ext_components_source}"
 
 
+@pytest.mark.parametrize("name", ["esp32p4_base.yaml", "esp32s3_base.yaml"])
+def test_platform_can_receive_a_larger_future_firmware(name):
+    from esphome import yaml_util
+    from esphome.components.packages import resolve_packages
+
+    config = resolve_packages({"packages": {
+        "platform": yaml_util.load_yaml(ROOT / "packages/platform" / name),
+    }})
+    assert any("ota" in entry["components"] for entry in config["external_components"])
+
+
 def test_ota_validation_progress_preserves_watchdog_and_failure_semantics(tmp_path):
     source = (ROOT / "esphome/components/ota/ota_backend_esp_idf.cpp").read_text()
     start = source.index("OTAResponseTypes IDFOTABackend::end()")

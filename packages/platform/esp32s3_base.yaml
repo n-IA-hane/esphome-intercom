@@ -15,6 +15,9 @@
 #       ref: main
 # =============================================================================
 
+packages:
+  ota_idf_backend: !include ../ota/idf_backend.yaml
+
 esp32:
   framework:
     type: esp-idf

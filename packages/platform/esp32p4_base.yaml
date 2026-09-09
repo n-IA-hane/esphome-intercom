@@ -13,6 +13,9 @@
 #       ref: main
 # =============================================================================
 
+packages:
+  ota_idf_backend: !include ../ota/idf_backend.yaml
+
 esp32:
   # This board selects ESPHome's engineering-sample P4 target, including rev1.3.
   # For production P4 rev3 silicon, replace the board selection with:
