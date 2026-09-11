@@ -10,6 +10,8 @@ import logging
 import secrets
 from typing import Any, Awaitable, Callable
 
+from .sip_capture import capture_io, send_sip_datagram
+
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS
 from .core.codec_capabilities import supports_dahua_pcm
 from .const import VOIP_STACK_RTP_PORT
@@ -602,6 +604,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             await asyncio.gather(*tasks, return_exceptions=True)
 
     def datagram_received(self, data: bytes, addr) -> None:
+        capture_io(data, self.transport, addr)
         self.submit_datagram(data, addr)
 
     def submit_datagram(self, data: bytes, addr) -> bool:
@@ -1828,7 +1831,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             if self.send_override is not None:
                 return self.send_override(data, addr) is not False
             if self.transport is not None:
-                self.transport.sendto(data, addr)
+                send_sip_datagram(self.transport, data, addr)
                 return True
         except (ConnectionError, OSError, RuntimeError) as err:
             _LOGGER.debug("SIP send failed for %s:%s: %s", addr[0], addr[1], err)
@@ -3591,6 +3594,7 @@ class SipTcpServer:
             while not reader.at_eof():
                 raw = await _read_sip_stream_message(
                     reader,
+                    writer=writer,
                     first_byte_timeout=(
                         self.initial_message_timeout if first_message else None
                     ),

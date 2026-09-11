@@ -374,3 +374,22 @@ HA; direct peer-to-peer ESP calls remain invisible to HA.
 See the complete
 [in-call DTMF recipe](AUTOMATION_DIALPLAN.md#open-a-gate-with-in-call-dtmf)
 for source-leg filtering and security notes.
+
+## SIP diagnostics
+
+### `voip_stack.capture_sip`
+
+Administrator action to record this integration's SIP signaling without SSH,
+tcpdump or extra HA OS tools. Required `operation` is `start`, `stop`, `status`
+or `clear`. Optional `duration` is 10 to 300 seconds (default 120), used only
+for `start`. The action returns a response with capture status, message and
+drop counts, size, stop reason and a short-lived `download_url`.
+
+Start before the call and stop after reproducing the failure. Open the returned
+path on your HA address to download a Wireshark-readable Upper PDU PCAP. The
+capture is bounded to 4 MiB or 20,000 messages and deleted 15 minutes after
+stopping. Authorization values are redacted; phone numbers and addresses are
+not. A start while active is rejected; a new start after stopping replaces the
+previous capture. This records application SIP I/O, not RTP or kernel packets.
+See [the capture instructions](troubleshooting.md#capture-sip-signaling-from-home-assistant-including-ha-os)
+for the complete procedure and diagnostic limits.

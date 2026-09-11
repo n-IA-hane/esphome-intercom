@@ -12,6 +12,8 @@ import socket
 import ssl
 from typing import Any, AsyncIterator, Awaitable, Callable
 
+from .sip_capture import send_sip_datagram
+
 from .core.audio_format import AudioFormat, HA_SIP_PCM_FORMATS, PcmFormat
 from .core import g711
 from .core.codec_capabilities import supports_dahua_pcm
@@ -872,7 +874,7 @@ class SipCallClient:
         if self.transport is None:
             raise ConnectionError("SIP UDP transport is not available")
         host, port = self._signaling_target(remote_host, int(remote_sip_port))
-        self.transport.sendto(raw, (host, port))
+        send_sip_datagram(self.transport, raw, (host, port))
 
     def _has_signaling_path(self) -> bool:
         if self._reused_flow_send is not None:
@@ -893,7 +895,7 @@ class SipCallClient:
                 return False
             if self.transport is not None:
                 host, port = self._signaling_target(host, int(port))
-                self.transport.sendto(raw, (host, port))
+                send_sip_datagram(self.transport, raw, (host, port))
                 return True
         except (ConnectionError, OSError, RuntimeError) as err:
             _LOGGER.debug("SIP dialog send failed for %s:%s: %s", host, port, err)
@@ -1577,7 +1579,7 @@ class SipCallClient:
                     if self.reader is None:
                         return None
                     raw = await asyncio.wait_for(
-                        _read_sip_stream_message(self.reader), timeout=remaining
+                        _read_sip_stream_message(self.reader, writer=self.writer), timeout=remaining
                     )
                     if raw is None:
                         return None

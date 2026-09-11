@@ -493,6 +493,9 @@ async def _async_setup_shared(hass: HomeAssistant, config: dict | None = None) -
 
         async_register_video_ws_view(hass)
     await _async_register_services(hass)
+    from .sip_capture_service import async_register_sip_capture
+
+    await async_register_sip_capture(hass)
     _register_esp_state_event_bridge(hass)
     _register_phonebook_service_event_sync(hass)
 

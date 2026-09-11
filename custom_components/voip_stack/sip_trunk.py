@@ -20,6 +20,8 @@ import time
 import uuid
 from typing import Any, Awaitable, Callable
 
+from .sip_capture import send_sip_datagram
+
 from .core import sip
 from .core.sip_transport import default_tls_context
 from .core.sip_auth import DigestChallengeTracker
@@ -142,7 +144,7 @@ class SipTrunkClient:
         def send(raw: bytes) -> bool:
             if self.transport is None or not self.registered:
                 return False
-            self.transport.sendto(raw, self.active_registrar_target)
+            send_sip_datagram(self.transport, raw, self.active_registrar_target)
             return True
         return send, responses
 
@@ -644,7 +646,7 @@ class SipTrunkClient:
             return
         if self.transport is None:
             raise ConnectionError("SIP trunk UDP transport is not available")
-        self.transport.sendto(raw, self.active_registrar_target)
+        send_sip_datagram(self.transport, raw, self.active_registrar_target)
 
     async def _read_response(
         self,
@@ -758,7 +760,7 @@ class SipTrunkClient:
                     return self._tcp_writer.send_nowait(raw)
                 return False
             if self.transport is not None:
-                self.transport.sendto(raw, addr)
+                send_sip_datagram(self.transport, raw, addr)
                 return True
         except (ConnectionError, OSError, RuntimeError) as err:
             _LOGGER.debug("SIP trunk response send failed for %s:%s: %s", addr[0], addr[1], err)
@@ -887,7 +889,7 @@ class SipTrunkClient:
                         continue
                     active_reader = self.reader
                     try:
-                        raw = await _read_sip_stream_message(active_reader)
+                        raw = await _read_sip_stream_message(active_reader, writer=self.writer)
                     except asyncio.CancelledError:
                         raise
                     except Exception as err:

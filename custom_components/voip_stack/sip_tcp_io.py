@@ -7,6 +7,7 @@ import contextlib
 import logging
 
 from .core import sip
+from .sip_capture import capture_io
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -14,6 +15,7 @@ _LOGGER = logging.getLogger(__name__)
 async def read_sip_stream_message(
     reader: asyncio.StreamReader,
     *,
+    writer: asyncio.StreamWriter | None = None,
     first_byte_timeout: float | None = None,
     frame_timeout: float | None = 10.0,
 ) -> bytes | None:
@@ -71,7 +73,10 @@ async def read_sip_stream_message(
             body = await reader.readexactly(content_length) if content_length else b""
         except asyncio.IncompleteReadError:
             return None
-        return head + body
+        raw = head + body
+        if writer is not None:
+            capture_io(raw, writer, tcp=True)
+        return raw
 
     try:
         if frame_timeout is None:
@@ -147,6 +152,7 @@ class SipTcpWriter:
                 return
             try:
                 self.writer.write(data)
+                capture_io(data, self.writer, tcp=True, outgoing=True)
                 await self.writer.drain()
             except (ConnectionError, RuntimeError, OSError) as err:
                 _LOGGER.debug("SIP TCP write failed for %s: %s", self.label, err)

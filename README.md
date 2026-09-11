@@ -653,6 +653,14 @@ Start with [`docs/troubleshooting.md`](docs/troubleshooting.md). It covers:
 - hold, UPDATE and re-INVITE;
 - stale card state or frontend cache.
 
+For SIP call setup or hangup problems, the **`voip_stack.capture_sip`** action
+can produce a Wireshark-readable trace directly from HA, including HA OS,
+without SSH or tcpdump. Start it, reproduce the problem, then stop and download
+the PCAP from the action response. See the
+[step-by-step SIP capture guide](docs/troubleshooting.md#capture-sip-signaling-from-home-assistant-including-ha-os)
+for examples, memory limits and what the trace can diagnose. Requires a release
+containing this action.
+
 When opening an issue, attach Home Assistant diagnostics and sanitized logs.
 Remove passwords, tokens, public numbers, private addresses and SIP credentials.
 
@@ -675,6 +683,21 @@ the underlying problem.
 
 Before submitting a change, run the repository test environment documented in
 [`docs/TESTING_AND_DEBUG.md`](docs/TESTING_AND_DEBUG.md).
+
+### AI-assisted contributions
+
+Vibe coding is welcome here. I support AI-assisted development and consider it
+an invaluable tool, provided it is used thoughtfully.
+
+Asking an AI to "add this feature" or "fix this bug" and submitting the result
+is not enough. A change may solve the immediate problem while introducing
+regressions elsewhere, especially in a project where audio, video and call
+handling share limited resources.
+
+Understand the proposed changes, review their wider effects, and test the
+affected functionality before opening a pull request. Explain what you tested
+and what remains unverified. AI can help write the code, but careful review
+and testing remain the contributor's responsibility.
 
 ## License
 

@@ -10,6 +10,88 @@ collect:
 - RTP packet/byte counters;
 - a short WAV capture when audio quality is in question.
 
+## Capture SIP signaling from Home Assistant (including HA OS)
+
+Use the **VoIP Stack: Capture SIP signaling** action as an administrator. No
+SSH, tcpdump, extra add-on or privileged network access is required. This
+feature is available in the development source; use a release containing it.
+
+In **Developer Tools > Actions**, start before making the failing call:
+
+```yaml
+action: voip_stack.capture_sip
+data:
+  operation: start
+  duration: 120
+```
+
+Reproduce the problem, note the times of answering and hanging up, then run:
+
+```yaml
+action: voip_stack.capture_sip
+data:
+  operation: stop
+```
+
+The downloaded file is named **`voip-stack-sip.pcap`** and is saved by your
+browser on the phone or computer used to open the link. On the HA server,
+the capture exists only in RAM; there is no PCAP file to find with a file editor.
+
+The action response contains `download_url`, `messages`, `dropped` and `reason`.
+Open the returned path on your Home Assistant address to download the PCAP
+(for example, keep your HA address and replace the page path with the returned
+`/api/...` path, including its query string). Open the file in Wireshark, or
+attach it to your support report. The signed link expires after five minutes;
+`operation: status` returns a fresh link while the capture is still retained.
+Do not share the download link itself.
+
+Use the same action with these operations:
+
+| `operation` | Effect |
+| --- | --- |
+| `start` | Begin capturing before the test call. `duration` defaults to 120 seconds. |
+| `stop` | Stop recording and return the download link. |
+| `status` | Check progress or obtain a fresh download link after stopping. |
+| `clear` | Stop and delete the capture immediately, invalidating its download link. |
+
+For example, to retrieve a new link after the original has expired:
+
+```yaml
+action: voip_stack.capture_sip
+data:
+  operation: status
+```
+
+If `messages` is zero, the capture did not observe SIP messages from this
+integration. Check that it was started before the call and that HA actually
+handles the call's SIP signaling. If the action does not appear, check that
+your installed VoIP Stack release includes it and restart HA after updating.
+
+Capture stops automatically after the selected duration (10 to 300 seconds),
+4 MiB or 20,000 messages. It retains the beginning of the call rather than
+overwriting it. `dropped` reports observations not saved; `size_limit` means
+the capture ended early. After stopping, data stays in memory for 15 minutes,
+then is deleted. `operation: clear` deletes it immediately. Starting another
+capture replaces the previous stopped capture; attempting to start while one
+is running is rejected. Restarting HA also discards it. Nothing is written to
+`www`, logs or a persistent capture directory.
+
+This is a **SIP application trace**, exported using Wireshark's Upper PDU PCAP
+format. It records SIP UDP messages and complete TCP/TLS messages at the
+integration's I/O boundary, with timestamps and socket endpoint metadata.
+Authorization and Proxy-Authorization values are removed from the saved copy;
+phone numbers, addresses, SDP and other SIP headers remain. Review the file
+before sharing it publicly. Redaction never changes messages sent to peers.
+
+The trace does not capture RTP audio/video, TCP segment retransmissions,
+packets rejected before reaching the application, or SIP exchanged directly
+between two ESP devices without passing through HA. TCP/TLS messages are
+recorded before encryption/after decryption, not as fabricated TCP packets.
+A TX record means the application handed the message to its socket transport,
+not that the remote provider received it. A wildcard local socket address can
+appear as `0.0.0.0` or `::`; it is not a measured on-wire source address. Router
+or host packet capture may still be needed for NAT or network-delivery faults.
+
 ## ESP does not ring
 
 - Confirm the peer sends a SIP `INVITE` to the ESP `sip_port`.

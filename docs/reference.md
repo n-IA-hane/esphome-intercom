@@ -208,6 +208,9 @@ permission are independent.
 
 ## HA services
 
+- `voip_stack.capture_sip`: start, stop, inspect or clear a bounded SIP trace;
+  returns a temporary PCAP download URL. See [SIP diagnostics](SERVICES.md#sip-diagnostics).
+
 - `voip_stack.call`
 - `voip_stack.answer`
 - `voip_stack.decline`

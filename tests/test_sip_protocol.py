@@ -3776,7 +3776,8 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         trunk._reader_ready.set()
         replacement_read = asyncio.Event()
 
-        async def fake_read(reader):
+        async def fake_read(reader, *, writer=None):
+            self.assertIs(writer, old_writer if reader is old_reader else new_writer)
             if reader is old_reader:
                 trunk.reader = new_reader
                 trunk.writer = new_writer  # type: ignore[assignment]
@@ -3972,7 +3973,7 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         first_invite = invite(1, "z9hG4bKinitial", 42000)
         read_count = 0
 
-        async def read_first_flow(_reader):
+        async def read_first_flow(_reader, *, writer=None):
             nonlocal read_count
             read_count += 1
             if read_count == 1:

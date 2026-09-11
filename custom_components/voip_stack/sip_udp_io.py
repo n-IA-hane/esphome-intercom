@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+from .sip_capture import capture_io
+
 from .queue_utils import put_drop_oldest
 
 
@@ -19,5 +21,6 @@ class SipDatagramQueueProtocol(asyncio.DatagramProtocol):
         self.transport = transport  # type: ignore[assignment]
 
     def datagram_received(self, data: bytes, addr) -> None:
+        capture_io(data, self.transport, addr)
         if put_drop_oldest(self.queue, (data, addr)):
             self.dropped_packets += 1

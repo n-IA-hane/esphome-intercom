@@ -777,3 +777,35 @@ disable_account:
 list_accounts:
   name: List SIP Endpoint Accounts
   description: Return configured local SIP endpoint accounts without passwords to the administrator who called this service.
+
+capture_sip:
+  name: Capture SIP signaling
+  description: >-
+    Administrator diagnostic action. Start before a test call, then stop to
+    obtain a temporary download URL for a Wireshark-readable PCAP. Captures
+    this integration's SIP messages, not RTP audio or network-level packets.
+    Authentication values are removed; phone numbers and addresses remain.
+    Automatically stops after the selected duration or 4 MiB and deletes the
+    capture 15 minutes after stopping. Starting again replaces the old capture.
+  fields:
+    operation:
+      name: Operation
+      required: true
+      selector:
+        select:
+          options:
+            - start
+            - stop
+            - status
+            - clear
+    duration:
+      name: Maximum duration
+      description: Used when starting a capture.
+      default: 120
+      selector:
+        number:
+          min: 10
+          max: 300
+          step: 1
+          unit_of_measurement: s
+          mode: box

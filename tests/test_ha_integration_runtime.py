@@ -821,3 +821,60 @@ async def test_assist_llm_discovers_and_executes_existing_voip_intents(
     assert not any(tool.name in assist_intents.INTENT_TYPES for tool in api.tools)
     assert "VoipCall" not in api.api_prompt
     assert llm_component.DATA_PLATFORMS in hass.data
+
+
+async def test_sip_capture_admin_action_download_and_clear(
+    hass, hass_client_no_auth, hass_admin_user
+):
+    """HA's signed download works without tools inside the host/container."""
+    from homeassistant.core import Context
+    from custom_components.voip_stack.sip_capture_service import async_register_sip_capture
+    from custom_components.voip_stack.sip_capture import capture_io
+
+    assert await async_setup_component(hass, "http", {})
+    await async_register_sip_capture(hass)
+    client = await hass_client_no_auth()
+    context = Context(user_id=hass_admin_user.id)
+    async def action(operation):
+        return await hass.services.async_call(
+            DOMAIN, "capture_sip", {"operation": operation},
+            blocking=True, return_response=True, context=context,
+        )
+    started = await action("start")
+    assert started["active"]
+    with pytest.raises(ServiceValidationError, match="already running"):
+        await action("start")
+    capture_io(
+        b"BYE sip:peer@example.test SIP/2.0\r\nCall-ID: test\r\nCSeq: 2 BYE\r\nContent-Length: 0\r\n\r\n",
+        SimpleNamespace(get_extra_info=lambda _: ("127.0.0.1", 5060)),
+        ("127.0.0.2", 5060), outgoing=True,
+    )
+    stopped = await action("stop")
+    assert not stopped["active"] and stopped["messages"] == 1
+    url = stopped["download_url"]
+    response = await client.get(url)
+    assert response.status == 200
+    assert b"BYE sip:peer" in await response.read()
+    assert response.headers["Cache-Control"] == "no-store"
+    unsigned = await client.get(url.split("?", 1)[0])
+    assert unsigned.status == 401
+    await action("clear")
+    expired = await client.get(url)
+    assert expired.status == 404
+
+
+async def test_sip_capture_rejects_non_admin_control(hass, hass_client_no_auth, hass_read_only_user):
+    from homeassistant.core import Context
+    from homeassistant.exceptions import Unauthorized
+    from custom_components.voip_stack.sip_capture_service import async_register_sip_capture
+
+    assert await async_setup_component(hass, "http", {})
+    await async_register_sip_capture(hass)
+    await hass_client_no_auth()
+    for operation in ("start", "stop", "status", "clear"):
+        with pytest.raises(Unauthorized):
+            await hass.services.async_call(
+                DOMAIN, "capture_sip", {"operation": operation},
+                blocking=True, return_response=True,
+                context=Context(user_id=hass_read_only_user.id),
+            )
