@@ -359,3 +359,18 @@ def test_automation_cookbook_uses_real_event_types_and_payload_fields() -> None:
                     f"for {sorted(received_types)}"
                 )
     assert not errors, "Cookbook event contract errors:\n" + "\n".join(errors)
+
+
+def test_internal_reports_are_not_in_public_checkout() -> None:
+    """Keep private audit and qualification diaries out of published files."""
+    import subprocess
+
+    tracked = subprocess.check_output(
+        ["git", "ls-files", "-z"], cwd=ROOT
+    ).decode().split("\0")
+    forbidden = [
+        path for path in tracked
+        if path and (ROOT / path).is_file()
+        and (path.startswith("docs/audits/") or path == "docs/COMMUNITY_REGRESSIONS.md")
+    ]
+    assert not forbidden, f"Internal reports must remain private: {forbidden}"

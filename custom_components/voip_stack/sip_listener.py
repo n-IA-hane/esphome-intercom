@@ -1,4 +1,4 @@
-"""Async SIP/UDP endpoint for the phase-1 VoIP Stack profile."""
+"""SIP endpoint request handling for UDP and TCP listeners."""
 
 from __future__ import annotations
 

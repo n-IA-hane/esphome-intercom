@@ -1,4 +1,4 @@
-"""Outbound SIP/RTP primitives for the phase-1 VoIP Stack profile."""
+"""Outbound SIP dialogs, transactions and RTP media negotiation."""
 
 from __future__ import annotations
 

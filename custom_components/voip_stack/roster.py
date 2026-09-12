@@ -1,4 +1,4 @@
-"""Canonical JSON roster and SIP routing decisions for phase-1 VoIP."""
+"""Canonical JSON roster and SIP routing decisions."""
 
 from __future__ import annotations
 

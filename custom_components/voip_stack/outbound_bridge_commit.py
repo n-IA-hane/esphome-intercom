@@ -1,4 +1,4 @@
-"""Atomic ownership handoff for one answered outbound SIP leg."""
+"""Prepare and adopt outbound bridge media under one call generation."""
 
 from __future__ import annotations
 
@@ -13,13 +13,13 @@ from .bridge_manager import async_watch_sip_bridge_destination
 from .bridge_media_updates import BridgeMediaUpdateBinder
 from .config import debug_mode, media_capture_enabled
 from .dtmf_events import attach_dtmf_event_bridge
-from .endpoint_termination import EndpointTerminationHandler
 from .endpoint_session import TerminationIntent
 from .fsm import CallState, TerminalReason
 from .inbound_answer import async_commit_runtime_answer
 from .media_ports import release_sip_rtp_port_pair, release_video_media_reservation
 from .outbound_attempts import OutboundLeg, async_apply_outbound_video_answer
 from .runtime_data import sip_endpoint_manager
+from .session_cleanup import async_wait_for_cleanup
 from .core.sdp import build_answer_directional, first_offered_dtmf_format
 from .sip_bridge import (
     async_request_sip_bridge_keyframe,
@@ -118,13 +118,6 @@ async def async_commit_outbound_bridge(
         watcher.cancel()
         await asyncio.gather(watcher, return_exceptions=True)
 
-    async def _fail_commit(reason: str) -> None:
-        await _cancel_watcher()
-        await EndpointTerminationHandler(hass).terminate(
-            invite.call_id,
-            TerminationIntent(reason),
-        )
-
     if session is None:
         watcher_ready = asyncio.Event()
         watcher = asyncio.create_task(
@@ -150,35 +143,67 @@ async def async_commit_outbound_bridge(
         if session is None:
             await _cancel_watcher()
             return None
-        if policy.dest_state == CallState.RINGING.value:
-            final = await client.wait_for_final()
-            if final != CallState.IN_CALL.value or client.dialog is None:
-                await _cancel_watcher()
-                raise RuntimeError(final)
     elif not registry.is_generation_current(invite.call_id, session.generation):
         return None
 
-    video_answer = None
-    try:
-        if winner.video_relay is not None and client.dialog is not None:
-            video_answer = configure_answered_invite_video_relay(
-                invite,
-                client.dialog,
-                winner.video_relay,
-                hass=hass,
-                enable_transcoding=data.enable_video_transcoding,
-            )
-            await async_apply_outbound_video_answer(winner, video_answer)
-    except BaseException:
-        await _fail_commit(TerminalReason.MEDIA_INCOMPATIBLE.value)
-        raise
+    generation = session.generation
+    relay = None
+    relay_adopted = False
+    ports_transferred = False
+    failure_reason = TerminalReason.MEDIA_INCOMPATIBLE.value
+
+    def _require_current() -> None:
+        if not registry.is_generation_current(invite.call_id, generation):
+            raise RuntimeError("bridge call generation is no longer current")
 
     def _release_ports(_ports: Any) -> None:
-        for ports in data.release_port_pairs:
-            release_sip_rtp_port_pair(hass, ports)
+        if ports_transferred:
+            for ports in data.release_port_pairs:
+                release_sip_rtp_port_pair(hass, ports)
 
-    relay = None
+    async def _cleanup_failure(barrier: asyncio.Future | None) -> None:
+        try:
+            await _cancel_watcher()
+        finally:
+            try:
+                if barrier is not None:
+                    await async_wait_for_cleanup(barrier)
+            finally:
+                try:
+                    # Once adopted, only the session closes the relay. Before
+                    # adoption this function still owns the prepared resource.
+                    if relay is not None and not relay_adopted:
+                        await relay.stop()
+                finally:
+                    try:
+                        if winner.video_relay is not None:
+                            await winner.video_relay.stop()
+                            winner.video_relay = None
+                    finally:
+                        if not ports_transferred:
+                            for reservation in data.detach_reservations:
+                                reservation.release()
+                            if all(item is not winner.ports for item in data.detach_reservations):
+                                winner.ports.release()
+
     try:
+        _require_current()
+        if policy.dest_state == CallState.RINGING.value and watcher is not None:
+            final = await client.wait_for_final()
+            _require_current()
+            if final != CallState.IN_CALL.value or client.dialog is None:
+                raise RuntimeError(final)
+
+        video_answer = None
+        if winner.video_relay is not None and client.dialog is not None:
+            video_answer = configure_answered_invite_video_relay(
+                invite, client.dialog, winner.video_relay,
+                hass=hass, enable_transcoding=data.enable_video_transcoding,
+            )
+            await async_apply_outbound_video_answer(winner, video_answer)
+            _require_current()
+
+        failure_reason = TerminalReason.TRANSPORT_UNREACHABLE.value
         if policy.local_source:
             relay = build_local_client_relay(
                 client=client,
@@ -202,6 +227,21 @@ async def async_commit_outbound_bridge(
                 debug_capture=media_capture_enabled(hass),
                 on_release=_release_ports,
             )
+        if winner.video_relay is not None:
+            relay.attach_video_relay(winner.video_relay)
+            winner.video_relay = None
+        # No await between transfer of reservations and adoption. If adoption
+        # raises, the local cleanup still owns this complete relay inventory.
+        for reservation in data.detach_reservations:
+            reservation.detach()
+        ports_transferred = True
+        registry.attach_relay(invite.call_id, relay)
+        relay_adopted = True
+        BridgeMediaUpdateBinder(hass).attach(
+            client, relay, source_call_id=invite.call_id,
+            source_video_send_format=invite.send_video_format,
+            source_video_receive_format=invite.recv_video_format,
+        )
         attach_dtmf_event_bridge(
             hass,
             relay,
@@ -211,9 +251,36 @@ async def async_commit_outbound_bridge(
             callee=policy.connected_party,
             client=client,
         )
-        if winner.video_relay is not None:
-            relay.attach_video_relay(winner.video_relay)
+        if policy.local_source:
+            registry.attach_media(
+                invite.call_id,
+                {
+                    "rtp_loopback": True,
+                    "remote_rtp_host": data.local_ip,
+                    "remote_rtp_port": data.source_relay_port,
+                    "send_format": invite.recv_format,
+                    "recv_format": invite.send_format,
+                    "local_ssrc": secrets.randbelow(0xFFFFFFFF) + 1,
+                    "endpoint_id": data.local_endpoint_id,
+                },
+            )
+        elif policy.consume_pending_source:
+            registry.take_pending_invite(invite.call_id)
+            pending_source = registry.take_media(invite.call_id, provisional=True)
+            if pending_source is not None and relay.video_relay is not None:
+                # The live relay now owns the source video sockets and reservation.
+                # Detach those handles from the provisional owner without closing
+                # them, then release only media that was not transferred.
+                for key in (
+                    "video_rtp_reservation",
+                    "video_rtp_socket",
+                    "video_rtcp_socket",
+                ):
+                    pending_source.pop(key, None)
+            release_video_media_reservation(pending_source)
+
         request_video_keyframe = await async_start_sip_bridge_media(relay)
+        _require_current()
         if (
             policy.response_already_sent
             and video_answer is not None
@@ -236,63 +303,8 @@ async def async_commit_outbound_bridge(
             )
         ):
             raise RuntimeError("preanswered source rejected video activation")
-    except BaseException:
-        await _cancel_watcher()
-        registry.forget_bridge_link(invite.call_id)
-        await registry.close_leg(
-            invite.call_id,
-            dest_call_id,
-            reason=TerminalReason.TRANSPORT_UNREACHABLE.value,
-        )
-        if relay is not None:
-            await relay.stop()
-        elif winner.video_relay is not None:
-            await winner.video_relay.stop()
-            winner.video_relay = None
-        winner.ports.release()
-        raise
-
-    for reservation in data.detach_reservations:
-        reservation.detach()
-    winner.video_relay = None
-    BridgeMediaUpdateBinder(hass).attach(
-        client,
-        relay,
-        source_call_id=invite.call_id,
-        source_video_send_format=invite.send_video_format,
-        source_video_receive_format=invite.recv_video_format,
-    )
-    registry.attach_relay(invite.call_id, relay)
-
-    if policy.local_source:
-        registry.attach_media(
-            invite.call_id,
-            {
-                "rtp_loopback": True,
-                "remote_rtp_host": data.local_ip,
-                "remote_rtp_port": data.source_relay_port,
-                "send_format": invite.recv_format,
-                "recv_format": invite.send_format,
-                "local_ssrc": secrets.randbelow(0xFFFFFFFF) + 1,
-                "endpoint_id": data.local_endpoint_id,
-            },
-        )
-    elif policy.consume_pending_source:
-        registry.take_pending_invite(invite.call_id)
-        pending_source = registry.take_media(invite.call_id, provisional=True)
-        if pending_source is not None and relay.video_relay is not None:
-            # The live relay now owns the source video sockets and reservation.
-            # Detach those handles from the provisional owner without closing
-            # them, then release only media that was not transferred.
-            for key in (
-                "video_rtp_reservation",
-                "video_rtp_socket",
-                "video_rtcp_socket",
-            ):
-                pending_source.pop(key, None)
-        release_video_media_reservation(pending_source)
-
-    try:
+        _require_current()
+        failure_reason = TerminalReason.PROTOCOL_ERROR.value
         answer = ""
         if not policy.response_already_sent and not policy.local_source:
             answer = build_answer_directional(
@@ -333,29 +345,37 @@ async def async_commit_outbound_bridge(
             media_client_id=policy.media_client_id,
             response_already_sent=policy.response_already_sent or policy.local_source,
         )
-    except BaseException:
-        await _fail_commit(TerminalReason.PROTOCOL_ERROR.value)
-        raise
-    if not bool(getattr(committed, "committed", committed)):
-        await _fail_commit(TerminalReason.PROTOCOL_ERROR.value)
-        raise RuntimeError(str(getattr(committed, "reason", "answer_not_committed")))
+        if not bool(getattr(committed, "committed", committed)):
+            raise RuntimeError(str(getattr(committed, "reason", "answer_not_committed")))
 
-    if request_video_keyframe:
-        assert relay.video_relay is not None
-        session.create_task(
-            async_request_sip_bridge_keyframe(client),
-            name=f"voip-keyframe-{dest_call_id}",
+        _require_current()
+        if request_video_keyframe:
+            assert relay.video_relay is not None
+            session.create_task(
+                async_request_sip_bridge_keyframe(client),
+                name=f"voip-keyframe-{dest_call_id}",
+            )
+
+        from .call_projection import publish_esp_media_route
+
+        publish_esp_media_route(hass, invite.call_id, relay.media_route)
+        result = BridgeCommitResult(
+            relay,
+            dest_call_id,
+            video_answer,
+            winner.video_failure_reason,
         )
-
-    from .call_projection import publish_esp_media_route
-
-    publish_esp_media_route(hass, invite.call_id, relay.media_route)
-    result = BridgeCommitResult(
-        relay,
-        dest_call_id,
-        video_answer,
-        winner.video_failure_reason,
-    )
-    if watcher_ready is not None:
-        watcher_ready.set()
-    return result
+        if watcher_ready is not None:
+            watcher_ready.set()
+        return result
+    except BaseException:
+        # Claim in the original caller before shielding cleanup. The session
+        # must not wait for an initiator which is itself awaiting this barrier.
+        barrier = registry.request_termination(
+            invite.call_id, TerminationIntent(failure_reason), generation=generation,
+        )
+        cleanup = asyncio.create_task(
+            _cleanup_failure(barrier), name=f"voip-bridge-rollback-{dest_call_id}",
+        )
+        await async_wait_for_cleanup(cleanup)
+        raise

@@ -54,3 +54,6 @@ brands/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Internal audit reports must not be published
+/docs/audits/

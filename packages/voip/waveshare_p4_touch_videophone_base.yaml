@@ -54,9 +54,6 @@ esphome:
             id: backlight_pwm
             level: 100%
         - output.turn_off: speaker_enable
-        - number.set:
-            id: master_volume
-            value: 1
         - lambda: |-
             id(videophone_peer) =
                 id(phone).get_current_destination();

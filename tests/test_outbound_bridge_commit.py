@@ -47,9 +47,11 @@ def _fixture():
             "m=audio 5000 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000\r\n"
         ),
     )
-    session = SimpleNamespace(create_task=asyncio.create_task)
+    session = SimpleNamespace(generation=1, create_task=asyncio.create_task)
     registry = SimpleNamespace(
         register_bridge=MagicMock(return_value=session),
+        is_generation_current=MagicMock(return_value=True),
+        request_termination=MagicMock(return_value=None),
         forget_bridge_link=MagicMock(),
         close_leg=AsyncMock(return_value=True),
         attach_relay=MagicMock(),
@@ -173,7 +175,7 @@ async def test_commit_reuses_registered_session_without_second_watcher(monkeypat
     await asyncio.sleep(0)
 
     assert result is not None
-    registry.is_generation_current.assert_called_once_with("source-call", 7)
+    assert registry.is_generation_current.call_args.args == ("source-call", 7)
     registry.register_bridge.assert_not_called()
     assert not _pending_watchers()
 
@@ -312,11 +314,6 @@ async def test_commit_failure_leaves_no_destination_watcher(monkeypatch, failure
     monkeypatch.setattr(module, "BridgeMediaUpdateBinder", lambda _hass: binder)
     monkeypatch.setattr(
         module,
-        "EndpointTerminationHandler",
-        lambda _hass: SimpleNamespace(terminate=AsyncMock(return_value=True)),
-    )
-    monkeypatch.setattr(
-        module,
         "async_commit_runtime_answer",
         AsyncMock(
             return_value=AnswerCommitResult(
@@ -350,3 +347,221 @@ async def test_commit_failure_leaves_no_destination_watcher(monkeypatch, failure
     await asyncio.sleep(0)
 
     assert not _pending_watchers()
+
+
+@pytest.fixture
+def owned_bridge(monkeypatch, socket_enabled):
+    """Real session, relay sockets and reservation release inventory."""
+    from custom_components.voip_stack import outbound_bridge_commit as module
+    from custom_components.voip_stack import media_ports
+    from custom_components.voip_stack.core.audio_format import AudioFormat
+    from custom_components.voip_stack.inbound_answer import AnswerCommitResult
+    from custom_components.voip_stack.pbx_runtime import SipEndpointRuntime
+    from custom_components.voip_stack.sip_rtp_bridge import RtpPeer, SipRtpRelay
+    import socket
+
+    invite, winner, _, _ = _fixture()
+    registry = SipEndpointRuntime(allow_dark_sessions=True)
+    registry.activate()
+    session = registry.upsert(invite.call_id, state="connecting", owner="bridge")
+    pool = {(40000, 40002)}
+    releases = []
+
+    def release(_hass, ports):
+        assert ports in pool, "reservation was released twice"
+        pool.remove(ports)
+        releases.append(ports)
+
+    winner.ports = media_ports.RtpPortReservation(object(), (40000, 40002))
+    monkeypatch.setattr(media_ports, "release_sip_rtp_port_pair", release)
+    monkeypatch.setattr(module, "release_sip_rtp_port_pair", release)
+    monkeypatch.setattr(module, "attach_dtmf_event_bridge", MagicMock())
+    monkeypatch.setattr(module, "build_answer_directional", lambda *_a, **_k: "sdp")
+    monkeypatch.setattr(module, "async_commit_runtime_answer", AsyncMock(return_value=AnswerCommitResult(True, True)))
+    binder = SimpleNamespace(attach=MagicMock())
+    monkeypatch.setattr(module, "BridgeMediaUpdateBinder", lambda _: binder)
+    relays = []
+    peers = []
+    for _ in range(2):
+        peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        peer.bind(("127.0.0.1", 0))
+        peer.setblocking(False)
+        peers.append(peer)
+
+    def build(**kwargs):
+        fmt = AudioFormat(16000, "s16le", 1, 20)
+        relay = SipRtpRelay(
+            left=RtpPeer("127.0.0.1", peers[0].getsockname()[1], 96, fmt),
+            right=RtpPeer("127.0.0.1", peers[1].getsockname()[1], 96, fmt),
+            left_port=0, right_port=0, on_release=kwargs["on_release"],
+        )
+        relays.append(relay)
+        return relay
+
+    monkeypatch.setattr(module, "build_invite_client_relay", build)
+    monkeypatch.setattr(module, "build_local_client_relay", build)
+    data = module.BridgeCommitData(
+        invite=invite, winner=winner, source_relay_port=0, dest_relay_port=0,
+        local_ip="127.0.0.1", release_port_pairs=(winner.ports.ports,),
+        detach_reservations=(winner.ports,),
+    )
+    try:
+        yield SimpleNamespace(module=module, invite=invite, winner=winner, registry=registry,
+                              session=session, pool=pool, releases=releases, binder=binder,
+                              relays=relays, peers=peers, data=data)
+    finally:
+        for peer in peers:
+            peer.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["build", "adopt", "bind", "start", "ended", "successor", "cancel"])
+async def test_bridge_failures_release_owned_inventory(owned_bridge, monkeypatch, failure):
+    h = owned_bridge
+    module = h.module
+    successor = None
+    transports = []
+    original_start = module.async_start_sip_bridge_media
+
+    async def start(relay):
+        nonlocal successor
+        await original_start(relay)
+        transports.extend((relay.left_transport, relay.right_transport))
+        if failure in {"ended", "successor"}:
+            await h.registry.terminate_call_wait(h.invite.call_id, reason="remote_hangup")
+            if failure == "successor":
+                successor = h.registry.upsert(h.invite.call_id, state="ringing", owner="router")
+        elif failure == "cancel":
+            raise asyncio.CancelledError
+        elif failure == "start":
+            raise RuntimeError("media startup failed")
+        return False
+
+    monkeypatch.setattr(module, "async_start_sip_bridge_media", start)
+    if failure == "build":
+        monkeypatch.setattr(module, "build_invite_client_relay", MagicMock(side_effect=RuntimeError("construction failed")))
+    elif failure == "adopt":
+        monkeypatch.setattr(h.registry, "attach_relay", MagicMock(side_effect=RuntimeError("adoption failed")))
+    elif failure == "bind":
+        h.binder.attach.side_effect = RuntimeError("binding failed")
+
+    try:
+        with pytest.raises(asyncio.CancelledError if failure == "cancel" else RuntimeError):
+            await module.async_commit_outbound_bridge(
+                MagicMock(), h.registry, h.data,
+                module.BridgeCommitPolicy(route_kind="direct", caller="a", callee="b", connected_party="b"),
+                session=h.session,
+            )
+        if failure in {"start", "ended", "successor", "cancel"}:
+            assert len(transports) == 2
+        assert not h.pool
+        assert len(h.releases) == 1
+        assert all(t.is_closing() for t in transports)
+        assert all(r.left_transport is None and r.right_transport is None for r in h.relays)
+        assert h.session.terminated.is_set()
+        if successor is not None:
+            assert h.registry.get_session(h.invite.call_id) is successor
+            assert successor.live and successor.state == "ringing"
+        else:
+            assert not h.registry.sessions
+        assert not _pending_watchers()
+    finally:
+        if successor is not None:
+            await successor.terminate(module.TerminationIntent("test_done"))
+        for relay in h.relays:
+            await relay.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("local_source,preanswered,video", [(False, False, False), (True, False, False), (False, True, True)])
+async def test_bridge_success_keeps_media_until_session_termination(owned_bridge, monkeypatch, local_source, preanswered, video):
+    h = owned_bridge
+    module = h.module
+    video_stop = AsyncMock()
+    if video:
+        fake_video = SimpleNamespace(
+            start=AsyncMock(), stop=video_stop, transcoding=False,
+            transcodes_from=lambda _: False,
+            left_port=40008,
+            left=SimpleNamespace(send_format="jpeg", recv_format="jpeg"),
+            right=SimpleNamespace(recv_format=SimpleNamespace(encoding="JPEG")),
+        )
+        h.winner.video_relay = fake_video
+        monkeypatch.setattr(module, "configure_answered_invite_video_relay", lambda *_a, **_k: SimpleNamespace(direction="sendrecv", video_format=None))
+        monkeypatch.setattr(module, "async_apply_outbound_video_answer", AsyncMock())
+        monkeypatch.setattr(module, "sip_endpoint_manager", lambda _: SimpleNamespace(async_activate_video_reinvite=AsyncMock(return_value=True)))
+    try:
+        result = await module.async_commit_outbound_bridge(
+            MagicMock(), h.registry, h.data,
+            module.BridgeCommitPolicy(route_kind="direct", caller="a", callee="b", connected_party="b", local_source=local_source, response_already_sent=preanswered),
+            session=h.session,
+        )
+        assert result is not None
+        relay = result.relay
+        assert relay.left_transport is not None and relay.right_transport is not None
+        assert h.pool and not h.releases
+        # Independent wire oracle: both sides receive the exact PCM payload.
+        import struct
+        loop = asyncio.get_running_loop()
+        for side, transport in enumerate((relay.left_transport, relay.right_transport)):
+            pcm = (1200 + side * 1000).to_bytes(2, "big", signed=True) * 320
+            packet = struct.pack("!BBHII", 0x80, 96, 1, 320, side + 1) + pcm
+            await loop.sock_sendto(h.peers[side], packet, transport.get_extra_info("sockname"))
+            received = await asyncio.wait_for(loop.sock_recv(h.peers[1 - side], 2048), 2)
+            assert received[12:] == pcm
+        await h.registry.terminate_call_wait(h.invite.call_id, reason="remote_hangup")
+        assert not h.pool and len(h.releases) == 1
+        assert relay.left_transport is None and relay.right_transport is None
+        assert not h.registry.sessions
+        if video:
+            video_stop.assert_awaited_once()
+    finally:
+        await h.session.terminate(module.TerminationIntent("test_done"))
+        for relay in h.relays:
+            await relay.stop()
+
+
+@pytest.mark.asyncio
+async def test_repeated_cancellation_waits_for_relay_cleanup(owned_bridge, monkeypatch):
+    h = owned_bridge
+    module = h.module
+    entered_start = asyncio.Event()
+    entered_stop = asyncio.Event()
+    finish_stop = asyncio.Event()
+    original_start = module.async_start_sip_bridge_media
+
+    async def start(relay):
+        await original_start(relay)
+        stop = relay.stop
+        async def slow_stop():
+            entered_stop.set()
+            await finish_stop.wait()
+            await stop()
+        relay.stop = slow_stop
+        entered_start.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(module, "async_start_sip_bridge_media", start)
+    task = asyncio.create_task(module.async_commit_outbound_bridge(
+        MagicMock(), h.registry, h.data,
+        module.BridgeCommitPolicy(route_kind="direct", caller="a", callee="b", connected_party="b"),
+        session=h.session,
+    ))
+    try:
+        await asyncio.wait_for(entered_start.wait(), 2)
+        task.cancel()
+        await asyncio.wait_for(entered_stop.wait(), 2)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done() and h.pool
+        finish_stop.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 2)
+        assert not h.pool and len(h.releases) == 1
+        assert not h.registry.sessions
+        assert all(r.left_transport is None and r.right_transport is None for r in h.relays)
+    finally:
+        finish_stop.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await h.session.terminate(module.TerminationIntent("test_done"))

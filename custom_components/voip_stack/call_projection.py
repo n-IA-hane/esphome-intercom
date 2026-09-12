@@ -1,4 +1,4 @@
-"""Stateless Home Assistant projections of authoritative PBX sessions."""
+"""Home Assistant projections and delivery bookkeeping for PBX sessions."""
 
 from __future__ import annotations
 

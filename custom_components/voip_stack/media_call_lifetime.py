@@ -1,4 +1,4 @@
-"""Shared authoritative lifetime lookup for browser media sessions."""
+"""Resolve browser media eligibility from the softphone projection."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ _MEDIA_CALL_STATES = frozenset({"connecting", "in_call"})
 
 @dataclass(frozen=True, slots=True)
 class ActiveMediaCall:
-    """One endpoint's current media-bearing call and authoritative registry."""
+    """One endpoint's projected media-bearing call and PBX registry."""
 
     call_id: str
     store: dict[str, Any]

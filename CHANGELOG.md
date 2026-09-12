@@ -1,9 +1,78 @@
-# 2026.9.1: use automated phone menus, clearer controls and smoother calls
+# Changelog
+
+## 2026.9.2: more reliable calls, audio fixes and built-in SIP capture
+
+This stable release brings together call reliability fixes, improved ESP audio support, P4 display improvements and built-in SIP troubleshooting. Existing working configurations remain supported.
+
+### Home Assistant calls
+
+- **Forwarding and connecting calls:** improved cleanup when a call ends or fails while its audio/video connection is being prepared. This helps prevent an interrupted call from leaving resources occupied for the next one.
+- **Hangup compatibility:** added support for providers that request authentication when ending an established call. The Swisscom capture confirmed this missing authentication retry; final confirmation on the affected account is still pending.
+- **Repeated controls:** pressing Hangup or Decline again after a call has ended no longer produces an incorrect ownership error.
+- **Phone menus:** the in-call keypad lets you interact with an IVR, for example to enter an extension or choose a department. It does not create a spoken IVR inside Home Assistant.
+
+### Capture SIP directly from HA, including HA OS
+
+The new **VoIP Stack: Capture SIP signaling** action helps diagnose calls without installing tcpdump or using SSH.
+
+In **Developer Tools > Actions**, start a capture before the test call:
+
+```yaml
+action: voip_stack.capture_sip
+data:
+  operation: start
+  duration: 120
+```
+
+After reproducing the problem, run the same action with `operation: stop`. Its response contains a complete `download_url`: copy it into your browser to download `voip-stack-sip.pcap` for Wireshark or a support report. If the link expires, `operation: status` provides a fresh one while the capture is retained.
+
+The capture records this integration's SIP signaling, not conversation audio or all network traffic. Authentication header values are hidden, but phone numbers and network addresses can remain. Review the file before sharing it publicly. Recording stops automatically at the time or size limit; data is held in RAM and deleted 15 minutes after stopping, or immediately with `operation: clear`.
+
+### ESP audio, firmware and P4 display
+
+**ESP-side changes require rebuilding and uploading firmware. A HACS update alone does not update an ESP.**
+
+- **P4 volume:** full landscape and VoIP-only profiles no longer force Master Volume to 1% on every boot. The saved setting can now be restored normally.
+- **P4 date and time:** the full landscape display abbreviates the date when space is limited, keeping the complete clock on one line.
+- **Announcements:** HTTP playback profiles include MP3 and WAV alongside FLAC. WAV announcements served without a filename extension are recognized, including the `audio/vnd.wave` content type.
+- **Early microphone startup:** capture requested before component setup no longer depends on a semaphore that has not yet been created.
+- **Microphone-only calls:** calls no longer time out simply because the device transmits audio without receiving it. Microphone gain controls also work without requiring a dummy speaker configuration.
+- **Speaker playback:** incoming call audio can restart a speaker that has become idle.
+- **Firmware updates:** shared OTA handling supports the larger Full images. The I2S interrupt fix addresses a P4 failure during flash writes that could cause an update to roll back.
+- **Audio negotiation:** two-way calls select a compatible format. Explicit directional negotiation retains separate transmit and receive rates; no automatic PCM/Opus fallback has been added.
+
+### Optional dual-microphone features
+
+Standard I2S can feed two microphone slots into the existing dual-microphone processing path. Optional I2S left/right slot-level sensors can support sound-direction automations. The microphone output presented to applications remains mono.
+
+Dual-microphone AFE configurations honor the requested VAD setting and can use optional output gain normalization when the underlying pipeline does not apply AGC. These features are optional and do not enable themselves in existing profiles. Changing AGC can rebuild the processing pipeline and briefly interrupt audio.
+
+### Retesting and updating
+
+Provider and board-specific reports, including Swisscom and some experimental ESP configurations, remain under investigation. These remaining reports are not declared resolved by this release. Original ESP32/A1S support and native locked-screen mobile calling have not been added.
+
+1. Open VoIP Stack in HACS, choose **Redownload**, and select **2026.9.2**.
+2. Restart Home Assistant.
+3. Reload the browser or Companion app to load the matching card.
+4. For ESP fixes, rebuild and upload the current `main` profile/components for your device.
+
+When reporting a retest, include the integration version, board/profile and call direction. Check audio in both directions, hangup from both ends and a second call. Remove passwords and keys from shared configuration or logs.
+
+### Thanks to the community
+
+Thanks to @jharris4 for the P4 I2S interrupt fix ([Audio Stack PR #12](https://github.com/n-IA-hane/esphome-audio-stack/pull/12)), @benklop for standard I2S dual-microphone support ([PR #11](https://github.com/n-IA-hane/esphome-audio-stack/pull/11)), and @jyoushiki for the VAD/AGC contribution ([PR #8](https://github.com/n-IA-hane/esphome-audio-stack/pull/8)). Their authorship is retained in the incorporated changes.
+
+Thanks also to @rvdv01, @MakaronaiVLN, @TheEris, @catthetech, @Frohnert59, @DunklerPhoenix and everyone providing configurations, captures and retest results.
+
+
+---
+
+## 2026.9.1: use automated phone menus, clearer controls and smoother calls
 
 This release adds a keypad you can use during calls, improves audio playback,
 and makes the phone controls easier to use.
 
-## Use automated menus and extensions during a call
+### Use automated menus and extensions during a call
 
 You can now interact with **IVRs, the automated phone menus that ask you to
 "press 1 for support" or "enter an extension"**, directly from the Home Assistant
@@ -22,7 +91,7 @@ available while the keypad is open.
   <img src="https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/v2026.9.1/docs/images/ha-softphone-in-call-keypad-2026-9-1.jpg" width="420" alt="Home Assistant phone keypad used during a call to select options in an automated phone menu"/>
 </p>
 
-## Easier controls on the Home Assistant card
+### Easier controls on the Home Assistant card
 
 - **Video calls:** open the keypad using the small icon beside Options. The two
   icons sit close together and no longer cover the call timer.
@@ -34,7 +103,7 @@ available while the keypad is open.
 - **Calling Assist:** fixed an issue that could stop the call while its audio
   was being set up.
 
-## The same dialer on Spotpear Full and VoIP-only
+### The same dialer on Spotpear Full and VoIP-only
 
 Spotpear VoIP-only now has the same dialer layout as the Full profile, fitted
 to its round screen. The delete key shows the correct icon. The clock and
@@ -44,7 +113,7 @@ button, and return when you leave it.
 This is the device's dialer for entering a destination. The in-call keypad for
 interacting with automated menus described above is on the Home Assistant card.
 
-## Smoother audio and more reliable call endings
+### Smoother audio and more reliable call endings
 
 Browser audio playback handles uneven delivery more smoothly, reducing
 crackling and short gaps. Audio processing on ESP devices also preserves
@@ -59,7 +128,7 @@ Call controls also handle interrupted connections to Home Assistant more
 reliably. Ending one call should not leave its screen or background work
 interfering with the next call.
 
-## Better compatibility with other SIP phones and switchboards
+### Better compatibility with other SIP phones and switchboards
 
 ESPHome phones now tell Home Assistant which audio formats they actually
 support. Compatible devices can call each other directly. When two phones need
@@ -71,7 +140,7 @@ SIP phones and switchboards. Calls, forwarding and groups also handle SIP
 addresses without an explicitly specified port correctly. These changes improve
 interoperability, but do not mean every phone or provider has been tested.
 
-## Opus on supported VoIP-only devices; PCM on Full profiles and P4
+### Opus on supported VoIP-only devices; PCM on Full profiles and P4
 
 Opus and PCM are the two supported audio formats:
 
@@ -88,7 +157,7 @@ Use the maintained YAML for your device and profile so its component versions
 and audio settings stay together. No manual change to a different speaker
 component is required for these profiles.
 
-## Starfleet: optional assistant theme
+### Starfleet: optional assistant theme
 
 Give your assistant a Starfleet-inspired look, with an animated home screen
 and matching listening, thinking, error and other assistant screens.
@@ -104,7 +173,7 @@ your ringtone automatically.
 
 See the [theme preview and instructions](https://github.com/n-IA-hane/esphome-intercom/blob/v2026.9.1/assets/images/assistant/starfleet/README.md).
 
-## Other improvements
+### Other improvements
 
 - Improved discovery of devices with larger audio/video configurations,
   including P4 profiles.
@@ -113,7 +182,7 @@ See the [theme preview and instructions](https://github.com/n-IA-hane/esphome-in
 - A clearer warning when the Home Assistant integration and ESP component
   versions do not match.
 
-## Compatibility notes
+### Compatibility notes
 
 Compatibility can vary between Android phones and external switchboards.
 Not every device or combination of simultaneous features has been tested.
@@ -126,14 +195,14 @@ On the **OnePlus Nord 5**, the current workaround is to use the display's
 **60 Hz mode**. Higher refresh rates can still affect calls in the Companion
 app and are not yet fully validated.
 
-## Community credits
+### Community credits
 
 Thank you to **[@rvdv01](https://github.com/rvdv01)** for creating and sharing
 the Starfleet assistant artwork and optional ringtone in
 [discussion #110](https://github.com/n-IA-hane/esphome-intercom/discussions/110).
 It is great to see the shared avatar format used for a community contribution!
 
-## Updating
+### Updating
 
 1. In HACS, open VoIP Stack and install the **2026.9.1** update.
 2. Restart Home Assistant, then reload the browser or Companion app so it loads

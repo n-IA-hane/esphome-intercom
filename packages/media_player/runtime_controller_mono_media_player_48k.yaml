@@ -1,5 +1,5 @@
 packages:
-  http_media_codecs: github://n-IA-hane/esphome-intercom/packages/audio/http_media_codecs.yaml@dev
+  http_media_codecs: github://n-IA-hane/esphome-intercom/packages/audio/http_media_codecs.yaml@main
 
 # =============================================================================
 # Runtime-controller full-experience mono 48 kHz media player.

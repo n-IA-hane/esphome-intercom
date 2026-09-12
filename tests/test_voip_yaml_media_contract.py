@@ -334,12 +334,8 @@ def test_p4_full_profile_has_native_camera_and_sip_jpeg() -> None:
     assert not re.search(r"(?m)^safe_mode:", text)
     assert "id(phone).get_contact_count()" in text
     assert "get_contacts_csv()" not in text
-    assert re.search(
-        r"(?ms)^        - number\.set:\n"
-        r"            id: master_volume\n"
-        r"            value: 1\n",
-        text,
-    )
+    boot = re.search(r"(?ms)^esphome:\n.*?(?=^[a-z_]+:|\Z)", text).group(0)
+    assert "id: master_volume" not in boot, "Boot must preserve the restored Master Volume"
 
     hosted = (
         ROOT / "packages" / "board" / "esp32p4_c6_sdio.yaml"
@@ -373,12 +369,8 @@ def test_p4_sip_only_uses_espressif_hosted_video_receive_depths() -> None:
     assert 'CONFIG_WIFI_RMT_RX_BA_WIN: "32"' in board
     assert 'CONFIG_LWIP_TCPIP_RECVMBOX_SIZE: "64"' in board
     base = P4_VIDEOPHONE_BASE.read_text()
-    assert re.search(
-        r"(?ms)^        - number\.set:\n"
-        r"            id: master_volume\n"
-        r"            value: 1\n",
-        base,
-    )
+    boot = re.search(r"(?ms)^esphome:\n.*?(?=^[a-z_]+:|\Z)", base).group(0)
+    assert "id: master_volume" not in boot, "Boot must preserve the restored Master Volume"
     assert 'p4_afe_task_priority: "18"' in base
     assert 'p4_afe_feed_task_priority: "18"' in base
     assert 'p4_afe_fetch_task_priority: "18"' in base

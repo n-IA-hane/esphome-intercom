@@ -1,11 +1,11 @@
-# 2026.9.2-dev: more reliable calls, audio fixes and built-in SIP capture
+# 2026.9.2: more reliable calls, audio fixes and built-in SIP capture
 
-This preview brings together the latest call and audio fixes for testing through HACS. **2026.9.1 remains the stable release.** Please report both successful retests and any remaining problems on your existing issue.
+This stable release brings together call reliability fixes, improved ESP audio support, P4 display improvements and built-in SIP troubleshooting. Existing working configurations remain supported.
 
 ## Home Assistant calls
 
 - **Forwarding and connecting calls:** improved cleanup when a call ends or fails while its audio/video connection is being prepared. This helps prevent an interrupted call from leaving resources occupied for the next one.
-- **Hangup compatibility:** added support for providers that request authentication when ending an established call. The reported Swisscom hangup problem still needs confirmation from the affected installation.
+- **Hangup compatibility:** added support for providers that request authentication when ending an established call. The Swisscom capture confirmed this missing authentication retry; final confirmation on the affected account is still pending.
 - **Repeated controls:** pressing Hangup or Decline again after a call has ended no longer produces an incorrect ownership error.
 - **Phone menus:** the in-call keypad lets you interact with an IVR, for example to enter an extension or choose a department. It does not create a spoken IVR inside Home Assistant.
 
@@ -41,18 +41,18 @@ The capture records this integration's SIP signaling, not conversation audio or 
 
 ## Optional dual-microphone features
 
-Standard I2S can feed two microphone slots into the existing dual-microphone processing path. Optional left/right level sensors can support sound-direction automations. The microphone output presented to applications remains mono.
+Standard I2S can feed two microphone slots into the existing dual-microphone processing path. Optional I2S left/right slot-level sensors can support sound-direction automations. The microphone output presented to applications remains mono.
 
 Dual-microphone AFE configurations honor the requested VAD setting and can use optional output gain normalization when the underlying pipeline does not apply AGC. These features are optional and do not enable themselves in existing profiles. Changing AGC can rebuild the processing pipeline and briefly interrupt audio.
 
 ## Retesting and updating
 
-Provider and board-specific reports, including Swisscom and some experimental ESP configurations, remain under investigation. This preview does not mean every open issue is resolved. Original ESP32/A1S support and native locked-screen mobile calling have not been added.
+Provider and board-specific reports, including Swisscom and some experimental ESP configurations, remain under investigation. These remaining reports are not declared resolved by this release. Original ESP32/A1S support and native locked-screen mobile calling have not been added.
 
-1. Open VoIP Stack in HACS, choose **Redownload**, and select **2026.9.2-dev**. Enable prerelease versions if needed.
+1. Open VoIP Stack in HACS, choose **Redownload**, and select **2026.9.2**.
 2. Restart Home Assistant.
 3. Reload the browser or Companion app to load the matching card.
-4. For ESP fixes, rebuild and upload the current `dev` profile/components for your device.
+4. For ESP fixes, rebuild and upload the current `main` profile/components for your device.
 
 When reporting a retest, include the integration version, board/profile and call direction. Check audio in both directions, hangup from both ends and a second call. Remove passwords and keys from shared configuration or logs.
 

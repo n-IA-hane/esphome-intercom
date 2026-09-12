@@ -673,6 +673,8 @@ class RtpPacketizationTest(unittest.IsolatedAsyncioTestCase):
             left_port=42000,
             right_port=42002,
         )
+        # Cross the 16-bit RTP sequence boundary on every run.
+        right.sequence = 65520
         output = Transport()
         relay.right_transport = output  # type: ignore[assignment]
         encoder = sip_rtp_bridge.RtpPayloadEncoder(source)
@@ -692,7 +694,7 @@ class RtpPacketizationTest(unittest.IsolatedAsyncioTestCase):
         packets = [rtp.parse_packet(raw) for raw in output.sent]
         self.assertEqual(
             [packet.sequence for packet in packets],
-            list(range(packets[0].sequence, packets[0].sequence + 40)),
+            [(65520 + index) & 0xFFFF for index in range(40)],
         )
         self.assertEqual(
             [

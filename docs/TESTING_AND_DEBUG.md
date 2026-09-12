@@ -1,7 +1,7 @@
 # Testing and debug
 
-Community-reported compatibility contracts and their current evidence are
-tracked in [COMMUNITY_REGRESSIONS.md](COMMUNITY_REGRESSIONS.md).
+Regression tests cover reported compatibility failures. Include the relevant
+protocol and device scenarios when validating a change.
 
 This project has enough call paths that manual spot checks are not enough.
 Use this page as the standard regression checklist before release-level

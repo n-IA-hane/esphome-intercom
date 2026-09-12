@@ -958,7 +958,7 @@ class CallRuntimeApi:
         reason: str = "",
         intent: TerminationIntent | None = None,
     ) -> EndpointCallSession | None:
-        """Remove one call and wait for its authoritative cleanup barrier."""
+        """Request cleanup, awaiting its barrier unless this task participates in it."""
 
         session_id = self.resolve_session_id(str(call_id or "").strip())
         session = self.sessions.get(session_id)

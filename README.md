@@ -539,6 +539,23 @@ Before every upgrade:
 Never assume an automation still has the same contract merely because the
 integration loaded successfully.
 
+## What's new in `2026.9.2`
+
+- More reliable call cleanup and authenticated hangup with SIP providers.
+- Built-in SIP capture from Home Assistant, including HA OS.
+- Microphone-only and speaker-only fixes, MP3/WAV announcements and safer firmware updates.
+- Optional dual-microphone input and level sensors.
+- P4 saved volume restored after reboot and date/time kept on one line.
+
+See the [2026.9.2 release notes](docs/WHATS_NEW_2026_9_2.md) and
+[complete changelog](CHANGELOG.md).
+
+## What's new in `2026.9.1`
+
+In-call DTMF for automated phone menus, clearer phone controls, improved audio
+playback and optional community themes. The full release notes, screenshots
+and contributor credits remain in [2026.9.1](docs/WHATS_NEW_2026_9_1.md).
+
 ## What's new in `2026.9.0`
 
 `2026.9.0` turns the development work after `2026.8.0` into one coordinated

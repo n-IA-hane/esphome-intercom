@@ -7,8 +7,9 @@ from tools.ha_voip_lab.browser_audio_capture import BrowserAudioCapture
 
 def test_cdp_capture_preserves_wire_pcm_and_separates_format_changes(tmp_path):
     observer = BrowserAudioCapture()
-    negotiation = lambda rate: {'opcode': 1, 'payloadData': json.dumps({
-        'rx_format': f'{rate}:s16le:1:10', 'tx_format': '48000:s16le:1:10'})}
+    def negotiation(rate):
+        return {'opcode': 1, 'payloadData': json.dumps({
+            'rx_format': f'{rate}:s16le:1:10', 'tx_format': '48000:s16le:1:10'})}
     pcm = bytes.fromhex('0100ffff0200feff')
     binary = {'opcode': 2, 'payloadData': base64.b64encode(b'\x01'+pcm).decode()}
     observer.record('connection', 'rx', negotiation(16000), 1.0)
