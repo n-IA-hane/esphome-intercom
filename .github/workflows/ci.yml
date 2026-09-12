@@ -21,10 +21,10 @@ jobs:
       - name: Check out coordinated ESP component sources
         working-directory: ..
         run: |
-          git clone --depth 1 --branch dev https://github.com/n-IA-hane/esphome-voip-stack.git
-          git clone --depth 1 --branch dev https://github.com/n-IA-hane/esphome-audio-stack.git
-          git clone --depth 1 --branch dev https://github.com/n-IA-hane/esphome-runtime-controller.git
-          git clone --depth 1 --branch dev https://github.com/n-IA-hane/esphome-esp-video-camera.git
+          git clone --depth 1 --branch main https://github.com/n-IA-hane/esphome-voip-stack.git
+          git clone --depth 1 --branch main https://github.com/n-IA-hane/esphome-audio-stack.git
+          git clone --depth 1 --branch main https://github.com/n-IA-hane/esphome-runtime-controller.git
+          git clone --depth 1 --branch main https://github.com/n-IA-hane/esphome-esp-video-camera.git
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.14"

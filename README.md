@@ -552,11 +552,15 @@ See the [2026.9.2 release notes](docs/WHATS_NEW_2026_9_2.md) and
 
 ## What's new in `2026.9.1`
 
-In-call DTMF for automated phone menus, clearer phone controls, improved audio
-playback and optional community themes. The full release notes, screenshots
-and contributor credits remain in [2026.9.1](docs/WHATS_NEW_2026_9_1.md).
+Use automated phone menus and extensions with the in-call keypad, enjoy clearer
+call controls and smoother audio, and optionally try the community Starfleet
+assistant theme by **rvdv01**.
 
-## What's new in `2026.9.0`
+See the [full release notes](docs/WHATS_NEW_2026_9_1.md) for the improvements,
+compatibility notes and HACS update instructions. Updating Home Assistant does
+not flash your ESP devices.
+
+## Previous release: `2026.9.0`
 
 `2026.9.0` turns the development work after `2026.8.0` into one coordinated
 Home Assistant and ESPHome release:
