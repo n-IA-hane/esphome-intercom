@@ -386,7 +386,7 @@ for `start`. The action returns a response with capture status, message and
 drop counts, size, stop reason and a short-lived `download_url`.
 
 Start before the call and stop after reproducing the failure. Open the returned
-path on your HA address to download a Wireshark-readable Upper PDU PCAP. The
+`download_url` in your browser to download a Wireshark-readable Upper PDU PCAP. The
 capture is bounded to 4 MiB or 20,000 messages and deleted 15 minutes after
 stopping. Authorization values are redacted; phone numbers and addresses are
 not. A start while active is rejected; a new start after stopping replaces the

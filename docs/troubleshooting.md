@@ -38,9 +38,11 @@ browser on the phone or computer used to open the link. On the HA server,
 the capture exists only in RAM; there is no PCAP file to find with a file editor.
 
 The action response contains `download_url`, `messages`, `dropped` and `reason`.
-Open the returned path on your Home Assistant address to download the PCAP
-(for example, keep your HA address and replace the page path with the returned
-`/api/...` path, including its query string). Open the file in Wireshark, or
+Open the complete `download_url` in your browser to download the PCAP.
+The Actions response may display it as plain text; copy the entire URL into
+your address bar if it is not clickable. `download_path` is also provided for
+clients that already know their HA address. If HA cannot determine its URL,
+the response explains how to configure it and still provides that path. Open the file in Wireshark, or
 attach it to your support report. The signed link expires after five minutes;
 `operation: status` returns a fresh link while the capture is still retained.
 Do not share the download link itself.

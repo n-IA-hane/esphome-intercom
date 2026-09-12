@@ -834,6 +834,7 @@ async def test_sip_capture_admin_action_download_and_clear(
     assert await async_setup_component(hass, "http", {})
     await async_register_sip_capture(hass)
     client = await hass_client_no_auth()
+    hass.config.internal_url = "http://ha.example.test:8123"
     context = Context(user_id=hass_admin_user.id)
     async def action(operation):
         return await hass.services.async_call(
@@ -851,7 +852,8 @@ async def test_sip_capture_admin_action_download_and_clear(
     )
     stopped = await action("stop")
     assert not stopped["active"] and stopped["messages"] == 1
-    url = stopped["download_url"]
+    assert stopped["download_url"] == "http://ha.example.test:8123" + stopped["download_path"]
+    url = stopped["download_path"]
     response = await client.get(url)
     assert response.status == 200
     assert b"BYE sip:peer" in await response.read()

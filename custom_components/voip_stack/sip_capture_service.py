@@ -12,6 +12,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.components.http.auth import async_sign_path
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.helpers.network import get_url, NoURLAvailableError
 from homeassistant.exceptions import ServiceValidationError
 
 from .authorization import async_require_service_admin
@@ -61,11 +62,23 @@ async def async_register_sip_capture(hass: HomeAssistant) -> None:
             capture.clear()
         result = capture.status()
         if capture.capture_id:
-            result["download_url"] = async_sign_path(
+            path = async_sign_path(
                 hass,
                 f"/api/voip_stack/sip_capture/{capture.capture_id}",
                 timedelta(minutes=5),
             )
+            result["download_path"] = path
+            try:
+                try:
+                    base = get_url(hass, require_current_request=True)
+                except NoURLAvailableError:
+                    base = get_url(hass)
+                result["download_url"] = base.rstrip("/") + path
+            except NoURLAvailableError:
+                result["download_url_error"] = (
+                    "Set a Home Assistant URL in Settings > System > Network, "
+                    "then request status again, or open download_path on your HA address."
+                )
         return result
 
     hass.http.register_view(CaptureDownload())
