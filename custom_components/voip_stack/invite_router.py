@@ -239,6 +239,9 @@ async def route_invite(
             to_tag="",
             decline_reason="capacity_exhausted",
         )
+    if decision.action is RouteAction.AUTOMATION:
+        from .automation_call import route_automation_call
+        return await route_automation_call(runtime, invite, decision, registry, source_endpoint)
     if decision.action is RouteAction.ASSIST:
         called_extension = (
             str(decision.entry.extension or invite.routing_target)
@@ -314,6 +317,9 @@ async def route_invite(
         # An automation selects a dial-plan destination, not a transport
         # shortcut. Re-enter the canonical PBX dispatcher for destination
         # types that were resolved before the automation window.
+        if decision.action is RouteAction.AUTOMATION:
+            from .automation_call import route_automation_call
+            return await route_automation_call(runtime, invite, decision, registry, source_endpoint)
         if decision.action is RouteAction.ASSIST:
             called_extension = (
                 str(decision.entry.extension or route_destination)

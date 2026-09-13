@@ -364,7 +364,9 @@ async def _handle_select_inbound_destination_service(call: ServiceCall) -> None:
 
 
 async def _handle_sip_forward_service(call: ServiceCall) -> None:
-    await _forward_browser_call(call)
+    from .automation_call import async_forward_automation_call
+    if not await async_forward_automation_call(call):
+        await _forward_browser_call(call)
 
 
 async def _handle_sip_transfer_service(call: ServiceCall) -> dict[str, object]:
@@ -428,6 +430,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
 
     account_handlers = build_account_service_handlers(_refresh_and_push_phonebook)
     phonebook_handlers = build_phonebook_service_handlers(_refresh_and_push_phonebook)
+    from .automation_call import async_tts_say
 
     await async_register_services(
         hass,
@@ -443,6 +446,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "set_ha_softphone_settings": _handle_set_ha_softphone_settings_service,
             "call": _handle_sip_call_target_service,
             "forward": _handle_sip_forward_service,
+            "tts_say": async_tts_say,
             "transfer": _handle_sip_transfer_service,
             "route": _handle_sip_route_service,
             "select_inbound_destination": _handle_select_inbound_destination_service,

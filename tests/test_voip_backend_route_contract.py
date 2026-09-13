@@ -938,7 +938,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         call_service = SOFTPHONE_ORIGINATE.read_text()
         assist = call_service[
             call_service.index(
-                "elif route.action is RouteAction.ASSIST:"
+                "elif route.action in {RouteAction.ASSIST, RouteAction.AUTOMATION}:"
             ) : call_service.index("if use_trunk:")
         ]
         self.assertIn("ha_uri_for(route.target or target, contacts)", assist)

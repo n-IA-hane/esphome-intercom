@@ -393,3 +393,26 @@ not. A start while active is rejected; a new start after stopping replaces the
 previous capture. This records application SIP I/O, not RTP or kernel packets.
 See [the capture instructions](troubleshooting.md#capture-sip-signaling-from-home-assistant-including-ha-os)
 for the complete procedure and diagnostic limits.
+
+## Announcements in automation calls
+
+`voip_stack.tts_say` speaks to the caller of a contact with `type: automation`.
+Choose a `tts_entity_id` (such as a configured Piper or xTTS entity) and
+`message`; `language` and provider `options` are optional. `timeout` limits
+synthesis and playback together, defaults to 120 seconds and accepts 1-600 seconds.
+The action answers the call if needed and waits for the audio to be sent before
+returning. It does not play on a room speaker or start Assist.
+
+Use the `call_id` and `generation` from the same `automation_requested` event
+as `call_id` and `expected_generation` on both `tts_say` and `forward`.
+A different automation cannot take over an already claimed call. A stale event
+cannot control a later call, even if a SIP Call-ID is reused.
+
+`voip_stack.add_contact` accepts `type: automation`, a required `name`, optional
+numeric `extension`, optional `fallback_destination` and `timeout` (inactivity,
+1-300 seconds, default 30). Do not provide an address, SIP URI or external number.
+The timeout applies before an automation acts and between its actions, not while
+TTS is running. With no fallback, the call ends on timeout. A TTS error stops the
+HA action sequence unless its standard `continue_on_error` option is enabled.
+
+See [automation contacts](AUTOMATION_DIALPLAN.md#automation-contacts) for examples.

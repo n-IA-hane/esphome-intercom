@@ -143,6 +143,7 @@ def softphone_originate(monkeypatch):
             "reserve_sip_video_media": Mock(),
         },
             "outbound_lifecycle": {
+                "observe_outbound_call_result": lambda registry, call_id, **kwargs: registry.upsert(call_id, owner="ha_softphone", **kwargs),
                 "HA_SOFTPHONE_ACTIVE_STATES": frozenset({"calling", "in_call"}),
                 "attach_outbound_connected_identity_state": Mock(),
                 "async_prepare_ha_outbound_call": AsyncMock(),

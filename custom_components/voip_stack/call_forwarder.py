@@ -290,6 +290,7 @@ async def async_forward_existing_call(
                 source="automation",
             )
         session = registry.sessions.get(registry.resolve_session_id(call_id))
+        application = registry.resource_for(call_id, "automation")
         session_endpoint = browser_phone(
             hass,
             str(
@@ -299,13 +300,13 @@ async def async_forward_existing_call(
         )
         if session_endpoint is None and initial_selection:
             session_endpoint = preferred_browser_phone(hass)
-        if session_endpoint is None:
+        if session_endpoint is None and application is None:
             raise _service_error(
                 f"call_id {call_id} has no Home Assistant phone owner",
                 "call_phone_owner_missing",
                 call_id=call_id,
             )
-        session_endpoint_id = session_endpoint.endpoint_id
+        session_endpoint_id = session_endpoint.endpoint_id if session_endpoint is not None else ""
         if (
             not initial_selection
             and target_browser_endpoint is not None
@@ -315,7 +316,7 @@ async def async_forward_existing_call(
                 "a Home Assistant phone cannot forward a call to itself",
                 "phone_self_target",
             )
-        session_device_id = session_endpoint.device_id
+        session_device_id = session_endpoint.device_id if session_endpoint is not None else ""
         original_callee = session.callee if session is not None else invite.target
         original_route_kind = session.route_kind if session is not None else ""
         # A trunk call is already SIP-answered while its DTMF/automation
@@ -323,7 +324,7 @@ async def async_forward_existing_call(
         # store yet, but HA is still its default owner.  Preserve that
         # ownership so ``on_failure: resume`` can enter normal ringing
         # instead of leaving the answered caller on silent RTP.
-        ha_claimed = (
+        ha_claimed = application is None and (
             bool(session is not None and session.owner == "ha_softphone")
             or registry.resource_for(call_id, "preanswered") is not None
             or bool(
@@ -340,7 +341,7 @@ async def async_forward_existing_call(
             if not route_already_claimed:
                 claimed = registry.transition(
                     call_id,
-                    state=CallState.CONNECTING.value,
+                    state=CallState.IN_CALL.value if application and application.answered else CallState.CONNECTING.value,
                     owner="router",
                     callee=destination,
                     route_kind=decision.action.value,
@@ -356,12 +357,13 @@ async def async_forward_existing_call(
                     )
         else:
             route_already_claimed = False
-        _release_ha_softphone_claim(
-            hass,
-            call_id,
-            destination=destination,
-            endpoint_id=session_endpoint_id,
-        )
+        if application is None:
+            _release_ha_softphone_claim(
+                hass,
+                call_id,
+                destination=destination,
+                endpoint_id=session_endpoint_id,
+            )
         if not route_already_claimed:
             if session is not None:
                 publish_bridge_projection(
@@ -386,7 +388,9 @@ async def async_forward_existing_call(
         resume_callee=original_callee,
         resume_route_kind=original_route_kind,
         transition_resume=session is not None,
-        publish_resume=partial(
+        resume_owner="automation" if application else "ha_softphone",
+        resume_state="in_call" if application and application.answered else "ringing",
+        publish_resume=application.resume if application else partial(
             runtime.publish_pending_ringing,
             invite,
             route_kind=original_route_kind,
@@ -395,7 +399,7 @@ async def async_forward_existing_call(
             callee=original_callee,
             last_sip_event="ROUTE_RESUME",
         )
-        if ha_claimed
+        if (application is not None or ha_claimed)
         else None,
     )
 
@@ -481,6 +485,8 @@ async def async_forward_existing_call(
                             )
                             or old_was_claimed
                         )
+                    if application is not None:
+                        await application.release_media_for_forward()
                     runtime.defer_invite_to_softphone(
                         invite,
                         route_kind=decision.action.value,
@@ -766,6 +772,8 @@ async def async_forward_existing_call(
                 response_already_sent = _source_dialog_is_answered(preanswered)
                 connected_party = str(winner.member or "").strip()
 
+                if application is not None:
+                    await application.release_media_for_forward()
                 committed = await async_commit_outbound_bridge(
                     hass,
                     registry,
@@ -825,7 +833,7 @@ async def async_forward_existing_call(
                 if current is not None:
                     claimed_assist = registry.transition(
                         call_id,
-                        state=CallState.CONNECTING.value,
+                        state=CallState.IN_CALL.value if application and application.answered else CallState.CONNECTING.value,
                         owner="assist",
                         callee=destination,
                         expected_revision=current.revision,
@@ -844,6 +852,7 @@ async def async_forward_existing_call(
                         or destination
                     ),
                     release_reservation_on_failure=preanswered is None,
+                    **({"existing_media": application.media} if application and application.media else {}),
                 )
                 response_already_sent = _source_dialog_is_answered(preanswered)
                 answer = ""
@@ -858,6 +867,8 @@ async def async_forward_existing_call(
                     )
                 registry.take_pending_invite(call_id)
                 transferred_media = registry.take_media(call_id, provisional=True)
+                if application is not None and application.media is not None:
+                    application.media.release_reservation_on_stop = True
                 release_video_media_reservation(transferred_media)
                 answer_result = await _commit_source_answer(
                     answer,
@@ -1012,6 +1023,8 @@ async def async_forward_existing_call(
                         route_source="automation",
                         last_sip_event="SIP_RESPONSE",
                     )
+            if application is not None:
+                await application.release_media_for_forward()
             committed = await async_commit_outbound_bridge(
                 hass,
                 registry,

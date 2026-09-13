@@ -87,6 +87,19 @@ def _ha_peer_name(hass: HomeAssistant) -> str:
     return (hass.config.location_name or "").strip() or HA_PEER_FALLBACK_NAME
 
 
+def observe_outbound_call_result(registry, call_id: str, *, state: str, **metadata):
+    """Observe the caller leg without reclaiming a local application's call."""
+    session = registry.get_session(call_id)
+    if session is not None and session.owner != "ha_softphone":
+        registry.observe_leg(
+            call_id, call_id, role="ha_softphone", state=state,
+            endpoint_id=str(metadata.get("endpoint_id") or ""),
+            generation=session.generation,
+        )
+        return session
+    return registry.upsert(call_id, state=state, owner="ha_softphone", **metadata)
+
+
 async def async_track_outbound_sip_client(
     hass: HomeAssistant,
     *,
@@ -118,12 +131,11 @@ async def async_track_outbound_sip_client(
         )
         return
 
-    registry.upsert(
-        client.dialog_ids.call_id,
+    observe_outbound_call_result(
+        registry, client.dialog_ids.call_id,
         state=CallState.REMOTE_RINGING.value
         if result == "ringing"
         else CallState.IN_CALL.value,
-        owner="ha_softphone",
         caller=local_name,
         callee=target,
         route_kind="direct",
@@ -188,10 +200,9 @@ async def async_track_outbound_sip_client(
                 if video_requested and not video_active
                 else ""
             )
-            session = registry.upsert(
-                client.dialog_ids.call_id,
+            session = observe_outbound_call_result(
+                registry, client.dialog_ids.call_id,
                 state=CallState.IN_CALL.value,
-                owner="ha_softphone",
                 caller=local_name,
                 callee=target,
                 route_kind="direct",

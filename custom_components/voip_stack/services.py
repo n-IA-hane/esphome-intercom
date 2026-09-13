@@ -81,6 +81,15 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         },
         extra=vol.PREVENT_EXTRA,
     )
+    tts_say_schema = vol.Schema({
+        vol.Required("call_id"): SHORT_TEXT,
+        vol.Required("expected_generation"): SEQUENCE,
+        vol.Required("tts_entity_id"): cv.entity_id,
+        vol.Required("message"): vol.All(cv.string, vol.Length(min=1, max=4096)),
+        vol.Optional("language"): SHORT_TEXT,
+        vol.Optional("options", default=dict): dict,
+        vol.Optional("timeout", default=120): vol.All(vol.Coerce(float), vol.Range(min=1, max=600)),
+    }, extra=vol.PREVENT_EXTRA)
     sip_forward_schema = vol.Schema(
         {
             **phone_selector_fields,
@@ -92,6 +101,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             ),
             vol.Optional("expected_state", default=""): IDENTIFIER_TEXT,
             vol.Optional("expected_sequence", default=0): SEQUENCE,
+            vol.Optional("expected_generation"): SEQUENCE,
         },
         extra=vol.PREVENT_EXTRA,
     )
@@ -147,6 +157,9 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
     phonebook_add_schema = vol.Schema(
         {
             vol.Required("name"): SHORT_TEXT,
+            vol.Optional("type", default="contact"): vol.In(["contact", "automation"]),
+            vol.Optional("fallback_destination", default=""): URI_TEXT,
+            vol.Optional("timeout", default=30): vol.All(vol.Coerce(float), vol.Range(min=1, max=300)),
             vol.Optional("id", default=""): SHORT_TEXT,
             vol.Optional("address", default=""): URI_TEXT,
             vol.Optional("sip_uri", default=""): URI_TEXT,
@@ -245,6 +258,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         # These mutate routing/timers without a phone selector. Internal HA
         # automations remain allowed; authenticated callers must be admins so
         # global event-entity control cannot affect another user's call.
+        "tts_say",
         "route",
         "select_inbound_destination",
         "set_deadline",
@@ -272,6 +286,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         schema=sip_call_schema,
         supports_response=SupportsResponse.OPTIONAL,
     )
+    hass.services.async_register(DOMAIN, "tts_say", handler_for("tts_say"), schema=tts_say_schema)
     hass.services.async_register(DOMAIN, "forward", handler_for("forward"), schema=sip_forward_schema)
     hass.services.async_register(
         DOMAIN,

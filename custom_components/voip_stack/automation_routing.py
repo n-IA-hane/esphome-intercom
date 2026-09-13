@@ -22,6 +22,7 @@ def canonical_call_origin(
 
 
 AUTOMATION_EVENT_TYPES = [
+    "automation_requested",
     "route_requested",
     "outgoing_call",
     "calling",

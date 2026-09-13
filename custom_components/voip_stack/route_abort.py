@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import contextlib
+import inspect
 from dataclasses import dataclass
 from typing import Any
 
@@ -37,6 +38,8 @@ class RouteAbortContext:
     resume_route_kind: str = ""
     transition_resume: bool = False
     publish_resume: Callable[[], None] | None = None
+    resume_owner: str = "ha_softphone"
+    resume_state: str = "ringing"
 
 
 async def async_abort_route(
@@ -71,8 +74,8 @@ async def async_abort_route(
                     return False
                 current = registry.transition(
                     call_id,
-                    state="ringing",
-                    owner="ha_softphone",
+                    state=context.resume_state,
+                    owner=context.resume_owner,
                     callee=context.resume_callee,
                     route_kind=context.resume_route_kind,
                     expected_revision=current.revision,
@@ -81,7 +84,9 @@ async def async_abort_route(
                 if current is None:
                     return False
             if context.publish_resume is not None:
-                context.publish_resume()
+                result = context.publish_resume()
+                if inspect.isawaitable(result):
+                    await result
             return True
         if action == "cleanup":
             return False

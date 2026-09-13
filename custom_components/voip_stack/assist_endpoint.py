@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant
 
 from .call_projection import publish_bridge_projection
-from .assist_runtime import AssistMediaSession, build_call_connected_intent
+from .assist_runtime import AssistConversation, AssistMediaSession, build_call_connected_intent
+from .local_call_media import LocalCallMedia
 from .automation_routing import canonical_call_origin
 from .config import assist_config
 from .const import (
@@ -46,7 +47,8 @@ class AssistEndpoint:
         source: str,
         called_extension: str,
         release_reservation_on_failure: bool = True,
-    ) -> AssistMediaSession:
+        existing_media: LocalCallMedia | None = None,
+    ) -> LocalCallMedia:
         """Attach an accepted SIP dialog to the configured Assist pipeline."""
 
         assist_cfg = assist_config(self.hass)
@@ -106,13 +108,7 @@ class AssistEndpoint:
                 expected_generation=completion_token.generation,
             )
 
-        media = AssistMediaSession(
-            self.hass,
-            invite=invite,
-            local_rtp_port=local_rtp_port,
-            reservation=reservation,
-            pipeline_id=str(assist_cfg.get(CONF_ASSIST_PIPELINE) or "preferred"),
-            call_connected_intent=build_call_connected_intent(
+        prompt = build_call_connected_intent(
                 caller=caller_name,
                 caller_id=caller_id,
                 caller_in_phonebook=caller_entry is not None,
@@ -121,9 +117,21 @@ class AssistEndpoint:
                 include_advanced_context=bool(
                     assist_cfg.get(CONF_ASSIST_ADVANCED_CALL_CONTEXT, False)
                 ),
-            ),
-            on_complete=complete,
-        )
+            )
+        if existing_media is None:
+            media = AssistMediaSession(
+                self.hass, invite=invite, local_rtp_port=local_rtp_port,
+                reservation=reservation,
+                pipeline_id=str(assist_cfg.get(CONF_ASSIST_PIPELINE) or "preferred"),
+                call_connected_intent=prompt, on_complete=complete,
+            )
+        else:
+            media = existing_media
+            media.on_complete = complete
+            conversation = AssistConversation(
+                media, str(assist_cfg.get(CONF_ASSIST_PIPELINE) or "preferred"), prompt
+            )
+            media.start_consumer(conversation._pipeline_loop)
         try:
             await media.start()
         except BaseException:

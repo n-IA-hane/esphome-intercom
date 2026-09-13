@@ -96,6 +96,9 @@ class _Registry:
     def resolve_session_id(call_id: str) -> str:
         return call_id
 
+    def get_session(self, call_id: str):
+        return self.sessions.get(call_id)
+
     def sip_client_for(self, call_id: str):
         return self.sip_clients.get(call_id)
 
@@ -118,6 +121,7 @@ class _Registry:
         self.calls.append(("upsert", call_id, kwargs))
         session = types.SimpleNamespace(
             call_id=call_id,
+            owner=kwargs.get("owner", "ha_softphone"),
             state=kwargs.get("state", ""),
             caller=kwargs.get("caller", ""),
             callee=kwargs.get("callee", ""),

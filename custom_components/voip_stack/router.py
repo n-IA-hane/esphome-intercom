@@ -18,6 +18,7 @@ class RouteAction(StrEnum):
     TRUNK = "trunk"
     GROUP = "group"
     ASSIST = "assist"
+    AUTOMATION = "automation"
     REJECT = "reject"
     BUSY = "busy"
 
@@ -216,6 +217,8 @@ def resolve_ha_router(target: str, entries: list[RosterEntry], *, trunk_ready: b
         return RouteDecision(RouteAction.REJECT, target=target, status=403, reason=RouteReason.TARGET_DISABLED, entry=entry)
     if entry is not None:
         endpoint_kind = str(entry.metadata.get("endpoint_kind") or "")
+        if entry.metadata.get("virtual_endpoint") == "automation":
+            return RouteDecision(RouteAction.AUTOMATION, target=entry.id, reason=RouteReason.EXPLICIT_ROUTE, source="phonebook", entry=entry)
         if entry.metadata.get("virtual_endpoint") == "assist_pipeline":
             return RouteDecision(RouteAction.ASSIST, target=entry.id, sip_uri=entry.sip_uri, reason=RouteReason.EXPLICIT_ROUTE, source="phonebook", entry=entry)
         if entry.metadata.get("group_type"):

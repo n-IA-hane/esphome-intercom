@@ -232,10 +232,8 @@ async def async_commit_runtime_answer(
     session = runtime.get_session(call_id)
     if session is None:
         return AnswerCommitResult(False, False, "stale_call")
-    return await async_commit_answer(
-        session,
-        answer_sdp,
-        claim=lambda: runtime.transition(
+    def claim() -> bool:
+        return runtime.transition(
             call_id,
             state=CallState.IN_CALL.value,
             owner=owner,
@@ -247,8 +245,18 @@ async def async_commit_runtime_answer(
             source_endpoint_id=source_endpoint_id,
             dest_endpoint_id=dest_endpoint_id,
             media_client_id=media_client_id,
-        )
-        is not None,
+        ) is not None
+
+    if response_already_sent and session.answer_committed:
+        # Application handoff on a confirmed dialog is not another SIP answer.
+        # Keep the generation check and owner transition in one synchronous step.
+        committed = session.live and claim()
+        return AnswerCommitResult(bool(committed), False, "" if committed else "stale_call")
+
+    return await async_commit_answer(
+        session,
+        answer_sdp,
+        claim=claim,
         send_final_response=bind_final_response(
             send_final_response,
             response_context,

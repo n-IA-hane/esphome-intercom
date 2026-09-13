@@ -322,7 +322,11 @@ def test_automation_cookbook_actions_pass_the_runtime_schemas() -> None:
                 errors.append(f"block {index}: voip_stack.{service} has no runtime schema")
                 continue
             try:
-                schema(payload)
+                # HA renders service-data templates before runtime validation.
+                rendered = dict(payload)
+                if "{{" in str(rendered.get("expected_generation", "")):
+                    rendered["expected_generation"] = 1
+                schema(rendered)
             except vol.Invalid as err:
                 errors.append(f"block {index}: voip_stack.{service}: {err}")
     assert not errors, "Cookbook actions rejected by runtime schemas:\n" + "\n".join(errors)

@@ -57,6 +57,7 @@ from .media_session_updates import (
     commit_video_session_update,
 )
 from .outbound_lifecycle import (
+    observe_outbound_call_result,
     attach_outbound_connected_identity_state,
     async_prepare_ha_outbound_call as _async_prepare_ha_outbound_call,
     async_track_outbound_sip_client as _track_outbound_sip_client,
@@ -414,7 +415,7 @@ async def async_originate_browser_call(
     route_uri = route.sip_uri
     if route.action is RouteAction.GROUP:
         route_uri = ha_uri_for(route.target or target, contacts)
-    elif route.action is RouteAction.ASSIST:
+    elif route.action in {RouteAction.ASSIST, RouteAction.AUTOMATION}:
         # Assist is a PBX-local application.  Originate the browser media leg
         # to this integration's listener so the canonical inbound dispatcher
         # owns the Assist session and RTP pipeline; never fall through to the
@@ -859,10 +860,9 @@ async def async_originate_browser_call(
         await _mark_sip_account_unreachable(hass, route.entry.id)
     public_result = _sip_public_state(result)
     if public_result in {CallState.REMOTE_RINGING.value, CallState.IN_CALL.value}:
-        session = registry.upsert(
-            client.dialog_ids.call_id,
+        session = observe_outbound_call_result(
+            registry, client.dialog_ids.call_id,
             state=public_result,
-            owner="ha_softphone",
             caller=local_name,
             callee=display_target,
             route_kind="direct",

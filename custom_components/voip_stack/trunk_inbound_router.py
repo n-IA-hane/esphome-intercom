@@ -272,6 +272,10 @@ async def async_route_trunk_invite(
         invite.recv_format.wire_token(),
     )
 
+    if decision.action is RouteAction.AUTOMATION:
+        from .automation_call import route_automation_call
+        await route_automation_call(runtime, invite, decision, registry, None)
+        return
     if decision.action is RouteAction.ASSIST:
         registry.take_pending_invite(invite.call_id)
         preanswered = registry.take_media(invite.call_id, provisional=True)

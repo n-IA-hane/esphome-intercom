@@ -418,3 +418,14 @@ Public SIP call states: `idle`, `calling`, `remote_ringing`, `ringing`,
 show `offline` when its endpoint is unavailable and `held` while an established
 call is on hold; these are phone/entity availability phases, not terminal SIP
 outcomes.
+
+### Automation contacts and call announcements
+
+`voip_stack.add_contact` accepts `type: automation` for a local service with a
+name, optional extension, `fallback_destination` and inactivity `timeout`.
+Its `automation_requested` event identifies the call and generation.
+`voip_stack.tts_say` accepts that `call_id`, `expected_generation`,
+`tts_entity_id`, `message`, optional `language` and `options`, and a bounded
+`timeout`. It answers if needed and completes after sending the announcement.
+Use `voip_stack.forward` with the same call and generation for the next step.
+See the [automation examples](AUTOMATION_DIALPLAN.md#automation-contacts).

@@ -3620,6 +3620,8 @@ class SipTcpServer:
                             _LOGGER.debug("SIP TCP dialog queue full for %s; dropped oldest message", addr)
                         continue
                 endpoint.submit_datagram(raw, addr)
+        except ConnectionError as err:
+            _LOGGER.debug("SIP TCP peer disconnected %s:%s: %s", addr[0], addr[1], err)
         finally:
             # Closing one TCP connection must not destroy dialogs owned by
             # the listener; the peer may already have opened the replacement

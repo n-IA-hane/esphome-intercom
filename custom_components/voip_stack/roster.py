@@ -39,6 +39,15 @@ def _entry_from_mapping(raw: dict[str, Any]) -> RosterEntry:
     extension = str(raw.get("extension") or "").strip()
     number = str(raw.get("number") or "").strip()
     metadata = dict(raw.get("metadata") or {})
+    if metadata.get("virtual_endpoint") == "automation":
+        if extension and not extension.isdigit():
+            raise RosterError("An automation extension must be numeric")
+        if address or sip_uri or number or raw.get("port") or raw.get("sip_port"):
+            raise RosterError("An automation contact cannot declare a physical address or trunk number")
+        timeout = float(metadata.get("automation_timeout", 30))
+        if not 1 <= timeout <= 300:
+            raise RosterError("Automation timeout must be between 1 and 300 seconds")
+        metadata["automation_timeout"] = timeout
     port = _parse_port(raw.get("port") or raw.get("sip_port") or metadata.get("port") or metadata.get("sip_port"))
     return RosterEntry(
         id=entry_id,
@@ -48,7 +57,7 @@ def _entry_from_mapping(raw: dict[str, Any]) -> RosterEntry:
         extension=extension,
         number=number,
         port=port,
-        ha_bridge=bool(raw.get("ha_bridge", False)),
+        ha_bridge=bool(raw.get("ha_bridge", False) or metadata.get("virtual_endpoint") == "automation"),
         enabled=bool(raw.get("enabled", True)),
         metadata=metadata,
     )

@@ -993,3 +993,87 @@ normal no-answer forward.
 - Raw internal bus events are implementation plumbing for the Event Entities,
   not a second public automation API. Build new automations from the native
   entities and services above.
+
+## Automation contacts
+
+An automation contact is a named local telephone service, not a physical device
+or a browser phone. Its numeric extension is optional. The examples below assume Assist is configured as extension `1666`. Create the
+automation contact once:
+
+```yaml
+action: voip_stack.add_contact
+data:
+  name: Welcome
+  type: automation
+  extension: "666"
+  fallback_destination: "1666"
+  timeout: 30
+```
+
+Omit `extension` to call it by its phonebook name only. The same contact can be
+called from an ESP, a browser phone, a registered SIP phone, or selected by its
+extension in the incoming trunk DTMF menu. It is not an unknown external number.
+The existing experimental 1.5-second routing override is not needed.
+
+### Say a greeting, then connect to Assist
+
+Use the immutable triggering event to select the call. Reading the latest
+attributes of the aggregate event entity could instead select another call.
+Replace the TTS entity and destination with those configured in your HA.
+
+```yaml
+alias: VoIP - Welcome then Assist
+mode: parallel
+max: 10
+triggers:
+  - trigger: event
+    event_type: voip_stack.call_event
+    event_data:
+      event_type: automation_requested
+conditions:
+  - condition: template
+    value_template: "{{ trigger.event.data.callee == 'Welcome' }}"
+actions:
+  - action: voip_stack.tts_say
+    data:
+      call_id: "{{ trigger.event.data.call_id }}"
+      expected_generation: "{{ trigger.event.data.generation }}"
+      tts_entity_id: tts.piper
+      message: "Welcome. How can I help you?"
+  - action: voip_stack.forward
+    data:
+      call_id: "{{ trigger.event.data.call_id }}"
+      expected_generation: "{{ trigger.event.data.generation }}"
+      destination: "1666"
+```
+
+The second action runs after the greeting has been sent. The caller stays on
+the same call. Assist starts listening using its existing configuration; disable
+advanced call details if no opening conversation message is wanted.
+
+For a TTS failure to skip straight to Assist, add `continue_on_error: true` to
+the first action. Without it, the contact's inactivity timeout and optional
+fallback remain in force. Hanging up cancels the pending audio work.
+
+### Choose a destination with an HA condition
+
+The same trigger can select a staffed phone when someone is home and Assist
+otherwise. Replace the actions above with:
+
+```yaml
+actions:
+  - action: voip_stack.forward
+    data:
+      call_id: "{{ trigger.event.data.call_id }}"
+      expected_generation: "{{ trigger.event.data.generation }}"
+      destination: "{{ 'Reception' if is_state('person.receptionist', 'home') else '1666' }}"
+```
+
+No greeting is required. An immediate forward can keep the source call ringing
+until the selected destination answers. This first implementation does not
+inject announcements into an existing conversation between two people.
+
+The [greeting and forwarding blueprint](../blueprints/automation/voip_greeting_then_forward.yaml)
+provides the same sequence with inputs for the contact, TTS provider, message
+and destination. Select your actual Assist name or extension; `Assist` is not
+a universal alias for every configured pipeline name.

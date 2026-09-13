@@ -348,7 +348,7 @@ def test_remote_hangup_while_listening_cancels_assist_without_ghost_completion()
                     await session.on_complete("pipeline_complete")
 
         session.on_complete = on_complete
-        session._pipeline_task = asyncio.create_task(listening_pipeline())
+        session._consumer_task = asyncio.create_task(listening_pipeline())
         await asyncio.wait_for(listening.wait(), timeout=1)
 
         await asyncio.wait_for(session.stop(), timeout=1)
@@ -400,7 +400,7 @@ def test_stop_racing_start_cannot_publish_transport_or_tasks() -> None:
         assert transport.closed is True
         assert session.transport is None
         assert session._tx_task is None
-        assert session._pipeline_task is None
+        assert session._consumer_task is None
 
     asyncio.run(run())
 
@@ -425,7 +425,7 @@ def test_concurrent_start_creates_one_transport_and_task_pair() -> None:
             await session.closed.wait()
 
         session._send_loop = idle
-        session._pipeline_loop = idle
+        session.conversation._pipeline_loop = idle
         loop = asyncio.get_running_loop()
         with mock.patch.object(
             loop,
@@ -441,7 +441,7 @@ def test_concurrent_start_creates_one_transport_and_task_pair() -> None:
         assert calls == 1
         assert session.transport is transport
         assert session._tx_task is not None
-        assert session._pipeline_task is not None
+        assert session._consumer_task is not None
         await session.stop()
 
     asyncio.run(run())
@@ -469,7 +469,7 @@ def test_tts_stream_accepts_arbitrary_provider_chunk_boundaries() -> None:
         components.tts = tts_module
         sys.modules["homeassistant.components.tts"] = tts_module
 
-        await session._stream_tts("token")
+        await session.conversation._stream_tts("token")
 
         first = session.tx_queue.get_nowait()
         second = session.tx_queue.get_nowait()
@@ -502,7 +502,7 @@ def test_vad_end_stops_buffering_audio_while_stt_finishes() -> None:
     session = _session()
     session._accepting_input = True
 
-    session._pipeline_event(
+    session.conversation._pipeline_event(
         types.SimpleNamespace(type=types.SimpleNamespace(value="stt-vad-end"), data={})
     )
 
@@ -548,7 +548,7 @@ def test_audio_stream_waits_for_speech_and_keeps_preroll() -> None:
         speech = bytes([1]) * assist_runtime.ASSIST_PCM_FORMAT.nominal_frame_bytes
         session.rx_queue.put_nowait(silence)
         session.rx_queue.put_nowait(speech)
-        stream = session._audio_stream()
+        stream = session.conversation._audio_stream()
 
         assert await anext(stream) == silence
         assert await anext(stream) == speech
@@ -561,7 +561,7 @@ def test_audio_stream_waits_for_speech_and_keeps_preroll() -> None:
 def test_call_connected_turn_uses_native_intent_to_tts_pipeline() -> None:
     async def run() -> None:
         session = _session()
-        session.call_connected_intent = assist_runtime.build_call_connected_intent(
+        session.conversation.call_connected_intent = assist_runtime.build_call_connected_intent(
             "Kitchen", include_advanced_context=True
         )
         captured = {}
@@ -624,13 +624,13 @@ def test_call_connected_turn_uses_native_intent_to_tts_pipeline() -> None:
         helpers.chat_session = chat_session_module
         sys.modules["homeassistant.helpers.chat_session"] = chat_session_module
 
-        await session._run_call_connected_turn("conversation-1")
+        await session.conversation._run_call_connected_turn("conversation-1")
 
         assert captured["conversation_id"] == "conversation-1"
         assert captured["run"]["start_stage"] == PipelineStage.INTENT
         assert captured["run"]["end_stage"] == PipelineStage.TTS
         assert captured["run"]["audio_settings"].is_vad_enabled is False
-        assert captured["input"]["intent_input"] == session.call_connected_intent
+        assert captured["input"]["intent_input"] == session.conversation.call_connected_intent
         assert "conversation_extra_system_prompt" not in captured["input"]
         assert captured["validate"] is True
 
@@ -640,7 +640,7 @@ def test_call_connected_turn_uses_native_intent_to_tts_pipeline() -> None:
 def test_spoken_turn_gates_call_details_without_changing_audio_input() -> None:
     async def run(enabled: bool) -> None:
         session = _session()
-        session.call_connected_intent = assist_runtime.build_call_connected_intent(
+        session.conversation.call_connected_intent = assist_runtime.build_call_connected_intent(
             "Kitchen", include_advanced_context=enabled
         )
         turns = []
@@ -698,8 +698,8 @@ def test_spoken_turn_gates_call_details_without_changing_audio_input() -> None:
         helpers.chat_session = chat_session_module
         sys.modules["homeassistant.helpers.chat_session"] = chat_session_module
 
-        session._run_call_connected_turn = connected_turn
-        await session._pipeline_loop()
+        session.conversation._run_call_connected_turn = connected_turn
+        await session.conversation._pipeline_loop()
 
         assert "conversation_extra_system_prompt" not in captured
         assert captured["conversation_id"] == "conversation-spoken"

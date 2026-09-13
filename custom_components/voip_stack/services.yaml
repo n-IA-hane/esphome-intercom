@@ -184,6 +184,14 @@ forward:
           required: false
           selector:
             text:
+        expected_generation:
+          name: Call generation
+          description: Required for automation calls, copied from the triggering event.
+          selector:
+            number:
+              min: 0
+              max: 2147483647
+              mode: box
         expected_state:
           name: Expected state
           required: false
@@ -401,6 +409,28 @@ add_contact:
   name: Add Phonebook Contact
   description: Add or replace one manual contact in the central JSON phonebook.
   fields:
+    type:
+      name: Contact type
+      default: contact
+      selector:
+        select:
+          options:
+            - contact
+            - automation
+    fallback_destination:
+      name: Automation fallback
+      description: Optional destination when no automation handles the call before its timeout.
+      selector:
+        text:
+    timeout:
+      name: Automation inactivity timeout
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 300
+          unit_of_measurement: s
+          mode: box
     name:
       name: Name
       description: Contact name. If ID is omitted, this is also used as the contact ID.
@@ -807,5 +837,53 @@ capture_sip:
           min: 10
           max: 300
           step: 1
+          unit_of_measurement: s
+          mode: box
+
+tts_say:
+  name: Speak to an automation call
+  description: Answer an automation call and send a TTS message. Waits until the audio has been sent before the next action.
+  fields:
+    call_id:
+      name: Call ID
+      required: true
+      selector:
+        text:
+    expected_generation:
+      name: Call generation
+      description: Use the generation from the same automation_requested event as the Call ID.
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 2147483647
+          mode: box
+    tts_entity_id:
+      name: Text-to-speech provider
+      required: true
+      selector:
+        entity:
+          domain: tts
+    message:
+      name: Message
+      required: true
+      selector:
+        text:
+          multiline: true
+    language:
+      name: Language
+      selector:
+        text:
+    options:
+      name: Provider options
+      selector:
+        object:
+    timeout:
+      name: Maximum duration
+      default: 120
+      selector:
+        number:
+          min: 1
+          max: 600
           unit_of_measurement: s
           mode: box

@@ -1,0 +1,48 @@
+blueprint:
+  name: VoIP - Greet a caller and forward
+  description: Speak through the selected HA TTS provider, then forward the same automation call.
+  domain: automation
+  input:
+    contact:
+      name: Automation contact name
+      selector:
+        text:
+    provider:
+      name: TTS provider
+      selector:
+        entity:
+          domain: tts
+    message:
+      name: Greeting
+      selector:
+        text:
+          multiline: true
+    destination:
+      name: Forward destination
+      description: Existing phonebook name or extension, including the configured Assist name or extension.
+      selector:
+        text:
+mode: parallel
+max: 10
+variables:
+  contact_name: !input contact
+triggers:
+  - trigger: event
+    event_type: voip_stack.call_event
+    event_data:
+      event_type: automation_requested
+conditions:
+  - condition: template
+    value_template: "{{ trigger.event.data.callee == contact_name }}"
+actions:
+  - action: voip_stack.tts_say
+    data:
+      call_id: "{{ trigger.event.data.call_id }}"
+      expected_generation: "{{ trigger.event.data.generation }}"
+      tts_entity_id: !input provider
+      message: !input message
+  - action: voip_stack.forward
+    data:
+      call_id: "{{ trigger.event.data.call_id }}"
+      expected_generation: "{{ trigger.event.data.generation }}"
+      destination: !input destination

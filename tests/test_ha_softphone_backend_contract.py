@@ -575,7 +575,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             "registry.sip_client_for(client.dialog_ids.call_id) is not client",
             watcher,
         )
-        self.assertIn("registry.upsert(", accepted)
+        self.assertIn("observe_outbound_call_result(", accepted)
         self.assertIn("registry.add_leg(", accepted)
         self.assertIn("publish_phone_projection(", accepted)
         self.assertNotIn("CallProjectionEvent.phone(", accepted)
@@ -751,18 +751,13 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             "set_send_video",
             "set_ha_softphone_settings",
         )
-        for index, service_name in enumerate(service_names):
-            start = service_descriptions.index(f"\n{service_name}:\n")
-            later_starts = [
-                service_descriptions.find(f"\n{name}:\n", start + 1)
-                for name in service_names[index + 1 :]
-            ]
-            later_starts = [position for position in later_starts if position >= 0]
-            end = min(later_starts) if later_starts else len(service_descriptions)
-            description = service_descriptions[start:end]
-            self.assertIn("device_id:", description)
-            self.assertNotIn("endpoint_id:", description)
-            self.assertNotIn("entity_id:", description)
+        import yaml
+        descriptions = yaml.safe_load(service_descriptions)
+        for service_name in service_names:
+            fields = descriptions[service_name]["fields"]
+            self.assertIn("device_id", fields)
+            self.assertNotIn("endpoint_id", fields)
+            self.assertNotIn("entity_id", fields)
 
     def test_invalid_new_sip_username_stays_a_form_validation_error(self) -> None:
         config_flow = CONFIG_FLOW.read_text()

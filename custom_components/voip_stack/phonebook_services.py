@@ -130,6 +130,18 @@ def build_phonebook_service_handlers(
         extension = str(call.data.get("extension") or "").strip()
         number = str(call.data.get("number") or "").strip()
         port = int(call.data.get("port") or 0)
+        if call.data.get("type") == "automation":
+            if not name:
+                raise ValueError("An automation contact needs a name")
+            if extension and not extension.isdigit():
+                raise ValueError("An automation extension must be numeric")
+            if address or sip_uri or number or port:
+                raise ValueError("An automation contact has no physical address or external number")
+            metadata.update(
+                virtual_endpoint="automation",
+                fallback_destination=str(call.data.get("fallback_destination") or "").strip(),
+                automation_timeout=float(call.data.get("timeout", 30)),
+            )
         entry = RosterEntry(
             id=entry_id,
             name=name,
@@ -138,7 +150,7 @@ def build_phonebook_service_handlers(
             extension=extension,
             number=number,
             port=port,
-            ha_bridge=bool(call.data.get("ha_bridge", False)),
+            ha_bridge=bool(call.data.get("ha_bridge", False) or call.data.get("type") == "automation"),
             metadata=metadata,
         )
         entry_keys = {
