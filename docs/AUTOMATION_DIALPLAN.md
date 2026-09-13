@@ -1,176 +1,320 @@
-# Home Assistant automation cookbook and dial plan
+# Automation as dialplan
 
-> [!WARNING]
-> Initial experimental preview in `2026.8.0`. The normal phonebook route
-> remains the default and does not require automations. Event fields, decision
-> timing and service semantics may change in a future release while this API is
-> validated against more real PBX deployments. Keep critical access-control or
-> emergency routing on an explicitly tested stable path.
+A dialplan is the set of rules that decides what happens to a phone call:
+which phone rings, what the caller hears, how long to wait, and where the call
+goes next. With VoIP Stack, you can write those rules as ordinary Home Assistant
+automations, using the same editor you use for lights and heating.
 
-VoIP Stack has one canonical dial plan: the shared phonebook. Home Assistant
-automations may override a call only at the explicit decision points described
-below. Disabling automation routing restores the ordinary phonebook path
-without changing contacts, extensions or the configured inbound destination.
+For example: **someone calls Welcome, hears a greeting, waits 20 seconds, then
+speaks to your voice assistant**. Another rule can ring reception during the
+day, use a smaller group at night, or let the caller press a key to choose.
 
-The Lovelace card never chooses or filters a route. It mirrors the authoritative
-backend state and sends user actions to the same router.
+The phonebook remains the default dialplan. You add automations where you want
+custom behavior. An applicable routing rule can select another destination;
+without that selection, normal phonebook routing continues. HA's conditions
+and action sequences express your policy; VoIP Stack handles the call itself.
 
-## Design model
+This cookbook describes the native call automation interface developed for
+2026.9.3. The native triggers and Automation contact workflow are not part of
+2026.9.2. Existing event and state automations have a
+[migration guide](#move-existing-automations-gradually).
 
-VoIP Stack deliberately does not introduce another dial-plan language inside
-Home Assistant. Mature PBXs separate call conditions from a small set of call
-applications:
+## Find the example you need
 
-| System | Condition layer | Call primitives |
+| I want to... | Start here |
+| --- | --- |
+| Create my first call automation entirely in the editor | [First greeting](#create-your-first-greeting-in-the-editor) |
+| Say a message, wait 20 seconds, then connect to Assist | [Greeting, delay and forward](#add-a-delay-before-forwarding) |
+| Use a name instead of a number | [Destination names and extensions](#destination-names-and-extensions) |
+| Make a contact that runs an automation | [Automation contacts](#automation-contacts) |
+| Play information and end the call | [Information line](#say-a-message-and-end-the-call) |
+| Choose where a call rings based on presence or time | [Initial routing](#override-the-initial-destination) |
+| Ring a phone first, then try Assist | [No-answer forwarding](#forward-an-unanswered-ha-call-to-assist) |
+| Offer "press 1 or 2" choices | [Keypad menu](#build-a-small-keypad-menu) |
+| Act on a key during a conversation | [In-call DTMF](#dtmf-during-a-connected-call) |
+| Answer or decline from a phone notification | [Actionable notification](#actionable-doorbell-notification) |
+| Understand failures, time limits and multiple callers | [Call behavior](#what-happens-to-the-call) and [troubleshooting](#test-and-troubleshoot-your-automation) |
+
+## Contacts and phones have different jobs
+
+| Item | What it represents | Example |
 | --- | --- | --- |
-| [Asterisk](https://docs.asterisk.org/Configuration/Dialplan/) | Contexts, extensions, expressions and `GotoIf` | `Dial`, `FollowMe`, `Queue`, `Bridge`, transfer and hangup applications |
-| [FreeSWITCH](https://developer.signalwire.com/freeswitch/dialplan/xml/) | Ordered XML conditions, channel fields, time rules and anti-actions | `bridge`, `transfer`, `answer`, `hangup` and other applications |
-| [Kamailio](https://www.kamailio.org/docs/modules/stable/modules/dispatcher.html) | Request, branch, reply and failure routes | Relay, destination selection, health probing and failover |
-| VoIP Stack | Native HA state, Event Entity, presence, schedule, calendar and device conditions | Initial selection, forward, transfer, call control and phone policy actions |
+| Phone | A device or endpoint that can make and receive calls | Browser card, ESP intercom, registered SIP phone |
+| Ordinary contact | A saved destination, such as an external number or SIP address | Mobile number, reception desk |
+| Automation contact | A named service whose call is handled by an HA automation | Welcome, Opening hours, Visitor menu |
 
-This gives Home Assistant users the same useful separation without copying a
-general PBX scripting language. Presence, alarm, calendar, occupancy and light
-logic stay in HA. SIP dialog, fork, media, transfer and termination logic stay
-inside VoIP Stack.
+Use **Add phone** for a phone. Use **Add contact > Automation** for a greeting
+or menu. An Automation contact does not create a pretend phone device or phone
+entities in HA. It appears in the central phonebook so it can be called.
 
-## Evidence levels and qualified building blocks
+Creating the contact does not create an automation. The contact makes the
+service callable; the automation defines what that service does. A numeric
+extension is optional. Assign one if people should reach it by typing digits
+on a SIP phone or in the trunk's extension menu.
 
-The checked-in HA qualification package uses one parameterized route
-automation and one ringing-forward automation. SIPp and baresip observe the
-real signaling while the runner verifies call state and cleanup before and
-after every case.
+## Create your first greeting in the editor
 
-The project keeps four evidence levels separate:
+The labels below use the English HA interface. Their wording is translated
+when your HA profile uses another language.
 
-| Level | What it proves |
-| --- | --- |
-| Catalogued | The use case is recorded in `qualification/dialplan_matrix.py`, with its trigger, condition, operation and expected fallback. This is a coverage target, not an executed test. |
-| Static | The documented YAML parses and its `voip_stack.*` actions use fields exposed by the current service schemas. |
-| HA runtime | The action handler and state projections run inside a Home Assistant test installation. Mocked component tests do not count as this level. |
-| Live peer | The checked-in automation runs in the isolated HA laboratory while SIPp or baresip independently observes signaling, termination and post-call cleanup. |
+In **Add trigger**, search for `VoIP`. Select the **Triggers** filter to see
+all the call triggers together:
 
-The `qualification` field in the catalogue names the evidence class required
-for a use case. It does not by itself mean that the class has an executor or
-that the scenario has passed. Release evidence must identify the concrete
-scenario result for the exact candidate.
+![VoIP call triggers in the Home Assistant trigger picker](images/automation-trigger-picker.png)
 
-The current real-HA matrix covers:
+1. Open **Settings > Devices & services > VoIP Stack**. Choose **Add contact**,
+   select **Automation**, and name it `Welcome`.
+2. Leave **Extension** empty if you only want to call it by name. Leave the
+   contact's other options at their defaults for this first example.
+3. Open **Settings > Automations & scenes**, create a new automation, and
+   choose an empty automation. No blueprint is required.
+4. Under **When**, select **Add trigger**, search for `VoIP`, and choose
+   **VoIP call received**.
+5. Enable the optional **Destination** field and enter `Welcome`. Leave
+   **Caller** and **Call origin** unused to accept calls from any supported
+   source. An unused filter means "all", not "unknown".
+6. Leave **And if** empty. The trigger already filters the destination, so
+   there is no additional condition to write.
+7. Under **Then do**, choose **Add action**, search for **Speak to the caller**,
+   and select the VoIP Stack action.
+8. Choose your configured **Text-to-speech provider** and enter a short
+   **Message**, such as `Hello. This is a test.` Leave **Advanced options** closed.
+9. Save the automation as `Welcome greeting` and make sure it is enabled.
+10. From your VoIP card or phone, call the phonebook contact **Welcome**.
 
-| Building block | Real outcome checked |
-| --- | --- |
-| Decline, busy and cancel route decisions | SIP `603`, `486` and `487` |
-| No override | Configured fallback answers normally |
-| Initial forward and bridge | Selected registered SIP destination answers |
-| Context condition true and false | Correct branch and destination are recorded |
-| Caller filter mismatch | Automation does nothing and fallback answers |
-| Ringing phone forward | Casa rings first, then the registered destination answers |
-| Failed ringing forward with `resume` | Casa remains available and caller CANCEL completes correctly |
-| Automatically answering and manually answering registered SIP peers | Caller-side and callee-side BYE both clean up |
-| Initial delayed offer | Offerless INVITE completes and terminates cleanly |
+Only Destination is enabled in this example. Caller and Call origin stay
+unused, so the automation accepts any supported caller to Welcome:
 
-Every case requires zero remaining sessions, legs, pending routes, pending
-INVITEs, relays, media owners, forward tasks and allocated RTP ports. Inspect
-the structured catalog with:
+![Call-received trigger with Welcome as its destination](images/automation-call-filter.png)
 
-```bash
-scripts/dialplan_matrix.py --validate
-scripts/dialplan_matrix.py --json
+The caller hears the message and the call ends when the automation finishes.
+You do not need an Answer action before TTS, a Hangup action afterwards, or a
+Call-ID anywhere. VoIP Stack answers when the announcement starts and keeps
+the actions associated with the call that triggered them.
+
+Use your actual TTS entity. For example, xTTS may appear as
+`tts.wyoming_xtts`; Piper or another HA TTS provider can be selected instead.
+The provider must be configured and available. TTS provider selection controls
+the greeting voice. Your Assist pipeline independently selects the assistant's
+speech recognition, conversation agent and response voice.
+
+The TTS action needs the provider and message. The less common settings remain
+under Advanced options:
+
+![TTS action with a provider and greeting message](images/automation-tts-action.png)
+
+The equivalent ordinary automation YAML is:
+
+```yaml
+alias: Welcome greeting
+mode: parallel
+triggers:
+  - trigger: voip_stack.call_received
+    options:
+      destination: Welcome
+conditions: []
+actions:
+  - action: voip_stack.tts_say
+    data:
+      tts_entity_id: tts.wyoming_xtts
+      message: "Hello. This is a test."
 ```
 
-The live true/false branch uses a controlled qualification boolean. Native HA
-conditions such as presence, time, calendar, alarm and connectivity feed the
-same branch from the integration's perspective. Their recipes are listed
-separately because they solve different user problems, not because each one is
-claimed as a separate live PBX test.
+`Parallel` allows separate callers to run their own copies of the sequence.
+For a first test with one caller, HA's default `Single` mode also works.
 
-The registered-peer answer cases above configure baresip answer policy. They
-do not qualify the `voip_stack.set_auto_answer` action of a Home Assistant or
-ESPHome phone. Likewise, the current ringing-forward case acts as soon as the
-source rings; it qualifies forwarding a live ringing call, not Home
-Assistant's native `for:` timer.
+## Add a delay before forwarding
 
-The recipes use native Home Assistant Event Entities, state Sensors,
-conditions and `voip_stack.*` actions. Replace every example entity, Device ID,
-person and destination with selections from your own installation. Prefer the
-automation editor's entity and Device selectors over guessed IDs.
+Edit the greeting automation. After the TTS action, add HA's **Delay** building
+block and set hours to `0`, minutes to `0`, and seconds to `20`. After that,
+add **VoIP Stack: Forward call** and set **Destination** to the name or extension
+of your configured voice assistant.
 
-The examples target VoIP Stack `2026.8.0` or later. Repository checks validate
-their YAML structure, Home Assistant event types and the runtime schemas of
-every `voip_stack.*` action they invoke.
+Suppose the assistant is listed in your phonebook as `Home assistant`, with
+extension `1000`. Either value can identify that same destination. These are
+example values, not names or numbers reserved by VoIP Stack.
 
-## Choose the correct call hook
-
-Routing and observation are separate. Use the hook that owns the phase you
-want to control:
-
-In plain language:
-
-- `route_requested` means: "A new call has arrived, but the PBX has not chosen
-  which phone should ring yet."
-- `voip_stack.select_inbound_destination` answers that request: "Send this new
-  call to this phone, group, extension or Assist."
-- `ringing` means that the call has already been delivered to a specific phone.
-- `voip_stack.forward` moves that already-delivered call somewhere else.
-
-The normal sequence is:
-
-```text
-Incoming call
-  -> route_requested
-  -> select_inbound_destination
-  -> destination starts ringing
-  -> optional forward
+```yaml
+alias: Welcome, wait, then assistant
+mode: parallel
+triggers:
+  - trigger: voip_stack.call_received
+    options:
+      destination: Welcome
+actions:
+  - action: voip_stack.tts_say
+    data:
+      tts_entity_id: tts.wyoming_xtts
+      message: "Welcome. I will connect you to the assistant shortly."
+  - delay: "00:00:20"
+  - action: voip_stack.forward
+    data:
+      destination: Home assistant
 ```
 
-| Goal | Trigger | Action |
+The editor shows the same three steps in order:
+
+![Greeting followed by a 20-second delay and a forward action](images/automation-greeting-delay-forward.png)
+
+The actions run in order. The delay begins when the TTS action finishes sending
+its announcement. The call remains answered during the delay; a delay by itself
+adds neither speech nor hold music. The next destination is contacted after
+the delay. A successful forward keeps the caller on the same call and lets the
+new destination handle it. Finishing this automation then does not hang up the
+forwarded conversation.
+
+Remove the Delay action to connect immediately after the greeting. Remove
+Forward call to make an information-only service that ends after its message.
+Keep these actions in sequence. Putting TTS and Forward in a parallel action
+block would ask the call to speak and change destination simultaneously.
+
+HA's [Delay action](https://www.home-assistant.io/docs/scripts/#wait-for-time-to-pass-delay)
+waits for a duration; it is different from "no one answered this phone within
+20 seconds". For that behavior, use [VoIP call unanswered](#forward-an-unanswered-ha-call-to-assist).
+
+## Destination names and extensions
+
+Call and Forward resolve their destination through the central phonebook.
+
+| Destination | Meaning |
+| --- | --- |
+| `Reception` | The contact or phone with that name |
+| `'1000'` | The entry assigned extension 1000 |
+| `Evening group` | A configured group with that name |
+| `Welcome` | An Automation contact with that name |
+| A public number or SIP address | A route to that number or SIP address, when configured |
+
+Use the name displayed in your phonebook. The name and numeric extension are
+alternatives; you do not enter both. Misspellings are not corrected for you.
+Keep numeric extensions quoted in YAML. A contact without an extension is still
+callable by its name, but it cannot be selected by typing a numeric extension.
+
+`Assist` is not a universal alias for every voice assistant. Use the name
+published for your configured Assist endpoint or its configured extension.
+If you rename a destination or change its extension, update automations that
+refer to the changed value.
+
+## What happens to the call
+
+| Situation | Result |
+| --- | --- |
+| The sequence contains only TTS | VoIP Stack answers, speaks, then ends the Automation contact call |
+| TTS is followed by Delay | The answered call stays open while HA waits |
+| A forward succeeds | The same caller is connected to the new destination |
+| The caller hangs up during TTS or keypad input | Call-owned audio or input work is cancelled and released |
+| The caller hangs up during an ordinary HA delay | The call ends; a later VoIP action rejects the ended call instead of selecting a different one |
+| No automation takes control of the contact | Its initial waiting limit expires, then its configured fallback is tried, or the call ends |
+| A controlling native automation errors or is cancelled | The configured fallback is tried if it still owns the contact call, or the call ends |
+| A notification-only automation finishes | It does not end an ordinary phone conversation |
+
+A regular HA delay is not automatically a cancellable telephone timer. HA may
+finish that delay and execute non-VoIP actions afterwards, even if the call
+has ended. The protection above concerns VoIP actions selecting their original
+call. Use appropriate conditions for unrelated lights, locks or notifications.
+
+For a long waiting sequence, start with TTS or keypad input so the automation
+takes control of the contact. A delay before the first call-handling action
+still counts against the contact's initial "Wait for an automation" limit.
+After TTS has taken control, a later delay belongs to that native execution.
+
+## Start in the Home Assistant editor
+
+Use the [first greeting walkthrough](#create-your-first-greeting-in-the-editor)
+for the simplest setup. For other rules, add a native VoIP trigger and use its
+optional caller, destination and origin filters directly. Ordinary HA
+conditions can then add presence, time, calendar or alarm rules.
+
+You do not need Call-ID templates in these call-handling sequences. The native
+trigger supplies the call identity across waits and synchronous scripts.
+An advanced action that intentionally coordinates two calls, such as attended
+transfer, still needs to identify the other call.
+
+Choose one controlling automation per Automation contact. Put alternative
+routes inside that automation with **If-then** or **Choose**. Separate
+notification automations can observe the call without taking control of it.
+Two controlling automations are not an ordered dialplan: their execution order
+is not a priority setting, and one cannot take over a call already claimed by
+the other.
+
+Use **Parallel** automation mode for independent callers. This is different
+from putting the actions inside one call in a parallel block.
+
+| Automation mode | Effect when another matching call arrives |
+| --- | --- |
+| Parallel | Each call gets its own action sequence |
+| Single | The new execution is ignored while the first is running |
+| Queued | The new execution waits behind earlier executions; its call may end before its turn |
+| Restart | HA stops the previous execution and starts the new one |
+
+These are HA's [normal automation modes](https://www.home-assistant.io/docs/automation/modes/).
+A reusable call-handling script should be called synchronously, so the parent
+waits for it. `script.turn_on` starts a separate run and does not wait for it;
+use a direct script action for a greeting-and-forward sequence.
+
+## Choose when to intervene
+
+| Trigger | When it runs | Main options |
 | --- | --- | --- |
-| Replace the first destination before the call is delivered | Aggregate `route_requested` Event Entity occurrence | `voip_stack.select_inbound_destination` |
-| React when one specific phone actually starts ringing | That phone's `ringing` Event Entity occurrence | Notification or another normal HA action |
-| Wait before replacing an already delivered destination | That phone's call-state Sensor remains `ringing` with `for:` | `voip_stack.forward` |
-| React to a key during an established call | Phone or aggregate `dtmf` Event Entity occurrence | Gate, light or another normal HA action |
-| Record completion or failure | Phone or aggregate `ended`, `missed` or `failed` occurrence | Notification, log or statistics |
+| `voip_stack.call_started` | A phone starts a call | Caller, destination, origin |
+| `voip_stack.call_received` | A phone or automation contact receives a call | Caller, destination, origin |
+| `voip_stack.route_requested` | Before the initial destination rings | Caller, destination, origin |
+| `voip_stack.call_unanswered` | The destination is still ringing after a duration | Destination and `for` |
+| `voip_stack.call_connected` | The call becomes connected | Caller, destination, origin |
+| `voip_stack.call_ended` | The call ends | Destination, outcome and optional reason |
+| `voip_stack.dtmf_received` | A caller or called party presses a key | Caller, destination, key and source side |
 
-`route_requested` is deliberately the only public event that opens the short
-initial-routing decision window. A generic incoming-call notification would
-only describe what happened; it would not grant authority to replace the
-pending route. Raw SIP event-bus messages are internal plumbing and are not a
-second automation API.
+The initial routing trigger is for a quick decision. A matching native trigger
+activates the existing decision window automatically; new automations do not
+need the older automation-routing switch. For a greeting, input menu or other
+longer sequence, route to an **Automation contact** instead.
 
-`voip_stack.select_inbound_destination` works only while that initial decision
-is pending. `voip_stack.forward` works later, after a phone or group has already
-received the call. It releases or replaces the current destination and follows
-the configured `on_failure` policy.
+A caller-entered extension in the trunk's initial DTMF menu remains explicit:
+a broad initial-routing rule does not replace it. An unknown explicit extension
+fails instead of silently selecting another phone.
 
-## Configure incoming trunk routing
+## Choose conditions without writing templates
 
-Reconfigure VoIP Stack and choose one **Incoming routing** mode:
+Use normal HA conditions for time, presence, calendars and alarms. VoIP Stack
+also offers conditions for the triggering call:
 
-| Mode | What the caller experiences | Normal route |
-| --- | --- | --- |
-| **Route immediately** | No DTMF collection or pre-answer delay. | The call follows the fallback destination unless an automation selects another destination. |
-| **Collect extension with DTMF** | HA answers the trunk leg and collects negotiated telephone-event or SIP INFO digits for the configured timeout. | A valid extension wins. With no digits, automation gets a decision point before the fallback. |
+| Condition in the editor | Use it for |
+| --- | --- |
+| Call is in a state | Check whether this call is still ringing or is connected |
+| Call is from | Choose a branch for local calls or calls from a trunk |
+| Phone is available | Check a named phone's availability, DND setting and whether it already has a call |
+| Caller keypad input matches | Choose a menu branch after Wait for keypad input |
 
-**Fallback destination** accepts the same values as the rest of the dial
-plan: a phonebook name, HA, an extension, a group, a registered SIP phone, an
-Assist extension, a SIP URI or a routable number.
+Caller, Destination and Call origin can usually be set directly in the trigger.
+Use a condition when you need to choose between actions inside an execution.
+For example, a **Choose** block can send local callers to reception and trunk
+callers to a greeting, without duplicating the whole automation.
 
-The optional **Allow experimental automation routing overrides** switch is
-independent from the incoming mode and is off by default. When enabled:
+Phone availability is different from a no-answer timer. A disconnected browser
+can still be a configured logical phone with a ringing state. Use the
+availability condition to avoid selecting it, or a no-answer trigger to give
+it time to answer before forwarding.
 
-- Direct mode exposes a 1.5 second `route_requested` decision point before the
-  configured default route.
-- DTMF mode exposes the same decision point only when the caller enters no
-  digits.
-- Explicit DTMF digits never pass through automation routing. They always use
-  the phonebook, and an unknown explicit extension ends as `route_not_found`
-  instead of silently ringing another destination.
-- If no matching automation acts during the decision window, the configured
-  phonebook route continues unchanged.
+For a keypad menu, select the input result and the key to match. This condition
+matches key `1` received by the preceding input-wait action:
 
-Existing configurations migrate transparently. A previous setup with DTMF
-enabled and a non-zero timeout becomes DTMF mode. Other setups become Direct
-mode. Automation overrides remain disabled until explicitly enabled, while the
-existing credentials, target and timeout are preserved.
+![Keypad condition matching a received digit one](images/automation-keypad-condition.png)
+
+## Understand the time limits
+
+| Setting | Meaning |
+| --- | --- |
+| Time without an answer | How long this destination must ring before the trigger fires |
+| Wait for an automation | Maximum wait for a contact to be taken into control, default 30 seconds |
+| Maximum announcement duration | Browser readiness, TTS generation and transmission together, default 120 seconds, under Advanced options |
+| Wait for digits | Input wait after answering, default 10 seconds |
+
+After a native automation takes control of a contact, its HA waits belong to
+that execution. Successful completion ends the call if it was not forwarded.
+An error uses the contact's fallback destination or ends the call. The older
+explicit-event API retains its inactivity behavior between actions.
+
+Every example below is an ordinary automation. Replace example phonebook names,
+TTS providers and HA entities with your own. No blueprint import is required.
 
 ## Override the initial destination
 
@@ -186,38 +330,30 @@ alias: VoIP - Front Door to P4 when home, otherwise Casa
 mode: parallel
 max: 10
 triggers:
-  - trigger: event.received
-    target:
-      entity_id: event.voip_stack_call
-    options:
-      event_type:
-        - route_requested
-conditions:
-  - condition: state
-    entity_id: event.voip_stack_call
-    attribute: caller
-    state: Front Door
+- trigger: voip_stack.route_requested
+  options:
+    caller: Front Door
 actions:
-  - if:
-      - condition: state
-        entity_id: person.daniele
-        state: home
-    then:
-      - action: voip_stack.select_inbound_destination
-        data:
-          destination: Waveshare P4 Touch
-    else:
-      - action: voip_stack.select_inbound_destination
-        data:
-          destination: Casa
+- if:
+  - condition: state
+    entity_id: person.daniele
+    state: home
+  then:
+  - action: voip_stack.select_inbound_destination
+    data:
+      destination: Waveshare P4 Touch
+  else:
+  - action: voip_stack.select_inbound_destination
+    data:
+      destination: Casa
 ```
 
 Replace the caller, destinations and person entity with values from the actual
 installation. If the automation does not match, the configured fallback route
 continues normally. Use this initial decision when Casa must not ring first.
 
-If Casa must ring before the call is moved, trigger on Casa's durable call-state
-sensor and use `voip_stack.forward` instead. With `on_failure: resume`, Casa
+If Casa must ring before the call is moved, use **VoIP call unanswered**
+with Casa as Destination and use `voip_stack.forward`. With `on_failure: resume`, Casa
 resumes ringing if P4 is unavailable:
 
 ```yaml
@@ -225,23 +361,20 @@ alias: VoIP - Move Casa call to P4 when home
 mode: parallel
 max: 10
 triggers:
-  - trigger: state
-    entity_id: sensor.casa_call_state
-    to: ringing
+- trigger: voip_stack.call_received
+  options:
+    destination: Casa
+    caller: Front Door
 conditions:
-  - condition: state
-    entity_id: person.daniele
-    state: home
-  - condition: state
-    entity_id: sensor.casa_call_state
-    attribute: peer_name
-    state: Front Door
+- condition: state
+  entity_id: person.daniele
+  state: home
 actions:
-  - action: voip_stack.forward
-    data:
-      device_id: <casa_phone_device_id>
-      destination: Waveshare P4 Touch
-      on_failure: resume
+- action: voip_stack.forward
+  data:
+    device_id: <casa_phone_device_id>
+    destination: Waveshare P4 Touch
+    on_failure: resume
 ```
 
 This complete automation routes a trunk call to `Waveshare S3 Audio` before
@@ -253,21 +386,13 @@ alias: VoIP - Route incoming call to WS3
 mode: parallel
 max: 10
 triggers:
-  - trigger: event.received
-    target:
-      entity_id: event.voip_stack_call
-    options:
-      event_type:
-        - route_requested
-conditions:
-  - condition: state
-    entity_id: event.voip_stack_call
-    attribute: ingress
-    state: trunk
+- trigger: voip_stack.route_requested
+  options:
+    ingress: trunk
 actions:
-  - action: voip_stack.select_inbound_destination
-    data:
-      destination: Waveshare S3 Audio
+- action: voip_stack.select_inbound_destination
+  data:
+    destination: Waveshare S3 Audio
 ```
 
 Use ordinary Home Assistant conditions between the trigger and action for
@@ -290,34 +415,23 @@ description: Route one known trunk caller to WS3 at home, otherwise Test.
 mode: parallel
 max: 10
 triggers:
-  - trigger: event.received
-    target:
-      entity_id: event.voip_stack_call
-    options:
-      event_type:
-        - route_requested
-conditions:
-  - condition: state
-    entity_id: event.voip_stack_call
-    attribute: ingress
-    state: trunk
-  - condition: state
-    entity_id: event.voip_stack_call
-    attribute: caller
-    state: "426"
+- trigger: voip_stack.route_requested
+  options:
+    ingress: trunk
+    caller: '426'
 actions:
-  - if:
-      - condition: state
-        entity_id: person.daniele
-        state: home
-    then:
-      - action: voip_stack.select_inbound_destination
-        data:
-          destination: Waveshare S3 Audio
-    else:
-      - action: voip_stack.select_inbound_destination
-        data:
-          destination: "667"
+- if:
+  - condition: state
+    entity_id: person.daniele
+    state: home
+  then:
+  - action: voip_stack.select_inbound_destination
+    data:
+      destination: Waveshare S3 Audio
+  else:
+  - action: voip_stack.select_inbound_destination
+    data:
+      destination: '667'
 ```
 
 The `caller` value is the resolved name or number shown by
@@ -336,83 +450,56 @@ alias: VoIP - Inbound trunk to RG Casa
 mode: parallel
 max: 10
 triggers:
-  - trigger: event.received
-    target:
-      entity_id: event.voip_stack_call
-    options:
-      event_type:
-        - route_requested
-conditions:
-  - condition: state
-    entity_id: event.voip_stack_call
-    attribute: ingress
-    state: trunk
+- trigger: voip_stack.route_requested
+  options:
+    ingress: trunk
 actions:
-  - action: voip_stack.select_inbound_destination
-    data:
-      destination: RG Casa
+- action: voip_stack.select_inbound_destination
+  data:
+    destination: RG Casa
 ```
 
-Use `state: extension` for calls originating from a local ESP, browser phone or
+Use `ingress: extension` for calls originating from a local ESP, browser phone or
 registered SIP endpoint. Do not filter on `scope`: scope identifies the
 internal state owner, while `ingress`/`origin` describe where the call entered
 the PBX. A ring group uses normal PBX semantics: eligible members ring, the
 first answer wins, losing legs are cancelled, and the caller is excluded when
 it is itself a member of the destination group.
 
-This action is only for the initial `route_requested` decision. When exactly
-one route is waiting, no Call-ID template is required. With concurrent pending
-routes, pass the `call_id` from the event explicitly. The configured fallback
-remains authoritative when no automation acts. Use `voip_stack.forward` only
-after a call has already been delivered to a ringing or connected endpoint.
+`select_inbound_destination` chooses the initial route. In native VoIP
+automations, `forward` also delegates to that initial decision when appropriate.
+Both use the triggering call, including when several calls arrive together.
+If the automation makes no selection, the configured phonebook fallback wins.
 
 ## Forward an unanswered HA call to Assist
 
-Initial routing and no-answer forwarding are separate operations. Once the HA
-softphone is ringing, its durable state sensor supports Home Assistant's native
-`for:` timing:
+Use **VoIP call unanswered**, select `Casa` as the destination and choose the
+ringing duration. The wait stops if Casa answers or the call moves elsewhere:
 
 ```yaml
 alias: VoIP - HA unanswered to Assist
 mode: parallel
 max: 10
 triggers:
-  - trigger: state
-    entity_id: sensor.casa_call_state  # Select Call state on Device Casa
-    to: ringing
-    for: "00:00:30"
-conditions:
-  - condition: state
-    entity_id: sensor.casa_call_state
-    attribute: ingress
-    state: trunk
+- trigger: voip_stack.call_unanswered
+  options:
+    destination: Casa
+    for: 00:00:30
+    ingress: trunk
 actions:
-  - action: voip_stack.forward
-    data:
-      destination: "1666"
-      on_failure: resume
+- action: voip_stack.forward
+  data:
+    destination: '1666'
+    on_failure: resume
 ```
 
-The `ringing` state already means that this phone is the incoming call target;
-an additional `direction: incoming` condition would be redundant. Keep the
-`ingress: trunk` condition when only provider/PBX calls should fall through to
-Assist. Remove the entire `conditions:` block when unanswered local-extension
-calls should follow the same rule.
+Keep `ingress: trunk` when only provider/PBX calls should fall through to
+Assist. Remove that filter to include local calls. Replace `1666` with your
+Assist extension. The original call remains open while VoIP Stack cancels the
+replaced ringing leg and delivers the call to Assist.
 
-Replace `1666` with any destination understood by the phonebook. When exactly
-one HA-owned call is forwardable, the backend resolves its Call-ID and current
-revision itself. The source call remains open while VoIP Stack releases the HA
-softphone, cancels any replaced ringing leg with SIP CANCEL, and attaches the
-new destination.
-
-If multiple calls are simultaneously forwardable, an advanced automation must
-identify the intended `call_id`. Ambiguous requests fail explicitly instead of
-guessing.
-
-With multiple logical phones, select the call-state entity attached to the
-phone that owns the ringing leg. Home Assistant generates and may localize the
-entity ID, so always select it from the phone Device in the automation editor
-instead of guessing its ID.
+Each execution retains its own call. No Call-ID is needed when several phones
+or callers use the same automation.
 
 Logical ringing is independent from browser connectivity. A browser softphone
 that belongs to a ring group is allowed to enter `ringing` while its
@@ -429,20 +516,16 @@ alias: VoIP - Casa unanswered to Cucina
 mode: parallel
 max: 10
 triggers:
-  - trigger: state
-    entity_id: sensor.casa_call_state  # Select Call state on Device Casa
-    to: ringing
-    for: "00:00:30"
-conditions:
-  - condition: state
-    entity_id: sensor.casa_call_state
-    attribute: ingress
-    state: trunk
+- trigger: voip_stack.call_unanswered
+  options:
+    destination: Casa
+    for: 00:00:30
+    ingress: trunk
 actions:
-  - action: voip_stack.forward
-    data:
-      destination: Cucina
-      on_failure: resume
+- action: voip_stack.forward
+  data:
+    destination: Cucina
+    on_failure: resume
 ```
 
 ## Common automation recipes
@@ -476,30 +559,23 @@ alias: VoIP - Trunk calls to Reception during office hours
 mode: parallel
 max: 10
 triggers:
-  - trigger: event.received
-    target:
-      entity_id: event.voip_stack_call
-    options:
-      event_type:
-        - route_requested
+- trigger: voip_stack.route_requested
+  options:
+    ingress: trunk
 conditions:
-  - condition: state
-    entity_id: event.voip_stack_call
-    attribute: ingress
-    state: trunk
-  - condition: time
-    after: "08:30:00"
-    before: "18:00:00"
-    weekday:
-      - mon
-      - tue
-      - wed
-      - thu
-      - fri
+- condition: time
+  after: 08:30:00
+  before: '18:00:00'
+  weekday:
+  - mon
+  - tue
+  - wed
+  - thu
+  - fri
 actions:
-  - action: voip_stack.select_inbound_destination
-    data:
-      destination: Reception
+- action: voip_stack.select_inbound_destination
+  data:
+    destination: Reception
 ```
 
 To send out-of-hours calls to Assist instead, configure Assist as the normal
@@ -508,34 +584,25 @@ the same schedule in two automation branches.
 
 ### Prefer an available phone
 
-This uses the same integration-side true/false route primitive exercised by
-the live matrix. Home Assistant supplies the connectivity condition. The
-specific connectivity recipe remains a static cookbook example until it has a
-named live scenario:
-
 ```yaml
 alias: VoIP - Prefer P4 when online
 mode: parallel
 max: 10
 triggers:
-  - trigger: event.received
-    target:
-      entity_id: event.voip_stack_call
-    options:
-      event_type: [route_requested]
+- trigger: voip_stack.route_requested
 actions:
-  - if:
-      - condition: state
-        entity_id: binary_sensor.p4_connectivity
-        state: "on"
-    then:
-      - action: voip_stack.select_inbound_destination
-        data:
-          destination: P4
-    else:
-      - action: voip_stack.select_inbound_destination
-        data:
-          destination: Casa
+- if:
+  - condition: state
+    entity_id: binary_sensor.p4_connectivity
+    state: 'on'
+  then:
+  - action: voip_stack.select_inbound_destination
+    data:
+      destination: P4
+  else:
+  - action: voip_stack.select_inbound_destination
+    data:
+      destination: Casa
 ```
 
 ### Route holidays to Assist
@@ -549,76 +616,61 @@ alias: VoIP - Holiday calls to Assist
 mode: parallel
 max: 10
 triggers:
-  - trigger: event.received
-    target:
-      entity_id: event.voip_stack_call
-    options:
-      event_type: [route_requested]
+- trigger: voip_stack.route_requested
 conditions:
-  - condition: state
-    entity_id: calendar.company_holidays
-    state: "on"
+- condition: state
+  entity_id: calendar.company_holidays
+  state: 'on'
 actions:
-  - action: voip_stack.select_inbound_destination
-    data:
-      destination: Assist
+- action: voip_stack.select_inbound_destination
+  data:
+    destination: Assist
 ```
 
 ### Reject calls while the alarm is triggered
 
-Use the Call-ID from the Event Entity when the action rejects a specific
-pending call. The backend rejects a stale or already settled decision. The
-real-HA matrix qualifies the `decline` decision and its `603` response:
+Decline the triggering call while the alarm is active. A delayed action
+cannot reject a different, newer call:
 
 ```yaml
 alias: VoIP - Reject calls while alarm is triggered
 mode: parallel
 max: 10
 triggers:
-  - trigger: event.received
-    target:
-      entity_id: event.voip_stack_call
-    options:
-      event_type: [route_requested]
+- trigger: voip_stack.route_requested
 conditions:
-  - condition: state
-    entity_id: alarm_control_panel.home
-    state: triggered
+- condition: state
+  entity_id: alarm_control_panel.home
+  state: triggered
 actions:
-  - action: voip_stack.route
-    data:
-      call_id: "{{ trigger.to_state.attributes.call_id }}"
-      action: decline
+- action: voip_stack.route
+  data:
+    action: decline
 ```
 
 ### Notify a no-answer timeout
 
-Use the Event Entity belonging to the phone you care about. This example sends
-one notification when `Casa` reaches its configured no-answer timeout:
+Select the intended phone in Destination. This example sends one notification
+when `Casa` reaches its configured no-answer timeout:
 
 ```yaml
 alias: VoIP - Notify Casa no-answer timeout
 mode: parallel
 max: 10
 triggers:
-  - trigger: event.received
-    target:
-      entity_id: event.casa_call
-    options:
-      event_type:
-        - missed
+- trigger: voip_stack.call_ended
+  options:
+    destination: Casa
+    outcome: missed
 actions:
-  - action: notify.mobile_app_your_phone
-    data:
-      title: "Missed VoIP call"
-      message: >-
-        Missed call from
-        {{ state_attr('event.casa_call', 'caller') or 'Unknown caller' }}
+- action: notify.mobile_app_your_phone
+  data:
+    title: Missed VoIP call
+    message: Missed call from {{ trigger.call.caller or 'Unknown caller'
+      }}
 ```
 
-Replace `event.casa_call` with the call Event Entity shown on the intended
-phone Device. Using the per-phone entity prevents a missed call on another
-room phone from triggering this notification. The public `missed` occurrence
+The public `missed` occurrence
 currently means that the no-answer timeout expired. If the caller hangs up
 before that timeout, the Event Entity emits `ended`; the Logbook still presents
 that unanswered incoming call as missed.
@@ -633,7 +685,7 @@ your own provisioning automation:
 action: voip_stack.add_contact
 data:
   name: Daniele mobile
-  number: "+1234567890"
+  number: '+1234567890'
 ```
 
 Then forward the still-ringing `Casa` call after ten seconds:
@@ -643,20 +695,16 @@ alias: VoIP - Casa unanswered to Daniele mobile
 mode: parallel
 max: 10
 triggers:
-  - trigger: state
-    entity_id: sensor.casa_call_state
-    to: ringing
-    for: "00:00:10"
-conditions:
-  - condition: state
-    entity_id: sensor.casa_call_state
-    attribute: ingress
-    state: trunk
+- trigger: voip_stack.call_unanswered
+  options:
+    destination: Casa
+    for: 00:00:10
+    ingress: trunk
 actions:
-  - action: voip_stack.forward
-    data:
-      destination: Daniele mobile
-      on_failure: resume
+- action: voip_stack.forward
+  data:
+    destination: Daniele mobile
+    on_failure: resume
 ```
 
 This requires a configured and registered SIP trunk able to dial the public
@@ -667,17 +715,23 @@ extension calls should use the same fallback.
 
 ### Transfer a connected call
 
-Forwarding changes a destination while HA still owns routing. Transfer uses
-SIP REFER on an established dialog. A blind transfer needs the active call ID:
+Forwarding changes a destination while HA owns routing. Transfer asks the SIP
+peer to move an established call using REFER. For example, a receptionist can
+press `9` to transfer the current call. The native trigger supplies the call ID:
 
 ```yaml
 alias: VoIP - Transfer Casa to Reception
-triggers: []
+mode: parallel
+triggers:
+- trigger: voip_stack.dtmf_received
+  options:
+    destination: Casa
+    digit: '9'
+    source_leg: callee
 actions:
-  - action: voip_stack.transfer
-    data:
-      call_id: "{{ state_attr('sensor.casa_call_state', 'call_id') }}"
-      destination: Reception
+- action: voip_stack.transfer
+  data:
+    destination: Reception
 ```
 
 For an attended transfer, pass the consultation call as `replaces_call_id`:
@@ -685,15 +739,10 @@ For an attended transfer, pass the consultation call as `replaces_call_id`:
 ```yaml
 action: voip_stack.transfer
 data:
-  call_id: "{{ states('input_text.original_call_id') }}"
+  call_id: '{{ states(''input_text.original_call_id'') }}'
   destination: Reception
-  replaces_call_id: "{{ states('input_text.consultation_call_id') }}"
+  replaces_call_id: '{{ states(''input_text.consultation_call_id'') }}'
 ```
-
-The transfer implementation has protocol and lifecycle tests. This particular
-Home Assistant automation recipe is catalogued and schema-checked, but the
-current live automation matrix does not execute it. The example helpers merely
-show where an automation can retain its two call IDs.
 
 ### Set DND from occupancy
 
@@ -701,23 +750,23 @@ show where an automation can retain its two call IDs.
 alias: VoIP - Casa DND follows occupancy
 mode: restart
 triggers:
-  - trigger: state
-    entity_id: zone.home
+- trigger: state
+  entity_id: zone.home
 actions:
-  - if:
-      - condition: numeric_state
-        entity_id: zone.home
-        above: 0
-    then:
-      - action: voip_stack.set_dnd
-        data:
-          device_id: <casa_phone_device_id>
-          dnd: false
-    else:
-      - action: voip_stack.set_dnd
-        data:
-          device_id: <casa_phone_device_id>
-          dnd: true
+- if:
+  - condition: numeric_state
+    entity_id: zone.home
+    above: 0
+  then:
+  - action: voip_stack.set_dnd
+    data:
+      device_id: <casa_phone_device_id>
+      dnd: false
+  else:
+  - action: voip_stack.set_dnd
+    data:
+      device_id: <casa_phone_device_id>
+      dnd: true
 ```
 
 ### Pause media during a call
@@ -729,16 +778,16 @@ the call lifecycle:
 alias: VoIP - Pause living-room media during calls
 mode: restart
 triggers:
-  - trigger: state
-    entity_id: sensor.casa_call_state
-    to: ringing
-  - trigger: state
-    entity_id: sensor.casa_call_state
-    to: in_call
+- trigger: voip_stack.call_received
+  options:
+    destination: Casa
+- trigger: voip_stack.call_connected
+  options:
+    destination: Casa
 actions:
-  - action: media_player.media_pause
-    target:
-      entity_id: media_player.living_room
+- action: media_player.media_pause
+  target:
+    entity_id: media_player.living_room
 ```
 
 ### Start a scheduled P4 video call
@@ -746,100 +795,90 @@ actions:
 ```yaml
 alias: VoIP - Scheduled P4 video check-in
 triggers:
-  - trigger: time
-    at: "18:00:00"
+- trigger: time
+  at: '18:00:00'
 actions:
-  - action: voip_stack.call
-    data:
-      device_id: <p4_phone_device_id>
-      destination: Casa
-      send_video: true
+- action: voip_stack.call
+  data:
+    device_id: <p4_phone_device_id>
+    destination: Casa
+    send_video: true
 ```
-
-The time trigger itself is native Home Assistant behavior. This recipe is
-catalogued and schema-checked; a release may claim the complete scenario only
-when its candidate evidence includes the selected phone, video negotiation,
-termination and the required P4 hardware run.
 
 ## Actionable doorbell notification
 
-Use the call Event Entity attached to the **receiving Home Assistant phone**.
-The `ringing` occurrence contains caller information, while the selected phone
-Device lets `voip_stack.decline` resolve the current call without copying a SIP
-Call-ID into the automation.
+Use **VoIP call received** with the receiving phone as Destination. The notification
+opens that phone's card or declines the triggering call. Microphone permission
+and audio remain with the browser or Companion view that answers.
 
-The **Answer** button must open the dashboard containing that phone's card.
-Only a browser or Companion view can request microphone/camera permission and
-attach media. The card consumes `?voip_answer=1` and answers the ringing call.
+The variables below identify this notification, so an old button cannot act on
+a newer call. Copy them unchanged; you do not enter a Call-ID yourself. Replace
+the notification service, phone device, phonebook names and dashboard path.
 
 ```yaml
 alias: VoIP - Actionable doorbell notification
-mode: restart
+mode: parallel
 triggers:
-  - trigger: event.received
-    target:
-      entity_id: event.casa_call
-    options:
-      event_type:
-        - ringing
-conditions:
-  - condition: state
-    entity_id: event.casa_call
-    attribute: caller
-    state: Front Door
+- trigger: voip_stack.call_received
+  options:
+    destination: Casa
+    caller: Front Door
 actions:
-  - action: notify.mobile_app_your_phone
+- variables:
+    decline_action: '{{ ''VOIP_DECLINE_'' ~ context.id }}'
+    notification_tag: '{{ ''voip_'' ~ context.id }}'
+- action: notify.mobile_app_your_phone
+  data:
+    title: 🔔 Front door
+    message: Front Door is calling Casa
     data:
-      title: "🔔 Front door"
-      message: "Front Door is calling Casa"
-      data:
-        tag: voip_front_door
-        channel: doorbell
-        importance: high
-        ttl: 0
-        priority: high
-        actions:
-          - action: URI
-            title: Answer
-            uri: /lovelace/phones?voip_answer=1
-          - action: VOIP_DECLINE_CASA
-            title: Decline
-  - wait_for_trigger:
-      - trigger: event
-        event_type: mobile_app_notification_action
-        event_data:
-          action: VOIP_DECLINE_CASA
-    timeout: "00:00:30"
-  - if:
-      - condition: template
-        value_template: "{{ wait.trigger is not none }}"
-    then:
-      - action: voip_stack.decline
-        data:
-          device_id: <casa_phone_device_id>
-  - action: notify.mobile_app_your_phone
+      tag: '{{ notification_tag }}'
+      channel: doorbell
+      importance: high
+      ttl: 0
+      priority: high
+      actions:
+      - action: URI
+        title: Answer
+        uri: /lovelace/phones?voip_answer=1&voip_endpoint={{ trigger.call.endpoint_id | urlencode
+          }}&voip_call_id={{ trigger.call.call_id | urlencode }}
+      - action: '{{ decline_action }}'
+        title: Decline
+- wait_for_trigger:
+  - trigger: event
+    event_type: mobile_app_notification_action
+    event_data:
+      action: '{{ decline_action }}'
+  timeout: 00:00:30
+- if:
+  - condition: template
+    value_template: '{{ wait.trigger is not none }}'
+  then:
+  - action: voip_stack.decline
     data:
-      message: clear_notification
-      data:
-        tag: voip_front_door
+      device_id: <casa_phone_device_id>
+    continue_on_error: true
+- action: notify.mobile_app_your_phone
+  data:
+    message: clear_notification
+    data:
+      tag: '{{ notification_tag }}'
 ```
 
-Replace `/lovelace/phones` with the real view containing the card bound to the
-same Casa phone Device. Receiving the notification does not itself answer or
-claim media. If the call ends before the action is pressed, the backend rejects
-the stale decline instead of affecting a later call.
+The Answer link selects both the phone and the original call. A stale link
+cannot answer a different call with another Call-ID. Decline waits only for the
+unique action sent in this notification. If the call has already ended, the
+call guard rejects Decline; `continue_on_error` lets the automation remove its
+old notification afterwards. A separate notification tag prevents that cleanup
+from clearing a newer notification.
 
-For several phones or simultaneous door stations, use one distinct notification
-tag/action name per receiving phone. Expert flows may also copy `call_id` from
-the event and pass it through action data, but it is unnecessary when exactly
-one call is ringing on the selected Device.
-
-The same automation is available as a standalone file:
+This follows Home Assistant's [actionable notification pattern](https://companion.home-assistant.io/docs/notifications/actionable-notifications/).
+The same automation is available in
 [`examples/doorbell-automation.yaml`](../examples/doorbell-automation.yaml).
 
 ![Answer a VoIP call from a Companion notification](images/mobile-notification-answer.gif)
 
-## Native automation entities
+## Existing event and state automations
 
 ### Event entity
 
@@ -858,7 +897,8 @@ stateless occurrences for every HA-owned call:
 - `dtmf`
 - `ended`, `missed`, `failed`, `state_changed`
 
-Select these through the `event.received` trigger in the automation editor.
+Existing `event.received` automations remain supported. For new rules, use the
+native VoIP triggers shown at the beginning of this guide.
 Each occurrence includes call metadata such as caller, callee, direction,
 route kind, owner and controllability. The aggregate entity is useful for
 initial `route_requested` decisions and advanced inspection; prefer the phone's
@@ -921,42 +961,89 @@ Explicit digits are authoritative. A valid extension does not emit
 automation. If the caller enters no digits, the optional automation decision
 and then the configured fallback are evaluated as described above.
 
+### See received digits in persistent notifications
+
+Start with a visible test before connecting a keypad action to a gate or lock.
+Create an ordinary automation with **VoIP call keypad digit received**. Leave
+its filters unused for this test. Add **Persistent notification: Create** as
+the action, with the following message:
+
+```yaml
+alias: VoIP - Show received keypad digits
+mode: parallel
+max: 20
+triggers:
+  - trigger: voip_stack.dtmf_received
+actions:
+  - action: persistent_notification.create
+    data:
+      title: VoIP keypad test
+      message: >-
+        Received key: {{ trigger.call.digit }}.
+        Caller: {{ trigger.call.caller | default('Unknown', true) }}.
+        Destination: {{ trigger.call.callee | default('Unknown', true) }}.
+        Pressed by: {{ trigger.call.source_leg }}.
+```
+
+Place an HA-managed call and send DTMF from the other phone. Open HA's
+**Notifications** panel: each received key creates a separate persistent
+notification. Repeated keys remain separate presses, so `1`, `1`, `0`, `0`
+should produce four notifications. This example does not send a mobile push
+notification and does not operate a device. Disable it after testing if you
+do not want a notification for every received key.
+
+The small templates only print information in the message. They do not select
+a call or require you to enter its ID. For a real action, replace the
+notification with the action you want and restrict the trigger to the intended
+caller, receiving phone, key and source side.
+
+### A keypad menu and an in-call key are different
+
+| Goal | Trigger or action to use |
+| --- | --- |
+| "Press 1 for reception" on an Automation contact | Speak the choices, then **Wait for keypad input**, then **Choose** |
+| "Press 5 during this door conversation to open the gate" | **VoIP call keypad digit received**, filtered to key 5 and the intended side |
+| Dial an extension in the incoming trunk menu | The trunk's existing extension-routing configuration |
+
+**Wait for keypad input** accepts the caller's input on its Automation contact.
+Its usual result is one key. Under Advanced options you can request multiple
+keys; the terminator ends input and is not included in the collected digits.
+For example, with a three-digit limit, `1`, `0`, `0` produces `100`. If the
+caller presses the terminator first, the received digits can be empty. A timeout
+is a separate result even if some digits were collected before it expired.
+
+The **Caller keypad input matches** condition reads the result of the latest
+input wait in this execution. You do not need a response variable for ordinary
+menu choices. It does not read the last key from another call.
+
+For the event trigger, **Who pressed the key** distinguishes the caller from
+the called party. In a doorphone call, decide explicitly whether the visitor
+or the person answering should be allowed to operate the gate. A received digit
+alone does not establish that person's identity.
+
 ### Open a gate with in-call DTMF
 
-During a connected call, this example presses a gate relay when the caller on
-the `Front Door` call presses `5`:
+When `Front Door` calls `Casa`, this example lets the person answering on
+`Casa` press `5` to operate the gate button:
 
 ```yaml
 alias: VoIP - Open front gate with DTMF 5
 mode: parallel
 max: 10
 triggers:
-  - trigger: event.received
-    target:
-      entity_id: event.casa_call
-    options:
-      event_type:
-        - dtmf
-conditions:
-  - condition: state
-    entity_id: event.casa_call
-    attribute: digit
-    state: "5"
-  - condition: state
-    entity_id: event.casa_call
-    attribute: source_leg
-    state: caller
-  - condition: state
-    entity_id: event.casa_call
-    attribute: caller
-    state: Front Door
+- trigger: voip_stack.dtmf_received
+  options:
+    destination: Casa
+    digit: '5'
+    source_leg: callee
+    caller: Front Door
 actions:
-  - action: button.press
-    target:
-      entity_id: button.front_gate
+- action: button.press
+  target:
+    entity_id: button.front_gate
 ```
 
-`source_leg: caller` prevents a key pressed by the receiving room phone from
+`source_leg: callee` prevents a key pressed by the receiving room phone from
 running the action. Replace the caller and button entities with values from
 your installation. The event also exposes `callee`, `transport` and `ingress`
 for more specific conditions.
@@ -991,60 +1078,58 @@ normal no-answer forward.
 - Offerless re-INVITE uses delayed offer/answer, with the local offer in the
   `200 OK` and the peer answer in ACK.
 - Raw internal bus events are implementation plumbing for the Event Entities,
-  not a second public automation API. Build new automations from the native
-  entities and services above.
+  retained for compatibility. Build new automations from the native VoIP
+  triggers and actions above.
 
 ## Automation contacts
 
-An automation contact is a named local telephone service, not a physical device
-or a browser phone. Its numeric extension is optional. The examples below assume Assist is configured as extension `1666`. Create the
-automation contact once:
+An automation contact is a named telephone service, not a physical phone.
+In the integration, choose **Add contact**, select **Automation**, enter its
+name and optionally a numeric extension. Leave the extension empty to dial
+by its phonebook name. This creates no phone device or entities.
+
+Choose a fallback destination for calls that no automation handles. The examples
+below assume your Assist extension is `1666`; use the extension configured in
+your own integration. The equivalent provisioning action is:
 
 ```yaml
 action: voip_stack.add_contact
 data:
   name: Welcome
   type: automation
-  extension: "666"
-  fallback_destination: "1666"
+  extension: '666'
+  fallback_destination: '1666'
   timeout: 30
 ```
 
 Omit `extension` to call it by its phonebook name only. The same contact can be
 called from an ESP, a browser phone, a registered SIP phone, or selected by its
 extension in the incoming trunk DTMF menu. It is not an unknown external number.
-The existing experimental 1.5-second routing override is not needed.
+Use the call-received trigger for this service, rather than keeping an initial
+routing decision open during the greeting.
 
 ### Say a greeting, then connect to Assist
 
-Use the immutable triggering event to select the call. Reading the latest
-attributes of the aggregate event entity could instead select another call.
-Replace the TTS entity and destination with those configured in your HA.
+Select **VoIP call received**, set Destination to `Welcome`, then add **Speak to
+the caller** and **Forward call**. Replace the TTS entity and Assist extension
+with yours. The action sequence is:
 
 ```yaml
 alias: VoIP - Welcome then Assist
 mode: parallel
 max: 10
 triggers:
-  - trigger: event
-    event_type: voip_stack.call_event
-    event_data:
-      event_type: automation_requested
-conditions:
-  - condition: template
-    value_template: "{{ trigger.event.data.callee == 'Welcome' }}"
+- trigger: voip_stack.call_received
+  options:
+    destination: Welcome
 actions:
-  - action: voip_stack.tts_say
-    data:
-      call_id: "{{ trigger.event.data.call_id }}"
-      expected_generation: "{{ trigger.event.data.generation }}"
-      tts_entity_id: tts.piper
-      message: "Welcome. How can I help you?"
-  - action: voip_stack.forward
-    data:
-      call_id: "{{ trigger.event.data.call_id }}"
-      expected_generation: "{{ trigger.event.data.generation }}"
-      destination: "1666"
+- action: voip_stack.tts_say
+  data:
+    tts_entity_id: tts.piper
+    message: Welcome. How can I help you?
+- action: voip_stack.forward
+  data:
+    destination: '1666'
 ```
 
 The second action runs after the greeting has been sent. The caller stays on
@@ -1052,28 +1137,253 @@ the same call. Assist starts listening using its existing configuration; disable
 advanced call details if no opening conversation message is wanted.
 
 For a TTS failure to skip straight to Assist, add `continue_on_error: true` to
-the first action. Without it, the contact's inactivity timeout and optional
-fallback remain in force. Hanging up cancels the pending audio work.
+the first action. Otherwise the failed native execution uses the contact's
+fallback or ends the call. Hanging up cancels pending audio work.
 
 ### Choose a destination with an HA condition
 
-The same trigger can select a staffed phone when someone is home and Assist
-otherwise. Replace the actions above with:
+Use HA's **If-then** action in the same automation:
 
 ```yaml
 actions:
-  - action: voip_stack.forward
-    data:
-      call_id: "{{ trigger.event.data.call_id }}"
-      expected_generation: "{{ trigger.event.data.generation }}"
-      destination: "{{ 'Reception' if is_state('person.receptionist', 'home') else '1666' }}"
+  - if:
+      - condition: state
+        entity_id: person.receptionist
+        state: home
+    then:
+      - action: voip_stack.forward
+        data:
+          destination: Reception
+    else:
+      - action: voip_stack.forward
+        data:
+          destination: "1666"
 ```
 
 No greeting is required. An immediate forward can keep the source call ringing
-until the selected destination answers. This first implementation does not
-inject announcements into an existing conversation between two people.
+until the selected destination answers. Announcements are for automation contacts; they do not interrupt an existing
+conversation between two people.
 
 The [greeting and forwarding blueprint](../blueprints/automation/voip_greeting_then_forward.yaml)
-provides the same sequence with inputs for the contact, TTS provider, message
-and destination. Select your actual Assist name or extension; `Assist` is not
+is an optional legacy event-based template with inputs for the contact, TTS
+provider, message and destination. New ordinary automations should use the
+native steps above; the template retains explicit event identities and the
+legacy inactivity behavior. Select your actual Assist name or extension; `Assist` is not
 a universal alias for every configured pipeline name.
+
+## Say a message and end the call
+
+Create an Automation contact named `Information`. This normal automation says
+its message and then ends the call automatically. No explicit hangup action
+or call identifier is needed.
+
+```yaml
+alias: VoIP - Recorded information
+mode: parallel
+triggers:
+  - trigger: voip_stack.call_received
+    options:
+      destination: Information
+actions:
+  - action: voip_stack.tts_say
+    data:
+      tts_entity_id: tts.piper
+      message: "Our office opens at nine. Thank you for calling."
+```
+
+## Build a small keypad menu
+
+Create an Automation contact named `Welcome`. In the editor, add a greeting,
+**Wait for keypad input**, then **Choose**. Each choice uses **Caller keypad
+input matches**. Leave the response variable unused; the condition obtains
+this execution's input result automatically.
+
+```yaml
+alias: VoIP - Welcome menu
+mode: parallel
+triggers:
+  - trigger: voip_stack.call_received
+    options:
+      destination: Welcome
+actions:
+  - action: voip_stack.tts_say
+    data:
+      tts_entity_id: tts.piper
+      message: "Press one for reception or two for the assistant."
+  - action: voip_stack.wait_for_dtmf
+    data:
+      timeout: 10
+  - choose:
+      - conditions:
+          - condition: voip_stack.is_dtmf_result
+            options:
+              status: received
+              digits: "1"
+        sequence:
+          - action: voip_stack.forward
+            data:
+              destination: Reception
+      - conditions:
+          - condition: voip_stack.is_dtmf_result
+            options:
+              status: received
+              digits: "2"
+        sequence:
+          - action: voip_stack.forward
+            data:
+              destination: "1666"
+      - conditions:
+          - condition: voip_stack.is_dtmf_result
+            options:
+              status: timeout
+        sequence:
+          - action: voip_stack.tts_say
+            data:
+              tts_entity_id: tts.piper
+              message: "There was no selection. Connecting you to the assistant."
+          - action: voip_stack.forward
+            data:
+              destination: "1666"
+    default:
+      - action: voip_stack.tts_say
+        data:
+          tts_entity_id: tts.piper
+          message: "That selection is not available. Please call again."
+```
+
+The default branch ends after its message. To repeat the menu after an invalid or empty selection, put the greeting,
+input wait and choices inside HA's **Repeat** action, choose a fixed count, and
+use **Stop** immediately after a forward action. This repeats input collection,
+not failed attempts to reach a phone. Do not use an unlimited repeat: someone
+who never presses a key must eventually reach the fallback or finish the call.
+Digits entered before the input wait begins are not collected. The `#` key ends
+input by default; it is not included in the returned digits.
+
+## Keep evenings quiet
+
+Choose a smaller ring group at night using an ordinary HA time condition:
+
+```yaml
+alias: VoIP - Quiet evening calls
+mode: parallel
+triggers:
+  - trigger: voip_stack.route_requested
+    options:
+      ingress: trunk
+actions:
+  - if:
+      - condition: time
+        after: "21:00:00"
+        before: "08:00:00"
+    then:
+      - action: voip_stack.forward
+        data:
+          destination: Quiet group
+    else:
+      - action: voip_stack.forward
+        data:
+          destination: Whole house
+```
+
+## Move existing automations gradually
+
+Old event and state triggers remain available. To migrate a rule:
+
+1. Replace its call event trigger with the corresponding native VoIP trigger.
+2. Move caller, destination and origin filters into that trigger.
+3. Remove the Call-ID and generation templates from call actions.
+4. For no-answer rules, select **VoIP call unanswered** and set the ringing duration.
+5. For a message followed by Assist, use **Speak to the caller**, then **Forward
+   call**. Keep a synchronous action sequence.
+6. Save, call the destination, and inspect the automation trace.
+
+Use the triggering snapshot (`trigger.call`) for optional dynamic notification
+text. Do not read the latest attributes of the global call event to select a
+call: another call may have arrived since this execution started.
+
+An advanced script that intentionally coordinates two calls, such as an
+attended transfer, can retain explicit identifiers. Existing automations are
+not rewritten automatically when the integration is upgraded.
+
+## Test and troubleshoot your automation
+
+Test by placing a real call to the configured destination. The editor's
+**Run actions** button does not create a phone call and does not supply a
+native call trigger. An announcement automation is therefore not meaningfully
+tested by pressing that button while no call exists.
+
+Open the automation's **Traces** view after the call. Follow the trigger, any
+conditions, and the actions in order. It shows whether the destination filter
+matched, which branch ran, and which action failed. HA's
+[automation troubleshooting guide](https://www.home-assistant.io/docs/automation/troubleshooting/)
+explains how to inspect those traces.
+
+| What you observe | What to check |
+| --- | --- |
+| Searching for the trigger shows no VoIP call choices | Check that the installed integration contains native call triggers, reload the frontend, and search for `VoIP` |
+| An optional field is greyed out | Enable its checkbox if you want to use that filter; otherwise leave it disabled to match all values |
+| Welcome is missing from the phonebook | Create it with Add contact > Automation, then refresh the phonebook on the card or device |
+| The contact rings but no message starts | Confirm the automation is enabled and its Destination matches the contact name or extension; inspect its trace |
+| TTS fails | Select an available TTS entity, check its language and provider options, and inspect the failed action in the trace |
+| The greeting plays but the assistant is not reached | Verify Forward call's destination against the phonebook and confirm the Assist endpoint is enabled |
+| The assistant uses a different voice from the greeting | The TTS action and the Assist pipeline have separate provider settings |
+| Assist speaks an unexpected opening message | Review the integration's advanced Assist call-context option and your conversation agent's behavior |
+| An action says its call has ended | The original caller hung up, the call moved on, or a queued execution ran too late; it has not selected a replacement call |
+| Only the first of two callers gets a sequence | Check whether the automation uses Single mode; use Parallel for independent callers |
+| A caller gets the contact's fallback while the automation is waiting | Check whether a long delay occurs before its first call-handling action, and review the initial waiting limit |
+| No DTMF notification appears | Confirm HA handles that call's signaling/media, the peer sends SIP INFO or negotiated RTP telephone-event, and the filters match the sender side |
+| A TTS action refuses an ordinary ongoing conversation | Announcements belong to Automation contacts; they are not an audio injection action for arbitrary two-party calls |
+| Initial routing ignores a rule | Check the trigger filters and caller recognition; initial overrides are restricted to trusted configured/registered sources, and explicit trunk extension digits retain precedence |
+
+To test failure behavior, make one deliberate change at a time: disable the
+matching automation to check the contact's fallback, try a no-answer call, or
+hang up during the announcement or input wait. Restore the normal settings
+after each test. Do not change a real gate or lock action while discovering
+which side emits a keypad event; use the notification example first.
+
+## Reuse a sequence without losing its call
+
+For a shared greeting, create a normal HA script and call it directly from the
+call automation. The parent waits for that script to finish, then continues
+to Forward call. Keep call-handling steps in sequence and choose script mode
+Parallel if several calls can use it at once.
+
+`script.turn_on` starts a script without waiting for it. That is useful for
+independent tasks, but it is not the equivalent of "finish this greeting,
+then continue this call". Likewise, an HA restart or automation reload does
+not resume an interrupted telephone conversation from the middle of a delay.
+
+The explicit Call-ID and generation fields remain available for older rules
+and advanced multi-call work. Leave them alone for native call-triggered
+examples in this guide. Extra templates are not required just because two
+callers arrive at the same time.
+
+## Browser auto-answer needs a running receiving card
+
+Auto-answer is performed by the receiving card in the browser. Keep that card
+loaded in a running browser or Companion view, with persistent microphone
+permission. Changing dashboard views can unload the card, and a mobile browser
+can suspend a background tab.
+
+If Phone A calls Phone B while B's card is unloaded, A remains calling and B
+remains ringing. Opening B's card can then cause the automatic answer. The
+caller enters the connected state and its in-call keypad becomes available at
+that point. The setting is saved in HA, but answering still requires the
+receiving browser. For a two-browser-phone test, keep both receiving and
+calling cards loaded in separate browser tabs or devices.
+
+## Refresh the editor after updating
+
+After installing an integration update, restart Home Assistant and reload its
+page before editing automations. If old names, missing icons or old card
+controls remain, refresh the frontend cache:
+
+- In Chrome or Edge, open HA, press **F12**, then right-click the browser's
+  reload button and choose **Empty cache and hard reload**.
+- In the Companion app's settings, use **Reset frontend cache**, then reopen
+  the HA page. Menu locations vary by app version and platform.
+
+See Home Assistant's [frontend cache instructions](https://www.home-assistant.io/faq/browser/).
+Refreshing the frontend does not install the new backend: download the update
+and restart HA first. Clearing cache does not reset your saved auto-answer
+setting or rewrite your automations.

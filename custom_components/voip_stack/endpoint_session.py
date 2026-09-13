@@ -9,6 +9,7 @@ from enum import IntEnum, StrEnum
 import inspect
 import logging
 from typing import Any, TypeAlias
+from weakref import WeakKeyDictionary
 
 from .fsm import sip_public_state
 from .session_cleanup import async_wait_for_cleanup
@@ -229,6 +230,17 @@ class CallEventContext:
     duration_seconds: int | None = None
     terminal_summary_claimed: bool = False
     terminal_endpoint_ids: frozenset[str] = field(default_factory=frozenset)
+    trigger_sequences: WeakKeyDictionary[object, tuple[int, str]] | None = field(default=None, repr=False)
+
+    def accept_trigger(self, subscriber: object, sequence: int, destination: str) -> bool:
+        """Publish a call transition once per native subscription and destination."""
+        if self.trigger_sequences is None:
+            self.trigger_sequences = WeakKeyDictionary()
+        previous = self.trigger_sequences.get(subscriber)
+        if previous is not None and (sequence < previous[0] or previous == (sequence, destination)):
+            return False
+        self.trigger_sequences[subscriber] = (sequence, destination)
+        return True
 
 
 @dataclass(slots=True)

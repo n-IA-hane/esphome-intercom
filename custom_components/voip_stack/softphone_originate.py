@@ -765,6 +765,14 @@ async def async_originate_browser_call(
         ),
     )
     from .dtmf_events import attach_direct_client_dtmf_events
+    from .browser_playback import BrowserPlayback
+    from .endpoint_session import CleanupStage
+
+    playback = BrowserPlayback()
+    registry.own_resource(
+        session.call_id, f"browser_playback:{session.call_id}", playback,
+        playback.close, stage=CleanupStage.OBSERVER, generation=session.generation,
+    )
 
     attach_direct_client_dtmf_events(
         hass,

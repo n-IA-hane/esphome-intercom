@@ -88,6 +88,8 @@ path_mode=$(
 pytest_args=(tests -q --tb=short)
 ha_tests=(
   tests/test_automation_call.py
+  tests/test_call_trigger.py
+  tests/test_call_deadlines_runtime.py
   tests/test_automation_route_result.py
   tests/test_ha_integration_runtime.py
   tests/test_ha_call_transfer.py

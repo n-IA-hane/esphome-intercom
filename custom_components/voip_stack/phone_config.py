@@ -606,11 +606,9 @@ def validate_sip_account_namespace(
     write. Group names may be reused by members, but no contact, phone or
     Assist route may be shadowed by a group (or vice versa).
     """
-    existing: list[Mapping[str, Any]] = [
-        item
-        for item in entry.data.get(CONF_PHONEBOOK_CONTACTS, []) or []
-        if isinstance(item, Mapping)
-    ]
+    from .contact_config import contact_dicts
+
+    existing: list[Mapping[str, Any]] = contact_dicts(entry)
     existing.extend(
         subentry.data
         for subentry in phone_subentries(entry)

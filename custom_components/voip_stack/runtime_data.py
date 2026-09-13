@@ -107,6 +107,7 @@ class VoipStackRegistration:
     audio_view: bool = False
     video_view: bool = False
     assist_intents: bool = False
+    route_trigger_filters: dict[object, dict] = field(default_factory=dict)
 
 
 def registration_data(hass: HomeAssistant) -> VoipStackRegistration:

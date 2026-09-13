@@ -8,8 +8,8 @@
           "sip_port": "Porta SIP",
           "rtp_port": "Porta RTP",
           "advertise_host": "Host/IP HA annunciato",
-        "assist_intents": "Abilita intent Assist",
-        "assist_endpoint_enabled": "Includi assistente vocale",
+          "assist_intents": "Abilita intent Assist",
+          "assist_endpoint_enabled": "Includi assistente vocale",
           "debug_mode": "Abilita i log di debug SIP/RTP",
           "media_capture": "Registra audio privato per la diagnostica",
           "experimental_sip_video": "Abilita video SIP per il softphone Home Assistant",
@@ -20,8 +20,8 @@
           "sip_port": "Porta di ascolto dell'endpoint SIP HA. HA accetta signaling SIP sia su UDP sia su TCP su questa porta.",
           "rtp_port": "Porta UDP RTP base per media e relay HA.",
           "advertise_host": "Override opzionale pubblicato nelle rubriche ESP. Usalo quando HA è dietro routing, NAT, LXC, VPN o più subnet e l'indirizzo annunciato automaticamente non è raggiungibile dagli ESP.",
-        "assist_intents": "Permette di chiamare e gestire vocalmente le chiamate con l'assistente (per esempio: \"Hey Jarvis, chiama Cucina\"). Abilita comandi Assist opzionali per chiamare, riagganciare, rispondere e rifiutare; i nomi pronunciati vengono risolti dinamicamente dalla rubrica VoIP live.",
-        "assist_endpoint_enabled": "Aggiunge un interno SIP collegato direttamente a una pipeline Assist di Home Assistant, senza integrazioni VoIP o listener SIP separati.",
+          "assist_intents": "Permette di chiamare e gestire vocalmente le chiamate con l'assistente (per esempio: \"Hey Jarvis, chiama Cucina\"). Abilita comandi Assist opzionali per chiamare, riagganciare, rispondere e rifiutare; i nomi pronunciati vengono risolti dinamicamente dalla rubrica VoIP live.",
+          "assist_endpoint_enabled": "Aggiunge un interno SIP collegato direttamente a una pipeline Assist di Home Assistant, senza integrazioni VoIP o listener SIP separati.",
           "debug_mode": "Abilita diagnostica e log SIP/RTP/media dettagliati senza registrare l'audio delle chiamate.",
           "media_capture": "Registra esplicitamente audio privato delle chiamate: fino a 15 secondi per direzione del softphone HA e 8 secondi per tratta relay, salvati come WAV/JSON in ~/.cache/voip_stack_debug (permessi 0700) e limitati a 24 file / 64 MiB. Mantienilo disabilitato salvo durante una cattura diagnostica.",
           "experimental_sip_video": "Permette al softphone Home Assistant di negoziare video SIP con telefoni, softphone e videocitofoni standard compatibili. H.264, VP8 e JPEG usano un percorso diretto nel browser. Gli endpoint audio ESP restano solo audio. Richiede HTTPS e un browser compatibile.",
@@ -41,8 +41,8 @@
           "video_camera_send_enabled": "Espone nella card la scelta Invia videocamera. Ogni telefono logico Home Assistant conserva la propria scelta; il permesso della videocamera resta locale a ciascun browser. La ricezione video non richiede accesso alla videocamera."
         }
       },
-    "assist": {
-      "title": "Interno assistente vocale",
+      "assist": {
+        "title": "Interno assistente vocale",
         "description": "Scegli l'interno SIP e la pipeline Assist usati per le chiamate telefoniche. Se i dettagli avanzati della chiamata sono abilitati, VoIP Stack avvia la conversazione con un messaggio utente come `Incoming SIP call from \"Daniele\".` Configura il comportamento telefonico nel campo Instructions o prompt dell'agente di conversazione selezionato in Impostazioni > Dispositivi e servizi > integrazione dell'agente > Configura. Istruzioni di esempio: `When you receive a message beginning with \"Incoming SIP call from\", treat it as a live phone call. Greet the caller once, act as a concise receptionist, and do not repeat their name in every reply.` Mood amichevole: `During SIP calls, sound cheerful and informal while remaining concise and helpful.` Pessimo umore: `Hi. I don't give a s**t, so please go f**k yourself.`",
         "data": {
           "assist_extension": "Interno assistente vocale",
@@ -54,8 +54,8 @@
           "assist_pipeline": "Pipeline Assist usata per riconoscimento vocale, conversazione e sintesi vocale nelle chiamate.",
           "assist_advanced_call_context": "Se disattivato, Assist parte in ascolto senza messaggi iniziali. Se attivato, invia una sola volta nome e ID del chiamante, corrispondenza in rubrica, provenienza e interno chiamato. Sono metadati non attendibili; la corrispondenza in rubrica non costituisce autenticazione."
         }
-    },
-    "trunk": {
+      },
+      "trunk": {
         "title": "Trunk SIP opzionale",
         "description": "Registra Home Assistant a un trunk provider/PBX. Le chiamate in ingresso usano la rubrica centrale e possono offrire un breve punto di decisione alle automazioni sperimentali.",
         "data": {
@@ -93,9 +93,9 @@
       }
     },
     "error": {
-    "sip_rtp_port_conflict": "SIP e RTP devono usare porte diverse.",
-    "assist_extension_invalid": "L'interno dell'assistente vocale deve contenere da 1 a 8 cifre.",
-    "assist_extension_conflict": "L'interno dell'assistente vocale è già usato da un'altra rotta.",
+      "sip_rtp_port_conflict": "SIP e RTP devono usare porte diverse.",
+      "assist_extension_invalid": "L'interno dell'assistente vocale deve contenere da 1 a 8 cifre.",
+      "assist_extension_conflict": "L'interno dell'assistente vocale è già usato da un'altra rotta.",
       "trunk_server_required": "Il server trunk è obbligatorio.",
       "trunk_username_required": "Lo username trunk è obbligatorio.",
       "trunk_password_required": "La password trunk è obbligatoria."
@@ -175,6 +175,42 @@
         "reconfigure_successful": "Telefono riconfigurato.",
         "already_configured": "Questo telefono esiste già."
       }
+    },
+    "contact": {
+      "entry_type": "Contatto",
+      "initiate_flow": {
+        "user": "Aggiungi contatto"
+      },
+      "title": "Contatto",
+      "step": {
+        "user": {
+          "title": "Aggiungi contatto",
+          "description": "Crea una voce della rubrica, senza creare un telefono o entità. Un contatto Automazione affida la chiamata alle regole HA.",
+          "data": {
+            "type": "Tipo di contatto"
+          }
+        },
+        "contact": {
+          "title": "Contatto",
+          "description": "Crea una voce della rubrica, senza creare un telefono o entità. Un contatto Automazione affida la chiamata alle regole HA.",
+          "data": {
+            "name": "Nome",
+            "extension": "Interno facoltativo",
+            "number": "Numero esterno",
+            "sip_uri": "Indirizzo SIP",
+            "fallback_destination": "Destinazione se non gestita",
+            "timeout": "Attesa di un'automazione"
+          },
+          "data_description": {
+            "extension": "Vuoto: il contatto si chiama per nome dalla rubrica.",
+            "fallback_destination": "Se nessuna automazione gestisce la chiamata, viene inoltrata qui. Vuoto: chiudi la chiamata.",
+            "timeout": "Secondi di attesa prima del fallback se nessuna automazione prende in carico la chiamata. Non è la durata dello squillo di un telefono."
+          }
+        }
+      },
+      "error": {
+        "invalid_contact": "Controlla nome e interno univoci. Un contatto ordinario richiede un numero o indirizzo SIP; un contatto Automazione non deve averli."
+      }
     }
   },
   "selector": {
@@ -182,6 +218,37 @@
       "options": {
         "direct": "Instrada subito",
         "dtmf": "Raccogli interno con DTMF"
+      }
+    },
+    "call_ingress": {
+      "options": {
+        "extension": "Chiamata locale",
+        "trunk": "Chiamata dal trunk"
+      }
+    },
+    "dtmf_source": {
+      "options": {
+        "caller": "Chiamante",
+        "callee": "Chiamato"
+      }
+    },
+    "contact_type": {
+      "options": {
+        "contact": "Numero o indirizzo SIP",
+        "automation": "Automazione"
+      }
+    },
+    "dtmf_result": {
+      "options": {
+        "received": "Cifre ricevute",
+        "timeout": "Nessuna risposta entro il tempo scelto"
+      }
+    },
+    "call_outcome": {
+      "options": {
+        "ended": "Terminata",
+        "missed": "Persa",
+        "failed": "Fallita"
       }
     }
   },
@@ -382,34 +449,224 @@
         }
       }
     },
-  "switch": {
-    "phone_endpoint_dnd": {
-      "name": "Non disturbare"
+    "switch": {
+      "phone_endpoint_dnd": {
+        "name": "Non disturbare"
+      },
+      "phone_endpoint_conference_ring": {
+        "name": "Squilla per le conferenze"
+      },
+      "phone_endpoint_auto_answer": {
+        "name": "Risposta automatica"
+      },
+      "phone_endpoint_send_video": {
+        "name": "Invia video"
+      }
     },
-    "phone_endpoint_conference_ring": {
-      "name": "Squilla per le conferenze"
+    "text": {
+      "phone_endpoint_extension": {
+        "name": "Interno"
+      },
+      "phone_endpoint_ring_group": {
+        "name": "Gruppi di squillo"
+      },
+      "phone_endpoint_conference_group": {
+        "name": "Gruppi conferenza"
+      }
     },
-    "phone_endpoint_auto_answer": {
-      "name": "Risposta automatica"
-    },
-    "phone_endpoint_send_video": {
-      "name": "Invia video"
-    }
-  },
-  "text": {
-    "phone_endpoint_extension": {
-      "name": "Interno"
-    },
-    "phone_endpoint_ring_group": {
-      "name": "Gruppi di squillo"
-    },
-    "phone_endpoint_conference_group": {
-      "name": "Gruppi conferenza"
-    }
-  },
     "binary_sensor": {
       "phone_endpoint_connectivity": {
         "name": "Connettività"
+      }
+    }
+  },
+  "triggers": {
+    "call_started": {
+      "name": "Chiamata VoIP avviata",
+      "description": "Lascia vuoti i filtri per tutte le chiamate. Le azioni usano automaticamente la chiamata che attiva questa regola.",
+      "fields": {
+        "caller": {
+          "name": "Chiamante",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "destination": {
+          "name": "Destinatario",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "ingress": {
+          "name": "Provenienza della chiamata",
+          "description": "Filtro facoltativo."
+        }
+      }
+    },
+    "call_received": {
+      "name": "Chiamata VoIP ricevuta",
+      "description": "Lascia vuoti i filtri per tutte le chiamate. Le azioni usano automaticamente la chiamata che attiva questa regola.",
+      "fields": {
+        "caller": {
+          "name": "Chiamante",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "destination": {
+          "name": "Destinatario",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "ingress": {
+          "name": "Provenienza della chiamata",
+          "description": "Filtro facoltativo."
+        }
+      }
+    },
+    "route_requested": {
+      "name": "Destinazione della chiamata VoIP da scegliere",
+      "description": "Lascia vuoti i filtri per tutte le chiamate. Le azioni usano automaticamente la chiamata che attiva questa regola.",
+      "fields": {
+        "caller": {
+          "name": "Chiamante",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "destination": {
+          "name": "Destinatario",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "ingress": {
+          "name": "Provenienza della chiamata",
+          "description": "Filtro facoltativo."
+        }
+      }
+    },
+    "call_connected": {
+      "name": "Chiamata VoIP connessa",
+      "description": "Lascia vuoti i filtri per tutte le chiamate. Le azioni usano automaticamente la chiamata che attiva questa regola.",
+      "fields": {
+        "caller": {
+          "name": "Chiamante",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "destination": {
+          "name": "Destinatario",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "ingress": {
+          "name": "Provenienza della chiamata",
+          "description": "Filtro facoltativo."
+        }
+      }
+    },
+    "call_ended": {
+      "name": "Chiamata VoIP terminata",
+      "description": "Lascia vuoti i filtri per tutte le chiamate. Le azioni usano automaticamente la chiamata che attiva questa regola.",
+      "fields": {
+        "caller": {
+          "name": "Chiamante",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "destination": {
+          "name": "Destinatario",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "ingress": {
+          "name": "Provenienza della chiamata",
+          "description": "Filtro facoltativo."
+        },
+        "reason": {
+          "name": "Motivo della chiusura",
+          "description": "Filtro facoltativo."
+        },
+        "outcome": {
+          "name": "Esito della chiamata",
+          "description": "Terminata, persa o fallita. Vuoto include tutti gli esiti."
+        }
+      }
+    },
+    "dtmf_received": {
+      "name": "Tasto ricevuto nella chiamata VoIP",
+      "description": "Lascia vuoti i filtri per tutte le chiamate. Le azioni usano automaticamente la chiamata che attiva questa regola.",
+      "fields": {
+        "caller": {
+          "name": "Chiamante",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "destination": {
+          "name": "Destinatario",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "ingress": {
+          "name": "Provenienza della chiamata",
+          "description": "Filtro facoltativo."
+        },
+        "digit": {
+          "name": "Tasto",
+          "description": "Filtro facoltativo."
+        },
+        "source_leg": {
+          "name": "Chi ha premuto il tasto",
+          "description": "Filtro facoltativo."
+        }
+      }
+    },
+    "call_unanswered": {
+      "name": "Chiamata VoIP senza risposta",
+      "description": "Il destinatario continua a squillare dopo il tempo scelto. Risposta, inoltro o chiusura annullano questa attesa.",
+      "fields": {
+        "caller": {
+          "name": "Chiamante",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "destination": {
+          "name": "Destinatario",
+          "description": "Nome in rubrica o interno. Vuoto significa tutti."
+        },
+        "ingress": {
+          "name": "Provenienza della chiamata",
+          "description": "Filtro facoltativo."
+        },
+        "for": {
+          "name": "Tempo senza risposta",
+          "description": "Contata dall'inizio dello squillo di questo destinatario."
+        }
+      }
+    }
+  },
+  "conditions": {
+    "is_call_state": {
+      "name": "La chiamata è nello stato",
+      "description": "Verifica la chiamata del trigger o il telefono selezionato.",
+      "fields": {
+        "state": {
+          "name": "Stato"
+        }
+      }
+    },
+    "is_call_origin": {
+      "name": "La chiamata proviene da",
+      "description": "Verifica la chiamata del trigger o il telefono selezionato.",
+      "fields": {
+        "ingress": {
+          "name": "Provenienza"
+        }
+      }
+    },
+    "is_phone_available": {
+      "name": "Il telefono è disponibile",
+      "description": "Verifica la chiamata del trigger o il telefono selezionato.",
+      "fields": {
+        "phone": {
+          "name": "Nome in rubrica o interno"
+        }
+      }
+    },
+    "is_dtmf_result": {
+      "name": "Il chiamante ha risposto con la tastiera",
+      "description": "Controlla il risultato dell'ultima azione Attendi tasti di questa esecuzione.",
+      "fields": {
+        "status": {
+          "name": "Risultato"
+        },
+        "digits": {
+          "name": "Cifre attese",
+          "description": "Vuoto: qualsiasi sequenza ricevuta."
+        }
       }
     }
   }

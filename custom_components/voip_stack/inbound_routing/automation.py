@@ -65,11 +65,12 @@ async def request_route_override(
     caller_is_trusted_endpoint: bool,
     automation_routing_enabled: bool,
     trunk_invite: bool,
+    native_override: bool = False,
 ) -> AutomationRoute:
     """Open one bounded automation window or keep the dialplan default."""
 
     if (
-        registered_source
+        (registered_source and not native_override)
         or not caller_is_trusted_endpoint
         or not automation_routing_enabled
     ):

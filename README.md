@@ -433,37 +433,34 @@ valid configurations.
 
 ## Automation routing preview
 
-The phonebook is always the normal dial plan. Advanced HA automation routing is
-an opt-in preview and is disabled by default.
+**Automation as dialplan** lets you define call behavior in Home Assistant's
+normal automation editor. Create an Automation contact, then build a sequence:
+**greeting, optional delay, forward to a phone or voice assistant**. Add a keypad
+menu, presence condition or office-hours rule when you need it.
 
-Automations may act only at explicit points:
+The phonebook remains the default dialplan. Native VoIP triggers select the
+call for the actions automatically, including across waits and synchronous
+scripts. No blueprint, generic event filter or Call-ID template is needed for
+the common examples. A destination can be its phonebook name or extension.
 
-- initial `route_requested`, before the configured inbound fallback;
-- a logical phone remaining `ringing` for a native HA `for:` duration;
-- a connected call producing a negotiated DTMF event.
+Start with the [step-by-step greeting](docs/AUTOMATION_DIALPLAN.md#create-your-first-greeting-in-the-editor),
+then add a [20-second delay and forward](docs/AUTOMATION_DIALPLAN.md#add-a-delay-before-forwarding).
+These native automation features target 2026.9.3 development, not 2026.9.2.
 
-Explicit extension digits entered during the trunk DTMF window remain
-authoritative and bypass the automation override. If an automation does
-nothing, the configured fallback continues normally.
+- [Route calls during office hours](docs/AUTOMATION_DIALPLAN.md#route-to-reception-during-office-hours).
+- [Forward only when a phone does not answer](docs/AUTOMATION_DIALPLAN.md#forward-an-unanswered-ha-call-to-assist).
+- [Build a keypad menu](docs/AUTOMATION_DIALPLAN.md#build-a-small-keypad-menu).
+- [Show received keys in HA notifications](docs/AUTOMATION_DIALPLAN.md#see-received-digits-in-persistent-notifications).
+- [Run a gate action from in-call DTMF](docs/AUTOMATION_DIALPLAN.md#open-a-gate-with-in-call-dtmf).
 
-Use per-phone state and Event Entities for room-specific behavior. Use
-`event.voip_stack_call` for the PBX-wide initial routing decision. The card's
-visible text is not an automation source of truth.
+Explicit extension digits entered during the trunk's initial DTMF menu retain
+precedence over a generic routing override. With no applicable automation
+selection, the configured phonebook route continues. Existing Event Entity
+and state automations remain available; see the
+[migration guide](docs/AUTOMATION_DIALPLAN.md#move-existing-automations-gradually).
 
-Start from a complete recipe:
-
-- [route calls during office hours](docs/AUTOMATION_DIALPLAN.md#route-to-reception-during-office-hours)
-- [dial a phonebook extension with initial DTMF](docs/AUTOMATION_DIALPLAN.md#dial-a-phonebook-extension-during-initial-trunk-routing)
-- [run an HA action from in-call DTMF](docs/AUTOMATION_DIALPLAN.md#open-a-gate-with-in-call-dtmf)
-
-Read the full [automation cookbook and concurrency rules](docs/AUTOMATION_DIALPLAN.md)
-for forwarding, presence routing, missed-call notifications and concurrent
-call controls.
-
-> [!WARNING]
-> Automation routing semantics may still change as more real installations are
-> tested. Do not use preview routing as the only control path for emergency or
-> safety-critical access.
+The full [Automation as dialplan cookbook](docs/AUTOMATION_DIALPLAN.md) explains
+call completion, fallback, time limits, concurrent callers and troubleshooting.
 
 ## Optional SIP trunk
 

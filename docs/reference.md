@@ -256,8 +256,8 @@ when only one exists. An ambiguous selection fails instead of guessing. This
 is the local phone performing the action, not the remote destination:
 `destination` is resolved independently by the central phonebook. Internal
 endpoint IDs are reported in state and events for PBX correlation, but are not
-alternative action inputs. Use `call_id` when a concurrent-call automation
-must select one call.
+alternative action inputs. Native VoIP triggers supply the call identity automatically. Explicit
+`call_id` is for legacy rules or intentional multi-call operations.
 
 `route` applies an automation decision to a pending inbound SIP route. Use
 `action: answer_ha`, `decline`, `busy`, `cancel`, `forward`, `bridge`, or
@@ -349,7 +349,7 @@ When `trunk_enabled` is true, the second step adds:
 | `trunk_outbound_proxy` | Optional proxy host or `sip:host:port` used as signaling next hop. |
 | `trunk_inbound_default_target` | Canonical phonebook target used by Direct mode or by the DTMF no-digits fallback. Default `HA`. |
 | `trunk_inbound_mode` | `direct` resolves the default target immediately; `dtmf` pre-answers and collects an explicit phonebook extension. |
-| `automation_routing_enabled` | Experimental, disabled by default. Exposes a bounded automation decision before Direct routing or the DTMF no-digits fallback. Explicit digits are never overridden. |
+| `automation_routing_enabled` | Legacy event-based routing opt-in, disabled by default. Matching native routing triggers activate the decision window themselves. Explicit trunk extension digits are never overridden. |
 | `trunk_dtmf_timeout_ms` | DTMF inter-digit timeout. The first digit is allowed 10 s. The setup UI shows seconds; internally this is stored in milliseconds. Default 3 s, maximum 10 s. |
 | `trunk_dtmf_terminator` | Optional terminator digit such as `#`. Empty means timeout or exact phonebook extension match decides. |
 
@@ -365,9 +365,9 @@ become `direct`, and automation routing remains disabled until selected.
 
 ## Home Assistant automation events
 
-`event.voip_stack_call` is the preferred native automation surface. It exposes
-the call lifecycle, routing deadlines and DTMF through a browsable HA event
-entity. Each integration-owned phone Device also has a scoped call Event Entity
+Use native `voip_stack.*` triggers for new call automations. The existing
+`event.voip_stack_call` entity continues to expose call lifecycle, routing
+deadlines and DTMF for event-based automations. Each integration-owned phone Device also has a scoped call Event Entity
 for room-specific automations.
 
 Public occurrence types are:
@@ -387,7 +387,7 @@ The payload includes the canonical SIP fields when available: `state`,
 and Device IDs, stable `ingress` / `origin` (`trunk` or `extension`), selected
 media formats, and RTP counters.
 
-Use Home Assistant's native `event.received` trigger. Raw event-bus messages
+Existing Event Entity automations use HA's `event.received` trigger. Raw event-bus messages
 are internal plumbing between the integration, frontend and Event Entities and
 are not a second public automation API. See the
 [automation cookbook](AUTOMATION_DIALPLAN.md) for complete recipes.
@@ -424,8 +424,27 @@ outcomes.
 `voip_stack.add_contact` accepts `type: automation` for a local service with a
 name, optional extension, `fallback_destination` and inactivity `timeout`.
 Its `automation_requested` event identifies the call and generation.
-`voip_stack.tts_say` accepts that `call_id`, `expected_generation`,
-`tts_entity_id`, `message`, optional `language` and `options`, and a bounded
-`timeout`. It answers if needed and completes after sending the announcement.
-Use `voip_stack.forward` with the same call and generation for the next step.
+`voip_stack.tts_say` needs a TTS provider and message in a native call automation.
+The trigger supplies call identity automatically. Legacy actions can still
+supply explicit `call_id` and `expected_generation`. Optional language, provider
+options and maximum announcement duration are advanced fields.
+Use `voip_stack.forward` as the next action to continue to another destination.
 See the [automation examples](AUTOMATION_DIALPLAN.md#automation-contacts).
+
+### Native call automation interfaces
+
+The integration provides native HA triggers: `voip_stack.call_started`,
+`voip_stack.call_received`, `voip_stack.route_requested`,
+`voip_stack.call_unanswered`, `voip_stack.call_connected`,
+`voip_stack.call_ended` and `voip_stack.dtmf_received`. Optional filters select
+caller, destination and local/trunk origin. The unanswered trigger uses `for`
+as a duration measured from ringing, cancelled by answering or forwarding.
+
+Call actions inherit the triggering call. Explicit identifiers remain accepted
+for older automations. `voip_stack.wait_for_dtmf` waits for this caller's input
+and exposes its result through `voip_stack.is_dtmf_result` or an optional action
+response. Other conditions are `voip_stack.is_call_state`,
+`voip_stack.is_call_origin` and `voip_stack.is_phone_available`.
+
+Add contact is a separate integration configuration flow. Contacts have their
+own configuration records and do not create phone devices or entities.

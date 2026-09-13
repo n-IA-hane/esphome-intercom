@@ -418,14 +418,22 @@ class VoipAudioWebSocketView(HomeAssistantView):
                 else:
                     assert session is not None
                     await ws.prepare(request)
-                    await _run_audio_session(
-                        hass,
-                        ws,
-                        session,
-                        request.transport,
-                        handoff_requested=owner.handoff_requested,
-                        endpoint_id=endpoint_id,
-                    )
+                    playback = prepared.registry.resource_for(context.call_id, "browser_playback")
+                    if playback is not None:
+                        playback.attach(ws)
+                    try:
+                        await _run_audio_session(
+                            hass,
+                            ws,
+                            session,
+                            request.transport,
+                            handoff_requested=owner.handoff_requested,
+                            endpoint_id=endpoint_id,
+                            playback=playback,
+                        )
+                    finally:
+                        if playback is not None:
+                            playback.detach(ws)
         except WebSocketOwnerBusyError as err:
             raise web.HTTPConflict(text="HA softphone media is already attached") from err
         return claimed.websocket
@@ -729,6 +737,7 @@ async def _run_audio_session(
     *,
     handoff_requested: asyncio.Event | None = None,
     endpoint_id: str,
+    playback=None,
 ) -> None:
     if session.conference_queue is not None:
         await _run_conference_audio_session(
@@ -1253,6 +1262,11 @@ async def _run_audio_session(
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
                     try:
+                        control = json.loads(str(msg.data))
+                        if isinstance(control, dict) and control.get("type") == "audio_ready":
+                            if playback is not None:
+                                playback.ready(ws)
+                            continue
                         parsed = _parse_browser_dtmf_control(str(msg.data))
                         if parsed is None:
                             continue
@@ -1290,6 +1304,9 @@ async def _run_audio_session(
                     expected = int(session.send_format.audio_format.nominal_frame_bytes)
                     if len(pcm) != expected:
                         raise ValueError(f"browser PCM frame has {len(pcm)} bytes, expected {expected}")
+                    if playback is not None:
+                        # Older duplex cards start capture after committing both worklets.
+                        playback.ready(ws)
                     if debug_capture is not None:
                         debug_capture.note_ws_rx(loop.time(), pcm)
                     tx_frames.append(pcm)

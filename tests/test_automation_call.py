@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from dataclasses import replace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -145,6 +146,96 @@ async def test_announcement_answers_once_and_sends_complete_pcm(
         )
     assert len(released) == 1
     assert app.media.transport is None
+
+
+async def test_browser_announcement_waits_for_current_connection(application, monkeypatch):
+    app, registry, _peer, _released = application
+    app.playback = module.BrowserPlayback()
+    old_connection, current_connection = object(), object()
+    app.playback.attach(old_connection)
+    app.playback.attach(current_connection)
+    synthesized = asyncio.Event()
+
+    class Stream:
+        def async_set_message(self, _message):
+            synthesized.set()
+
+        async def async_stream_result(self):
+            yield b"\x80\x01" * 320
+
+    from homeassistant.components import tts
+
+    monkeypatch.setattr(tts, "async_create_stream", lambda *_args: Stream())
+    task = asyncio.create_task(app.say(service(app)))
+    try:
+        async with asyncio.timeout(2):
+            while not app.answered:
+                await asyncio.sleep(0)
+        app.playback.ready(old_connection)
+        await asyncio.sleep(0)
+        assert not synthesized.is_set()
+        app.playback.ready(current_connection)
+        app.playback.detach(old_connection)
+        async with asyncio.timeout(2):
+            await task
+        assert synthesized.is_set()
+        assert module.send_final_response.call_count == 1
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))
+
+
+async def test_closed_browser_playback_wakes_waiter():
+    playback = module.BrowserPlayback()
+    waiter = asyncio.create_task(playback.wait_ready())
+    await asyncio.sleep(0)
+    await playback.close("remote_hangup")
+    with pytest.raises(ConnectionError, match="ended"):
+        await waiter
+    with pytest.raises(ConnectionError, match="ended"):
+        playback.attach(object())
+
+
+async def test_wait_for_digits_ignores_other_call_and_generation(application):
+    from custom_components.voip_stack.websocket_api import SIP_DTMF_EVENT
+
+    app, registry, _peer, _released = application
+    task = asyncio.create_task(app.wait_for_dtmf(service(app, max_digits=2, timeout=1)))
+    try:
+        async with asyncio.timeout(2):
+            while not app.answered:
+                await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        payload = {"call_id": app.session.call_id, "generation": app.session.generation, "source_leg": "caller"}
+        for event in (
+            {**payload, "call_id": "another", "digit": "9"},
+            {**payload, "generation": app.session.generation + 1, "digit": "9"},
+            {**payload, "digit": "4"},
+            {**payload, "digit": "2"},
+        ):
+            app.hass.bus.async_fire(SIP_DTMF_EVENT, event)
+        assert await task == {"status": "received", "digits": "42"}
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))
+
+
+async def test_local_announcement_decodes_negotiated_rtp_dtmf_once(application):
+    app, registry, peer, _released = application
+    app.invite = replace(app.invite, remote_sdp=app.invite.remote_sdp.replace(b"RTP/AVP 96", b"RTP/AVP 96 100") + b"a=rtpmap:100 telephone-event/8000\r\na=fmtp:100 0-15\r\n")
+    try:
+        await app.answer()
+        received = []
+        app.media.on_dtmf = lambda side, digit, transport: received.append((side, digit, transport))
+        packet = rtp.build_packet(rtp.RtpPacket(payload_type=100, sequence=1, timestamp=1000, ssrc=123, payload=b"\x01\x80\x00\xa0"))
+        app.media.handle_rtp(packet, peer.getsockname())
+        app.media.handle_rtp(packet, peer.getsockname())
+        assert received == [("left", "1", "rtp_event")]
+        assert app.media.counters["drop_payload_type"] == 0
+    finally:
+        await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))
 
 
 async def test_competing_automation_and_stale_generation_are_rejected(application):

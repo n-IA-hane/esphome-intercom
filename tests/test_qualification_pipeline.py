@@ -907,8 +907,7 @@ def test_real_ha_automation_package_covers_route_decisions() -> None:
     automation = package["automation"][0]
     assert automation["triggers"] == [
         {
-            "trigger": "state",
-            "entity_id": "event.voip_stack_call",
+            "trigger": "voip_stack.route_requested",
         }
     ]
     choice = next(action for action in automation["actions"] if "choose" in action)
@@ -936,10 +935,8 @@ def test_real_ha_package_uses_one_context_branch_and_one_forward_automation() ->
     forward = automations["voip_qualification_ringing_forward"]
     assert forward["triggers"] == [
         {
-            "trigger": "state",
-            "entity_id": "sensor.casa_call_state",
-            "to": "ringing",
-            "for": {"seconds": 1},
+            "trigger": "voip_stack.call_unanswered",
+            "options": {"for": {"seconds": 1}},
         }
     ]
     assert any(

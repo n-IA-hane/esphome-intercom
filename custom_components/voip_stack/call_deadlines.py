@@ -6,23 +6,75 @@ installations without automation rules keep the normal phonebook dial plan.
 
 from __future__ import annotations
 
-import asyncio
-
 from homeassistant.core import HomeAssistant
+from collections.abc import Callable
+from .endpoint_session import CleanupStage
 
 from .automation_routing import deadline_is_current
 from .call_registry import TERMINAL_STATES
-from .endpoint_lifecycle import call_registry, create_runtime_task
-from .runtime_data import call_runtime_artifacts
+from .endpoint_lifecycle import call_registry
 from .service_errors import service_error as _service_error
 from .websocket_api import _fire_call_event
 
 
+class CallDeadline:
+    """Use the session cleanup owner for timers and their cancellation hooks."""
+
+    def __init__(self, registry, session, name: str, callback: Callable[[], None]):
+        self.registry = registry
+        self.token = session.token
+        self.name = name
+        self.callback = callback
+        self.handle = None
+        self.on_close: Callable[[], None] | None = None
+        self.closed = False
+
+    def arm(self, loop, delay: float) -> None:
+        self.registry.own_resource(
+            self.token.call_id,
+            self.name,
+            self,
+            self.close,
+            stage=CleanupStage.OBSERVER,
+            generation=self.token.generation,
+        )
+        self.handle = loop.call_later(delay, self._expired)
+
+    def _expired(self) -> None:
+        current = self.registry.is_generation_current(
+            self.token.call_id, self.token.generation
+        )
+        if self.closed:
+            return
+        self.cancel()
+        if current:
+            self.callback()
+
+    def cancel(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        if self.handle is not None:
+            self.handle.cancel()
+            self.handle = None
+        self.registry.release_resource(
+            self.token.call_id,
+            self.name,
+            value=self,
+            generation=self.token.generation,
+        )
+        if self.on_close is not None:
+            self.on_close()
+
+    async def close(self, _reason: str) -> None:
+        self.cancel()
+
+
 def cancel_call_deadline(hass: HomeAssistant, call_id: str) -> None:
     """Cancel an armed deadline, if present."""
-    call_runtime_artifacts(hass).cancel_task(
-        str(call_id or "").strip(), "deadline"
-    )
+    deadline = call_registry(hass).resource_for(str(call_id or "").strip(), "deadline")
+    if deadline is not None:
+        deadline.cancel()
 
 
 async def async_set_call_deadline(hass: HomeAssistant, data: dict) -> None:
@@ -87,8 +139,7 @@ async def async_set_call_deadline(hass: HomeAssistant, data: dict) -> None:
     armed_state = context.state
     armed_sequence = context.sequence
 
-    async def _wait() -> None:
-        await asyncio.sleep(timeout)
+    def expired() -> None:
         current = registry.event_context(call_id)
         if current is None:
             return
@@ -114,14 +165,11 @@ async def async_set_call_deadline(hass: HomeAssistant, data: dict) -> None:
             "sip",
         )
 
-    task = create_runtime_task(hass, _wait())
-    if not call_runtime_artifacts(hass).replace_task(
-        call_id, task, name="deadline"
-    ):
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+    if session is None or not session.live:
         raise _service_error(
             f"call_id {call_id} is no longer active",
             "call_inactive",
             call_id=call_id,
         )
+    deadline = CallDeadline(registry, session, f"deadline:{call_id}", expired)
+    deadline.arm(hass.loop, timeout)

@@ -186,7 +186,7 @@ forward:
             text:
         expected_generation:
           name: Call generation
-          description: Required for automation calls, copied from the triggering event.
+          description: Supplied automatically by native VoIP triggers. Only enter it for legacy explicit-call automations.
           selector:
             number:
               min: 0
@@ -209,33 +209,34 @@ forward:
 
 transfer:
   name: Transfer call
-  description: Transfer an established call using SIP REFER, optionally replacing another established consultation call.
+  description: Transfer an established SIP call. A native VoIP trigger selects the call automatically.
   fields:
-    device_id:
-      name: Phone
-      description: Local phone that owns the call.
-      required: false
-      selector:
-        device:
-          filter:
-            - integration: voip_stack
-    call_id:
-      name: Call ID
-      required: true
-      selector:
-        text:
     destination:
       name: Destination
-      description: SIP URI, address, extension or configured phone for a blind transfer.
-      required: false
+      description: Phonebook name, extension or SIP address for the transfer.
       selector:
         text:
-    replaces_call_id:
-      name: Consultation call ID
-      description: Established consultation call to replace for an attended transfer.
-      required: false
-      selector:
-        text:
+    advanced:
+      name: Advanced options
+      collapsed: true
+      fields:
+        device_id:
+          name: Phone
+          description: Optional local phone selector for an explicit call.
+          selector:
+            device:
+              filter:
+                - integration: voip_stack
+        call_id:
+          name: Call ID
+          description: Only needed without a native VoIP call trigger.
+          selector:
+            text:
+        replaces_call_id:
+          name: Consultation call ID
+          description: Use the established consultation call for an attended transfer.
+          selector:
+            text:
 
 set_deadline:
   name: "Advanced: Set call deadline"
@@ -841,23 +842,10 @@ capture_sip:
           mode: box
 
 tts_say:
-  name: Speak to an automation call
-  description: Answer an automation call and send a TTS message. Waits until the audio has been sent before the next action.
+  name: Speak to the caller
+  description: Pronounce a message on the automation call. The call is selected by
+    its VoIP trigger; the next action waits for the announcement.
   fields:
-    call_id:
-      name: Call ID
-      required: true
-      selector:
-        text:
-    expected_generation:
-      name: Call generation
-      description: Use the generation from the same automation_requested event as the Call ID.
-      required: true
-      selector:
-        number:
-          min: 0
-          max: 2147483647
-          mode: box
     tts_entity_id:
       name: Text-to-speech provider
       required: true
@@ -870,20 +858,108 @@ tts_say:
       selector:
         text:
           multiline: true
-    language:
-      name: Language
-      selector:
-        text:
-    options:
-      name: Provider options
-      selector:
-        object:
+    advanced:
+      name: Advanced options
+      collapsed: true
+      fields:
+        language:
+          name: Language
+          description: Omit to use the provider's default language.
+          selector:
+            text: null
+        options:
+          name: Provider options
+          selector:
+            object: null
+        timeout:
+          name: Maximum announcement duration
+          description: Maximum time for browser readiness, speech generation and transmission.
+            Defaults to 120 seconds; this is not a ringing timeout.
+          selector:
+            number:
+              min: 1
+              max: 600
+              unit_of_measurement: s
+              mode: box
+        call_id:
+          name: Call ID
+          description: Only needed for legacy automations that do not use a native
+            VoIP call trigger.
+          selector:
+            text: null
+        expected_generation:
+          name: Call generation
+          description: Legacy call generation paired with the explicit Call ID. Native
+            VoIP triggers supply it automatically.
+          selector:
+            number:
+              min: 1
+              max: 2147483647
+              mode: box
+        device_id:
+          name: Phone for manual execution
+          description: Select the phone with the automation call when testing this
+            action without a VoIP trigger.
+          selector:
+            device:
+              filter:
+              - integration: voip_stack
+              - integration: esphome
+
+
+wait_for_dtmf:
+  name: Wait for keypad input
+  description: Wait for digits from the caller on this automation call. The next condition
+    can check the received digits or the timeout result.
+  fields:
     timeout:
-      name: Maximum duration
-      default: 120
+      name: Wait for digits
+      description: Seconds to wait after the call is answered. Defaults to 10 seconds.
       selector:
         number:
-          min: 1
-          max: 600
+          min: 0.1
+          max: 300
           unit_of_measurement: s
           mode: box
+    advanced:
+      name: Advanced options
+      collapsed: true
+      fields:
+        max_digits:
+          name: Number of digits
+          description: Finish after this many digits. Defaults to one.
+          selector:
+            number:
+              min: 1
+              max: 32
+              mode: box
+        terminator:
+          name: End input key
+          description: 'Defaults to #. An empty value disables the end key.'
+          selector:
+            select:
+              options:
+              - ''
+              - '#'
+              - '*'
+        call_id:
+          name: Call ID
+          description: For legacy actions outside a native call trigger.
+          selector:
+            text: {}
+        expected_generation:
+          name: Call generation
+          selector:
+            number:
+              min: 1
+              max: 2147483647
+              mode: box
+        device_id:
+          name: Phone for manual execution
+          description: Select the phone with the automation call when testing this
+            action without a VoIP trigger.
+          selector:
+            device:
+              filter:
+              - integration: voip_stack
+              - integration: esphome

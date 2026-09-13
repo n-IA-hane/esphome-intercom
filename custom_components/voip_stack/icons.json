@@ -32,16 +32,28 @@
       "service": "mdi:phone-remove"
     },
     "answer": {
-      "service": "mdi:phone-in-talk"
+      "service": "mdi:phone-in-talk",
+      "sections": {
+        "advanced": "mdi:tune-variant"
+      }
     },
     "decline": {
-      "service": "mdi:phone-hangup"
+      "service": "mdi:phone-hangup",
+      "sections": {
+        "advanced": "mdi:tune-variant"
+      }
     },
     "call": {
-      "service": "mdi:phone-outgoing"
+      "service": "mdi:phone-outgoing",
+      "sections": {
+        "advanced": "mdi:tune-variant"
+      }
     },
     "forward": {
-      "service": "mdi:phone-forward"
+      "service": "mdi:phone-forward",
+      "sections": {
+        "advanced": "mdi:tune-variant"
+      }
     },
     "set_deadline": {
       "service": "mdi:timer-plus-outline"
@@ -53,10 +65,16 @@
       "service": "mdi:routes"
     },
     "select_inbound_destination": {
-      "service": "mdi:sign-direction"
+      "service": "mdi:sign-direction",
+      "sections": {
+        "advanced": "mdi:tune-variant"
+      }
     },
     "hangup": {
-      "service": "mdi:phone-hangup"
+      "service": "mdi:phone-hangup",
+      "sections": {
+        "advanced": "mdi:tune-variant"
+      }
     },
     "add_contact": {
       "service": "mdi:card-account-phone"
@@ -105,6 +123,64 @@
     },
     "list_accounts": {
       "service": "mdi:account-search"
+    },
+    "tts_say": {
+      "service": "mdi:speaker-message",
+      "sections": {
+        "advanced": "mdi:tune-variant"
+      }
+    },
+    "wait_for_dtmf": {
+      "service": "mdi:dialpad",
+      "sections": {
+        "advanced": "mdi:tune-variant"
+      }
+    },
+    "transfer": {
+      "service": "mdi:phone-forward",
+      "sections": {
+        "advanced": "mdi:tune-variant"
+      }
+    },
+    "capture_sip": {
+      "service": "mdi:lan-connect"
+    }
+  },
+  "triggers": {
+    "call_started": {
+      "trigger": "mdi:phone-outgoing"
+    },
+    "call_received": {
+      "trigger": "mdi:phone-incoming"
+    },
+    "route_requested": {
+      "trigger": "mdi:sign-direction"
+    },
+    "call_connected": {
+      "trigger": "mdi:phone-in-talk"
+    },
+    "call_ended": {
+      "trigger": "mdi:phone-hangup"
+    },
+    "dtmf_received": {
+      "trigger": "mdi:dialpad"
+    },
+    "call_unanswered": {
+      "trigger": "mdi:phone-missed"
+    }
+  },
+  "conditions": {
+    "is_call_state": {
+      "condition": "mdi:phone-in-talk"
+    },
+    "is_call_origin": {
+      "condition": "mdi:phone-incoming"
+    },
+    "is_phone_available": {
+      "condition": "mdi:phone-check"
+    },
+    "is_dtmf_result": {
+      "condition": "mdi:dialpad"
     }
   }
 }

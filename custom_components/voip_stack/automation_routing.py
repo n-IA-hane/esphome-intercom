@@ -148,3 +148,24 @@ def resolve_pending_route_call_id(
             "More than one inbound route is waiting; provide call_id"
         )
     return candidates[0]
+
+
+def matches_call(payload: dict, options: dict) -> bool:
+    """Match the event snapshot rather than mutable Event Entity attributes."""
+    aliases = {
+        "caller": ("caller", "caller_number", "caller_extension"),
+        "destination": ("callee", "destination", "called_extension"),
+        "reason": ("reason", "terminal_reason"),
+        "outcome": ("type",),
+    }
+    for key, wanted in options.items():
+        if key == "for":
+            continue
+        if not str(wanted).strip():
+            continue
+        fields = aliases.get(key, (key,))
+        if str(wanted).strip().casefold() not in {
+            str(payload.get(field) or "").strip().casefold() for field in fields
+        }:
+            return False
+    return True

@@ -17,7 +17,8 @@ from homeassistant.core import HomeAssistant
 
 from .core import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
-from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk
+from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk, registration_data
+from .automation_routing import matches_call
 from .const import (
     CONF_AUTOMATION_ROUTING_ENABLED,
     CONF_TRUNK_DTMF_ENABLED,
@@ -279,13 +280,21 @@ async def route_invite(
         )
         if trunk_result is not None:
             return trunk_result
+    native_override = any(matches_call({
+        "caller": invite.caller,
+        "callee": decision.target or invite.target,
+        "destination": decision.entry.display_name if decision.entry is not None else invite.target,
+        "called_extension": decision.entry.extension if decision.entry is not None else invite.target,
+        "ingress": "trunk" if trunk_invite else "extension",
+    }, options) for options in registration_data(hass).route_trigger_filters.values())
     automation_route = await request_route_override(
         runtime=runtime,
         invite=invite,
         decision=decision,
         registered_source=registered_source,
+        native_override=native_override,
         caller_is_trusted_endpoint=caller_is_trusted_endpoint,
-        automation_routing_enabled=bool(
+        automation_routing_enabled=native_override or bool(
             _get_trunk_config(hass).get(
                 CONF_AUTOMATION_ROUTING_ENABLED,
                 False,

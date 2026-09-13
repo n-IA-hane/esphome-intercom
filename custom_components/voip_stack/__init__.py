@@ -83,6 +83,7 @@ from .runtime_data import (
     runtime_data as _runtime_data,
 )
 from .store import manual_roster_entries as _manual_roster_entries
+from .contact_config import contact_dicts
 from .websocket_api import (
     async_register_websocket_api,
     _async_load_ha_softphone_store,
@@ -137,6 +138,11 @@ async def async_migrate_entry(
         data.setdefault(CONF_INITIAL_PHONE_CREATED, True)
         hass.config_entries.async_update_entry(config_entry, data=data, version=5)
         _LOGGER.info("Migrated VoIP Stack preferred-phone bootstrap state")
+    if config_entry.version < 6:
+        from .contact_config import contact_dicts, replace_contacts
+
+        replace_contacts(hass, config_entry, contact_dicts(config_entry))
+        hass.config_entries.async_update_entry(config_entry, version=6)
     return True
 
 
@@ -364,7 +370,13 @@ async def _handle_select_inbound_destination_service(call: ServiceCall) -> None:
 
 
 async def _handle_sip_forward_service(call: ServiceCall) -> None:
+    from .automation_context import current_execution
     from .automation_call import async_forward_automation_call
+    if current_execution.get() is not None and _call_registry(call.hass).artifact_for(
+        str(call.data.get("call_id") or ""), "pending_route"
+    ) is not None:
+        await _handle_select_inbound_destination_service(call)
+        return
     if not await async_forward_automation_call(call):
         await _forward_browser_call(call)
 
@@ -430,7 +442,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
 
     account_handlers = build_account_service_handlers(_refresh_and_push_phonebook)
     phonebook_handlers = build_phonebook_service_handlers(_refresh_and_push_phonebook)
-    from .automation_call import async_tts_say
+    from .automation_call import async_tts_say, async_wait_for_dtmf
 
     await async_register_services(
         hass,
@@ -447,6 +459,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "call": _handle_sip_call_target_service,
             "forward": _handle_sip_forward_service,
             "tts_say": async_tts_say,
+            "wait_for_dtmf": async_wait_for_dtmf,
             "transfer": _handle_sip_transfer_service,
             "route": _handle_sip_route_service,
             "select_inbound_destination": _handle_select_inbound_destination_service,
@@ -578,11 +591,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
             str(subentry.data.get("endpoint_id") or "").strip(): dict(subentry.data)
             for subentry in phone_subentries(entry)
         },
-        entry_contacts_signature=tuple(
-            dict(item)
-            for item in entry.data.get(CONF_PHONEBOOK_CONTACTS, [])
-            if isinstance(item, dict)
-        ),
+        entry_contacts_signature=tuple(contact_dicts(entry)),
         softphones=(
             previous_runtime.softphones if previous_runtime is not None else {}
         ),

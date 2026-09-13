@@ -31,7 +31,7 @@ from inbound_routing_qualification import (  # noqa: E402
 )
 from live_voip_qualification import candidate_revision  # noqa: E402
 from run_answered_sipp_lab import lab_token, runtime_quiescence  # noqa: E402
-from run_ha_real_matrix import _registered_local_trunk  # noqa: E402
+from run_ha_real_matrix import _registered_local_trunk, _ha_ws_result  # noqa: E402
 
 
 def _caller_config(source: Path, destination: Path, *, port: int) -> tuple[Path, str]:
@@ -53,15 +53,14 @@ def _caller_config(source: Path, destination: Path, *, port: int) -> tuple[Path,
 
 
 def _extension_entities(api: HomeAssistantApi) -> list[tuple[str, str]]:
+    devices = asyncio.run(_ha_ws_result(api, {"type": "voip_stack/list_devices"}))["devices"]
     return sorted(
         (
-            str(state["entity_id"]).removeprefix("text.").removesuffix("_extension"),
-            str(state.get("state") or "").strip(),
+            str(device["name"]),
+            str(device.get("extension") or "").strip(),
         )
-        for state in api.get("/api/states")
-        if str(state.get("entity_id") or "").startswith("text.")
-        and str(state.get("entity_id") or "").endswith("_extension")
-        and str(state.get("state") or "").strip().isdigit()
+        for device in devices
+        if str(device.get("extension") or "").strip().isdigit()
     )
 
 
@@ -161,13 +160,12 @@ def main() -> int:
                     api,
                     mode="dtmf",
                     automation=True,
-                    default_target="Casa",
+                    default_target="missing qualification fallback",
                     timeout_seconds=5,
                     trunk_override=fake_trunk,
                 )
                 _, sip_port = trunk_contact_target()
-            for index, (slug, extension) in enumerate(extensions[:2]):
-                callee = slug.replace("_", " ").title()
+            for index, (callee, extension) in enumerate(extensions[:2]):
                 scenario_id = (
                     "dtmf_primary_extension_bypasses_automation"
                     if index == 0

@@ -9,14 +9,15 @@ logic.
 
 ## Softphone services
 
-The normal automation editor shows one optional `device_id` phone picker. If
-it is omitted, VoIP Stack uses the configured preferred phone, or the sole
-compatible phone when only one exists. An ambiguous request fails explicitly.
-This is the only public phone selector: it identifies the local phone
-performing the action, never the remote destination. Internal endpoint and
-entity IDs are deliberately not alternative action inputs. `call_id` and
-stale-decision guards remain under the collapsed **Advanced options** section
-where concurrency requires them.
+A native VoIP trigger supplies the current call to call-handling actions,
+including across waits and synchronous scripts. You do not enter its ID.
+The optional Phone selector is mainly useful when starting a call or applying
+a setting outside a call-triggered automation. It identifies the local phone,
+never the remote destination.
+
+Without a call trigger, omitted phone selectors use the configured preferred
+phone or the sole compatible phone. Ambiguous requests fail explicitly.
+Advanced explicit-call fields remain available for legacy automations.
 
 ### `voip_stack.call`
 
@@ -118,7 +119,9 @@ Enable or disable Auto Answer on the selected logical HA phone. The value is
 persisted in that phone's config subentry and exposed by its native **Auto
 answer** switch. Every card bound to the phone sees the same setting; clearing
 one browser's cache does not reset it. A browser still needs persistent
-microphone permission before it can answer automatically.
+microphone permission before it can answer automatically. The receiving card
+must also remain loaded in a running browser/app view. If opening its dashboard
+view loads the card, that can be the moment it answers the waiting call.
 
 ### `voip_stack.set_send_video`
 
@@ -285,14 +288,15 @@ callers. Internal Home Assistant automations remain allowed.
 
 Fields:
 
-- `call_id`: required.
+- `call_id`: supplied by a native VoIP trigger; required for legacy explicit routing actions.
 - `action`: `answer_ha`, `decline`, `busy`, `forward`, `bridge`, `default`,
   `cancel`.
 - `destination`: forward/bridge destination.
 - `status`, `reason`, `decline_reason`: optional terminal response metadata.
 
-Use this only for the automation fallback path. Known roster targets should be
-handled by the central dial plan without waiting for this service.
+Use this while an initial routing decision is pending. A matching native
+routing trigger opens that decision window. Without an applicable automation,
+the phonebook continues to select the destination.
 
 ### `voip_stack.select_inbound_destination`
 
@@ -301,8 +305,8 @@ pending. This is the normal automation action for initial trunk routing.
 
 - `destination`: required phonebook name, group, extension, registered phone,
   Assist extension, SIP URI or routable number.
-- `call_id`: optional when exactly one inbound route is pending; required when
-  several calls are waiting concurrently.
+- `call_id`: supplied by a native VoIP trigger, including concurrent calls.
+  Legacy actions may omit it only when exactly one inbound route is pending.
 - `expected_state` / `expected_sequence`: optional stale-event guards.
 
 This action does not forward an already-ringing call. Use
@@ -317,7 +321,7 @@ are internal transport between the integration and its Event Entities, not a
 second public automation API.
 
 Each integration-owned phone Device also exposes a scoped call Event Entity
-and an enum call-state Sensor Entity. Prefer those entities for automations
+and an enum call-state Sensor Entity. Those entities remain available for automations
 about one room/handset, such as "Casa has rung for 30 seconds" or "Test missed
 an incoming call". Use the aggregate entity for PBX-wide logic and
 `route_requested`. Every phone has its own Device-owned call-state sensor.
@@ -329,9 +333,9 @@ and `extension` for locally originated calls. The selected sensor identifies
 the phone: an automation on Casa's sensor does not apply to every logical
 phone.
 
-## Experimental: in-call DTMF event entity occurrence
+## In-call DTMF event entity occurrence
 
-This event surface remains experimental in `2026.8.0`. Automations that operate
+For new rules, prefer the native `voip_stack.dtmf_received` trigger. Automations that operate
 gates, locks or other security-sensitive devices must validate the expected
 caller/source and digit rather than matching the digit alone.
 
@@ -403,16 +407,51 @@ synthesis and playback together, defaults to 120 seconds and accepts 1-600 secon
 The action answers the call if needed and waits for the audio to be sent before
 returning. It does not play on a room speaker or start Assist.
 
-Use the `call_id` and `generation` from the same `automation_requested` event
-as `call_id` and `expected_generation` on both `tts_say` and `forward`.
+Native VoIP triggers supply the call identity automatically. Legacy event-based
+automations can keep passing `call_id` and `expected_generation` from their
+triggering event.
 A different automation cannot take over an already claimed call. A stale event
 cannot control a later call, even if a SIP Call-ID is reused.
 
 `voip_stack.add_contact` accepts `type: automation`, a required `name`, optional
 numeric `extension`, optional `fallback_destination` and `timeout` (inactivity,
 1-300 seconds, default 30). Do not provide an address, SIP URI or external number.
-The timeout applies before an automation acts and between its actions, not while
-TTS is running. With no fallback, the call ends on timeout. A TTS error stops the
+For native triggers this limits the initial wait for an automation to take
+control. Legacy event-based automations also use it between actions, but not
+while TTS is running. With no fallback, the call ends on timeout. A TTS error stops the
 HA action sequence unless its standard `continue_on_error` option is enabled.
 
 See [automation contacts](AUTOMATION_DIALPLAN.md#automation-contacts) for examples.
+
+## Native call automations
+
+Native VoIP triggers bind each action to the call that triggered that execution.
+`voip_stack.call_received`, for example, can filter `destination: Welcome`
+directly. In that automation, omit `call_id` and `expected_generation` from
+`voip_stack.tts_say` and `voip_stack.forward`. The binding also survives normal
+HA waits and synchronous script calls. Separate calls never share this binding.
+Legacy event-based automations can continue supplying explicit identifiers.
+
+When a native automation finishes, an automation contact still controlled by
+that execution ends its call. A successful forward hands the call to the new
+destination instead. Observational automations, such as notifications, do not
+end calls merely because their action sequence finished.
+
+### `voip_stack.wait_for_dtmf`
+
+Wait for keypad input from the caller of an automation contact. The call is
+answered if needed. `timeout` is the time to wait for input after answering,
+in seconds (default 10, range 0.1-300). A timeout returns a result and lets the
+next HA action run; it is not a SIP failure or a ringing timeout.
+
+Advanced options are `max_digits` (default 1, range 1-32) and `terminator`
+(default `#`, or `*`, or an empty string to disable it). The terminator ends
+input and is not included in the result. Use the native condition
+`voip_stack.is_dtmf_result` to check `status: received` with optional `digits`,
+or `status: timeout`, without templates. An optional HA response variable
+receives `{status: received|timeout, digits: "..."}` for advanced scripts.
+
+The wait belongs to the current call and accepts only its caller's digits.
+Ending the call cancels the wait. Digits entered before this action starts
+are not collected. For an IVR, first speak the choices, then wait for a key,
+then use HA's Choose action to forward to the selected destination.

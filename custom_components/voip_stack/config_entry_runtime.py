@@ -90,11 +90,9 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         return
     runtime_signature = entry_runtime_signature(entry)
     phone_signature = entry_phone_signature(entry)
-    contacts_signature = tuple(
-        dict(item)
-        for item in entry.data.get(CONF_PHONEBOOK_CONTACTS, [])
-        if isinstance(item, dict)
-    )
+    from .contact_config import contact_dicts
+
+    contacts_signature = tuple(contact_dicts(entry))
     previous_runtime = runtime.entry_runtime_signature
     previous_phones = runtime.entry_phone_signature
     previous_contacts = runtime.entry_contacts_signature

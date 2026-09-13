@@ -93,6 +93,68 @@ def _validate_contact_namespace(
         accepted.append(_entry_mapping(entry))
 
 
+def contact_from_data(data: Mapping[str, Any]) -> RosterEntry:
+    """Normalize a contact from either the HA editor or a service request."""
+    name = str(data["name"]).strip()
+    entry_id = str(data.get("id") or name).strip()
+
+    def metadata_value(key: str):
+        value = data.get(key)
+        if value in (None, ""):
+            return None
+        return value
+
+    metadata = {
+        **dict(data.get("metadata") or {}),
+        **{
+        key: metadata_value(key)
+        for key in (
+            "transport",
+            "rtp_port",
+            "tx_rate",
+            "rx_rate",
+            "tx_formats",
+            "rx_formats",
+            "max_payload_bytes",
+            "conference_group",
+            "conference_ring",
+            "ring_group",
+        )
+        if key in data and metadata_value(key) is not None
+        },
+    }
+    address = str(data.get("address") or "").strip()
+    sip_uri = str(data.get("sip_uri") or "").strip()
+    extension = str(data.get("extension") or "").strip()
+    number = str(data.get("number") or "").strip()
+    port = int(data.get("port") or 0)
+    if data.get("type") == "automation":
+        if not name:
+            raise ValueError("An automation contact needs a name")
+        if extension and not extension.isdigit():
+            raise ValueError("An automation extension must be numeric")
+        if address or sip_uri or number or port:
+            raise ValueError("An automation contact has no physical address or external number")
+        metadata.update(
+            virtual_endpoint="automation",
+            fallback_destination=str(data.get("fallback_destination") or "").strip(),
+            automation_timeout=float(data.get("timeout", 30)),
+        )
+    entry = RosterEntry(
+        id=entry_id,
+        name=name,
+        address=address,
+        sip_uri=sip_uri,
+        extension=extension,
+        number=number,
+        port=port,
+        ha_bridge=bool(data.get("ha_bridge", False) or data.get("type") == "automation"),
+        enabled=bool(data.get("enabled", True)),
+        metadata=metadata,
+    )
+    return entry
+
+
 def build_phonebook_service_handlers(
     refresh_and_push_phonebook: Callable[[object], Awaitable[None]],
 ) -> dict[str, Callable[[ServiceCall], Awaitable[Any]]]:
@@ -100,59 +162,7 @@ def build_phonebook_service_handlers(
 
     async def add_contact(call: ServiceCall) -> None:
         hass = call.hass
-        name = str(call.data["name"]).strip()
-        entry_id = str(call.data.get("id") or name).strip()
-
-        def metadata_value(key: str):
-            value = call.data.get(key)
-            if value in (None, ""):
-                return None
-            return value
-
-        metadata = {
-            key: metadata_value(key)
-            for key in (
-                "transport",
-                "rtp_port",
-                "tx_rate",
-                "rx_rate",
-                "tx_formats",
-                "rx_formats",
-                "max_payload_bytes",
-                "conference_group",
-                "conference_ring",
-                "ring_group",
-            )
-            if key in call.data and metadata_value(key) is not None
-        }
-        address = str(call.data.get("address") or "").strip()
-        sip_uri = str(call.data.get("sip_uri") or "").strip()
-        extension = str(call.data.get("extension") or "").strip()
-        number = str(call.data.get("number") or "").strip()
-        port = int(call.data.get("port") or 0)
-        if call.data.get("type") == "automation":
-            if not name:
-                raise ValueError("An automation contact needs a name")
-            if extension and not extension.isdigit():
-                raise ValueError("An automation extension must be numeric")
-            if address or sip_uri or number or port:
-                raise ValueError("An automation contact has no physical address or external number")
-            metadata.update(
-                virtual_endpoint="automation",
-                fallback_destination=str(call.data.get("fallback_destination") or "").strip(),
-                automation_timeout=float(call.data.get("timeout", 30)),
-            )
-        entry = RosterEntry(
-            id=entry_id,
-            name=name,
-            address=address,
-            sip_uri=sip_uri,
-            extension=extension,
-            number=number,
-            port=port,
-            ha_bridge=bool(call.data.get("ha_bridge", False) or call.data.get("type") == "automation"),
-            metadata=metadata,
-        )
+        entry = contact_from_data(call.data)
         entry_keys = {
             normalize_roster_key(entry.id),
             normalize_roster_key(entry.name),

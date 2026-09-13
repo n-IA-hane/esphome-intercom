@@ -8,8 +8,8 @@
           "sip_port": "SIP port",
           "rtp_port": "RTP port",
           "advertise_host": "Advertised HA host/IP",
-        "assist_intents": "Enable Assist intents",
-        "assist_endpoint_enabled": "Include voice assistant",
+          "assist_intents": "Enable Assist intents",
+          "assist_endpoint_enabled": "Include voice assistant",
           "debug_mode": "Enable SIP/RTP debug logging",
           "media_capture": "Record private call audio for diagnostics",
           "experimental_sip_video": "Enable SIP video for the Home Assistant softphone",
@@ -20,8 +20,8 @@
           "sip_port": "Listen port for the HA SIP endpoint. HA accepts SIP signaling over both UDP and TCP on this port.",
           "rtp_port": "Base RTP UDP port for HA media and relays.",
           "advertise_host": "Optional override published in ESP phonebooks. Use this when HA is behind routing, NAT, LXC, VPN, or multiple subnets and the automatically announced address is not reachable by ESP devices.",
-        "assist_intents": "Register optional Assist handlers for call, hang up, answer and decline (\"Hey Jarvis, call Kitchen\"). Spoken contact names are resolved dynamically against the live VoIP phonebook.",
-        "assist_endpoint_enabled": "Add a SIP extension backed directly by a Home Assistant Assist pipeline. No separate VoIP integration or SIP listener is required.",
+          "assist_intents": "Register optional Assist handlers for call, hang up, answer and decline (\"Hey Jarvis, call Kitchen\"). Spoken contact names are resolved dynamically against the live VoIP phonebook.",
+          "assist_endpoint_enabled": "Add a SIP extension backed directly by a Home Assistant Assist pipeline. No separate VoIP integration or SIP listener is required.",
           "debug_mode": "Enables detailed SIP/RTP/media diagnostics and logs without recording call audio.",
           "media_capture": "Explicitly records private call audio: up to 15 seconds per HA-softphone direction and 8 seconds per relay leg, stored as WAV/JSON in ~/.cache/voip_stack_debug (mode 0700) and pruned to 24 files / 64 MiB. Keep disabled unless collecting a diagnostic capture.",
           "experimental_sip_video": "Let the Home Assistant softphone negotiate SIP video with compatible standard phones, softphones and door stations. H.264, VP8 and JPEG use the browser media path. Standard ESP endpoints remain audio-only; qualified ESP32-P4 profiles can negotiate JPEG or H.264. Requires HTTPS and a compatible browser.",
@@ -41,8 +41,8 @@
           "video_camera_send_enabled": "Expose a Send Camera choice in the card. Each logical Home Assistant phone keeps its choice; camera permission remains local to each browser. Receiving video never requires camera access."
         }
       },
-    "assist": {
-      "title": "Voice assistant extension",
+      "assist": {
+        "title": "Voice assistant extension",
         "description": "Choose the SIP extension and Home Assistant Assist pipeline used for telephone calls. When advanced call details are enabled, VoIP Stack starts the conversation with a user message such as `Incoming SIP call from \"Daniele\".` Configure telephone behavior in the selected conversation agent's own Instructions or prompt field under Settings > Devices & services > the agent integration > Configure. Example instructions: `When you receive a message beginning with \"Incoming SIP call from\", treat it as a live phone call. Greet the caller once, act as a concise receptionist, and do not repeat their name in every reply.` Friendly mood: `During SIP calls, sound cheerful and informal while remaining concise and helpful.` Terrible mood: `Hi. I don't give a s**t, so please go f**k yourself.`",
         "data": {
           "assist_extension": "Voice assistant extension",
@@ -54,8 +54,8 @@
           "assist_pipeline": "Assist pipeline used for speech recognition, conversation and text-to-speech on telephone calls.",
           "assist_advanced_call_context": "When disabled, Assist starts listening without an initial text message. When enabled, sends the caller name and ID, phonebook match, source and called extension once at connection. These are untrusted call metadata; a phonebook match is not authentication."
         }
-    },
-    "trunk": {
+      },
+      "trunk": {
         "title": "Optional SIP Trunk",
         "description": "Register Home Assistant to one provider/PBX trunk. Incoming calls use the central phonebook and may optionally expose a short decision point to experimental automations.",
         "data": {
@@ -93,9 +93,9 @@
       }
     },
     "error": {
-    "sip_rtp_port_conflict": "SIP and RTP must use different ports.",
-    "assist_extension_invalid": "The voice assistant extension must contain 1 to 8 digits.",
-    "assist_extension_conflict": "The voice assistant extension is already used by another route.",
+      "sip_rtp_port_conflict": "SIP and RTP must use different ports.",
+      "assist_extension_invalid": "The voice assistant extension must contain 1 to 8 digits.",
+      "assist_extension_conflict": "The voice assistant extension is already used by another route.",
       "trunk_server_required": "Trunk server is required.",
       "trunk_username_required": "Trunk username is required.",
       "trunk_password_required": "Trunk password is required."
@@ -175,6 +175,42 @@
         "reconfigure_successful": "Phone reconfigured successfully.",
         "already_configured": "This phone already exists."
       }
+    },
+    "contact": {
+      "entry_type": "Contact",
+      "initiate_flow": {
+        "user": "Add contact"
+      },
+      "title": "Contact",
+      "step": {
+        "user": {
+          "title": "Add contact",
+          "description": "Create a phonebook entry without creating a phone or entities. An Automation contact hands its call to HA automations.",
+          "data": {
+            "type": "Contact type"
+          }
+        },
+        "contact": {
+          "title": "Contact",
+          "description": "Create a phonebook entry without creating a phone or entities. An Automation contact hands its call to HA automations.",
+          "data": {
+            "name": "Name",
+            "extension": "Optional extension",
+            "number": "External number",
+            "sip_uri": "SIP address",
+            "fallback_destination": "Destination if not handled",
+            "timeout": "Wait for an automation"
+          },
+          "data_description": {
+            "extension": "Leave empty to dial the contact by its phonebook name.",
+            "fallback_destination": "If no automation handles the call, forward here. Leave empty to end the call.",
+            "timeout": "Seconds before fallback if no automation takes control of the call. This is not a phone ringing duration."
+          }
+        }
+      },
+      "error": {
+        "invalid_contact": "Use a unique name and extension. An ordinary contact needs a number or SIP address; an Automation contact must not contain them."
+      }
     }
   },
   "selector": {
@@ -182,6 +218,37 @@
       "options": {
         "direct": "Route immediately",
         "dtmf": "Collect extension with DTMF"
+      }
+    },
+    "call_ingress": {
+      "options": {
+        "extension": "Local call",
+        "trunk": "Trunk call"
+      }
+    },
+    "dtmf_source": {
+      "options": {
+        "caller": "Caller",
+        "callee": "Called party"
+      }
+    },
+    "contact_type": {
+      "options": {
+        "contact": "Number or SIP address",
+        "automation": "Automation"
+      }
+    },
+    "dtmf_result": {
+      "options": {
+        "received": "Digits received",
+        "timeout": "Input wait expired"
+      }
+    },
+    "call_outcome": {
+      "options": {
+        "ended": "Ended",
+        "missed": "Missed",
+        "failed": "Failed"
       }
     }
   },
@@ -382,34 +449,224 @@
         }
       }
     },
-  "switch": {
-    "phone_endpoint_dnd": {
-      "name": "Do not disturb"
+    "switch": {
+      "phone_endpoint_dnd": {
+        "name": "Do not disturb"
+      },
+      "phone_endpoint_conference_ring": {
+        "name": "Ring for conference calls"
+      },
+      "phone_endpoint_auto_answer": {
+        "name": "Auto answer"
+      },
+      "phone_endpoint_send_video": {
+        "name": "Send video"
+      }
     },
-    "phone_endpoint_conference_ring": {
-      "name": "Ring for conference calls"
+    "text": {
+      "phone_endpoint_extension": {
+        "name": "Extension"
+      },
+      "phone_endpoint_ring_group": {
+        "name": "Ring groups"
+      },
+      "phone_endpoint_conference_group": {
+        "name": "Conference groups"
+      }
     },
-    "phone_endpoint_auto_answer": {
-      "name": "Auto answer"
-    },
-    "phone_endpoint_send_video": {
-      "name": "Send video"
-    }
-  },
-  "text": {
-    "phone_endpoint_extension": {
-      "name": "Extension"
-    },
-    "phone_endpoint_ring_group": {
-      "name": "Ring groups"
-    },
-    "phone_endpoint_conference_group": {
-      "name": "Conference groups"
-    }
-  },
     "binary_sensor": {
       "phone_endpoint_connectivity": {
         "name": "Connectivity"
+      }
+    }
+  },
+  "triggers": {
+    "call_started": {
+      "name": "VoIP call started",
+      "description": "Leave filters empty to match every call. Actions use this triggering call automatically.",
+      "fields": {
+        "caller": {
+          "name": "Caller",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "ingress": {
+          "name": "Call origin",
+          "description": "Optional filter."
+        }
+      }
+    },
+    "call_received": {
+      "name": "VoIP call received",
+      "description": "Leave filters empty to match every call. Actions use this triggering call automatically.",
+      "fields": {
+        "caller": {
+          "name": "Caller",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "ingress": {
+          "name": "Call origin",
+          "description": "Optional filter."
+        }
+      }
+    },
+    "route_requested": {
+      "name": "VoIP call destination requested",
+      "description": "Leave filters empty to match every call. Actions use this triggering call automatically.",
+      "fields": {
+        "caller": {
+          "name": "Caller",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "ingress": {
+          "name": "Call origin",
+          "description": "Optional filter."
+        }
+      }
+    },
+    "call_connected": {
+      "name": "VoIP call connected",
+      "description": "Leave filters empty to match every call. Actions use this triggering call automatically.",
+      "fields": {
+        "caller": {
+          "name": "Caller",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "ingress": {
+          "name": "Call origin",
+          "description": "Optional filter."
+        }
+      }
+    },
+    "call_ended": {
+      "name": "VoIP call ended",
+      "description": "Leave filters empty to match every call. Actions use this triggering call automatically.",
+      "fields": {
+        "caller": {
+          "name": "Caller",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "ingress": {
+          "name": "Call origin",
+          "description": "Optional filter."
+        },
+        "reason": {
+          "name": "End reason",
+          "description": "Optional filter."
+        },
+        "outcome": {
+          "name": "Call outcome",
+          "description": "Ended normally, missed, or failed. Leave empty for every outcome."
+        }
+      }
+    },
+    "dtmf_received": {
+      "name": "VoIP call keypad digit received",
+      "description": "Leave filters empty to match every call. Actions use this triggering call automatically.",
+      "fields": {
+        "caller": {
+          "name": "Caller",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "ingress": {
+          "name": "Call origin",
+          "description": "Optional filter."
+        },
+        "digit": {
+          "name": "Keypad digit",
+          "description": "Optional filter."
+        },
+        "source_leg": {
+          "name": "Who pressed the key",
+          "description": "Optional filter."
+        }
+      }
+    },
+    "call_unanswered": {
+      "name": "VoIP call unanswered",
+      "description": "The destination is still ringing after the chosen duration. Answering, forwarding or ending cancels this wait.",
+      "fields": {
+        "caller": {
+          "name": "Caller",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "destination": {
+          "name": "Destination",
+          "description": "Phonebook name or extension. Leave empty for all."
+        },
+        "ingress": {
+          "name": "Call origin",
+          "description": "Optional filter."
+        },
+        "for": {
+          "name": "Time without an answer",
+          "description": "Measured from when this destination starts ringing."
+        }
+      }
+    }
+  },
+  "conditions": {
+    "is_call_state": {
+      "name": "Call is in a state",
+      "description": "Check the triggering call or selected phone.",
+      "fields": {
+        "state": {
+          "name": "State"
+        }
+      }
+    },
+    "is_call_origin": {
+      "name": "Call is from",
+      "description": "Check the triggering call or selected phone.",
+      "fields": {
+        "ingress": {
+          "name": "Origin"
+        }
+      }
+    },
+    "is_phone_available": {
+      "name": "Phone is available",
+      "description": "Check the triggering call or selected phone.",
+      "fields": {
+        "phone": {
+          "name": "Phonebook name or extension"
+        }
+      }
+    },
+    "is_dtmf_result": {
+      "name": "Caller keypad input matches",
+      "description": "Check the result of the last Wait for keypad input action in this execution.",
+      "fields": {
+        "status": {
+          "name": "Result"
+        },
+        "digits": {
+          "name": "Expected digits",
+          "description": "Leave empty to match any received digits."
+        }
       }
     }
   }

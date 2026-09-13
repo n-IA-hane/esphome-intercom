@@ -452,7 +452,8 @@ def service(domain: str, name: str, data: dict[str, Any] | None = None) -> Any:
 
 
 def event_state() -> dict[str, Any]:
-    return ha_request("/api/states/event.voip_stack_call")["attributes"]
+    state = ha_request("/api/states/event.voip_stack_call")
+    return {**state["attributes"], "_event_timestamp": state["state"]}
 
 
 def wait_card(
@@ -618,6 +619,7 @@ def main() -> int:
                 headless=True,
                 executable_path="/usr/bin/chromium",
                 args=[
+                    "--disable-audio-output",
                     "--use-fake-ui-for-media-stream",
                     "--use-fake-device-for-media-stream",
                     "--autoplay-policy=no-user-gesture-required",
@@ -727,6 +729,7 @@ def main() -> int:
                 transport: str,
                 *,
                 source_leg: str = "caller",
+                after: str = "",
             ) -> dict[str, Any]:
                 deadline = time.monotonic() + 5
                 observed = event_state()
@@ -734,10 +737,16 @@ def main() -> int:
                     observed.get("event_type") == "dtmf"
                     and observed.get("call_id") == call_id
                     and observed.get("digit") == digit
+                    and observed.get("_event_timestamp") != after
                 ):
                     time.sleep(0.05)
                     observed = event_state()
-                if observed.get("event_type") != "dtmf":
+                if not (
+                    observed.get("event_type") == "dtmf"
+                    and observed.get("call_id") == call_id
+                    and observed.get("digit") == digit
+                    and observed.get("_event_timestamp") != after
+                ):
                     raise RuntimeError(
                         f"in-dialog DTMF event was not published: {observed}"
                     )
@@ -877,12 +886,14 @@ def main() -> int:
                 observed_digits: list[str] = []
                 observed: dict[str, Any] = {}
                 for digit in digits:
+                    previous = str(event_state().get("_event_timestamp") or "")
                     callee.digits(digit)
                     observed = wait_dtmf_event(
                         calling["backend"]["call_id"],
                         digit,
                         transport,
                         source_leg="callee",
+                        after=previous,
                     )
                     observed_digits.append(str(observed.get("digit") or ""))
                 callee.hangup()
@@ -911,6 +922,12 @@ def main() -> int:
                 "outbound_rfc4733_dtmf_keypad",
                 lambda: outbound_dtmf_event(
                     mode="rtpevent", digits="0123456789*#", transport="rtp_event"
+                ),
+            )
+            case(
+                "outbound_rfc4733_repeated_digits",
+                lambda: outbound_dtmf_event(
+                    mode="rtpevent", digits="1100##", transport="rtp_event"
                 ),
             )
 

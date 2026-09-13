@@ -1,5 +1,4 @@
-# Real Home Assistant automation package used only by the isolated VoIP lab.
-# The test runner selects one policy before placing a real SIP call.
+# HA-native call routing fixtures used by the real SIP qualification matrix.
 input_boolean:
   voip_qualification_enabled:
     name: VoIP qualification enabled
@@ -10,172 +9,142 @@ input_boolean:
   voip_qualification_forward_enabled:
     name: VoIP qualification ringing forward enabled
     initial: false
-
 input_select:
   voip_qualification_route_action:
     name: VoIP qualification route action
     options:
-      - no_action
-      - default
-      - answer_ha
-      - decline
-      - busy
-      - cancel
-      - forward
-      - bridge
+    - no_action
+    - default
+    - answer_ha
+    - decline
+    - busy
+    - cancel
+    - forward
+    - bridge
     initial: no_action
   voip_qualification_false_route_action:
     name: VoIP qualification false route action
     options:
-      - no_action
-      - default
-      - answer_ha
-      - decline
-      - busy
-      - cancel
-      - forward
-      - bridge
+    - no_action
+    - default
+    - answer_ha
+    - decline
+    - busy
+    - cancel
+    - forward
+    - bridge
     initial: no_action
   voip_qualification_forward_failure:
     name: VoIP qualification forward failure policy
     options:
-      - resume
-      - terminate
-      - busy
+    - resume
+    - terminate
+    - busy
     initial: resume
-
 input_text:
   voip_qualification_expected_origin:
     name: VoIP qualification expected origin
-    initial: ""
+    initial: ''
   voip_qualification_expected_caller:
     name: VoIP qualification expected caller
-    initial: ""
+    initial: ''
   voip_qualification_expected_target:
     name: VoIP qualification expected target
-    initial: ""
+    initial: ''
   voip_qualification_destination:
     name: VoIP qualification decision destination
-    initial: ""
+    initial: ''
   voip_qualification_false_destination:
     name: VoIP qualification false decision destination
-    initial: ""
+    initial: ''
   voip_qualification_forward_destination:
     name: VoIP qualification ringing forward destination
-    initial: ""
+    initial: ''
   voip_qualification_last_decision:
     name: VoIP qualification last decision
-    initial: ""
+    initial: ''
   voip_qualification_last_forward:
     name: VoIP qualification last ringing forward
-    initial: ""
-
+    initial: ''
 automation:
-  - id: voip_qualification_route_decision
-    alias: VoIP qualification route decision
-    mode: parallel
-    max: 16
-    triggers:
-      - trigger: state
-        entity_id: event.voip_stack_call
-    conditions:
-      - condition: state
-        entity_id: input_boolean.voip_qualification_enabled
-        state: "on"
-      - condition: template
-        value_template: >-
-          {{ trigger.to_state is not none
-             and trigger.to_state.attributes.get('event_type') == 'route_requested' }}
-      - condition: template
-        value_template: >-
-          {% set expected = states('input_text.voip_qualification_expected_origin') | trim %}
-          {{ expected == '' or
-             trigger.to_state.attributes.get('ingress', '') == expected }}
-      - condition: template
-        value_template: >-
-          {% set expected = states('input_text.voip_qualification_expected_caller') | trim %}
-          {{ expected == '' or
-             trigger.to_state.attributes.get('caller', '') == expected }}
-      - condition: template
-        value_template: >-
-          {% set expected = states('input_text.voip_qualification_expected_target') | trim %}
-          {{ expected == '' or
-             trigger.to_state.attributes.get('callee', '') == expected }}
-    actions:
-      - variables:
-          selected_action: >-
-            {% if is_state('input_boolean.voip_qualification_condition', 'on') %}
-              {{ states('input_select.voip_qualification_route_action') }}
-            {% else %}
-              {{ states('input_select.voip_qualification_false_route_action') }}
-            {% endif %}
-          selected_destination: >-
-            {% if is_state('input_boolean.voip_qualification_condition', 'on') %}
-              {{ states('input_text.voip_qualification_destination') | trim }}
-            {% else %}
-              {{ states('input_text.voip_qualification_false_destination') | trim }}
-            {% endif %}
-          selected_call_id: >-
-            {{ trigger.to_state.attributes.get('call_id', '') }}
-          selected_state: >-
-            {{ trigger.to_state.attributes.get('state', '') }}
-          selected_sequence: >-
-            {{ trigger.to_state.attributes.get('sequence', 0) | int }}
-      - condition: template
-        value_template: "{{ selected_action != 'no_action' }}"
-      - choose:
-          - conditions: "{{ selected_action == 'forward' }}"
-            sequence:
-              - action: voip_stack.select_inbound_destination
-                data:
-                  call_id: "{{ selected_call_id }}"
-                  destination: "{{ selected_destination }}"
-                  expected_state: "{{ selected_state }}"
-                  expected_sequence: "{{ selected_sequence }}"
-        default:
-          - action: voip_stack.route
-            data:
-              call_id: "{{ selected_call_id }}"
-              action: "{{ selected_action }}"
-              destination: "{{ selected_destination }}"
-              expected_state: "{{ selected_state }}"
-              expected_sequence: "{{ selected_sequence }}"
-      - action: input_text.set_value
+- id: voip_qualification_route_decision
+  alias: VoIP qualification route decision
+  mode: parallel
+  max: 16
+  triggers:
+  - trigger: voip_stack.route_requested
+  conditions:
+  - condition: state
+    entity_id: input_boolean.voip_qualification_enabled
+    state: 'on'
+  - condition: template
+    value_template: "{% set expected = states('input_text.voip_qualification_expected_origin') | trim\
+      \ %} {{ expected == '' or\n   trigger.call.get('ingress', '') == expected }}"
+  - condition: template
+    value_template: "{% set expected = states('input_text.voip_qualification_expected_caller') | trim\
+      \ %} {{ expected == '' or\n   trigger.call.get('caller', '') == expected }}"
+  - condition: template
+    value_template: "{% set expected = states('input_text.voip_qualification_expected_target') | trim\
+      \ %} {{ expected == '' or\n   trigger.call.get('callee', '') == expected }}"
+  actions:
+  - variables:
+      selected_action: "{% if is_state('input_boolean.voip_qualification_condition', 'on') %}\n  {{ states('input_select.voip_qualification_route_action')\
+        \ }}\n{% else %}\n  {{ states('input_select.voip_qualification_false_route_action') }}\n{% endif\
+        \ %}"
+      selected_destination: "{% if is_state('input_boolean.voip_qualification_condition', 'on') %}\n \
+        \ {{ states('input_text.voip_qualification_destination') | trim }}\n{% else %}\n  {{ states('input_text.voip_qualification_false_destination')\
+        \ | trim }}\n{% endif %}"
+      selected_call_id: '{{ trigger.call.get(''call_id'', '''') }}'
+      selected_state: '{{ trigger.call.get(''state'', '''') }}'
+      selected_sequence: '{{ trigger.call.get(''sequence'', 0) | int }}'
+  - condition: template
+    value_template: '{{ selected_action != ''no_action'' }}'
+  - choose:
+    - conditions: '{{ selected_action == ''forward'' }}'
+      sequence:
+      - action: voip_stack.select_inbound_destination
         data:
-          entity_id: input_text.voip_qualification_last_decision
-          value: >-
-            {{ selected_call_id }}|{{ selected_action }}|{{ selected_destination }}
-
-  - id: voip_qualification_ringing_forward
-    alias: VoIP qualification ringing forward
-    mode: parallel
-    max: 16
-    triggers:
-      - trigger: state
-        entity_id: sensor.casa_call_state
-        to: ringing
-        for:
-          seconds: 1
-    conditions:
-      - condition: state
-        entity_id: input_boolean.voip_qualification_enabled
-        state: "on"
-      - condition: state
-        entity_id: input_boolean.voip_qualification_forward_enabled
-        state: "on"
-      - condition: template
-        value_template: >-
-          {{ states('input_text.voip_qualification_forward_destination') | trim != '' }}
-    actions:
-      - action: input_text.set_value
-        data:
-          entity_id: input_text.voip_qualification_last_forward
-          value: >-
-            {{ trigger.to_state.attributes.get('call_id', '') }}|{{
-               states('input_text.voip_qualification_forward_destination') | trim }}
-      - action: voip_stack.forward
-        data:
-          destination: >-
-            {{ states('input_text.voip_qualification_forward_destination') | trim }}
-          on_failure: >-
-            {{ states('input_select.voip_qualification_forward_failure') }}
+          call_id: '{{ selected_call_id }}'
+          destination: '{{ selected_destination }}'
+          expected_state: '{{ selected_state }}'
+          expected_sequence: '{{ selected_sequence }}'
+    default:
+    - action: voip_stack.route
+      data:
+        call_id: '{{ selected_call_id }}'
+        action: '{{ selected_action }}'
+        destination: '{{ selected_destination }}'
+        expected_state: '{{ selected_state }}'
+        expected_sequence: '{{ selected_sequence }}'
+  - action: input_text.set_value
+    data:
+      entity_id: input_text.voip_qualification_last_decision
+      value: '{{ selected_call_id }}|{{ selected_action }}|{{ selected_destination }}'
+- id: voip_qualification_ringing_forward
+  alias: VoIP qualification ringing forward
+  mode: parallel
+  max: 16
+  triggers:
+  - trigger: voip_stack.call_unanswered
+    options:
+      for:
+        seconds: 1
+  conditions:
+  - condition: state
+    entity_id: input_boolean.voip_qualification_enabled
+    state: 'on'
+  - condition: state
+    entity_id: input_boolean.voip_qualification_forward_enabled
+    state: 'on'
+  - condition: template
+    value_template: '{{ states(''input_text.voip_qualification_forward_destination'') | trim != '''' }}'
+  actions:
+  - action: input_text.set_value
+    data:
+      entity_id: input_text.voip_qualification_last_forward
+      value: "{{ trigger.call.get('call_id', '') }}|{{\n   states('input_text.voip_qualification_forward_destination')\
+        \ | trim }}"
+  - action: voip_stack.forward
+    data:
+      destination: '{{ states(''input_text.voip_qualification_forward_destination'') | trim }}'
+      on_failure: '{{ states(''input_select.voip_qualification_forward_failure'') }}'

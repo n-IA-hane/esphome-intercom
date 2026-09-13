@@ -51,7 +51,9 @@ def phonebook_contact_dicts(hass: HomeAssistant) -> list[dict]:
     entry = config_entry(hass)
     if entry is None:
         return []
-    return [dict(item) for item in entry.data.get(CONF_PHONEBOOK_CONTACTS, []) if isinstance(item, dict)]
+    from .contact_config import contact_dicts
+
+    return contact_dicts(entry)
 
 
 def manual_roster_entries(hass: HomeAssistant):
@@ -86,9 +88,9 @@ def store_manual_roster_entries(hass: HomeAssistant, entries) -> None:
         }
         for item in contacts
     ]
-    data = dict(entry.data)
-    data[CONF_PHONEBOOK_CONTACTS] = payload
-    hass.config_entries.async_update_entry(entry, data=data)
+    from .contact_config import replace_contacts
+
+    replace_contacts(hass, entry, payload)
     hass.data.setdefault(DOMAIN, {})["manual_roster_entries"] = contacts
 
 

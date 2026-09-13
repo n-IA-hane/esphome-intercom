@@ -1738,6 +1738,9 @@ class VoipStackEngine extends EventTarget {
       // yet publishable; reconcile once after the atomic initial commit.
       await this._reconcileAudioMedia(this._lastSessionPayload || {});
       if (attachKey && this._sessionAttachKey !== attachKey) return false;
+      if (this._playbackNode && this._audioContext?.state === "running" && this._ws?.readyState === WebSocket.OPEN) {
+        this._ws.send(JSON.stringify({ type: "audio_ready" }));
+      }
       return true;
     } catch (err) {
       if (attachKey && this._sessionAttachKey !== attachKey) {

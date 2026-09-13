@@ -8,7 +8,7 @@ beyond the project overview in the [top-level README](../README.md).
 | Need | Document |
 |---|---|
 | Learn the complete everyday workflow | [User guide](USER_GUIDE.md) |
-| Use redirects and advanced automations | [Automation cookbook](AUTOMATION_DIALPLAN.md) |
+| Build greetings, keypad menus and call routing in the HA editor | [Automation as dialplan cookbook](AUTOMATION_DIALPLAN.md) |
 | Review the current release | [What is new in 2026.9.0](WHATS_NEW_2026_9_0.md) |
 | Choose a board and maintained YAML | [Deployment guide](DEPLOYMENT_GUIDE.md) |
 | Complete the shortest supported setup | [Quick start](../README.md#fastest-start) |

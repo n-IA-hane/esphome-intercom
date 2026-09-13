@@ -175,6 +175,42 @@
         "reconfigure_successful": "Telefone reconfigurado com sucesso.",
         "already_configured": "Este telefone já existe."
       }
+    },
+    "contact": {
+      "entry_type": "Contato",
+      "initiate_flow": {
+        "user": "Adicionar contato"
+      },
+      "title": "Contato",
+      "step": {
+        "user": {
+          "title": "Adicionar contato",
+          "description": "Cria uma entrada na agenda sem criar um telefone ou entidades. Um contato de Automação entrega sua chamada às automações do HA.",
+          "data": {
+            "type": "Tipo de contato"
+          }
+        },
+        "contact": {
+          "title": "Contato",
+          "description": "Cria uma entrada na agenda sem criar um telefone ou entidades. Um contato de Automação entrega sua chamada às automações do HA.",
+          "data": {
+            "name": "Nome",
+            "extension": "Ramal opcional",
+            "number": "Número externo",
+            "sip_uri": "Endereço SIP",
+            "fallback_destination": "Destino se não houver atendimento",
+            "timeout": "Aguardar uma automação"
+          },
+          "data_description": {
+            "extension": "Deixe vazio para chamar o contato pelo nome na agenda.",
+            "fallback_destination": "Se nenhuma automação tratar a chamada, encaminhar para este destino. Deixe vazio para encerrar a chamada.",
+            "timeout": "Segundos até o destino alternativo se nenhuma automação assumir a chamada. Não é a duração do toque do telefone."
+          }
+        }
+      },
+      "error": {
+        "invalid_contact": "Use um nome e um ramal exclusivos. Um contato comum precisa de número ou endereço SIP; um contato de Automação não deve contê-los."
+      }
     }
   },
   "selector": {
@@ -182,6 +218,37 @@
       "options": {
         "direct": "Encaminhar imediatamente",
         "dtmf": "Coletar extensão com DTMF"
+      }
+    },
+    "call_ingress": {
+      "options": {
+        "extension": "Chamada local",
+        "trunk": "Chamada do tronco"
+      }
+    },
+    "dtmf_source": {
+      "options": {
+        "caller": "Chamador",
+        "callee": "Pessoa chamada"
+      }
+    },
+    "contact_type": {
+      "options": {
+        "contact": "Número ou endereço SIP",
+        "automation": "Automação"
+      }
+    },
+    "dtmf_result": {
+      "options": {
+        "received": "Dígitos recebidos",
+        "timeout": "Tempo de espera da entrada esgotado"
+      }
+    },
+    "call_outcome": {
+      "options": {
+        "ended": "Encerrada",
+        "missed": "Perdida",
+        "failed": "Falhou"
       }
     }
   },
@@ -412,6 +479,195 @@
         "name": "Conectividade"
       }
     }
+  },
+  "triggers": {
+    "call_started": {
+      "name": "Chamada VoIP iniciada",
+      "description": "Deixe os filtros vazios para incluir todas as chamadas. As ações usam automaticamente a chamada que acionou a automação.",
+      "fields": {
+        "caller": {
+          "name": "Chamador",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "destination": {
+          "name": "Destino",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "ingress": {
+          "name": "Origem da chamada",
+          "description": "Filtro opcional."
+        }
+      }
+    },
+    "call_received": {
+      "name": "Chamada VoIP recebida",
+      "description": "Deixe os filtros vazios para incluir todas as chamadas. As ações usam automaticamente a chamada que acionou a automação.",
+      "fields": {
+        "caller": {
+          "name": "Chamador",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "destination": {
+          "name": "Destino",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "ingress": {
+          "name": "Origem da chamada",
+          "description": "Filtro opcional."
+        }
+      }
+    },
+    "route_requested": {
+      "name": "Destino da chamada VoIP solicitado",
+      "description": "Deixe os filtros vazios para incluir todas as chamadas. As ações usam automaticamente a chamada que acionou a automação.",
+      "fields": {
+        "caller": {
+          "name": "Chamador",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "destination": {
+          "name": "Destino",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "ingress": {
+          "name": "Origem da chamada",
+          "description": "Filtro opcional."
+        }
+      }
+    },
+    "call_connected": {
+      "name": "Chamada VoIP conectada",
+      "description": "Deixe os filtros vazios para incluir todas as chamadas. As ações usam automaticamente a chamada que acionou a automação.",
+      "fields": {
+        "caller": {
+          "name": "Chamador",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "destination": {
+          "name": "Destino",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "ingress": {
+          "name": "Origem da chamada",
+          "description": "Filtro opcional."
+        }
+      }
+    },
+    "call_ended": {
+      "name": "Chamada VoIP encerrada",
+      "description": "Deixe os filtros vazios para incluir todas as chamadas. As ações usam automaticamente a chamada que acionou a automação.",
+      "fields": {
+        "caller": {
+          "name": "Chamador",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "destination": {
+          "name": "Destino",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "ingress": {
+          "name": "Origem da chamada",
+          "description": "Filtro opcional."
+        },
+        "reason": {
+          "name": "Motivo do encerramento",
+          "description": "Filtro opcional."
+        },
+        "outcome": {
+          "name": "Resultado da chamada",
+          "description": "Encerrada, perdida ou falhou. Vazio inclui todos os resultados."
+        }
+      }
+    },
+    "dtmf_received": {
+      "name": "Tecla recebida durante a chamada VoIP",
+      "description": "Deixe os filtros vazios para incluir todas as chamadas. As ações usam automaticamente a chamada que acionou a automação.",
+      "fields": {
+        "caller": {
+          "name": "Chamador",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "destination": {
+          "name": "Destino",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "ingress": {
+          "name": "Origem da chamada",
+          "description": "Filtro opcional."
+        },
+        "digit": {
+          "name": "Tecla",
+          "description": "Filtro opcional."
+        },
+        "source_leg": {
+          "name": "Quem pressionou a tecla",
+          "description": "Filtro opcional."
+        }
+      }
+    },
+    "call_unanswered": {
+      "name": "Chamada VoIP sem resposta",
+      "description": "O destino continua tocando após o tempo escolhido. Atendimento, encaminhamento ou encerramento cancelam esta espera.",
+      "fields": {
+        "caller": {
+          "name": "Chamador",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "destination": {
+          "name": "Destino",
+          "description": "Nome na agenda ou ramal. Vazio significa todos."
+        },
+        "ingress": {
+          "name": "Origem da chamada",
+          "description": "Filtro opcional."
+        },
+        "for": {
+          "name": "Tempo sem resposta",
+          "description": "Contado a partir do início do toque neste destino."
+        }
+      }
+    }
+  },
+  "conditions": {
+    "is_call_state": {
+      "name": "Chamada está no estado",
+      "description": "Verifica a chamada que acionou a automação ou o telefone selecionado.",
+      "fields": {
+        "state": {
+          "name": "Estado"
+        }
+      }
+    },
+    "is_call_origin": {
+      "name": "Chamada proveniente de",
+      "description": "Verifica a chamada que acionou a automação ou o telefone selecionado.",
+      "fields": {
+        "ingress": {
+          "name": "Origem"
+        }
+      }
+    },
+    "is_phone_available": {
+      "name": "Telefone está disponível",
+      "description": "Verifica a chamada que acionou a automação ou o telefone selecionado.",
+      "fields": {
+        "phone": {
+          "name": "Nome na agenda ou ramal"
+        }
+      }
+    },
+    "is_dtmf_result": {
+      "name": "Entrada do teclado do chamador corresponde",
+      "description": "Verifica o resultado da última ação Aguardar teclas nesta execução.",
+      "fields": {
+        "status": {
+          "name": "Resultado"
+        },
+        "digits": {
+          "name": "Dígitos esperados",
+          "description": "Deixe vazio para aceitar qualquer sequência recebida."
+        }
+      }
+    }
   }
 }
-

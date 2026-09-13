@@ -1,0 +1,89 @@
+call_started:
+  fields:
+    caller: &id001
+      selector:
+        text: {}
+    destination: &id002
+      selector:
+        text: {}
+    ingress: &id003
+      selector:
+        select:
+          options:
+          - extension
+          - trunk
+          translation_key: call_ingress
+call_received:
+  fields:
+    caller: *id001
+    destination: *id002
+    ingress: *id003
+route_requested:
+  fields:
+    caller: *id001
+    destination: *id002
+    ingress: *id003
+call_connected:
+  fields:
+    caller: *id001
+    destination: *id002
+    ingress: *id003
+call_ended:
+  fields:
+    caller: *id001
+    destination: *id002
+    ingress: *id003
+    reason:
+      selector:
+        text: {}
+    outcome:
+      selector:
+        select:
+          options:
+          - ended
+          - missed
+          - failed
+          translation_key: call_outcome
+dtmf_received:
+  fields:
+    caller: *id001
+    destination: *id002
+    ingress: *id003
+    digit:
+      selector:
+        select:
+          options:
+          - '0'
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+          - '5'
+          - '6'
+          - '7'
+          - '8'
+          - '9'
+          - '*'
+          - '#'
+          - A
+          - B
+          - C
+          - D
+    source_leg:
+      selector:
+        select:
+          options:
+          - caller
+          - callee
+          translation_key: dtmf_source
+call_unanswered:
+  fields:
+    caller: *id001
+    destination: *id002
+    ingress: *id003
+    for:
+      required: true
+      default:
+        seconds: 30
+      selector:
+        duration: {}

@@ -175,6 +175,42 @@
         "reconfigure_successful": "Telefon erfolgreich neu konfiguriert.",
         "already_configured": "Dieses Telefon existiert bereits."
       }
+    },
+    "contact": {
+      "entry_type": "Kontakt",
+      "initiate_flow": {
+        "user": "Kontakt hinzufügen"
+      },
+      "title": "Kontakt",
+      "step": {
+        "user": {
+          "title": "Kontakt hinzufügen",
+          "description": "Erstellt einen Telefonbucheintrag ohne Telefon oder Entitäten. Ein Automationskontakt übergibt seinen Anruf an HA-Automationen.",
+          "data": {
+            "type": "Kontakttyp"
+          }
+        },
+        "contact": {
+          "title": "Kontakt",
+          "description": "Erstellt einen Telefonbucheintrag ohne Telefon oder Entitäten. Ein Automationskontakt übergibt seinen Anruf an HA-Automationen.",
+          "data": {
+            "name": "Name",
+            "extension": "Optionale Nebenstelle",
+            "number": "Externe Rufnummer",
+            "sip_uri": "SIP-Adresse",
+            "fallback_destination": "Ziel bei fehlender Bearbeitung",
+            "timeout": "Auf eine Automation warten"
+          },
+          "data_description": {
+            "extension": "Leer lassen, um den Kontakt über seinen Telefonbuchnamen anzurufen.",
+            "fallback_destination": "Wenn keine Automation den Anruf bearbeitet, hierhin weiterleiten. Leer lassen, um den Anruf zu beenden.",
+            "timeout": "Sekunden bis zur Ersatzzielwahl, wenn keine Automation den Anruf übernimmt. Dies ist keine Klingeldauer."
+          }
+        }
+      },
+      "error": {
+        "invalid_contact": "Eindeutigen Namen und eindeutige Nebenstelle verwenden. Ein normaler Kontakt benötigt eine Rufnummer oder SIP-Adresse; ein Automationskontakt darf diese nicht enthalten."
+      }
     }
   },
   "selector": {
@@ -182,6 +218,37 @@
       "options": {
         "direct": "Sofort weiterleiten",
         "dtmf": "Nebenstelle per DTMF erfassen"
+      }
+    },
+    "call_ingress": {
+      "options": {
+        "extension": "Lokaler Anruf",
+        "trunk": "Trunk-Anruf"
+      }
+    },
+    "dtmf_source": {
+      "options": {
+        "caller": "Anrufende Person",
+        "callee": "Angerufene Person"
+      }
+    },
+    "contact_type": {
+      "options": {
+        "contact": "Rufnummer oder SIP-Adresse",
+        "automation": "Automation"
+      }
+    },
+    "dtmf_result": {
+      "options": {
+        "received": "Ziffern empfangen",
+        "timeout": "Eingabewartezeit abgelaufen"
+      }
+    },
+    "call_outcome": {
+      "options": {
+        "ended": "Beendet",
+        "missed": "Verpasst",
+        "failed": "Fehlgeschlagen"
       }
     }
   },
@@ -410,6 +477,196 @@
     "binary_sensor": {
       "phone_endpoint_connectivity": {
         "name": "Konnektivität"
+      }
+    }
+  },
+  "triggers": {
+    "call_started": {
+      "name": "VoIP-Anruf gestartet",
+      "description": "Filter leer lassen, um alle Anrufe zu erfassen. Aktionen verwenden automatisch den auslösenden Anruf.",
+      "fields": {
+        "caller": {
+          "name": "Anrufende Person",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "destination": {
+          "name": "Ziel",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "ingress": {
+          "name": "Anrufherkunft",
+          "description": "Optionaler Filter."
+        }
+      }
+    },
+    "call_received": {
+      "name": "VoIP-Anruf empfangen",
+      "description": "Filter leer lassen, um alle Anrufe zu erfassen. Aktionen verwenden automatisch den auslösenden Anruf.",
+      "fields": {
+        "caller": {
+          "name": "Anrufende Person",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "destination": {
+          "name": "Ziel",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "ingress": {
+          "name": "Anrufherkunft",
+          "description": "Optionaler Filter."
+        }
+      }
+    },
+    "route_requested": {
+      "name": "VoIP-Anrufziel wird angefordert",
+      "description": "Filter leer lassen, um alle Anrufe zu erfassen. Aktionen verwenden automatisch den auslösenden Anruf.",
+      "fields": {
+        "caller": {
+          "name": "Anrufende Person",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "destination": {
+          "name": "Ziel",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "ingress": {
+          "name": "Anrufherkunft",
+          "description": "Optionaler Filter."
+        }
+      }
+    },
+    "call_connected": {
+      "name": "VoIP-Anruf verbunden",
+      "description": "Filter leer lassen, um alle Anrufe zu erfassen. Aktionen verwenden automatisch den auslösenden Anruf.",
+      "fields": {
+        "caller": {
+          "name": "Anrufende Person",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "destination": {
+          "name": "Ziel",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "ingress": {
+          "name": "Anrufherkunft",
+          "description": "Optionaler Filter."
+        }
+      }
+    },
+    "call_ended": {
+      "name": "VoIP-Anruf beendet",
+      "description": "Filter leer lassen, um alle Anrufe zu erfassen. Aktionen verwenden automatisch den auslösenden Anruf.",
+      "fields": {
+        "caller": {
+          "name": "Anrufende Person",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "destination": {
+          "name": "Ziel",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "ingress": {
+          "name": "Anrufherkunft",
+          "description": "Optionaler Filter."
+        },
+        "reason": {
+          "name": "Beendigungsgrund",
+          "description": "Optionaler Filter."
+        },
+        "outcome": {
+          "name": "Anrufergebnis",
+          "description": "Beendet, verpasst oder fehlgeschlagen. Leer erfasst alle Ergebnisse."
+        }
+      }
+    },
+    "dtmf_received": {
+      "name": "Tasteneingabe im VoIP-Anruf empfangen",
+      "description": "Filter leer lassen, um alle Anrufe zu erfassen. Aktionen verwenden automatisch den auslösenden Anruf.",
+      "fields": {
+        "caller": {
+          "name": "Anrufende Person",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "destination": {
+          "name": "Ziel",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "ingress": {
+          "name": "Anrufherkunft",
+          "description": "Optionaler Filter."
+        },
+        "digit": {
+          "name": "Taste",
+          "description": "Optionaler Filter."
+        },
+        "source_leg": {
+          "name": "Wer die Taste gedrückt hat",
+          "description": "Optionaler Filter."
+        }
+      }
+    },
+    "call_unanswered": {
+      "name": "VoIP-Anruf unbeantwortet",
+      "description": "Das Ziel klingelt nach der gewählten Zeit weiterhin. Antwort, Weiterleitung oder Beendigung brechen diese Wartezeit ab.",
+      "fields": {
+        "caller": {
+          "name": "Anrufende Person",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "destination": {
+          "name": "Ziel",
+          "description": "Telefonbuchname oder Nebenstelle. Leer bedeutet alle."
+        },
+        "ingress": {
+          "name": "Anrufherkunft",
+          "description": "Optionaler Filter."
+        },
+        "for": {
+          "name": "Zeit ohne Antwort",
+          "description": "Gemessen ab dem Beginn des Klingelns an diesem Ziel."
+        }
+      }
+    }
+  },
+  "conditions": {
+    "is_call_state": {
+      "name": "Anruf befindet sich im Zustand",
+      "description": "Prüft den auslösenden Anruf oder das ausgewählte Telefon.",
+      "fields": {
+        "state": {
+          "name": "Zustand"
+        }
+      }
+    },
+    "is_call_origin": {
+      "name": "Anruf stammt von",
+      "description": "Prüft den auslösenden Anruf oder das ausgewählte Telefon.",
+      "fields": {
+        "ingress": {
+          "name": "Herkunft"
+        }
+      }
+    },
+    "is_phone_available": {
+      "name": "Telefon ist verfügbar",
+      "description": "Prüft den auslösenden Anruf oder das ausgewählte Telefon.",
+      "fields": {
+        "phone": {
+          "name": "Telefonbuchname oder Nebenstelle"
+        }
+      }
+    },
+    "is_dtmf_result": {
+      "name": "Tasteneingabe der anrufenden Person stimmt überein",
+      "description": "Prüft das Ergebnis der letzten Aktion zum Warten auf Tasteneingaben in dieser Ausführung.",
+      "fields": {
+        "status": {
+          "name": "Ergebnis"
+        },
+        "digits": {
+          "name": "Erwartete Ziffern",
+          "description": "Leer lassen, um jede empfangene Ziffernfolge zu akzeptieren."
+        }
       }
     }
   }

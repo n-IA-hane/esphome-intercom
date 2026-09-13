@@ -754,7 +754,9 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         import yaml
         descriptions = yaml.safe_load(service_descriptions)
         for service_name in service_names:
-            fields = descriptions[service_name]["fields"]
+            fields = dict(descriptions[service_name]["fields"])
+            for field in tuple(fields.values()):
+                fields.update(field.get("fields", {}))
             self.assertIn("device_id", fields)
             self.assertNotIn("endpoint_id", fields)
             self.assertNotIn("entity_id", fields)

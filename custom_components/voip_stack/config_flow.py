@@ -104,11 +104,11 @@ def _entry_route_mappings(
     include_assist: bool = True,
 ) -> list[Mapping[str, Any]]:
     """Build the complete persisted routing namespace for flow validation."""
-    mappings: list[Mapping[str, Any]] = [
-        item
-        for item in data.get(CONF_PHONEBOOK_CONTACTS, []) or []
-        if isinstance(item, Mapping)
-    ]
+    from .contact_config import contact_dicts
+
+    mappings: list[Mapping[str, Any]] = (
+        contact_dicts(entry) if entry is not None else list(data.get(CONF_PHONEBOOK_CONTACTS, []) or [])
+    )
     mappings.extend(
         item
         for item in data.get("sip_accounts", []) or []
@@ -218,7 +218,7 @@ def _base_entry_data(existing: Mapping[str, Any]) -> dict[str, Any]:
 class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for VoIP Stack."""
 
-    VERSION = 5
+    VERSION = 6
     _base_input: dict | None = None
 
     @classmethod
@@ -227,7 +227,9 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
         cls, config_entry: ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
         """Expose the native Add phone flow on the integration entry."""
-        return {PHONE_SUBENTRY_TYPE: PhoneSubentryFlowHandler}
+        from .contact_flow import ContactSubentryFlowHandler
+
+        return {PHONE_SUBENTRY_TYPE: PhoneSubentryFlowHandler, "contact": ContactSubentryFlowHandler}
 
     def _current_entry(self) -> ConfigEntry | None:
         if self.source == SOURCE_RECONFIGURE:
@@ -240,6 +242,8 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def _store_entry(self, data: dict):
         current_entry, _existing = self._current_entry_data()
+        if current_entry is None or current_entry.version >= 6:
+            data.pop(CONF_PHONEBOOK_CONTACTS, None)
         if current_entry is not None:
             return self.async_update_and_abort(
                 current_entry,

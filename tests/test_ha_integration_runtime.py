@@ -754,9 +754,92 @@ async def test_v4_migration_marks_existing_phone_bootstrap_as_complete(
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.version == 5
+    assert entry.version == 6
     assert entry.data[CONF_INITIAL_PHONE_CREATED] is True
     assert not entry.subentries
+
+
+async def test_contact_migration_preserves_routes_without_phone_entities(hass):
+    from custom_components.voip_stack import async_migrate_entry
+    from custom_components.voip_stack.contact_config import contact_dicts, replace_contacts
+    from homeassistant.helpers import device_registry, entity_registry
+
+    records = [
+        {"id": "Prova", "name": "Prova", "extension": "", "ha_bridge": True,
+         "metadata": {"virtual_endpoint": "automation", "automation_timeout": 30}},
+        {"id": "external", "name": "External", "number": "+12025550123", "metadata": {"custom": "retained"}},
+    ]
+    entry = MockConfigEntry(domain=DOMAIN, data={"phonebook_contacts": records}, version=5)
+    entry.add_to_hass(hass)
+    devices = len(device_registry.async_get(hass).devices)
+    entities = len(entity_registry.async_get(hass).entities)
+    assert await async_migrate_entry(hass, entry)
+    assert contact_dicts(entry) == records
+    assert "phonebook_contacts" not in entry.data
+    identities = tuple(entry.subentries)
+    replace_contacts(hass, entry, records)
+    assert tuple(entry.subentries) == identities
+    assert len(device_registry.async_get(hass).devices) == devices
+    assert len(entity_registry.async_get(hass).entities) == entities
+    replace_contacts(hass, entry, [])
+    assert contact_dicts(entry) == []
+    assert not entry.subentries
+
+
+async def test_native_add_contact_flow_creates_only_a_contact(hass, monkeypatch):
+    from custom_components.voip_stack import phonebook_services
+    from custom_components.voip_stack.contact_config import contact_dicts
+    from homeassistant.helpers import device_registry, entity_registry
+
+    _prepare_integration_dependencies(hass)
+    monkeypatch.setattr(phonebook_services, "_runtime_route_mappings", lambda _: [])
+    entry = MockConfigEntry(domain=DOMAIN, data={}, version=6)
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "contact"), context={"source": "user"},
+    )
+    result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"type": "automation"})
+    assert result["step_id"] == "contact"
+    result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"name": "Prova", "extension": "", "timeout": 30})
+    assert result["type"] == "create_entry"
+    contacts = contact_dicts(entry)
+    assert len(contacts) == 1
+    assert contacts[0]["name"] == "Prova"
+    assert contacts[0]["metadata"]["virtual_endpoint"] == "automation"
+    assert not contacts[0]["extension"]
+    assert not device_registry.async_get(hass).devices
+    assert not entity_registry.async_get(hass).entities
+
+
+async def test_native_cookbook_triggers_and_conditions_validate(hass):
+    import re
+    import yaml
+    from homeassistant.helpers import config_validation as cv
+    from homeassistant.helpers.trigger import async_validate_trigger_config
+    from homeassistant.helpers.condition import async_validate_condition_config
+
+    _prepare_integration_dependencies(hass)
+    text = (Path(__file__).parents[1] / "docs/AUTOMATION_DIALPLAN.md").read_text()
+    counts = {"triggers": 0, "conditions": 0}
+
+    async def validate(value):
+        if isinstance(value, dict):
+            if str(value.get("trigger", "")).startswith("voip_stack."):
+                await async_validate_trigger_config(hass, cv.TRIGGER_SCHEMA([value]))
+                counts["triggers"] += 1
+            if str(value.get("condition", "")).startswith("voip_stack."):
+                await async_validate_condition_config(hass, cv.CONDITION_SCHEMA(value))
+                counts["conditions"] += 1
+            for child in value.values():
+                await validate(child)
+        elif isinstance(value, list):
+            for child in value:
+                await validate(child)
+
+    for block in re.findall(r"```yaml\n(.*?)```", text, re.S):
+        await validate(yaml.safe_load(block))
+    assert counts["triggers"] >= 15
+    assert counts["conditions"] >= 3
 
 
 @pytest.mark.parametrize("device_id", ["spotpear-device", "p4-device"])

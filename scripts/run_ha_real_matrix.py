@@ -18,6 +18,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from typing import Callable
 
 import aiohttp
@@ -777,6 +779,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    endpoint_cases = set(POLICY_CASES) | {"ringing_forward_to_available_phone", "ringing_forward_failure_resumes_source"}
+    if not args.policy_endpoint_id and (not args.only or set(args.only).intersection(endpoint_cases)):
+        raise RuntimeError("phone-policy cases require --policy-endpoint-id before running the matrix")
     if not args.installed_package.is_file():
         raise RuntimeError(
             f"Home Assistant qualification package is missing: {args.installed_package}"
@@ -795,6 +800,14 @@ def main() -> int:
         .replace('<pause milliseconds="100" />', '<pause milliseconds="1500" />'),
         encoding="utf-8",
     )
+    def http_ready() -> bool:
+        try:
+            with urllib.request.urlopen(args.ha_url, timeout=2) as response:
+                return response.status == 200
+        except (OSError, urllib.error.URLError):
+            return False
+
+    wait_for(http_ready, 30, "Home Assistant HTTP readiness before authentication")
     token = lab_token(args.ha_url, args.credentials)
     api = HomeAssistantApi(base_url=args.ha_url, token=token)
 
@@ -975,10 +988,6 @@ def main() -> int:
                 )
 
             policy_requested = not selected or bool(selected.intersection(POLICY_CASES))
-            if policy_requested and not args.policy_endpoint_id:
-                raise RuntimeError(
-                    "phone-policy cases require --policy-endpoint-id"
-                )
             policy_endpoint_id = str(args.policy_endpoint_id or "")
             auto_answer_target = (
                 _phone_policy_target(
@@ -1184,7 +1193,7 @@ def main() -> int:
             )
 
             def ringing_forward_success() -> dict[str, object]:
-                package.select("forward", destination="Casa")
+                package.select("forward", destination=_phone_policy_target(api, endpoint_id=policy_endpoint_id, policy="auto_answer")[2])
                 package.forward("video_sink", on_failure="resume")
                 try:
                     result = run_answered_case(
@@ -1208,7 +1217,7 @@ def main() -> int:
             execute(MatrixCase("ringing_forward_to_available_phone", ringing_forward_success))
 
             def ringing_forward_failure_resume() -> dict[str, object]:
-                package.select("forward", destination="Casa")
+                package.select("forward", destination=_phone_policy_target(api, endpoint_id=policy_endpoint_id, policy="auto_answer")[2])
                 package.forward("missing qualification target", on_failure="resume")
                 try:
                     result = _run_sipp_scenario(

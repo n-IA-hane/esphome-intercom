@@ -216,7 +216,10 @@ def test_qualification_package_uses_public_selection_and_real_ring_delay() -> No
 
     assert "action: voip_stack.select_inbound_destination" in package
     assert "continue_on_error" not in package
-    assert "for:\n          seconds: 1" in package
+    import yaml
+
+    forward = next(item for item in yaml.safe_load(package)["automation"] if item["id"] == "voip_qualification_ringing_forward")
+    assert forward["triggers"][0]["options"]["for"] == {"seconds": 1}
 
 
 def test_runner_rejects_a_stale_installed_automation_package(
@@ -229,7 +232,7 @@ def test_runner_rejects_a_stale_installed_automation_package(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run_ha_real_matrix.py", "--installed-package", str(installed)],
+        ["run_ha_real_matrix.py", "--installed-package", str(installed), "--policy-endpoint-id", "default"],
     )
 
     try:

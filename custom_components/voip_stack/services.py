@@ -82,13 +82,22 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         extra=vol.PREVENT_EXTRA,
     )
     tts_say_schema = vol.Schema({
-        vol.Required("call_id"): SHORT_TEXT,
-        vol.Required("expected_generation"): SEQUENCE,
+        **phone_selector_fields,
+        vol.Optional("call_id", default=""): SHORT_TEXT,
+        vol.Optional("expected_generation"): SEQUENCE,
         vol.Required("tts_entity_id"): cv.entity_id,
         vol.Required("message"): vol.All(cv.string, vol.Length(min=1, max=4096)),
         vol.Optional("language"): SHORT_TEXT,
         vol.Optional("options", default=dict): dict,
         vol.Optional("timeout", default=120): vol.All(vol.Coerce(float), vol.Range(min=1, max=600)),
+    }, extra=vol.PREVENT_EXTRA)
+    dtmf_wait_schema = vol.Schema({
+        **phone_selector_fields,
+        vol.Optional("call_id", default=""): SHORT_TEXT,
+        vol.Optional("expected_generation"): SEQUENCE,
+        vol.Optional("timeout", default=10): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=300)),
+        vol.Optional("max_digits", default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=32)),
+        vol.Optional("terminator", default="#"): vol.In(["", "#", "*"]),
     }, extra=vol.PREVENT_EXTRA)
     sip_forward_schema = vol.Schema(
         {
@@ -108,7 +117,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
     sip_transfer_schema = vol.Schema(
         {
             **phone_selector_fields,
-            vol.Required("call_id"): SHORT_TEXT,
+            vol.Optional("call_id", default=""): SHORT_TEXT,
             vol.Optional("destination", default=""): URI_TEXT,
             vol.Optional("replaces_call_id", default=""): SHORT_TEXT,
         },
@@ -116,7 +125,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
     )
     sip_deadline_schema = vol.Schema(
         {
-            vol.Required("call_id"): SHORT_TEXT,
+            vol.Optional("call_id", default=""): SHORT_TEXT,
             vol.Required("phase"): vol.In(["calling", "ringing"]),
             vol.Required("timeout"): vol.All(
                 vol.Coerce(float), vol.Range(min=0.1, max=3600)
@@ -127,12 +136,12 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         extra=vol.PREVENT_EXTRA,
     )
     sip_cancel_deadline_schema = vol.Schema(
-        {vol.Required("call_id"): SHORT_TEXT},
+        {vol.Optional("call_id", default=""): SHORT_TEXT},
         extra=vol.PREVENT_EXTRA,
     )
     sip_route_schema = vol.Schema(
         {
-            vol.Required("call_id"): SHORT_TEXT,
+            vol.Optional("call_id", default=""): SHORT_TEXT,
             vol.Optional("action", default="default"): vol.In(
                 ["answer_ha", "decline", "busy", "forward", "bridge", "default", "cancel"]
             ),
@@ -259,6 +268,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         # automations remain allowed; authenticated callers must be admins so
         # global event-entity control cannot affect another user's call.
         "tts_say",
+        "wait_for_dtmf",
         "route",
         "select_inbound_destination",
         "set_deadline",
@@ -271,6 +281,9 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
                 await async_require_service_admin(hass, call)
             else:
                 await async_require_service_control(hass, call)
+            from .automation_context import bind_call_action
+
+            call = bind_call_action(call)
             return await handlers[name](call)
 
         return _handle
@@ -287,6 +300,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(DOMAIN, "tts_say", handler_for("tts_say"), schema=tts_say_schema)
+    hass.services.async_register(DOMAIN, "wait_for_dtmf", handler_for("wait_for_dtmf"), schema=dtmf_wait_schema, supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(DOMAIN, "forward", handler_for("forward"), schema=sip_forward_schema)
     hass.services.async_register(
         DOMAIN,

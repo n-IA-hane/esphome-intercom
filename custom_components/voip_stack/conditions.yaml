@@ -1,0 +1,42 @@
+is_call_state:
+  fields:
+    state:
+      required: true
+      selector:
+        select:
+          options:
+          - calling
+          - ringing
+          - remote_ringing
+          - in_call
+          - idle
+is_call_origin:
+  fields:
+    ingress:
+      required: true
+      selector:
+        select:
+          options:
+          - extension
+          - trunk
+          translation_key: call_ingress
+is_phone_available:
+  fields:
+    phone:
+      required: true
+      selector:
+        text: {}
+is_dtmf_result:
+  fields:
+    status:
+      required: true
+      default: received
+      selector:
+        select:
+          options:
+          - received
+          - timeout
+          translation_key: dtmf_result
+    digits:
+      selector:
+        text: {}

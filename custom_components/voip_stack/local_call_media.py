@@ -54,6 +54,10 @@ class LocalCallMedia:
         self.reservation = reservation
         self.release_reservation_on_stop = True
         self.on_complete = on_complete
+        self.on_dtmf = None
+        self._dtmf_sdp = None
+        self._dtmf_decoder = None
+        self._dtmf_events = frozenset()
 
         self.transport: asyncio.DatagramTransport | None = None
         self.closed = asyncio.Event()
@@ -231,6 +235,22 @@ class LocalCallMedia:
             return
         try:
             packet = rtp.parse_packet(data)
+            if self.on_dtmf is not None:
+                if self._dtmf_sdp != self.invite.remote_sdp:
+                    from .core.sdp import offered_dtmf_formats
+                    from .dtmf import RtpDtmfDecoder
+
+                    formats = offered_dtmf_formats(self.invite.remote_sdp)
+                    self._dtmf_sdp = self.invite.remote_sdp
+                    self._dtmf_decoder = RtpDtmfDecoder(formats[0].payload_type) if formats else None
+                    self._dtmf_events = formats[0].events if formats else frozenset()
+                if self._dtmf_decoder is not None and packet.payload_type == self._dtmf_decoder.payload_type:
+                    from .dtmf import telephone_event_code
+
+                    digit = self._dtmf_decoder.decode(data)
+                    if digit and telephone_event_code(digit) in self._dtmf_events:
+                        self.on_dtmf("left", digit, "rtp_event")
+                    return
             if packet.payload_type != self.invite.recv_format.payload_type:
                 self.counters["drop_payload_type"] += 1
                 return

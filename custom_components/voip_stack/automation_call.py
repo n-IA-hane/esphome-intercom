@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
 from .authorization import async_require_service_admin
+from .automation_context import current_execution
+from .browser_playback import BrowserPlayback
 from .call_projection import publish_bridge_projection
 from .endpoint_lifecycle import call_registry
 from .endpoint_session import CleanupStage, EndpointCallSession, TerminationIntent
@@ -18,7 +20,7 @@ from .inbound_answer import async_commit_runtime_answer
 from .local_call_media import LocalCallMedia
 from .media_ports import RtpPortReservation, take_delayed_offer_ports
 from .runtime_data import call_runtime_artifacts
-from .core.sdp import build_answer_directional
+from .core.sdp import build_answer_directional, first_offered_dtmf_format
 from .sip_runtime import send_final_response
 
 if TYPE_CHECKING:
@@ -36,6 +38,7 @@ class AutomationCall:
     contact: RosterEntry
     local_ip: str
     media: LocalCallMedia | None = None
+    playback: BrowserPlayback | None = None
     controller: str = ""
     answered: bool = False
     deadline: asyncio.TimerHandle | None = None
@@ -57,7 +60,8 @@ class AutomationCall:
 
     def claim(self, call: ServiceCall) -> None:
         self.require_current(int(call.data.get("expected_generation", -1)))
-        controller = call.context.id
+        execution = current_execution.get()
+        controller = execution.controller if execution is not None else call.context.id
         if self.controller and self.controller != controller:
             raise ServiceValidationError(
                 "Another automation already controls this call"
@@ -72,6 +76,10 @@ class AutomationCall:
     def arm_deadline(self) -> None:
         self.cancel_deadline()
         if not self.session.live or self.session.owner != "automation":
+            return
+        execution = current_execution.get()
+        if execution is not None and execution.active and self.controller == execution.controller:
+            # The native HA execution owns its waits until completion or cancellation.
             return
         delay = float(self.contact.metadata.get("automation_timeout", 30))
         self.deadline = self.hass.loop.call_later(
@@ -135,17 +143,33 @@ class AutomationCall:
             reservation=reservation,
             on_complete=complete,
         )
+        from .dtmf_events import publish_dtmf_event
+
+        media.on_dtmf = lambda side, digit, transport: publish_dtmf_event(
+            self.hass,
+            call_id=self.session.call_id,
+            dest_call_id="",
+            caller=self.session.caller,
+            callee=self.session.callee,
+            side=side,
+            digit=digit,
+            transport=transport,
+        )
         try:
             await media.start()
             self.require_current()
             registry.attach_relay(self.session.call_id, media)
             self.media = media
+            dtmf = first_offered_dtmf_format(self.invite.remote_sdp)
+            if dtmf is not None:
+                dtmf = replace(dtmf, events=dtmf.events & frozenset(range(16)))
             answer = build_answer_directional(
                 self.local_ip,
                 self.local_ip,
                 reservation.ports[0],
                 self.invite.send_format,
                 self.invite.recv_format,
+                dtmf=dtmf,
                 remote_sdp=self.invite.remote_sdp,
             )
             result = await async_commit_runtime_answer(
@@ -196,47 +220,104 @@ class AutomationCall:
             await media.stop()
             raise
 
-    async def say(self, call: ServiceCall) -> None:
+    async def run_operation(
+        self, call: ServiceCall, operation, *, timeout: float | None
+    ):
+        """Serialize application work under the existing call cleanup owner."""
         self.claim(call)
         if self.lock.locked():
             raise ServiceValidationError("An action is already running on this call")
         async with self.lock:
             self.cancel_deadline()
-
-            async def play() -> None:
-                from homeassistant.components import tts
-
-                await self.answer()
-                self.require_current()
-                assert self.media is not None
-                if not self.media.can_send:
-                    raise ServiceValidationError(
-                        "This caller cannot receive announcement audio"
-                    )
-                options = {
-                    **call.data.get("options", {}),
-                    **self.media._tts_audio_output(),
-                }
-                stream = tts.async_create_stream(
-                    self.hass,
-                    call.data["tts_entity_id"],
-                    call.data.get("language"),
-                    options,
-                )
-                stream.async_set_message(call.data["message"])
-                await self.media.play_pcm_stream(stream.async_stream_result())
-                await self.media.tx_queue.join()
-                self.require_current()
-
-            self.operation = self.session.create_task(play(), name="automation-tts")
+            self.operation = self.session.create_task(
+                operation(), name=f"automation-{call.service}"
+            )
             try:
-                async with asyncio.timeout(float(call.data.get("timeout", 120))):
-                    await self.operation
+                async with asyncio.timeout(timeout):
+                    return await self.operation
             finally:
                 self.operation = None
                 if self.media is not None:
                     self.media.discard_output()
                 self.arm_deadline()
+
+    async def say(self, call: ServiceCall) -> None:
+        async def play() -> None:
+            from homeassistant.components import tts
+
+            await self.answer()
+            self.require_current()
+            if self.playback is not None:
+                await self.playback.wait_ready()
+                self.require_current()
+            assert self.media is not None
+            if not self.media.can_send:
+                raise ServiceValidationError(
+                    "This caller cannot receive announcement audio"
+                )
+            options = {**call.data.get("options", {}), **self.media._tts_audio_output()}
+            stream = tts.async_create_stream(
+                self.hass,
+                call.data["tts_entity_id"],
+                call.data.get("language"),
+                options,
+            )
+            stream.async_set_message(call.data["message"])
+            await self.media.play_pcm_stream(stream.async_stream_result())
+            await self.media.tx_queue.join()
+            self.require_current()
+
+        await self.run_operation(
+            call, play, timeout=float(call.data.get("timeout", 120))
+        )
+
+    async def wait_for_dtmf(self, call: ServiceCall) -> dict:
+        from .websocket_api import SIP_DTMF_EVENT
+        from homeassistant.core import callback
+
+        execution = current_execution.get()
+        if execution is not None:
+            execution.dtmf_result = None
+
+        async def collect():
+            await self.answer()
+            collected = ""
+            completed = self.hass.loop.create_future()
+            maximum = int(call.data.get("max_digits", 1))
+            terminator = str(call.data.get("terminator", "#"))
+
+            @callback
+            def receive(event):
+                nonlocal collected
+                data = event.data
+                if (
+                    data.get("call_id") != self.session.call_id
+                    or data.get("generation") != self.session.generation
+                    or data.get("source_leg") != "caller"
+                    or completed.done()
+                ):
+                    return
+                digit = str(data.get("digit") or "")
+                if len(digit) != 1 or digit not in "0123456789*#ABCD":
+                    return
+                if digit != terminator:
+                    collected += digit
+                if digit == terminator or len(collected) >= maximum:
+                    completed.set_result({"status": "received", "digits": collected})
+
+            remove = self.hass.bus.async_listen(SIP_DTMF_EVENT, receive)
+            try:
+                async with asyncio.timeout(float(call.data.get("timeout", 10))):
+                    return await completed
+            except TimeoutError:
+                return {"status": "timeout", "digits": collected}
+            finally:
+                remove()
+
+        result = await self.run_operation(call, collect, timeout=None)
+        if execution is not None:
+            execution.dtmf_result = result
+        return result
 
     async def forward(self, destination: str, *, on_failure: str = "resume") -> None:
         self.require_current()
@@ -289,16 +370,42 @@ def automation_call(hass, call_id: str) -> AutomationCall | None:
     return call_registry(hass).resource_for(call_id, "automation")
 
 
-async def async_tts_say(call: ServiceCall) -> None:
-    application = automation_call(call.hass, str(call.data["call_id"]))
+async def resolve_application_action(call: ServiceCall):
+    """Use the trigger's call or an explicitly selected phone's active call."""
+    call_id = str(call.data.get("call_id") or "")
+    if not call_id:
+        if not call.data.get("device_id"):
+            raise ServiceValidationError("Select a phone when running this action without a VoIP call trigger")
+        from .runtime_data import require_runtime_data
+
+        runtime = require_runtime_data(call.hass)
+        phone = await runtime.phones.resolve_source(call)
+        endpoint = runtime.endpoints.get(phone.endpoint_id)
+        call_id = endpoint.active_call_id if endpoint is not None else ""
+        application = automation_call(call.hass, call_id)
+        if application is not None:
+            call = ServiceCall(call.hass, call.domain, call.service, {
+                **call.data, "call_id": call_id,
+                "expected_generation": application.session.generation,
+            }, context=call.context, return_response=call.return_response)
+    else:
+        application = automation_call(call.hass, call_id)
     if application is None:
-        raise ServiceValidationError(
-            "The selected call is not handled by an automation"
-        )
+        raise ServiceValidationError("The selected phone has no call handled by an automation")
+    return application, call
+
+
+async def async_tts_say(call: ServiceCall) -> None:
+    application, call = await resolve_application_action(call)
     try:
         await application.say(call)
     except Exception as err:
         raise ServiceValidationError(f"Announcement failed: {err}") from err
+
+
+async def async_wait_for_dtmf(call: ServiceCall) -> dict:
+    application, call = await resolve_application_action(call)
+    return await application.wait_for_dtmf(call)
 
 
 async def async_forward_automation_call(call: ServiceCall) -> bool:
@@ -345,6 +452,7 @@ async def route_automation_call(runtime, invite, decision, registry, source_endp
         decision.entry,
         runtime.local_ip,
         answered=answered,
+        playback=registry.resource_for(invite.call_id, "browser_playback"),
     )
     registry.own_resource(
         invite.call_id,
