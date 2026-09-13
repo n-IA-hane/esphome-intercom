@@ -43,7 +43,7 @@
       },
       "assist": {
         "title": "Sprachassistent-Nebenstelle",
-        "description": "Wählen Sie die SIP-Nebenstelle und die Home Assistant Assist-Pipeline aus, die für Telefonanrufe verwendet werden. VoIP Stack startet das Gespräch mit einer Benutzernachricht wie \"Eingehender SIP-Anruf von Daniele.\" Konfigurieren Sie das Telefonverhalten in den Anweisungen oder dem Eingabeaufforderungsfeld des ausgewählten Gesprächsagenten unter Einstellungen > Geräte & Dienste > Agentenintegration > Konfigurieren. Beispielanweisungen: \"Wenn Sie eine Nachricht erhalten, die mit Eingehender SIP-Anruf von beginnt, behandeln Sie sie als Live-Telefonanruf. Begrüßen Sie den Anrufer einmal, agieren Sie wie eine prägnante Empfangsdame und wiederholen Sie seinen Namen nicht in jeder Antwort.\" Freundliche Stimmung: \"Seien Sie bei SIP-Anrufen fröhlich und informell, bleiben Sie dabei prägnant und hilfsbereit.\" Schreckliche Stimmung: \"Hallo. Es ist mir scheißegal, also fick dich bitte selbst.\"",
+        "description": "Wählen Sie die SIP-Nebenstelle und die Home Assistant Assist-Pipeline aus, die für Telefonanrufe verwendet werden. Wenn erweiterte Anrufdetails aktiviert sind, startet VoIP Stack das Gespräch mit einer Benutzernachricht wie \"Eingehender SIP-Anruf von Daniele.\" Konfigurieren Sie das Telefonverhalten in den Anweisungen oder dem Eingabeaufforderungsfeld des ausgewählten Gesprächsagenten unter Einstellungen > Geräte & Dienste > Agentenintegration > Konfigurieren. Beispielanweisungen: \"Wenn Sie eine Nachricht erhalten, die mit Eingehender SIP-Anruf von beginnt, behandeln Sie sie als Live-Telefonanruf. Begrüßen Sie den Anrufer einmal, agieren Sie wie eine prägnante Empfangsdame und wiederholen Sie seinen Namen nicht in jeder Antwort.\" Freundliche Stimmung: \"Seien Sie bei SIP-Anrufen fröhlich und informell, bleiben Sie dabei prägnant und hilfsbereit.\" Schreckliche Stimmung: \"Hallo. Es ist mir scheißegal, also fick dich bitte selbst.\"",
         "data": {
           "assist_extension": "Sprachassistent-Nebenstelle",
           "assist_pipeline": "Pipeline für Sprachassistenten",
@@ -52,7 +52,7 @@
         "data_description": {
           "assist_extension": "Numerische Nebenstelle mit 1 bis 8 Ziffern, eindeutig für Konten, Kontakte und Gruppen.",
           "assist_pipeline": "Assist-Pipeline für Spracherkennung, Konversation und Text-to-Speech bei Telefonanrufen.",
-          "assist_advanced_call_context": "Hängen Sie Anrufer-ID, Telefonbuchübereinstimmung, Quelle und angerufene Nebenstelle einmal an die erste Benutzernachricht an. Bei diesen Werten handelt es sich um nicht vertrauenswürdige Anrufmetadaten und eine Übereinstimmung im Telefonbuch stellt keine Authentifizierung dar."
+          "assist_advanced_call_context": "Wenn deaktiviert, beginnt Assist direkt zuzuhören, ohne eine einleitende Textnachricht. Wenn aktiviert, werden Anrufername und ID, Telefonbuchzuordnung, Herkunft und angerufene Nebenstelle einmal zu Beginn übermittelt. Diese Anrufdaten sind nicht vertrauenswürdig; eine Telefonbuchzuordnung ist keine Authentifizierung."
         }
       },
       "trunk": {

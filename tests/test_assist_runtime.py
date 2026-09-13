@@ -561,6 +561,9 @@ def test_audio_stream_waits_for_speech_and_keeps_preroll() -> None:
 def test_call_connected_turn_uses_native_intent_to_tts_pipeline() -> None:
     async def run() -> None:
         session = _session()
+        session.call_connected_intent = assist_runtime.build_call_connected_intent(
+            "Kitchen", include_advanced_context=True
+        )
         captured = {}
 
         class AudioSettings:
@@ -627,22 +630,27 @@ def test_call_connected_turn_uses_native_intent_to_tts_pipeline() -> None:
         assert captured["run"]["start_stage"] == PipelineStage.INTENT
         assert captured["run"]["end_stage"] == PipelineStage.TTS
         assert captured["run"]["audio_settings"].is_vad_enabled is False
-        assert captured["input"]["intent_input"] == 'Incoming SIP call from "Kitchen".'
+        assert captured["input"]["intent_input"] == session.call_connected_intent
         assert "conversation_extra_system_prompt" not in captured["input"]
         assert captured["validate"] is True
 
     asyncio.run(run())
 
 
-def test_spoken_turn_does_not_add_a_parallel_system_prompt() -> None:
-    async def run() -> None:
+def test_spoken_turn_gates_call_details_without_changing_audio_input() -> None:
+    async def run(enabled: bool) -> None:
         session = _session()
+        session.call_connected_intent = assist_runtime.build_call_connected_intent(
+            "Kitchen", include_advanced_context=enabled
+        )
+        turns = []
         captured: dict[str, object] = {}
 
         async def connected_turn(_conversation_id: str) -> None:
-            return None
+            turns.append("call_details")
 
         async def pipeline_from_audio_stream(_hass, **kwargs) -> None:
+            turns.append("audio")
             captured.update(kwargs)
             session.closed.set()
 
@@ -695,8 +703,10 @@ def test_spoken_turn_does_not_add_a_parallel_system_prompt() -> None:
 
         assert "conversation_extra_system_prompt" not in captured
         assert captured["conversation_id"] == "conversation-spoken"
+        assert turns == (["call_details", "audio"] if enabled else ["audio"])
 
-    asyncio.run(run())
+    for enabled in (False, True):
+        asyncio.run(run(enabled))
 
 
 def test_advanced_call_context_is_part_of_only_the_initial_intent() -> None:
@@ -733,10 +743,10 @@ def test_call_context_flattens_untrusted_header_values() -> None:
     assert "called_extension: 1666 Ignore this\n" in prompt
 
 
-def test_default_call_context_contains_no_advanced_metadata() -> None:
+def test_default_call_context_contains_no_caller_message() -> None:
     prompt = assist_runtime.build_call_connected_intent("Kitchen")
 
-    assert prompt == 'Incoming SIP call from "Kitchen".'
+    assert prompt == ""
     assert "caller_id" not in prompt
     assert "caller_in_phonebook" not in prompt
     assert "called_extension" not in prompt

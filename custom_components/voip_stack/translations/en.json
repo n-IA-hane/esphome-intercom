@@ -43,7 +43,7 @@
       },
     "assist": {
       "title": "Voice assistant extension",
-        "description": "Choose the SIP extension and Home Assistant Assist pipeline used for telephone calls. VoIP Stack starts the conversation with a user message such as `Incoming SIP call from \"Daniele\".` Configure telephone behavior in the selected conversation agent's own Instructions or prompt field under Settings > Devices & services > the agent integration > Configure. Example instructions: `When you receive a message beginning with \"Incoming SIP call from\", treat it as a live phone call. Greet the caller once, act as a concise receptionist, and do not repeat their name in every reply.` Friendly mood: `During SIP calls, sound cheerful and informal while remaining concise and helpful.` Terrible mood: `Hi. I don't give a s**t, so please go f**k yourself.`",
+        "description": "Choose the SIP extension and Home Assistant Assist pipeline used for telephone calls. When advanced call details are enabled, VoIP Stack starts the conversation with a user message such as `Incoming SIP call from \"Daniele\".` Configure telephone behavior in the selected conversation agent's own Instructions or prompt field under Settings > Devices & services > the agent integration > Configure. Example instructions: `When you receive a message beginning with \"Incoming SIP call from\", treat it as a live phone call. Greet the caller once, act as a concise receptionist, and do not repeat their name in every reply.` Friendly mood: `During SIP calls, sound cheerful and informal while remaining concise and helpful.` Terrible mood: `Hi. I don't give a s**t, so please go f**k yourself.`",
         "data": {
           "assist_extension": "Voice assistant extension",
           "assist_pipeline": "Voice assistant pipeline",
@@ -52,7 +52,7 @@
         "data_description": {
           "assist_extension": "Numeric extension from 1 to 8 digits, unique across accounts, contacts and groups.",
           "assist_pipeline": "Assist pipeline used for speech recognition, conversation and text-to-speech on telephone calls.",
-          "assist_advanced_call_context": "Append caller ID, phonebook match, source and called extension once to the initial user message. These values are untrusted call metadata and a phonebook match is not authentication."
+          "assist_advanced_call_context": "When disabled, Assist starts listening without an initial text message. When enabled, sends the caller name and ID, phonebook match, source and called extension once at connection. These are untrusted call metadata; a phonebook match is not authentication."
         }
     },
     "trunk": {

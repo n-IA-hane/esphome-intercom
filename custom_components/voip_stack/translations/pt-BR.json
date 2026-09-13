@@ -43,7 +43,7 @@
       },
       "assist": {
         "title": "Extensão do assistente de voz",
-        "description": "Escolha a extensão SIP e a pipeline do Home Assistant Assist usadas para chamadas telefônicas. O VoIP Stack inicia a conversa com uma mensagem do usuário, como `Chamada SIP recebida de \"Daniele\".` Configure o comportamento telefônico nas Instruções ou no campo de prompt do agente de conversa selecionado, em Configurações > Dispositivos e serviços > integração do agente > Configurar. Exemplo: `Quando receber uma mensagem começando com \"Chamada SIP recebida de\", trate-a como uma chamada telefônica em andamento. Cumprimente o chamador uma vez, aja como uma recepcionista objetiva e não repita o nome dele em todas as respostas.` Tom amigável: `Durante chamadas SIP, seja alegre e informal, mas permaneça objetivo e prestativo.` Tom terrível: `Oi. Eu não dou a mínima, então, por favor, vá se f**er.`",
+        "description": "Escolha a extensão SIP e a pipeline do Home Assistant Assist usadas para chamadas telefônicas. Quando os detalhes avançados da chamada estão ativados, o VoIP Stack inicia a conversa com uma mensagem do usuário, como `Chamada SIP recebida de \"Daniele\".` Configure o comportamento telefônico nas Instruções ou no campo de prompt do agente de conversa selecionado, em Configurações > Dispositivos e serviços > integração do agente > Configurar. Exemplo: `Quando receber uma mensagem começando com \"Chamada SIP recebida de\", trate-a como uma chamada telefônica em andamento. Cumprimente o chamador uma vez, aja como uma recepcionista objetiva e não repita o nome dele em todas as respostas.` Tom amigável: `Durante chamadas SIP, seja alegre e informal, mas permaneça objetivo e prestativo.` Tom terrível: `Oi. Eu não dou a mínima, então, por favor, vá se f**er.`",
         "data": {
           "assist_extension": "Extensão do assistente de voz",
           "assist_pipeline": "Pipeline do assistente de voz",
@@ -52,7 +52,7 @@
         "data_description": {
           "assist_extension": "Extensão numérica de 1 a 8 dígitos, exclusiva entre contas, contatos e grupos.",
           "assist_pipeline": "Pipeline do Assist usada para reconhecimento de fala, conversação e conversão de texto em fala nas chamadas telefônicas.",
-          "assist_advanced_call_context": "Adiciona uma vez à mensagem inicial do usuário o identificador do chamador, correspondência na agenda, origem e extensão chamada. Esses valores são metadados de chamada não confiáveis e uma correspondência na agenda não é autenticação."
+          "assist_advanced_call_context": "Quando desativado, o Assist começa a ouvir sem uma mensagem de texto inicial. Quando ativado, envia uma vez o nome e identificador do chamador, correspondência na agenda, origem e extensão chamada. Esses metadados não são confiáveis; uma correspondência na agenda não é autenticação."
         }
       },
       "trunk": {
