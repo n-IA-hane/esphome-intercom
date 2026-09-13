@@ -1,2 +1,6 @@
 -r requirements-test.txt
 pytest-homeassistant-custom-component==0.13.365
+
+# Dependencies of the HA TTS modules exercised directly by the suite.
+mutagen==1.48.1
+ha-ffmpeg==3.2.2
