@@ -1088,6 +1088,7 @@ async def async_forward_existing_call(
                     ),
                     force_common_audio=bridge_to_trunk,
                     reuse_registered_flow=not bridge_to_trunk,
+                    use_trunk_flow=bridge_to_trunk,
                     allow_video=forward_video_enabled,
                 ),
             )

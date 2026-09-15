@@ -726,20 +726,10 @@ async def async_originate_browser_call(
 
     client.on_media_update = _prepare_softphone_media_update
     if use_trunk and trunk is not None:
-        open_dialog = getattr(trunk, "open_outbound_dialog", None)
-        if callable(open_dialog):
-            reused = open_dialog(client.dialog_ids.call_id)
-            if reused is not None:
-                send, responses = reused
-                client.use_reused_signaling_flow(
-                    send=send,
-                    responses=responses,
-                    close=lambda call_id=client.dialog_ids.call_id: trunk.close_outbound_dialog(call_id),
-                )
-                udp_port = getattr(trunk, "_udp_local_port", None)
-                if udp_port:
-                    client.local_sip_port = int(udp_port)
-                _LOGGER.info("SIP trunk registered UDP flow reused for outbound call")
+        from .trunk_signaling import reuse_registered_trunk_flow
+
+        if reuse_registered_trunk_flow(trunk, client):
+            _LOGGER.info("SIP trunk registered UDP flow reused for outbound call")
     else:
         _enable_reused_sip_tcp_connection(
             hass,

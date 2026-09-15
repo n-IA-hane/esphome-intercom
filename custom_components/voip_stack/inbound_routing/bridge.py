@@ -58,7 +58,8 @@ from ..outbound_bridge_commit import (
 )
 from ..phone_endpoint import EndpointKind
 from ..peer import sip_uri_for_peer
-from ..runtime_data import call_runtime_artifacts
+from ..runtime_data import call_runtime_artifacts, sip_trunk
+from ..trunk_signaling import reuse_registered_trunk_flow
 from ..core.sip import parse_sip_uri, sip_default_port, sip_endpoints_equal, sip_uri_targets_listener
 from ..sip_bridge import (
     build_pending_invite_video_relay,
@@ -345,7 +346,9 @@ async def route_sip_bridge(
         generic_video_relay=bool(video_bridge_ports),
         allow_video_transcoding=video_transcoding_enabled,
     )
-    if not bridge_to_trunk:
+    if bridge_to_trunk:
+        reuse_registered_trunk_flow(sip_trunk(hass), client)
+    else:
         runtime.enable_reused_sip_tcp_connection(
             hass,
             client,

@@ -175,6 +175,10 @@ def test_trunk_policy_uses_external_ports_and_common_builder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dialer, created, reused = _dialer(monkeypatch)
+    trunk = object()
+    bind_trunk = Mock(return_value=True)
+    monkeypatch.setattr(endpoint_dialing, "sip_trunk", lambda _hass: trunk)
+    monkeypatch.setattr(endpoint_dialing, "reuse_registered_trunk_flow", bind_trunk)
     reservation = SimpleNamespace(ports=(12000, 12002), release=Mock())
     policy = endpoint_dialing.OutboundLegPolicy(
         local_uri_user="426",
@@ -184,6 +188,7 @@ def test_trunk_policy_uses_external_ports_and_common_builder(
         outbound_proxy="sip:proxy.example.test",
         force_common_audio=True,
         reuse_registered_flow=False,
+        use_trunk_flow=True,
         allow_video=False,
     )
 
@@ -201,6 +206,7 @@ def test_trunk_policy_uses_external_ports_and_common_builder(
 
     assert leg is not None
     assert leg.ports is reservation
+    bind_trunk.assert_called_once_with(trunk, leg.client)
     assert created["local_rtp_port"] == 12002
     assert created["local_uri_user"] == "426"
     assert created["auth_username"] == "auth-426"

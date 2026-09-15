@@ -1,4 +1,4 @@
-# 2026.9.3-dev: Automations as dialplan
+# 2026.9.3-dev: automations as dialplan
 
 This preview adds telephone services controlled by Home Assistant automations and fixes the unwanted initial response when calling Assist. **2026.9.2 remains the stable release.**
 
@@ -102,6 +102,17 @@ Phonebook names must be unique, including browser phones and Assist pipelines,
 even if their extensions differ. Conflicting names now produce an error log and
 a persistent Home Assistant notification identifying the destinations to rename.
 The notification clears once the conflict is corrected.
+
+## Consistent external calls from SIP phones
+
+Registered SIP phones and automation forwards now reuse the trunk's registered
+UDP connection in the same way as the dashboard phone. This addresses a path
+difference that can cause a provider to reject a SIP phone's external call while
+accepting calls from the card. Confirmation from affected providers is welcome.
+
+The cookbook also explains how to combine a greeting, keypad input and choices
+into an IVR, including no-input handling and forwarding to a real voicemail
+service when one is available.
 
 ## Install and test
 

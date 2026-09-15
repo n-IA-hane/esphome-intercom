@@ -31,7 +31,8 @@ from .outbound_attempts import BrowserLeg, OutboundLeg
 from .pbx_routing import roster_entry_for_target
 from .phone_endpoint import EndpointKind
 from .peer import sip_uri_for_peer
-from .runtime_data import preferred_browser_phone
+from .runtime_data import preferred_browser_phone, sip_trunk
+from .trunk_signaling import reuse_registered_trunk_flow
 from .core.sip import parse_sip_uri
 from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
 from .sip_client import SipCallClient
@@ -56,6 +57,7 @@ class OutboundLegPolicy:
     outbound_proxy: str = ""
     force_common_audio: bool = False
     reuse_registered_flow: bool = True
+    use_trunk_flow: bool = False
     allow_video: bool = True
 
 
@@ -314,7 +316,9 @@ class EndpointDialer:
                     self.config.get(CONF_VIDEO_TRANSCODING, False)
                 ),
             )
-            if policy.reuse_registered_flow:
+            if policy.use_trunk_flow:
+                reuse_registered_trunk_flow(sip_trunk(self.hass), client)
+            elif policy.reuse_registered_flow:
                 self.enable_reused_tcp_connection(
                     self.hass,
                     client,

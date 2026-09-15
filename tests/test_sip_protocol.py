@@ -32,6 +32,35 @@ from .voip_phase1_support import (
 
 
 class SipProtocolBugFixTest(unittest.TestCase):
+    def test_trunk_flow_binding_releases_only_original_dialog(self) -> None:
+        module = _load_intercom_module("trunk_signaling")
+        closed = []
+        attached = {}
+        trunk = types.SimpleNamespace(
+            open_outbound_dialog=lambda call_id: (lambda raw: True, object()),
+            close_outbound_dialog=closed.append,
+            _udp_local_port=35000,
+        )
+        client = types.SimpleNamespace(
+            dialog_ids=types.SimpleNamespace(call_id="original"),
+            local_sip_port=5060,
+            use_reused_signaling_flow=lambda **kwargs: attached.update(kwargs),
+        )
+        self.assertTrue(module.reuse_registered_trunk_flow(trunk, client))
+        self.assertEqual(client.local_sip_port, 35000)
+        client.dialog_ids.call_id = "new-call"
+        attached["close"]()
+        self.assertEqual(closed, ["original"])
+
+    def test_unavailable_trunk_flow_leaves_client_transport_unchanged(self) -> None:
+        module = _load_intercom_module("trunk_signaling")
+        client = types.SimpleNamespace(
+            dialog_ids=types.SimpleNamespace(call_id="call"), local_sip_port=5060,
+        )
+        for trunk in (None, types.SimpleNamespace(open_outbound_dialog=lambda _: None)):
+            self.assertFalse(module.reuse_registered_trunk_flow(trunk, client))
+            self.assertEqual(client.local_sip_port, 5060)
+
     def test_uri_default_port_follows_sip_scheme(self) -> None:
         self.assertEqual(sip.sip_default_port(sip.parse_sip_uri("sip:peer@example.test")), 5060)
         self.assertEqual(sip.sip_default_port(sip.parse_sip_uri("sips:peer@example.test")), 5061)

@@ -1259,6 +1259,26 @@ who never presses a key must eventually reach the fallback or finish the call.
 Digits entered before the input wait begins are not collected. The `#` key ends
 input by default; it is not included in the returned digits.
 
+### Use the menu for incoming trunk calls
+
+Keep the greeting, **Wait for keypad input** and **Choose** in the same
+automation. The wait stores the caller's selection for the following conditions;
+you do not need a separate DTMF event automation or a Call-ID template.
+
+For calls from your provider, first select `Welcome` with the native
+`voip_stack.route_requested` trigger filtered to `ingress: trunk` and the
+`voip_stack.select_inbound_destination` action. The menu above then runs when
+that call reaches Welcome. Each choice can forward to a phonebook name, an
+extension or a ring group. For example, use destination `"1"` if that is your
+home ring group's actual name or extension.
+
+**Leaving a message needs a voicemail destination.** To offer that choice,
+forward it to a configured voicemail service on your PBX or provider. Playing
+the greeting already answers the call; ending it afterwards is a hangup, not
+an unanswered busy rejection that can reliably trigger provider voicemail.
+VoIP Stack's menu does not itself record voicemail. If you only want to end
+the call, play an appropriate message and let that automation branch finish.
+
 ## Keep evenings quiet
 
 Choose a smaller ring group at night using an ordinary HA time condition:
