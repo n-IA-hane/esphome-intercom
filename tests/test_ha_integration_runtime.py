@@ -26,6 +26,73 @@ INTEGRATION_DEPENDENCIES = {
 pytestmark = pytest.mark.ha
 
 
+async def test_phonebook_duplicate_name_notification(hass, caplog):
+    from homeassistant.components import persistent_notification as notifications
+    from homeassistant.core import callback
+    from custom_components.voip_stack.roster import RosterEntry
+    from custom_components.voip_stack.sensor import VoipPhonebookSensor
+
+    updates = []
+
+    @callback
+    def updated(kind, items):
+        updates.append((kind, items))
+
+    unsubscribe = notifications.async_register_callback(hass, updated)
+    phone = RosterEntry("browser-a", "Casa", extension="100",
+                        metadata={"endpoint_kind": "browser"})
+    assist = RosterEntry("assist-a", "CASA", extension="777",
+                         metadata={"virtual_endpoint": "assist_pipeline"})
+    sensor = VoipPhonebookSensor(hass)
+    try:
+        sensor._report_name_conflicts([phone, assist])
+        await hass.async_block_till_done()
+        assert len(updates) == 1
+        notification = updates[0][1]["voip_stack_duplicate_phonebook_names"]
+        assert "browser phone, extension 100" in notification["message"]
+        assert "Assist pipeline, extension 777" in notification["message"]
+        assert "must be unique" in notification["message"]
+        assert "Duplicate VoIP phonebook names" in caplog.text
+
+        sensor._report_name_conflicts([assist, phone])
+        await hass.async_block_till_done()
+        assert len(updates) == 1
+        assert caplog.text.count("Duplicate VoIP phonebook names") == 1
+
+        # Reloading after a rename must also clear the previous notification.
+        renamed = RosterEntry("assist-a", "Assistant", extension="777")
+        VoipPhonebookSensor(hass)._report_name_conflicts([phone, renamed])
+        await hass.async_block_till_done()
+        assert updates[-1][0] is notifications.UpdateType.REMOVED
+    finally:
+        unsubscribe()
+
+
+async def test_phonebook_unique_names_do_not_notify(hass):
+    from homeassistant.components import persistent_notification as notifications
+    from homeassistant.core import callback
+    from custom_components.voip_stack.roster import RosterEntry
+    from custom_components.voip_stack.sensor import VoipPhonebookSensor
+
+    updates = []
+
+    @callback
+    def updated(kind, items):
+        updates.append(kind)
+
+    unsubscribe = notifications.async_register_callback(hass, updated)
+    try:
+        VoipPhonebookSensor(hass)._report_name_conflicts([
+            RosterEntry("a", "Home", metadata={"ring_group": "All rooms"}),
+            RosterEntry("b", "Kitchen", metadata={"ring_group": "All rooms"}),
+            RosterEntry("c", "Home", enabled=False),
+        ])
+        await hass.async_block_till_done()
+        assert updates == []
+    finally:
+        unsubscribe()
+
+
 def _prepare_integration_dependencies(hass: HomeAssistant) -> None:
     """Provide dependency surfaces without starting unrelated HA services."""
     hass.config.components.update(INTEGRATION_DEPENDENCIES)

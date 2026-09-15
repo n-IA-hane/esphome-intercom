@@ -96,6 +96,13 @@ This update does not require new ESP firmware.
 
 This update includes real browser and SIP call checks, audio recordings and repeated keypad tests. ESP firmware is unchanged; device and provider feedback is still welcome.
 
+## Clear warnings for duplicate phonebook names
+
+Phonebook names must be unique, including browser phones and Assist pipelines,
+even if their extensions differ. Conflicting names now produce an error log and
+a persistent Home Assistant notification identifying the destinations to rename.
+The notification clears once the conflict is corrected.
+
 ## Install and test
 
 1. Open VoIP Stack in HACS, enable prerelease versions if necessary, choose **Redownload**, and select **2026.9.3-dev**.

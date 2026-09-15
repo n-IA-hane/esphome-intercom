@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import logging
 
+from homeassistant.components import persistent_notification
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
@@ -260,6 +261,7 @@ class VoipPhonebookSensor(SensorEntity):
         self._phonebook = ""
         self._roster_json = '{"version":2,"capabilities":["extension","ring_group","conference_group","conference_ring"],"contacts":[]}'
         self._count = 0
+        self._name_conflicts: tuple[str, ...] | None = None
         self._tracked_entities: set[str] = set()
         self._known_esp_peers: dict[str, Peer] = {}
         self._online_esp_services: dict[str, str] = {}
@@ -401,6 +403,7 @@ class VoipPhonebookSensor(SensorEntity):
         roster_entries = roster_from_peers(
             self.hass, peers, registered_roster_entries(self.hass)
         )
+        self._report_name_conflicts(roster_entries)
         phonebook = ",".join(entries)
         roster_json = dump_roster_json(roster_entries)
         visible_count = len(roster_entries)
@@ -431,6 +434,57 @@ class VoipPhonebookSensor(SensorEntity):
                 roster_json,
                 target_services=services,
             )
+
+    @callback
+    def _report_name_conflicts(self, entries) -> None:
+        """Report ambiguous phonebook names once, until the conflict changes."""
+        from .roster import normalize_roster_key
+
+        names = {}
+        for entry in entries:
+            if not entry.enabled:
+                continue
+            key = normalize_roster_key(entry.display_name)
+            if key:
+                names.setdefault(key, []).append(entry)
+        conflicts = []
+        for matches in names.values():
+            if len(matches) < 2:
+                continue
+            destinations = []
+            for entry in matches:
+                metadata = entry.metadata or {}
+                kind = (
+                    "Assist pipeline" if metadata.get("virtual_endpoint") == "assist_pipeline"
+                    else "browser phone" if metadata.get("endpoint_kind") == "browser"
+                    else "group" if metadata.get("group_type")
+                    else "phone/contact"
+                )
+                extension = f", extension {entry.extension}" if entry.extension else ""
+                destinations.append(f"{entry.display_name} ({kind}{extension})")
+            conflicts.append("; ".join(sorted(destinations)))
+        current = tuple(sorted(conflicts))
+        if current == self._name_conflicts:
+            return
+        self._name_conflicts = current
+        notification_id = "voip_stack_duplicate_phonebook_names"
+        if not current:
+            persistent_notification.async_dismiss(self.hass, notification_id)
+            return
+        message = (
+            "Phonebook names must be unique, including browser phones and Assist pipelines. "
+            "Rename one destination in each conflicting pair:\n\n"
+            + "\n".join(f"- {conflict}" for conflict in current)
+            + "\n\nUse the VoIP Stack phone settings, the contact editor, or the Assist "
+            "pipeline settings to change the corresponding name. Different extension "
+            "numbers do not make duplicate names valid."
+        )
+        _LOGGER.error("Duplicate VoIP phonebook names: %s. Rename the conflicting destinations.",
+                      " | ".join(current))
+        persistent_notification.async_create(
+            self.hass, message, title="VoIP Stack: duplicate phonebook names",
+            notification_id=notification_id,
+        )
 
     async def async_update(self) -> None:
         await self._schedule_and_wait_recompute()

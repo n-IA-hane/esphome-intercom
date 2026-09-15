@@ -340,6 +340,11 @@ A name is the contact identity. An `extension` is an internal alias for that
 same destination; a `number` is normally routed through the trunk. The resolver
 can also handle canonical SIP URIs.
 
+Phonebook names must be unique across phones, contacts and Assist pipelines,
+even when their extensions differ. Duplicate names produce an error log and
+a persistent Home Assistant notification identifying the conflicting entries.
+Rename one destination; the notification clears when the phonebook updates.
+
 SIP routing identity and presentation identity remain separate. ESPHome node
 names and account usernames provide stable URI users, while friendly names are
 sent as standard SIP display names with spaces preserved. Incoming caller text
