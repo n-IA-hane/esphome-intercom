@@ -145,6 +145,10 @@ async def test_transfer_service_returns_the_refer_subscription_result(
     transfer = AsyncMock(
         return_value=SipTransferResult(True, 200, "completed")
     )
+    monkeypatch.setattr(
+        voip_stack, "_call_registry",
+        lambda _hass: SimpleNamespace(get_session=lambda _call_id: None),
+    )
     monkeypatch.setattr(call_transfer, "async_transfer_call", transfer)
 
     response = await hass.services.async_call(

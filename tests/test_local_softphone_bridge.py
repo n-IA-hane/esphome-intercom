@@ -67,6 +67,7 @@ def _load_runtime_module():
     call_projection = types.ModuleType(f"{package_name}.call_projection")
 
     call_projection.publish_phone_projection = lambda *_args, **_kwargs: True
+    call_projection.observe_phone_leg_projection = lambda *_args, **_kwargs: True
     call_projection.stage_phone_termination_projection = (
         lambda *_args, **_kwargs: None
     )
@@ -170,6 +171,39 @@ class LocalSoftphoneBridgeTest(unittest.TestCase):
         call = self.bridge.start_call("office", "kitchen")
         self.assertTrue(call.call_id.startswith("local-"))
         self.assertEqual(self.bridge.require_call(call.call_id), call)
+
+    def test_redirect_preserves_caller_identity_and_media_lease(self) -> None:
+        self.start(caller_owner_id="caller-card", request_video=True)
+        lease = self.bridge.acquire_media("call-1", "office", "caller-card")
+        moved = self.bridge.redirect_ringing("call-1", "hall")
+        self.assertEqual(moved.call_id, "call-1")
+        self.assertEqual(moved.callee_endpoint_id, "hall")
+        self.assertEqual(self.registry.require("kitchen").active_call_id, "")
+        self.assertEqual(self.registry.require("hall").active_call_id, "call-1")
+        self.assertEqual(self.bridge.acquire_media("call-1", "office", "caller-card"), lease)
+        self.assertFalse(moved.video_enabled)
+        self.bridge.answer("call-1", "hall", "hall-card")
+        with self.assertRaises(bridge_module.LocalCallStateError):
+            self.bridge.redirect_ringing("call-1", "kitchen")
+
+    def test_redirect_to_busy_endpoint_preserves_original_call(self) -> None:
+        original = self.start()
+        self.registry.claim_call("hall", "other-call")
+        with self.assertRaises(endpoint_registry.EndpointBusyError):
+            self.bridge.redirect_ringing("call-1", "hall")
+        self.assertEqual(self.bridge.require_call("call-1"), original)
+        self.assertEqual(self.registry.require("kitchen").active_call_id, "call-1")
+
+    def test_detach_ringing_preserves_caller_claim_without_terminal_event(self) -> None:
+        self.start(caller_owner_id="caller-card")
+        events = []
+        self.bridge.subscribe(events.append)
+        snapshot = self.bridge.detach_ringing("call-1")
+        self.assertEqual(snapshot.caller_media_owner_id, "caller-card")
+        self.assertIsNone(self.bridge.get_call("call-1"))
+        self.assertEqual(self.registry.require("office").active_call_id, "call-1")
+        self.assertEqual(self.registry.require("kitchen").active_call_id, "")
+        self.assertEqual(events, [])
 
     def test_start_rejects_self_call_and_duplicate_logical_call_id(self) -> None:
         with self.assertRaises(bridge_module.LocalBridgeError):

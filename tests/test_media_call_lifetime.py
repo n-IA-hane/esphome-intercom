@@ -126,7 +126,7 @@ def test_listener_ignores_other_calls_and_wakes_on_terminal_state(
     assert not ended.is_set()
     bus.listener(SimpleNamespace(data={"call_id": "call-1", "state": "in_call"}))
     assert not ended.is_set()
-    bus.listener(SimpleNamespace(data={"call_id": "call-1", "state": "idle"}))
+    bus.listener(SimpleNamespace(data={"call_id": "call-1", "state": "idle", "endpoint_id": "default"}))
 
     assert ended.is_set()
     remove()
@@ -141,3 +141,19 @@ def test_listener_is_already_set_for_stale_projection(media_call_lifetime) -> No
     )
 
     assert ended.is_set()
+
+
+def test_other_group_legs_do_not_end_this_phones_media(media_call_lifetime):
+    hass, _registry, bus = _hass()
+    ended, remove = media_call_lifetime.listen_for_media_call_end(hass, "call-1", "default")
+    for payload in (
+        {"call_id": "call-1", "state": "ringing", "endpoint_id": "other"},
+        {"call_id": "call-1", "state": "cancelled", "endpoint_id": "other"},
+        {"call_id": "call-1", "state": "ringing"},
+    ):
+        bus.listener(SimpleNamespace(data=payload))
+        assert not ended.is_set()
+    hass.stores["default"]["state"] = "idle"
+    bus.listener(SimpleNamespace(data={"call_id": "call-1", "state": "idle"}))
+    assert ended.is_set()
+    remove()

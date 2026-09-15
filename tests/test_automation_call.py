@@ -474,3 +474,29 @@ async def test_tts_confirms_existing_trunk_early_media(application):
         await registry.request_termination(
             app.session.call_id, TerminationIntent("test_done")
         )
+
+
+async def test_resuming_application_does_not_publish_another_received_call(application, monkeypatch):
+    app, registry, _peer, _released = application
+    events = []
+    monkeypatch.setattr(module, "publish_bridge_projection", lambda _hass, _session, **fields: events.append(fields))
+    try:
+        await app.resume()
+        assert len(events) == 1
+        assert events[0]["event_type"] == "state_changed"
+    finally:
+        await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))
+
+
+async def test_announcement_handoff_keeps_the_same_rtp_sender_state(application):
+    app, registry, _peer, _released = application
+    try:
+        await app.answer()
+        source = app.media.rtp_source
+        provisional = registry.resource_for(app.session.call_id, "preanswered")
+        assert provisional["audio_rtp_source"] is source
+        await app.release_media_for_forward()
+        assert app.media is None
+        assert provisional["audio_rtp_source"] is source
+    finally:
+        await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))

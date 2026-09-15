@@ -32,7 +32,7 @@ def _idle_state() -> dict[str, Any]:
             "browser_tx_ready_latency_ms": -1,
             "mic_input_path": "tests/simulator/audio/mic_input.pcm",
             "mic_input_bytes": 80000,
-            "speaker_output_path": "test_runs/simulator/spotpear-voip-contract_speaker_output.pcm",
+            "speaker_output_path": "test_captures/simulator/spotpear-voip-contract_speaker_output.pcm",
             "speaker_output_bytes": 0,
             "speaker_output_markers": "",
         },
@@ -329,7 +329,7 @@ def serve(socket_path: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--socket", type=Path, default=Path("test_runs/simulator/voip-sim.sock"))
+    parser.add_argument("--socket", type=Path, default=Path("test_captures/simulator/voip-sim.sock"))
     args = parser.parse_args(argv)
     try:
         return serve(args.socket)

@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 import types
 from unittest import mock
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -198,7 +199,7 @@ def test_assist_uses_g722_rtp_clock_instead_of_pcm_sample_count() -> None:
         session.transport = types.SimpleNamespace(
             sendto=lambda packet, _addr: sent.append(packet)
         )
-        session.timestamp = 1000
+        session.rtp_source.timestamp = 1000
 
         task = asyncio.create_task(session._send_loop())
         deadline = asyncio.get_running_loop().time() + 1.0
@@ -522,12 +523,17 @@ def test_audio_stream_waits_for_speech_and_keeps_preroll() -> None:
                 self,
                 *,
                 speech_seconds: float,
-                timeout_seconds: float,
+                timeout_seconds: float = 15.0,
                 before_command_speech_threshold: float,
             ) -> None:
                 assert speech_seconds == 0.2
-                assert timeout_seconds == float("inf")
+                assert timeout_seconds == 15.0
                 assert before_command_speech_threshold == 0.5
+                self.timeout_seconds = timeout_seconds
+                self.in_command = False
+                self._speech_chunks = 0
+
+            def reset(self) -> None:
                 self.in_command = False
                 self._speech_chunks = 0
 
@@ -535,6 +541,8 @@ def test_audio_stream_waits_for_speech_and_keeps_preroll() -> None:
                 if probability > 0.2:
                     self._speech_chunks += 1
                     self.in_command = self._speech_chunks >= 2
+                elif self.in_command:
+                    return False
                 return True
 
         pymicro_vad = types.ModuleType("pymicro_vad")
@@ -553,7 +561,11 @@ def test_audio_stream_waits_for_speech_and_keeps_preroll() -> None:
         assert await anext(stream) == silence
         assert await anext(stream) == speech
         assert session.counters["speech_gate_opens"] == 1
-        await stream.aclose()
+        session.rx_queue.put_nowait(silence)
+        assert await anext(stream) == silence
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+        assert session._accepting_input is False
 
     asyncio.run(run())
 
@@ -656,6 +668,7 @@ def test_spoken_turn_gates_call_details_without_changing_audio_input() -> None:
 
         class AudioSettings:
             def __init__(self, **kwargs) -> None:
+                self.is_vad_enabled = kwargs.get("is_vad_enabled", True)
                 captured["audio_settings"] = kwargs
 
         stt_module = types.ModuleType("homeassistant.components.stt")
@@ -703,6 +716,7 @@ def test_spoken_turn_gates_call_details_without_changing_audio_input() -> None:
 
         assert "conversation_extra_system_prompt" not in captured
         assert captured["conversation_id"] == "conversation-spoken"
+        assert captured["audio_settings"].is_vad_enabled is False
         assert turns == (["call_details", "audio"] if enabled else ["audio"])
 
     for enabled in (False, True):

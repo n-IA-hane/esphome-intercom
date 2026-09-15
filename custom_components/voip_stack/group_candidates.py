@@ -91,7 +91,7 @@ async def async_prepare_group_candidates(
     ring_policy: RingPolicy | None = None,
     source_endpoint_id: str = "",
     group_name: str = "",
-    initial_selection: bool = True,
+    excluded_endpoint_ids: frozenset[str] = frozenset(),
 ) -> None:
     """Populate a bounded set using forwarding or ring-group policy."""
 
@@ -102,14 +102,14 @@ async def async_prepare_group_candidates(
             if ring_policy is not None
             else 0
         )
-        if detailed_preflight and _caller_matches(
+        if _caller_matches(
             invite, member, peers, source_endpoint_id
         ):
             continue
         browser_leg = runtime.browser_leg_for_member(member, peers, roster_entries)
         if browser_leg is not None:
-            if not initial_selection or (
-                detailed_preflight and browser_leg.endpoint_id == source_endpoint_id
+            if browser_leg.endpoint_id in excluded_endpoint_ids or (
+                source_endpoint_id and browser_leg.endpoint_id == source_endpoint_id
             ):
                 continue
             endpoint = (
@@ -158,9 +158,6 @@ async def async_prepare_group_candidates(
                 continue
             result.browser_legs.append(browser_leg)
             continue
-        if not detailed_preflight and _caller_matches(invite, member, peers):
-            continue
-
         logical_endpoint = (
             runtime.logical_endpoint_for_member(member, peers, roster_entries)
             if runtime.logical_endpoint_for_member is not None

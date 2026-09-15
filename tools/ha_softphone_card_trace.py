@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "test_runs"))
+sys.path.insert(0, str(ROOT / "tools"))
 
 
 DEFAULT_URL = os.environ.get(
@@ -109,7 +109,7 @@ def main() -> int:
     parser.add_argument("--seconds", type=float, default=50.0)
     parser.add_argument("--interval", type=float, default=0.1)
     parser.add_argument(
-        "--out", default=str(ROOT / "test_runs" / "ha_softphone_card_trace.json")
+        "--out", default=str(ROOT / "test_captures" / "ha_softphone_card_trace.json")
     )
     parser.add_argument("--screenshots-dir")
     parser.add_argument("--viewport-width", type=int, default=1440)

@@ -81,6 +81,7 @@ async def test_call_cleanup_cancels_its_deadline(hass, deadline_call):
         "call_id": session.call_id, "phase": "ringing", "timeout": 10,
     })
     deadline = registry.resource_for(session.call_id, "deadline")
-    await registry.request_termination(session.call_id, TerminationIntent.bye("local_hangup"))
+    result = await registry.request_termination(session.call_id, TerminationIntent.bye("local_hangup"))
+    assert result.errors == ()
     assert deadline.closed
     assert events == []

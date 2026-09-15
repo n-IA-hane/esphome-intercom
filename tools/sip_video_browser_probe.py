@@ -58,7 +58,7 @@ DEFAULT_DASHBOARD_PATH = os.environ.get(
     "/lovelace/test",
 )
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "test_runs"))
+sys.path.insert(0, str(ROOT / "tools"))
 
 
 class _ProbeComplete(Exception):

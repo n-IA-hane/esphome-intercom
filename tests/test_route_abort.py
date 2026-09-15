@@ -186,3 +186,30 @@ async def test_closed_trunk_cannot_resume(abort_env) -> None:
     )
 
     assert terminate.await_args.args[1].sip_disposition is disposition.BYE
+
+
+@pytest.mark.parametrize("action", ["resume", "cleanup"])
+async def test_route_abort_retains_the_original_local_source(abort_env, monkeypatch, action):
+    route_abort, _, terminate, _, _, _, _ = abort_env
+    bridge = SimpleNamespace(
+        get_call=lambda _id: SimpleNamespace(caller_endpoint_id="caller"),
+        hangup=Mock(),
+    )
+    monkeypatch.setitem(sys.modules, "custom_components.voip_stack.local_softphone_runtime",
+                        SimpleNamespace(local_softphone_bridge=lambda _hass: bridge))
+    session = SimpleNamespace(owner="router", state="connecting", revision=3)
+    registry = _Registry(session=session)
+    resume = Mock()
+    result = await route_abort.async_abort_route(
+        route_abort.RouteAbortContext(
+            SimpleNamespace(), registry, "call-1", transition_resume=True,
+            resume_owner="local_bridge", publish_resume=resume,
+        ),
+        route_abort.RouteAbortIntent("busy", action),
+    )
+    assert result is (action == "resume")
+    assert session.owner == ("local_bridge" if action == "resume" else "router")
+    assert session.state == ("ringing" if action == "resume" else "connecting")
+    bridge.hangup.assert_not_called()
+    terminate.assert_not_awaited()
+    assert resume.call_count == (1 if action == "resume" else 0)

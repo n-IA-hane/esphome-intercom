@@ -302,6 +302,7 @@ class _ActiveDialog(DialogSignalingState):
     update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     session_timer_task: asyncio.Task[None] | None = None
     refer_task: asyncio.Task[None] | None = None
+    refer_subscription: sip_transfer.ReferSubscription | None = None
     termination_task: asyncio.Task[bool] | None = None
     delayed_offer: _PendingDelayedOffer | None = None
     prepared_video_reinvite: tuple[SipInvite, SipInvite, str] | None = None
@@ -696,6 +697,7 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             dialog.invite_2xx.cancel()
             self._cancel_connected_identity(dialog)
             self._cancel_session_timer(dialog)
+            self._cancel_refer(dialog)
         for pending in tuple(self.pending_invites.values()):
             self._cancel_pending_expiry(pending)
         for reliable in tuple(self._reliable_provisionals.values()):
@@ -843,6 +845,9 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
 
     @staticmethod
     def _cancel_refer(dialog: _ActiveDialog) -> None:
+        if dialog.refer_subscription is not None:
+            dialog.refer_subscription.close()
+            dialog.refer_subscription = None
         task = dialog.refer_task
         dialog.refer_task = None
         if task is not None and task is not asyncio.current_task():
@@ -2313,6 +2318,17 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             if not _same_dialog_request(request, existing_dialog, addr):
                 self._send_response(request, addr, 481, "Call/Transaction Does Not Exist", to_tag=existing_dialog.to_tag)
                 return
+            if request.method == "NOTIFY":
+                subscription = existing_dialog.refer_subscription
+                status, reason = (
+                    subscription.notify(request)
+                    if subscription is not None else (489, "Bad Event")
+                )
+                self._send_response(request, addr, status, reason, to_tag=existing_dialog.to_tag)
+                self._remember_dialog_response(existing_dialog, request, addr, status, reason)
+                if status == 200:
+                    existing_dialog.cseq = sip.parse_cseq(request.header("CSeq")).number + 1
+                return
             if request.method == "REFER":
                 await self._handle_dialog_refer(
                     call_id, existing_dialog, request, addr
@@ -3041,6 +3057,42 @@ class SipUdpEndpoint(asyncio.DatagramProtocol):
             response is not None
             and 200 <= int(response.status_code or 0) < 300
         )
+
+    def remote_uri_for_call(self, call_id: str) -> str:
+        dialog = self.active_dialogs.get(call_id)
+        return (
+            dialog.remote_uri or _uri_text_from_header(dialog.request.header("From"))
+            if dialog is not None else ""
+        )
+
+    async def async_refer(
+        self, call_id: str, target: sip_transfer.SipReferTarget, *, timeout: float = 30.0,
+    ) -> sip_transfer.SipTransferResult | None:
+        """Request transfer through the existing owner of an inbound dialog."""
+        dialog = self.active_dialogs.get(call_id)
+        if dialog is None:
+            return None
+        if dialog.refer_subscription is not None:
+            return sip_transfer.SipTransferResult(False, 0, "unavailable")
+        subscription = sip_transfer.ReferSubscription()
+        dialog.refer_subscription = subscription
+        try:
+            response = await self._send_dialog_request(
+                call_id, dialog, "REFER",
+                extra_headers=(("Refer-To", target.as_header()),),
+                timeout=min(timeout, 8.0),
+            )
+            status = int(response.status_code or 0) if response is not None else 0
+            if not 200 <= status < 300:
+                return sip_transfer.SipTransferResult(False, status, "rejected")
+            try:
+                return await asyncio.wait_for(subscription.result, timeout)
+            except TimeoutError:
+                return sip_transfer.SipTransferResult(False, 0, "timeout")
+        finally:
+            subscription.close()
+            if dialog.refer_subscription is subscription:
+                dialog.refer_subscription = None
 
     async def send_dtmf_info(
         self,

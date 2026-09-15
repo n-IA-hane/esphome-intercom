@@ -231,7 +231,7 @@ decision point. Use:
 ```yaml
 - action: voip_stack.select_inbound_destination
   data:
-    destination: RG Casa
+    destination: Home ring group
 ```
 
 Do not use `voip_stack.forward` for that initial decision. `forward` moves an

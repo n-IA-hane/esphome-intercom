@@ -227,6 +227,25 @@ class WebSocketOwnerTest(unittest.IsolatedAsyncioTestCase):
             "available",
         )
 
+    def test_forwarded_call_keeps_source_and_destination_browser_identities(self):
+        bucket = _MediaRuntime()
+        registry = _CallRegistry("receiver-document")
+        registry.sessions["call-1"].metadata.update(
+            endpoint_id="reception", source_endpoint_id="caller",
+            source_media_client_id="caller-document",
+        )
+        for endpoint, client, expected in (
+            ("caller", "caller-document", "available"),
+            ("caller", "receiver-document", "other"),
+            ("reception", "receiver-document", "available"),
+            ("reception", "caller-document", "other"),
+        ):
+            self.assertEqual(media_websocket_owner_status(bucket, registry, "call-1", endpoint, client), expected)
+        OWNER_MODULE._set_call_media_client_id(registry, "call-1", "new-source", "caller")
+        self.assertEqual(registry.sessions["call-1"].metadata["media_client_id"], "receiver-document")
+        self.assertEqual(registry.softphone_media["call-1"]["media_client_id"], "receiver-document")
+        self.assertEqual(registry.sessions["call-1"].metadata["source_media_client_id"], "new-source")
+
     def test_local_bridge_media_status_is_scoped_to_each_endpoint(self) -> None:
         bucket = _MediaRuntime()
         registry = _CallRegistry("caller-document")

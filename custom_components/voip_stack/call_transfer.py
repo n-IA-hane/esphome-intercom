@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from .core import sip, sip_transfer
 from .phone_endpoint import PhoneEndpoint
 from .runtime_data import VoipStackRuntime
+from .roster import find_entry, parse_roster_json
 from .sip_client import SipCallClient, SipTransferResult
 
 
@@ -47,7 +48,7 @@ def _endpoint_user(endpoint: PhoneEndpoint | None, fallback: str) -> str:
 
 def _blind_target(
     runtime: VoipStackRuntime,
-    client: SipCallClient,
+    remote_uri: str,
     destination: str,
 ) -> sip_transfer.SipReferTarget:
     raw = str(destination or "").strip()
@@ -55,17 +56,35 @@ def _blind_target(
         return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(raw)))
     if "@" in raw:
         return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(f"sip:{raw}")))
+    phonebook = getattr(runtime, "phonebook_sensor", None)
+    attributes = phonebook.extra_state_attributes if phonebook is not None else {}
+    roster_json = str((attributes or {}).get("roster_json") or "")
+    entry = find_entry(parse_roster_json(roster_json), raw) if roster_json else None
+    if entry is not None and entry.sip_uri:
+        return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(entry.sip_uri)))
     endpoint = runtime.endpoints.resolve(raw)
-    dialog = client.dialog
-    if dialog is None:
+    if not remote_uri:
         raise sip.SipError("call dialog is unavailable")
-    remote = sip.parse_sip_uri(dialog.remote_uri)
-    user = _endpoint_user(endpoint, raw)
+    remote = sip.parse_sip_uri(remote_uri)
+    user = _endpoint_user(endpoint, entry.number if entry is not None and entry.number else raw)
     if not user:
         raise sip.SipError("transfer destination is empty")
     return sip_transfer.SipReferTarget(
         str(sip.SipUri(user, remote.host, remote.port, remote.params))
     )
+
+
+def _inbound_server(runtime: VoipStackRuntime, call_id: str):
+    if runtime.sip is None:
+        return None, ""
+    server = runtime.sip.component("udp_listener")
+    trunk = runtime.sip.component("trunk")
+    for candidate in (server, getattr(trunk, "inbound_endpoint", None)):
+        if candidate is not None:
+            remote_uri = candidate.remote_uri_for_call(call_id)
+            if remote_uri:
+                return candidate, remote_uri
+    return None, ""
 
 
 def _attended_target(
@@ -91,7 +110,12 @@ async def async_transfer_call(
     """Transfer one established call without creating another lifecycle owner."""
 
     client = _client_for_call(runtime, request.call_id)
-    if client is None or client.dialog is None:
+    server, remote_uri = (
+        (None, client.dialog.remote_uri)
+        if client is not None and client.dialog is not None
+        else _inbound_server(runtime, request.call_id)
+    )
+    if not remote_uri:
         return SipTransferResult(False, 0, "call_not_found")
     if request.replaces_call_id:
         consultation = _client_for_call(runtime, request.replaces_call_id)
@@ -99,7 +123,9 @@ async def async_transfer_call(
             return SipTransferResult(False, 0, "replacement_not_found")
         target = _attended_target(consultation)
     else:
-        target = _blind_target(runtime, client, request.destination)
+        target = _blind_target(runtime, remote_uri, request.destination)
+    if server is not None:
+        return await server.async_refer(request.call_id, target) or SipTransferResult(False, 0, "call_not_found")
     return await client.refer(target)
 
 

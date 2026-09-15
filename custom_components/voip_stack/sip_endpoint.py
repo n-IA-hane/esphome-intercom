@@ -457,6 +457,19 @@ class SipEndpointManager:
             return bool(callable(send) and await send(call_id, digit))
         return False
 
+    def remote_uri_for_call(self, call_id: str) -> str:
+        for endpoint in self._dialog_endpoints():
+            if uri := endpoint.remote_uri_for_call(call_id):
+                return uri
+        return ""
+
+    async def async_refer(self, call_id: str, target):
+        """Delegate REFER to the transport which owns the dialog."""
+        for endpoint in self._dialog_endpoints():
+            if call_id in endpoint.active_dialogs:
+                return await endpoint.async_refer(call_id, target)
+        return None
+
     def _active_dialog_count_for(self, server: object) -> int:
         endpoint = getattr(server, "endpoint", None)
         active = getattr(endpoint, "active_dialogs", None)

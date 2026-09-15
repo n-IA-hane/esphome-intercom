@@ -57,6 +57,19 @@ def listen_for_media_call_end(
         payload = event.data
         if str(payload.get("call_id") or "") != call_id:
             return
+        event_endpoint = str(payload.get("endpoint_id") or "").strip()
+        if event_endpoint and event_endpoint != endpoint_id:
+            return
+        if not event_endpoint and str(payload.get("state") or "").lower() in {
+            "calling", "ringing", "remote_ringing"
+        }:
+            # Aggregate/group events do not describe this phone's media leg.
+            current = _ha_softphone_store(hass, endpoint_id)
+            if (
+                str(current.get("call_id") or "") == call_id
+                and str(current.get("state") or "").lower() in _MEDIA_CALL_STATES
+            ):
+                return
         if str(payload.get("state") or "").lower() not in _MEDIA_CALL_STATES:
             call_ended.set()
 

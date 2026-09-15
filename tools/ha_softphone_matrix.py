@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_CAPTURE_DIR = ROOT / "test_captures"
-sys.path.insert(0, str(ROOT / "test_runs"))
+sys.path.insert(0, str(ROOT / "tools"))
 
 
 HA_BASE = os.environ.get("HA_BASE", "http://127.0.0.1:18123").rstrip("/")
@@ -534,7 +534,7 @@ def dial_browser_inbound() -> BareSip:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--out", default=str(ROOT / "test_runs" / "ha_softphone_matrix.json")
+        "--out", default=str(ROOT / "test_captures" / "ha_softphone_matrix.json")
     )
     parser.add_argument("--only", action="append", default=[])
     args = parser.parse_args()

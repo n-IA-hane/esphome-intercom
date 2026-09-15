@@ -117,6 +117,7 @@ class AnswerTransaction:
         claim: ClaimAnswer,
         status: int = 200,
         reason: str = "OK",
+        response_already_sent: bool = False,
     ) -> AnswerCommitResult:
         """Claim without yielding, transfer resources, then send final response."""
 
@@ -139,7 +140,11 @@ class AnswerTransaction:
         # state claim, resource transfer, and final response.  This makes the
         # sequence atomic relative to asyncio termination callbacks.
         try:
-            claimed = self.session.claim_answer(self.token, claim)
+            claimed = (
+                claim()
+                if response_already_sent and self.session.answer_committed
+                else self.session.claim_answer(self.token, claim)
+            )
         except Exception:
             _LOGGER.exception(
                 "Inbound answer state claim failed call_id=%s",
@@ -174,6 +179,8 @@ class AnswerTransaction:
             await self.session.terminate(TerminationIntent("resource_transfer_failed"))
             return AnswerCommitResult(False, False, "resource_transfer_failed")
         self._finished = True
+        if response_already_sent:
+            return AnswerCommitResult(True, False)
         try:
             response_sent = bool(
                 self._send_final_response(int(status), str(reason), str(answer_sdp))
@@ -201,13 +208,10 @@ async def async_commit_answer(
 ) -> AnswerCommitResult:
     """Commit one answer through the session generation owner."""
 
-    transaction = AnswerTransaction(
-        session,
-        (lambda _status, _reason, _sdp: True)
-        if response_already_sent
-        else send_final_response,
+    transaction = AnswerTransaction(session, send_final_response)
+    return await transaction.commit(
+        answer_sdp, claim=claim, response_already_sent=response_already_sent
     )
-    return await transaction.commit(answer_sdp, claim=claim)
 
 
 async def async_commit_runtime_answer(
@@ -246,12 +250,6 @@ async def async_commit_runtime_answer(
             dest_endpoint_id=dest_endpoint_id,
             media_client_id=media_client_id,
         ) is not None
-
-    if response_already_sent and session.answer_committed:
-        # Application handoff on a confirmed dialog is not another SIP answer.
-        # Keep the generation check and owner transition in one synchronous step.
-        committed = session.live and claim()
-        return AnswerCommitResult(bool(committed), False, "" if committed else "stale_call")
 
     return await async_commit_answer(
         session,

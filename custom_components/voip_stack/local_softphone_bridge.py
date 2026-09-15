@@ -86,6 +86,7 @@ class LocalBridgeEventType(StrEnum):
     """Observable bridge mutations used by state adapters."""
 
     STARTED = "started"
+    REDIRECTED = "redirected"
     ANSWERED = "answered"
     VIDEO_UPDATED = "video_updated"
     MEDIA_LEASE_ACQUIRED = "media_lease_acquired"
@@ -473,9 +474,61 @@ class LocalSoftphoneBridge:
         call = self._calls.get(str(call_id or "").strip())
         return call.snapshot() if call is not None else None
 
+    def redirect_ringing(self, call_id: object, endpoint_id: object) -> LocalCallSnapshot:
+        """Replace an unanswered destination while retaining the caller's lease.
+
+        Claim the new endpoint before releasing the old one. A rejected claim
+        leaves the original call unchanged; no callback observes a partial move.
+        """
+        call = self._require_internal(call_id)
+        if call.callee_state is not LocalCallState.RINGING:
+            raise LocalCallStateError("only an unanswered call can be redirected")
+        target = self._registry.require(endpoint_id)
+        if target.endpoint_id == call.callee_endpoint_id:
+            return call.snapshot()
+        if target.endpoint_id == call.caller_endpoint_id:
+            raise LocalCallStateError("a call cannot be redirected to its caller")
+        media = self._new_endpoint_media(target.endpoint_id)
+        self._registry.claim_call(target.endpoint_id, call.call_id)
+        previous = call.callee_endpoint_id
+        old_media = call.callee_media
+        call.callee_endpoint_id = target.endpoint_id
+        call.callee_media = media
+        call.answer_owner_id = ""
+        call.callee_video_send = False
+        call.video_enabled = bool(
+            call.video_requested
+            and self._registry.require(call.caller_endpoint_id).supports(LocalMediaKind.VIDEO)
+            and target.supports(LocalMediaKind.VIDEO)
+        )
+        call.caller_video_send = bool(call.caller_video_send and call.video_enabled)
+        old_media.clear_queued_media()
+        if old_media.lease is not None:
+            old_media.lease.released.set()
+        self._registry.release_call(previous, call.call_id)
+        snapshot = call.snapshot()
+        self._emit(LocalBridgeEvent(LocalBridgeEventType.REDIRECTED, snapshot, previous))
+        return snapshot
+
     def require_call(self, call_id: object) -> LocalCallSnapshot:
         """Return an active call snapshot or raise a typed error."""
         return self._require_internal(call_id).snapshot()
+
+    def detach_ringing(self, call_id: str) -> LocalCallSnapshot:
+        """Relinquish a pending call while its next owner retains the caller claim."""
+        call = self._require_internal(call_id)
+        if call.callee_state is not LocalCallState.RINGING:
+            raise LocalCallStateError("only an unanswered call can change media owners")
+        snapshot = call.snapshot()
+        self._calls.pop(call_id)
+        call.closed.set()
+        for media in (call.caller_media, call.callee_media):
+            media.clear_queued_media()
+            if media.lease is not None:
+                media.lease.released.set()
+        if self._registry.get(call.callee_endpoint_id) is not None:
+            self._registry.release_call(call.callee_endpoint_id, call_id)
+        return snapshot
 
     def answer(
         self,

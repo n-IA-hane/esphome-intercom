@@ -5660,3 +5660,33 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "ringing")
         self.assertEqual(client.last_sip_status_code, 183)
         self.assertTrue(sent)
+
+
+class ReferSubscriptionTest(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def notification(status, *, event="refer", content_type="message/sipfrag"):
+        return sip.SipMessage(
+            method="NOTIFY",
+            headers=(("Event", event), ("Content-Type", content_type),
+                     ("Subscription-State", "terminated" if status >= 200 else "active")),
+            body=f"SIP/2.0 {status} Result\r\n".encode(),
+        )
+
+    async def test_progress_does_not_finish_and_final_result_is_immutable(self):
+        subscription = sip_transfer.ReferSubscription()
+        self.assertEqual(subscription.notify(self.notification(100)), (200, "OK"))
+        self.assertFalse(subscription.result.done())
+        self.assertEqual(subscription.notify(self.notification(200)), (200, "OK"))
+        expected = sip_transfer.SipTransferResult(True, 200, "completed")
+        self.assertEqual(await subscription.result, expected)
+        subscription.notify(self.notification(486))
+        subscription.close()
+        self.assertEqual(await subscription.result, expected)
+
+    async def test_unrelated_notifications_do_not_complete_transfer(self):
+        subscription = sip_transfer.ReferSubscription()
+        self.assertEqual(subscription.notify(self.notification(200, event="presence"))[0], 489)
+        self.assertEqual(subscription.notify(self.notification(200, content_type="text/plain"))[0], 415)
+        self.assertFalse(subscription.result.done())
+        subscription.close()
+        self.assertEqual(await subscription.result, sip_transfer.SipTransferResult(False, 0, "terminated"))

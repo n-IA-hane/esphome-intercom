@@ -30,7 +30,7 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_CAPTURE_DIR = ROOT / "test_captures"
-sys.path.insert(0, str(ROOT / "test_runs"))
+sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tools"))
 
 
@@ -764,7 +764,7 @@ def trace_types(trace: EventTrace, call_id: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--out", default=str(ROOT / "test_runs" / "inbound_routing_matrix.json")
+        "--out", default=str(ROOT / "test_captures" / "inbound_routing_matrix.json")
     )
     parser.add_argument("--only", action="append", default=[])
     parser.add_argument(

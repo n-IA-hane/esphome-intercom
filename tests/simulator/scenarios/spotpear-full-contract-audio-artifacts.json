@@ -11,7 +11,7 @@
         "audio": {
           "mic_input_path": "tests/simulator/audio/mic_input.pcm",
           "mic_input_bytes": 80000,
-          "speaker_output_path": "test_runs/simulator/spotpear-voip-contract_speaker_output.pcm",
+          "speaker_output_path": "test_captures/simulator/spotpear-voip-contract_speaker_output.pcm",
           "speaker_output_bytes": 0
         }
       }
@@ -33,7 +33,7 @@
     },
     {
       "expect_file": {
-        "path": "test_runs/simulator/spotpear-voip-contract_speaker_output.pcm",
+        "path": "test_captures/simulator/spotpear-voip-contract_speaker_output.pcm",
         "min_bytes": 35,
         "contains": "browser_audio_ready"
       }
@@ -51,7 +51,7 @@
     },
     {
       "expect_file": {
-        "path": "test_runs/simulator/spotpear-voip-contract_speaker_output.pcm",
+        "path": "test_captures/simulator/spotpear-voip-contract_speaker_output.pcm",
         "min_bytes": 61,
         "contains": "inject_pcm"
       }

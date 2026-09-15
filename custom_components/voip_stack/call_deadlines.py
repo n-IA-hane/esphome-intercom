@@ -57,12 +57,15 @@ class CallDeadline:
         if self.handle is not None:
             self.handle.cancel()
             self.handle = None
-        self.registry.release_resource(
-            self.token.call_id,
-            self.name,
-            value=self,
-            generation=self.token.generation,
-        )
+        session = self.registry.get_session(self.token.call_id)
+        # During teardown the session already owns and closes this resource.
+        if session is not None and session.owns(self.token):
+            self.registry.release_resource(
+                self.token.call_id,
+                self.name,
+                value=self,
+                generation=self.token.generation,
+            )
         if self.on_close is not None:
             self.on_close()
 

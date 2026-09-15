@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from homeassistant.core import HomeAssistant, callback
 
 from .call_projection import (
+    observe_phone_leg_projection,
     publish_phone_projection,
     stage_phone_termination_projection,
 )
@@ -250,7 +251,18 @@ def _publish_leg(
 def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
     snapshot = event.call
     registry = call_registry(hass)
-    if event.event_type is LocalBridgeEventType.STARTED:
+    if event.event_type is LocalBridgeEventType.REDIRECTED:
+        session = registry.get_session(snapshot.call_id)
+        if session is None:
+            return
+        observe_phone_leg_projection(
+            hass, registry, session, event.endpoint_id, "idle",
+            leg_id=f"local:{event.endpoint_id}", role="local_phone",
+            peer_name=_name(_endpoint(hass, snapshot.caller_endpoint_id), snapshot.caller_endpoint_id),
+            direction="incoming", reason="forwarded", last_sip_event="ROUTE_FORWARD",
+        )
+        registry.remove_leg(snapshot.call_id, f"local:{event.endpoint_id}")
+    if event.event_type in {LocalBridgeEventType.STARTED, LocalBridgeEventType.REDIRECTED}:
         registry.upsert(
             snapshot.call_id,
             state="ringing",
@@ -283,16 +295,17 @@ def _bridge_event(hass: HomeAssistant, event: LocalBridgeEvent) -> None:
             state="ringing",
             endpoint_id=snapshot.callee_endpoint_id,
         )
-        registry.attach_media(
-            snapshot.call_id,
-            {
-                "local_bridge": True,
-                "endpoint_ids": (
-                    snapshot.caller_endpoint_id,
-                    snapshot.callee_endpoint_id,
-                ),
-            },
-        )
+        media = {
+            "local_bridge": True,
+            "endpoint_ids": (
+                snapshot.caller_endpoint_id,
+                snapshot.callee_endpoint_id,
+            ),
+        }
+        if event.event_type is LocalBridgeEventType.REDIRECTED:
+            registry.update_media(snapshot.call_id, **media)
+        else:
+            registry.attach_media(snapshot.call_id, media)
         _publish_leg(hass, snapshot, snapshot.caller_endpoint_id)
         _publish_leg(hass, snapshot, snapshot.callee_endpoint_id)
         return
@@ -382,3 +395,137 @@ def async_shutdown_local_softphone_bridge(hass: HomeAssistant) -> None:
         unsubscribe()
     runtime.local_bridge = None
     runtime.local_bridge_unsub = None
+
+
+class PendingLocalSource:
+    """Move a ringing browser source into the existing RTP call owners."""
+
+    def __init__(
+        self, hass: HomeAssistant, snapshot: LocalCallSnapshot,
+        local_ip: str, sip_port: int,
+    ) -> None:
+        from .core import sdp, sip
+        from .sip_listener import SipInvite
+
+        self.hass = hass
+        self.call = snapshot
+        self.registry = call_registry(hass)
+        self.bridge = local_softphone_bridge(hass)
+        session = self.registry.get_session(snapshot.call_id)
+        if session is None or snapshot.callee_state is not LocalCallState.RINGING:
+            raise RuntimeError("local call is no longer ringing")
+        self.token = session.token
+        self.media = self.registry.resource_for(snapshot.call_id, "softphone_media")
+        if not isinstance(self.media, dict):
+            raise RuntimeError("local call media ownership is missing")
+        self.original_media = dict(self.media)
+        self.paused = False
+        self.committed = False
+        caller = _endpoint(hass, snapshot.caller_endpoint_id)
+        callee = _endpoint(hass, snapshot.callee_endpoint_id)
+        if caller is None or callee is None:
+            raise RuntimeError("local phone disappeared during forwarding")
+        rtp_format = next(
+            fmt for fmt in HA_SIP_PCM_FORMATS
+            if fmt.channels == 1 and fmt.nominal_frame_bytes <= 1200
+        )
+        self.invite = SipInvite(
+            source_host=local_ip, source_port=sip_port,
+            request_uri=sip.SipUri(callee.sip_uri_user, local_ip, sip_port),
+            caller_uri=sip.SipUri(caller.sip_uri_user, local_ip, sip_port),
+            target=callee.name, caller=caller.name, call_id=snapshot.call_id,
+            cseq="1 INVITE", remote_sdp=b"",
+            send_format=sdp.audio_format_to_rtp(rtp_format, 96),
+            recv_format=sdp.audio_format_to_rtp(rtp_format, 96),
+            remote_rtp_host=local_ip, remote_rtp_port=0,
+        )
+
+    def pause(self) -> None:
+        if not self.registry.is_generation_current(self.token.call_id, self.token.generation):
+            raise RuntimeError("local source ended during forwarding")
+        session = self.registry.get_session(self.token.call_id)
+        observe_phone_leg_projection(
+            self.hass, self.registry, session, self.call.callee_endpoint_id, "idle",
+            leg_id=f"local:{self.call.callee_endpoint_id}", role="local_phone",
+            peer_name=self.invite.caller, direction="incoming", reason="forwarded",
+            last_sip_event="ROUTE_FORWARD",
+        )
+        self.paused = True
+
+    def stage_media(self, descriptor: dict) -> None:
+        self.media.clear()
+        self.media.update(descriptor)
+
+    def connect_browser(self, endpoint_id: str, media_owner_id: str, *, send_video: bool) -> None:
+        """Adopt a selected browser winner without replacing the caller media."""
+        if not self.registry.is_generation_current(self.token.call_id, self.token.generation):
+            raise RuntimeError("local source ended during forwarding")
+        current = self.bridge.require_call(self.token.call_id)
+        if current.callee_state is not LocalCallState.RINGING:
+            raise RuntimeError("local source was already answered")
+        self.registry.release_endpoint_claim(self.token.call_id, endpoint_id)
+        self.registry.take_pending_invite(self.token.call_id)
+        self.bridge.redirect_ringing(self.token.call_id, endpoint_id)
+        self.committed = True
+        self.bridge.answer(self.token.call_id, endpoint_id, media_owner_id,
+                           enable_video_send=send_video)
+
+    def commit(self, *, keep_media: bool = False) -> None:
+        if not self.registry.is_generation_current(self.token.call_id, self.token.generation):
+            raise RuntimeError("local source ended during forwarding")
+        current = self.bridge.require_call(self.token.call_id)
+        if current.callee_state is not LocalCallState.RINGING:
+            raise RuntimeError("local source was already answered")
+        self.registry.claim_endpoint(self.token.call_id, self.call.caller_endpoint_id, role="source")
+        self.bridge.detach_ringing(self.token.call_id)
+        self.committed = True
+        if not keep_media:
+            self.registry.take_media(self.token.call_id)
+        for endpoint in (self.call.caller_endpoint_id, self.call.callee_endpoint_id):
+            self.registry.remove_leg(self.token.call_id, f"local:{endpoint}")
+        session = self.registry.get_session(self.token.call_id)
+        session.metadata.update(
+            local_bridge=False, endpoint_id=self.call.caller_endpoint_id,
+            source_endpoint_id=self.call.caller_endpoint_id,
+            dest_endpoint_id="",
+            media_client_id=self.call.caller_media_owner_id,
+            source_media_client_id=self.call.caller_media_owner_id,
+        )
+
+    def resume(self) -> None:
+        if (
+            self.bridge.get_call(self.token.call_id) is None
+            or not self.registry.is_generation_current(self.token.call_id, self.token.generation)
+        ):
+            return
+        self.media.clear()
+        self.media.update(self.original_media)
+        self.registry.take_pending_invite(self.token.call_id)
+        session = self.registry.get_session(self.token.call_id)
+        if session.owner != "local_bridge" or session.state != "ringing":
+            self.registry.transition(
+                self.token.call_id, owner="local_bridge", state="ringing",
+                callee=self.invite.target, route_kind="local",
+            )
+        if not self.paused:
+            return
+        for endpoint in (self.call.caller_endpoint_id, self.call.callee_endpoint_id):
+            self.registry.add_leg(
+                self.token.call_id, f"local:{endpoint}", role="local_phone",
+                state=self.call.state_for(endpoint).value, endpoint_id=endpoint,
+            )
+            _publish_leg(self.hass, self.call, endpoint)
+
+    def connected(self, destination: str, route_kind: str) -> None:
+        session = self.registry.get_session(self.token.call_id)
+        observe_phone_leg_projection(
+            self.hass, self.registry, session, self.call.caller_endpoint_id, "in_call",
+            leg_id=f"browser-origin:{self.call.caller_endpoint_id}",
+            peer_name=destination, direction="outgoing", media_transport="rtp",
+            selected_tx_format=self.invite.recv_format.audio_format.wire_token(),
+            selected_rx_format=self.invite.send_format.audio_format.wire_token(),
+            selected_tx_rtp_format=self.invite.recv_format.wire_token(),
+            selected_rx_rtp_format=self.invite.send_format.wire_token(),
+            audio_mode="full_duplex", route_kind=route_kind,
+            sip_status_code=200, last_sip_event="ROUTE_FORWARD",
+        )

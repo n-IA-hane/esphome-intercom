@@ -19,10 +19,10 @@ CONFIG_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(VoipSimulator),
         cv.Optional(CONF_SOURCE_PROFILE, default=""): cv.string,
         cv.Optional(CONF_DEVICE_PROFILE, default="generic"): cv.string,
-        cv.Optional(CONF_SOCKET_PATH, default="test_runs/simulator/voip-sim.sock"): cv.string,
-        cv.Optional(CONF_SPEAKER_OUTPUT_PATH, default="test_runs/simulator/audio/speaker_output.pcm"): cv.string,
+        cv.Optional(CONF_SOCKET_PATH, default="test_captures/simulator/voip-sim.sock"): cv.string,
+        cv.Optional(CONF_SPEAKER_OUTPUT_PATH, default="test_captures/simulator/audio/speaker_output.pcm"): cv.string,
         cv.Optional(CONF_MICROPHONE_INPUT_PATH, default="tests/simulator/audio/mic_input.pcm"): cv.string,
-        cv.Optional(CONF_FRAMEBUFFER_PATH, default="test_runs/simulator/framebuffer.png"): cv.string,
+        cv.Optional(CONF_FRAMEBUFFER_PATH, default="test_captures/simulator/framebuffer.png"): cv.string,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 

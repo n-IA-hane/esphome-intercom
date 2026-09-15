@@ -8,7 +8,7 @@ SCENARIO="all"
 REPEAT=1
 SEED=""
 MODE="all"
-SOCKET="${SIM_SOCKET:-test_runs/simulator/voip-sim.sock}"
+SOCKET="${SIM_SOCKET:-test_captures/simulator/voip-sim.sock}"
 TRACE_DIR=""
 PYTHON_BIN="${PYTHON_BIN:-$ROOT/.venv/bin/python}"
 
@@ -54,7 +54,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-mkdir -p test_runs/simulator
+mkdir -p test_captures/simulator
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
   echo "python executable not found: $PYTHON_BIN" >&2

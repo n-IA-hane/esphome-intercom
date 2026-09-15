@@ -47,7 +47,7 @@ except (
 DEFAULT_HA_URL = os.environ.get("HA_URL", "http://127.0.0.1:18123").rstrip("/")
 DEFAULT_TOKEN_FILE = Path("/home/codex/.secrets/esphome-intercom/ha_token_codex")
 DEFAULT_AUTH_FILE = Path("/home/codex/.secrets/esphome-intercom/ha_home_auth.json")
-OUT = Path("test_runs/live_voip_qualification")
+OUT = Path("test_captures/live_voip_qualification")
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -93,7 +93,7 @@ def qualification_token(args: argparse.Namespace) -> str:
     if args.auth_file.is_file():
         return _refresh_ha_token(args.auth_file)
     helper_path = (
-        Path(__file__).resolve().parents[1] / "test_runs/ha_playwright_auth.py"
+        Path(__file__).resolve().parents[1] / "tools/ha_playwright_auth.py"
     )
     if not helper_path.is_file():
         return args.token_file.read_text(encoding="utf-8").strip()

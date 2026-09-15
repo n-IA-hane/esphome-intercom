@@ -192,7 +192,7 @@ Use `voip_stack.call`, not `forward`, when there is no existing source call.
 
 ## Ring group
 
-1. Caller dials a group such as `RG Casa`.
+1. Caller dials a group such as `Home ring group`.
 2. HA resolves a roster entry with `metadata.group_type = ring`.
 3. HA sends `180 Ringing` to the caller.
 4. HA forks INVITE to all callable members except the caller.

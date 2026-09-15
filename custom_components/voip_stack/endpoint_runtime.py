@@ -60,7 +60,7 @@ from .media_ports import (
     take_delayed_offer_ports,
 )
 from .media_renegotiation import async_prepare_media_update
-from .call_projection import publish_phone_projection
+from .call_projection import observe_phone_leg_projection, publish_phone_projection
 from .invite_router import InviteRuntime, route_invite
 from .endpoint_registry import EndpointBusyError
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
@@ -315,10 +315,14 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
         session = registry.get_session(invite.call_id)
         if session is None:
             return
-        publish_phone_projection(
+        observe_phone_leg_projection(
             hass,
+            registry,
             session,
-            endpoint_id, peer_name=invite.caller, direction="incoming",
+            endpoint_id,
+            CallState.RINGING.value,
+            leg_id=f"browser:{endpoint_id}",
+            peer_name=invite.caller, direction="incoming",
             dialed_target=invite.target,
             selected_tx_format=invite.send_format.audio_format.wire_token(),
             selected_rx_format=invite.recv_format.audio_format.wire_token(),
@@ -327,11 +331,7 @@ async def async_start_sip_endpoint(hass: HomeAssistant) -> bool:
             audio_mode="full_duplex",
             route_kind=route_kind,
             sip_uri=sip_uri,
-            sip_status_code=(
-                200
-                if registry.resource_for(invite.call_id, "preanswered") is not None
-                else 180
-            ),
+            sip_status_code=180,
             last_sip_event=last_sip_event,
             video_offered=video_enabled,
             video_format=(invite.video_format.wire_token() if video_enabled else ""),

@@ -21,6 +21,7 @@ from .outbound_attempts import OutboundLeg, async_apply_outbound_video_answer
 from .runtime_data import sip_endpoint_manager
 from .session_cleanup import async_wait_for_cleanup
 from .core.sdp import build_answer_directional, first_offered_dtmf_format
+from .core.rtp import AudioRtpSenderState
 from .sip_bridge import (
     async_request_sip_bridge_keyframe,
     async_start_sip_bridge_media,
@@ -227,6 +228,12 @@ async def async_commit_outbound_bridge(
                 debug_capture=media_capture_enabled(hass),
                 on_release=_release_ports,
             )
+        source_media = registry.resource_for(invite.call_id, "preanswered") or {}
+        audio_source = source_media.get("audio_rtp_source")
+        if isinstance(audio_source, AudioRtpSenderState):
+            relay.left.sequence = audio_source.sequence
+            relay.left.timestamp = audio_source.timestamp
+            relay.left.ssrc = audio_source.ssrc
         if winner.video_relay is not None:
             relay.attach_video_relay(winner.video_relay)
             winner.video_relay = None

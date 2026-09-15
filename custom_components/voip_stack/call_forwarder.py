@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from contextvars import copy_context
+from dataclasses import dataclass, replace
 from functools import partial
 import logging
 from typing import Any, Awaitable, Callable
@@ -129,9 +130,8 @@ async def async_forward_existing_call(
     """Route or move one HA-owned pending/ringing call to a target.
 
     ``initial_selection`` is used only by the bounded ``route_requested``
-    decision point. Unlike a later forward, it must not exclude browser
-    phones from a ring group merely because the pre-answered trunk dialog
-    is temporarily anchored on the default HA phone.
+    decision point. A later forward excludes its previous receiving phone
+    from a group; an initial selection has no previous destination to exclude.
     """
 
     hass = runtime.hass
@@ -187,13 +187,61 @@ async def async_forward_existing_call(
             limit=8,
         )
 
+    local_source = None
     invite = registry.artifact_for(call_id, "pending_invite")
     if invite is None:
-        raise _service_error(
-            f"call_id {call_id} is not a forwardable pending or ringing HA-owned call",
-            "call_not_forwardable",
-            call_id=call_id,
-        )
+        from .local_softphone_runtime import local_softphone_bridge
+
+        bridge = local_softphone_bridge(hass)
+        local_call = bridge.get_call(call_id) if bridge is not None else None
+        if local_call is not None:
+            peers = await _async_build_peer_snapshot(hass)
+            _validate_snapshot()
+            if bridge.get_call(call_id) != local_call:
+                raise _service_error(
+                    f"call_id {call_id} changed while the route was being resolved",
+                    "call_changed_during_operation", call_id=call_id,
+                )
+            roster_entries = _roster_from_peers(hass, peers, _registered_roster_entries(hass))
+            decision = runtime.route_resolver.route(destination, roster_entries)
+            target = runtime.route_resolver.logical_endpoint(
+                decision.target or destination, peers, roster_entries,
+            )
+            if (
+                decision.action is RouteAction.ANSWER_HA
+                and target is not None
+                and target.kind is EndpointKind.BROWSER
+            ):
+                from .pbx_routing import browser_endpoint_can_ring
+
+                if not browser_endpoint_can_ring(target) or (
+                    target.active_call_id and target.active_call_id != call_id
+                ):
+                    if on_failure != "resume":
+                        from .endpoint_termination import EndpointTerminationHandler
+                        from .endpoint_session import TerminationInitiator
+
+                        await EndpointTerminationHandler(hass).terminate_reason(
+                            call_id, "busy", TerminationInitiator.ROUTING,
+                        )
+                    return
+                bridge.redirect_ringing(call_id, target.endpoint_id)
+                registry.record_route(call_id, action="forward", destination=destination, source="automation")
+                return
+            if decision.action in {
+                RouteAction.DIRECT, RouteAction.FORWARD, RouteAction.BRIDGE,
+                RouteAction.TRUNK, RouteAction.ASSIST, RouteAction.GROUP,
+            }:
+                from .local_softphone_runtime import PendingLocalSource
+
+                local_source = PendingLocalSource(hass, local_call, local_ip, int(cfg["sip_port"]))
+                invite = local_source.invite
+                registry.set_pending_invite(call_id, invite)
+        if invite is None:
+            raise _service_error(
+                f"call_id {call_id} is not a forwardable pending or ringing HA-owned call",
+                "call_not_forwardable", call_id=call_id,
+            )
     artifacts = call_runtime_artifacts(hass)
     call_artifacts = artifacts.artifacts_for(call_id)
     if call_artifacts is None:
@@ -293,7 +341,7 @@ async def async_forward_existing_call(
         application = registry.resource_for(call_id, "automation")
         session_endpoint = browser_phone(
             hass,
-            str(
+            local_source.call.callee_endpoint_id if local_source is not None else str(
                 (session.metadata if session is not None else {}).get("endpoint_id")
                 or ""
             ),
@@ -357,7 +405,9 @@ async def async_forward_existing_call(
                     )
         else:
             route_already_claimed = False
-        if application is None:
+        if local_source is not None:
+            local_source.pause()
+        elif application is None:
             _release_ha_softphone_claim(
                 hass,
                 call_id,
@@ -370,7 +420,7 @@ async def async_forward_existing_call(
                     hass,
                     session,
                     peer_name=destination,
-                    direction="incoming",
+                    direction="outgoing" if local_source is not None else "incoming",
                     route_source="automation",
                     route_kind=decision.action.value,
                     event_type="forwarding",
@@ -378,6 +428,8 @@ async def async_forward_existing_call(
                 )
     except Exception:
         call_artifacts.forward_claim = False
+        if local_source is not None:
+            local_source.resume()
         raise
 
     forward_abort = RouteAbortContext(
@@ -388,7 +440,7 @@ async def async_forward_existing_call(
         resume_callee=original_callee,
         resume_route_kind=original_route_kind,
         transition_resume=session is not None,
-        resume_owner="automation" if application else "ha_softphone",
+        resume_owner="local_bridge" if local_source is not None else "automation" if application else "ha_softphone",
         resume_state="in_call" if application and application.answered else "ringing",
         publish_resume=application.resume if application else partial(
             runtime.publish_pending_ringing,
@@ -402,6 +454,8 @@ async def async_forward_existing_call(
         if (application is not None or ha_claimed)
         else None,
     )
+    if local_source is not None:
+        forward_abort.publish_resume = local_source.resume
 
     async def _commit_source_answer(
         answer_sdp: str,
@@ -421,7 +475,12 @@ async def async_forward_existing_call(
             caller=invite.caller,
             callee=callee,
             route_kind=route_kind,
-            response_already_sent=response_already_sent,
+            response_already_sent=response_already_sent or local_source is not None,
+            **({
+                "endpoint_id": local_source.call.caller_endpoint_id,
+                "source_endpoint_id": local_source.call.caller_endpoint_id,
+                "media_client_id": local_source.call.caller_media_owner_id,
+            } if local_source is not None else {}),
         )
 
     async def _run_forward() -> None:
@@ -549,6 +608,7 @@ async def async_forward_existing_call(
                             call_id,
                             settle=_settle_browser_candidates,
                             attempts=attempts if cleanup else (),
+                            resume_owner="local_bridge" if local_source is not None else "ha_softphone",
                         ),
                         RouteAbortIntent(reason, "cleanup"),
                     )
@@ -567,7 +627,16 @@ async def async_forward_existing_call(
                         peers=peers,
                         roster_entries=roster_entries,
                         local_name=invite.caller or _ha_peer_name(hass),
-                        initial_selection=initial_selection,
+                        source_endpoint_id=str(
+                            (session.metadata if session is not None else {}).get(
+                                "source_endpoint_id"
+                            ) or ""
+                        ),
+                        excluded_endpoint_ids=(
+                            frozenset({session_endpoint_id})
+                            if not initial_selection and application is None and session_endpoint_id
+                            else frozenset()
+                        ),
                     )
                 except Exception:
                     await _abort_group(
@@ -645,7 +714,7 @@ async def async_forward_existing_call(
                             hass,
                             ringing_session,
                             peer_name=entry.display_name,
-                            direction="incoming",
+                            direction="outgoing" if local_source is not None else "incoming",
                             route_source="automation",
                             route_kind=GROUP_TYPE_RING,
                             last_sip_event="SIP_RESPONSE",
@@ -723,6 +792,14 @@ async def async_forward_existing_call(
                         TerminalReason.CANCELLED.value,
                         keep_endpoint_id=winner.endpoint_id,
                     )
+                    if local_source is not None:
+                        local_source.connect_browser(
+                            winner.endpoint_id,
+                            str(browser_decision.get("media_client_id") or ""),
+                            send_video=bool(browser_decision.get("send_video", False)),
+                        )
+                        reservation.release()
+                        return
                     registry.upsert(
                         call_id,
                         state=CallState.RINGING.value,
@@ -734,6 +811,8 @@ async def async_forward_existing_call(
                         session_device_id=winner.device_id,
                     )
                     registry.set_pending_invite(call_id, invite)
+                    if application is not None:
+                        await application.release_media_for_forward()
                     call_artifacts.answer_commit = True
                     try:
                         await hass.services.async_call(
@@ -774,6 +853,8 @@ async def async_forward_existing_call(
 
                 if application is not None:
                     await application.release_media_for_forward()
+                if local_source is not None:
+                    local_source.commit()
                 committed = await async_commit_outbound_bridge(
                     hass,
                     registry,
@@ -788,6 +869,7 @@ async def async_forward_existing_call(
                         enable_video_transcoding=bool(
                             cfg.get(CONF_VIDEO_TRANSCODING, False)
                         ),
+                        local_endpoint_id=local_source.call.caller_endpoint_id if local_source is not None else "",
                     ),
                     BridgeCommitPolicy(
                         route_kind=GROUP_TYPE_RING,
@@ -803,10 +885,17 @@ async def async_forward_existing_call(
                             else CallState.CONNECTING.value
                         ),
                         response_already_sent=response_already_sent,
+                        local_source=local_source is not None,
+                        endpoint_id=local_source.call.caller_endpoint_id if local_source is not None else "",
+                        source_endpoint_id=local_source.call.caller_endpoint_id if local_source is not None else "",
+                        media_client_id=local_source.call.caller_media_owner_id if local_source is not None else "",
+                        expected_generation=session.generation if session is not None else None,
                     ),
                 )
                 if committed is None:
                     raise RuntimeError(TerminalReason.CANCELLED.value)
+                if local_source is not None:
+                    local_source.connected(connected_party, GROUP_TYPE_RING)
                 if session is not None:
                     publish_bridge_projection(
                         hass,
@@ -815,7 +904,7 @@ async def async_forward_existing_call(
                         dialed_target=entry.display_name,
                         connected_party=connected_party,
                         answered_by=connected_party,
-                        direction="incoming",
+                        direction="outgoing" if local_source is not None else "incoming",
                         route_source="automation",
                         route_kind=GROUP_TYPE_RING,
                         sip_status_code=200,
@@ -841,12 +930,33 @@ async def async_forward_existing_call(
                     )
                     if claimed_assist is None:
                         raise RuntimeError("Assist route ownership changed")
+                assist_invite = invite
+                if local_source is not None:
+                    assist_invite = replace(
+                        invite, remote_rtp_port=dest_relay_port,
+                        remote_sdp=build_answer_directional(
+                            local_ip, local_ip, dest_relay_port,
+                            invite.send_format, invite.recv_format,
+                        ).encode(),
+                    )
+                    local_source.stage_media({
+                        "invite": replace(
+                            invite, remote_rtp_port=source_relay_port,
+                            remote_sdp=build_answer_directional(
+                                local_ip, local_ip, source_relay_port,
+                                invite.send_format, invite.recv_format,
+                            ).encode(),
+                        ),
+                        "local_rtp_port": dest_relay_port,
+                        "endpoint_id": local_source.call.caller_endpoint_id,
+                        "media_client_id": local_source.call.caller_media_owner_id,
+                    })
                 await runtime.start_local_assist_bridge(
-                    invite,
+                    assist_invite,
                     reservation=reservation,
                     local_rtp_port=source_relay_port,
                     roster_entries=roster_entries,
-                    source="trunk" if preanswered is not None else "sip",
+                    source="browser" if local_source is not None else "trunk" if preanswered is not None else "sip",
                     called_extension=str(
                         (decision.entry.extension if decision.entry is not None else "")
                         or destination
@@ -854,6 +964,8 @@ async def async_forward_existing_call(
                     release_reservation_on_failure=preanswered is None,
                     **({"existing_media": application.media} if application and application.media else {}),
                 )
+                if local_source is not None:
+                    local_source.commit(keep_media=True)
                 response_already_sent = _source_dialog_is_answered(preanswered)
                 answer = ""
                 if not response_already_sent:
@@ -879,6 +991,8 @@ async def async_forward_existing_call(
                 )
                 if not answer_result.committed:
                     raise RuntimeError(answer_result.reason)
+                if local_source is not None:
+                    local_source.connected(destination, decision.action.value)
                 return
 
             bridge_to_trunk = decision.action is RouteAction.TRUNK
@@ -1019,12 +1133,20 @@ async def async_forward_existing_call(
                         hass,
                         ringing_session,
                         peer_name=destination,
-                        direction="incoming",
+                        direction="outgoing" if local_source is not None else "incoming",
                         route_source="automation",
                         last_sip_event="SIP_RESPONSE",
                     )
+                # Keep the source and reservation with the route until the
+                # destination answers. A rejected ringing attempt must still
+                # be eligible for on_failure: resume.
+                result = await client.wait_for_final()
+                if result != "in_call" or client.dialog is None:
+                    raise RuntimeError(result)
             if application is not None:
                 await application.release_media_for_forward()
+            if local_source is not None:
+                local_source.commit()
             committed = await async_commit_outbound_bridge(
                 hass,
                 registry,
@@ -1037,6 +1159,7 @@ async def async_forward_existing_call(
                     release_port_pairs=(reservation.ports,),
                     detach_reservations=(reservation,),
                     enable_video_transcoding=video_transcoding_enabled,
+                    local_endpoint_id=local_source.call.caller_endpoint_id if local_source is not None else "",
                 ),
                 BridgeCommitPolicy(
                     route_kind=decision.action.value,
@@ -1056,17 +1179,24 @@ async def async_forward_existing_call(
                     ),
                     dest_state=result,
                     response_already_sent=response_already_sent,
+                    local_source=local_source is not None,
+                    endpoint_id=local_source.call.caller_endpoint_id if local_source is not None else "",
+                    source_endpoint_id=local_source.call.caller_endpoint_id if local_source is not None else "",
+                    media_client_id=local_source.call.caller_media_owner_id if local_source is not None else "",
+                    expected_generation=session.generation if session is not None else None,
                 ),
             )
             if committed is None:
                 raise RuntimeError(TerminalReason.CANCELLED.value)
+            if local_source is not None:
+                local_source.connected(destination, decision.action.value)
             failure = committed.video_failure_reason or video_failure_reason
             if session is not None:
                 publish_bridge_projection(
                     hass,
                     session,
                     peer_name=destination,
-                    direction="incoming",
+                    direction="outgoing" if local_source is not None else "incoming",
                     route_source="automation",
                     answered_by=destination,
                     selected_tx_format=invite.send_format.audio_format.wire_token(),
@@ -1098,13 +1228,18 @@ async def async_forward_existing_call(
                 forward_abort,
                 RouteAbortIntent(
                     reason,
-                    on_failure,
+                    "terminate" if local_source is not None and local_source.committed else on_failure,
                 ),
             )
         finally:
             call_artifacts.forward_claim = False
 
-    task = create_runtime_task(hass, _run_forward())
+    from .automation_context import current_execution
+
+    # The PBX owns the forward after the requesting HA action has returned.
+    forward_context = copy_context()
+    forward_context.run(current_execution.set, None)
+    task = forward_context.run(create_runtime_task, hass, _run_forward())
     if not artifacts.own_task(call_id, task, name="forward"):
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)

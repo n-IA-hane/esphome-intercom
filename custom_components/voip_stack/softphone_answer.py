@@ -61,25 +61,6 @@ async def async_answer_browser_call(
         transport_config(hass).get(CONF_VIDEO_CAMERA_SEND, False)
     ) and bool(call.data.get("send_video", False))
 
-    from .local_softphone_bridge import LocalBridgeError
-    from .local_softphone_runtime import local_softphone_bridge
-
-    local_bridge = local_softphone_bridge(hass)
-    if local_bridge is not None and local_bridge.get_call(call_id) is not None:
-        try:
-            local_bridge.answer(
-                call_id,
-                endpoint_id,
-                str(call.data.get("media_client_id") or ""),
-                enable_video_send=camera_send_requested,
-            )
-        except LocalBridgeError as err:
-            raise _service_error(
-                str(err),
-                "local_phone_operation_failed",
-            ) from err
-        return
-
     # A browser ring-group member resolves its own pending candidate before
     # the generic forwarding guard. The fork controller then commits the only
     # winner and cancels every sibling B-leg.
@@ -95,6 +76,31 @@ async def async_answer_browser_call(
             },
         )
         return
+
+    from .local_softphone_bridge import LocalBridgeError
+    from .local_softphone_runtime import local_softphone_bridge
+
+    local_bridge = local_softphone_bridge(hass)
+    if local_bridge is not None and local_bridge.get_call(call_id) is not None:
+        local_artifacts = call_runtime_artifacts(hass).artifacts_for(call_id)
+        if local_artifacts is not None and local_artifacts.forward_claim:
+            raise _service_error(
+                f"call_id {call_id} is being forwarded", "call_forwarding", call_id=call_id,
+            )
+        try:
+            local_bridge.answer(
+                call_id,
+                endpoint_id,
+                str(call.data.get("media_client_id") or ""),
+                enable_video_send=camera_send_requested,
+            )
+        except LocalBridgeError as err:
+            raise _service_error(
+                str(err),
+                "local_phone_operation_failed",
+            ) from err
+        return
+
     artifacts = call_runtime_artifacts(hass)
     call_artifacts = artifacts.artifacts_for(call_id)
     forward_task = artifacts.task_for(call_id, "forward")
@@ -313,6 +319,7 @@ async def async_answer_browser_call(
 
     resolved_callee = str((session.callee if session is not None else "") or local_name)
     softphone_media = {
+        "audio_rtp_source": (preanswered or {}).get("audio_rtp_source"),
         "invite": invite,
         "local_rtp_port": local_rtp_port,
         "local_video_rtp_port": local_video_rtp_port,
@@ -374,7 +381,9 @@ async def async_answer_browser_call(
         registry.take_pending_invite(call_id)
         return True
 
-    answer_result = await transaction.commit(answer_sdp, claim=_claim_answer)
+    answer_result = await transaction.commit(
+        answer_sdp, claim=_claim_answer, response_already_sent=response_already_sent
+    )
     if not answer_result.committed:
         failure_reason = answer_result.reason or TerminalReason.PROTOCOL_ERROR.value
         await EndpointTerminationHandler(hass).terminate(

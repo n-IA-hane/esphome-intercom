@@ -296,3 +296,17 @@ def test_live_projection_is_rejected_after_terminal_claim(monkeypatch) -> None:
         object(), session, peer_name="late callback"
     )
     sink.assert_not_called()
+
+
+def test_new_phone_leg_rings_while_the_original_caller_is_answered(monkeypatch):
+    runtime = _runtime(monkeypatch)
+    sink = Mock()
+    monkeypatch.setattr(websocket_api, "_set_ha_softphone_call_state", sink)
+    session = runtime.upsert("greeting", state="in_call", owner="automation", caller="Alice", callee="Welcome")
+    assert call_projection.observe_phone_leg_projection(
+        object(), runtime, session, "reception", "ringing",
+        leg_id="browser:reception", sip_status_code=180,
+    )
+    assert session.state == "in_call"
+    assert sink.call_args.args[1] == "ringing"
+    assert sink.call_args.kwargs["call_id"] == session.call_id

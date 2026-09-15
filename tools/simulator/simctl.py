@@ -11,7 +11,7 @@ import sys
 from typing import Any
 
 
-DEFAULT_SOCKET = Path("test_runs/simulator/voip-sim.sock")
+DEFAULT_SOCKET = Path("test_captures/simulator/voip-sim.sock")
 
 
 class SimctlError(RuntimeError):

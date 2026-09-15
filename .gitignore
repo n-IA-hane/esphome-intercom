@@ -16,7 +16,6 @@ codex.md
 /CHANGELOG.local.md
 
 # Local test, lint, and release artifacts
-/test_runs/
 /test_captures/
 /.pytest_cache/
 /.ruff_cache/

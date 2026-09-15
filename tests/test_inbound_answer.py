@@ -171,6 +171,19 @@ class AnswerTransactionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events, ["relay:final_response_failed"])
         self.assertEqual(session.phase, endpoint_session.SessionPhase.TERMINATED)
 
+    async def test_confirmed_call_transfers_new_media_without_second_sip_answer(self):
+        session = endpoint_session.EndpointCallSession("call-1", 1)
+        self.assertTrue(session.claim_answer(session.token, lambda: True))
+        sent = []
+        transaction = inbound_answer.AnswerTransaction(session, lambda *args: sent.append(args))
+        transaction.add_resource("new-media", object(), lambda _reason: None)
+        result = await transaction.commit("answer", claim=lambda: True, response_already_sent=True)
+        self.assertTrue(result.committed)
+        self.assertFalse(result.response_sent)
+        self.assertEqual(sent, [])
+        self.assertEqual([r.name for r in session.resources], ["new-media"])
+        await session.terminate(endpoint_session.TerminationIntent("test_done"))
+
     async def test_rollback_survives_repeated_waiter_cancellation(self) -> None:
         entered = asyncio.Event()
         release = asyncio.Event()

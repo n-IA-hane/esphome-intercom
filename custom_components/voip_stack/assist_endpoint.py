@@ -170,7 +170,8 @@ class AssistEndpoint:
         publish_bridge_projection(
             self.hass,
             session,
-            peer_name=destination_name, direction="incoming",
+            peer_name=destination_name,
+            direction="outgoing" if source == "browser" else "incoming",
             route_kind=RouteAction.ASSIST.value,
             ingress=call_ingress,
             origin=call_ingress,

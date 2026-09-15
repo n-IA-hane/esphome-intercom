@@ -276,7 +276,7 @@ Sample LED entity effect/color at <=100 ms while calls transition.
 
 ## Required artifacts
 
-- `test_runs/` JSON from live matrix.
+- `test_captures/` JSON from live matrix.
 - Playwright screenshots for both dashboards in idle, ringing and in_call.
 - HA log excerpt around every call leg.
 - ESP serial/API logs around every direct/bridge call.

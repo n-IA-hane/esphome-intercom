@@ -458,6 +458,8 @@ def _active_softphone_media_session(
     call_id = active.call_id
     registry = active.registry
     item = registry.resource_for(call_id, "softphone_media") if call_id else None
+    if item is not None and item.get("endpoint_id") not in (None, "", endpoint_id):
+        item = None
 
     def _dtmf_callback(side: str) -> Callable[[str], None]:
         def _emit(digit: str) -> None:

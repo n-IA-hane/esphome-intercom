@@ -7,11 +7,11 @@ devices and SIP endpoints only declare membership and place normal SIP calls.
 
 A ring group is the PBX "ring many, first answer wins" primitive.
 
-Example: `RG Casa`.
+Example: `Home ring group`.
 
 Behavior:
 
-- Caller dials `RG Casa`.
+- Caller dials `Home ring group`.
 - HA excludes the caller from the member list.
 - HA sends parallel INVITEs to all callable members.
 - The first endpoint that answers wins.
@@ -63,7 +63,7 @@ ESP YAML:
 ```yaml
 voip_stack:
   conference_groups: "CG Casa"
-  ring_groups: "RG Casa"
+  ring_groups: "Home ring group"
   conference_ring: false
 
 packages:
@@ -82,7 +82,7 @@ service: voip_stack.set_ha_softphone_settings
 data:
   conference_group: "CG Casa"
   conference_ring: true
-  ring_group: "RG Casa"
+  ring_group: "Home ring group"
 ```
 
 Registered SIP endpoint account:
@@ -95,7 +95,7 @@ data:
   extension: "210"
   conference_group: "CG Casa"
   conference_ring: true
-  ring_group: "RG Casa"
+  ring_group: "Home ring group"
 ```
 
 Manual contact:
@@ -106,20 +106,20 @@ data:
   name: Garage Phone
   sip_uri: sip:garage@192.168.1.80:5060;transport=udp
   conference_group: "CG Casa"
-  ring_group: "RG Casa"
+  ring_group: "Home ring group"
 ```
 
 Multiple groups use comma-separated values:
 
 ```yaml
-ring_group: "RG Casa, RG Garage"
+ring_group: "Home ring group, Garage ring group"
 conference_group: "CG Casa, CG Monitor"
 ```
 
 For ESP YAML root defaults the keys are plural:
 
 ```yaml
-ring_groups: "RG Casa, RG Garage"
+ring_groups: "Home ring group, Garage ring group"
 conference_groups: "CG Casa, CG Monitor"
 ```
 
@@ -127,9 +127,9 @@ conference_groups: "CG Casa, CG Monitor"
 
 Groups are generated from declarations:
 
-- if at least one endpoint/contact declares `RG Casa`, the roster contains
-  `RG Casa`;
-- if the last declaration disappears, `RG Casa` disappears;
+- if at least one endpoint/contact declares `Home ring group`, the roster contains
+  `Home ring group`;
+- if the last declaration disappears, `Home ring group` disappears;
 - adding a new ESP with a new group name creates that group automatically;
 - changing HA softphone group settings or ESP group text entities rebuilds and
   pushes the phonebook.

@@ -433,18 +433,19 @@ valid configurations.
 
 ## Automation routing preview
 
-**Automation as dialplan** lets you define call behavior in Home Assistant's
+**Automations as dialplan** lets you define call behavior in Home Assistant's
 normal automation editor. Create an Automation contact, then build a sequence:
-**greeting, optional delay, forward to a phone or voice assistant**. Add a keypad
+**greeting, then forward to a phone or voice assistant**. Add a keypad
 menu, presence condition or office-hours rule when you need it.
 
-The phonebook remains the default dialplan. Native VoIP triggers select the
+**Phonebook as dialplan** remains the default when no routing automation overrides it.
+Native VoIP triggers select the
 call for the actions automatically, including across waits and synchronous
 scripts. No blueprint, generic event filter or Call-ID template is needed for
 the common examples. A destination can be its phonebook name or extension.
 
 Start with the [step-by-step greeting](docs/AUTOMATION_DIALPLAN.md#create-your-first-greeting-in-the-editor),
-then add a [20-second delay and forward](docs/AUTOMATION_DIALPLAN.md#add-a-delay-before-forwarding).
+then add a [forward after the greeting](docs/AUTOMATION_DIALPLAN.md#forward-after-the-greeting).
 These native automation features target 2026.9.3 development, not 2026.9.2.
 
 - [Route calls during office hours](docs/AUTOMATION_DIALPLAN.md#route-to-reception-during-office-hours).
@@ -459,7 +460,7 @@ selection, the configured phonebook route continues. Existing Event Entity
 and state automations remain available; see the
 [migration guide](docs/AUTOMATION_DIALPLAN.md#move-existing-automations-gradually).
 
-The full [Automation as dialplan cookbook](docs/AUTOMATION_DIALPLAN.md) explains
+The full [Automations as dialplan cookbook](docs/AUTOMATION_DIALPLAN.md) explains
 call completion, fallback, time limits, concurrent callers and troubleshooting.
 
 ## Optional SIP trunk

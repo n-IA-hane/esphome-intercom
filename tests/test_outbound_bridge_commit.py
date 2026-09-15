@@ -50,6 +50,7 @@ def _fixture():
     session = SimpleNamespace(generation=1, create_task=asyncio.create_task)
     registry = SimpleNamespace(
         register_bridge=MagicMock(return_value=session),
+        resource_for=MagicMock(return_value=None),
         is_generation_current=MagicMock(return_value=True),
         request_termination=MagicMock(return_value=None),
         forget_bridge_link=MagicMock(),
@@ -80,11 +81,15 @@ def _pending_watchers() -> list[asyncio.Task]:
 
 
 @pytest.mark.asyncio
-async def test_commit_transfers_bridge_and_owns_destination_watcher(monkeypatch, media_projection):
+@pytest.mark.parametrize("after_greeting", [False, True])
+async def test_commit_transfers_bridge_and_owns_destination_watcher(monkeypatch, media_projection, after_greeting):
     from custom_components.voip_stack import outbound_bridge_commit as module
     from custom_components.voip_stack.inbound_answer import AnswerCommitResult
 
     invite, winner, registry, relay = _fixture()
+    if after_greeting:
+        registry.resource_for.return_value = {"audio_rtp_source": module.AudioRtpSenderState(7, 1000, 42)}
+        relay.left = SimpleNamespace()
     binder = SimpleNamespace(attach=MagicMock())
     monkeypatch.setattr(module, "build_invite_client_relay", lambda **_: relay)
     monkeypatch.setattr(module, "attach_dtmf_event_bridge", MagicMock())
@@ -120,6 +125,8 @@ async def test_commit_transfers_bridge_and_owns_destination_watcher(monkeypatch,
     )
     await asyncio.sleep(0)
 
+    if after_greeting:
+        assert (relay.left.sequence, relay.left.timestamp, relay.left.ssrc) == (7, 1000, 42)
     assert result is not None
     relay.start.assert_awaited_once()
     winner.ports.detach.assert_called_once()

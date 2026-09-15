@@ -758,8 +758,10 @@ async def async_originate_browser_call(
         route_kind="direct",
         direction="outgoing",
         endpoint_id=endpoint_id,
+        source_endpoint_id=endpoint_id,
         session_device_id=source_device_id,
         media_client_id=str(call.data.get("media_client_id") or ""),
+        source_media_client_id=str(call.data.get("media_client_id") or ""),
         target_endpoint_id=(
             target_endpoint.endpoint_id if target_endpoint is not None else ""
         ),

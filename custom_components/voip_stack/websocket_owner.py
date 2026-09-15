@@ -74,10 +74,15 @@ async def _media_identity_guard(media: BrowserMediaRuntime, owner_key: str):
             locks.pop(owner_key, None)
 
 
-def _call_media_client_id(registry: Any, call_id: str) -> str:
+def _call_media_client_id(registry: Any, call_id: str, endpoint_id: str = "") -> str:
     """Return the browser identity currently pinned to one logical call."""
     session_id = registry.resolve_session_id(str(call_id or "").strip())
     session = registry.sessions.get(session_id)
+    metadata = session.metadata if session is not None else {}
+    if endpoint_id and endpoint_id == metadata.get("source_endpoint_id"):
+        source_id = str(metadata.get("source_media_client_id") or "")
+        if source_id:
+            return source_id
     session_id_value = str(
         (session.metadata if session is not None else {}).get("media_client_id")
         or ""
@@ -99,7 +104,7 @@ def media_websocket_owner_status(
 
     local_call = local_bridge.get_call(call_id) if local_bridge is not None else None
     if local_call is None:
-        expected_client_id = _call_media_client_id(registry, call_id)
+        expected_client_id = _call_media_client_id(registry, call_id, endpoint_id)
     elif endpoint_id == local_call.caller_endpoint_id:
         expected_client_id = str(local_call.caller_media_owner_id or "")
     elif endpoint_id == local_call.callee_endpoint_id:
@@ -130,12 +135,18 @@ def media_websocket_owner_status(
     return "other"
 
 
-def _set_call_media_client_id(registry: Any, call_id: str, client_id: str) -> None:
+def _set_call_media_client_id(registry: Any, call_id: str, client_id: str, endpoint_id: str = "") -> None:
     """Atomically rebind a disconnected call to a new browser document."""
     session_id = registry.resolve_session_id(str(call_id or "").strip())
     session = registry.sessions.get(session_id)
     if session is None:
         raise WebSocketOwnerBusyError(call_id)
+    if endpoint_id and endpoint_id == session.metadata.get("source_endpoint_id"):
+        if session.metadata.get("source_media_client_id") != client_id:
+            session.metadata["source_media_client_id"] = client_id
+            session.revision += 1
+        if endpoint_id != session.metadata.get("endpoint_id"):
+            return
     if session.metadata.get("media_client_id") != client_id:
         session.metadata["media_client_id"] = client_id
         session.revision += 1
@@ -185,11 +196,11 @@ async def async_claim_call_media_owner(
             is not None
         ]
         if pin_client_identity:
-            expected_client_id = _call_media_client_id(registry, call_id)
+            expected_client_id = _call_media_client_id(registry, call_id, endpoint_id)
             if expected_client_id != owner.client_id:
                 if expected_client_id:
                     raise WebSocketOwnerBusyError(call_id)
-                _set_call_media_client_id(registry, call_id, owner.client_id)
+                _set_call_media_client_id(registry, call_id, owner.client_id, endpoint_id)
         elif local_bridge is not None:
             competing_owner = any(
                 not isinstance(candidate, MediaWebSocketOwner)

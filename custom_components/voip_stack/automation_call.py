@@ -142,6 +142,7 @@ class AutomationCall:
             local_rtp_port=reservation.ports[0],
             reservation=reservation,
             on_complete=complete,
+            rtp_source=(preanswered or {}).get("audio_rtp_source"),
         )
         from .dtmf_events import publish_dtmf_event
 
@@ -197,6 +198,7 @@ class AutomationCall:
                         "local_rtp_port": reservation.ports[0],
                         "final_response_sent": True,
                         "early_answer_sdp": answer,
+                        "audio_rtp_source": media.rtp_source,
                     },
                     provisional=True,
                 )
@@ -206,6 +208,7 @@ class AutomationCall:
                     provisional=True,
                     final_response_sent=True,
                     early_answer_sdp=answer,
+                    audio_rtp_source=media.rtp_source,
                 )
             # The shared preanswered resource now owns the reservation through handoff.
             media.release_reservation_on_stop = False
@@ -361,7 +364,7 @@ class AutomationCall:
             self.hass,
             self.session,
             direction="incoming",
-            event_type="ringing",
+            event_type="state_changed",
             route_kind="automation",
         )
 

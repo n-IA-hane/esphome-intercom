@@ -59,7 +59,11 @@ async def async_abort_route(
         from .local_softphone_runtime import local_softphone_bridge
 
         bridge = local_softphone_bridge(hass)
-        if bridge is not None and (local_call := bridge.get_call(call_id)) is not None:
+        if (
+            bridge is not None
+            and (local_call := bridge.get_call(call_id)) is not None
+            and not (intent.action in {"resume", "cleanup"} and context.resume_owner == "local_bridge")
+        ):
             with contextlib.suppress(Exception):
                 bridge.hangup(call_id, local_call.caller_endpoint_id)
 

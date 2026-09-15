@@ -180,7 +180,7 @@ Conference group:
 - Members with conference ring enabled are invited.
 - Members with conference ring disabled can still join manually.
 
-`RG Casa` is a ring group:
+`Home ring group` is a ring group:
 
 - Calling it rings members.
 - First answer wins and all other forks are cancelled.

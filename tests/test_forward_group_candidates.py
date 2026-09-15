@@ -113,7 +113,7 @@ class ForwardGroupCandidatesTest(unittest.IsolatedAsyncioTestCase):
     async def _prepare(
         self,
         *,
-        initial_selection: bool,
+        excluded_endpoint_ids: frozenset[str] = frozenset(),
         browser_legs: dict[str, object],
         endpoints: dict[str, object] | None = None,
         busy: set[str] | None = None,
@@ -145,14 +145,13 @@ class ForwardGroupCandidatesTest(unittest.IsolatedAsyncioTestCase):
             peers=[],
             roster_entries=[],
             local_name="Caller",
-            initial_selection=initial_selection,
+            excluded_endpoint_ids=excluded_endpoint_ids,
         )
         return result, registry, prepared
 
     async def test_initial_selection_keeps_browser_and_sip_candidates(self) -> None:
         browser = SimpleNamespace(endpoint_id="browser")
         result, registry, prepared = await self._prepare(
-            initial_selection=True,
             browser_legs={"Browser": browser},
         )
 
@@ -166,16 +165,25 @@ class ForwardGroupCandidatesTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.attempts[0].order, 2)
         self.assertEqual(prepared[0]["local_rtp_port_index"], 1)
 
-    async def test_later_forward_does_not_ring_browser_again(self) -> None:
+    async def test_later_forward_excludes_only_the_previous_browser(self) -> None:
         browser = SimpleNamespace(endpoint_id="browser")
         result, registry, prepared = await self._prepare(
-            initial_selection=False,
+            excluded_endpoint_ids=frozenset({"browser"}),
             browser_legs={"Browser": browser},
         )
 
         self.assertEqual(result.browser_legs, [])
         self.assertEqual(registry.claims, [])
         self.assertEqual([item["member"] for item in prepared], ["Desk"])
+
+    async def test_later_forward_can_ring_a_different_browser(self) -> None:
+        browser = SimpleNamespace(endpoint_id="new-browser")
+        result, registry, _prepared = await self._prepare(
+            excluded_endpoint_ids=frozenset({"previous-browser"}),
+            browser_legs={"Browser": browser},
+        )
+        self.assertEqual(result.browser_legs, [browser])
+        self.assertEqual(registry.claims, [("source-call", "new-browser", "group_candidate")])
 
     async def test_blocked_and_busy_browser_candidates_are_excluded(self) -> None:
         blocked = SimpleNamespace(endpoint_id="blocked")
@@ -210,7 +218,6 @@ class ForwardGroupCandidatesTest(unittest.IsolatedAsyncioTestCase):
             peers=[],
             roster_entries=[],
             local_name="Caller",
-            initial_selection=True,
         )
 
         self.assertEqual(result.browser_legs, [])

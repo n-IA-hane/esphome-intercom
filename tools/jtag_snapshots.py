@@ -282,7 +282,7 @@ def main() -> int:
         help="Do not print FreeRTOS task tables",
     )
     parser.add_argument(
-        "--out-dir", default="test_runs/jtag_snapshots", help="Output directory"
+        "--out-dir", default="test_captures/jtag_snapshots", help="Output directory"
     )
     parser.add_argument(
         "--keep-openocd-log",

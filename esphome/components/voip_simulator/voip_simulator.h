@@ -103,10 +103,10 @@ class VoipSimulator : public Component {
 
   std::string source_profile_;
   std::string device_profile_{"generic"};
-  std::string socket_path_{"test_runs/simulator/voip-sim.sock"};
-  std::string speaker_output_path_{"test_runs/simulator/audio/speaker_output.pcm"};
+  std::string socket_path_{"test_captures/simulator/voip-sim.sock"};
+  std::string speaker_output_path_{"test_captures/simulator/audio/speaker_output.pcm"};
   std::string microphone_input_path_{"tests/simulator/audio/mic_input.pcm"};
-  std::string framebuffer_path_{"test_runs/simulator/framebuffer.png"};
+  std::string framebuffer_path_{"test_captures/simulator/framebuffer.png"};
   mutable std::mutex mutex_;
   SimulatorState state_;
   std::thread server_thread_;

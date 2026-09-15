@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -93,8 +94,40 @@ def test_blind_transfer_preserves_secure_sip_uri() -> None:
 
     assert call_transfer._blind_target(
         runtime,
-        source,
+        source.dialog.remote_uri,
         "sips:desk@pbx.example:5061;transport=tls",
     ) == sip_transfer.SipReferTarget(
         "sips:desk@pbx.example:5061;transport=tls"
     )
+
+
+@pytest.mark.parametrize("accepted,current", [(True, True), (False, True), (True, False)])
+async def test_transfer_service_closes_only_the_successful_current_call(
+    monkeypatch, accepted, current,
+) -> None:
+    import custom_components.voip_stack as integration
+    from custom_components.voip_stack import endpoint_termination
+
+    session = SimpleNamespace(generation=7)
+    registry = SimpleNamespace(
+        get_session=lambda _call_id: session,
+        is_generation_current=lambda _call_id, generation: current and generation == 7,
+    )
+    runtime = SimpleNamespace(phones=SimpleNamespace(resolve_source=AsyncMock()))
+    monkeypatch.setattr(integration, "_runtime_data", lambda _hass: runtime)
+    monkeypatch.setattr(integration, "_call_registry", lambda _hass: registry)
+    monkeypatch.setattr(call_transfer, "async_transfer_call", AsyncMock(
+        return_value=SipTransferResult(accepted, 200 if accepted else 486, "completed" if accepted else "failed"),
+    ))
+    terminate = AsyncMock()
+    monkeypatch.setattr(
+        endpoint_termination, "EndpointTerminationHandler",
+        lambda _hass: SimpleNamespace(terminate_reason=terminate),
+    )
+    result = await integration._handle_sip_transfer_service(SimpleNamespace(
+        hass=object(), data={"call_id": "original", "destination": "Reception"},
+    ))
+    assert result["success"] is accepted
+    assert terminate.await_count == int(accepted and current)
+    if accepted and current:
+        assert terminate.await_args.args[:2] == ("original", "forwarded")

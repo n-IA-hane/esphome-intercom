@@ -187,7 +187,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             self.source.index("def _defer_invite_to_ha_softphone(") :
             self.source.index("def _inbound_route_decision(")
         ]
-        self.assertIn("publish_phone_projection(", publish)
+        self.assertIn("observe_phone_leg_projection(", publish)
         self.assertNotIn("CallProjectionEvent.phone(", publish)
         self.assertLess(
             defer.index("session = registry.upsert("),
@@ -247,10 +247,9 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "invite.recv_video_format.wire_token()",
         ):
             self.assertIn(field, publish)
-        self.assertIn(
-            'registry.resource_for(invite.call_id, "preanswered") is not None',
-            publish,
-        )
+        self.assertIn('leg_id=f"browser:{endpoint_id}"', publish)
+        self.assertIn("CallState.RINGING.value", publish)
+        self.assertIn("sip_status_code=180", publish)
 
     def test_forwarded_standard_sip_video_prefers_direct_then_transcodes(
         self,
@@ -615,7 +614,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         local_answer = answer_service[
             answer_service.index(
                 "camera_send_requested = bool("
-            ) : answer_service.index("# A browser ring-group")
+            ) : answer_service.index("    artifacts = call_runtime_artifacts(hass)")
         ]
         self.assertIn("CONF_VIDEO_CAMERA_SEND", local_answer)
         self.assertIn('call.data.get("send_video", False)', local_answer)
@@ -1220,7 +1219,8 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         trunk_route = self.trunk_inbound_router
         self.assertIn("initial_selection: bool = False", forward)
         self.assertIn("async_prepare_group_candidates(", forward)
-        self.assertIn("not initial_selection", candidates)
+        self.assertIn("excluded_endpoint_ids", candidates)
+        self.assertIn("not initial_selection and application is None", forward)
         self.assertIn("browser_endpoint_can_ring(endpoint)", candidates)
         self.assertIn("browser_legs: list[BrowserLeg]", candidates)
         self.assertIn('role="group_candidate"', candidates)
@@ -1731,8 +1731,23 @@ class VoipBackendRouteContractTest(unittest.TestCase):
         self.assertIn("CallState.REMOTE_RINGING.value", bridge)
         self.assertIn('direction="incoming"', bridge)
 
-    def test_inbound_assist_bridge_preserves_direction(self) -> None:
-        self.assertIn('direction="incoming"', self.assist_endpoint)
+    def test_assist_bridge_preserves_source_direction(self) -> None:
+        projection = next(
+            node for node in ast.walk(ast.parse(self.assist_endpoint))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "publish_bridge_projection"
+        )
+        direction = next(arg.value for arg in projection.keywords if arg.arg == "direction")
+        expression = compile(ast.Expression(direction), "assist projection", "eval")
+        for source, expected in (
+            ("browser", "outgoing"),
+            ("trunk", "incoming"),
+            ("sip", "incoming"),
+            ("esp", "incoming"),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(eval(expression, {"__builtins__": {}}, {"source": source}), expected)
 
     def test_direct_ha_alias_resolves_through_phonebook_name(self) -> None:
         router = self.source[

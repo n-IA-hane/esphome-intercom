@@ -13,11 +13,11 @@ from .local_call_media import LocalCallMedia, LOCAL_PCM_FORMAT
 
 ASSIST_PCM_FORMAT = LOCAL_PCM_FORMAT
 _LOGGER = logging.getLogger(__name__)
-_SPEECH_GATE_PREROLL_FRAMES = 25
+# Telephone-band speech can trigger VAD late; retain the first syllables.
+_SPEECH_GATE_PREROLL_FRAMES = round(1000 / ASSIST_PCM_FORMAT.frame_ms)
 _SPEECH_GATE_START_SECONDS = 0.2
 _SPEECH_GATE_START_PROBABILITY = 0.5
 _CALL_NOISE_SUPPRESSION_LEVEL = 1
-_CALL_END_SILENCE_SECONDS = 0.4
 
 def _metadata_value(value: str, fallback: str) -> str:
     clean = " ".join(str(value or "").split())[:256]
@@ -59,15 +59,17 @@ class AssistConversation:
         self._pipeline_failed = False
 
     async def _audio_stream(self) -> AsyncGenerator[bytes]:
-        """Wait indefinitely for real speech, then feed HA a short pre-roll."""
+        """Wait for speech, then delimit one utterance with the same detector."""
         from homeassistant.components.assist_pipeline.vad import VoiceCommandSegmenter
         from pymicro_vad import MicroVad
 
         gate = VoiceCommandSegmenter(
             speech_seconds=_SPEECH_GATE_START_SECONDS,
-            timeout_seconds=float("inf"),
             before_command_speech_threshold=_SPEECH_GATE_START_PROBABILITY,
         )
+        command_seconds_left = gate.timeout_seconds
+        gate.timeout_seconds = float("inf")
+        gate.reset()
         vad = MicroVad()
         pre_roll: deque[bytes] = deque(maxlen=_SPEECH_GATE_PREROLL_FRAMES)
         vad_chunk_bytes = 320  # 10 ms, 16 kHz, signed 16-bit mono.
@@ -80,8 +82,6 @@ class AssistConversation:
                 if len(chunk) != vad_chunk_bytes:
                     continue
                 gate.process(0.01, vad.Process10ms(chunk))
-                if gate.in_command:
-                    break
 
         if self.media.closed.is_set():
             return
@@ -90,7 +90,19 @@ class AssistConversation:
         while pre_roll:
             yield pre_roll.popleft()
         while not self.media.closed.is_set():
-            yield await self.media.rx_queue.get()
+            frame = await self.media.rx_queue.get()
+            yield frame
+            for offset in range(0, len(frame), vad_chunk_bytes):
+                chunk = frame[offset : offset + vad_chunk_bytes]
+                if len(chunk) != vad_chunk_bytes:
+                    continue
+                command_seconds_left -= 0.01
+                if (
+                    not gate.process(0.01, vad.Process10ms(chunk))
+                    or command_seconds_left <= 0
+                ):
+                    self.media._accepting_input = False
+                    return
 
     def _pipeline_event(self, event: Any) -> None:
         event_type = getattr(
@@ -205,7 +217,7 @@ class AssistConversation:
                     tts_audio_output=self.media._tts_audio_output(),
                     audio_settings=AudioSettings(
                         noise_suppression_level=_CALL_NOISE_SUPPRESSION_LEVEL,
-                        silence_seconds=_CALL_END_SILENCE_SECONDS,
+                        is_vad_enabled=False,
                     ),
                 )
                 self.media._accepting_input = False

@@ -404,6 +404,8 @@ async def _handle_sip_transfer_service(call: ServiceCall) -> dict[str, object]:
             translation_domain=DOMAIN,
             translation_key="transfer_destination_required",
         )
+    registry = _call_registry(call.hass)
+    source_session = registry.get_session(request.call_id)
     try:
         result = await async_transfer_call(runtime, request)
     except (ValueError, RuntimeError) as err:
@@ -411,6 +413,17 @@ async def _handle_sip_transfer_service(call: ServiceCall) -> dict[str, object]:
             translation_domain=DOMAIN,
             translation_key="transfer_target_invalid",
         ) from err
+    if (
+        result.accepted
+        and source_session is not None
+        and registry.is_generation_current(request.call_id, source_session.generation)
+    ):
+        from .endpoint_termination import EndpointTerminationHandler
+        from .endpoint_session import TerminationInitiator
+
+        await EndpointTerminationHandler(call.hass).terminate_reason(
+            request.call_id, "forwarded", TerminationInitiator.ROUTING,
+        )
     return {
         "schema_version": 1,
         "success": result.accepted,

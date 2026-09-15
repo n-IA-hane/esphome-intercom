@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
 import contextlib
 import logging
-import secrets
 from typing import Any, TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant
@@ -47,6 +46,7 @@ class LocalCallMedia:
         local_rtp_port: int,
         reservation: RtpPortReservation,
         on_complete: Callable[[str], Awaitable[None]],
+        rtp_source: rtp.AudioRtpSenderState | None = None,
     ) -> None:
         self.hass = hass
         self.invite = invite
@@ -71,9 +71,7 @@ class LocalCallMedia:
         self.tx_converter = PcmFrameConverter(
             LOCAL_PCM_FORMAT, invite.send_format.audio_format
         )
-        self.sequence = secrets.randbelow(0x10000)
-        self.timestamp = secrets.randbelow(0x100000000)
-        self.ssrc = secrets.randbelow(0x100000000)
+        self.rtp_source = rtp_source or rtp.AudioRtpSenderState.create()
         self.remote_rtp_port = int(invite.remote_rtp_port)
         self.remote_ssrc: int | None = None
         self._consumer_task: asyncio.Task | None = None
@@ -321,9 +319,9 @@ class LocalCallMedia:
                         packet = rtp.build_packet(
                             rtp.RtpPacket(
                                 payload_type=invite.send_format.payload_type,
-                                sequence=self.sequence,
-                                timestamp=self.timestamp,
-                                ssrc=self.ssrc,
+                                sequence=self.rtp_source.sequence,
+                                timestamp=self.rtp_source.timestamp,
+                                ssrc=self.rtp_source.ssrc,
                                 payload=payload,
                             )
                         )
@@ -343,9 +341,9 @@ class LocalCallMedia:
                 finally:
                     if queued:
                         self.tx_queue.task_done()
-                self.sequence = rtp.next_sequence(self.sequence)
-                self.timestamp = rtp.next_timestamp(
-                    self.timestamp,
+                self.rtp_source.sequence = rtp.next_sequence(self.rtp_source.sequence)
+                self.rtp_source.timestamp = rtp.next_timestamp(
+                    self.rtp_source.timestamp,
                     invite.send_format.rtp_timestamp_step,
                 )
                 next_send += frame_delay

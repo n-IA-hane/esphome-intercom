@@ -2,10 +2,51 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, quote, unquote, urlencode
 
 from . import sip
+
+
+@dataclass(frozen=True, slots=True)
+class SipTransferResult:
+    """Final outcome reported by a REFER subscription."""
+
+    accepted: bool
+    status: int
+    state: str
+
+
+class ReferSubscription:
+    """One bounded transfer outcome, independent of dialog direction."""
+
+    def __init__(self) -> None:
+        self.result: asyncio.Future[SipTransferResult] = asyncio.get_running_loop().create_future()
+
+    def notify(self, request: sip.SipMessage) -> tuple[int, str]:
+        if request.header("Event").split(";", 1)[0].strip().casefold() != "refer":
+            return 489, "Bad Event"
+        if request.header("Content-Type").split(";", 1)[0].strip().casefold() != "message/sipfrag":
+            return 415, "Unsupported Media Type"
+        try:
+            status = parse_sipfrag_status(request.body)
+        except (TypeError, ValueError, sip.SipError):
+            return 400, "Bad Request"
+        terminated = request.header("Subscription-State").split(";", 1)[0].strip().casefold() == "terminated"
+        if not self.result.done():
+            if status >= 200:
+                self.result.set_result(SipTransferResult(
+                    200 <= status < 300, status,
+                    "completed" if status < 300 else "failed",
+                ))
+            elif terminated:
+                self.result.set_result(SipTransferResult(False, status, "terminated"))
+        return 200, "OK"
+
+    def close(self) -> None:
+        if not self.result.done():
+            self.result.set_result(SipTransferResult(False, 0, "terminated"))
 
 
 @dataclass(frozen=True, slots=True)
