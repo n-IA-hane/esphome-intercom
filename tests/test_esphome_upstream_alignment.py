@@ -31,47 +31,27 @@ def test_voice_assistant_keeps_upstream_backpressure_and_speaker_drain() -> None
     assert "if (!this->api_client_->send_message(msg))" in source
     assert "this->speaker_buffer_index_ + msg.data_len <= SPEAKER_BUFFER_SIZE" in source
     assert "this->write_speaker_();" in source
-    assert 'this->set_timeout("playing", this->tts_playback_start_timeout_' in source
+    assert 'timeout = this->tts_playback_start_timeout_;' in source
+    assert 'this->set_timeout("playing", timeout,' in source
 
 
 def test_local_forks_remain_narrow_and_documented() -> None:
     speaker = (COMPONENTS / "speaker" / "UPSTREAM.md").read_text()
     voice_assistant = (COMPONENTS / "voice_assistant" / "UPSTREAM.md").read_text()
     audio = (COMPONENTS / "audio" / "UPSTREAM.md").read_text()
-    audio_http = (COMPONENTS / "audio_http" / "UPSTREAM.md").read_text()
     mipi_dsi = (COMPONENTS / "mipi_dsi" / "UPSTREAM.md").read_text()
-    spi = (COMPONENTS / "spi" / "UPSTREAM.md").read_text()
 
-    for document in (speaker, voice_assistant, audio, audio_http, mipi_dsi, spi):
+    for document in (speaker, voice_assistant, audio, mipi_dsi):
         assert UPSTREAM_DEV_SHA in document
     assert "pause_releases_pipeline" in speaker
     assert "tts_playback_start_timeout" in voice_assistant
     assert "host simulator" in audio
 
 
-def test_audio_http_exposes_micro_decoder_persistent_ring_policy() -> None:
-    schema = (COMPONENTS / "audio_http" / "media_source.py").read_text()
-    source = (COMPONENTS / "audio_http" / "audio_http_media_source.cpp").read_text()
-    header = (COMPONENTS / "audio_http" / "audio_http_media_source.h").read_text()
-    upstream = (COMPONENTS / "audio_http" / "UPSTREAM.md").read_text()
 
-    assert 'CONF_PERSISTENT_RING_BUFFER = "persistent_ring_buffer"' in schema
-    assert "default=False" in schema
-    assert "set_persistent_ring_buffer(config[CONF_PERSISTENT_RING_BUFFER])" in schema
-    assert "config.persistent_ring_buffer = this->persistent_ring_buffer_;" in source
-    assert "bool persistent_ring_buffer_{false};" in header
-    assert UPSTREAM_DEV_SHA in upstream
-    assert "micro-decoder 0.4.0" in upstream
-
-
-def test_spi_uses_direct_psram_dma_without_internal_bounce_buffers() -> None:
-    source = (COMPONENTS / "spi" / "spi_esp_idf.cpp").read_text()
-    upstream = (COMPONENTS / "spi" / "UPSTREAM.md").read_text()
-
-    assert "MAX_PSRAM_TRANSFER_SIZE = 4032" in source
-    assert "SPI_TRANS_DMA_USE_PSRAM" in source
-    assert "SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL" in source
-    assert "psram_tx_flags(txbuf, partial)" in source
-    assert "psram_tx_flags(data, chunk_size)" in source
-    assert UPSTREAM_DEV_SHA in upstream
-    assert "ESP-IDF 5.5" in upstream
+def test_integrated_spi_and_http_components_are_not_shadowed() -> None:
+    assert not (COMPONENTS / "spi").exists()
+    assert not (COMPONENTS / "audio_http").exists()
+    package = (ROOT / "packages/audio/http_media_codecs.yaml").read_text()
+    assert "components: [audio_http_compat]" in package
+    assert "min_version: 2026.9.0" in package

@@ -2,11 +2,16 @@
 # prefers FLAC. Compile those decoders explicitly, without format: NONE enabling
 # every decoder (including Opus). Include only in profiles with HTTP playback.
 substitutions:
-  ext_components_source: github://n-IA-hane/esphome-intercom@main
+  ext_components_source: github://n-IA-hane/esphome-intercom@dev
 
 external_components:
   - source: ${ext_components_source}
-    components: [audio_http]
+    components: [audio_http_compat]
+
+esphome:
+  min_version: 2026.9.0
+
+audio_http_compat:
 
 audio:
   codecs:

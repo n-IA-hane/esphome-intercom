@@ -7,6 +7,9 @@
 # still call by name when HA is present because HA bridges the SIP legs.
 # =============================================================================
 
+esphome:
+  min_version: 2026.9.0
+
 substitutions:
   voip_transport: udp
   voip_sip_port: "5060"

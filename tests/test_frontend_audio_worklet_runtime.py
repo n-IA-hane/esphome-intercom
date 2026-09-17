@@ -202,3 +202,72 @@ assert.ok(enabled.alias < disabled.alias * 0.08);
         check=True,
         capture_output=True,
     )
+
+
+@pytest.mark.parametrize("frame_ms,context_rate,channels", [
+    (10, 48000, 1), (16, 48000, 1), (20, 48000, 1),
+    (32, 48000, 1), (10, 44100, 1), (10, 48000, 2),
+])
+def test_playback_recovery_does_not_repeat_full_startup_wait(frame_ms, context_rate, channels):
+    script = r'''
+import fs from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+const [path, frameMs, rate, channels] = JSON.parse(process.env.CASE);
+let Processor, now = 1;
+class Worklet {
+  constructor() { this.port = {onmessage: null, postMessage() {}}; }
+}
+const context = vm.createContext({
+  AudioWorkletProcessor: Worklet, sampleRate: rate,
+  registerProcessor: (_, value) => { Processor = value; },
+  ArrayBuffer, DataView, Float32Array, Math, Number, Object, Error,
+});
+Object.defineProperty(context, 'currentTime', {get: () => now});
+vm.runInContext(fs.readFileSync(path, 'utf8'), context);
+const p = new Processor({processorOptions: {format: {
+  sampleRate: 16000, frameMs, channels, pcmFormat: 's16le',
+}}});
+function packet(value) {
+  const data = new ArrayBuffer(16000 * frameMs / 1000 * channels * 2);
+  const view = new DataView(data);
+  for (let i = 0; i < data.byteLength; i += 2) view.setInt16(i, value, true);
+  p.port.onmessage({data: {type: 'audio', buffer: data}});
+}
+function render() {
+  const output = Array.from({length: channels}, () => new Float32Array(128));
+  p.process([], [output]);
+  now += 128 / rate;
+  return output[0];
+}
+for (let i = 0; i < 40 && !p._started; i++) {
+  packet(4096);
+  now += frameMs / 1000;
+}
+assert(p._started);
+for (let i = 0; i < 2000 && !p._starvationPending; i++) render();
+assert(p._starvationPending);
+p._targetStartFrames = p._maxStartFrames;
+const returned = now;
+packet(24576);
+let next = returned + frameMs / 1000, heard;
+while (now - returned < 0.8) {
+  while (now >= next) { packet(24576); next += frameMs / 1000; }
+  const output = render();
+  if (heard === undefined && output.some(value => value > 0.6)) {
+    heard = now - 128 / rate;
+  }
+}
+assert(heard !== undefined);
+assert((heard - returned) * 1000 <= 40, `Recovery delayed ${(heard - returned) * 1000}ms`);
+assert.equal(p._underruns, 1);
+assert.equal(p._framesDrop, 0);
+'''
+    import os
+    subprocess.run(
+        ["node", "--input-type=module", "-"],
+        input=script, text=True, check=True, capture_output=True,
+        env={**os.environ, "CASE": json.dumps([
+            str(PLAYBACK_PROCESSOR), frame_ms, context_rate, channels,
+        ])},
+    )

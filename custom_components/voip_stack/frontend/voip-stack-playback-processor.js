@@ -65,6 +65,9 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     this._overlapFrames = Math.max(1, Math.round(sampleRate * 0.005));
     this._minMatchFrames = Math.max(1, Math.round(sampleRate * 0.0025));
     this._maxMatchFrames = Math.max(this._minMatchFrames, Math.round(sampleRate * 0.015));
+    this._recoveryFrames = Math.ceil(
+      (this._overlapFrames + this._maxMatchFrames) / this._contextFrameSamples,
+    ) + 1;
     this._scaleOffset = 0;
     this._scalePosition = 0;
     this._scaleCorrelation = 1;
@@ -104,13 +107,13 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
       this._historyFrames = 0;
       this._scaleOffset = 0;
     }
-    if (this._starvationPending) {
+    const recovering = this._starvationPending;
+    if (recovering && this._available === 0) {
       if (!this._remoteSilenceResume) {
         this._underruns++;
         this._lastUnderrun = currentTime;
         this._targetStartFrames = Math.min(this._maxStartFrames, this._targetStartFrames + 2);
       }
-      this._starvationPending = false;
     }
     this._remoteSilenceResume = false;
     this._updateArrivalJitter();
@@ -151,8 +154,14 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
     }
     this._available += this._contextFrameSamples * this._format.channels;
     this._framesIn++;
-    if (!this._started && this._available >= frameSamples * this._targetStartFrames) {
+    // Recovery needs enough samples for the existing time-scale operation,
+    // not a second wait for the full adaptive startup target.
+    const startFrames = recovering
+      ? Math.min(this._targetStartFrames, this._recoveryFrames)
+      : this._targetStartFrames;
+    if (!this._started && this._available >= frameSamples * startFrames) {
       this._started = true;
+      this._starvationPending = false;
       this._levelFrames = this._available / this._format.channels;
     }
   }
@@ -226,11 +235,11 @@ class VoipPlaybackProcessor extends AudioWorkletProcessor {
 
     let underrunThisQuantum = false;
     for (let i = 0; i < channels[0].length; i++) {
-      if (!this._started) {
+      if (!this._started && !this._starvationPending) {
         for (const out of channels) out[i] = 0;
         continue;
       }
-      if (this._available < this._format.channels) {
+      if (!this._started || this._available < this._format.channels) {
         if (!underrunThisQuantum) {
           underrunThisQuantum = true;
           this._starvationPending = true;

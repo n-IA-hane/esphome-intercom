@@ -6,6 +6,22 @@ an earlier development contract instead of carrying two parallel APIs. The
 config-entry migration preserves supported persisted settings, but copied card
 YAML and automations cannot be migrated by Home Assistant automatically.
 
+## 2026.9.3-dev: ESPHome 2026.9.0 for maintained firmware profiles
+
+Update ESPHome to at least **2026.9.0** before compiling the current project
+YAMLs. Updating only the Home Assistant integration does not require an
+immediate firmware rebuild.
+
+For copied custom YAMLs, remove `spi` and `audio_http` from external-component
+lists that point to this repository. Both now come from ESPHome. Keep
+`persistent_ring_buffer` settings unchanged. Where the old SPI fork was used
+for the Spotpear display, set `psram_dma: true` on the `mipi_spi` display itself.
+
+Include `packages/audio/http_media_codecs.yaml` for HTTP playback. It selects
+MP3/WAV codecs and the small `audio_http_compat` adapter that preserves WAV
+recognition for `audio/vnd.wave` responses. The retired `audio_http` directory
+is no longer an external component source.
+
 ## 2026.9.0: upgrade checklist
 
 If you use only the standard HACS integration and its visual card editor, the

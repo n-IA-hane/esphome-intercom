@@ -21,7 +21,7 @@ git diff --no-index ../esphome-pr-work/esphome/components/voice_assistant esphom
 
    Reason: slow TTS engines can take longer than ESPHome's fixed 2 second
    playback-start timeout. The fork keeps upstream's 2 second default, exposes a
-   YAML option, and maintained full voice packages set it to 10 seconds.
+   YAML option, and maintained full voice packages set it to 35 seconds.
 
    Upstream path: viable as a narrow configuration option preserving existing
    default behavior.
@@ -36,7 +36,10 @@ voice_assistant.h
 + setter and tts_playback_start_timeout_ member
 
 voice_assistant.cpp
-+ start_playback_timeout_ uses the configured value instead of hardcoded 2000
++ configurable deadline while waiting for playback to start
++ retain the upstream 2 second deadline after playback has started
++ preserve completed or aborted playback across late TTS events
++ deliver the streaming-start hook before submitting the media URL
 ```
 
 After updating ESPHome, re-run the diff above and update this file before

@@ -250,7 +250,8 @@ def test_spotpear_concurrency_memory_policy_is_explicit_and_preallocated() -> No
     assert "audio_task_stacks_in_psram: ${voip_audio_task_stacks_in_psram}" in text
     assert "tx_task_stack_size: ${voip_tx_task_stack_size}" in text
     assert "rx_task_stack_size: ${voip_rx_task_stack_size}" in text
-    assert "components: [audio_http, speaker, voice_assistant, spi]" in text
+    assert "components: [speaker, voice_assistant]" in text
+    assert "psram_dma: true" in text
 
 
 def test_sendspin_artwork_uses_the_official_image_platform() -> None:
@@ -530,7 +531,7 @@ def test_p4_video_workers_are_event_driven_and_use_bounded_direct_display() -> N
     assert "this->surface_capacity_bytes_" in renderer_cpp
     assert "config.scale_x = scale;" in renderer_cpp
     assert "config.scale_y = scale;" in renderer_cpp
-    assert "kMaxPresentationPixels = 256U * 1024U" in renderer_cpp
+    assert "return width <= pixel_capacity / height;" in renderer_cpp
     assert "ulTaskNotifyTake(pdTRUE, portMAX_DELAY);" in renderer_cpp
     assert "xTaskNotifyGive(this->rx_task_handle_)" in renderer_cpp
     assert "this->pending_surface_.load(std::memory_order_acquire) >= 0" in renderer_cpp

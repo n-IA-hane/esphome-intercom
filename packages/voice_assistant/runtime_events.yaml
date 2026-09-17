@@ -7,7 +7,8 @@
 voice_assistant:
   id: va
   media_player: speaker_media_player
-  tts_playback_start_timeout: 10s
+  # Allow the HTTP reader's connection attempts before reporting a start failure.
+  tts_playback_start_timeout: 35s
   on_start:
     - runtime_controller.event:
         id: runtime
@@ -47,10 +48,13 @@ voice_assistant:
   on_intent_progress:
     # ESPHome exposes the streaming TTS media URL here. It is transport state,
     # not assistant response text, so it must never reach display adapters.
-    - logger.log:
-        level: DEBUG
-        tag: va
-        format: "VA: intent_progress"
+    - if:
+        condition:
+          lambda: return !x.empty();
+        then:
+          - runtime_controller.event:
+              id: runtime
+              event: va_responding
   on_tts_start:
     - logger.log:
         level: INFO

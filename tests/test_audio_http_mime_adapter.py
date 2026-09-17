@@ -6,7 +6,7 @@ import subprocess
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-ADAPTER = ROOT / "esphome/components/audio_http/idf_components/micro_decoder_mime/CMakeLists.txt"
+ADAPTER = ROOT / "esphome/components/audio_http_compat/micro_decoder_mime/CMakeLists.txt"
 
 
 @pytest.mark.parametrize("wav", [False, True])

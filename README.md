@@ -2,7 +2,7 @@
 
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3%20%7C%20ESP32--P4-blue.svg)](#supported-hardware)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-native-blue.svg)](https://www.home-assistant.io)
-[![ESPHome](https://img.shields.io/badge/ESPHome-2026.6.5%2B-18bcf2.svg)](https://esphome.io)
+[![ESPHome](https://img.shields.io/badge/ESPHome-2026.9.0%2B-18bcf2.svg)](https://esphome.io)
 
 Turn ESPHome audio devices and Home Assistant into a local SIP phone system,
 or use the maintained full-experience firmware to combine VoIP with a complete
@@ -63,6 +63,11 @@ phonebook. Each room phone still has its own identity and call state._
     </td>
   </tr>
 </table>
+
+Maintained ESP firmware profiles require **ESPHome 2026.9.0 or newer**.
+See the [firmware migration notes](docs/BREAKING_CHANGES.md#202693-dev-esphome-202690-for-maintained-firmware-profiles)
+when updating copied YAMLs. This does not force an immediate firmware update
+when installing the Home Assistant integration alone.
 
 ## What can you build?
 

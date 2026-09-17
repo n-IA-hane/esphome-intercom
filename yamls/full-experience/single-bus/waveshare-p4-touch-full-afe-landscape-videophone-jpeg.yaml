@@ -54,11 +54,11 @@ substitutions:
 
   # Toggled by scripts/yaml_paths.sh between local (../../../...) and remote
   # release mode.
-  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
-  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@main"
-  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/main/"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
+  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/dev/"
 
   # Logical LVGL dimensions after software rotation. Runtime layout still reads
   # the active LVGL resolution so the main dashboard can be reused on nearby
@@ -142,31 +142,32 @@ substitutions:
 # controller, phonebook sync, ESP AFE controls, LVGL dashboard and media assets.
 
 packages:
-  http_media_codecs: github://n-IA-hane/esphome-intercom/packages/audio/http_media_codecs.yaml@main
-  p4_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32p4_base.yaml@main
-  p4_c6_sdio: github://n-IA-hane/esphome-intercom/packages/board/esp32p4_c6_sdio.yaml@main
-  p4_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native_no_wifi_signal.yaml@main
-  full_voice_voip_runtime: github://n-IA-hane/esphome-intercom/packages/presets/full_voice_voip_runtime.yaml@main
-  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller_no_led.yaml@main
-  voice_assistant_runtime_controls: github://n-IA-hane/esphome-intercom/packages/voice_assistant/runtime_controls.yaml@main
-  call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@main
-  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api_runtime.yaml@main
-  voice_assistant_local_commands: github://n-IA-hane/esphome-intercom/packages/voice_assistant/local_commands.yaml@main
-  voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@main
-  p4_full_video_jpeg: github://n-IA-hane/esphome-intercom/packages/voip/p4_full_video_jpeg.yaml@main
-  phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@main
-  ota_maintenance: github://n-IA-hane/esphome-intercom/packages/ota/full_audio_lvgl_maintenance.yaml@main
-  afe_entities: github://n-IA-hane/esphome-intercom/packages/esp_afe/dual_mic_entities.yaml@main
-  audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@main
-  speaker_power: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/speaker_power_output.yaml@main
-  flac_codecs_psram: github://n-IA-hane/esphome-intercom/packages/audio/flac_codecs_psram.yaml@main
-  sendspin_artwork: github://n-IA-hane/esphome-intercom/packages/media_player/sendspin_artwork.yaml@main
-  lvgl_p4_ppa: github://n-IA-hane/esphome-intercom/packages/lvgl/p4_ppa.yaml@main
-  p4_va_cleanup: github://n-IA-hane/esphome-intercom/packages/lvgl/p4_va_cleanup.yaml@main
+  playback_compat: github://n-IA-hane/esphome-intercom/packages/media_player/playback_compat.yaml@dev
+  http_media_codecs: github://n-IA-hane/esphome-intercom/packages/audio/http_media_codecs.yaml@dev
+  p4_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32p4_base.yaml@dev
+  p4_c6_sdio: github://n-IA-hane/esphome-intercom/packages/board/esp32p4_c6_sdio.yaml@dev
+  p4_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native_no_wifi_signal.yaml@dev
+  full_voice_voip_runtime: github://n-IA-hane/esphome-intercom/packages/presets/full_voice_voip_runtime.yaml@dev
+  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller_no_led.yaml@dev
+  voice_assistant_runtime_controls: github://n-IA-hane/esphome-intercom/packages/voice_assistant/runtime_controls.yaml@dev
+  call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
+  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api_runtime.yaml@dev
+  voice_assistant_local_commands: github://n-IA-hane/esphome-intercom/packages/voice_assistant/local_commands.yaml@dev
+  voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
+  p4_full_video_jpeg: github://n-IA-hane/esphome-intercom/packages/voip/p4_full_video_jpeg.yaml@dev
+  phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
+  ota_maintenance: github://n-IA-hane/esphome-intercom/packages/ota/full_audio_lvgl_maintenance.yaml@dev
+  afe_entities: github://n-IA-hane/esphome-intercom/packages/esp_afe/dual_mic_entities.yaml@dev
+  audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@dev
+  speaker_power: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/speaker_power_output.yaml@dev
+  flac_codecs_psram: github://n-IA-hane/esphome-intercom/packages/audio/flac_codecs_psram.yaml@dev
+  sendspin_artwork: github://n-IA-hane/esphome-intercom/packages/media_player/sendspin_artwork.yaml@dev
+  lvgl_p4_ppa: github://n-IA-hane/esphome-intercom/packages/lvgl/p4_ppa.yaml@dev
+  p4_va_cleanup: github://n-IA-hane/esphome-intercom/packages/lvgl/p4_va_cleanup.yaml@dev
   # No carousel (lvgl_settings_navigation) on P4: the landscape display holds
   # all settings in one scrollable dashboard page.
   # _boot package provides the settings_p4_sync_widgets script invoked from on_boot.
-  lvgl_settings_p4_boot: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_p4_unified_boot.yaml@main
+  lvgl_settings_p4_boot: github://n-IA-hane/esphome-intercom/packages/lvgl/lvgl_settings_p4_unified_boot.yaml@dev
 
 # =============================================================================
 # BOARD AND MEMORY
@@ -220,12 +221,18 @@ esp_ldo:
 # EXTERNAL COMPONENTS
 # =============================================================================
 
+# Allow interrupts between large video cache-writeback chunks.
+esp32:
+  framework:
+    sdkconfig_options:
+      CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS: "y"
+
 external_components:
   - source: ${voip_stack_components_source}
     components: [voip_stack]
   - source: ${ext_components_source}
     components: [speaker, voice_assistant, mipi_dsi]
-  - source: github://n-IA-hane/esphome-esp-video-camera@main
+  - source: github://n-IA-hane/esphome-esp-video-camera@dev
     components: [esp_video_camera]
   - source: ${runtime_controller_components_source}
     components: [runtime_controller]
@@ -388,15 +395,17 @@ light:
 # Runtime raw TDM probing on the P4 Touch 10.1 matches the working v4.0.0
 # layout: slot 0 + slot 2 are the physical mics, slot 1 follows speaker
 # playback as the ES8311 feedback/AEC reference, slot 3 is unused.
-# Stable P4 front-end: esp-sr FD, dual-mic MMNR feed, hardware TDM reference,
+# Stable P4 front-end: esp-sr FD, dual-mic MMR feed, hardware TDM reference,
 # esp_codec_dev codec control and Espressif rate conversion. The raw ES7210
-# slot order is mic/ref/mic/unused; esp_afe stages it as mic/mic/unused/ref.
+# slot order is mic/ref/mic/unused; esp_afe stages the active channels as mic/mic/ref.
 
 # Hardware audio stack: ES7210/ES8311 codec control, 48 kHz TDM bus, AFE feed
 # and speaker output through the shared esp_audio_stack component.
 
 esp_audio_stack:
   id: audio_stack
+  # Keep hardware audio on Core 1; the AFE feed task remains on Core 0.
+  task_core: 1
   # Keep the realtime I2S/AFE bridge stack internal on P4. Sendspin, display and
   # XIP already exercise PSRAM/cache heavily; an external task stack can make a
   # processed AFE frame miss its 64 ms publication slot.
@@ -452,7 +461,8 @@ esp_afe:
   type: fd
   mode: high_perf
   mic_num: 2
-  input_format: MMNR
+  # Two microphones and the reference use the default MMR layout.
+  # input_format: MMNR  # Optional unused AFE channel; no extra physical microphone.
   aec_enabled: true
   # Dual-mic GMF follows Espressif's official element output path. Keep AEC on
   # for normal audio quality; AEC-off on dual-mic BSS targets may sound metallic.

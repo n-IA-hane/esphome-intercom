@@ -101,6 +101,7 @@ enum class MediaPlayerResponseState {
   URL_SENT,
   PLAYING,
   FINISHED,
+  ABORTED,
 };
 #endif
 

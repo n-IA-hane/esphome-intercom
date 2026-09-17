@@ -58,4 +58,27 @@ def test_real_network_outage_is_still_reported(tmp_path):
     ], check=True, capture_output=True, text=True)
     result = json.loads(report.read_text())
     assert result['underruns'] >= 1
-    assert result['maxZeroRunMs'] > 100
+    # Missing network audio remains a real outage. Concealment may decay to a
+    # nonzero float, so measure its energy rather than require exact zero bits.
+    signal = np.fromfile(str(report) + '.f32', dtype='<f4')
+    outage = signal[int(3.4 * 48000):int(3.5 * 48000)]
+    assert len(outage) == 4800
+    assert np.sqrt(np.mean(outage ** 2)) < 0.005
+
+
+def test_recovery_keeps_enough_reserve_for_measured_jitter(tmp_path):
+    trace = json.loads((ROOT / 'tests/fixtures/audio/arrival-jitter.json').read_text())
+    trace['times'] = [time + (0.35 if time >= 3 else 0) for time in trace['times']]
+    fixture = tmp_path / 'jitter-after-outage.json'
+    fixture.write_text(json.dumps(trace))
+    report = tmp_path / 'output.json'
+    subprocess.run([
+        'node', str(ROOT / 'tools/ha_voip_lab/playout_replay.mjs'),
+        str(ROOT / 'custom_components/voip_stack/frontend/voip-stack-playback-processor.js'),
+        str(fixture), str(report),
+    ], check=True, capture_output=True, text=True)
+    result = json.loads(report.read_text())
+    # The deliberate outage is reported once. Recovery must not create a
+    # cascade of new underruns or discard packets while rebuilding its reserve.
+    assert result['underruns'] == 1
+    assert result['framesDropped'] == 0

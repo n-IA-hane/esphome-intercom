@@ -2,9 +2,7 @@
 # Local VA control commands exposed to Home Assistant as ESPHome API actions.
 #
 # Prerequisites:
-#   - id `va`                   : voice_assistant
-#   - id `speaker_media_player` : speaker_source media_player
-#   - script `ui_va_barge_start`: device-specific response-text cleanup hook
+#   - id `runtime`: runtime_controller using the full_voice_voip profile
 # =============================================================================
 
 script:
@@ -13,11 +11,9 @@ script:
   - id: voice_quiet_internal
     mode: restart
     then:
-      - script.execute: ui_va_barge_start
-      - media_player.stop:
-          id: speaker_media_player
-          announcement: true
-      - voice_assistant.stop:
+      - runtime_controller.event:
+          id: runtime
+          event: voice_stop
 
 api:
   actions:

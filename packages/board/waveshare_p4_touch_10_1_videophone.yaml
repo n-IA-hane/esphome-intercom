@@ -147,7 +147,8 @@ esp_afe:
   type: fd
   mode: high_perf
   mic_num: 2
-  input_format: MMNR
+  # Two microphones and the reference use the default MMR layout.
+  # input_format: MMNR  # Optional unused AFE channel; no extra physical microphone.
   aec_enabled: true
   aec_filter_length: 4
   aec_nlp_level: normal
