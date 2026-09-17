@@ -28,7 +28,7 @@ class _PhoneTextSetting:
 
 
 _SETTINGS = (
-    _PhoneTextSetting("extension", "phone_endpoint_extension", "mdi:dialpad", 8),
+    _PhoneTextSetting("extension", "phone_endpoint_extension", "mdi:dialpad", 255),
     _PhoneTextSetting(
         "ring_group", "phone_endpoint_ring_group", "mdi:phone-ring", 255
     ),

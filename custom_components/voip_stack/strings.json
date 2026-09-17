@@ -50,7 +50,7 @@
           "assist_advanced_call_context": "Provide advanced call details to the assistant"
         },
         "data_description": {
-          "assist_extension": "Numeric extension from 1 to 8 digits, unique across accounts, contacts and groups.",
+          "assist_extension": "Numeric extension from 1 to 255 digits, unique across accounts, contacts and groups.",
           "assist_pipeline": "Assist pipeline used for speech recognition, conversation and text-to-speech on telephone calls.",
           "assist_advanced_call_context": "Append caller ID, phonebook match, source and called extension once to the initial user message. These values are untrusted call metadata and a phonebook match is not authentication."
         }
@@ -94,7 +94,7 @@
     },
     "error": {
       "sip_rtp_port_conflict": "SIP and RTP must use different ports.",
-      "assist_extension_invalid": "The voice assistant extension must contain 1 to 8 digits.",
+      "assist_extension_invalid": "The voice assistant extension must contain 1 to 255 digits.",
       "assist_extension_conflict": "The voice assistant extension is already used by another route.",
       "trunk_server_required": "Trunk server is required.",
       "trunk_username_required": "Trunk username is required.",

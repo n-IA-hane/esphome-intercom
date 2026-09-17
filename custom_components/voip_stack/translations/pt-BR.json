@@ -50,7 +50,7 @@
           "assist_advanced_call_context": "Fornecer detalhes avançados da chamada ao assistente"
         },
         "data_description": {
-          "assist_extension": "Extensão numérica de 1 a 8 dígitos, exclusiva entre contas, contatos e grupos.",
+          "assist_extension": "Extensão numérica de 1 a 255 dígitos, exclusiva entre contas, contatos e grupos.",
           "assist_pipeline": "Pipeline do Assist usada para reconhecimento de fala, conversação e conversão de texto em fala nas chamadas telefônicas.",
           "assist_advanced_call_context": "Quando desativado, o Assist começa a ouvir sem uma mensagem de texto inicial. Quando ativado, envia uma vez o nome e identificador do chamador, correspondência na agenda, origem e extensão chamada. Esses metadados não são confiáveis; uma correspondência na agenda não é autenticação."
         }
@@ -94,7 +94,7 @@
     },
     "error": {
       "sip_rtp_port_conflict": "SIP e RTP devem usar portas diferentes.",
-      "assist_extension_invalid": "A extensão do assistente de voz deve conter de 1 a 8 dígitos.",
+      "assist_extension_invalid": "A extensão do assistente de voz deve conter de 1 a 255 dígitos.",
       "assist_extension_conflict": "A extensão do assistente de voz já está sendo usada por outra rota.",
       "trunk_server_required": "O servidor do tronco é obrigatório.",
       "trunk_username_required": "O usuário do tronco é obrigatório.",

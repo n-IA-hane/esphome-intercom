@@ -50,7 +50,7 @@
           "assist_advanced_call_context": "Fornisci dettagli avanzati della chiamata all'assistente"
         },
         "data_description": {
-          "assist_extension": "Interno numerico da 1 a 8 cifre, univoco tra account, contatti e gruppi.",
+          "assist_extension": "Interno numerico da 1 a 255 cifre, univoco tra account, contatti e gruppi.",
           "assist_pipeline": "Pipeline Assist usata per riconoscimento vocale, conversazione e sintesi vocale nelle chiamate.",
           "assist_advanced_call_context": "Se disattivato, Assist parte in ascolto senza messaggi iniziali. Se attivato, invia una sola volta nome e ID del chiamante, corrispondenza in rubrica, provenienza e interno chiamato. Sono metadati non attendibili; la corrispondenza in rubrica non costituisce autenticazione."
         }
@@ -94,7 +94,7 @@
     },
     "error": {
       "sip_rtp_port_conflict": "SIP e RTP devono usare porte diverse.",
-      "assist_extension_invalid": "L'interno dell'assistente vocale deve contenere da 1 a 8 cifre.",
+      "assist_extension_invalid": "L'interno dell'assistente vocale deve contenere da 1 a 255 cifre.",
       "assist_extension_conflict": "L'interno dell'assistente vocale è già usato da un'altra rotta.",
       "trunk_server_required": "Il server trunk è obbligatorio.",
       "trunk_username_required": "Lo username trunk è obbligatorio.",

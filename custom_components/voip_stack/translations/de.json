@@ -50,7 +50,7 @@
           "assist_advanced_call_context": "Geben Sie dem Assistenten erweiterte Anrufdetails"
         },
         "data_description": {
-          "assist_extension": "Numerische Nebenstelle mit 1 bis 8 Ziffern, eindeutig für Konten, Kontakte und Gruppen.",
+          "assist_extension": "Numerische Nebenstelle mit 1 bis 255 Ziffern, eindeutig für Konten, Kontakte und Gruppen.",
           "assist_pipeline": "Assist-Pipeline für Spracherkennung, Konversation und Text-to-Speech bei Telefonanrufen.",
           "assist_advanced_call_context": "Wenn deaktiviert, beginnt Assist direkt zuzuhören, ohne eine einleitende Textnachricht. Wenn aktiviert, werden Anrufername und ID, Telefonbuchzuordnung, Herkunft und angerufene Nebenstelle einmal zu Beginn übermittelt. Diese Anrufdaten sind nicht vertrauenswürdig; eine Telefonbuchzuordnung ist keine Authentifizierung."
         }
@@ -94,7 +94,7 @@
     },
     "error": {
       "sip_rtp_port_conflict": "SIP und RTP müssen unterschiedliche Ports verwenden.",
-      "assist_extension_invalid": "Die Sprachassistent-Nebenstelle muss 1 bis 8 Ziffern enthalten.",
+      "assist_extension_invalid": "Die Sprachassistent-Nebenstelle muss 1 bis 255 Ziffern enthalten.",
       "assist_extension_conflict": "Die Sprachassistent-Nebenstelle wird bereits von einer anderen Route verwendet.",
       "trunk_server_required": "Trunk-Server ist erforderlich.",
       "trunk_username_required": "Trunk-Benutzername ist erforderlich.",

@@ -434,7 +434,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             extension = str(user_input.get(CONF_ASSIST_EXTENSION) or "").strip()
-            if not extension.isdigit() or not 1 <= len(extension) <= 8:
+            if not extension.isdigit() or not 1 <= len(extension) <= 255:
                 errors["base"] = "assist_extension_invalid"
             elif (
                 extension_conflicts(extension, existing)

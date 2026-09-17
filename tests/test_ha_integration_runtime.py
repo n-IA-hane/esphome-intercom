@@ -1034,3 +1034,32 @@ async def test_sip_capture_rejects_non_admin_control(hass, hass_client_no_auth, 
                 blocking=True, return_response=True,
                 context=Context(user_id=hass_read_only_user.id),
             )
+
+
+@pytest.mark.parametrize('extension', ['1000000003', '001000000003', '1' * 255])
+async def test_long_extension_can_be_published_as_ha_text(hass, extension):
+    from custom_components.voip_stack.endpoint_registry import EndpointRegistry
+    from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
+    from custom_components.voip_stack.text import PhoneEndpointSettingText, _SETTINGS
+
+    endpoint = PhoneEndpoint(endpoint_id='long-extension', name='Test phone',
+                             kind=EndpointKind.BROWSER, extension=extension)
+    registry = EndpointRegistry()
+    registry.register(endpoint)
+    setting = next(item for item in _SETTINGS if item.key == 'extension')
+    entity = PhoneEndpointSettingText(hass, endpoint, registry, setting=setting)
+    import logging
+    from datetime import timedelta
+    from homeassistant.helpers.entity_platform import EntityPlatform
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    component = EntityPlatform(hass=hass, logger=logging.getLogger(__name__),
+                               domain='text', platform_name=DOMAIN, platform=None,
+                               scan_interval=timedelta(seconds=30), entity_namespace=None)
+    component.config_entry = entry
+    entity.entity_id = 'text.test_phone_extension'
+    await component.async_add_entities([entity])
+    assert hass.states.get(entity.entity_id).state == extension
+    updated = registry.update(endpoint.endpoint_id, extension='1000000004')
+    entity.apply_endpoint(updated)
+    assert hass.states.get(entity.entity_id).state == '1000000004'
