@@ -4,3 +4,8 @@ pytest-homeassistant-custom-component==0.13.365
 # Dependencies of the HA TTS modules exercised directly by the suite.
 mutagen==1.48.1
 ha-ffmpeg==3.2.2
+
+# Assist pipeline modules imported directly by the speech tests.
+# Match Home Assistant's assist_pipeline manifest.
+pymicro-vad==1.0.1
+pyspeex-noise==1.0.2
