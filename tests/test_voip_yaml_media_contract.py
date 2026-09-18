@@ -81,25 +81,16 @@ def _has_s16le_mono_format(section: str, sample_rate: int, frame_ms: int) -> boo
     )
 
 
-def test_complete_ha_phone_package_keeps_entities_actions_and_phonebook_together() -> None:
-    text = HA_PHONE_PACKAGE.read_text()
+def test_retired_ha_packages_fail_validation_instead_of_registering_duplicates() -> None:
+    for name in ("ha_phone", "ha_integration", "ha_actions", "ha_api", "ha_api_runtime", "phonebook_subscribe"):
+        text = (ROOT / "packages/voip" / f"{name}.yaml").read_text()
+        assert f"legacy_ha_package: {name}" in text
+        assert "actions:" not in text
 
-    assert "voip_ha_entities: !include ha_integration.yaml" in text
-    assert "voip_ha_actions: !include ha_api.yaml" in text
-    assert "voip_ha_phonebook: !include phonebook_subscribe.yaml" in text
 
-
-def test_physical_phone_presets_use_complete_ha_phone_package() -> None:
-    voip_only = VOIP_ONLY_PACKAGE.read_text()
-    p4_base = P4_VIDEOPHONE_BASE.read_text()
-
-    assert "ha_phone: !include voip/ha_phone.yaml" in voip_only
-    assert "ha_phone:" in p4_base
-    assert "!include ha_phone.yaml" in p4_base
-    for text in (voip_only, p4_base):
-        assert "ha_integration:" not in text
-        assert "ha_api:" not in text
-        assert "phonebook_subscribe:" not in text
+def test_physical_phone_presets_use_native_ha_surface() -> None:
+    assert "ha_phone: !include" not in (ROOT / "packages/voip_only.yaml").read_text()
+    assert "use_ha_as_first_contact: true" in (ROOT / "packages/voip_only.yaml").read_text()
 
 
 def test_flac_ringtone_drains_naturally_behind_source_local_ducking() -> None:

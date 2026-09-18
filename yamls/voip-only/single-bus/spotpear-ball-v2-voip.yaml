@@ -203,6 +203,7 @@ wifi:
         value: "true"
 
 api:
+  custom_services: true
   on_client_connected:
     - globals.set:
         id: draw_display_pending

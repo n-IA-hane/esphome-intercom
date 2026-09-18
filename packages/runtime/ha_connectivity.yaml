@@ -1,0 +1,80 @@
+# Full-profile connectivity events and runtime diagnostics.
+wifi:
+  on_connect:
+    - runtime_controller.event:
+        id: runtime
+        event: wifi_connected
+  on_disconnect:
+    - runtime_controller.event:
+        id: runtime
+        event: wifi_disconnected
+
+api:
+  on_client_connected:
+    # ESPHome exposes client_info only to automations as a string. Keep this as a
+    # lambda so log/dashboard/web clients do not incorrectly mark HA as present.
+    - if:
+        condition:
+          lambda: |-
+            return !client_info.empty() &&
+                   client_info.rfind("ESPHome Logs", 0) != 0 &&
+                   client_info.rfind("ESPHome Dashboard", 0) != 0 &&
+                   client_info.rfind("ESPHome Web", 0) != 0;
+        then:
+          - lambda: |-
+              id(g_ha_api_clients)++;
+          - runtime_controller.event:
+              id: runtime
+              event: ha_connected
+  on_client_disconnected:
+    # Mirror the same client_info filter on disconnect and drop HA only when the
+    # last real API client is gone.
+    - if:
+        condition:
+          lambda: |-
+            return !client_info.empty() &&
+                   client_info.rfind("ESPHome Logs", 0) != 0 &&
+                   client_info.rfind("ESPHome Dashboard", 0) != 0 &&
+                   client_info.rfind("ESPHome Web", 0) != 0;
+        then:
+          - lambda: |-
+              if (id(g_ha_api_clients) > 0) id(g_ha_api_clients)--;
+    # Client counters identify HA-like peers, but can be stale across reconnect
+    # races. Reconcile against the API server itself after callbacks settle so
+    # closing `esphome logs` can never masquerade as an HA disconnect.
+    - delay: 250ms
+    - if:
+        condition:
+          not:
+            api.connected:
+        then:
+          - lambda: 'id(g_ha_api_clients) = 0;'
+          - runtime_controller.event:
+              id: runtime
+              event: ha_disconnected
+  actions:
+    # Diagnostic/runtime reducer helpers. These are profile-level API actions,
+    # not runtime_controller component semantics: any event name is defined by YAML.
+    - action: runtime_event
+      variables:
+        event: string
+      then:
+        - runtime_controller.event:
+            id: runtime
+            event: !lambda 'return event;'
+    - action: runtime_set_activity
+      variables:
+        activity: string
+        active: bool
+      then:
+        - runtime_controller.set_activity:
+            id: runtime
+            activity: !lambda 'return activity;'
+            active: !lambda 'return active;'
+    - action: runtime_dump
+      variables:
+        reason: string
+      then:
+        - runtime_controller.dump:
+            id: runtime
+            reason: !lambda 'return reason;'

@@ -36,3 +36,6 @@ packages:
 # not reuse generated CMake components from another profile.
 esphome:
   build_path: .esphome/build/waveshare-p4-touch-videophone-h264
+
+api:
+  custom_services: true

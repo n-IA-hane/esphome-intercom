@@ -66,14 +66,14 @@ voip_stack:
   ring_groups: "Home ring group"
   conference_ring: false
 
-packages:
-  voip_ha_integration: !include packages/voip/ha_integration.yaml
+api:
+  custom_services: true
 ```
 
-The package exposes `text.voip_ring_groups`, `text.voip_conference_groups` and
+The component exposes `text.voip_ring_groups`, `text.voip_conference_groups` and
 `switch.voip_conference_ring`. Editing those entities from HA updates the ESP
 membership without reflashing. `voip_stack:` by itself can still run standalone,
-but HA cannot discover group membership unless these entities are exposed.
+with `ha_integration: false`; its HA interface is otherwise created automatically when API is configured.
 
 HA softphone service:
 

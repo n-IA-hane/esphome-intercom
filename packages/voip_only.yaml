@@ -3,7 +3,7 @@
 # Simple phones use voip_stack callbacks directly, without runtime_controller.
 # Full profiles use runtime_controller because VA/media/LVGL need arbitration.
 #
-# This preset includes the complete HA phone surface through ha_phone.yaml.
+# HA discovery and actions are provided by the VoIP component.
 # Maintained profiles keep optional local controls next to this preset:
 #   - voip/entities_full_duplex.yaml   call/next/prev/decline buttons + mic mute
 #   - voip/call_settings.yaml          auto-answer + DND switches
@@ -21,8 +21,10 @@
 # =============================================================================
 
 packages:
-  ha_phone: !include voip/ha_phone.yaml
   simple_led_status_full_duplex: !include voip/simple_led_status_full_duplex.yaml
   callbacks: !include voip/callbacks.yaml
 
 # voip_stack reserves socket headroom in validation; no lwIP override here.
+
+voip_stack:
+  use_ha_as_first_contact: true

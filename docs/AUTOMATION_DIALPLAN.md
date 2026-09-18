@@ -18,7 +18,7 @@ that selection, normal phonebook routing continues. HA's conditions and action
 sequences express your policy; VoIP Stack handles the call itself.
 
 This cookbook describes the native call automation interface developed for
-2026.9.3. The native triggers and Automation contact workflow are not part of
+2026.10.0. The native triggers and Automation contact workflow are not part of
 2026.9.2. Existing event and state automations have a
 [migration guide](#move-existing-automations-gradually).
 

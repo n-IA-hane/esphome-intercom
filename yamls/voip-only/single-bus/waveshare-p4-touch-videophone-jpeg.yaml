@@ -21,3 +21,6 @@ packages:
 # switch in a shared ESPHome build directory.
 esphome:
   build_path: .esphome/build/waveshare-p4-touch-videophone-jpeg
+
+api:
+  custom_services: true

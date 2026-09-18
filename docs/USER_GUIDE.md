@@ -86,15 +86,15 @@ phone is allowed after another preferred phone has been selected.
 4. Add it through the normal ESPHome integration.
 5. Wait for VoIP Stack to discover its endpoint and publish it in the phonebook.
 
-Normal custom profiles should include the semantic phone package:
+Custom profiles use ESPHome 2026.9.0 or newer and enable native API actions:
 
 ```yaml
-packages:
-  voip_ha_phone: !include packages/voip/ha_phone.yaml
+api:
+  custom_services: true
 ```
 
-It provides the entities, phonebook subscription and native ESPHome actions
-required by Home Assistant:
+The `voip_stack` component supplies discovery, phonebook reception and these
+call-control actions automatically, without a VoIP HA package:
 
 ```text
 start_call

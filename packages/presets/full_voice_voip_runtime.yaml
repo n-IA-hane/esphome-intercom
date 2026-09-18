@@ -13,7 +13,6 @@ packages:
   runtime_mww_task_priority: !include ../runtime/mww_task_priority.yaml
   runtime_voip_ringtone_orchestration: !include ../runtime/voip_ringtone_orchestration.yaml
   voice_assistant_runtime_events: !include ../voice_assistant/runtime_events.yaml
-  voip_ha_integration: !include ../voip/ha_integration.yaml
   voip_full_runtime_callbacks: !include ../voip/full_runtime_callbacks.yaml
 
 voip_stack:

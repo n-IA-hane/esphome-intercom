@@ -28,7 +28,6 @@ substitutions:
 
 packages:
   voice_pe_base: github://esphome/home-assistant-voice-pe/home-assistant-voice.yaml@dev
-  ha_phone: github://n-IA-hane/esphome-intercom/packages/voip/ha_phone.yaml@dev
   voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
   voip_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
 
@@ -99,6 +98,7 @@ speaker:
 # mixer input above for RTP receive audio.
 
 voip_stack:
+  use_ha_as_first_contact: true
   id: phone
   audio:
     rx:
@@ -164,3 +164,6 @@ button:
       name: Decline
       id: decline_button
       icon: mdi:phone-hangup
+
+api:
+  custom_services: true

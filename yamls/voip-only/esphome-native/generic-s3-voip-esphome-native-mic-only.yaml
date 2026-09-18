@@ -66,7 +66,6 @@ substitutions:
 # basic buttons and native diagnostics.
 
 packages:
-  ha_phone: github://n-IA-hane/esphome-intercom/packages/voip/ha_phone.yaml@dev
   simple_led_status_mic_only: github://n-IA-hane/esphome-intercom/packages/voip/simple_led_status_mic_only.yaml@dev
   callbacks: github://n-IA-hane/esphome-intercom/packages/voip/callbacks.yaml@dev
   voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
@@ -205,6 +204,7 @@ microphone:
 # speaker sink, so remote audio playback is intentionally absent.
 
 voip_stack:
+  use_ha_as_first_contact: true
   id: phone
   task_stacks_in_psram: true
   buffers_in_psram: true
@@ -245,3 +245,6 @@ voip_stack:
   ringing_timeout: 30s
   delete_contact_missing_from:
     updates_number: 1
+
+api:
+  custom_services: true

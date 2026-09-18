@@ -39,7 +39,6 @@ external_components:
 
 packages:
   voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
-  ha_phone: github://n-IA-hane/esphome-intercom/packages/voip/ha_phone.yaml@dev
   afe_entities: github://n-IA-hane/esphome-intercom/packages/esp_afe/single_mic_entities.yaml@dev
 
 esphome:
@@ -77,6 +76,7 @@ logger:
   level: DEBUG
 
 api:
+  custom_services: true
   on_client_connected:
     - script.execute: draw_call_screen
 
@@ -562,6 +562,7 @@ script:
           lv_obj_set_style_bg_color(id(call_action_btn), lv_color_hex(btn_color), 0);
 
 voip_stack:
+  use_ha_as_first_contact: true
   id: phone
   transport: udp
   microphone: mic_afe

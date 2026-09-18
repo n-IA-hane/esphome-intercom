@@ -1,111 +1,111 @@
-# ESP VoIP entity surface
+# ESP phones and Home Assistant
 
-`voip_stack:` is the SIP/RTP engine. It can run headless: an ESP can call
-static contacts or direct SIP peers without exposing any Home Assistant entity.
+Starting with 2026.10.0, the VoIP component supplies its Home Assistant
+interface directly. No VoIP HA package is required. Compile with **ESPHome
+2026.9.0 or newer**.
 
-Home Assistant features need entities and native API actions. Custom physical
-phones should normally include the complete package:
-
-```yaml
-packages:
-  voip_ha_phone: !include packages/voip/ha_phone.yaml
-```
-
-This combines the `ha_integration.yaml` entity surface,
-`ha_api.yaml` connectivity wrapper and `phonebook_subscribe.yaml`.
-`ha_api.yaml` imports the single shared `ha_actions.yaml` definition for
-`start_call`, `answer_call`, `decline_call` and `hangup_call`. Selecting the ESP
-as `device_id` in a public VoIP Stack action invokes the matching native action
-on that physical phone.
-
-Maintained YAMLs already include the appropriate pieces. Full
-runtime-controller profiles use `ha_integration.yaml` with
-`ha_api_runtime.yaml` instead. When building a custom YAML from the bare
-`voip_stack` component, include `ha_phone.yaml` or declare the equivalent
-entities and API actions manually. Otherwise the ESP may still be a working SIP
-phone, but Home Assistant cannot fully discover and control it.
-
-## Entities
-
-| Entity | Required for | Purpose |
-| --- | --- | --- |
-| `text_sensor: type: endpoint` | HA phonebook/dialplan | Publishes ESP SIP identity, ports, transport, extension and audio formats. |
-| `text_sensor: type: state` | ESP mirror card | Current ESP call state, for example `idle`, `ringing`, `calling`, `in_call`. |
-| `text_sensor: type: caller` | ESP mirror card | Current incoming caller. |
-| `text_sensor: type: destination` | ESP mirror card | Selected/outgoing destination. |
-| `text_sensor: type: last_reason` | ESP mirror card | Why the last call ended. |
-| `text_sensor: type: contacts` | Local UI/card context | Compact contact count/status. |
-| `text: type: ring_groups` | PBX groups | Comma-separated ring group memberships, editable from HA. |
-| `text: type: conference_groups` | PBX groups | Comma-separated conference group memberships, editable from HA. |
-| `switch: conference_ring` | PBX conference ringing | Whether this endpoint rings when another member starts one of its conference groups. |
-| `text_sensor: type: transport` | Debug | Active SIP signaling transport. |
-| `text_sensor: type: sip_snapshot` | Debug | Compact SIP/media diagnostic snapshot. |
-
-If the card does not mirror an ESP's state, check that the device exposes at
-least `state`, `caller`, `destination` and `last_reason`.
-
-![ESP mirror card and keypad](images/esp-mirror-card-keypad-options.png)
-
-If the ESP does not appear in the HA phonebook, check that it exposes
-`endpoint` and that the endpoint state is not `unknown` or `unavailable`.
-
-The ESPHome Device ID is the stable control identity. Two physical phones may
-publish the same extension and remain independently selectable by Device ID or
-name. Dialing that shared extension is intentionally rejected as ambiguous
-until each phone is assigned a unique extension.
-
-## Entity-only package and manual YAML
-
-`ha_integration.yaml` is intentionally the low-level entity-only package. It
-does not expose call control. `ha_actions.yaml` is the shared low-level action
-surface used by both connectivity wrappers. Equivalent manual entity YAML:
+Keep your board's network, microphone and/or speaker configuration. Add the
+native API option below alongside any existing API encryption settings:
 
 ```yaml
-text_sensor:
-  - platform: voip_stack
-    type: endpoint
-    name: VoIP Endpoint
-  - platform: voip_stack
-    type: state
-    name: VoIP State
-  - platform: voip_stack
-    type: caller
-    name: VoIP Caller
-  - platform: voip_stack
-    type: destination
-    name: VoIP Destination
-  - platform: voip_stack
-    type: last_reason
-    name: VoIP Last Reason
-  - platform: voip_stack
-    type: contacts
-    name: VoIP Contacts
+api:
+  custom_services: true
 
-text:
-  - platform: voip_stack
-    type: ring_groups
-    name: VoIP Ring Groups
-  - platform: voip_stack
-    type: conference_groups
-    name: VoIP Conference Groups
-
-switch:
-  - platform: voip_stack
-    conference_ring:
-      name: VoIP Ring On Conference
+voip_stack:
+  id: phone
+  microphone_source:
+    microphone: mic_main
+    channels: [0]
+  speaker: hw_speaker
 ```
 
-## Debug package
+`mic_main` and `hw_speaker` refer to your existing audio components. Mic-only
+and speaker-only phones are supported: omit the direction you do not have.
+This works with native ESPHome audio or Audio Stack. Voice Assistant, a display
+and the runtime controller are not prerequisites.
 
-Optional diagnostics:
+## What appears automatically
+
+When the native API is present, `voip_stack` creates the existing **VoIP
+Endpoint**, **VoIP State**, **VoIP Caller**, **VoIP Destination**, **VoIP Last
+Reason**, **VoIP Media Route** and **VoIP Contacts** entities. It also exposes
+extension, ring/conference groups and the conference-ring switch.
+
+The endpoint entity advertises the phone's SIP address and media capabilities.
+The HA integration discovers it through the ESPHome device and pushes the
+central phonebook using the native `set_roster_json` action. Call, answer,
+decline, hangup and manual contact actions use the same native API connection.
+Entity names and action names remain compatible with the earlier packages.
+
+Each responsibility has one owner:
+
+- The ESP VoIP component owns calls and its local phonebook.
+- Home Assistant owns the central phonebook and delivers its updates.
+- The native API adapter exposes the component's existing methods and states.
+- Optional packages compose the display, ringtone and Full-profile activities.
+
+No second SIP connection, audio pipeline or polling task is added for this
+interface. ESPHome supplies retained entity states when an API client connects;
+IP changes continue to update the endpoint through the component's network events.
+
+## Customize an entity
+
+The generated entities accept their usual ESPHome options under
+`voip_stack.ha_integration`. For example:
 
 ```yaml
-packages:
-  voip_debug: !include packages/voip/debug.yaml
+voip_stack:
+  ha_integration:
+    media_route:
+      on_value:
+        - logger.log:
+            format: "Call media route: %s"
+            args: ['x.c_str()']
 ```
 
-This adds `transport` and `sip_snapshot`.
+Use this location instead of declaring another `text_sensor` for a managed
+role or extending an entity inside a retired package. Leave the default names
+unless your HA discovery setup has been checked with custom names. Optional
+buttons, volume controls and diagnostic sensors remain explicit declarations.
 
-LVGL profiles may project the same public call state and terminal reason:
+## Standalone SIP
 
-![LVGL call terminal reason](images/lvgl-hangup-reason.jpg)
+Without `api:`, the HA adapter is omitted. With API enabled only for other
+purposes, explicitly disable the phone's HA interface:
+
+```yaml
+voip_stack:
+  ha_integration: false
+```
+
+Static contacts and direct SIP calling remain available. Disabling this
+interface does not disable SIP or RTP. Conversely, enabling it does not force
+calls through HA: `use_ha_as_first_contact` remains a separate routing choice.
+
+## Migrating an existing phone
+
+Remove includes of `voip/ha_phone.yaml`, `voip/ha_integration.yaml`,
+`voip/ha_actions.yaml`, `voip/ha_api.yaml` and
+`voip/phonebook_subscribe.yaml`. These paths now fail validation with migration
+instructions. Remove copied definitions of the native phone actions and managed
+entities as well; duplicates are rejected before compilation.
+
+Full profiles replace `voip/ha_api_runtime.yaml` with
+`runtime/ha_connectivity.yaml` for their runtime connectivity events and
+runtime diagnostic actions. This replacement is not needed by a basic phone.
+Keep unrelated hardware, display, ringtone and audio packages.
+
+Add `custom_services: true` to the existing `api:` block. If you previously
+used `phonebook_subscribe.yaml` or `ha_phone.yaml` and want to preserve their
+routing preference, keep `use_ha_as_first_contact: true` in `voip_stack`.
+Maintained profiles already include these migration changes.
+
+After upload, check the available **VoIP Endpoint**, delivery of contacts,
+calling and hangup. Updating the HACS integration alone does not recompile the
+firmware or migrate a custom device YAML.
+
+## Dashboard controls
+
+The ESP mirror card uses the same call state and native controls.
+
+![ESP mirror card keypad and options](images/esp-mirror-card-keypad-options.png)

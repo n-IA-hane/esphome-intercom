@@ -6,7 +6,19 @@ an earlier development contract instead of carrying two parallel APIs. The
 config-entry migration preserves supported persisted settings, but copied card
 YAML and automations cannot be migrated by Home Assistant automatically.
 
-## 2026.9.3-dev: ESPHome 2026.9.0 for maintained firmware profiles
+## 2026.10.0: native ESP phone integration
+
+VoIP discovery, call actions and phonebook delivery are now built into the ESP
+component. Remove the old VoIP HA packages before compiling, and enable
+`custom_services: true` in the existing `api:` block. Old package paths fail
+configuration validation with an explanatory message.
+
+Do not remove hardware, audio, display or ringtone packages. Full profiles
+retain their runtime connectivity package. The [migration guide](ESP_ENTITY_SURFACE.md)
+lists the retired packages, replacement configuration and how to preserve your
+routing preference. Existing entity and action names are retained.
+
+## 2026.10.0: ESPHome 2026.9.0 for maintained firmware profiles
 
 Update ESPHome to at least **2026.9.0** before compiling the current project
 YAMLs. Updating only the Home Assistant integration does not require an

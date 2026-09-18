@@ -131,11 +131,10 @@ packages:
   runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller_no_led.yaml@dev
   voice_assistant_runtime_controls: github://n-IA-hane/esphome-intercom/packages/voice_assistant/runtime_controls.yaml@dev
   call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
-  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api_runtime.yaml@dev
+  ha_api: github://n-IA-hane/esphome-intercom/packages/runtime/ha_connectivity.yaml@dev
   voice_assistant_local_commands: github://n-IA-hane/esphome-intercom/packages/voice_assistant/local_commands.yaml@dev
   ota_maintenance: github://n-IA-hane/esphome-intercom/packages/ota/full_audio_lvgl_maintenance.yaml@dev
   voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
-  phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
   s3_base: github://n-IA-hane/esphome-intercom/packages/platform/esp32s3_base.yaml@dev
   native_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native.yaml@dev
   aec_entities: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/aec_controls.yaml@dev
@@ -256,6 +255,7 @@ wifi:
     - script.execute: draw_display
 
 api:
+  custom_services: true
   on_client_connected:
     - script.execute: draw_display
 
@@ -548,6 +548,7 @@ runtime_controller:
   storage_in_psram: true
 
 voip_stack:
+  use_ha_as_first_contact: true
   task_stacks_in_psram: true   # save ~28KB internal heap on S3 PSRAM builds by placing task stacks in PSRAM
   signaling_buffers_in_psram: true
   buffers_in_psram: true # VoIP staging buffers in PSRAM; AEC/AFE buffers live in esp_audio_stack

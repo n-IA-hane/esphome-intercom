@@ -321,3 +321,6 @@ select:
       # Reflect actual live mode (covers rejection and silent hardware mode).
       - lambda: |-
           id(aec_mode_select).publish_state(id(aec_processor).get_mode_name());
+
+api:
+  custom_services: true

@@ -14,13 +14,14 @@ lvgl:
             text_font: font_info
             text_align: CENTER
 
-text_sensor:
-  - id: !extend voip_media_route
-    on_value:
-      then:
-        - lvgl.label.update:
-            id: call_media_route_label
-            text: !lambda |-
-              if (x == "direct") return std::string("Direct");
-              if (x == "ha_transcoding") return std::string("HA transcoding");
-              return std::string();
+voip_stack:
+  ha_integration:
+    media_route:
+      on_value:
+        then:
+          - lvgl.label.update:
+              id: call_media_route_label
+              text: !lambda |-
+                if (x == "direct") return std::string("Direct");
+                if (x == "ha_transcoding") return std::string("HA transcoding");
+                return std::string();

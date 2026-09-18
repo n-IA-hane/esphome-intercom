@@ -304,3 +304,6 @@ switch:
     name: Speaker Power
     output: speaker_enable
     restore_mode: RESTORE_DEFAULT_ON
+
+api:
+  custom_services: true

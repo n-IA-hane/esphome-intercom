@@ -422,3 +422,6 @@ script:
                     media_player.is_announcing:
                 timeout: 5s
             - delay: 1s
+
+api:
+  custom_services: true

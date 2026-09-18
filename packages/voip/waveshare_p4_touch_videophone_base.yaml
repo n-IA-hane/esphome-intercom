@@ -38,7 +38,6 @@ packages:
   ui: !include ../lvgl/p4_videophone_ui.yaml
   voip_entities: !include entities_full_duplex.yaml
   call_settings: !include call_settings.yaml
-  ha_phone: !include ha_phone.yaml
   transport: !include transport.yaml
   speaker_mute: !include speaker_mute.yaml
   audio_controls: !include ../esp_audio_stack/controls.yaml
@@ -122,6 +121,7 @@ switch:
       restore_mode: ALWAYS_ON
 
 voip_stack:
+  use_ha_as_first_contact: true
   id: phone
   # With the full assistant/media runtime absent, all call-critical workers fit
   # in internal RAM. Large frame/codec surfaces remain explicitly in PSRAM.

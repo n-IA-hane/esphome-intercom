@@ -65,7 +65,7 @@ phonebook. Each room phone still has its own identity and call state._
 </table>
 
 Maintained ESP firmware profiles require **ESPHome 2026.9.0 or newer**.
-See the [firmware migration notes](docs/BREAKING_CHANGES.md#202693-dev-esphome-202690-for-maintained-firmware-profiles)
+See the [firmware migration notes](docs/BREAKING_CHANGES.md#2026100-esphome-202690-for-maintained-firmware-profiles)
 when updating copied YAMLs. This does not force an immediate firmware update
 when installing the Home Assistant integration alone.
 
@@ -456,7 +456,7 @@ the common examples. A destination can be its phonebook name or extension.
 
 Start with the [step-by-step greeting](docs/AUTOMATION_DIALPLAN.md#create-your-first-greeting-in-the-editor),
 then add a [forward after the greeting](docs/AUTOMATION_DIALPLAN.md#forward-after-the-greeting).
-These native automation features target 2026.9.3 development, not 2026.9.2.
+These native automation features target 2026.10.0 development, not 2026.9.2.
 
 - [Route calls during office hours](docs/AUTOMATION_DIALPLAN.md#route-to-reception-during-office-hours).
 - [Forward only when a phone does not answer](docs/AUTOMATION_DIALPLAN.md#forward-an-unanswered-ha-call-to-assist).

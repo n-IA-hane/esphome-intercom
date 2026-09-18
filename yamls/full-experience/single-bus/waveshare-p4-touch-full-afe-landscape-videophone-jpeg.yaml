@@ -151,11 +151,10 @@ packages:
   runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller_no_led.yaml@dev
   voice_assistant_runtime_controls: github://n-IA-hane/esphome-intercom/packages/voice_assistant/runtime_controls.yaml@dev
   call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
-  ha_api: github://n-IA-hane/esphome-intercom/packages/voip/ha_api_runtime.yaml@dev
+  ha_api: github://n-IA-hane/esphome-intercom/packages/runtime/ha_connectivity.yaml@dev
   voice_assistant_local_commands: github://n-IA-hane/esphome-intercom/packages/voice_assistant/local_commands.yaml@dev
   voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@dev
   p4_full_video_jpeg: github://n-IA-hane/esphome-intercom/packages/voip/p4_full_video_jpeg.yaml@dev
-  phonebook_subscribe: github://n-IA-hane/esphome-intercom/packages/voip/phonebook_subscribe.yaml@dev
   ota_maintenance: github://n-IA-hane/esphome-intercom/packages/ota/full_audio_lvgl_maintenance.yaml@dev
   afe_entities: github://n-IA-hane/esphome-intercom/packages/esp_afe/dual_mic_entities.yaml@dev
   audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@dev
@@ -286,6 +285,7 @@ wifi:
 # central phonebook updates used by VoIP Stack.
 
 api:
+  custom_services: true
   on_client_connected:
     - script.execute: set_idle_or_mute_phase
     - script.execute: draw_display
@@ -663,6 +663,7 @@ voice_assistant:
     - script.execute: draw_display
 
 voip_stack:
+  use_ha_as_first_contact: true
   id: phone
   task_stacks_in_psram: true
   # The TX/RX audio stacks reserve 24 KiB. H.264, AFE, API and Sendspin cannot
