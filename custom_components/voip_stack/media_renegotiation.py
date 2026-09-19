@@ -11,6 +11,7 @@ re-INVITE fails.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import logging
 
 from homeassistant.core import HomeAssistant
@@ -35,6 +36,8 @@ from .core.sdp import (
     constrained_media_direction,
     constrained_video_direction,
     first_offered_dtmf_format,
+    offered_video_formats as sdp_video_formats,
+    video_fmtp_parameters,
     remote_can_receive,
     remote_can_send,
 )
@@ -128,16 +131,36 @@ async def _prepare_bridge_video_contract_change(
     elif removing_video or retaining_video:
         if current_video_relay is None:
             return SipInviteResult(488, "Not Acceptable Here")
-        offered_video_formats = tuple(getattr(client, "video_formats", ()))
-        if not offered_video_formats:
-            offered_video_formats = tuple(
-                item
-                for item in (
-                    destination_dialog.recv_video_format,
-                    destination_dialog.video_format,
-                )
-                if item is not None
+        # Direction changes retain the active leg's codec, including a codec
+        # introduced by a remote re-INVITE after the initial offer.
+        offered_video_formats = tuple(dict.fromkeys(
+            item for item in (
+                getattr(destination_dialog, "recv_video_format", None),
+                getattr(destination_dialog, "video_format", None),
+            ) if item is not None
+        ))
+        # Re-offer our own SDP parameters, not the remote encoder's SPS/PPS
+        # carried by the receive-stream contract.
+        local_sdp = getattr(destination_dialog, "local_sdp_body", "")
+        if local_sdp and offered_video_formats:
+            receive_format = offered_video_formats[0]
+            local_formats = tuple(
+                item for item in sdp_video_formats(local_sdp)
+                if item.payload_type == receive_format.payload_type
+                and item.encoding == receive_format.encoding
             )
+            if local_formats and receive_format.encoding == "H264":
+                offered_video_formats = (replace(
+                    receive_format,
+                    sprop_parameter_sets=local_formats[0].sprop_parameter_sets,
+                    fmtp=";".join(
+                        f"{key}={value}" if value else key
+                        for key, value in video_fmtp_parameters(receive_format).items()
+                        if key != "sprop-parameter-sets"
+                    ),
+                ),)
+        if not offered_video_formats:
+            offered_video_formats = tuple(getattr(client, "video_formats", ()))
         if not offered_video_formats:
             return SipInviteResult(488, "Not Acceptable Here")
         destination_video_port = (

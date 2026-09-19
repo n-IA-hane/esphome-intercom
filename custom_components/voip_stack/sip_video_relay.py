@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 import secrets
 import socket
@@ -190,7 +190,7 @@ class SipVideoRtpRelay:
             "right": [],
         }
         self._transcode_startup_bytes = {"left": 0, "right": 0}
-        self._keyframe_requests: set[str] = set()
+        self._keyframe_requests: dict[str, int | None] = {}
         self._staged_peers: dict[str, _StagedVideoPeer] = {}
         self._rtcp_ssrc = secrets.randbelow(0xFFFFFFFF) + 1
         self._fir_sequence = 0
@@ -200,6 +200,7 @@ class SipVideoRtpRelay:
         self._start_task: asyncio.Task[None] | None = None
         self._stop_task: asyncio.Task[None] | None = None
         self._stop_requested = False
+        self._nat_timer: asyncio.TimerHandle | None = None
         self.started = False
         self.forwarded = 0
         self.rtcp_forwarded = 0
@@ -310,17 +311,20 @@ class SipVideoRtpRelay:
         feedback = set(source.recv_format.rtcp_feedback)
         if (
             not self.transcodes_from(side)
-            or source.recv_format.transport_profile != "RTP/AVPF"
             or not feedback.intersection({"ccm fir", "nack pli"})
         ):
             return False
-        self._keyframe_requests.add(side)
+        self._keyframe_requests.setdefault(side, None)
         return True
 
     def _send_armed_keyframe_request(self, side: str, source: VideoRtpPeer) -> None:
-        if side not in self._keyframe_requests or source.rx_ssrc is None:
+        if (
+            side not in self._keyframe_requests
+            or self._keyframe_requests[side] is not None
+            or source.rx_ssrc is None
+        ):
             return
-        self._keyframe_requests.discard(side)
+        self._keyframe_requests[side] = source.rx_ssrc
         feedback = set(source.recv_format.rtcp_feedback)
         if "ccm fir" in feedback:
             self._fir_sequence = (self._fir_sequence + 1) & 0xFF
@@ -413,6 +417,7 @@ class SipVideoRtpRelay:
             if self._transcode.directions:
                 await self._start_transcoding(loop)
             self.started = True
+            self._maintain_nat()
         except BaseException:
             await self._stop_transcoding()
             self._close_resources()
@@ -444,6 +449,39 @@ class SipVideoRtpRelay:
         except BaseException:
             await self._stop_transcoding()
             raise
+
+    def _maintain_nat(self) -> None:
+        """Keep receive-only video reachable without producing RTP media.
+
+        RFC 6263 section 4.4: a STUN Binding Indication opens the actual RTP
+        tuple and is ignored by peers that do not implement STUN. It does not
+        introduce another RTP source or require negotiated RTCP multiplexing.
+        """
+        if self._nat_timer is not None:
+            self._nat_timer.cancel()
+            self._nat_timer = None
+        if not self.started or self._stop_requested:
+            return
+        for side, peer in (("left", self.left), ("right", self.right)):
+            transport = self._transports.get((side, False))
+            if transport is None or peer.connection_held or not peer.port:
+                continue
+            indication = struct.pack("!HHI", 0x0011, 0, 0x2112A442) + secrets.token_bytes(12)
+            try:
+                transport.sendto(indication, (peer.host, peer.port))
+            except OSError as err:
+                _LOGGER.debug("Video NAT indication failed side=%s: %s", side, err)
+        # A peer may install its RTP tuple only after the SDP transaction ACK.
+        # Probe promptly until the negotiated sender is observed, then maintain
+        # the mapping at the ordinary interval. The peer's RTP latch owns this
+        # readiness state, including after a committed address change.
+        awaiting_source = any(
+            remote_can_send(peer.video_format) and peer.rx_ssrc is None
+            for peer in (self.left, self.right)
+        )
+        self._nat_timer = asyncio.get_running_loop().call_later(
+            1 if awaiting_source else 15, self._maintain_nat
+        )
 
     async def _build_transcode_generation(
         self,
@@ -502,6 +540,9 @@ class SipVideoRtpRelay:
         generation: _TranscodeGeneration,
     ) -> None:
         self._transcode = generation
+        self._keyframe_requests.clear()
+        for side in generation.directions:
+            self.arm_keyframe_request(side)
 
     def _buffer_transcode_startup_rtp(self, side: str, data: bytes) -> bool:
         pending = self._transcode_startup_rtp[side]
@@ -577,6 +618,9 @@ class SipVideoRtpRelay:
     def _close_resources(self) -> None:
         """Synchronously detach every socket/transport from the relay."""
 
+        if self._nat_timer is not None:
+            self._nat_timer.cancel()
+            self._nat_timer = None
         self._staged_peers.clear()
         for transport in self._transports.values():
             transport.close()
@@ -691,7 +735,17 @@ class SipVideoRtpRelay:
             raise RuntimeError("right video peer is not staged")
         directions = self.transcode_directions_for(left, right)
 
-        if not self._transcode.directions and not directions:
+        # A direction/address change does not invalidate codec reference frames.
+        # Retain the existing conversion processes when their contracts match.
+        same_codecs = directions == self._transcode.directions and all(
+            replace(before, direction="sendrecv") == replace(after, direction="sendrecv")
+            for old, new in ((previous_left, left), (previous_right, right))
+            for before, after in (
+                (old.recv_format, new.recv_format),
+                (old.send_format, new.send_format),
+            )
+        )
+        if (not self._transcode.directions and not directions) or same_codecs:
             settled = False
 
             async def rollback_passthrough() -> None:
@@ -731,7 +785,7 @@ class SipVideoRtpRelay:
                 right.rtcp_source_port = None
                 self.left = left
                 self.right = right
-                self._keyframe_requests.clear()
+                self._maintain_nat()
                 for staged_side, staged_peer in (
                     ("left", staged_left),
                     ("right", staged_right),
@@ -808,8 +862,8 @@ class SipVideoRtpRelay:
             old = self._transcode
             self.left = left
             self.right = right
+            self._maintain_nat()
             self._install_transcode_generation(generation)
-            self._keyframe_requests.clear()
             for side in ("left", "right"):
                 self._transcode_startup_rtp[side].clear()
                 self._transcode_startup_bytes[side] = 0

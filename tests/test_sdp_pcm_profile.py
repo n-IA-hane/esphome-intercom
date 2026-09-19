@@ -491,7 +491,7 @@ class SdpPcmProfileTest(unittest.TestCase):
 
         sdp.validate_sdp_answer(offer, answer)
 
-    def test_avp_answer_feedback_is_ignored_as_inapplicable(self) -> None:
+    def test_avp_answer_retains_explicit_peer_feedback_capability(self) -> None:
         offer = (
             "v=0\r\no=- 1 1 IN IP4 192.0.2.10\r\n"
             "s=offer\r\nc=IN IP4 192.0.2.10\r\nt=0 0\r\n"
@@ -514,7 +514,8 @@ class SdpPcmProfileTest(unittest.TestCase):
         selected = sdp.offered_video_formats(answer)
         self.assertEqual(len(selected), 1)
         self.assertEqual(selected[0].transport_profile, "RTP/AVP")
-        self.assertEqual(selected[0].rtcp_feedback, ())
+        self.assertEqual(selected[0].rtcp_feedback, ("nack pli",))
+        self.assertEqual(sdp.offered_video_formats(offer)[0].rtcp_feedback, ())
 
     def test_answer_must_preserve_media_count_order_transport_and_formats(self) -> None:
         audio = audio_format.AudioFormat(16000, "s16le", 1, 20)
@@ -655,6 +656,10 @@ class SdpPcmProfileTest(unittest.TestCase):
                 else:
                     with self.assertRaises(sdp.SdpError):
                         sdp.validate_sdp_answer(offer, answer)
+                    with self.assertRaises(sdp.SdpError):
+                        sdp.validate_sdp_answer(
+                            offer, answer, allow_video_sendrecv_capability=True,
+                        )
 
     def test_sdp_origin_rewrite_preserves_identity_and_detects_real_changes(self) -> None:
         fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)

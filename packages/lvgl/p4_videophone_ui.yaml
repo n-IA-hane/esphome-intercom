@@ -4,6 +4,9 @@
 # decoded frames directly to the DSI display and LVGL draws the bottom control
 # strip; there is no per-frame LVGL image copy.
 
+packages:
+  call_media_route: !include p4_call_media_route.yaml
+
 font:
   - file:
       type: gfonts
@@ -176,6 +179,16 @@ lvgl:
             text_color: 0x94A3B8
             text_font: videophone_body_font
             long_mode: DOT
+
+        - label:
+            id: p4_call_media_route_label
+            align: TOP_MID
+            y: 190
+            width: 1000
+            text: ""
+            text_align: CENTER
+            text_color: 0x94A3B8
+            text_font: videophone_small_font
 
         - label:
             id: videophone_peer_label
@@ -636,9 +649,20 @@ lvgl:
                   id: videophone_video_peer_label
                   align: LEFT_MID
                   x: 28
+                  y: -15
                   width: 840
                   text: "Video call"
                   text_color: 0xFFFFFF
+                  text_font: videophone_small_font
+                  long_mode: DOT
+              - label:
+                  id: p4_video_media_route_label
+                  align: LEFT_MID
+                  x: 28
+                  y: 15
+                  width: 840
+                  text: ""
+                  text_color: 0x94A3B8
                   text_font: videophone_small_font
                   long_mode: DOT
               - button:

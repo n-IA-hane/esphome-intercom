@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -113,6 +114,45 @@ async def test_enabling_video_commits_reserved_media_only_after_reinvite(
     assert client.video_rtcp_socket is rtcp_socket
     assert store["video_direction"] == "sendrecv"
     assert not reservation.released
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_inbound_camera_intent_wakes_existing_media_owner(intent, monkeypatch, enabled):
+    module, store = intent
+    store["send_video"] = enabled
+    video = module.sdp.RtpVideoFormat(payload_type=26, encoding="JPEG")
+    direction = "sendrecv" if enabled else "recvonly"
+    candidate = SimpleNamespace(
+        video_format=video, recv_video_format=video,
+        remote_video_rtp_host="192.0.2.5", remote_video_rtp_port=44002,
+        remote_video_rtcp_host="192.0.2.5", remote_video_rtcp_port=44003,
+        remote_video_rtcp_mux=False, remote_video_payload_types=(26,),
+        remote_video_connection_held=False,
+        remote_sdp="v=0\r\nc=IN IP4 192.0.2.5\r\nm=video 44002 RTP/AVP 26\r\na="
+        + ("sendrecv" if enabled else "sendonly") + "\r\n",
+    )
+    media = {"invite": candidate, "local_video_rtp_port": 42002}
+    session = SimpleNamespace(
+        media_generation=3, update_event=asyncio.Event(), camera_send_enabled=not enabled,
+    )
+    registry = _Registry(None)
+    registry.resource_for = lambda *_args: media
+    prepared = SimpleNamespace(candidate=candidate, commit=Mock(return_value=True))
+    manager = SimpleNamespace(
+        async_prepare_video_reinvite=AsyncMock(return_value=prepared),
+        video_reinvite_result=lambda _id: (200, "OK"),
+    )
+    monkeypatch.setattr(module, "call_registry", lambda _hass: registry)
+    monkeypatch.setattr(module, "sip_endpoint_manager", lambda _hass: manager)
+    monkeypatch.setattr(module, "require_runtime_data", lambda _hass: SimpleNamespace(
+        media=SimpleNamespace(sessions_for=lambda _kind: {"call-1": session}),
+    ))
+    assert await module.async_apply_send_video_intent(object(), "phone", enabled)
+    assert session.camera_send_enabled is enabled
+    assert session.local_direction == direction
+    assert session.remote_rtp_port == 44002
+    assert session.media_generation == 4
+    assert session.update_event.is_set()
 
 
 async def test_rejected_video_addition_releases_staged_media_and_keeps_audio(

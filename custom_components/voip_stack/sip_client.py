@@ -3255,6 +3255,8 @@ class SipCallClient:
                 # answer at this B2BUA boundary while keeping general SDP
                 # answer validation strict.
                 allow_inactive_rejected_media_port=local_video_rtp_port == 0,
+                # local_video_direction below remains bounded by our offer.
+                allow_video_sendrecv_capability=True,
             )
             audio = sdp.negotiate_answer_directional(
                 answer.body,
@@ -3271,6 +3273,7 @@ class SipCallClient:
                 sdp.negotiate_video_answer_directional(
                     answer.body,
                     offered_video_formats,
+                    allow_h264_level_capability=True,
                 )
                 if offered_video_formats and local_video_rtp_port > 0
                 else None

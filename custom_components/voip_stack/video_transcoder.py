@@ -8,12 +8,15 @@ when a browser JPEG must be normalized to RFC 2435's fixed Huffman tables.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import contextlib
 from dataclasses import dataclass, field
 import logging
 import os
 import shutil
 import socket
+import struct
+import time
 from typing import TYPE_CHECKING
 
 from .core import sdp
@@ -374,6 +377,54 @@ def _output_command_args(video_format: RtpVideoFormat) -> list[str]:
 
 
 @dataclass(slots=True)
+class _TranscoderInputTimeline:
+    """Join successive RTP sources on FFmpeg's single input timeline.
+
+    FFmpeg retains sequence and timestamp history across SSRC changes. Rebase
+    only the loopback copy, preserving loss, duplicates and reordering within
+    each source. No public RTP/RTCP stream is rewritten here.
+    """
+
+    source: int | None = None
+    retired: deque[int] = field(default_factory=lambda: deque(maxlen=8))
+    sequence_offset: int = 0
+    timestamp_offset: int = 0
+    last_sequence: int = 0
+    last_timestamp: int = 0
+    last_arrival: float = 0.0
+
+    def translate(self, data: bytes, now: float, clock_rate: int) -> bytes | None:
+        if len(data) < 12 or data[0] >> 6 != 2:
+            return None
+        sequence, timestamp, source = struct.unpack_from("!HII", data, 2)
+        changed = source != self.source
+        if changed:
+            if source in self.retired:
+                return None
+            if self.source is not None:
+                self.retired.append(self.source)
+                self.sequence_offset = (self.last_sequence + 1 - sequence) & 0xFFFF
+                elapsed = max(1, round((now - self.last_arrival) * clock_rate))
+                self.timestamp_offset = (
+                    self.last_timestamp + elapsed - timestamp
+                ) & 0xFFFFFFFF
+            self.source = source
+        mapped_sequence = (sequence + self.sequence_offset) & 0xFFFF
+        mapped_timestamp = (timestamp + self.timestamp_offset) & 0xFFFFFFFF
+        if changed or 0 < (mapped_sequence - self.last_sequence) & 0xFFFF < 0x8000:
+            self.last_sequence = mapped_sequence
+            self.last_timestamp = mapped_timestamp
+            self.last_arrival = now
+        if not (self.sequence_offset or self.timestamp_offset):
+            return data
+        return (
+            data[:2]
+            + struct.pack("!HI", mapped_sequence, mapped_timestamp)
+            + data[8:]
+        )
+
+
+@dataclass(slots=True)
 class FfmpegVideoTranscoder:
     """One receive-only RTP conversion into a negotiated output codec."""
 
@@ -394,6 +445,9 @@ class FfmpegVideoTranscoder:
     _start_task: asyncio.Task[None] | None = field(default=None, init=False)
     _cleanup_task: asyncio.Task[None] | None = field(default=None, init=False)
     _close_requested: bool = field(default=False, init=False)
+    _input_timeline: _TranscoderInputTimeline = field(
+        default_factory=_TranscoderInputTimeline, init=False
+    )
 
     @property
     def ready(self) -> bool:
@@ -521,7 +575,11 @@ class FfmpegVideoTranscoder:
     def send_rtp(self, data: bytes) -> None:
         if self._send_socket is None or self.process is None or self.process.returncode is not None:
             raise VideoTranscoderError("FFmpeg video transcoder stopped")
-        self._send_socket.sendto(data, ("127.0.0.1", int(self.input_port)))
+        packet = self._input_timeline.translate(
+            data, time.monotonic(), int(self.input_format.clock_rate)
+        )
+        if packet is not None:
+            self._send_socket.sendto(packet, ("127.0.0.1", int(self.input_port)))
 
     async def _drain_stderr(self, process: asyncio.subprocess.Process) -> None:
         if process.stderr is None:

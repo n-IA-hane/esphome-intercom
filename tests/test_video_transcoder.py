@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import socket
+import struct
 import sys
 import types
 import unittest
@@ -69,6 +70,35 @@ class _Hass:
 
 
 video_transcoder.require_runtime_data = lambda hass: hass.runtime
+
+
+class TranscoderInputTimelineTests(unittest.TestCase):
+    def test_source_restart_preserves_packet_contract(self) -> None:
+        timeline = video_transcoder._TranscoderInputTimeline()
+
+        def packet(sequence, timestamp, source):
+            # Preserve CSRC, extension, payload and padding byte-for-byte.
+            return b"\xb1\xfd" + struct.pack("!HII", sequence, timestamp, source) + b"\x00" * 12 + b"payload\x01"
+
+        first = packet(65535, 0xFFFFFF00, 1)
+        self.assertIs(timeline.translate(first, 1.0, 90000), first)
+        wrapped = packet(0, 0x100, 1)
+        self.assertIs(timeline.translate(wrapped, 1.1, 90000), wrapped)
+        restarted = packet(12000, 700000000, 2)
+        mapped = timeline.translate(restarted, 1.3, 90000)
+        self.assertEqual(struct.unpack_from("!HI", mapped, 2), (1, 0x100 + 18000))
+        self.assertEqual(mapped[:2], restarted[:2])
+        self.assertEqual(mapped[8:], restarted[8:])
+        # A missing packet remains missing; duplicates and reordering retain IDs.
+        later = timeline.translate(packet(12002, 700009000, 2), 1.4, 90000)
+        self.assertEqual(struct.unpack_from("!HI", later, 2), (3, 0x100 + 27000))
+        duplicate = timeline.translate(packet(12002, 700009000, 2), 1.5, 90000)
+        self.assertEqual(duplicate, later)
+        reordered = timeline.translate(packet(12001, 700000000, 2), 1.6, 90000)
+        self.assertEqual(struct.unpack_from("!H", reordered, 2)[0], 2)
+        self.assertIsNone(timeline.translate(wrapped, 1.7, 90000))
+        third = timeline.translate(packet(9, 500, 3), 1.8, 90000)
+        self.assertEqual(struct.unpack_from("!HI", third, 2), (4, 0x100 + 63000))
 
 
 def _parse_multipart_jpegs(data: bytes) -> list[bytes]:
@@ -781,6 +811,7 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
         encoder_args: tuple[str, ...] = (),
         output_format=None,
         gop: int = 10,
+        restart_source: bool = False,
     ) -> None:
         output = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         output.setblocking(False)
@@ -807,9 +838,19 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
         async def forward_input() -> None:
             nonlocal input_packets
             loop = asyncio.get_running_loop()
+            frames = 0
             while True:
                 raw, _addr = await loop.sock_recvfrom(source, 2048)
                 input_packets += 1
+                if restart_source:
+                    sequence, timestamp, ssrc = struct.unpack_from("!HII", raw, 2)
+                    if frames >= 10:
+                        raw = raw[:2] + struct.pack(
+                            "!HII", (sequence + 16000) & 0xFFFF,
+                            (timestamp + 1700000000) & 0xFFFFFFFF, ssrc ^ 1,
+                        ) + raw[12:]
+                    if raw[1] & 0x80:
+                        frames += 1
                 transcoder.send_rtp(raw)
 
         forward_task = asyncio.create_task(forward_input())
@@ -845,7 +886,7 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
             packets = 0
             access_units = []
             deadline = loop.time() + 5.0
-            while loop.time() < deadline and len(access_units) < 8:
+            while loop.time() < deadline and len(access_units) < (24 if restart_source else 8):
                 try:
                     raw, _addr = await asyncio.wait_for(loop.sock_recvfrom(output, 2048), 0.5)
                 except TimeoutError:
@@ -866,6 +907,8 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreater(input_packets, 20, diagnostic)
             self.assertGreater(packets, 8, diagnostic)
             self.assertGreaterEqual(len(access_units), 3, diagnostic)
+            if restart_source:
+                self.assertGreaterEqual(len(access_units), 20, diagnostic)
             self.assertTrue(any(item.key_frame for item in access_units))
             timestamps = [item.timestamp for item in access_units]
             self.assertEqual(timestamps, sorted(timestamps))
@@ -878,6 +921,15 @@ class VideoTranscoderTests(unittest.IsolatedAsyncioTestCase):
             await transcoder.async_close()
             output.close()
             source.close()
+
+    async def test_vp8_source_restart_keeps_jpeg_output_running(self) -> None:
+        await self._qualify_codec(
+            video_format=sdp.RtpVideoFormat(payload_type=125, encoding="VP8"),
+            encoder="libvpx",
+            encoder_args=("-deadline", "realtime"),
+            output_format=sdp.RtpVideoFormat(payload_type=26, encoding="JPEG", max_framerate=10),
+            restart_source=True,
+        )
 
     async def test_supported_sip_codec_matrix_transcodes_to_vp8(self) -> None:
         formats = (

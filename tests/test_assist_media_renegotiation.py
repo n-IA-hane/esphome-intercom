@@ -9,6 +9,8 @@ from pathlib import Path
 import sys
 import types
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "custom_components" / "voip_stack" / "media_renegotiation.py"
@@ -98,6 +100,10 @@ def _load_module(registry, answer_calls: list[dict]):
         constrained_media_direction=lambda *_args, **_kwargs: "sendrecv",
         constrained_video_direction=lambda *_args, **_kwargs: "inactive",
         first_offered_dtmf_format=lambda _sdp: None,
+        offered_video_formats=lambda _sdp: (),
+        video_fmtp_parameters=lambda fmt: dict(
+            part.split("=", 1) for part in fmt.fmtp.split(";") if part
+        ),
         remote_can_receive=lambda *_args, **_kwargs: False,
         remote_can_send=lambda *_args, **_kwargs: False,
     )
@@ -704,7 +710,8 @@ def test_bridge_video_removal_updates_both_dialogs_and_stops_media() -> None:
     assert relay.right is candidate
 
 
-def test_bridge_video_inactive_updates_both_video_legs_atomically() -> None:
+@pytest.mark.parametrize("local_parameters", ["", "local-encoder"])
+def test_bridge_video_inactive_updates_both_video_legs_atomically(local_parameters) -> None:
     answer_calls: list[dict] = []
     session = types.SimpleNamespace(generation=13)
     registry = types.SimpleNamespace(
@@ -799,10 +806,20 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically() -> None:
 
     relay = Relay()
     registry.relays["source"] = relay
+    @dataclass(frozen=True)
+    class VideoFormat:
+        sprop_parameter_sets: str
+        payload_type: int = 105
+        encoding: str = "H264"
+        fmtp: str = "max-fs=3600"
+    remote_format = VideoFormat("remote-encoder", fmtp="sprop-parameter-sets=remote-encoder;max-fs=3600")
+    local_format = VideoFormat(local_parameters)
+    module.sdp_video_formats = lambda body: (local_format,) if body == "current-local-sdp" else ()
     destination_dialog = types.SimpleNamespace(
         remote_host="192.0.2.20",
-        recv_video_format="jpeg-recv",
-        video_format="jpeg-send",
+        recv_video_format=remote_format,
+        video_format=remote_format,
+        local_sdp_body="current-local-sdp",
     )
     candidate = types.SimpleNamespace(
         video_format=types.SimpleNamespace(direction="inactive"),
@@ -879,7 +896,7 @@ def test_bridge_video_inactive_updates_both_video_legs_atomically() -> None:
     assert result.status == 200
     assert client.prepared == {
         "local_video_rtp_port": 43002,
-        "video_formats": ("jpeg",),
+        "video_formats": (local_format,),
         "video_direction": "inactive",
     }
     assert client.committed is False

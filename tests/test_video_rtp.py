@@ -1178,7 +1178,7 @@ class H264SdpTest(unittest.TestCase):
         self.assertEqual(formats[0].transport_profile, "RTP/AVPF")
         self.assertEqual(sdp.negotiate_video(offer).encoding, "VP8")
 
-    def test_avp_ignores_avpf_feedback_attributes(self) -> None:
+    def test_avp_retains_explicit_feedback_attributes(self) -> None:
         offer = (
             "v=0\r\nc=IN IP4 192.168.1.20\r\nt=0 0\r\n"
             "m=video 41002 RTP/AVP 103\r\n"
@@ -1188,7 +1188,7 @@ class H264SdpTest(unittest.TestCase):
         formats = sdp.offered_video_formats(offer)
         self.assertEqual(len(formats), 1)
         self.assertEqual(formats[0].transport_profile, "RTP/AVP")
-        self.assertEqual(formats[0].rtcp_feedback, ())
+        self.assertEqual(formats[0].rtcp_feedback, ("nack pli",))
 
     def test_rtcp_mux_offer_can_be_answered_with_separate_rtcp(self) -> None:
         offer = (

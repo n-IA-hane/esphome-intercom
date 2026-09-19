@@ -1921,6 +1921,16 @@ lvgl:
                         text_color: 0x22C55E
                         text_font: font_ui_medium
                     - label:
+                        id: p4_call_media_route_label
+                        align: TOP_MID
+                        y: 78
+                        width: 90%
+                        text: ""
+                        text_color: 0x94A3B8
+                        text_font: font_body
+                        text_align: CENTER
+                        long_mode: DOT
+                    - label:
                         id: call_in_call_peer_label
                         align: CENTER
                         y: -38

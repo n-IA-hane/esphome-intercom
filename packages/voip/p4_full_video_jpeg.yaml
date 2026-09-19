@@ -6,6 +6,7 @@
 # pipeline or software image conversion.
 
 packages:
+  call_media_route: !include ../lvgl/p4_call_media_route.yaml
   video_entities: !include video_entities.yaml
 
 substitutions:
@@ -109,10 +110,21 @@ lvgl:
                   id: call_video_peer_label
                   align: LEFT_MID
                   x: 24
+                  y: -15
                   width: 900
                   text: "Video call"
                   text_color: 0xFFFFFF
                   text_font: font_ui_medium
+                  long_mode: DOT
+              - label:
+                  id: p4_video_media_route_label
+                  align: LEFT_MID
+                  x: 24
+                  y: 15
+                  width: 900
+                  text: ""
+                  text_color: 0x94A3B8
+                  text_font: font_body
                   long_mode: DOT
               - button:
                   align: RIGHT_MID

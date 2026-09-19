@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import importlib.util
 import socket
 import sys
@@ -253,7 +254,7 @@ class SipVideoRelayTests(unittest.TestCase):
         self.right.local_video_format = RtpVideoFormat(
             payload_type=110,
             encoding="H264",
-            transport_profile="RTP/AVPF",
+            transport_profile="RTP/AVP",
             rtcp_feedback=("ccm fir",),
         )
         self.relay._transcode.directions = {"right"}  # noqa: SLF001
@@ -267,6 +268,9 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertEqual(destination, (self.right.rtcp_host, self.right.rtcp_port))
         feedback = sys.modules[f"{PKG_NAME}.core.video_rtcp"].parse_compound(raw)[-1]
         self.assertEqual((feedback.packet_type, feedback.fmt), (206, 4))
+        self.assertTrue(self.relay.arm_keyframe_request("right"))
+        self.relay.handle_rtp("right", packet, (self.right.host, self.right.port))
+        self.assertEqual(len(self.right_rtcp.sent), 1)
 
     def test_avp_transcoder_does_not_emit_unnegotiated_rtcp_feedback(self) -> None:
         self.relay._transcode.directions = {"right"}  # noqa: SLF001
@@ -402,6 +406,54 @@ class SipVideoRelayTests(unittest.TestCase):
         self.assertIs(self.relay.right, replacement_right)
         self.assertFalse(self.relay.transcoding)
         self.assertIsNone(self.relay._transcode_hass)  # noqa: SLF001
+
+    def test_direction_change_preserves_transcoder_but_codec_change_does_not(self) -> None:
+        self.relay.started = True
+        self.left.video_format = RtpVideoFormat(payload_type=116, encoding="VP8")
+        self.right.video_format = RtpVideoFormat(payload_type=26, encoding="JPEG")
+        generation = self.relay._transcode
+        generation.directions = {"left", "right"}
+        replacement_left = replace(self.left)
+        replacement_right = replace(
+            self.right, video_format=replace(self.right.video_format, direction="recvonly"),
+        )
+        self.relay.stage_peer_reconfiguration("left", replacement_left)
+        self.relay.stage_peer_reconfiguration("right", replacement_right)
+        commit, _rollback = asyncio.run(self.relay.async_prepare_peer_generation(
+            left=replacement_left, right=replacement_right,
+        ))
+        asyncio.run(commit())
+        self.assertIs(self.relay._transcode, generation)
+        self.assertIs(self.relay.right, replacement_right)
+        changed = replace(
+            replacement_right,
+            video_format=replace(replacement_right.video_format, max_framerate=5),
+        )
+        self.relay.stage_peer_reconfiguration("right", changed)
+        # Changed encoder limits must enter the full generation preparation.
+        with self.assertRaisesRegex(RuntimeError, "transcoding is not configured"):
+            asyncio.run(self.relay.async_prepare_peer_generation(
+                left=replacement_left, right=changed,
+            ))
+
+    def test_receive_only_nat_uses_stun_and_timer_stops_with_relay(self) -> None:
+        async def exercise():
+            self.relay.started = True
+            self.left.video_format = replace(self.left.video_format, direction="sendonly")
+            self.relay._maintain_nat()
+            packet, target = self.left_rtp.sent[-1]
+            self.assertEqual(target, (self.left.host, self.left.port))
+            self.assertEqual(len(packet), 20)
+            self.assertEqual(packet[:8], bytes.fromhex("001100002112a442"))
+            timer = self.relay._nat_timer
+            self.relay._maintain_nat()
+            self.assertTrue(timer.cancelled())
+            timer = self.relay._nat_timer
+            self.relay._close_resources()
+            self.assertTrue(timer.cancelled())
+            self.assertIsNone(self.relay._nat_timer)
+        asyncio.run(exercise())
+
 
     def test_opposite_side_staged_reconfigurations_commit_independently(self) -> None:
         left = VideoRtpPeer("10.0.0.9", 19000, 19001, _format(120))

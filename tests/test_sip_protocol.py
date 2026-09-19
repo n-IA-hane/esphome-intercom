@@ -2753,6 +2753,62 @@ class SipProtocolBugFixAsyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(client.dialog, current)
         self.assertEqual(candidate.video_format.encoding, "JPEG")
 
+    async def test_video_reinvite_keeps_local_direction_with_broader_peer_answer(self) -> None:
+        for direction in ("recvonly", "sendonly"):
+            client, current, sent, negotiated = self._confirmed_audio_client()
+            video = sdp.RtpVideoFormat(payload_type=116, encoding="VP8")
+            prepared = asyncio.create_task(client.async_prepare_video_reinvite(
+                local_video_rtp_port=43000, video_formats=(video,),
+                video_direction=direction,
+            ))
+            request = await self._wait_for_sent_request(sent, "INVITE")
+            answer = sdp.build_answer_directional(
+                "127.0.0.2", "127.0.0.2", 42000, negotiated, negotiated,
+                remote_sdp=request.body, video_port=44000,
+                video_format=video, video_direction="sendrecv",
+            )
+            with self.assertRaises(sdp.SdpError):
+                sdp.validate_sdp_answer(request.body, answer)
+            client.queue.put_nowait((
+                self._response_to_request(request, 200, "OK", answer),
+                ("127.0.0.2", 5060),
+            ))
+            candidate = await asyncio.wait_for(prepared, timeout=0.2)
+            self.assertIsNotNone(candidate)
+            self.assertIs(client.dialog, current)
+            self.assertEqual(candidate.local_video_direction, direction)
+            self.assertEqual(candidate.send_format, current.send_format)
+            self.assertTrue(client.commit_prepared_reinvite(current, candidate))
+            self.assertEqual(client.video_direction, direction)
+            self.assertFalse(any(sip.parse_message(raw).method == "BYE" for raw, _ in sent))
+
+    async def test_video_reinvite_bounds_h264_peer_capability(self) -> None:
+        client, current, sent, negotiated = self._confirmed_audio_client()
+        video = sdp.RtpVideoFormat(
+            payload_type=105, profile_level_id="42e01f", level_asymmetry_allowed=False,
+        )
+        prepared = asyncio.create_task(client.async_prepare_video_reinvite(
+            local_video_rtp_port=43000, video_formats=(video,), video_direction="recvonly",
+        ))
+        request = await self._wait_for_sent_request(sent, "INVITE")
+        answer = sdp.build_answer_directional(
+            "127.0.0.2", "127.0.0.2", 42000, negotiated, negotiated,
+            remote_sdp=request.body, video_port=44000,
+            video_format=video, video_direction="sendrecv",
+        ).replace("42e01f", "42e020")
+        self.assertIsNone(sdp.negotiate_video_answer_directional(answer, (video,)))
+        for invalid in (answer.replace("42e020", "640020"), answer.replace("packetization-mode=1", "packetization-mode=0")):
+            self.assertIsNone(sdp.negotiate_video_answer_directional(
+                invalid, (video,), allow_h264_level_capability=True,
+            ))
+        client.queue.put_nowait((self._response_to_request(request, 200, "OK", answer), ("127.0.0.2", 5060)))
+        candidate = await asyncio.wait_for(prepared, timeout=0.2)
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate.local_video_direction, "recvonly")
+        self.assertEqual(candidate.video_format.profile_level_id, "42e01f")
+        self.assertEqual(candidate.recv_video_format.profile_level_id, "42e01f")
+        self.assertEqual(candidate.send_format, current.send_format)
+
     async def test_local_reinvite_removes_video_with_port_zero(self) -> None:
         client, current, sent, negotiated = self._confirmed_audio_client()
         jpeg = sdp.DEFAULT_VIDEO_FORMATS[3]

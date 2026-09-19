@@ -1983,6 +1983,7 @@ def validate_sdp_answer(
     *,
     allow_omitted_trailing_media: bool = False,
     allow_inactive_rejected_media_port: bool = False,
+    allow_video_sendrecv_capability: bool = False,
 ) -> None:
     """Validate the RFC 3264 media-section and direction answer contract.
 
@@ -2116,6 +2117,16 @@ def validate_sdp_answer(
         offer_direction = normalize_direction(str(offered_section["direction"]))
         answer_direction = normalize_direction(str(answered_section["direction"]))
         if answer_direction not in allowed_directions[offer_direction]:
+            # Some UAs report sendrecv capabilities rather than the effective
+            # one-way answer. As in PJSIP, an opting-in caller must intersect
+            # this with its local offer; it must never widen local send rights.
+            if (
+                allow_video_sendrecv_capability
+                and media == "video"
+                and answer_direction == "sendrecv"
+                and offer_direction in {"sendonly", "recvonly"}
+            ):
+                continue
             raise SdpError(
                 f"SDP answer direction {answer_direction} is invalid for "
                 f"{offer_direction} offer in media section {index}"
@@ -2270,9 +2281,9 @@ def offered_video_formats(sdp_body: str | bytes) -> list[RtpVideoFormat]:
                 clock_rate=clock_rate,
                 transport_profile=str(parsed["transport_profile"]),
                 fmtp=str(parsed["fmtp"].get(payload_type, "")).strip(),
-                rtcp_feedback=(
-                    feedback if str(parsed["transport_profile"]) == "RTP/AVPF" else ()
-                ),
+                # PJSIP and PBXs also signal explicit feedback over AVP.
+                # Retain advertised capabilities without inventing any.
+                rtcp_feedback=feedback,
                 max_framerate=parsed["framerate"],
             )
         )
@@ -2543,6 +2554,8 @@ def _negotiate_video_answer(
 def negotiate_video_answer_directional(
     remote_sdp: str | bytes,
     offered: RtpVideoFormat | tuple[RtpVideoFormat, ...],
+    *,
+    allow_h264_level_capability: bool = False,
 ) -> RtpVideoDirection | None:
     """Validate an answer and retain the offer/answer receive limits.
 
@@ -2555,6 +2568,22 @@ def negotiate_video_answer_directional(
         (offered,) if isinstance(offered, RtpVideoFormat) else tuple(offered)
     )
     selected = _negotiate_video_answer(remote_sdp, offered_formats)
+    if selected is None and allow_h264_level_capability:
+        # Some UAs repeat their decoder capability instead of the selected
+        # H.264 level. As in PJSIP's permissive negotiation, retain our offered
+        # limit. Never relax the sub-profile, packetization mode or RTP profile.
+        for answer in offered_video_formats(remote_sdp):
+            if answer.encoding != "H264" or _h264_profile_level(answer.profile_level_id) is None:
+                continue
+            for offer in offered_formats:
+                if offer.encoding != "H264" or not _h264_subprofiles_compatible(offer, answer):
+                    continue
+                bounded = replace(answer, profile_level_id=offer.profile_level_id)
+                if _matching_offered_video_answer(bounded, (offer,)) is not None:
+                    selected = bounded
+                    break
+            if selected is not None:
+                break
     if selected is None:
         return None
     candidate = _matching_offered_video_answer(selected, offered_formats)
@@ -2744,9 +2773,8 @@ def _video_media_lines(
     fmtp = _serialized_video_fmtp(selected)
     if fmtp:
         lines.append(f"a=fmtp:{payload_type} {fmtp}")
-    if selected.transport_profile == "RTP/AVPF":
-        for feedback in selected.rtcp_feedback:
-            lines.append(f"a=rtcp-fb:{payload_type} {feedback}")
+    for feedback in selected.rtcp_feedback:
+        lines.append(f"a=rtcp-fb:{payload_type} {feedback}")
     if selected.max_framerate is not None:
         lines.append(f"a=framerate:{selected.max_framerate:g}")
     if int(media_port) > 0:
@@ -2781,7 +2809,7 @@ def _video_media_lines_many(
         fmtp = _serialized_video_fmtp(item)
         if fmtp:
             lines.append(f"a=fmtp:{payload_type} {fmtp}")
-        if profile == "RTP/AVPF":
+        if profile == "RTP/AVPF" or item.rtcp_feedback:
             feedback = item.rtcp_feedback or (
                 ("nack pli", "ccm fir") if item.encoding in {"H264", "VP8"} else ()
             )

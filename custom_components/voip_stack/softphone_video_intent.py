@@ -14,7 +14,8 @@ from .core import sdp
 from .core.sdp import DEFAULT_VIDEO_FORMATS, browser_video_send_supported
 from .endpoint_lifecycle import call_registry
 from .media_ports import reserve_sip_video_media
-from .runtime_data import sip_endpoint_manager
+from .media_session_updates import commit_video_session_update
+from .runtime_data import require_runtime_data, sip_endpoint_manager
 from .websocket_api import _fire_call_event, _ha_softphone_store
 
 
@@ -279,6 +280,14 @@ async def async_apply_send_video_intent(
             else "inactive"
         )
         media["video_direction"] = negotiated_direction
+        video_session = require_runtime_data(hass).media.sessions_for("video").get(call_id)
+        if video_session is not None and prepared.candidate.video_format is not None:
+            video_session.camera_send_enabled = bool(enabled)
+            commit_video_session_update(
+                video_session,
+                prepared.candidate,
+                local_direction=negotiated_direction,
+            )
         if reservation is not None:
             media["local_video_rtp_port"] = port
             media["video_rtp_reservation"] = reservation

@@ -1,0 +1,11 @@
+# Both P4 call views project the existing authoritative media-route sensor.
+voip_stack:
+  ha_integration:
+    media_route:
+      on_value:
+        then:
+          - lambda: |-
+              const char *route = x == "direct" ? "Direct" :
+                                  x == "ha_transcoding" ? "HA transcoding" : "";
+              lv_label_set_text(id(p4_call_media_route_label), route);
+              lv_label_set_text(id(p4_video_media_route_label), route);
