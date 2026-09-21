@@ -157,6 +157,33 @@ voip_stack:
 # RUNTIME LOGIC AND ENTITIES
 # =============================================================================
 
+# The official GPIO0 center button keeps all of its normal click/hold actions.
+# Consume both edges of a press used to answer so its delayed single-click
+# automation cannot also start Assist after the call has been accepted.
+
+binary_sensor:
+  - id: !extend center_button
+    filters:
+      - lambda: |-
+          static bool voip_press_consumed = false;
+
+          if (voip_press_consumed) {
+            if (!x) {
+              voip_press_consumed = false;
+            }
+            return {};
+          }
+
+          if (x && !id(center_button).state && id(phone).is_ringing() &&
+              !id(init_in_progress) && !id(color_changed) &&
+              !id(group_volume_changed) && !id(disable_buttons).state) {
+            voip_press_consumed = true;
+            id(phone).answer_call();
+            return {};
+          }
+
+          return x;
+
 # Optional HA buttons for manual call control from the ESPHome integration.
 
 button:
