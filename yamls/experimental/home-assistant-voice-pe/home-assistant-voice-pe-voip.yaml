@@ -101,11 +101,25 @@ voip_stack:
   use_ha_as_first_contact: true
   id: phone
   audio:
+    # The XMOS microphone produces 16 kHz PCM. Match the RX packet time;
+    # auto would inherit 16 ms and leave no common TX/RX RTP cadence.
+    tx:
+      sample_rate: 16000
+      pcm_format: s16le
+      channels: 1
+      frame_ms: 10
     rx:
       sample_rate: 48000
       pcm_format: s16le
       channels: 1
       frame_ms: 10
+    # Plain SIP peers require a format usable in both directions. The
+    # resampler accepts this fallback while its hardware output stays 48 kHz.
+    rx_formats:
+      - sample_rate: 16000
+        pcm_format: s16le
+        channels: 1
+        frame_ms: 10
   microphone_source:
     microphone: i2s_mics
     channels: 0
