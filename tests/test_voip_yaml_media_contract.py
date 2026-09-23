@@ -93,23 +93,19 @@ def test_physical_phone_presets_use_native_ha_surface() -> None:
     assert "use_ha_as_first_contact: true" in (ROOT / "packages/voip_only.yaml").read_text()
 
 
-def test_flac_ringtone_drains_naturally_behind_source_local_ducking() -> None:
-    """Answering must silence only the ringtone while FLAC reaches EOF."""
-    media = RUNTIME_MEDIA_PLAYER.read_text()
+def test_flac_ringtone_stop_preserves_pipeline_ownership() -> None:
+    """Stopping a ring must clear its playlist without stopping call playback."""
+    media = (ROOT / "packages/voip/ringtone_asset.yaml").read_text()
     orchestration = RINGTONE_ORCHESTRATION.read_text()
 
     assert "assets/sounds/ringtone.flac" in media
     assert "assets/sounds/ringtone.wav" not in media
-    assert orchestration.count("mixer_speaker.apply_ducking:") >= 4
     assert "id: tts_mixer_input" in orchestration
-    assert "decibel_reduction: 51" in orchestration
     assert "id: voip_mixer_input" not in orchestration
     assert "id: hw_speaker" not in orchestration
-    assert "media_source::MediaSourceState::IDLE" in orchestration
-    assert orchestration.count("media_source::MediaSourceCommand::STOP") == 2
-    assert orchestration.index("media_source::MediaSourceState::IDLE") < orchestration.index(
-        "media_source::MediaSourceCommand::STOP"
-    )
+    assert "media_player.stop:" in orchestration
+    assert "announcement: true" in orchestration
+    assert "media_source::MediaSourceCommand::STOP" not in orchestration
 
 
 def test_runtime_media_player_profiles_share_ringtone_lifecycle_owner() -> None:
@@ -231,7 +227,7 @@ def test_spotpear_concurrency_memory_policy_is_explicit_and_preallocated() -> No
     assert 'http_media_ring_buffer_size: "32768"' in text
     assert text.count("buffer_size: ${http_media_ring_buffer_size}") == 2
     assert 'sendspin_audio_ring_buffer_size: "262144"' in text
-    assert "buffer_size: ${sendspin_audio_ring_buffer_size}" in text
+    assert "buffer_size: ${sendspin_audio_ring_buffer_size}" in (ROOT / "packages/media_player/sendspin.yaml").read_text()
     assert text.count(
         "persistent_ring_buffer: ${http_media_persistent_ring_buffer}"
     ) == 2
@@ -432,7 +428,7 @@ def test_p4_idle_animation_uses_rendered_page_state() -> None:
     text = P4_LANDSCAPE_FULL_AFE.read_text()
     lifecycle = text[
         text.index("      # Animation lifecycle") :
-        text.index("      # Self-heal: ensure MWW is active when idle")
+        text.index("  - id:", text.index("      # Animation lifecycle"))
     ]
 
     assert 'id(runtime_rendered_page).rfind("main:idle:", 0) == 0' in lifecycle
@@ -456,7 +452,8 @@ def test_p4_idle_animation_has_generic_call_and_page_gates() -> None:
 
     assert "on_unload:\n        - script.stop: ai_animation_loop" in main_page
     assert "- script.stop: ai_animation_loop" in call_started
-    assert 'id: current_mode\n          value: "0"' in call_ended
+    assert "script.execute: runtime_ui_call_end" in call_ended
+    assert "id(current_mode) = id(previous_mode)" in (ROOT / "packages/runtime/lvgl_ui_projection.yaml").read_text()
     assert call_ended.rindex("- script.execute: draw_display") > call_ended.index("delay: 4s")
 
 
@@ -481,7 +478,7 @@ def test_p4_full_jpeg_video_page_has_dedicated_lifecycle() -> None:
     assert 'id(runtime_rendered_page) = "call_video";' in full_jpeg
     assert 'id(runtime_rendered_page) == "call_video"' in full
     assert "id(phone).is_in_call()" in full
-    assert 'id: current_mode\n          value: "0"' in full
+    assert "script.execute: runtime_ui_call_end" in full
     profile_dir = YAMLS / "full-experience" / "single-bus"
     assert not (
         profile_dir / "waveshare-p4-touch-full-afe-landscape-jpeg-native-800.yaml"

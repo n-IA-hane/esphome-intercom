@@ -1,3 +1,46 @@
+# ==============================================================================================
+# Waveshare S3 Touch LCD 1.85C-BOX V2 / Assist + VoIP
+# Status: experimental V2/BOX profile; V1 has different audio hardware
+# Support: https://github.com/sponsors/n-IA-hane
+#
+# Main packages:
+#   presets/full_voice_voip_runtime.yaml; runtime_controller/full_controller_no_led.yaml
+#   audio/shared_mono_mixer_48k.yaml; runtime/timer_alarm_orchestration.yaml
+#   runtime/lvgl_ui_projection.yaml; source-player pipelines declared locally
+#
+# Capture: despite the filename, this profile uses standalone esp_aec:
+# ┌─────────────────────────┐     ┌───────────────────────┐
+# │  ES7210 TDM mic slot 0  ├────>│    48 kHz -> 16 kHz   ├───┐
+# │     microphone input    │     │  audio_stack capture  │   │   ┌─────────────────────────┐
+# └─────────────────────────┘     └───────────────────────┘   └──>│   esp_aec sr_low_cost   │
+#                                                              ┌─>│    16 kHz processing    │
+# ┌─────────────────────────┐     ┌───────────────────────┐    │  └────────────┬────────────┘
+# │  ES7210 TDM ref slot 1  ├────>│    48 kHz -> 16 kHz   ├────┘               │
+# │   AEC reference input   │     │ audio_stack reference │                    v
+# └─────────────────────────┘     └───────────────────────┘       ┌─────────────────────────┐
+#                                                                 │         mic_afe         │
+#                                                                 │    VA / MWW / VoIP TX   │
+#                                                                 └─────────────────────────┘
+#
+# Playback: media, announcement/TTS and call inputs:
+# ┌─────────────────────────┐
+# │   media_speaker_input   ├────┐
+# │    media_mixer_input    │    │     ┌──────────────────────┐      ┌─────────────────────────┐
+# └─────────────────────────┘    ├────>│     audio_mixer      ├─────>│        hw_speaker       │
+# ┌─────────────────────────┐    │     │     48 kHz mono      │      │   ES8311 / NS4150B amp  │
+# │    tts_speaker_input    ├────┤     └──────────────────────┘      └─────────────────────────┘
+# │     tts_mixer_input     │    │
+# └─────────────────────────┘    │
+# ┌─────────────────────────┐    │
+# │    voip_speaker_input   ├────┘
+# │     voip_mixer_input    │
+# └─────────────────────────┘
+#
+# The reference is hardware TDM slot 1; the configured microphone is slot 0.
+# Timer playback is an announcement owner. Native VA observation reports completion.
+# Display/touch, V2-specific wiring and GPIO0 page-aware controls remain below.
+# ==============================================================================================
+
 # =============================================================================
 # WAVESHARE ESP32-S3-TOUCH-LCD-1.85C-BOX V2 - VOICE ASSISTANT + VOIP + WAKE WORD
 # =============================================================================
@@ -7,14 +50,6 @@
 #
 # V2 is required. Waveshare documents V1 with PCM5101 + digital MEMS mic and V2
 # with ES8311 + ES7210 + dual analog microphones. This YAML targets V2/BOX only.
-#
-# Audio pipeline (esp_audio_stack @ 48 kHz, single-mic AEC):
-#
-#   ES7210 slot 0 mic + slot 1 hardware ref -> esp_ae_rate_cvt x3 -> esp_aec -> mic_afe -> VA / VoIP TX / MWW
-#
-#   Music/radio -> media_speaker_input (resampler) -> mixer (48kHz)
-#   VA TTS      -> tts_speaker_input (resampler)   -> mixer -> hw_speaker
-#   VoIP RX     -> voip_speaker_input (resampler)  -> mixer -> ES8311
 #
 # BOOT GPIO0 button, page-aware:
 #   VA idle           : click=start VA      | long (1-3s)=switch to VoIP
@@ -125,9 +160,12 @@ substitutions:
 # navigation, ESP AFE controls, mixer/media player and assets.
 
 packages:
+  sendspin_source: github://n-IA-hane/esphome-intercom/packages/media_player/sendspin.yaml@dev
   playback_compat: github://n-IA-hane/esphome-intercom/packages/media_player/playback_compat.yaml@dev
   http_media_codecs: github://n-IA-hane/esphome-intercom/packages/audio/http_media_codecs.yaml@dev
   full_voice_voip_runtime: github://n-IA-hane/esphome-intercom/packages/presets/full_voice_voip_runtime.yaml@dev
+  runtime_ui_projection: github://n-IA-hane/esphome-intercom/packages/runtime/lvgl_ui_projection.yaml@dev
+  timer_alarm_orchestration: github://n-IA-hane/esphome-intercom/packages/runtime/timer_alarm_orchestration.yaml@dev
   runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller_no_led.yaml@dev
   voice_assistant_runtime_controls: github://n-IA-hane/esphome-intercom/packages/voice_assistant/runtime_controls.yaml@dev
   call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
@@ -426,12 +464,6 @@ speaker:
 # =============================================================================
 
 # Sendspin media hub used by the full dashboard media experience.
-sendspin:
-  id: sendspin_hub
-  task_stack_in_psram: true
-
-# Local FLAC assets for timer completion and VoIP ringing.
-
 audio_file:
   - id: timer_finished_sound
     file: ${assets_base}assets/sounds/timer_finished.flac
@@ -452,15 +484,6 @@ media_source:
   - platform: audio_file
     id: announcement_file_source
     task_stack_in_psram: true
-  - platform: sendspin
-    id: sendspin_media_source
-    sample_rate: 48000
-    buffer_size: 262144
-    task_stack_in_psram: true
-    decode_memory: psram
-
-# Speaker media player with separate media and announcement pipelines.
-
 media_player:
   - platform: speaker_source
     name: None
@@ -476,7 +499,6 @@ media_player:
       format: FLAC
       sources:
         - media_http_source
-        - sendspin_media_source
     announcement_pipeline:
       speaker: tts_speaker_input
       format: FLAC
@@ -484,24 +506,11 @@ media_player:
       sources:
         - announcement_http_source
         - announcement_file_source
-    on_announcement:
-      - runtime_controller.event:
-          id: runtime
-          event: announcement_started
     on_play:
-      - runtime_controller.event:
-          id: runtime
-          event: media_playing
       - script.execute: backlight_timer
     on_pause:
-      - runtime_controller.event:
-          id: runtime
-          event: media_paused
       - script.execute: backlight_timer
     on_idle:
-      - runtime_controller.event:
-          id: runtime
-          event: media_idle
       - delay: 200ms
       - script.execute: backlight_timer
 
@@ -539,9 +548,6 @@ voice_assistant:
   on_timer_tick:
     - script.execute: update_timer_state
   on_timer_finished:
-    - runtime_controller.event:
-        id: runtime
-        event: timer_finished
     - script.execute: draw_display
 
 runtime_controller:
@@ -2320,58 +2326,7 @@ script:
   # Device-local overlays (timer, settings, call-ended) are resolved inside draw_display.
   - id: !extend render_ui_state
     then:
-      - lambda: |-
-          int state = id(ui_state);
-          // VoIP idle: restore previous mode after call ends.
-          if (state == ${ui_state_idle} && id(current_mode) == 1 && id(phone).is_idle()) {
-            id(peer_name) = id(phone).get_current_destination();
-            if (id(previous_mode) == 0) {
-              id(current_mode) = 0;
-            }
-          }
-
-          switch (state) {
-            case ${ui_state_init}:
-            case ${ui_state_no_wifi}:
-            case ${ui_state_no_ha}:
-              id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
-              break;
-            case ${ui_state_both_muted}:
-            case ${ui_state_mic_muted}:
-              id(voice_assistant_phase) = ${voice_assist_muted_phase_id};
-              break;
-            case ${ui_state_mww_recent}:
-            case ${ui_state_va_listening}:
-              id(current_mode) = 0;
-              id(voice_assistant_phase) = ${voice_assist_listening_phase_id};
-              break;
-            case ${ui_state_va_thinking}:
-              id(voice_assistant_phase) = ${voice_assist_thinking_phase_id};
-              break;
-            case ${ui_state_va_replying}:
-              id(voice_assistant_phase) = ${voice_assist_replying_phase_id};
-              break;
-            case ${ui_state_va_error}:
-              id(voice_assistant_phase) = ${voice_assist_error_phase_id};
-              break;
-            case ${ui_state_media}:
-              if (id(mute).state) {
-                id(voice_assistant_phase) = ${voice_assist_muted_phase_id};
-              } else {
-                id(apply_media_artwork).execute();
-                id(voice_assistant_phase) = ${voice_assist_replying_phase_id};
-              }
-              break;
-            case ${ui_state_idle}:
-              if (id(mute).state) {
-                id(voice_assistant_phase) = ${voice_assist_muted_phase_id};
-              } else {
-                id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
-              }
-              break;
-            default:
-              break;
-          }
+      - script.execute: runtime_project_ui_phase
       - script.execute: backlight_timer
       # Reset text on listening start.
       - if:
@@ -2419,9 +2374,6 @@ script:
           lv_img_set_src(id(mood_bg), mood);
           id(text_response).publish_state(t);
       - globals.set:
-          id: voice_assistant_phase
-          value: '${voice_assist_replying_phase_id}'
-      - globals.set:
           id: reply_page_index
           value: '0'
       - script.stop: reply_pagination_timer
@@ -2432,7 +2384,7 @@ script:
       - if:
           condition:
             lambda: |-
-              return id(current_mode) == 0;
+              return id(current_mode) == 0 && id(ui_state) == ${ui_state_va_replying};
           then:
             - script.execute: update_replying_text
             - if:
@@ -2454,11 +2406,10 @@ script:
   # VoIP call display (extends package placeholder)
   - id: !extend ui_call_started
     then:
+      - script.execute: runtime_ui_call_begin
       - script.stop: reply_pagination_timer
       - lambda: |-
           id(peer_name) = peer;
-          id(previous_mode) = id(current_mode);
-          id(current_mode) = 1;
       - script.execute: backlight_timer
       # Update the relevant peer label for whichever call page will show
       - lvgl.label.update:
@@ -2477,6 +2428,7 @@ script:
   - id: !extend ui_call_ended
     mode: restart
     then:
+      - script.execute: runtime_ui_call_end
       - globals.set:
           id: call_ended_active
           value: "true"
@@ -2644,7 +2596,7 @@ script:
           // callbacks can legitimately update the phase while playing the alarm.
           if (id(runtime).is_activity_active("timer_ringing")) {
             target = id(timer_finished_page)->obj;
-          } else if (id(call_ended_active)) {
+          } else if (id(call_ended_active) && !id(phone).is_active()) {
             target = id(call_ended_page)->obj;
           } else if (id(settings_active) && !id(g_settings_pages).empty()) {
             int idx = id(g_settings_index);
@@ -2655,7 +2607,7 @@ script:
             target = id(initializing_page)->obj;
           } else if (!wifi::global_wifi_component->is_connected()) {
             target = id(no_wifi_page)->obj;
-          } else if (!api::global_api_server->is_connected()) {
+          } else if (id(runtime).is_activity_active("no_ha")) {
             target = id(no_ha_page)->obj;
           } else if (id(current_mode) == 1) {
             // VoIP mode
@@ -2748,25 +2700,6 @@ script:
             binary_sensor.is_on: is_idle_screen
           then:
             - script.execute: update_idle_labels
-      # Self-heal: ensure MWW is active when in VA idle (catches any missed restarts)
-      - if:
-          condition:
-            and:
-              - lambda: |-
-                  return id(current_mode) == 0 &&
-                         id(voice_assistant_phase) == ${voice_assist_idle_phase_id} &&
-                         !id(init_in_progress);
-              - switch.is_off: mute
-              - not:
-                  media_player.is_announcing:
-                    id: speaker_media_player
-          then:
-            - if:
-                condition:
-                  not:
-                    micro_wake_word.is_running:
-                then:
-                  - script.execute: start_mww_when_ready
       - if:
           condition:
             lambda: |-
@@ -2841,36 +2774,6 @@ script:
 
           lv_obj_clear_flag(id(timer_overlay), LV_OBJ_FLAG_HIDDEN);
 
-  - id: set_idle_or_mute_phase
-    then:
-      - if:
-          condition:
-            switch.is_on: mute
-          then:
-            - globals.set:
-                id: voice_assistant_phase
-                value: '${voice_assist_muted_phase_id}'
-          else:
-            - if:
-                condition:
-                  media_player.is_playing:
-                    id: speaker_media_player
-                then:
-                  # Music playing: show neutral mood screen instead of idle animation
-                  - script.execute: apply_media_artwork
-                  - globals.set:
-                      id: voice_assistant_phase
-                      value: '${voice_assist_replying_phase_id}'
-                else:
-                  - globals.set:
-                      id: voice_assistant_phase
-                      value: '${voice_assist_idle_phase_id}'
-
-  # Swipe-driven mode switch: set the nav_anim hint, then delegate to the
-  # existing switch_to_voip / switch_to_va scripts. They funnel into
-  # draw_display, which honours nav_anim (animated transition) and resets
-  # it. Non-swipe callers (long-press GPIO0) leave nav_anim=0 and stay
-  # instant. Single source of truth for routing + state transitions.
   - id: swipe_to_voip
     then:
       - lambda: |-
@@ -3022,30 +2925,6 @@ script:
                 value: !lambda 'return id(reply_page_index) + 1;'
             - script.execute: update_replying_text
             - script.execute: reply_pagination_timer
-
-  # Timer alarm: play sound in a loop while runtime_controller timer_ringing is active
-  - id: timer_alarm_loop
-    mode: single
-    then:
-      - while:
-          condition:
-            runtime_controller.is_active:
-              id: runtime
-              activity: timer_ringing
-          then:
-            - media_player.play_media:
-                id: speaker_media_player
-                media_url: "audio-file://timer_finished_sound"
-                announcement: true
-            - delay: 6s
-
-  - id: timer_alarm_auto_stop
-    mode: restart
-    then:
-      - delay: 15min
-      - runtime_controller.event:
-          id: runtime
-          event: timer_stopped
 
   # Backlight timer
   - id: backlight_timer
@@ -3359,18 +3238,12 @@ switch:
       - voice_assistant.stop:
       - micro_wake_word.stop:
       - microphone.mute: mic_afe
-      - runtime_controller.event:
-          id: runtime
-          event: mic_muted
     on_turn_off:
       - logger.log:
           level: INFO
           tag: mute
           format: "Mic mute OFF: microphone active, MWW started"
       - microphone.unmute: mic_afe
-      - runtime_controller.event:
-          id: runtime
-          event: mic_unmuted
       - if:
           condition:
             not:
@@ -3393,9 +3266,6 @@ switch:
           tag: mute
           format: "Speaker mute ON: DAC muted, amplifier off"
       - speaker.mute_on: hw_speaker
-      - runtime_controller.event:
-          id: runtime
-          event: speaker_muted
       - delay: 50ms
       - output.turn_off: speaker_enable
     on_turn_off:
@@ -3410,9 +3280,6 @@ switch:
             - output.turn_on: speaker_enable
             - delay: 50ms
       - speaker.mute_off: hw_speaker
-      - runtime_controller.event:
-          id: runtime
-          event: speaker_unmuted
   # VoIP controls
 
 select:

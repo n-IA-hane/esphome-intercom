@@ -1,3 +1,28 @@
+# ==============================================================================================
+# Generic ESP32-S3 / native ESPHome audio / Full duplex
+# Status: native-I2S regression/wiring example; Freenove FNK0085 pins below
+# Support: https://github.com/sponsors/n-IA-hane
+#
+# Main packages:
+#   voip/transport.yaml; voip/call_settings.yaml; voip/entities_full_duplex.yaml
+#   ESPHome i2s_audio microphone/speaker platforms; no external audio DSP
+#
+# Capture (selected native mic channel):
+# ┌─────────────────────────┐    ┌─────────────────────────┐    ┌─────────────────────────┐
+# │     INMP441 / RX I2S    ├───>│   i2s_audio: mic_main   ├───>│         VoIP TX         │
+# │      48 kHz capture     │    │  microphone_source ch 1 │    │     48 kHz mono PCM     │
+# └─────────────────────────┘    └─────────────────────────┘    └─────────────────────────┘
+#
+# Playback (native output at the configured PCM rate):
+# ┌─────────────────────────┐    ┌─────────────────────────┐    ┌─────────────────────────┐
+# │         VoIP RX         ├───>│  i2s_audio: hw_speaker  ├───>│        MAX98357A        │
+# │     48 kHz mono PCM     │    │      native TX I2S      │    │      speaker output     │
+# └─────────────────────────┘    └─────────────────────────┘    └─────────────────────────┘
+#
+# No mixer, resampler, esp_audio_stack, software AEC or AEC reference is configured.
+# Hardware and optional amplifier-enable wiring remain documented below.
+# ==============================================================================================
+
 # =============================================================================
 # GENERIC ESP32-S3 VOIP FULL-DUPLEX - native ESPHome audio
 # =============================================================================

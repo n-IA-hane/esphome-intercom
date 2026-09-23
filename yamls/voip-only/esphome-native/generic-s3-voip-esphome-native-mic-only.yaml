@@ -1,3 +1,22 @@
+# ==============================================================================================
+# Generic ESP32-S3 / native ESPHome audio / Microphone only
+# Status: native-I2S regression/wiring example; Freenove FNK0085 pins below
+# Support: https://github.com/sponsors/n-IA-hane
+#
+# Main packages:
+#   voip/transport.yaml; voip/call_settings.yaml; voip/entities_full_duplex.yaml
+#   ESPHome i2s_audio microphone platform; no external audio DSP
+#
+# Capture (selected native mic channel):
+# ┌─────────────────────────┐    ┌─────────────────────────┐    ┌─────────────────────────┐
+# │     INMP441 / RX I2S    ├───>│   i2s_audio: mic_main   ├───>│         VoIP TX         │
+# │      48 kHz capture     │    │  microphone_source ch 1 │    │     48 kHz mono PCM     │
+# └─────────────────────────┘    └─────────────────────────┘    └─────────────────────────┘
+#
+# No mixer, resampler, esp_audio_stack, software AEC or AEC reference is configured.
+# Microphone wiring and channel selection remain documented below.
+# ==============================================================================================
+
 # =============================================================================
 # GENERIC ESP32-S3 VOIP MIC-ONLY - native ESPHome audio
 # =============================================================================

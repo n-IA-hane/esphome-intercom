@@ -1,3 +1,36 @@
+# ==============================================================================================
+# Waveshare S3 Touch LCD 1.85C V2 / minimal VoIP + AFE
+# Status: contributor-tested (Noxeus); not hardware-qualified by the maintainer
+# Support: https://github.com/sponsors/n-IA-hane
+#
+# Main packages:
+#   voip/transport.yaml; esp_afe/single_mic_entities.yaml
+#   Audio, endpoint and single-page UI are declared directly in this YAML
+#
+# Contributor-qualified 32 kHz bus and hardware reference:
+# ┌─────────────────────────┐     ┌───────────────────────┐
+# │  ES7210 TDM mic slot 0  ├────>│    32 kHz -> 16 kHz   ├───┐
+# │     microphone input    │     │  audio_stack capture  │   │   ┌─────────────────────────┐
+# └─────────────────────────┘     └───────────────────────┘   └──>│  esp_afe vc / low_cost  │
+#                                                              ┌─>│    16 kHz processing    │
+# ┌─────────────────────────┐     ┌───────────────────────┐    │  └────────────┬────────────┘
+# │  ES7210 TDM ref slot 1  ├────>│    32 kHz -> 16 kHz   ├────┘               │
+# │   AEC reference input   │     │ audio_stack reference │                    v
+# └─────────────────────────┘     └───────────────────────┘       ┌─────────────────────────┐
+#                                                                 │         mic_afe         │
+#                                                                 │         VoIP TX         │
+#                                                                 └─────────────────────────┘
+#
+# Direct playback (no mixer):
+# ┌─────────────────────────┐    ┌─────────────────────────┐    ┌─────────────────────────┐
+# │         VoIP RX         ├───>│    voip_speaker_input   ├───>│        hw_speaker       │
+# │       decoded PCM       │    │   resampler to 32 kHz   │    │     ES8311 / 32 kHz     │
+# └─────────────────────────┘    └─────────────────────────┘    └─────────────────────────┘
+#
+# One logical microphone; AFE AEC/NS/AGC enabled, VAD and dual-mic SE disabled.
+# No Voice Assistant, MWW, media/TTS mixer or separate ringtone player is configured.
+# ==============================================================================================
+
 # =============================================================================
 # Waveshare ESP32-S3-Touch-LCD-1.85C v2: BARE MINIMUM VoIP caller
 #

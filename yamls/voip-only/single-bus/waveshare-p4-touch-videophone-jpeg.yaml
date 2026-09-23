@@ -1,3 +1,38 @@
+# ==============================================================================================
+# Waveshare ESP32-P4 Touch 10.1 / SIP videophone / JPEG
+# Status: JPEG videophone profile
+# Support: https://github.com/sponsors/n-IA-hane
+#
+# Main packages:
+#   voip/waveshare_p4_touch_videophone_base.yaml
+#   board/waveshare_p4_touch_10_1_videophone.yaml (through base)
+#   voip/p4_video_jpeg.yaml (the selected video codec only)
+#
+# Audio inherited from the shared videophone board package:
+# ┌─────────────────────────┐     ┌───────────────────────┐
+# │   ES7210 mic slots 0,2  ├────>│    48 kHz -> 16 kHz   ├───┐
+# │     microphone input    │     │  audio_stack capture  │   │   ┌─────────────────────────┐
+# └─────────────────────────┘     └───────────────────────┘   └──>│   esp_afe: 2 mic + AEC  │
+#                                                              ┌─>│    16 kHz processing    │
+# ┌─────────────────────────┐     ┌───────────────────────┐    │  └────────────┬────────────┘
+# │  ES7210 TDM ref slot 1  ├────>│    48 kHz -> 16 kHz   ├────┘               │
+# │   AEC reference input   │     │ audio_stack reference │                    v
+# └─────────────────────────┘     └───────────────────────┘       ┌─────────────────────────┐
+#                                                                 │         mic_main        │
+#                                                                 │         VoIP TX         │
+#                                                                 └─────────────────────────┘
+#
+# Playback inherited from the same board package (no mixer):
+# ┌─────────────────────────┐    ┌─────────────────────────┐    ┌─────────────────────────┐
+# │         VoIP RX         ├───>│    voip_speaker_input   ├───>│        hw_speaker       │
+# │       decoded PCM       │    │        resampler        │    │     ES8311 / 48 kHz     │
+# └─────────────────────────┘    └─────────────────────────┘    └─────────────────────────┘
+#
+# This top-level YAML selects video parameters; audio bindings live in the base package.
+# The SIP-only base has no VA, MWW, media_player, local audio files or TTS/media mixer.
+# Video dimensions and isolated build-directory notes are preserved below.
+# ==============================================================================================
+
 # Waveshare ESP32-P4 Touch 10.1: hardware-accelerated JPEG SIP videophone.
 #
 # Exactly one codec package is merged with the common SIP-only runtime. H.264

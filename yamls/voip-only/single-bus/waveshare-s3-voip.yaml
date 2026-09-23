@@ -1,3 +1,41 @@
+# ==============================================================================================
+# Waveshare ESP32-S3 AUDIO Board / VoIP / ES7210 + ES8311
+# Status: maintained VoIP-only board profile
+# Support: https://github.com/sponsors/n-IA-hane
+#
+# Main packages:
+#   voip_only.yaml; voip/transport.yaml; voip/call_settings.yaml
+#   voip/entities_full_duplex.yaml; esp_audio_stack/controls.yaml
+#   led/status_ws2812_ring.yaml; source-player ringtone pipeline
+#
+# Capture and hardware TDM reference:
+# ┌─────────────────────────┐     ┌───────────────────────┐
+# │  ES7210 TDM mic slot 0  ├────>│    48 kHz -> 16 kHz   ├───┐
+# │     microphone input    │     │  audio_stack capture  │   │   ┌─────────────────────────┐
+# └─────────────────────────┘     └───────────────────────┘   └──>│  esp_aec voip_high_perf │
+#                                                              ┌─>│    16 kHz processing    │
+# ┌─────────────────────────┐     ┌───────────────────────┐    │  └────────────┬────────────┘
+# │  ES7210 TDM ref slot 1  ├────>│    48 kHz -> 16 kHz   ├────┘               │
+# │   AEC reference input   │     │ audio_stack reference │                    v
+# └─────────────────────────┘     └───────────────────────┘       ┌─────────────────────────┐
+#                                                                 │         mic_main        │
+#                                                                 │         VoIP TX         │
+#                                                                 └─────────────────────────┘
+#
+# Playback: call and ringtone share the hardware speaker:
+# ┌─────────────────────────┐
+# │    voip_speaker_input   ├────┐
+# │     voip_mixer_input    │    │     ┌──────────────────────┐      ┌─────────────────────────┐
+# └─────────────────────────┘    ├────>│     audio_mixer      ├─────>│        hw_speaker       │
+# ┌─────────────────────────┐    │     │     48 kHz mono      │      │   ES8311 / NS4150B amp  │
+# │     ringtone_speaker    ├────┘     └──────────────────────┘      └─────────────────────────┘
+# │   ringtone_speaker_mix  │
+# └─────────────────────────┘
+#
+# Opus is the active default; substitutions define PCM boundary rates and packet time.
+# No VA/MWW or general-purpose media playback is configured.
+# ==============================================================================================
+
 # =============================================================================
 # WAVESHARE ESP32-S3 AUDIO BOARD - VoIP-only AEC
 # =============================================================================
@@ -8,10 +46,6 @@
 # intentionally omits wake word, Voice Assistant and general media playback.
 #
 # ESP-to-ESP calls use the unified phonebook from HA.
-#
-# Audio pipeline:
-#   ES7210 TDM slot 0 mic + slot 1 playback reference -> esp_aec -> Opus TX
-#   Opus RX -> 48 kHz resampler/mixer -> ES8311 -> NS4150B amplifier
 #
 # =============================================================================
 

@@ -481,11 +481,7 @@ void VoiceAssistant::loop() {
           ESP_LOGD(TAG, "Announcement finished playing");
           this->set_state_(State::RESPONSE_FINISHED, State::RESPONSE_FINISHED);
 
-          api::VoiceAssistantAnnounceFinished msg;
-          msg.success = true;
-          if (!this->api_client_->send_message(msg)) {
-            API_LOG_MSG_DROPPED(TAG, "Announce-finished");
-          }
+          this->send_announce_finished_(true);
           break;
         }
       }
@@ -700,8 +696,13 @@ void VoiceAssistant::request_stop() {
   this->continue_conversation_ = false;
 #ifdef USE_MEDIA_PLAYER
   if (this->media_player_ != nullptr) {
+    const bool response_pending = this->media_player_response_state_ == MediaPlayerResponseState::URL_SENT ||
+                                  this->media_player_response_state_ == MediaPlayerResponseState::PLAYING;
     this->cancel_timeout("playing");
     this->media_player_response_state_ = MediaPlayerResponseState::ABORTED;
+    if (response_pending) {
+      this->send_announce_finished_(false);
+    }
   }
 #endif
 
@@ -763,6 +764,16 @@ void VoiceAssistant::signal_stop_() {
   }
 }
 
+void VoiceAssistant::send_announce_finished_(bool success) {
+  if (this->api_client_ == nullptr)
+    return;
+  api::VoiceAssistantAnnounceFinished msg;
+  msg.success = success;
+  if (!this->api_client_->send_message(msg)) {
+    API_LOG_MSG_DROPPED(TAG, "Announce-finished");
+  }
+}
+
 void VoiceAssistant::start_playback_timeout_() {
   uint32_t timeout = 2000;
 #ifdef USE_MEDIA_PLAYER
@@ -786,13 +797,7 @@ void VoiceAssistant::start_playback_timeout_() {
     this->cancel_timeout("speaker-timeout");
     this->set_state_(State::RESPONSE_FINISHED, State::RESPONSE_FINISHED);
 
-    if (this->api_client_ == nullptr)
-      return;
-    api::VoiceAssistantAnnounceFinished msg;
-    msg.success = success;
-    if (!this->api_client_->send_message(msg)) {
-      API_LOG_MSG_DROPPED(TAG, "Announce-finished");
-    }
+    this->send_announce_finished_(success);
   });
 }
 

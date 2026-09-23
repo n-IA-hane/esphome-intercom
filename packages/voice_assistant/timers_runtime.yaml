@@ -1,53 +1,6 @@
-# =============================================================================
-# Optional Voice Assistant timers package for runtime_controller profiles.
-# =============================================================================
-
+# Optional timer asset and playback.
+packages:
+  timer_alarm: !include ../runtime/timer_alarm_orchestration.yaml
 audio_file:
   - id: timer_finished_sound
     file: ${assets_base}assets/sounds/timer_finished.flac
-
-voice_assistant:
-  id: va
-  on_timer_started:
-    - runtime_controller.event:
-        id: runtime
-        event: timer_started
-  on_timer_cancelled:
-    - runtime_controller.event:
-        id: runtime
-        event: timer_stopped
-  on_timer_updated:
-    - runtime_controller.event:
-        id: runtime
-        event: timer_updated
-  on_timer_tick:
-    - runtime_controller.event:
-        id: runtime
-        event: timer_tick
-  on_timer_finished:
-    - runtime_controller.event:
-        id: runtime
-        event: timer_finished
-
-script:
-  - id: timer_alarm_loop
-    mode: single
-    then:
-      - while:
-          condition:
-            runtime_controller.is_active:
-              id: runtime
-              activity: timer_ringing
-          then:
-            - media_player.play_media:
-                id: speaker_media_player
-                media_url: "audio-file://timer_finished_sound"
-                announcement: true
-            - delay: 6s
-  - id: timer_alarm_auto_stop
-    mode: restart
-    then:
-      - delay: 15min
-      - runtime_controller.event:
-          id: runtime
-          event: timer_stopped

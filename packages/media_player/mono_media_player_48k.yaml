@@ -1,0 +1,34 @@
+# HTTP player without Sendspin or call sounds. Requires media/tts speaker inputs.
+packages:
+  playback_compat: !include playback_compat.yaml
+  http_media_codecs: !include ../audio/http_media_codecs.yaml
+media_source:
+  - platform: audio_http
+    id: media_http_source
+    buffer_size: 65536
+    task_stack_in_psram: true
+  - platform: audio_http
+    id: announcement_http_source
+    buffer_size: 65536
+    task_stack_in_psram: true
+media_player:
+  - platform: speaker_source
+    id: speaker_media_player
+    name: None
+    internal: false
+    volume_initial: 100%
+    volume_min: 0%
+    volume_max: 100%
+    volume_increment: 5%
+    media_pipeline:
+      speaker: media_speaker_input
+      sample_rate: 48000
+      format: FLAC
+      sources:
+        - media_http_source
+    announcement_pipeline:
+      speaker: tts_speaker_input
+      sample_rate: 48000
+      format: FLAC
+      sources:
+        - announcement_http_source

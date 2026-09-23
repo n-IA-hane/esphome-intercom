@@ -1,3 +1,37 @@
+# ==============================================================================================
+# Generic ESP32-S3 / VoIP / dual-bus
+# Status: maintained generic wiring example; adapt GPIOs to the board
+# Support: https://github.com/sponsors/n-IA-hane
+#
+# Main packages:
+#   voip_only.yaml; voip/transport.yaml; voip/call_settings.yaml
+#   voip/entities_full_duplex.yaml; esp_audio_stack/controls.yaml
+#
+# Capture and software AEC reference:
+# ┌─────────────────────────┐     ┌───────────────────────┐
+# │   I2S MEMS microphone   ├────>│    48 kHz -> 16 kHz   ├───┐
+# │     microphone input    │     │  audio_stack capture  │   │   ┌─────────────────────────┐
+# └─────────────────────────┘     └───────────────────────┘   └──>│         esp_aec         │
+#                                                              ┌─>│    16 kHz processing    │
+# ┌─────────────────────────┐     ┌───────────────────────┐    │  └────────────┬────────────┘
+# │   PCM: previous_frame   ├────>│    48 kHz -> 16 kHz   ├────┘               │
+# │   AEC reference input   │     │ audio_stack reference │                    v
+# └─────────────────────────┘     └───────────────────────┘       ┌─────────────────────────┐
+#                                                                 │         mic_main        │
+#                                                                 │         VoIP TX         │
+#                                                                 └─────────────────────────┘
+#
+# Playback (direct output, no mixer):
+# ┌─────────────────────────┐    ┌─────────────────────────┐    ┌─────────────────────────┐
+# │         VoIP RX         ├───>│    voip_speaker_input   ├───>│        hw_speaker       │
+# │       decoded PCM       │    │   resampler to 48 kHz   │    │  audio_stack / I2S amp  │
+# └─────────────────────────┘    └─────────────────────────┘    └─────────────────────────┘
+#
+# Separate RX I2S0 and TX I2S1.
+# The reference is the software playback PCM tap selected by aec_reference: previous_frame.
+# No VA/MWW, media/TTS mixer or separate reference wire is configured here.
+# ==============================================================================================
+
 # =============================================================================
 # GENERIC ESP32-S3 VOIP - Dual I2S bus, no hardware codec
 # =============================================================================
@@ -5,10 +39,6 @@
 # exposes standard SIP signaling plus RTP media through voip_stack.
 #
 # ESP-to-ESP calls use the unified phonebook from HA.
-#
-# Audio pipeline:
-#   MEMS mic -> RX I2S bus -> esp_audio_stack (48kHz) -> esp_ae_rate_cvt -> esp_aec -> VoIP TX
-#   VoIP RX (16kHz) -> resampler -> esp_audio_stack -> TX I2S bus -> class-D amp
 #
 # HARDWARE (adapt GPIOs to YOUR board):
 #   - Board: Freenove ESP32-S3 WROOM N8R8, or equivalent S3 with octal PSRAM

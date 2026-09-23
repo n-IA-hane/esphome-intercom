@@ -40,7 +40,18 @@ def test_tracked_text_avoids_generated_typography() -> None:
         except UnicodeDecodeError:
             continue
         for line_number, line in enumerate(text.splitlines(), start=1):
-            found = sorted(name for character, name in forbidden.items() if character in line)
+            # Hardware signal diagrams in YAML comments intentionally use joined lines.
+            diagram_comment = (
+                path.relative_to(ROOT).parts[0] == "yamls"
+                and path.suffix == ".yaml"
+                and line.lstrip().startswith("#")
+            )
+            found = sorted(
+                name
+                for character, name in forbidden.items()
+                if character in line
+                and not (diagram_comment and name == "box drawing character")
+            )
             if found:
                 violations.append(
                     f"{path.relative_to(ROOT)}:{line_number}: {', '.join(found)}"

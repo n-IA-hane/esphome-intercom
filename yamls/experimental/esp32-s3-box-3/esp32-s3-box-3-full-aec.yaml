@@ -1,3 +1,46 @@
+# ==============================================================================================
+# ESP32-S3-BOX-3 / Assist + VoIP / single active ADC microphone
+# Status: contributor-tested (mwhdc); not hardware-qualified by the maintainer
+# Support: https://github.com/sponsors/n-IA-hane
+#
+# Main packages:
+#   presets/full_voice_voip_runtime.yaml; runtime_controller/full_controller.yaml
+#   audio/shared_mono_mixer_48k.yaml; media_player/runtime_controller_mono_media_player_48k.yaml
+#   voice_assistant/timers_runtime.yaml; esp32-s3-box-3-additions.yaml
+#
+# Capture and software playback reference:
+# ┌─────────────────────────┐     ┌───────────────────────┐
+# │    ES7210 MIC1 (0x01)   ├────>│    48 kHz -> 16 kHz   ├───┐
+# │     microphone input    │     │  audio_stack capture  │   │   ┌─────────────────────────┐
+# └─────────────────────────┘     └───────────────────────┘   └──>│   esp_aec fd_high_perf  │
+#                                                              ┌─>│    16 kHz processing    │
+# ┌─────────────────────────┐     ┌───────────────────────┐    │  └────────────┬────────────┘
+# │   PCM: previous_frame   ├────>│    48 kHz -> 16 kHz   ├────┘               │
+# │   AEC reference input   │     │ audio_stack reference │                    v
+# └─────────────────────────┘     └───────────────────────┘       ┌─────────────────────────┐
+#                                                                 │         mic_main        │
+#                                                                 │    VA / MWW / VoIP TX   │
+#                                                                 └─────────────────────────┘
+#
+# Shared playback mixer (first column is a resampler input):
+# ┌─────────────────────────┐
+# │   media_speaker_input   ├────┐
+# │    media_mixer_input    │    │     ┌──────────────────────┐      ┌─────────────────────────┐
+# └─────────────────────────┘    ├────>│     audio_mixer      ├─────>│        hw_speaker       │
+# ┌─────────────────────────┐    │     │     48 kHz mono      │      │   ES8311 DAC / 48 kHz   │
+# │    tts_speaker_input    ├────┤     └──────────────────────┘      └─────────────────────────┘
+# │     tts_mixer_input     │    │
+# └─────────────────────────┘    │
+# ┌─────────────────────────┐    │
+# │    voip_speaker_input   ├────┘
+# │     voip_mixer_input    │
+# └─────────────────────────┘
+#
+# This preset enables one of the board's two wired microphones; it is not a dual-mic AFE.
+# Box-3 has no hardware TDM reference in this configuration.
+# Existing contributor notes, amplifier enable, LCD-backlight status and pin notes remain below.
+# ==============================================================================================
+
 # =============================================================================
 # ESP32-S3-BOX-3 VOIP + VA AEC LIGHT - Single I2S bus, ES7210/ES8311 codec
 # =============================================================================
@@ -15,13 +58,6 @@
 # Box-3 has a real ES7210 ADC + ES8311 DAC codec (unlike the no-codec generic-s3
 # profile this file started from), so esp_audio_stack owns codec I2C init via
 # its `codec:` block instead of talking to raw ADC/DAC-less I2S pins.
-#
-# Audio pipeline:
-#   ES7210 mic → esp_audio_stack (48kHz) → esp_ae_rate_cvt x3 → esp_aec → mic_main → VA / VoIP TX / MWW
-#
-#   Media       -> media_speaker_input (resampler) -> mixer (48kHz)
-#   VA TTS      -> tts_speaker_input (resampler)   -> mixer -> hw_speaker
-#   VoIP RX     -> voip_speaker_input (resampler)  -> mixer -> ES8311 DAC -> amp
 #
 # HARDWARE (ESP32-S3-BOX-3):
 #   - Board: esp32s3box (ESP32-S3R8, 16MB flash, octal PSRAM)

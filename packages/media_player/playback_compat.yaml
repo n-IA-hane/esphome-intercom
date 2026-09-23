@@ -1,10 +1,8 @@
 # Shared playback-completion and Sendspin compatibility adapters.
-# Included only by profiles that use Sendspin.
+# Keeps playback accounting and pending-source cancellation consistent.
 esphome:
   min_version: 2026.9.0
 
 external_components:
   - source: ${ext_components_source}
-    components: [mixer, speaker_source, sendspin_compat]
-
-sendspin_compat:
+    components: [mixer, speaker_source]

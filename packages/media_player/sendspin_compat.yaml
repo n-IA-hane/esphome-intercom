@@ -1,0 +1,5 @@
+# Optional Sendspin library fixes, without player or mixer instances.
+external_components:
+  - source: ${ext_components_source}
+    components: [sendspin_compat]
+sendspin_compat:

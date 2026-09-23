@@ -78,7 +78,7 @@ def test_p4_camera_package_path_is_relative_to_the_top_level_yaml() -> None:
     assert source == "../../../../esphome-esp-video-camera/components"
 
 
-def test_remote_camera_source_follows_selected_ref(tmp_path: Path) -> None:
+def test_remote_camera_source_uses_upstream_main(tmp_path: Path) -> None:
     yaml_paths = _load_yaml_paths()
     config = tmp_path / "camera.yaml"
     config.write_text(
@@ -87,12 +87,12 @@ def test_remote_camera_source_follows_selected_ref(tmp_path: Path) -> None:
         "    components: [esp_video_camera]\n"
     )
 
-    yaml_paths.rewrite_camera(config, "dev")
-
-    assert (
-        "source: github://n-IA-hane/esphome-esp-video-camera@dev"
-        in config.read_text()
-    )
+    for ref in ("dev", "main"):
+        yaml_paths.rewrite_camera(config, ref)
+        assert (
+            "source: github://Psix-anp/esphome-esp-video-camera@main"
+            in config.read_text()
+        )
 
 
 def test_global_selection_preserves_private_local_overrides(tmp_path: Path) -> None:

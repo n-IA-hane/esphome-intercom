@@ -1,0 +1,24 @@
+# Optional wake-word controls and microphone-mute integration.
+switch:
+  - id: !extend mute
+    on_turn_on:
+      - micro_wake_word.stop:
+    on_turn_off:
+      - script.execute: start_mww_when_ready
+  - platform: template
+    name: Wake Word
+    id: wake_word_switch
+    icon: mdi:account-voice
+    entity_category: config
+    restore_mode: DISABLED
+    lambda: 'return id(g_wake_word_enabled);'
+    turn_on_action:
+      - globals.set:
+          id: g_wake_word_enabled
+          value: "true"
+      - script.execute: start_mww_when_ready
+    turn_off_action:
+      - globals.set:
+          id: g_wake_word_enabled
+          value: "false"
+      - micro_wake_word.stop:

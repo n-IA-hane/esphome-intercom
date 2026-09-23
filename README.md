@@ -1,5 +1,7 @@
 # VoIP Stack for ESPHome and Home Assistant
 
+Development preview: [2026.10.0-dev](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.0-dev). Requires ESPHome 2026.9.0 or newer for firmware builds.
+
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3%20%7C%20ESP32--P4-blue.svg)](#supported-hardware)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-native-blue.svg)](https://www.home-assistant.io)
 [![ESPHome](https://img.shields.io/badge/ESPHome-2026.9.0%2B-18bcf2.svg)](https://esphome.io)
@@ -635,6 +637,8 @@ The complete hardware, memory and C6 firmware notes are in the
 [deployment guide](docs/DEPLOYMENT_GUIDE.md#esp-devices).
 
 ## Documentation
+
+For custom firmware composition, see [Modular device packages](packages/README.md).
 
 Start with the practical [user guide](docs/USER_GUIDE.md) for normal setup and
 daily operation. Use the [automation cookbook](docs/AUTOMATION_DIALPLAN.md) for

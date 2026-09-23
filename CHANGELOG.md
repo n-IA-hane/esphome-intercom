@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026.10.0-dev: modular full profiles and native ESP phones
+
+- Voice Assistant returns to idle after its reply while keeping previously paused music paused.
+- Interrupting TTS no longer leaves Home Assistant waiting for an announcement that has already stopped.
+- Fixed a network lockup that could occur when interrupting HTTP audio playback.
+- Ending a ringtone clears the player playlist as well as stopping the sound. A timer followed by a call no longer leaves the device showing an announcement after hangup.
+- Shared packages can select HTTP playback, Sendspin, local announcements, call buttons, wake-word controls, timers and diagnostics separately. The full presets still assemble the complete feature set.
+- P4 profiles now use the camera component directly from Psix-anp's repository. The component code matches our previous source.
+
+Use **ESPHome 2026.9.0 or newer**. Review the [package guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/packages/README.md) and [breaking changes](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/BREAKING_CHANGES.md) before rebuilding a custom YAML.
+
+Waveshare S3 Audio and Spotpear were tested with direct calls, ringing, manual and automatic answer, Voice Assistant and overlapping media. P4 JPEG and H.264 were compiled with the upstream camera; this update does not claim a new P4 hardware qualification.
+
+These changes require rebuilding and uploading ESP firmware. The existing Home Assistant features below remain included.
+
+[Complete preview changes](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.0-dev).
+
+Thank you to everyone supporting the project through GitHub Sponsors, including the latest donation, and to the contributors sharing fixes and hardware feedback.
+
+---
+
 ## 2026.9.2: more reliable calls, audio fixes and built-in SIP capture
 
 This stable release brings together call reliability fixes, improved ESP audio support, P4 display improvements and built-in SIP troubleshooting. Existing working configurations remain supported.

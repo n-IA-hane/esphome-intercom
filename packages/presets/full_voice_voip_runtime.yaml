@@ -6,10 +6,12 @@
 # events, VoIP UI callbacks and the VoIP stack base id.
 
 packages:
+  voip_call_buttons: !include ../voip/call_buttons.yaml
   runtime_full_ui_state_globals: !include ../runtime/full_ui_state_globals.yaml
   runtime_boot_events: !include ../runtime/boot_events.yaml
   runtime_ui_hook_placeholders: !include ../runtime/ui_hook_placeholders.yaml
-  runtime_mww_safe_start: !include ../runtime/mww_safe_start.yaml
+  runtime_mww_events: !include ../runtime/wake_word_events.yaml
+  runtime_mww_controls: !include ../runtime/wake_word_controls.yaml
   runtime_mww_task_priority: !include ../runtime/mww_task_priority.yaml
   runtime_voip_ringtone_orchestration: !include ../runtime/voip_ringtone_orchestration.yaml
   voice_assistant_runtime_events: !include ../voice_assistant/runtime_events.yaml

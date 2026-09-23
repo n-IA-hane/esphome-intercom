@@ -1,0 +1,18 @@
+# Globals owned by voice adapters.
+globals:
+  - id: g_wake_word_enabled
+    type: bool
+    restore_value: true
+    initial_value: "true"
+  - id: g_va_state
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: runtime_response_text_ready
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: g_last_wake_word
+    type: std::string
+    restore_value: false
+    initial_value: "\"\""

@@ -1,0 +1,6 @@
+# Globals owned by ha_presence adapters.
+globals:
+  - id: g_ha_api_clients
+    type: int
+    restore_value: false
+    initial_value: "0"

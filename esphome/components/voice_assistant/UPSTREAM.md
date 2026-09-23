@@ -40,6 +40,7 @@ voice_assistant.cpp
 + retain the upstream 2 second deadline after playback has started
 + preserve completed or aborted playback across late TTS events
 + deliver the streaming-start hook before submitting the media URL
++ acknowledge an interrupted announcement once so Home Assistant can complete its service call
 ```
 
 After updating ESPHome, re-run the diff above and update this file before

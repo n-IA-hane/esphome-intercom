@@ -1,15 +1,59 @@
 # =============================================================================
 # GENERIC ESP32-S3 VOIP + VA - Single I2S bus, no hardware codec
+# Profile: UNTESTED / shared I2S / single-mic AFE
+# Composition: Preset + component bindings + shared mono mixer/player; verify this board profile.
+# Runtime facts: native media/VoIP/Wi-Fi/mute listeners; shared VA/MWW callbacks.
+# YAML keeps user controls, board wiring and presentation hooks.
+# Support: https://github.com/sponsors/n-IA-hane
 # =============================================================================
+#
+# CAPTURE: software playback reference; mic output is 16 kHz mono.
+# [MEMS mic / I2S RX 48 kHz] ─────────────┐
+# [audio_stack TX: previous_frame REF] ───┤
+#                                         ▼
+#                          [audio_stack: 48 → 16 kHz]
+#                                         │
+#                                         ▼
+#                               [afe_processor: AEC + NS + AGC]
+#                                         │
+#                                         ▼
+#                                    [mic_main] ─┬─► VA
+#                                                ├─► MWW (barge-in)
+#                                                └─► VoIP TX
+# The REF is the previous software TX frame; no codec ADC loopback is configured.
+#
+# PLAYBACK: speaker_media_player owns the media + announcement pipelines.
+#      [HTTP / Sendspin]          [VA TTS / HTTP / files]              [VoIP RX]
+#              │                             │                             │
+#              ▼                             ▼                             │
+#       [media_pipeline]          [announcement_pipeline]                  │
+#              │                             │                             │
+#              ▼                             ▼                             ▼
+#    [media_speaker_input]          [tts_speaker_input]           [voip_speaker_input]
+#          resampler                     resampler                     resampler
+#              │                             │                             │
+#              ▼                             ▼                             ▼
+#     [media_mixer_input]            [tts_mixer_input]             [voip_mixer_input]
+#              │                             │                             │
+#              └─────────────────────────────┼─────────────────────────────┘
+#                                            ▼
+#                             ┌─────────────────────────────┐
+#                             │   audio_mixer: 48 kHz mono  │
+#                             └──────────────┬──────────────┘
+#                                            ▼
+#                                       [hw_speaker]
+#                                            │
+#                                            ▼
+#                   [audio_stack shared-I2S TX → class-D amp → speaker]
+#
+# The three *_speaker_input nodes are resamplers; *_mixer_input are mixer ports.
+# TTS, ringtone and timer files share the announcement pipeline, not VoIP RX.
+# Reference labels above describe configured signal sources, not extra I2S buses.
+#
+# BOARD, WIRING AND USER CONTROLS
+# -------------------------------
 # Full-featured config: VoIP + Media Player + mixer (VA/MWW ready).
 # For ESP32 boards where mic and speaker share the SAME I2S bus.
-#
-# Audio pipeline:
-#   MEMS mic → esp_audio_stack (48kHz) → esp_ae_rate_cvt x3 → esp_afe (AEC+NS+AGC) → mic_main → VA / VoIP TX / MWW
-#
-#   Media       -> media_speaker_input (resampler) -> mixer (48kHz)
-#   VA TTS      -> tts_speaker_input (resampler)   -> mixer -> hw_speaker
-#   VoIP RX     -> voip_speaker_input (resampler)  -> mixer -> class-D amp
 #
 # HARDWARE (adapt GPIOs to YOUR board):
 #   - Board: Any ESP32-S3 with PSRAM
@@ -26,7 +70,6 @@
 #   Shared I2S:  BCLK=GPIO36, LRCLK=GPIO37, DIN=GPIO35 (mic), DOUT=GPIO7 (speaker)
 #   LED:         DATA=GPIO33
 #
-# =============================================================================
 
 # =============================================================================
 # PROJECT SETUP
@@ -75,6 +118,7 @@ substitutions:
 
 packages:
   full_voice_voip_runtime: github://n-IA-hane/esphome-intercom/packages/presets/full_voice_voip_runtime.yaml@dev
+  timer_alarm_orchestration: github://n-IA-hane/esphome-intercom/packages/runtime/timer_alarm_orchestration.yaml@dev
   runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller.yaml@dev
   voice_assistant_runtime_controls: github://n-IA-hane/esphome-intercom/packages/voice_assistant/runtime_controls.yaml@dev
   call_settings: github://n-IA-hane/esphome-intercom/packages/voip/call_settings.yaml@dev
@@ -337,28 +381,6 @@ voip_stack:
 # RUNTIME LOGIC AND ENTITIES
 # =============================================================================
 
-script:
-  - id: timer_alarm_loop
-    mode: single
-    then:
-      - while:
-          condition:
-            runtime_controller.is_active:
-              id: runtime
-              activity: timer_ringing
-          then:
-            - media_player.play_media:
-                id: speaker_media_player
-                media_url: "audio-file://timer_finished_sound"
-                announcement: true
-            - delay: 6s
-  - id: timer_alarm_auto_stop
-    mode: restart
-    then:
-      - delay: 15min
-      - runtime_controller.event:
-          id: runtime
-          event: timer_stopped
 
 # Local BOOT button: short press controls VA/call toggle, double press changes
 # contact, long press toggles microphone mute.

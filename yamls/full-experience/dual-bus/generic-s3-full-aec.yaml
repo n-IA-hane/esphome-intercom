@@ -1,16 +1,63 @@
 # =============================================================================
 # GENERIC ESP32-S3 FULL AEC - Dual I2S bus, no codec
+# Profile: FULL / dual I2S / software AEC
+# Composition: Preset + component bindings + shared mono mixer/player; board owns I2S + esp_aec.
+# Runtime facts: native media/VoIP/Wi-Fi/mute listeners; shared VA/MWW callbacks.
+# YAML keeps user controls, board wiring and presentation hooks.
+# Support: https://github.com/sponsors/n-IA-hane
 # =============================================================================
+#
+# CAPTURE: software playback reference; mic output is 16 kHz mono.
+# [MEMS mic / I2S RX 48 kHz] ─────────────┐
+# [audio_stack TX: previous_frame REF] ───┤
+#                                         ▼
+#                          [audio_stack: 48 → 16 kHz]
+#                                         │
+#                                         ▼
+#                               [aec_processor: esp_aec]
+#                                         │
+#                                         ▼
+#                                    [mic_main] ─┬─► VA
+#                                                ├─► MWW (barge-in)
+#                                                └─► VoIP TX
+# The REF is the previous software TX frame; no codec ADC loopback is configured.
+#
+# PLAYBACK: speaker_media_player owns the media + announcement pipelines.
+#      [HTTP / Sendspin]          [VA TTS / HTTP / files]              [VoIP RX]
+#              │                             │                             │
+#              ▼                             ▼                             │
+#       [media_pipeline]          [announcement_pipeline]                  │
+#              │                             │                             │
+#              ▼                             ▼                             ▼
+#    [media_speaker_input]          [tts_speaker_input]           [voip_speaker_input]
+#          resampler                     resampler                     resampler
+#              │                             │                             │
+#              ▼                             ▼                             ▼
+#     [media_mixer_input]            [tts_mixer_input]             [voip_mixer_input]
+#              │                             │                             │
+#              └─────────────────────────────┼─────────────────────────────┘
+#                                            ▼
+#                             ┌─────────────────────────────┐
+#                             │   audio_mixer: 48 kHz mono  │
+#                             └──────────────┬──────────────┘
+#                                            ▼
+#                                       [hw_speaker]
+#                                            │
+#                                            ▼
+#                       [audio_stack TX I2S1 → MAX98357A → speaker]
+#
+# The three *_speaker_input nodes are resamplers; *_mixer_input are mixer ports.
+# TTS, ringtone and timer files share the announcement pipeline, not VoIP RX.
+# Reference labels above describe configured signal sources, not extra I2S buses.
+#
+# BOARD, WIRING AND USER CONTROLS
+# -------------------------------
 # Generic target: ESP32-S3 board with PSRAM, one INMP441 microphone and one
 # MAX98357A amplifier on separate I2S buses.
 #
 # Tested hardware: Freenove ESP32-S3-WROOM CAM / FNK0085, camera module removed.
 # Tested chip/memory: ESP32-S3 N8R8, 8 MB flash, 8 MB OPI PSRAM.
 # Tested modules: INMP441 digital MEMS microphone, MAX98357A I2S amplifier.
-#
-# Audio pipeline:
-#   INMP441 -> RX I2S bus -> esp_audio_stack (48 kHz) -> esp_ae_rate_cvt -> esp_aec -> VA / VoIP / MWW
-#   Media/VA/VoIP -> mixer (48 kHz) -> esp_audio_stack -> TX I2S bus -> MAX98357A
 #
 # Pin choice rationale:
 #   - Camera GPIOs are reused because the camera module is removed.
@@ -43,7 +90,6 @@
 #   - Freenove ESP32S3_Pinout.png: camera pins 4/5/6/7/15/16/17/18/8/9/10/11/12/13/14,
 #     SD pins 38/39/40, PSRAM pins 35/36/37, USB pins 19/20, WS2812 pin 48.
 #   - PlatformIO board freenove_esp32_s3_wroom: N8R8, qio_opi, 8 MB flash, 8 MB PSRAM.
-# =============================================================================
 
 # =============================================================================
 # PROJECT SETUP

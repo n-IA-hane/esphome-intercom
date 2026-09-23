@@ -1,0 +1,22 @@
+# Optional voip mixer port and resampler.
+speaker:
+  - id: !extend audio_mixer
+    source_speakers:
+      - id: voip_mixer_input
+        timeout: 10s
+        # Local mixer staging only. SIP/SDP packet time is owned by voip_stack.
+        buffer_duration: 128ms
+        sample_rate: 48000
+        bits_per_sample: 16
+        num_channels: 1
+
+  - platform: resampler
+    id: voip_speaker_input
+    output_speaker: voip_mixer_input
+    task_stack_in_psram: true
+    sample_rate: 48000
+    bits_per_sample: 16
+    num_channels: 1
+    # Keep the VoIP playout staging close to the mixer source buffer. This is
+    # not the RTP packet time and should not be tuned as a SIP workaround.
+    buffer_duration: 128ms

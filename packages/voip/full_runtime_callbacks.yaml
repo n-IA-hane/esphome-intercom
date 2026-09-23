@@ -22,12 +22,22 @@ voip_stack:
         id: ui_call_started
         peer: !lambda 'return peer;'
   on_hangup:
-    - script.execute:
-        id: ui_call_ended
-        peer: !lambda 'return peer;'
-        reason: !lambda 'return reason;'
+    # Trigger delivery is deferred to the main loop. A newer live call can
+    # already own the UI when an older call's terminal callback arrives.
+    - if:
+        condition:
+          lambda: 'return !id(phone).is_active();'
+        then:
+          - script.execute:
+              id: ui_call_ended
+              peer: !lambda 'return peer;'
+              reason: !lambda 'return reason;'
   on_call_failed:
-    - script.execute:
-        id: ui_call_ended
-        peer: !lambda 'return peer;'
-        reason: !lambda 'return reason;'
+    - if:
+        condition:
+          lambda: 'return !id(phone).is_active();'
+        then:
+          - script.execute:
+              id: ui_call_ended
+              peer: !lambda 'return peer;'
+              reason: !lambda 'return reason;'

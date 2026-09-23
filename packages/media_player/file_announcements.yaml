@@ -1,0 +1,10 @@
+# Optional local-file source. Select an audio_file asset alongside this module.
+media_source:
+  - platform: audio_file
+    id: announcement_file_source
+    task_stack_in_psram: true
+media_player:
+  - id: !extend speaker_media_player
+    announcement_pipeline:
+      sources:
+        - announcement_file_source

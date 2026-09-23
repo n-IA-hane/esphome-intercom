@@ -1,0 +1,32 @@
+# Optional shared timer playback.
+packages:
+  timer_events: !include ../voice_assistant/timer_events.yaml
+
+script:
+  - id: timer_alarm_loop
+    mode: single
+    then:
+      - while:
+          condition:
+            runtime_controller.is_active:
+              id: runtime
+              activity: timer_ringing
+          then:
+            - if:
+                condition:
+                  lambda: |-
+                    return std::string(id(runtime).get_policy("ringtone")) != "play" &&
+                           !id(runtime).is_activity_active("ringtone_draining");
+                then:
+                  - media_player.play_media:
+                      id: speaker_media_player
+                      media_url: "audio-file://timer_finished_sound"
+                      announcement: true
+            - delay: 6s
+  - id: timer_alarm_auto_stop
+    mode: restart
+    then:
+      - delay: 15min
+      - runtime_controller.event:
+          id: runtime
+          event: timer_stopped

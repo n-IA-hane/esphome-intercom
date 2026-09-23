@@ -1,0 +1,23 @@
+# Official MWW trigger; user automations coexist through normal package merging.
+packages:
+  mww_start: !include mww_safe_start.yaml
+
+micro_wake_word:
+  id: mww
+  stop_after_detection: false
+  on_wake_word_detected:
+    - globals.set:
+        id: g_last_wake_word
+        value: !lambda 'return wake_word;'
+    - runtime_controller.event:
+        id: runtime
+        event: wake_word
+
+voice_assistant:
+  id: va
+  on_client_connected:
+    - script.execute: start_mww_when_ready
+  on_end:
+    - script.execute: start_mww_when_ready
+  on_error:
+    - script.execute: start_mww_when_ready

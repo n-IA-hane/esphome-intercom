@@ -37,7 +37,7 @@ script:
                    static_cast<unsigned long>(id(runtime_activity_mask)),
                    id(ui_state), id(g_applied_led), id(g_ducking_active), id(g_va_state),
                    media, id(phone).get_state_str(), id(mww).is_running() ? 1 : 0,
-                   id(g_voip_ringtone_active) ? 1 : 0, id(runtime_rendered_page).c_str(),
+                   id(runtime).is_activity_active("ringtone_draining") ? 1 : 0, id(runtime_rendered_page).c_str(),
                    static_cast<int>(${runtime_probe_phase_expr}),
                    static_cast<int>(${runtime_probe_mode_expr}),
                    id(runtime_visual_source), id(runtime_response_text_ready) ? 1 : 0);

@@ -1,0 +1,39 @@
+# Globals owned by presentation adapters.
+substitutions:
+  ui_state_idle: "0"
+  ui_state_init: "1"
+  ui_state_no_wifi: "2"
+  ui_state_no_ha: "3"
+  ui_state_both_muted: "4"
+  ui_state_mic_muted: "5"
+  ui_state_spk_muted: "6"
+  ui_state_mww_recent: "7"
+  ui_state_va_listening: "8"
+  ui_state_va_thinking: "9"
+  ui_state_va_replying: "10"
+  ui_state_call_ringing: "11"
+  ui_state_ic_calling: "12"
+  ui_state_call_in_call: "13"
+  ui_state_va_error: "14"
+  ui_state_media: "15"
+  ui_state_no_va: "16"
+
+globals:
+  - id: runtime_rendered_page
+    type: std::string
+    restore_value: false
+    initial_value: '"unrendered"'
+  # Display adapter telemetry: 0=none/idle, 1=neutral, 2=happy,
+  # 3=angry, 4=Sendspin artwork. Non-display devices remain at 0.
+  - id: runtime_visual_source
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: g_applied_led
+    type: int
+    restore_value: false
+    initial_value: "-1"
+  - id: ui_state
+    type: int
+    restore_value: false
+    initial_value: "-1"

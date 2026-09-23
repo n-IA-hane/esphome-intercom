@@ -1,0 +1,8 @@
+# Shared hardware mixer. Add only the input ports required by the device.
+speaker:
+  - platform: mixer
+    id: audio_mixer
+    output_speaker: hw_speaker
+    num_channels: 1
+    bits_per_sample: 16
+    task_stack_in_psram: true

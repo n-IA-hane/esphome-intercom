@@ -1,0 +1,88 @@
+# Common semantic projection for the full LVGL profiles. Board renderers own
+# layout, text and animation, while this adapter is the only phase writer.
+# Includes require current_mode, previous_mode, voice_assistant_phase and the
+# shared mood widgets; headless profiles keep the empty UI hooks instead.
+
+globals:
+  - id: runtime_ui_call_session_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+script:
+  - id: runtime_project_ui_phase
+    then:
+      - lambda: |-
+          switch (id(ui_state)) {
+            case ${ui_state_init}:
+            case ${ui_state_no_wifi}:
+            case ${ui_state_no_ha}:
+            case ${ui_state_no_va}:
+              id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
+              break;
+            case ${ui_state_both_muted}:
+            case ${ui_state_mic_muted}:
+              id(voice_assistant_phase) = ${voice_assist_muted_phase_id};
+              break;
+            case ${ui_state_mww_recent}:
+            case ${ui_state_va_listening}:
+              id(current_mode) = 0;
+              id(voice_assistant_phase) = ${voice_assist_listening_phase_id};
+              break;
+            case ${ui_state_va_thinking}:
+              id(voice_assistant_phase) = ${voice_assist_thinking_phase_id};
+              break;
+            case ${ui_state_va_replying}:
+              id(voice_assistant_phase) = ${voice_assist_replying_phase_id};
+              break;
+            case ${ui_state_va_error}:
+              id(voice_assistant_phase) = ${voice_assist_error_phase_id};
+              break;
+            case ${ui_state_media}:
+              if (id(mute).state) {
+                id(voice_assistant_phase) = ${voice_assist_muted_phase_id};
+              } else {
+                id(apply_media_artwork).execute();
+                id(voice_assistant_phase) = ${voice_assist_replying_phase_id};
+              }
+              break;
+            case ${ui_state_spk_muted}:
+            case ${ui_state_idle}:
+              // A cached media cover must not remain bound after idle wins.
+              lv_img_set_src(id(mood_bg), id(mood_neutral));
+              lv_obj_invalidate(id(mood_bg));
+              id(runtime_visual_source) = 1;
+              id(runtime_response_text_ready) = false;
+              id(voice_assistant_phase) = id(mute).state ?
+                  ${voice_assist_muted_phase_id} : ${voice_assist_idle_phase_id};
+              break;
+            default:
+              // Call states select their own page/tile in the renderer.
+              break;
+          }
+
+  # Compatibility hook used by mode switches and board initialization. It now
+  # projects the committed snapshot instead of reconstructing VA state locally.
+  - id: set_idle_or_mute_phase
+    then:
+      - script.execute: runtime_project_ui_phase
+
+  - id: runtime_ui_call_begin
+    then:
+      # Cancel the previous call's delayed overlay before it can hide a new one.
+      - script.stop: ui_call_ended
+      - lambda: |-
+          id(call_ended_active) = false;
+          if (!id(runtime_ui_call_session_active)) {
+            id(previous_mode) = id(current_mode);
+            id(runtime_ui_call_session_active) = true;
+          }
+          id(current_mode) = 1;
+
+  - id: runtime_ui_call_end
+    then:
+      - lambda: |-
+          if (id(runtime_ui_call_session_active)) {
+            id(current_mode) = id(previous_mode);
+            id(runtime_ui_call_session_active) = false;
+          }

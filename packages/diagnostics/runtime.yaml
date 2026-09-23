@@ -1,0 +1,28 @@
+# Optional Runtime Controller API diagnostics.
+api:
+  actions:
+    # Diagnostic/runtime reducer helpers. These are profile-level API actions,
+    # not runtime_controller component semantics: any event name is defined by YAML.
+    - action: runtime_event
+      variables:
+        event: string
+      then:
+        - runtime_controller.event:
+            id: runtime
+            event: !lambda 'return event;'
+    - action: runtime_set_activity
+      variables:
+        activity: string
+        active: bool
+      then:
+        - runtime_controller.set_activity:
+            id: runtime
+            activity: !lambda 'return activity;'
+            active: !lambda 'return active;'
+    - action: runtime_dump
+      variables:
+        reason: string
+      then:
+        - runtime_controller.dump:
+            id: runtime
+            reason: !lambda 'return reason;'

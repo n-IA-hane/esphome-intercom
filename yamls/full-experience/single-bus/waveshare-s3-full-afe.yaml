@@ -1,6 +1,57 @@
 # =============================================================================
 # Waveshare ESP32-S3-AUDIO-Board: VA + VoIP + MWW (no display)
+# Profile: FULL / dual-mic AFE / LED and physical buttons
+# Composition: Preset + component bindings + shared mono mixer/player; codec/AFE bindings below.
+# Runtime facts: native media/VoIP/Wi-Fi/mute listeners; shared VA/MWW callbacks.
+# YAML keeps user controls, board wiring and presentation hooks.
+# Support: https://github.com/sponsors/n-IA-hane
 # =============================================================================
+#
+# CAPTURE: hardware feedback and two physical microphones, 4-slot TDM.
+# [ES7210 slots 0 + 2: microphones] ──────┐
+# [ES7210 slot 1: ES8311 feedback REF] ───┤
+#                                         ▼
+#                          [audio_stack: 48 → 16 kHz]
+#                                         │
+#                                         ▼
+#                        [afe_processor: AEC + dual-mic SE]
+#                                         │
+#                                         ▼
+#                                    [mic_main] ─┬─► VA
+#                                                ├─► MWW (barge-in)
+#                                                └─► VoIP TX
+# Slot 3 is unused. The reference comes from the configured ADC TDM slot.
+#
+# PLAYBACK: speaker_media_player owns the media + announcement pipelines.
+#      [HTTP / Sendspin]          [VA TTS / HTTP / files]              [VoIP RX]
+#              │                             │                             │
+#              ▼                             ▼                             │
+#       [media_pipeline]          [announcement_pipeline]                  │
+#              │                             │                             │
+#              ▼                             ▼                             ▼
+#    [media_speaker_input]          [tts_speaker_input]           [voip_speaker_input]
+#          resampler                     resampler                     resampler
+#              │                             │                             │
+#              ▼                             ▼                             ▼
+#     [media_mixer_input]            [tts_mixer_input]             [voip_mixer_input]
+#              │                             │                             │
+#              └─────────────────────────────┼─────────────────────────────┘
+#                                            ▼
+#                             ┌─────────────────────────────┐
+#                             │   audio_mixer: 48 kHz mono  │
+#                             └──────────────┬──────────────┘
+#                                            ▼
+#                                       [hw_speaker]
+#                                            │
+#                                            ▼
+#                     [audio_stack I2S TX → ES8311 → NS4150 → speaker]
+#
+# The three *_speaker_input nodes are resamplers; *_mixer_input are mixer ports.
+# TTS, ringtone and timer files share the announcement pipeline, not VoIP RX.
+# Reference labels above describe configured signal sources, not extra I2S buses.
+#
+# BOARD, WIRING AND USER CONTROLS
+# -------------------------------
 #
 # Hardware:
 #   - ESP32-S3R8 (16MB Flash, 8MB PSRAM octal)
@@ -16,7 +67,7 @@
 #   LEDs: GPIO38 (WS2812 x7)
 #   BOOT: GPIO0
 #
-# Audio pipeline (esp_audio_stack at 48kHz, TDM + Espressif rate conversion to 16kHz):
+# Capture slot mapping (board-specific reference):
 #
 # Verified Waveshare ESP32-S3-AUDIO-Board slot map, board oriented with:
 #   - speaker at the bottom
@@ -28,15 +79,6 @@
 #   - slot 1 = playback reference used by AEC
 #   - slot 3 = near-silent / unused on this board revision
 #
-# Dual-mic target:
-#   ES7210 TDM slots [0, 2]     -> esp_ae_rate_cvt x3
-#   ES7210 TDM slot 1 (DAC ref) -> esp_ae_rate_cvt x3 -> esp_afe (AEC + Speech Enhancement + VAD) -> mono mic_main -> VA / VoIP TX / MWW
-#
-#   Music/radio -> media_speaker_input (resampler) -> mixer (48kHz)
-#   VA TTS      -> tts_speaker_input (resampler)   -> mixer -> hw_speaker
-#   VoIP RX     -> voip_speaker_input (resampler)  -> mixer -> ES8311 DAC
-#
-# =============================================================================
 
 # =============================================================================
 # PROJECT SETUP
@@ -561,9 +603,6 @@ switch:
       - speaker.mute_on: hw_speaker
       - delay: 50ms
       - switch.turn_off: speaker_enable
-      - runtime_controller.event:
-          id: runtime
-          event: speaker_muted
     on_turn_off:
       - logger.log:
           level: INFO
@@ -576,9 +615,6 @@ switch:
             - switch.turn_on: speaker_enable
             - delay: 50ms
       - speaker.mute_off: hw_speaker
-      - runtime_controller.event:
-          id: runtime
-          event: speaker_unmuted
 
   # VoIP switches
 

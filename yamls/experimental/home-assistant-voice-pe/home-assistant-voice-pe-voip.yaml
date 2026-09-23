@@ -1,13 +1,35 @@
+# ==============================================================================================
+# Home Assistant Voice PE / native-audio VoIP overlay
+# Status: experimental overlay; inherits the official Voice PE dev package
+# Support: https://github.com/sponsors/n-IA-hane
+#
+# Main packages:
+#   esphome/home-assistant-voice-pe/home-assistant-voice.yaml@dev
+#   voip/transport.yaml; voip/call_settings.yaml
+#
+# Microphone boundary inherited from the official base:
+# ┌─────────────────────────┐    ┌─────────────────────────┐    ┌─────────────────────────┐
+# │      XMOS front end     ├───>│   i2s_mics / channel 0  ├───>│         VoIP TX         │
+# │  base-owned processing  │    │    microphone_source    │    │     16 kHz mono PCM     │
+# └─────────────────────────┘    └─────────────────────────┘    └─────────────────────────┘
+#
+# The local overlay adds one input to the existing mixer:
+# ┌─────────────────────────┐    ┌─────────────────────────┐    ┌─────────────────────────┐
+# │         VoIP RX         ├───>│ voip_resampling_speaker ├───>│      mixing_speaker     │
+# │        48 kHz PCM       │    │    voip_mixing_input    │    │   official base output  │
+# └─────────────────────────┘    └─────────────────────────┘    └─────────────────────────┘
+#
+# The official base owns its microphone processing, hardware speaker, media and announcements.
+# This overlay does not declare a software-AEC node or reference binding; those remain upstream.
+# The mixer extension preserves existing inputs; it is not a replacement audio stack.
+# ==============================================================================================
+
 # =============================================================================
 # Home Assistant Voice PE + voip_stack experiment.
 #
 # This YAML keeps the official Voice PE audio stack intact and only adds the
 # native VoIP layer. The Voice PE is not a Generic S3: its microphones are
 # processed by the onboard XMOS voice front-end before ESPHome receives them.
-#
-# Expected audio graph:
-#   XMOS processed mic -> i2s_mics channel 0 -> voip_stack TX
-#   voip_stack RX -> VoIP resampler -> Voice PE mixer -> AIC3204 speaker
 #
 # This is an experimental bring-up target, not a validated release preset.
 # =============================================================================

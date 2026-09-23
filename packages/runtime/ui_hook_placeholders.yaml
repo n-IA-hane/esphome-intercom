@@ -1,29 +1,12 @@
-# Empty UI hook scripts for full runtime devices.
-#
-# Device-specific display packages may !extend these scripts to draw LVGL pages
-# or update hardware-specific UI. Headless devices can include them unchanged.
-
+# Empty presentation and call hooks for board extensions.
+packages:
+  voice_hooks: !include ../voice_assistant/ui_hooks.yaml
 script:
   - id: update_led
     mode: restart
     then: []
   - id: render_ui_state
     mode: restart
-    then: []
-  - id: ui_tts_started
-    parameters:
-      text: string
-    then: []
-  - id: ui_stt_ended
-    parameters:
-      text: string
-    then: []
-  - id: ui_va_end
-    then:
-      - globals.set:
-          id: runtime_response_text_ready
-          value: "false"
-  - id: ui_va_barge_start
     then: []
   - id: ui_call_started
     parameters:

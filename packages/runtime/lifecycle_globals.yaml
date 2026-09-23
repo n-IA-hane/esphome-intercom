@@ -1,0 +1,18 @@
+# Globals owned by lifecycle adapters.
+globals:
+  - id: init_in_progress
+    type: bool
+    restore_value: false
+    initial_value: "true"
+  - id: runtime_activity_mask
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: runtime_sequence
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: g_ota_in_progress
+    type: bool
+    restore_value: false
+    initial_value: "false"

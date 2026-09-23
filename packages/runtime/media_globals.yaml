@@ -1,0 +1,6 @@
+# Media policy diagnostics.
+globals:
+  - id: g_ducking_active
+    type: int
+    restore_value: false
+    initial_value: "0"

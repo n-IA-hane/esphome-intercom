@@ -1,5 +1,30 @@
 # Breaking changes
 
+## 2026.10.0: modular runtime controller packages
+
+Requires ESPHome 2026.9.0 or newer. Update the Intercom and Runtime Controller
+components together and review the [package guide](../packages/README.md).
+
+- VA controls no longer include telephone buttons. Add `voip/call_buttons.yaml`
+  when desired; the full preset includes them.
+- MWW callbacks and controls are separate from VA. Full presets select both.
+- Native media/Wi-Fi/mute listeners replace redundant state-forwarding callbacks.
+  Unsupported `observe.voice_assistant` and `observe.micro_wake_word` keys must be
+  removed; shared official callbacks provide those integrations.
+- `runtime/ha_connectivity.yaml` no longer exposes diagnostic API actions. Add
+  `diagnostics/runtime.yaml` explicitly when needed.
+- `media_player/playback_compat.yaml` no longer loads the Sendspin-specific adapter.
+  Custom inline Sendspin configurations must also include
+  `media_player/sendspin_compat.yaml`, or use `media_player/sendspin.yaml`.
+- HTTP playback, local-file announcements and Sendspin can be selected separately.
+  Existing full media presets still compose the complete feature set.
+- Shared LVGL projection owns the voice phase and restores the mode preceding a
+  call. Do not duplicate phase assignments in TTS content callbacks.
+
+The reducer publishes complete state before effects. Custom callbacks must not
+rely on nested events executing before the current callback returns.
+
+
 Read every section newer than the stable version currently installed before
 upgrading. VoIP Stack is maintained by one person and may deliberately replace
 an earlier development contract instead of carrying two parallel APIs. The

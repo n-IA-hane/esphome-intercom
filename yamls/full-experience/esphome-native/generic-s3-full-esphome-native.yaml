@@ -1,6 +1,53 @@
 # =============================================================================
 # GENERIC ESP32-S3 FULL NATIVE - ESPHome native audio, no ESP AEC
+# Profile: FULL / native ESPHome audio / no software AEC
+# Composition: Preset + component bindings + shared mono mixer/player; native I2S endpoints below.
+# Runtime facts: native media/VoIP/Wi-Fi/mute listeners; shared VA/MWW callbacks.
+# YAML keeps user controls, board wiring and presentation hooks.
+# Support: https://github.com/sponsors/n-IA-hane
 # =============================================================================
+#
+# CAPTURE: native ESPHome I2S at 16 kHz; no esp_audio_stack or software AEC.
+# [INMP441 / RX I2S bus]
+#            │
+#            ▼
+# [native_mic_raw: stereo, 32-bit samples]
+#            │
+#            ├──► [va_mic_source: channel 1, 16-bit] ────► VA
+#            ├──► [mww_mic_source: channel 1, 16-bit] ───► MWW (barge-in)
+#            └──► [voip_mic_source: channel 1, 16-bit] ──► VoIP TX
+# An external front-end may provide processed audio; this YAML adds no AEC REF.
+#
+# PLAYBACK: speaker_media_player owns the media + announcement pipelines.
+#      [HTTP / Sendspin]          [VA TTS / HTTP / files]              [VoIP RX]
+#              │                             │                             │
+#              ▼                             ▼                             │
+#       [media_pipeline]          [announcement_pipeline]                  │
+#              │                             │                             │
+#              ▼                             ▼                             ▼
+#    [media_speaker_input]          [tts_speaker_input]           [voip_speaker_input]
+#          resampler                     resampler                     resampler
+#              │                             │                             │
+#              ▼                             ▼                             ▼
+#     [media_mixer_input]            [tts_mixer_input]             [voip_mixer_input]
+#              │                             │                             │
+#              └─────────────────────────────┼─────────────────────────────┘
+#                                            ▼
+#                             ┌─────────────────────────────┐
+#                             │   audio_mixer: 48 kHz mono  │
+#                             └──────────────┬──────────────┘
+#                                            ▼
+#                                       [hw_speaker]
+#                                            │
+#                                            ▼
+#                       [native i2s_audio TX → MAX98357A → speaker]
+#
+# The three *_speaker_input nodes are resamplers; *_mixer_input are mixer ports.
+# TTS, ringtone and timer files share the announcement pipeline, not VoIP RX.
+# Reference labels above describe configured signal sources, not extra I2S buses.
+#
+# BOARD, WIRING AND USER CONTROLS
+# -------------------------------
 # Generic target: ESP32-S3 board with PSRAM and native ESPHome
 # microphone/speaker components. The tested example uses one INMP441
 # microphone and one MAX98357A amplifier on separate I2S buses.
@@ -29,12 +76,6 @@
 # Tested chip/memory: ESP32-S3 N8R8, 8 MB flash, 8 MB OPI PSRAM.
 # Tested modules: INMP441 digital MEMS microphone, MAX98357A I2S amplifier.
 #
-# Audio pipeline:
-#   INMP441 -> native ESPHome i2s_audio microphone -> MicrophoneSource
-#           -> VA / VoIP / MWW
-#   Media/VA/VoIP -> mixer/resampler (48 kHz) -> native ESPHome i2s_audio
-#           speaker -> MAX98357A
-#
 # Wiring:
 #   INMP441:
 #     SCK/BCLK -> GPIO9
@@ -51,7 +92,6 @@
 #     SD/EN    -> GPIO18 (optional; tie high instead if your board prefers)
 #     VIN      -> 5V or 3V3 according to your MAX98357A module
 #     GND      -> GND
-# =============================================================================
 
 # =============================================================================
 # PROJECT SETUP

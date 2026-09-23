@@ -1,15 +1,59 @@
 # =============================================================================
 # GENERIC ESP32-S3 VOIP + VA AEC LIGHT - Single I2S bus, no hardware codec
+# Profile: FULL / shared I2S / software AEC
+# Composition: Preset + component bindings + shared mono mixer/player; board owns I2S + esp_aec.
+# Runtime facts: native media/VoIP/Wi-Fi/mute listeners; shared VA/MWW callbacks.
+# YAML keeps user controls, board wiring and presentation hooks.
+# Support: https://github.com/sponsors/n-IA-hane
 # =============================================================================
+#
+# CAPTURE: software playback reference; mic output is 16 kHz mono.
+# [MEMS mic / I2S RX 48 kHz] ─────────────┐
+# [audio_stack TX: previous_frame REF] ───┤
+#                                         ▼
+#                          [audio_stack: 48 → 16 kHz]
+#                                         │
+#                                         ▼
+#                               [aec_processor: esp_aec]
+#                                         │
+#                                         ▼
+#                                    [mic_main] ─┬─► VA
+#                                                ├─► MWW (barge-in)
+#                                                └─► VoIP TX
+# The REF is the previous software TX frame; no codec ADC loopback is configured.
+#
+# PLAYBACK: speaker_media_player owns the media + announcement pipelines.
+#      [HTTP / Sendspin]          [VA TTS / HTTP / files]              [VoIP RX]
+#              │                             │                             │
+#              ▼                             ▼                             │
+#       [media_pipeline]          [announcement_pipeline]                  │
+#              │                             │                             │
+#              ▼                             ▼                             ▼
+#    [media_speaker_input]          [tts_speaker_input]           [voip_speaker_input]
+#          resampler                     resampler                     resampler
+#              │                             │                             │
+#              ▼                             ▼                             ▼
+#     [media_mixer_input]            [tts_mixer_input]             [voip_mixer_input]
+#              │                             │                             │
+#              └─────────────────────────────┼─────────────────────────────┘
+#                                            ▼
+#                             ┌─────────────────────────────┐
+#                             │   audio_mixer: 48 kHz mono  │
+#                             └──────────────┬──────────────┘
+#                                            ▼
+#                                       [hw_speaker]
+#                                            │
+#                                            ▼
+#                   [audio_stack shared-I2S TX → class-D amp → speaker]
+#
+# The three *_speaker_input nodes are resamplers; *_mixer_input are mixer ports.
+# TTS, ringtone and timer files share the announcement pipeline, not VoIP RX.
+# Reference labels above describe configured signal sources, not extra I2S buses.
+#
+# BOARD, WIRING AND USER CONTROLS
+# -------------------------------
 # Full-featured lightweight config: VoIP + Media Player + mixer + VA/MWW.
 # For ESP32 boards where mic and speaker share the SAME I2S bus.
-#
-# Audio pipeline:
-#   MEMS mic → esp_audio_stack (48kHz) → esp_ae_rate_cvt x3 → esp_aec → mic_main → VA / VoIP TX / MWW
-#
-#   Media       -> media_speaker_input (resampler) -> mixer (48kHz)
-#   VA TTS      -> tts_speaker_input (resampler)   -> mixer -> hw_speaker
-#   VoIP RX     -> voip_speaker_input (resampler)  -> mixer -> class-D amp
 #
 # HARDWARE (adapt GPIOs to YOUR board):
 #   - Board: Any ESP32-S3 with PSRAM
@@ -26,7 +70,6 @@
 #   Shared I2S:  BCLK=GPIO36, LRCLK=GPIO37, DIN=GPIO35 (mic), DOUT=GPIO7 (speaker)
 #   LED:         DATA=GPIO33
 #
-# =============================================================================
 
 # =============================================================================
 # PROJECT SETUP

@@ -1,7 +1,7 @@
-# Voice Assistant + Micro Wake Word runtime_controller event forwarding.
+# Voice Assistant runtime_controller event forwarding.
 #
-# Include this when VA/MWW state is rendered by runtime_controller. This package
-# defines the VA and MWW components and forwards their lifecycle events; it does
+# Include this when Voice Assistant state is rendered by runtime_controller. This package
+# defines the VA component and forwards its lifecycle events; it does
 # not create user-facing switches or buttons.
 
 voice_assistant:
@@ -108,7 +108,6 @@ voice_assistant:
     - runtime_controller.event:
         id: runtime
         event: va_client_connected
-    - script.execute: start_mww_when_ready
   on_client_disconnected:
     - logger.log:
         tag: va
@@ -116,14 +115,3 @@ voice_assistant:
     - runtime_controller.event:
         id: runtime
         event: va_client_disconnected
-
-micro_wake_word:
-  id: mww
-  stop_after_detection: false
-  on_wake_word_detected:
-    - globals.set:
-        id: g_last_wake_word
-        value: !lambda 'return wake_word;'
-    - runtime_controller.event:
-        id: runtime
-        event: wake_word

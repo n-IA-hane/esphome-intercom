@@ -1,3 +1,22 @@
+# ==============================================================================================
+# ESP32-S3-BOX-3 / display, touch and optional sensor-dock additions
+# Status: optional contributor-tested overlay; no audio path is declared here
+# Support: https://github.com/sponsors/n-IA-hane
+#
+# Main packages:
+#   Parent: esp32-s3-box-3-full-aec.yaml
+#   Requires parent I2C ids internal_i2c and external_i2c
+#
+# Dependency boundary (audio remains in the parent YAML):
+# ┌─────────────────────────┐    ┌─────────────────────────┐    ┌─────────────────────────┐
+# │   Parent core profile   ├───>│  This additions overlay ├───>│  Shared parent I2C ids  │
+# │   codec + AEC + mixer   │    │  display / touch / dock │    │   hardware integration  │
+# └─────────────────────────┘    └─────────────────────────┘    └─────────────────────────┘
+#
+# The connection above is a configuration dependency, not an audio signal path.
+# Removing this overlay removes its UI/dock hardware declarations; it does not reroute audio.
+# ==============================================================================================
+
 # =============================================================================
 # Box-3 additions - NOT part of esphome-intercom's core audio/VoIP path
 # =============================================================================

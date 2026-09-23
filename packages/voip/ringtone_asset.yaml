@@ -1,0 +1,4 @@
+# Optional local incoming-call sound.
+audio_file:
+  - id: voip_ringing_sound
+    file: ${assets_base}assets/sounds/ringtone.flac

@@ -1,6 +1,9 @@
+from pathlib import Path
+
 from esphome import automation
 import esphome.codegen as cg
 from esphome.components import audio, media_player, media_source, speaker
+from esphome.components.esp32 import add_idf_component
 from esphome.components.const import (
     CONF_VOLUME_INCREMENT,
     CONF_VOLUME_INITIAL,
@@ -172,6 +175,10 @@ FINAL_VALIDATE_SCHEMA = cv.All(
 
 
 async def to_code(config: ConfigType) -> None:
+    add_idf_component(
+        name="pthread_join_guard",
+        path=str(Path(__file__).parent / "idf_components" / "pthread_join_guard"),
+    )
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await media_player.register_media_player(var, config)

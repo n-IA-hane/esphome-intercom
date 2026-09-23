@@ -1,0 +1,26 @@
+# Official VA timer callbacks shared by profiles.
+voice_assistant:
+  id: va
+  on_timer_started:
+    - runtime_controller.event:
+        id: runtime
+        event: timer_started
+  on_timer_cancelled:
+    - runtime_controller.set_activity:
+        id: runtime
+        activity: timer
+        active: !lambda |-
+          for (const auto &other : id(va).get_timers())
+            if (other.id != timer.id) return true;
+          return false;
+  on_timer_finished:
+    - runtime_controller.set_activity:
+        id: runtime
+        activity: timer
+        active: !lambda |-
+          for (const auto &other : id(va).get_timers())
+            if (other.id != timer.id) return true;
+          return false;
+    - runtime_controller.event:
+        id: runtime
+        event: timer_finished
