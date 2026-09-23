@@ -17,7 +17,7 @@ These changes require rebuilding and uploading ESP firmware. The existing Home A
 
 [Complete preview changes](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.0-dev).
 
-Thanks to @DunklerPhoenix and @MakaronaiVLN for sharing feedback and helping test the project.
+Thanks to everyone who donated to support the project.
 
 ---
 
