@@ -17,6 +17,8 @@ These changes require rebuilding and uploading ESP firmware. The existing Home A
 
 [Complete preview changes](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.0-dev).
 
+Thanks to @DunklerPhoenix and @MakaronaiVLN for sharing feedback and helping test the project.
+
 ---
 
 ## 2026.9.2: more reliable calls, audio fixes and built-in SIP capture
