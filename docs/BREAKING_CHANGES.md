@@ -1,5 +1,26 @@
 # Breaking changes
 
+## 2026.10.0: coordinated update and call automations
+
+The stable candidate pairs Intercom 2026.10.0 with ESP VoIP Stack 2026.10.0,
+Runtime Controller 2026.10.0 and Audio Stack 2026.10.1. The new Audio Diagnostics
+button requires the latter; Audio Stack 2026.10.0 does not expose that action.
+Do not mix new shared packages with older component implementations.
+
+Home Assistant 2026.7.0 or newer is required for the native automation interface.
+ESPHome 2026.9.0 is the firmware minimum, not an exact-version pin.
+
+Phonebook as dialplan remains the default. Automations as dialplan adds overrides;
+users do not need automations to make ordinary calls. Existing event/state rules
+remain available. When migrating a rule to a native VoIP trigger, disable its old
+equivalent to avoid handling the same call twice. Use the
+[cookbook migration instructions](AUTOMATION_DIALPLAN.md#move-existing-automations-gradually).
+
+Integration setup migrates supported stored settings and contacts. It cannot
+rewrite copied firmware YAMLs or user-authored automations. Back up those files
+and your HA configuration before updating. A previous HACS archive alone does not
+undo a config-entry migration; restore the matching HA backup if rolling back.
+
 ## 2026.10.0: modular runtime controller packages
 
 Requires ESPHome 2026.9.0 or newer. Update the Intercom and Runtime Controller
@@ -488,7 +509,7 @@ Migration impact:
   `packages/voip/ha_integration.yaml` entity surface or equivalent manual
   `platform: voip_stack` entities.
 
-## SIP consolidation audit
+## 2026.7.0: SIP behavior
 
 The active branch is intentionally SIP-first and breaking:
 

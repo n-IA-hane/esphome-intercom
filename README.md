@@ -1,6 +1,8 @@
 # VoIP Stack for ESPHome and Home Assistant
 
-Development preview: [2026.10.0-dev](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.0-dev). Requires ESPHome 2026.9.0 or newer for firmware builds.
+Development branch for the upcoming 2026.10.0 stable release. Published preview: [2026.10.0-dev](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.0-dev). Requires ESPHome 2026.9.0 or newer for firmware builds.
+
+Candidate component set: Intercom and ESP VoIP Stack **2026.10.0**, Runtime Controller **2026.10.0**, and Audio Stack **2026.10.1**. These stable releases have not been published yet.
 
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3%20%7C%20ESP32--P4-blue.svg)](#supported-hardware)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-native-blue.svg)](https://www.home-assistant.io)
@@ -443,7 +445,7 @@ The assistant's personality is entirely up to your prompt. Professional
 receptionist and verbally abusive domestic secretary are both technically
 valid configurations.
 
-## Automation routing preview
+## Automations as dialplan
 
 **Automations as dialplan** lets you define call behavior in Home Assistant's
 normal automation editor. Create an Automation contact, then build a sequence:
@@ -458,7 +460,7 @@ the common examples. A destination can be its phonebook name or extension.
 
 Start with the [step-by-step greeting](docs/AUTOMATION_DIALPLAN.md#create-your-first-greeting-in-the-editor),
 then add a [forward after the greeting](docs/AUTOMATION_DIALPLAN.md#forward-after-the-greeting).
-These native automation features target 2026.10.0 development, not 2026.9.2.
+These native automation features are included in the 2026.10.0 candidate; they are not part of 2026.9.2.
 
 - [Route calls during office hours](docs/AUTOMATION_DIALPLAN.md#route-to-reception-during-office-hours).
 - [Forward only when a phone does not answer](docs/AUTOMATION_DIALPLAN.md#forward-an-unanswered-ha-call-to-assist).
@@ -549,74 +551,22 @@ Before every upgrade:
 Never assume an automation still has the same contract merely because the
 integration loaded successfully.
 
-## What's new in `2026.9.2`
+## What's new in the 2026.10.0 candidate
 
-- More reliable call cleanup and authenticated hangup with SIP providers.
-- Built-in SIP capture from Home Assistant, including HA OS.
-- Microphone-only and speaker-only fixes, MP3/WAV announcements and safer firmware updates.
-- Optional dual-microphone input and level sensors.
-- P4 saved volume restored after reboot and date/time kept on one line.
+- Native call triggers, conditions and actions make greetings, forwarding,
+  unanswered-call rules and DTMF menus available in HA's normal automation editor.
+- ESP phones receive their HA controls and phonebook through the VoIP component,
+  without the retired VoIP HA packages.
+- Modular full profiles preserve paused music and handle interrupted replies,
+  ringtones and overlapping voice/media activity more consistently.
+- P4 video changes during calls preserve the negotiated media path; on-device
+  labels distinguish Direct from HA transcoding.
+- Audio and VoIP diagnostic actions help capture a useful issue report without
+  enabling verbose audio tracing.
 
-See the [2026.9.2 release notes](docs/WHATS_NEW_2026_9_2.md) and
-[complete changelog](CHANGELOG.md).
-
-## What's new in `2026.9.1`
-
-Use automated phone menus and extensions with the in-call keypad, enjoy clearer
-call controls and smoother audio, and optionally try the community Starfleet
-assistant theme by **rvdv01**.
-
-See the [full release notes](docs/WHATS_NEW_2026_9_1.md) for the improvements,
-compatibility notes and HACS update instructions. Updating Home Assistant does
-not flash your ESP devices.
-
-## Previous release: `2026.9.0`
-
-`2026.9.0` turns the development work after `2026.8.0` into one coordinated
-Home Assistant and ESPHome release:
-
-- capability-gated G.722 on HA SIP legs, while ESP endpoints keep their native
-  high-quality PCM path;
-- automatic Dahua `PCM/16000` interoperability for matching registered
-  door-station profiles;
-- stronger SIP digest stale-nonce recovery and registered TCP-flow reuse;
-- RFC 7616/8760 Digest with MD5, SHA-256, SHA-512-256, `auth` and `auth-int`
-  across the HA registrar and trunk client;
-- reliable provisional responses with `100rel` and PRACK, shared RFC 4028
-  session refresh policy, initial and in-dialog delayed offers, remote SIP fork
-  settlement and standards-based REFER/NOTIFY call transfer;
-- RFC 3263 NAPTR/SRV discovery, IPv6 SIP addressing and verified SIP TLS on HA
-  SIP legs, including preserved `sips:` routing and transfer identities;
-- FRITZBox-compatible trunk REGISTER Request-URI handling and RTP reframing
-  when a peer sends packets shorter than its negotiated `ptime`;
-- browser media preflight before Call or Answer, so a missing microphone API
-  leaves an incoming call ringing instead of answering and immediately sending
-  BYE;
-- one persisted preferred Home Assistant phone, selected by its real Device ID,
-  so service calls remain deterministic with multiple browser phones;
-- one authoritative termination and cleanup path for browser, routed, trunk,
-  conference and forwarded calls, with stale-generation protection;
-- faster vectorized G.711 conversion on HA;
-- smaller call-routing orchestrators with the existing single authoritative
-  call lifecycle preserved;
-- a substantially expanded, schema-checked automation cookbook;
-- fail-closed candidate qualification with real HA, browser, SIP peers,
-  maintained firmware builds and hardware-in-the-loop evidence;
-- one generation-owned call session with common answer, bridge, projection,
-  rollback and termination primitives across direct, trunk, forward, group and
-  conference paths;
-- stabilized P4 bidirectional JPEG/H.264 negotiation, audio-first video
-  upgrades, codec-specific decode and MIPI DSI presentation, bounded
-  presentation queues and post-call LVGL recovery;
-- exact candidate locks for all four repositories, firmware manifests and a
-  deterministic HACS ZIP built, validated and published explicitly;
-- executable regression evidence for community interop fixes and post-call
-  quiescence.
-
-The complete release overview is in
-[`What is new in 2026.9.0`](docs/WHATS_NEW_2026_9_0.md). The immutable HACS
-archive is attached to the
-[`2026.9.0` release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.9.0).
+See the [complete changelog](CHANGELOG.md) for this candidate and earlier releases,
+and the [breaking changes](docs/BREAKING_CHANGES.md) before updating custom YAMLs.
+A HACS update changes HA and the card; ESP improvements require a firmware rebuild.
 
 ## Supported hardware
 
@@ -643,7 +593,7 @@ For custom firmware composition, see [Modular device packages](packages/README.m
 Start with the practical [user guide](docs/USER_GUIDE.md) for normal setup and
 daily operation. Use the [automation cookbook](docs/AUTOMATION_DIALPLAN.md) for
 redirect, fallback, DTMF and guarded concurrent routing, and the
-[development feature guide](docs/WHATS_NEW_2026_8_1.md) for the new SIP and PBX
+[SIP feature reference](docs/WHATS_NEW_2026_8_1.md) for the established SIP and PBX
 capabilities.
 
 | Topic | Document |

@@ -1,21 +1,74 @@
 # Changelog
 
-## 2026.10.0-dev: modular full profiles and native ESP phones
+## 2026.10.0: native call automations and simpler ESP phones
 
-- Voice Assistant returns to idle after its reply while keeping previously paused music paused.
-- Interrupting TTS no longer leaves Home Assistant waiting for an announcement that has already stopped.
-- Fixed a network lockup that could occur when interrupting HTTP audio playback.
-- Ending a ringtone clears the player playlist as well as stopping the sound. A timer followed by a call no longer leaves the device showing an announcement after hangup.
-- Shared packages can select HTTP playback, Sendspin, local announcements, call buttons, wake-word controls, timers and diagnostics separately. The full presets still assemble the complete feature set.
-- P4 profiles now use the camera component directly from Psix-anp's repository. The component code matches our previous source.
+Release candidate. Stable publication is pending final qualification.
 
-Use **ESPHome 2026.9.0 or newer**. Review the [package guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/packages/README.md) and [breaking changes](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/BREAKING_CHANGES.md) before rebuilding a custom YAML.
+### Automations as dialplan
 
-Waveshare S3 Audio and Spotpear were tested with direct calls, ringing, manual and automatic answer, Voice Assistant and overlapping media. P4 JPEG and H.264 were compiled with the upstream camera; this update does not claim a new P4 hardware qualification.
+Phonebook as dialplan remains the default: ordinary calls continue to use the
+configured contacts, groups and forwarding rules. Matching automation rules can
+override that routing when enabled.
 
-These changes require rebuilding and uploading ESP firmware. The existing Home Assistant features below remain included.
+- Create an Automation contact with a name and optional extension. It can receive
+  calls without creating an extra telephone device.
+- Select call triggers, conditions and actions directly in Home Assistant's
+  automation editor. Native triggers keep actions associated with their call
+  across delays and synchronous scripts, without requiring Call-ID templates.
+- Speak a fixed TTS message to the caller, then forward the same call by contact
+  name or extension. Information-only automations can finish and end their call.
+- Build keypad menus with DTMF input, choices, timeouts and fallback destinations.
+  Use unanswered-call triggers to select another destination after ringing.
+- Existing event and state automations remain supported. The
+  [illustrated cookbook](docs/AUTOMATION_DIALPLAN.md) explains gradual migration.
 
-[Complete preview changes](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.0-dev).
+### Calling, Assist and video
+
+- Registered SIP phones and automation forwards reuse the configured trunk's
+  signaling flow, extending the outbound behavior used by the dashboard phone.
+- Duplicate phonebook names produce an explicit error and a persistent
+  notification. Names used for routing must be unique.
+- The advanced call-details option controls the opening message sent to Assist.
+  With it disabled, the assistant starts listening without an automatic caller
+  description. Longer extensions are accepted by the HA configuration surface.
+- Video added during a call and camera-direction changes preserve the negotiated
+  media contract. These changes address frozen or missing P4 video with SIP peers.
+  Turning off Send video stops local transmission while remote video can continue.
+- P4 shows Direct or HA transcoding below the call heading. Audio-only destinations
+  keep the audio call interface rather than opening the video screen.
+
+### ESP firmware and full profiles
+
+- HA discovery, call controls and phonebook reception are built into the ESP VoIP
+  component. Remove the retired VoIP HA packages and enable `api.custom_services`.
+- Voice Assistant can finish its reply while previously paused music stays paused.
+  Interrupted announcements acknowledge completion instead of leaving HA waiting.
+- HTTP playback shutdown handles unrelated task notifications correctly. Ringtone
+  cleanup clears the playlist as well as stopping its source.
+- Runtime packages compose voice controls, call buttons, wake word, media,
+  Sendspin, timers, display and diagnostics separately. Full presets retain the
+  complete feature set.
+- P4 uses the unchanged camera implementation from Psix-anp's upstream repository.
+- On-demand Audio and VoIP diagnostic actions report existing runtime state without
+  enabling audio tracing. Shared controls expose diagnostic buttons.
+
+### Update requirements
+
+Use Home Assistant **2026.7.0 or newer** and ESPHome **2026.9.0 or newer**.
+The coordinated component set is VoIP Stack ESP **2026.10.0**, Runtime Controller
+**2026.10.0** and Audio Stack **2026.10.1**. The Audio update includes live
+single-microphone AEC switching and codec-layout cleanup after closing.
+
+A HACS update changes HA and the card. ESP changes require rebuilding and uploading
+firmware. Follow the [breaking changes](docs/BREAKING_CHANGES.md) and
+[package guide](packages/README.md) before updating custom YAMLs. After updating HA,
+restart it and reload the dashboard or Companion app to load the matching card.
+
+The final release qualification will distinguish physical board tests from
+configuration checks and firmware builds. An intermittent single-microphone AEC
+call termination has not been reproduced conclusively. The long-uptime Spotpear
+announcement report remains unconfirmed: the local observation completed 22
+announcements in about seven hours, not a 48-hour soak test.
 
 Thanks to everyone who donated to support the project.
 
