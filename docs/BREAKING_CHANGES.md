@@ -31,6 +31,28 @@ an earlier development contract instead of carrying two parallel APIs. The
 config-entry migration preserves supported persisted settings, but copied card
 YAML and automations cannot be migrated by Home Assistant automatically.
 
+## 2026.10.0: Audio Stack dependency and TDM layout
+
+Audio Stack now uses Espressif `esp_codec_dev` **2.0.0-beta5**. This is an
+upstream prerelease selected by the component. If your custom build overrides
+the codec library with a 1.x version, remove that override before rebuilding;
+the backend now uses the 2.x API. Maintained YAMLs require no manual dependency
+changes. Rebuild and upload firmware to receive the update.
+
+The TDM memory optimization does **not** require renumbering YAML slots:
+`tdm_mic_slots`, `tdm_ref_slot`, `tdm_tx_slot` and diagnostic slot-level sensors
+still refer to physical bus positions. Keep `tdm_total_slots` matched to the
+hardware frame, even when only some slots are selected for capture or playback.
+
+An explicit AFE `input_format: MMNR` remains valid. Its `N` is processor
+padding, not an extra microphone or a requirement to capture an unused bus
+slot. Omitting the override selects `MR` for one microphone and `MMR` for two.
+The public ESPHome microphone and speaker interfaces are unchanged.
+
+See the [Audio Stack upgrade notes](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/README.md#upgrading-to-2026100)
+for details. These audio changes do not require adding VoIP or declaring an
+unused speaker or microphone.
+
 ## 2026.10.0: native ESP phone integration
 
 VoIP discovery, call actions and phonebook delivery are now built into the ESP
