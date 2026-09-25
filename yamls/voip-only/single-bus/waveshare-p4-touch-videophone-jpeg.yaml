@@ -55,6 +55,7 @@ packages:
 # particular, the JPEG-only esp_h264 manifest shim must never survive a codec
 # switch in a shared ESPHome build directory.
 esphome:
+  min_version: 2026.9.0
   build_path: .esphome/build/waveshare-p4-touch-videophone-jpeg
 
 api:

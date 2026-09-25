@@ -160,6 +160,7 @@ packages:
 # Device identity exposed to ESPHome, HA and the shared VoIP phonebook.
 
 esphome:
+  min_version: 2026.9.0
   name: ${name}
   friendly_name: ${friendly_name}
 

@@ -61,6 +61,7 @@ packages:
 # colliding with a normal Voice PE already adopted in HA.
 
 esphome:
+  min_version: 2026.9.0
   name: ${name}
   friendly_name: ${friendly_name}
   name_add_mac_suffix: true

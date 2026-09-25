@@ -70,6 +70,7 @@ packages:
 # Codec profiles have different managed-component graphs and therefore must
 # not reuse generated CMake components from another profile.
 esphome:
+  min_version: 2026.9.0
   build_path: .esphome/build/waveshare-p4-touch-videophone-h264
 
 api:

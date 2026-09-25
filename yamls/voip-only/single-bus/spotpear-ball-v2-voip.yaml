@@ -156,6 +156,7 @@ packages:
 
 # Device identity and boot choreography for the round LVGL call UI.
 esphome:
+  min_version: 2026.9.0
   name: ${name}
   friendly_name: ${friendly_name}
   name_add_mac_suffix: false

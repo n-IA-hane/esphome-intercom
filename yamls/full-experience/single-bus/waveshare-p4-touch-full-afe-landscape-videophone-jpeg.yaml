@@ -221,6 +221,7 @@ packages:
 # after restored switches/entities have settled.
 
 esphome:
+  min_version: 2026.9.0
   name: ${name}
   friendly_name: ${friendly_name}
   # This full native-camera profile has a different generated component graph

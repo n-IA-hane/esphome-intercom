@@ -75,6 +75,7 @@ packages:
   afe_entities: github://n-IA-hane/esphome-intercom/packages/esp_afe/single_mic_entities.yaml@dev
 
 esphome:
+  min_version: 2026.9.0
   name: ${name}
   name_add_mac_suffix: false
   friendly_name: ${friendly_name}
