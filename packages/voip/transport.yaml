@@ -21,3 +21,12 @@ voip_stack:
   transport: ${voip_transport}
   sip_port: ${voip_sip_port}
   rtp_port: ${voip_rtp_port}
+
+button:
+  - platform: template
+    name: VoIP Diagnostics
+    entity_category: diagnostic
+    icon: mdi:clipboard-text-search
+    on_press:
+      - voip_stack.dump_diagnostics:
+          id: phone

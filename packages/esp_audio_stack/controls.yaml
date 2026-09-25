@@ -26,3 +26,12 @@ number:
       name: Mic Gain
       min_value: ${mic_gain_min}
       max_value: ${mic_gain_max}
+
+button:
+  - platform: template
+    name: Audio Diagnostics
+    entity_category: diagnostic
+    icon: mdi:clipboard-text-search
+    on_press:
+      - esp_audio_stack.dump_diagnostics:
+          id: audio_stack
