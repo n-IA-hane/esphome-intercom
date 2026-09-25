@@ -198,6 +198,7 @@ def test_every_documentation_image_is_embedded() -> None:
 
 def test_public_markdown_headings_use_sentence_case_without_emoji() -> None:
     allowed_capitals = {
+        "Audio",
         "Assistant",
         "Assist",
         "Dahua",
