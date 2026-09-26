@@ -84,15 +84,19 @@ calls through HA: `use_ha_as_first_contact` remains a separate routing choice.
 
 ## Migrating an existing phone
 
-Remove includes of `voip/ha_phone.yaml`, `voip/ha_integration.yaml`,
+Start from an updated [maintained device YAML](../yamls) and reapply your board
+settings, or migrate your existing configuration as follows.
+
+Comment out or remove the package entries for `voip/ha_phone.yaml`, `voip/ha_integration.yaml`,
 `voip/ha_actions.yaml`, `voip/ha_api.yaml` and
 `voip/phonebook_subscribe.yaml`. These paths now fail validation with migration
 instructions. Remove copied definitions of the native phone actions and managed
 entities as well; duplicates are rejected before compilation.
 
 Full profiles replace `voip/ha_api_runtime.yaml` with
-`runtime/ha_connectivity.yaml` for their runtime connectivity events and
-runtime diagnostic actions. This replacement is not needed by a basic phone.
+`runtime/ha_connectivity.yaml` for their runtime connectivity events. Runtime
+diagnostic API actions are selected separately with `diagnostics/runtime.yaml`.
+This connectivity replacement is not needed by a basic phone.
 Keep unrelated hardware, display, ringtone and audio packages.
 
 Add `custom_services: true` to the existing `api:` block. If you previously

@@ -1,77 +1,149 @@
 # Changelog
 
-## 2026.10.0: native call automations and simpler ESP phones
+## 2026.10.0: build call flows with Home Assistant automations
 
-Release candidate. Stable publication is pending final qualification.
+Changes since stable **2026.9.2**.
+
+### Home Assistant backend and dashboard card
+
+- **Greetings in the browser phone:** the card now signals when audio playback
+  is ready, allowing an automation greeting to wait for the browser before starting.
+- **Audio recovery in the card:** after a brief shortage of incoming audio, playback
+  can resume with the samples needed for recovery instead of waiting for the full
+  initial buffering target again. This reduces unnecessarily long recovery pauses.
+- **External calls from registered SIP phones:** phones registered to HA and
+  calls forwarded by automations now reuse the trunk's established signaling
+  connection, extending the behavior previously used by the dashboard phone.
+- **Duplicate contact names:** conflicting phonebook names now produce an error
+  and a persistent HA notification. The message makes the naming problem visible
+  instead of leaving users to diagnose an ambiguous call destination.
+- **Calling Assist:** the advanced call-details option now controls whether an
+  opening message containing caller information is sent to the assistant.
+  Disable it to start listening without that introduction. The HA configuration
+  also accepts longer extensions.
+- **Adding or changing video during a call:** fixes address frozen or missing
+  P4 video when a SIP peer enables video after answering, switches its source
+  or changes camera direction. Turning off **Send video** stops the local camera
+  transmission while allowing incoming video to continue.
 
 ### Automations as dialplan
 
-Phonebook as dialplan remains the default: ordinary calls continue to use the
-configured contacts, groups and forwarding rules. Matching automation rules can
-override that routing when enabled.
+You can now decide what happens to a call using Home Assistant's automation
+editor: play a greeting, ask the caller to press a key, ring a selected phone,
+forward to Assist or choose another destination when nobody answers.
 
-- Create an Automation contact with a name and optional extension. It can receive
-  calls without creating an extra telephone device.
-- Select call triggers, conditions and actions directly in Home Assistant's
-  automation editor. Native triggers keep actions associated with their call
-  across delays and synchronous scripts, without requiring Call-ID templates.
-- Speak a fixed TTS message to the caller, then forward the same call by contact
-  name or extension. Information-only automations can finish and end their call.
-- Build keypad menus with DTMF input, choices, timeouts and fallback destinations.
-  Use unanswered-call triggers to select another destination after ringing.
-- Existing event and state automations remain supported. The
-  [illustrated cookbook](docs/AUTOMATION_DIALPLAN.md) explains gradual migration.
+Create an **Automation contact**, such as `Welcome`, with an optional extension.
+Calling that contact starts your automation without creating another phone device.
 
-### Calling, Assist and video
+- Choose VoIP call triggers, conditions and actions directly in the editor.
+  Filter a trigger by destination, caller or call origin, instead of writing a
+  generic event trigger followed by extra filtering conditions.
+- Use **Speak to the caller** to choose a TTS provider and enter a message.
+  Playback completes before the next action runs, so you can forward immediately
+  after the greeting without adding an arbitrary delay.
+- Forward by contact name or extension. Actions started by a native call trigger
+  keep their association with that call across delays and scripts the automation
+  waits for;
+  you do not need to copy a changing Call-ID into the automation.
+- Build an IVR, a spoken menu where the caller presses a DTMF key to choose a
+  destination. Configure the choices, waiting time and what happens when no
+  valid key is entered.
+- Handle unanswered calls with another destination, a greeting or Assist.
 
-- Registered SIP phones and automation forwards reuse the configured trunk's
-  signaling flow, extending the outbound behavior used by the dashboard phone.
-- Duplicate phonebook names produce an explicit error and a persistent
-  notification. Names used for routing must be unique.
-- The advanced call-details option controls the opening message sent to Assist.
-  With it disabled, the assistant starts listening without an automatic caller
-  description. Longer extensions are accepted by the HA configuration surface.
-- Video added during a call and camera-direction changes preserve the negotiated
-  media contract. These changes address frozen or missing P4 video with SIP peers.
-  Turning off Send video stops local transmission while remote video can continue.
-- P4 shows Direct or HA transcoding below the call heading. Audio-only destinations
-  keep the audio call interface rather than opening the video screen.
+These rules override phonebook routing for the calls they handle. The
+[illustrated automation cookbook](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/AUTOMATION_DIALPLAN.md)
+walks through the editor and provides examples for greetings, opening hours,
+keypad menus, transfers and door controls.
 
-### ESP firmware and full profiles
+![Filter incoming calls by destination in the Home Assistant automation editor](https://raw.githubusercontent.com/n-IA-hane/esphome-intercom/main/docs/images/automation-call-filter.png)
 
-- Generic S3 VoIP-only profiles separate AEC and Opus work across the two CPU
-  cores and use the recommended AEC filter length. This prevents microphone
-  audio from falling behind and being discarded during bidirectional calls.
-- HA discovery, call controls and phonebook reception are built into the ESP VoIP
-  component. Remove the retired VoIP HA packages and enable `api.custom_services`.
-- Voice Assistant can finish its reply while previously paused music stays paused.
-  Interrupted announcements acknowledge completion instead of leaving HA waiting.
-- HTTP playback shutdown handles unrelated task notifications correctly. Ringtone
-  cleanup clears the playlist as well as stopping its source.
-- Runtime packages compose voice controls, call buttons, wake word, media,
-  Sendspin, timers, display and diagnostics separately. Full presets retain the
-  complete feature set.
-- P4 uses the unchanged camera implementation from Psix-anp's upstream repository.
-- On-demand Audio and VoIP diagnostic actions report existing runtime state without
-  enabling audio tracing. Shared controls expose diagnostic buttons.
+### Update Home Assistant
 
-### Update requirements
+Requires **Home Assistant 2026.7.0 or newer**.
 
-Use Home Assistant **2026.7.0 or newer** and ESPHome **2026.9.0 or newer**.
-The coordinated component set is VoIP Stack ESP **2026.10.0**, Runtime Controller
-**2026.10.0** and Audio Stack **2026.10.1**. The Audio update includes live
-single-microphone AEC switching and codec-layout cleanup after closing.
+HA and ESP firmware do not need matching version numbers for this release.
+Updating the HACS integration does not itself require reflashing your ESPs.
 
-A HACS update changes HA and the card. ESP changes require rebuilding and uploading
-firmware. Follow the [breaking changes](docs/BREAKING_CHANGES.md) and
-[package guide](packages/README.md) before updating custom YAMLs. After updating HA,
-restart it and reload the dashboard or Companion app to load the matching card.
+Update VoIP Stack through HACS, restart Home Assistant, then reload the dashboard
+or clear the Companion app's frontend cache so the updated card is loaded.
 
-The final release qualification will distinguish physical board tests from
-configuration checks and firmware builds. An intermittent single-microphone AEC
-call termination has not been reproduced conclusively. The long-uptime Spotpear
-announcement report remains unconfirmed: the local observation completed 22
-announcements in about seven hours, not a 48-hour soak test.
+When replacing an old event-based automation with a native VoIP trigger,
+disable the old rule to avoid handling the same call twice. Follow the
+[cookbook migration steps](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/AUTOMATION_DIALPLAN.md#move-existing-automations-gradually).
+
+### ESP firmware: Generic validation and device improvements
+
+- **Simpler phone setup:** HA discovery, phonebook reception and call controls
+  are built into the ESP VoIP component. Separate VoIP HA packages are retired;
+  see the migration steps below.
+- **P4 display:** received JPEG video uses more of the screen. The call screen
+  shows **Direct** or **HA transcoding** below the call heading, and a subsequent
+  audio-only call no longer inherits the video screen.
+- **Generic S3 audio:** testing exposed CPU contention between microphone/AEC
+  processing and VoIP work. Generic VoIP-only and single-bus Full/Full Lite
+  profiles put capture and echo cancellation on core 1, separate from VoIP
+  tasks on core 0. VoIP-only profiles also reduce the AEC filter length from 8 to 4. This addresses microphone
+  audio falling behind and being discarded during bidirectional calls.
+- **New Generic Full Lite for ESP32-S3 boards with 4 MB of flash:** leaving
+  Sendspin out makes room for a voice and intercom profile that includes Voice
+  Assistant, wake word, AEC, VoIP, TTS, HTTP music and timers. The single-bus Lite
+  YAML disables Sendspin and uses compiler size optimization to fit the standard
+  4 MB OTA layout. **PSRAM is still required.** The profile is experimental, with
+  limited room for extra features; the full 8 MB profile includes Sendspin.
+- **Voice and playback:** replies can finish correctly while music remains
+  paused. Interrupted announcements report completion, and playback shutdown
+  handles unrelated task notifications correctly.
+- **Modular runtime packages:** voice controls, call buttons, media, Sendspin,
+  timers and presentation can be selected separately. The updated controller
+  excludes unused observer, LED and VoIP support, including their optional
+  stored state.
+- **Easier troubleshooting:** shared controls add Audio and VoIP diagnostic
+  buttons for collecting the current device state without enabling packet tracing.
+- **Upstream components:** maintained YAMLs now use ESPHome's SPI and HTTP audio
+  components, and P4 profiles obtain the camera component from Psix-anp's repository.
+- **Experimental Voice PE profile:** updated VoIP packet timing and center-button
+  handling for answering incoming calls.
+
+The Generic single-bus reference board was retested with VoIP-only, Full AEC
+and Full Lite configurations. The checks included real calls, calls with music
+playing, announcements over paused music, HA card audio capture and calls between
+the Generic Lite and Waveshare S3 in both directions. The assistant's announcement
+completion was also checked through HA, including its return to idle.
+
+The Generic single-bus Full and Lite examples now set Wi-Fi transmit power to
+15 dB and document how to adjust it or restore the ESP-IDF default. See the
+[deployment guide](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/DEPLOYMENT_GUIDE.md#generic-s3-full-and-full-lite).
+
+### Update ESP firmware
+
+**We recommend rebuilding your ESP firmware from an updated maintained YAML,**
+especially on Generic S3 devices, to receive the scheduling fixes and revised
+package setup. This recommendation is separate from updating HA.
+
+Use **ESPHome 2026.9.0 or newer**. The updated firmware packages use ESP VoIP
+Stack **2026.10.0**, Runtime Controller **2026.10.0** and Audio Stack **2026.10.1**.
+When adopting these packages, update their component sources together.
+
+Start from an updated
+[maintained YAML](https://github.com/n-IA-hane/esphome-intercom/tree/main/yamls)
+and reapply your board settings and customizations.
+
+**Alternatively, update your existing YAML:**
+
+- Comment out or remove package entries for `voip/ha_phone.yaml`,
+  `voip/ha_integration.yaml`, `voip/ha_actions.yaml`, `voip/ha_api.yaml` and
+  `voip/phonebook_subscribe.yaml`. Leaving them enabled fails validation.
+- In full profiles, replace `voip/ha_api_runtime.yaml` with
+  `runtime/ha_connectivity.yaml`. Add `diagnostics/runtime.yaml` separately if
+  you want its diagnostic API actions.
+- Add `custom_services: true` to the existing `api:` block. Keep `voip_stack:`
+  and your hardware, audio, display and ringtone packages.
+- Remove `spi` and `audio_http` from external-component lists that point to
+  this repository. Read the migration instructions for the replacement settings.
+
+[Complete breaking changes](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/BREAKING_CHANGES.md)
+| [ESP phone migration](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/ESP_ENTITY_SURFACE.md)
+| [Modular package guide](https://github.com/n-IA-hane/esphome-intercom/blob/main/packages/README.md)
 
 Thanks to everyone who donated to support the project.
 

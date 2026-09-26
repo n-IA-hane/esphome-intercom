@@ -2,7 +2,14 @@
 
 Development branch for the upcoming 2026.10.0 stable release. Published preview: [2026.10.0-dev](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.0-dev). Requires ESPHome 2026.9.0 or newer for firmware builds.
 
-Candidate component set: Intercom and ESP VoIP Stack **2026.10.0**, Runtime Controller **2026.10.0**, and Audio Stack **2026.10.1**. These stable releases have not been published yet.
+Candidate firmware component set: ESP VoIP Stack **2026.10.0**, Runtime Controller
+**2026.10.0**, and Audio Stack **2026.10.1**. These stable releases have not been
+published yet. HA and ESP firmware do not need matching version numbers for
+this update. Rebuilding ESP firmware is recommended to receive the device fixes,
+especially on Generic S3; it is separate from updating HA through HACS.
+
+See the [2026.10.0 changes](CHANGELOG.md) and
+[upgrade instructions](docs/BREAKING_CHANGES.md#2026100-coordinated-update-and-call-automations).
 
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3%20%7C%20ESP32--P4-blue.svg)](#supported-hardware)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-native-blue.svg)](https://www.home-assistant.io)

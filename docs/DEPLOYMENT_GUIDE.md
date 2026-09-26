@@ -1,9 +1,14 @@
 # Deployment guide
 
-This guide maps the maintained YAMLs and the Home Assistant integration to the
-current VoIP model. The old TCP/UDP intercom split is gone: every device is a
-SIP phone, and `transport: udp` or `transport: tcp` only selects SIP signaling
-transport.
+This guide covers installation, firmware selection and network settings.
+`transport: udp` or `transport: tcp` selects SIP signaling transport; RTP audio
+and video use UDP in both cases.
+
+For 2026.10.0, use Home Assistant 2026.7.0 or newer. Firmware builds require
+ESPHome 2026.9.0 or newer. HA and ESP firmware do not need matching version
+numbers: a HACS update and a device firmware update are separate operations.
+We recommend rebuilding from an updated maintained YAML to receive device
+fixes, particularly on Generic S3.
 
 ## YAML tree
 
@@ -11,8 +16,7 @@ transport.
 yamls/
 |-- voip-only/          SIP phone + audio stack, no wake word or VA
 |-- full-experience/    SIP phone + audio stack + MWW/Voice Assistant/media
-|-- experimental/       bring-up/reference profiles
-`-- host/               local-only ESPHome host test YAMLs, gitignored
+`-- experimental/       bring-up/reference profiles
 ```
 
 Choose the maintained YAML closest to the hardware and edit identity, pins and
@@ -48,8 +52,11 @@ voip_stack:
   transport: tcp
 ```
 
-Use `static_contacts` for a small fixed ESP-local dial plan. Use the HA
-phonebook subscription package when HA should be the authority.
+Use `static_contacts` for a small fixed ESP-local dial plan. For HA-managed
+contacts, the ESP VoIP component now provides phonebook reception and discovery
+itself. Enable `custom_services: true` in the existing `api:` block; do not add
+the retired phonebook subscription package. See the
+[ESP phone migration](ESP_ENTITY_SURFACE.md#migrating-an-existing-phone).
 
 Supported audio shapes:
 
@@ -60,6 +67,70 @@ Supported audio shapes:
 These are first-class SIP endpoint shapes. They are not compatibility modes.
 An endpoint must provide at least one real audio direction; a signaling-only
 device is not a VoIP phone and is rejected.
+
+### Generic S3 Full and Full Lite
+
+Both single-bus profiles combine software AEC, Voice Assistant, wake word, VoIP,
+HTTP playback, TTS and timers. Choose according to flash size and needed features:
+
+| Profile | Flash configuration | Sendspin | Build optimization |
+|---|---|---|---|
+| [Full AEC](../yamls/full-experience/single-bus/generic-s3-full-aec.yaml) | 8 MB | Included | Performance |
+| [Full Lite AEC](../yamls/full-experience/single-bus/generic-s3-full-lite-aec.yaml) | 4 MB | Disabled, package line commented | Size |
+
+**Full Lite is experimental and still requires PSRAM.** Its measured application
+image is about 1.78 MB. The standard 4 MB OTA layout has two application slots of
+1,835,008 bytes each, leaving roughly 59 KB per slot with the measured firmware.
+The whole 4 MB flash is not available to one application. Check the build result
+after changing features or dependencies; re-enabling Sendspin may exceed the slot.
+
+Adapt GPIOs, flash size and PSRAM settings to your actual board. If moving to a
+different partition layout, use a complete serial flash for this migration;
+an ordinary OTA application upload is not a partition-layout migration.
+
+Testing on the Generic reference board exposed CPU contention between AEC and
+VoIP processing. The updated VoIP-only profiles and the single-bus Full/Full Lite
+profiles place microphone capture and AEC on core 1, with VoIP tasks on core 0.
+The VoIP-only profiles also use AEC `filter_length: 4` instead of `8`.
+Rebuilding from a current example applies these changes to copied configurations.
+
+#### Wi-Fi transmit power
+
+The single-bus Full and Lite examples use:
+
+```yaml
+wifi:
+  # Merge into your existing Wi-Fi block.
+  output_power: 15dB
+```
+
+This limits the ESP's transmit power. It does not increase its receive
+sensitivity. Treat 15 as a starting point for your installation.
+
+- If the AP is distant or coverage is insufficient, comment out `output_power`,
+  rebuild and upload. With the standard ESP-IDF settings this restores the
+  default maximum of 20 dBm; actual transmit power also depends on data rate,
+  radio and regulatory limits.
+- If UDP `sendto` reports `ENOMEM`, especially near the AP, compare lower values
+  such as `8.5dB` using real calls and media playback. Check both packet loss and
+  usable range. Excessively low power can make coverage worse.
+- `ENOMEM` can mean that network transmit buffers are exhausted. It does not
+  by itself prove that the firmware has run out of all RAM, or that transmit
+  power is the cause. If changing power does not help, collect the diagnostic
+  output and investigate the connection and resource use.
+
+### Selecting runtime features
+
+Use the base Runtime Controller package and only the adapters your device needs
+when building a custom configuration. The full preset intentionally includes
+voice, media, timers, ringtone and presentation bindings; the no-LED preset only
+removes the physical LED renderer.
+
+The controller's optional VoIP, LED, output-script and state-observer support is
+selected during compilation. Omitting a feature also omits its dedicated stored
+state. A screenless device does not need a display adapter or LVGL.
+See the [runtime package guide](https://github.com/n-IA-hane/esphome-runtime-controller/blob/main/MIGRATION.md#choose-packages)
+for the required IDs and helpers of each package.
 
 ## Home Assistant
 
@@ -131,15 +202,14 @@ that endpoint's normal ESPHome entities.
 
 ![ESP mirror card](images/esp-mirror-card.png)
 
-After an upgrade, restart HA, run **Reconfigure** on the integration, then hard
-refresh dashboards containing the card. In the Android Companion app use
+After an upgrade, restart HA, then hard refresh dashboards containing the card. In the Android Companion app use
 **Settings → Companion App → Troubleshooting → Reset frontend cache**. Read
 [`BREAKING_CHANGES.md`](BREAKING_CHANGES.md) before changing major versions.
 
 ### ESPHome external components
 
-Maintained YAMLs already reference the stable `main` branches. A custom
-lightweight AEC profile uses:
+For stable firmware, use component and package sources from `main`. A custom
+lightweight AEC profile loads the components with:
 
 ```yaml
 external_components:

@@ -2,10 +2,15 @@
 
 ## 2026.10.0: coordinated update and call automations
 
-The stable candidate pairs Intercom 2026.10.0 with ESP VoIP Stack 2026.10.0,
-Runtime Controller 2026.10.0 and Audio Stack 2026.10.1. The new Audio Diagnostics
-button requires the latter; Audio Stack 2026.10.0 does not expose that action.
-Do not mix new shared packages with older component implementations.
+HA and ESP firmware do not need matching version numbers for this release.
+Installing the HACS update does not by itself require reflashing working ESPs.
+We recommend rebuilding from an updated maintained YAML, particularly for
+Generic S3 devices, to receive the scheduling and package improvements.
+
+When rebuilding the updated profiles, use ESP VoIP Stack 2026.10.0, Runtime
+Controller 2026.10.0 and Audio Stack 2026.10.1. The new Audio Diagnostics button
+requires the latter; Audio Stack 2026.10.0 does not expose that action. Update
+component sources together when adopting new shared firmware packages.
 
 Home Assistant 2026.7.0 or newer is required for the native automation interface.
 ESPHome 2026.9.0 is the firmware minimum, not an exact-version pin.
@@ -23,8 +28,10 @@ undo a config-entry migration; restore the matching HA backup if rolling back.
 
 ## 2026.10.0: modular runtime controller packages
 
-Requires ESPHome 2026.9.0 or newer. Update the Intercom and Runtime Controller
-components together and review the [package guide](../packages/README.md).
+Requires ESPHome 2026.9.0 or newer. Update the firmware packages from the Intercom
+repository together with the Runtime Controller component, and review the
+[package guide](../packages/README.md). This does not require matching HA and ESP
+firmware version numbers.
 
 - VA controls no longer include telephone buttons. Add `voip/call_buttons.yaml`
   when desired; the full preset includes them.
@@ -42,8 +49,13 @@ components together and review the [package guide](../packages/README.md).
 - Shared LVGL projection owns the voice phase and restores the mode preceding a
   call. Do not duplicate phase assignments in TTS content callbacks.
 
-The reducer publishes complete state before effects. Custom callbacks must not
-rely on nested events executing before the current callback returns.
+The reducer updates all bound state values before output callbacks run.
+An event sent from inside a callback is processed after that callback returns;
+custom code must not expect the second event's result immediately.
+
+For a device without VoIP, LED or display, use the base runtime package and
+only the adapters it needs. The full preset deliberately includes all its
+bindings. See the [runtime package selection guide](https://github.com/n-IA-hane/esphome-runtime-controller/blob/main/MIGRATION.md#choose-packages).
 
 
 Read every section newer than the stable version currently installed before
@@ -70,14 +82,15 @@ padding, not an extra microphone or a requirement to capture an unused bus
 slot. Omitting the override selects `MR` for one microphone and `MMR` for two.
 The public ESPHome microphone and speaker interfaces are unchanged.
 
-See the [Audio Stack upgrade notes](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/README.md#upgrading-to-2026100)
+See the [Audio Stack upgrade notes](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/README.md#upgrading-to-2026100)
 for details. These audio changes do not require adding VoIP or declaring an
 unused speaker or microphone.
 
 ## 2026.10.0: native ESP phone integration
 
 VoIP discovery, call actions and phonebook delivery are now built into the ESP
-component. Remove the old VoIP HA packages before compiling, and enable
+component. Start from an updated [maintained YAML](../yamls), or comment out
+or remove the old VoIP HA package entries before compiling, and enable
 `custom_services: true` in the existing `api:` block. Old package paths fail
 configuration validation with an explanatory message.
 
