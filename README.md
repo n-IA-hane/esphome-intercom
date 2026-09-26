@@ -659,8 +659,53 @@ the PCAP from the action response. See the
 for examples, memory limits and what the trace can diagnose. Requires a release
 containing this action.
 
-When opening an issue, attach Home Assistant diagnostics and sanitized logs.
-Remove passwords, tokens, public numbers, private addresses and SIP credentials.
+## Before opening an issue
+
+Reproduce the issue with the current maintained release/profile and report the
+exact versions actually running, including the ESP firmware. An updated YAML
+on your computer does not update a device until it is rebuilt and uploaded.
+
+Include:
+
+- Steps to reproduce, expected behavior, actual behavior and how often it happens.
+- HA and VoIP Stack versions; for ESP devices, ESPHome and component tags/commits.
+- Exact board, microphone/speaker and codec models, relevant YAML and custom wiring.
+- The call path: who calls whom, directly or through HA, SIP UDP/TCP, and PBX or
+  peer software/version. Include negotiated codecs and `ptime` if known.
+- HA integration diagnostics and logs around the failure, plus the ESP boot log.
+- For an updated ESP profile, complete **VoIP Diagnostics** log output during the
+  fault and after hangup. Add **Audio Diagnostics** when using Audio Stack.
+  Open the ESPHome logs before pressing the buttons, use INFO or a more verbose
+  logger level, and include whole diagnostic blocks, not only the last line.
+- A [SIP capture](docs/troubleshooting.md#capture-sip-signaling-from-home-assistant-including-ha-os)
+  for HA-handled signaling problems. It does not capture RTP media or SIP exchanged
+  directly between ESP devices. Further captures may be needed for those paths.
+
+For audio faults, state which direction is silent or distorted. For video faults,
+state whether the call began with video or video was enabled later. For custom
+Audio Stack hardware, include whether the problem persists with AEC/AFE disabled
+and whether the bus is shared or split, if you can test those cases.
+
+Use this structure, replacing the example details with what you observed:
+
+```text
+Title: ESP receives audio but the browser caller hears silence
+Versions: [exact installed HA, integration, ESPHome and component versions]
+Hardware: [board, microphone, speaker, codec and relevant wiring]
+Call path: HA browser card -> Generic S3, through HA, SIP UDP
+Steps: call, answer, speak in both directions, hang up from HA
+Expected: bidirectional audio and both endpoints idle after hangup
+Actual: ESP plays audio; browser hears silence; hangup works
+Frequency and test time: [repetitions, timestamp and timezone]
+Attachments: sanitized YAML, HA diagnostics, HA/ESP logs, full diagnostic blocks,
+             and a SIP capture when relevant
+```
+
+Never publish SIP passwords, authentication data, API keys or tokens. Review
+configuration files, logs and captures before attaching them. Issues without
+enough information to reproduce or classify the fault may be closed as incomplete.
+
+If you ignore these instructions and open a useless issue anyway, I’ll get pissed off like there’s no tomorrow.
 
 ## Support the project
 
@@ -668,9 +713,8 @@ If this work is useful, consider
 [sponsoring it on GitHub](https://github.com/sponsors/n-IA-hane). Donations help
 cover development tools, services and test hardware.
 
-Bug reports and hardware feedback are welcome. Include the exact board, ESPHome
-and HA versions, relevant YAML substitutions, the peer/PBX model, sanitized
-SIP/SDP logs and whether audio/video worked in each direction.
+For bug reports and hardware feedback, follow the
+[issue-reporting instructions](#before-opening-an-issue) above.
 
 ## Contributing
 

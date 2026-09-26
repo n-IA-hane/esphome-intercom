@@ -145,6 +145,60 @@ and reapply your board settings and customizations.
 | [ESP phone migration](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/ESP_ENTITY_SURFACE.md)
 | [Modular package guide](https://github.com/n-IA-hane/esphome-intercom/blob/main/packages/README.md)
 
+### Diagnostics and useful bug reports
+
+The new ESP diagnostic buttons complement HA's downloadable integration
+diagnostics and the existing built-in SIP capture. Use these tools when reporting
+a problem so we can investigate the actual call and device state.
+
+1. Describe how to reproduce the fault, what you expected and what happened.
+   Include HA, ESPHome, integration and component versions, the exact board,
+   caller and destination, and SIP transport. Attach the relevant YAML with
+   credentials removed.
+2. Download the VoIP Stack integration diagnostics from HA and include the HA
+   logs around the failure. For an ESP, include its boot log and complete
+   **VoIP Diagnostics** output during the fault and after hangup. Include
+   **Audio Diagnostics** too if the device uses Audio Stack.
+3. For call setup, hangup or video negotiation problems handled by HA, start
+   this capture in **Developer Tools > Actions** before reproducing the issue:
+
+```yaml
+action: voip_stack.capture_sip
+data:
+  operation: start
+  duration: 120
+```
+
+After the test, run the action with `operation: stop`. Download the PCAP using
+`download_url` from the response and attach the file, not the temporary link.
+This captures SIP signaling handled by HA, not RTP audio/video or direct
+ESP-to-ESP signaling. The
+[diagnostic guide](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/troubleshooting.md)
+explains the limits and additional information to collect.
+
+**Example report, replace the details with your own:**
+
+```text
+Title: ESP receives audio but the browser caller hears silence
+
+Versions: [HA], [VoIP Stack HA], [ESPHome], [ESP VoIP Stack], [Audio Stack if used]
+Hardware: [exact ESP board, microphone, speaker and codec]
+Call path: HA browser card -> Generic S3, through HA, SIP UDP
+Steps: call the ESP, answer, speak into each microphone, then hang up from HA
+Expected: audio in both directions; both endpoints return to idle after hangup
+Actual: the ESP plays browser audio, but the browser hears silence; hangup works
+Frequency: reproduced in 3 consecutive calls after reboot
+Test time and timezone: [when the call was made]
+Attachments: sanitized YAML, HA diagnostics, HA/ESP logs,
+             complete VoIP/Audio diagnostic blocks, SIP capture
+```
+
+Review attachments for passwords, tokens, authentication data and other private
+information before sharing them. A report that only says "it does not work",
+without reproduction details or supporting logs, may be closed as incomplete.
+
+If you ignore these instructions and open a useless issue anyway, I’ll get pissed off like there’s no tomorrow.
+
 Thanks to everyone who donated to support the project.
 
 ---

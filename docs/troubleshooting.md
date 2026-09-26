@@ -10,11 +10,34 @@ collect:
 - RTP packet/byte counters;
 - a short WAV capture when audio quality is in question.
 
+## Collect a runtime snapshot from an ESP
+
+Updated maintained firmware exposes **VoIP Diagnostics** and, when Audio Stack
+is configured, **Audio Diagnostics** buttons. Open the ESPHome logs, reproduce
+the fault and press the applicable buttons. Repeat after hanging up and attach
+each complete diagnostic block, together with the boot log.
+
+The dumps report component state, negotiated formats and existing counters.
+They work without enabling verbose audio tracing. Older firmware must be
+rebuilt to add them; installing a HACS update does not change ESP firmware.
+The VoIP action is part of ESP VoIP Stack 2026.10.0, and the Audio action requires
+Audio Stack 2026.10.1 (or the corresponding development previews).
+
+For custom YAMLs, see the
+[ESP VoIP diagnostic button](https://github.com/n-IA-hane/esphome-voip-stack/blob/main/README.md#before-opening-an-issue)
+and [Audio Stack diagnostic button](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/README.md#before-opening-an-issue).
+For a Runtime Controller state problem, its detailed dump separately requires
+`debug: true`; see the [runtime diagnostic guide](https://github.com/n-IA-hane/esphome-runtime-controller/blob/main/README.md#diagnosing-a-stuck-state).
+
+Use the [report template](../README.md#before-opening-an-issue) when opening an
+issue. A diagnostic snapshot is a starting point; a packet or audio recording
+may still be needed to establish why a fault occurs.
+
 ## Capture SIP signaling from Home Assistant (including HA OS)
 
 Use the **VoIP Stack: Capture SIP signaling** action as an administrator. No
 SSH, tcpdump, extra add-on or privileged network access is required. This
-feature is available in the development source; use a release containing it.
+feature is available from VoIP Stack HA 2026.9.2.
 
 In **Developer Tools > Actions**, start before making the failing call:
 
