@@ -9,9 +9,9 @@ substitutions:
   # Preserve the existing HA/SIP endpoint identity when switching profiles.
   friendly_name: Waveshare P4 Touch
 
-  ext_components_source: "../../../esphome/components"
-  voip_stack_components_source: "../../../../esphome-voip-stack/esphome/components"
-  audio_stack_components_source: "../../../../esphome-audio-stack/esphome/components"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
 
   voip_transport: udp
   voip_sip_port: "5060"

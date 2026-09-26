@@ -1,12 +1,14 @@
 # VoIP Stack for ESPHome and Home Assistant
 
-Development branch for the upcoming 2026.10.0 stable release. Published preview: [2026.10.0-dev](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.0-dev). Requires ESPHome 2026.9.0 or newer for firmware builds.
+Stable release: [2026.10.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.0).
+Requires Home Assistant **2026.7.0 or newer**. Firmware builds require ESPHome
+**2026.9.0 or newer**.
 
-Candidate firmware component set: ESP VoIP Stack **2026.10.0**, Runtime Controller
-**2026.10.0**, and Audio Stack **2026.10.1**. These stable releases have not been
-published yet. HA and ESP firmware do not need matching version numbers for
-this update. Rebuilding ESP firmware is recommended to receive the device fixes,
-especially on Generic S3; it is separate from updating HA through HACS.
+The updated firmware profiles use ESP VoIP Stack **2026.10.0**, Runtime Controller
+**2026.10.0**, and Audio Stack **2026.10.1** from their `main` branches. HA and ESP
+firmware do not need matching version numbers. Rebuilding ESP firmware is
+recommended to receive the device fixes, especially on Generic S3; it is separate
+from updating HA through HACS.
 
 See the [2026.10.0 changes](CHANGELOG.md) and
 [upgrade instructions](docs/BREAKING_CHANGES.md#2026100-coordinated-update-and-call-automations).
@@ -467,7 +469,7 @@ the common examples. A destination can be its phonebook name or extension.
 
 Start with the [step-by-step greeting](docs/AUTOMATION_DIALPLAN.md#create-your-first-greeting-in-the-editor),
 then add a [forward after the greeting](docs/AUTOMATION_DIALPLAN.md#forward-after-the-greeting).
-These native automation features are included in the 2026.10.0 candidate; they are not part of 2026.9.2.
+These native automation features are included in 2026.10.0; they are not part of 2026.9.2.
 
 - [Route calls during office hours](docs/AUTOMATION_DIALPLAN.md#route-to-reception-during-office-hours).
 - [Forward only when a phone does not answer](docs/AUTOMATION_DIALPLAN.md#forward-an-unanswered-ha-call-to-assist).
@@ -558,7 +560,7 @@ Before every upgrade:
 Never assume an automation still has the same contract merely because the
 integration loaded successfully.
 
-## What's new in the 2026.10.0 candidate
+## What's new in 2026.10.0
 
 - Native call triggers, conditions and actions make greetings, forwarding,
   unanswered-call rules and DTMF menus available in HA's normal automation editor.
@@ -571,7 +573,7 @@ integration loaded successfully.
 - Audio and VoIP diagnostic actions help capture a useful issue report without
   enabling verbose audio tracing.
 
-See the [complete changelog](CHANGELOG.md) for this candidate and earlier releases,
+See the [complete changelog](CHANGELOG.md) for this release and earlier releases,
 and the [breaking changes](docs/BREAKING_CHANGES.md) before updating custom YAMLs.
 A HACS update changes HA and the card; ESP improvements require a firmware rebuild.
 
@@ -705,7 +707,7 @@ Never publish SIP passwords, authentication data, API keys or tokens. Review
 configuration files, logs and captures before attaching them. Issues without
 enough information to reproduce or classify the fault may be closed as incomplete.
 
-If you ignore these instructions and open a useless issue anyway, I’ll get pissed off like there’s no tomorrow.
+If you ignore these instructions and open a useless issue anyway, I'll get pissed off like there's no tomorrow.
 
 ## Support the project
 
