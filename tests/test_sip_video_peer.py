@@ -28,6 +28,47 @@ def _load_tool():
     return module
 
 
+def test_bye_retry_preserves_transaction_and_stops_after_response():
+    peer = _load_tool()
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sender.setblocking(False)
+        receiver.setblocking(False)
+        receiver.bind(("127.0.0.1", 0))
+        request = b"BYE sip:test@localhost SIP/2.0\r\nCSeq: 2 BYE\r\n\r\n"
+        retry = None
+        try:
+            await loop.sock_sendto(sender, request, receiver.getsockname())
+            first, _ = await loop.sock_recvfrom(receiver, 4096)
+            # Simulate loss of the first response, not a failure to send BYE.
+            retry = asyncio.create_task(peer._repeat_udp_bye(
+                sender, request, receiver.getsockname(), t1=0.01, t2=0.02
+            ))
+            repeated, address = await asyncio.wait_for(
+                loop.sock_recvfrom(receiver, 4096), 1
+            )
+            assert repeated == first == request
+            response = b"SIP/2.0 200 OK\r\nCSeq: 2 BYE\r\n\r\n"
+            await loop.sock_sendto(receiver, response, address)
+            received, _ = await loop.sock_recvfrom(sender, 4096)
+            assert received == response
+            retry.cancel()
+            await asyncio.gather(retry, return_exceptions=True)
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(loop.sock_recvfrom(receiver, 4096), 0.05)
+        finally:
+            if retry is not None:
+                retry.cancel()
+                await asyncio.gather(retry, return_exceptions=True)
+            sender.close()
+            receiver.close()
+
+    asyncio.run(scenario())
+
+
 def test_audio_offer_can_express_hold_and_resume_directions() -> None:
     peer = _load_tool()
     common = {

@@ -32,6 +32,16 @@ PKG_DIR = ROOT / "custom_components" / "voip_stack"
 CORE_MODULES = {"rtp", "sdp", "sip", "video_rtcp", "video_rtp"}
 
 
+async def _repeat_udp_bye(sock, request, destination, *, t1=0.5, t2=4.0):
+    """Retransmit the same BYE with RFC 3261 Timer E until cancelled."""
+    interval = t1
+    loop = asyncio.get_running_loop()
+    while True:
+        await asyncio.sleep(interval)
+        await loop.sock_sendto(sock, request, destination)
+        interval = min(interval * 2, t2)
+
+
 def _load(name: str):
     """Load protocol helpers without importing the Home Assistant integration."""
 
@@ -1666,6 +1676,9 @@ async def async_main(args: argparse.Namespace) -> int:
             )
             await loop.sock_sendto(sip_socket, bye, (args.host, args.port))
             bye_sent = True
+            bye_retry = asyncio.create_task(
+                _repeat_udp_bye(sip_socket, bye, (args.host, args.port))
+            )
             try:
                 async with asyncio.timeout(3.0):
                     while result["bye_response_status"] is None:
@@ -1694,6 +1707,9 @@ async def async_main(args: argparse.Namespace) -> int:
                             result["bye_response_status"] = int(message.status_code)
             except TimeoutError as err:
                 raise TimeoutError("SIP BYE was not acknowledged") from err
+            finally:
+                bye_retry.cancel()
+                await asyncio.gather(bye_retry, return_exceptions=True)
             if not 200 <= int(result["bye_response_status"]) < 300:
                 raise RuntimeError(
                     f"SIP BYE failed: {result['bye_response_status']} {message.reason}"
