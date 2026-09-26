@@ -1,6 +1,10 @@
+# Experimental 4 MB profile with limited OTA headroom.
+# Keeps Voice Assistant, wake word, HTTP media, TTS, VoIP and runtime controller.
+# Sendspin is optional and disabled to fit the standard 4 MB OTA layout.
+# Measured flash margin is small; adding features can exceed the OTA partition.
 # =============================================================================
-# GENERIC ESP32-S3 VOIP + VA AEC LIGHT - Single I2S bus, no hardware codec
-# Profile: FULL / shared I2S / software AEC
+# GENERIC ESP32-S3 FULL LITE AEC - Single I2S bus, no hardware codec
+# Profile: FULL LITE / shared I2S / software AEC / 4 MB flash
 # Composition: Preset + component bindings + shared mono mixer/player; board owns I2S + esp_aec.
 # Runtime facts: native media/VoIP/Wi-Fi/mute listeners; shared VA/MWW callbacks.
 # YAML keeps user controls, board wiring and presentation hooks.
@@ -23,7 +27,7 @@
 # The REF is the previous software TX frame; no codec ADC loopback is configured.
 #
 # PLAYBACK: speaker_media_player owns the media + announcement pipelines.
-#      [HTTP / Sendspin]          [VA TTS / HTTP / files]              [VoIP RX]
+#      [HTTP media]               [VA TTS / HTTP / files]              [VoIP RX]
 #              │                             │                             │
 #              ▼                             ▼                             │
 #       [media_pipeline]          [announcement_pipeline]                  │
@@ -57,8 +61,7 @@
 #
 # HARDWARE (adapt GPIOs to YOUR board):
 #   - Board: Any ESP32-S3 with PSRAM
-#   - Flash: 8 MB or larger. Full AEC + VA + VoIP + runtime controller no
-#     longer fits the default 4 MB OTA app partition.
+#   - Flash: 4 MB or larger. This lite profile excludes Sendspin and uses SIZE.
 #   - Microphone: Any I2S MEMS mic on DIN pin
 #   - Speaker: Any I2S class-D amp on DOUT pin
 #   - Mic and speaker SHARE BCLK + LRCLK (same I2S bus, full-duplex)
@@ -130,7 +133,11 @@ packages:
   native_diagnostics: github://n-IA-hane/esphome-intercom/packages/diagnostics/native.yaml@dev
   status_led: github://n-IA-hane/esphome-intercom/packages/led/status_ws2812_single.yaml@dev
   speaker_mixer: github://n-IA-hane/esphome-intercom/packages/audio/shared_mono_mixer_48k.yaml@dev
-  speaker_media_player: github://n-IA-hane/esphome-intercom/packages/media_player/runtime_controller_mono_media_player_48k.yaml@dev
+  speaker_media_player: github://n-IA-hane/esphome-intercom/packages/media_player/mono_media_player_48k.yaml@dev
+  file_announcements: github://n-IA-hane/esphome-intercom/packages/media_player/file_announcements.yaml@dev
+  ringtone_asset: github://n-IA-hane/esphome-intercom/packages/voip/ringtone_asset.yaml@dev
+  # Optional on larger flash devices; recheck OTA size before enabling.
+  # sendspin: github://n-IA-hane/esphome-intercom/packages/media_player/sendspin.yaml@dev
   va_timers: github://n-IA-hane/esphome-intercom/packages/voice_assistant/timers_runtime.yaml@dev
   audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@dev
   aec_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/aec_controls.yaml@dev
@@ -153,11 +160,11 @@ esphome:
 esp32:
   board: esp32-s3-devkitc-1
   variant: esp32s3
-  flash_size: 8MB
+  flash_size: 4MB
   framework:
     type: esp-idf
     advanced:
-      compiler_optimization: PERF
+      compiler_optimization: SIZE
     sdkconfig_options:
       # Allow mbedtls to allocate its working buffers in PSRAM.
       CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: "y"
@@ -206,8 +213,7 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   power_save_mode: NONE
-  # Validated at short range from the AP. Adjust for your board and coverage;
-  # maximum TX power caused packet loss on the reference board under media load.
+  # Validated at short range from the AP; adjust for your board and coverage.
   output_power: 8.5dB
 
 # Home Assistant native API for entities, service actions and phonebook sync.
@@ -261,7 +267,7 @@ logger:
 
 esp_audio_stack:
   id: audio_stack
-  # VoIP TX/RX run on core 0; keep capture and AEC on the other core.
+  # Keep microphone capture and AEC separate from the VoIP tasks on core 0.
   task_core: 1
   i2s_lrclk_pin: ${i2s_lrclk_pin}
   i2s_bclk_pin: ${i2s_bclk_pin}

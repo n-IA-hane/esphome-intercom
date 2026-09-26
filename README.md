@@ -580,11 +580,19 @@ are not a claim that every board with the same chip has the same wiring.
 | Waveshare ESP32-P4 Touch LCD, full JPEG videophone | [`waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml`](yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml) | Field tested |
 | Waveshare ESP32-P4 Touch LCD, portrait | [`waveshare-p4-touch-full-afe-portrait.yaml`](yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml) | Experimental layout |
 | Generic ESP32-S3, single bus | [`generic-s3-full-aec.yaml`](yamls/full-experience/single-bus/generic-s3-full-aec.yaml) | Reference profile |
+| Generic ESP32-S3, single bus, 4 MB flash | [`generic-s3-full-lite-aec.yaml`](yamls/full-experience/single-bus/generic-s3-full-lite-aec.yaml) | Experimental; limited OTA headroom |
 | Generic ESP32-S3, dual bus | [`generic-s3-full-aec.yaml`](yamls/full-experience/dual-bus/generic-s3-full-aec.yaml) | Reference profile |
 | Native ESPHome mic/speaker | [`generic-s3-full-esphome-native.yaml`](yamls/full-experience/esphome-native/generic-s3-full-esphome-native.yaml) | Reference profile |
 
 The complete hardware, memory and C6 firmware notes are in the
 [deployment guide](docs/DEPLOYMENT_GUIDE.md#esp-devices).
+
+The Generic Full Lite AEC profile keeps Voice Assistant, wake word, software
+AEC, VoIP, HTTP playback, TTS, timers and the runtime controller. It uses size
+optimization and leaves Sendspin disabled. PSRAM is still required. Its measured
+OTA image is about 1.78 MB, leaving roughly 59 KB in the standard 4 MB flash
+layout; check the build size again after adding components or updating
+dependencies. The full 8 MB profile retains Sendspin and more flash headroom.
 
 ## Documentation
 
