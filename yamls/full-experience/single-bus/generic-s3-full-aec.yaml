@@ -206,9 +206,15 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   power_save_mode: NONE
-  # Validated at short range from the AP. Adjust for your board and coverage;
-  # maximum TX power caused packet loss on the reference board under media load.
-  output_power: 8.5dB
+  # Wi-Fi transmit-power limit; 15 dB is a starting point, not a universal optimum.
+  # For a distant AP or insufficient range, comment out output_power, then rebuild
+  # and upload: this restores ESP-IDF's default maximum of 20 dBm. Actual transmit
+  # power also depends on the radio, data rate and regulatory limits.
+  # If UDP sendto reports ENOMEM near the AP, compare lower settings (e.g. 8.5dB)
+  # with real calls and media playback, checking packet loss and usable range.
+  # ENOMEM can mean exhausted transmit buffers; lower power is not a general fix
+  # for memory exhaustion. Keep the setting that works best in your installation.
+  output_power: 15dB
 
 # Home Assistant native API for entities, service actions and phonebook sync.
 
