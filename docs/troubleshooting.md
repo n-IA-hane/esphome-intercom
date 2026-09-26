@@ -1,21 +1,56 @@
 # Troubleshooting
 
-Start from evidence, not from a single UI symptom. For every failing call,
-collect:
+Collect evidence from the parts involved in the failing call. For an HA or
+browser-card problem, start with HA integration diagnostics, the HA logs, call
+direction and reproduction steps. Include the browser or Companion app version
+and relevant browser console errors for card problems.
 
-- HA logs around the call;
-- ESP log/monitor around the call;
-- HA softphone or ESP `SipPhoneState` snapshot;
-- selected TX/RX formats;
-- RTP packet/byte counters;
-- a short WAV capture when audio quality is in question.
+**If no ESP device is involved, skip the ESP section.** For an ESP problem,
+include its firmware logs and applicable diagnostic dumps as described below.
+Negotiated formats, RTP counters and a short audio recording can help with
+audio faults. Use the SIP capture for signaling that passes through HA.
 
 ## Collect a runtime snapshot from an ESP
 
-Updated maintained firmware exposes **VoIP Diagnostics** and, when Audio Stack
-is configured, **Audio Diagnostics** buttons. Open the ESPHome logs, reproduce
-the fault and press the applicable buttons. Repeat after hanging up and attach
-each complete diagnostic block, together with the boot log.
+**Only if the problem involves an ESP device, run its diagnostic dumps:**
+
+Open the device's ESPHome logs with `logger` at INFO or a more verbose level.
+While the problem is present, press **VoIP Diagnostics** and, if the firmware
+uses Audio Stack, **Audio Diagnostics**. Repeat after hangup and attach the
+complete output from `BEGIN v=1` through `END v=1` for each component, plus the
+boot log.
+
+In Home Assistant, these are device buttons. You can press them on the device
+page, or open **Developer Tools > Actions**, select **Button: Press**
+(`button.press`) and choose the diagnostic button entities for that ESP.
+The output appears in the **ESPHome device logs**, not in the HA action response.
+
+Updated maintained profiles already include the applicable buttons. If they are
+missing from a custom YAML, add the relevant definitions below, then rebuild and
+upload with the updated components:
+
+```yaml
+button:
+  - platform: template
+    name: VoIP Diagnostics
+    entity_category: diagnostic
+    on_press:
+      - voip_stack.dump_diagnostics:
+          id: phone
+
+  - platform: template
+    name: Audio Diagnostics
+    entity_category: diagnostic
+    on_press:
+      - esp_audio_stack.dump_diagnostics:
+          id: audio_stack
+```
+
+Replace `phone` and `audio_stack` with your actual component IDs. Omit the Audio
+Diagnostics button if the device does not use Audio Stack. Do not add duplicate
+buttons when your packages already provide them. The two `dump_diagnostics`
+entries are **ESPHome firmware actions**, not HA services to paste directly into
+HA's Actions editor. These dumps do not require verbose audio tracing.
 
 The dumps report component state, negotiated formats and existing counters.
 They work without enabling verbose audio tracing. Older firmware must be

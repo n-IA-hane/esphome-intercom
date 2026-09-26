@@ -663,8 +663,14 @@ containing this action.
 
 ## Before opening an issue
 
+**Report the parts you actually use.** If the issue involves only HA, browser
+cards or SIP equipment without an ESP, provide the HA-side information below
+and skip the ESP requirements. ESP dumps apply only to ESP-related faults;
+Audio Diagnostics additionally requires Audio Stack on that device.
+
 Reproduce the issue with the current maintained release/profile and report the
-exact versions actually running, including the ESP firmware. An updated YAML
+exact versions actually running, including ESP firmware when an ESP is involved.
+An updated YAML
 on your computer does not update a device until it is rebuilt and uploaded.
 
 Include:
@@ -682,6 +688,14 @@ Include:
 - A [SIP capture](docs/troubleshooting.md#capture-sip-signaling-from-home-assistant-including-ha-os)
   for HA-handled signaling problems. It does not capture RTP media or SIP exchanged
   directly between ESP devices. Further captures may be needed for those paths.
+
+To request an ESP dump from HA, open **Developer Tools > Actions**, select
+**Button: Press** (`button.press`) and choose that device's **VoIP Diagnostics**
+or **Audio Diagnostics** button. Open the ESPHome device logs first: the dump is
+printed there, not returned by the HA action. For missing buttons in custom
+firmware, use the [YAML definitions](docs/troubleshooting.md#collect-a-runtime-snapshot-from-an-esp)
+and rebuild/upload. The `voip_stack.dump_diagnostics` and
+`esp_audio_stack.dump_diagnostics` names are ESPHome actions, not HA services.
 
 For audio faults, state which direction is silent or distorted. For video faults,
 state whether the call began with video or video was enabled later. For custom
