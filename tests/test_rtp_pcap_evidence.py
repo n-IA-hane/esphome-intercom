@@ -106,3 +106,39 @@ def test_video_sequence_gap_is_optional_during_direction_change() -> None:
         max_video_loss=0,
         max_cadence_ratio=1.25,
     ) == ["192.0.2.1:40004->192.0.2.2:40006 lost 20 video packets"]
+
+
+def test_contiguous_opus_packets_cannot_hide_sender_cpu_starvation(monkeypatch, tmp_path):
+    """The generic S3 regression lost PCM before RTP sequence numbers existed."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _: "tshark")
+    interval = 0.063420327
+
+    def capture_result(command, **kwargs):
+        if command[command.index("-Y") + 1] == "sdp":
+            return SimpleNamespace(stdout=(
+                "192.0.2.1\taudio 40000 RTP/AVP 96"
+                "\trtpmap:96 opus/48000/2,ptime:20\n"
+            ))
+        return SimpleNamespace(stdout="\n".join(
+            row(index * interval, 100 + index, 960 * index)
+            for index in range(285)
+        ))
+
+    monkeypatch.setattr(MODULE.subprocess, "run", capture_result)
+    streams = MODULE.analyze_pcap(tmp_path / "call.pcap")
+    assert streams[0]["lost_packets"] == 0
+    assert streams[0]["clock_rate"] == 48000
+    assert streams[0]["expected_delta_ms"] == 20.0
+    assert MODULE.evaluate_streams(
+        streams, require_streams=1, max_audio_loss=0,
+        max_video_loss=None, max_cadence_ratio=1.02,
+    ) == ["192.0.2.1:40000->192.0.2.2:40002 cadence 3.171x negotiated clock"]
+
+    interval = 0.02
+    assert not MODULE.evaluate_streams(
+        MODULE.analyze_pcap(tmp_path / "call.pcap"),
+        require_streams=1, max_audio_loss=0,
+        max_video_loss=None, max_cadence_ratio=1.02,
+    )

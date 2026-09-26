@@ -39,6 +39,9 @@ override that routing when enabled.
 
 ### ESP firmware and full profiles
 
+- Generic S3 VoIP-only profiles separate AEC and Opus work across the two CPU
+  cores and use the recommended AEC filter length. This prevents microphone
+  audio from falling behind and being discarded during bidirectional calls.
 - HA discovery, call controls and phonebook reception are built into the ESP VoIP
   component. Remove the retired VoIP HA packages and enable `api.custom_services`.
 - Voice Assistant can finish its reply while previously paused music stays paused.

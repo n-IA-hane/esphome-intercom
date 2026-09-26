@@ -222,6 +222,8 @@ output:
 
 esp_audio_stack:
   id: audio_stack
+  # Keep AEC processing separate from the Opus/network tasks on core 0.
+  task_core: 1
   rx_bus:
     i2s_num: 0
     i2s_lrclk_pin: ${rx_i2s_lrclk_pin}
@@ -250,7 +252,8 @@ esp_audio_stack:
 esp_aec:
   id: aec_processor
   sample_rate: 16000
-  filter_length: 8
+  # Espressif recommends 4 on S3; longer filters consume more CPU.
+  filter_length: 4
   mode: fd_high_perf
 
 microphone:
