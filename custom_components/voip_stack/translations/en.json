@@ -14,7 +14,8 @@
           "media_capture": "Record private call audio for diagnostics",
           "experimental_sip_video": "Enable SIP video for the Home Assistant softphone",
           "sip_registrar_enabled": "Enable local SIP accounts",
-          "trunk_enabled": "Enable optional SIP trunk"
+          "trunk_enabled": "Enable optional SIP trunk",
+          "companion_enabled": "Enable Companion phones"
         },
         "data_description": {
           "sip_port": "Listen port for the HA SIP endpoint. HA accepts SIP signaling over both UDP and TCP on this port.",
@@ -26,7 +27,8 @@
           "media_capture": "Explicitly records private call audio: up to 15 seconds per HA-softphone direction and 8 seconds per relay leg, stored as WAV/JSON in ~/.cache/voip_stack_debug (mode 0700) and pruned to 24 files / 64 MiB. Keep disabled unless collecting a diagnostic capture.",
           "experimental_sip_video": "Let the Home Assistant softphone negotiate SIP video with compatible standard phones, softphones and door stations. H.264, VP8 and JPEG use the browser media path. Standard ESP endpoints remain audio-only; qualified ESP32-P4 profiles can negotiate JPEG or H.264. Requires HTTPS and a compatible browser.",
           "sip_registrar_enabled": "Accept REGISTER from local SIP endpoints such as VoIP phones, Zoiper, Linphone or baresip using accounts managed by VoIP Stack services.",
-          "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration, external route or DTMF collector starts."
+          "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration, external route or DTMF collector starts.",
+          "companion_enabled": "Discover compatible Companion apps as separate incoming-call phones. Their names follow their mobile_app device tracker. Requires a Companion build with native call support."
         }
       },
       "video": {
@@ -165,9 +167,8 @@
         },
         "companion": {
           "title": "Companion phone",
-          "description": "Configure calls to this registered Companion app. Enable the phone to make it available as a call destination.",
+          "description": "Configure this Companion phone. Its name follows its mobile_app device tracker.",
           "data": {
-            "name": "Name",
             "extension": "Extension",
             "enabled": "Enabled",
             "dnd": "Do not disturb",

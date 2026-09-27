@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 PROTOCOL_VERSION = 1
 CAPABILITY_KEY = "native_calls"
 COMMAND = "command_call"
+CONF_COMPANION_ENABLED = "companion_enabled"
 CONF_MOBILE_APP_ENTRY_ID = "mobile_app_entry_id"
 CALL_PATH = "/api/voip_stack/companion/call"
 

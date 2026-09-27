@@ -171,3 +171,48 @@ async def test_failed_answer_removes_its_event_listener(fixture):
     with pytest.raises(RuntimeError, match="Answer could not commit"):
         await views.CompanionCallView().post(f.request)
     assert f.hass.listeners == []
+
+
+def test_phone_name_follows_tracker_without_changing_identity(monkeypatch):
+    mobile = SimpleNamespace(entry_id="registration", title="CPH2709",
+        data={"device_id": "installation-id", "device_name": "CPH2709"})
+    tracker = SimpleNamespace(domain="device_tracker", platform="mobile_app",
+        unique_id="installation-id", name=None, original_name="CPH2709",
+        entity_id="device_tracker.cph2709", disabled_by="user")
+    battery = SimpleNamespace(domain="sensor", platform="mobile_app", unique_id="battery",
+        name="Unrelated battery name")
+    monkeypatch.setattr(phones.er, "async_get", lambda _: object())
+    monkeypatch.setattr(phones.er, "async_entries_for_config_entry", lambda *_: [battery, tracker])
+    identity = phones.companion_endpoint_id(mobile.entry_id)
+    assert phones.companion_display_name(None, mobile) == "CPH2709"
+    tracker.name = "App Daniele"
+    tracker.entity_id = "device_tracker.daniele"
+    assert phones.companion_display_name(None, mobile) == "App Daniele"
+    assert phones.companion_endpoint_id(mobile.entry_id) == identity
+
+
+def test_tracker_absence_does_not_require_location_permission(monkeypatch):
+    mobile = SimpleNamespace(entry_id="registration", title="Fallback", data={"device_name": "Tablet"})
+    monkeypatch.setattr(phones.er, "async_get", lambda _: object())
+    monkeypatch.setattr(phones.er, "async_entries_for_config_entry", lambda *_: [])
+    assert phones.companion_display_name(None, mobile) == "Tablet"
+
+
+@pytest.mark.asyncio
+async def test_disabled_companion_support_preserves_phone_and_makes_it_unavailable(monkeypatch, fixture):
+    f = fixture
+    phone = SimpleNamespace(data={"endpoint_id": f.binding.endpoint_id, "kind": "companion", "enabled": True})
+    entry = SimpleNamespace(data={phones.CONF_COMPANION_ENABLED: False})
+    f.hass.config_entries = SimpleNamespace(async_entries=lambda _: [])
+    manager = phones.CompanionPhones(f.hass, entry)
+    manager.bindings[f.binding.endpoint_id] = f.binding
+    monkeypatch.setattr(phones.dr, "async_get", lambda _: object())
+    monkeypatch.setattr(phones, "phone_subentries", lambda _: [phone])
+    monkeypatch.setattr(phones, "sync_registry_from_entry", lambda *_: None)
+    monkeypatch.setattr(phones, "require_runtime_data", lambda _: f.runtime)
+    await manager.sync()
+    assert manager.bindings == {}
+    endpoint = f.runtime.endpoints.get(f.binding.endpoint_id)
+    assert endpoint is not None
+    assert endpoint.availability.value == "unavailable"
+    assert endpoint.active_call_id == "call-1"

@@ -9,12 +9,16 @@ import time
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.components import persistent_notification
 
-from .companion_protocol import CAPABILITY_KEY, COMMAND, CONF_MOBILE_APP_ENTRY_ID, CompanionCallToken, companion_endpoint_id
+from .companion_protocol import CAPABILITY_KEY, COMMAND, CONF_COMPANION_ENABLED, CONF_MOBILE_APP_ENTRY_ID, CompanionCallToken, companion_endpoint_id
 from .const import DOMAIN
+from .config_validation import route_namespace_conflicts
+from .phonebook_services import _runtime_route_mappings, _entry_mapping
+from .store import manual_roster_entries
 from .endpoint_lifecycle import call_registry, create_runtime_task
-from .phone_config import _add_phone_subentry, browser_phone_data, phone_subentries, sync_registry_from_entry
+from .phone_config import _add_phone_subentry, browser_phone_data, phone_subentries, sync_registry_from_entry, update_phone_subentry
 from .phone_endpoint import EndpointAvailability, EndpointKind
 from .runtime_data import require_runtime_data
 from .websocket_api import HA_SOFTPHONE_STATE_EVENT
@@ -39,6 +43,23 @@ class CompanionInvitation:
     caller: str
 
 
+def companion_display_name(hass: HomeAssistant, mobile: ConfigEntry) -> str:
+    """Follow the registered mobile tracker without requiring location updates."""
+    trackers = [entity for entity in er.async_entries_for_config_entry(er.async_get(hass), mobile.entry_id)
+                if entity.domain == "device_tracker" and entity.platform == "mobile_app"
+                and entity.unique_id == mobile.data.get("device_id")]
+    if len(trackers) == 1:
+        tracker = trackers[0]
+        return str(tracker.name or tracker.original_name or mobile.data.get("device_name") or mobile.title)
+    return str(mobile.data.get("device_name") or mobile.title)
+
+
+def companion_name_conflicts(hass: HomeAssistant, endpoint_id: str, name: str) -> bool:
+    existing = [entry for entry in _runtime_route_mappings(hass) if entry.get("id") != endpoint_id]
+    existing.extend(_entry_mapping(entry) for entry in manual_roster_entries(hass))
+    return bool(route_namespace_conflicts(candidate_routes=(name,), existing=existing))
+
+
 class CompanionPhones:
     """Own discovery and notification delivery, never routing or media resources."""
 
@@ -55,6 +76,7 @@ class CompanionPhones:
         await self.sync()
         self._unsubs.extend((
             self.hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, self._device_changed),
+            self.hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._device_changed),
             self.hass.bus.async_listen(HA_SOFTPHONE_STATE_EVENT, self._call_changed),
             self.entry.add_update_listener(self._entry_changed),
         ))
@@ -80,9 +102,12 @@ class CompanionPhones:
         async with self._sync_lock:
             devices = dr.async_get(self.hass)
             bindings = {}
+            unavailable = set()
             existing = {str(p.data.get("endpoint_id")): p for p in phone_subentries(self.entry)}
-            names = {str(p.data.get("name", p.title)).casefold() for p in existing.values()}
-            for mobile in self.hass.config_entries.async_entries("mobile_app"):
+            mobiles = self.hass.config_entries.async_entries("mobile_app")
+            if not self.entry.data.get(CONF_COMPANION_ENABLED, False):
+                mobiles = []
+            for mobile in mobiles:
                 if mobile.entry_id not in self._entry_unsubs:
                     self._entry_unsubs[mobile.entry_id] = mobile.add_update_listener(self._entry_changed)
                 if mobile.data.get("app_data", {}).get(CAPABILITY_KEY) != 1:
@@ -97,16 +122,27 @@ class CompanionPhones:
                 if not binding.user_id or not binding.webhook_id:
                     continue
                 bindings[endpoint_id] = binding
+                name = companion_display_name(self.hass, mobile)
+                notification_id = f"{DOMAIN}_companion_name_{mobile.entry_id}"
+                if companion_name_conflicts(self.hass, endpoint_id, name):
+                    _LOGGER.error("Companion phone name %s conflicts with another phonebook destination", name)
+                    persistent_notification.async_create(self.hass,
+                        f'The Companion tracker name "{name}" is already used by another VoIP destination. '
+                        'Choose a unique tracker name to synchronize this phone.',
+                        title="VoIP Stack: duplicate Companion name", notification_id=notification_id)
+                    unavailable.add(endpoint_id)
+                    continue
+                persistent_notification.async_dismiss(self.hass, notification_id)
                 if endpoint_id not in existing:
-                    name = f"{device.name_by_user or device.name or mobile.title} (Companion)"
-                    if name.casefold() in names:
-                        name = f"{name} {mobile.entry_id[-6:]}"
-                    names.add(name.casefold())
                     data = browser_phone_data(self.hass, self.entry, endpoint_id=endpoint_id)
-                    data.update(kind=EndpointKind.COMPANION.value, name=name, enabled=False,
+                    data.update(kind=EndpointKind.COMPANION.value, name=name, enabled=True,
                         extension="", ring_group="", conference_group="", video_enabled=False,
                         send_video=False, **{CONF_MOBILE_APP_ENTRY_ID: mobile.entry_id})
                     _add_phone_subentry(self.hass, self.entry, data=data, title=name)
+                    sync_registry_from_entry(self.hass, self.entry)
+                elif existing[endpoint_id].data.get("name") != name:
+                    update_phone_subentry(self.hass, self.entry, endpoint_id, {"name": name})
+
             self.bindings = bindings
             sync_registry_from_entry(self.hass, self.entry)
             directory = require_runtime_data(self.hass).endpoints
@@ -115,7 +151,7 @@ class CompanionPhones:
                 endpoint = directory.get(endpoint_id)
                 if endpoint is None or endpoint.kind is not EndpointKind.COMPANION:
                     continue
-                available = endpoint_id in bindings and bool(phone.data.get("enabled", True))
+                available = endpoint_id in bindings and endpoint_id not in unavailable and bool(phone.data.get("enabled", True))
                 directory.update(endpoint_id, availability=EndpointAvailability.AVAILABLE if available else EndpointAvailability.UNAVAILABLE)
 
     @callback

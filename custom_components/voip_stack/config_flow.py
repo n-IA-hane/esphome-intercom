@@ -49,6 +49,7 @@ from .phone_config import (
     phone_subentries,
 )
 from .phone_endpoint import EndpointKind, OfflinePolicy
+from .companion_protocol import CONF_COMPANION_ENABLED
 from .sip_registrar import generate_password, normalize_username
 from .const import (
     CONF_ASSIST_ADVANCED_CALL_CONTEXT,
@@ -272,6 +273,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_ASSIST_ENDPOINT_ENABLED: existing.get(
                 CONF_ASSIST_ENDPOINT_ENABLED, False
             ),
+            CONF_COMPANION_ENABLED: existing.get(CONF_COMPANION_ENABLED, False),
             CONF_DEBUG_MODE: existing.get(CONF_DEBUG_MODE, False),
             CONF_MEDIA_CAPTURE: existing.get(CONF_MEDIA_CAPTURE, False),
             CONF_SIP_VIDEO: existing.get(CONF_SIP_VIDEO, False),
@@ -295,6 +297,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_ASSIST_ENDPOINT_ENABLED,
                     default=defaults[CONF_ASSIST_ENDPOINT_ENABLED],
                 ): BooleanSelector(),
+                vol.Optional(CONF_COMPANION_ENABLED, default=defaults[CONF_COMPANION_ENABLED]): BooleanSelector(),
                 vol.Required(
                     CONF_DEBUG_MODE, default=defaults[CONF_DEBUG_MODE]
                 ): BooleanSelector(),
@@ -939,10 +942,13 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         """Configure a discovered native phone without converting it to a browser."""
         schema = self._common_schema(sip_account=False)
         schema = vol.Schema({key: value for key, value in schema.schema.items()
-            if key.schema not in {CONF_PHONE_VIDEO_ENABLED, CONF_PHONE_AUTO_ANSWER, CONF_PHONE_SEND_VIDEO}})
+            if key.schema not in {CONF_PHONE_NAME, CONF_PHONE_VIDEO_ENABLED, CONF_PHONE_AUTO_ANSWER, CONF_PHONE_SEND_VIDEO}})
         errors = {}
         if user_input is not None:
-            data, errors = self._normalized_common(user_input, kind=EndpointKind.COMPANION)
+            data, errors = self._normalized_common(
+                {**user_input, CONF_PHONE_NAME: self._current_data()[CONF_PHONE_NAME]},
+                kind=EndpointKind.COMPANION,
+            )
             if not errors:
                 from .companion_protocol import CONF_MOBILE_APP_ENTRY_ID
                 data.update({CONF_MOBILE_APP_ENTRY_ID: self._current_data()[CONF_MOBILE_APP_ENTRY_ID],
