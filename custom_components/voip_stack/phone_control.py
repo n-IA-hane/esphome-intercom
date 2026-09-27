@@ -290,6 +290,7 @@ class PhoneAdapterRegistry:
         ).strip()
         self._adapters: dict[EndpointKind, PhoneAdapter] = {
             EndpointKind.BROWSER: BrowserPhoneAdapter(),
+            EndpointKind.COMPANION: BrowserPhoneAdapter(),
             EndpointKind.ESPHOME: EspHomePhoneAdapter(),
         }
 
@@ -382,8 +383,11 @@ class PhoneAdapterRegistry:
         if endpoint is not None:
             if endpoint.kind is EndpointKind.SIP_ACCOUNT:
                 return self._endpoint_handle(endpoint, frozenset())
-            if endpoint.kind is EndpointKind.BROWSER:
-                return self._endpoint_handle(endpoint, ALL_PHONE_OPERATIONS)
+            if endpoint.kind.is_softphone:
+                capabilities = ALL_PHONE_OPERATIONS
+                if endpoint.kind is EndpointKind.COMPANION:
+                    capabilities = capabilities - {PhoneOperation.ORIGINATE}
+                return self._endpoint_handle(endpoint, capabilities)
 
         device = await async_resolve_source_device(
             self._hass,

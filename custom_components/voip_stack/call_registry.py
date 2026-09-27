@@ -574,6 +574,13 @@ class CallRuntimeApi:
             and (owner is None or session.owner == owner)
         )
 
+    def current_generation(self, call_id: str) -> int | None:
+        """Read a live generation without creating a session or publishing events."""
+        session = self.sessions.get(self.resolve_session_id(call_id))
+        if session is None or not self.is_generation_current(call_id, session.generation):
+            return None
+        return session.generation
+
     def is_generation_current(self, call_id: str, generation: int) -> bool:
         """Return whether an async operation still belongs to a live call."""
 

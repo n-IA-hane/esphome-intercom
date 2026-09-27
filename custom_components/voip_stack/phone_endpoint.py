@@ -11,8 +11,14 @@ class EndpointKind(StrEnum):
     """Supported logical endpoint implementations."""
 
     BROWSER = "browser"
+    COMPANION = "companion"
     SIP_ACCOUNT = "sip_account"
     ESPHOME = "esphome"
+
+    @property
+    def is_softphone(self) -> bool:
+        """Use the HA-owned signaling and authenticated WebSocket media path."""
+        return self in {EndpointKind.BROWSER, EndpointKind.COMPANION}
 
 
 class EndpointAvailability(StrEnum):

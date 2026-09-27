@@ -75,7 +75,7 @@ async def async_setup_entry(
         entry,
         async_add_entities,
         PhoneEndpointConferenceRingSwitch,
-        predicate=lambda endpoint: endpoint.kind is EndpointKind.BROWSER,
+        predicate=lambda endpoint: endpoint.kind.is_softphone,
     )
     conference_manager.async_setup()
     register_endpoint_entity_manager(
@@ -92,7 +92,7 @@ async def async_setup_entry(
             entry,
             async_add_entities,
             entity_class,
-            predicate=lambda endpoint: endpoint.kind is EndpointKind.BROWSER,
+            predicate=lambda endpoint: endpoint.kind.is_softphone,
         )
         preference_manager.async_setup()
         register_endpoint_entity_manager(

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from .phone_endpoint import PhoneEndpoint
 
 
-MANAGED_ENDPOINT_KINDS = frozenset({"browser", "sip_account"})
+MANAGED_ENDPOINT_KINDS = frozenset({"browser", "companion", "sip_account"})
 ENDPOINT_DEVICE_PREFIX = "phone_endpoint:"
 BROWSER_PHONE_DEVICE_MODEL = "Home Assistant softphone"
 SIP_ACCOUNT_DEVICE_MODEL = "SIP account"
@@ -65,7 +65,9 @@ def endpoint_device_info(endpoint: PhoneEndpoint) -> DeviceInfo | None:
     if not is_managed_endpoint(endpoint):
         return None
     model = BROWSER_PHONE_DEVICE_MODEL
-    if enum_value(endpoint.kind) == "sip_account":
+    if enum_value(endpoint.kind) == "companion":
+        model = "Companion phone"
+    elif enum_value(endpoint.kind) == "sip_account":
         model = SIP_ACCOUNT_DEVICE_MODEL
     return DeviceInfo(
         identifiers={(DOMAIN, endpoint_device_identifier(endpoint.endpoint_id))},

@@ -140,7 +140,7 @@ async def _async_resolve_browser_destination(
         return route, target, None
     endpoint_id = str((route.entry.metadata or {}).get("endpoint_id") or "").strip()
     endpoint = endpoint_directory(hass).get(endpoint_id) if endpoint_id else None
-    if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
+    if endpoint is None or not endpoint.kind.is_softphone:
         return route, target, None
     if endpoint.endpoint_id == source_endpoint_id:
         raise _service_error(
@@ -266,7 +266,7 @@ async def async_originate_browser_call(
         )
         return
     target_endpoint = _logical_endpoint_for_route(hass, route)
-    if target_endpoint is not None and target_endpoint.kind is not EndpointKind.BROWSER:
+    if target_endpoint is not None and not target_endpoint.kind.is_softphone:
         if target_endpoint.dnd or target_endpoint.active_call_id:
             raise _service_error(
                 f"{target_endpoint.name} is busy",
@@ -786,7 +786,7 @@ async def async_originate_browser_call(
         )
         if (
             target_endpoint is not None
-            and target_endpoint.kind is not EndpointKind.BROWSER
+            and not target_endpoint.kind.is_softphone
         ):
             registry.claim_endpoint(
                 client.dialog_ids.call_id,

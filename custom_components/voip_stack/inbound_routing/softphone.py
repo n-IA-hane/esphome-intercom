@@ -51,10 +51,10 @@ def _resolve_browser_target(
 ) -> BrowserRouteTarget | None:
     endpoint = target_endpoint
     if require_browser_kind and (
-        endpoint is None or endpoint.kind is not EndpointKind.BROWSER
+        endpoint is None or not endpoint.kind.is_softphone
     ):
         endpoint = None
-    if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
+    if endpoint is None or not endpoint.kind.is_softphone:
         return None
     return BrowserRouteTarget(endpoint, endpoint.endpoint_id, endpoint.device_id)
 
@@ -86,7 +86,7 @@ def defer_browser_softphone_invite(
     try:
         if (
             source_endpoint is not None
-            and source_endpoint.kind is not EndpointKind.BROWSER
+            and not source_endpoint.kind.is_softphone
         ):
             registry.upsert(
                 invite.call_id,
@@ -183,14 +183,14 @@ def answer_inbound_ha_softphone(
         source_endpoint_id=(
             source_endpoint.endpoint_id
             if source_endpoint is not None
-            and source_endpoint.kind is not EndpointKind.BROWSER
+            and not source_endpoint.kind.is_softphone
             else ""
         ),
     )
     try:
         if (
             source_endpoint is not None
-            and source_endpoint.kind is not EndpointKind.BROWSER
+            and not source_endpoint.kind.is_softphone
         ):
             registry.claim_endpoint(
                 invite.call_id,

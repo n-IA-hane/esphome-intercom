@@ -336,7 +336,7 @@ def _ha_softphone_store(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
     store = stores.setdefault(key, {"dnd": False})
     store.setdefault("endpoint_id", key)
     endpoint = endpoint_directory(hass).get(key)
-    if endpoint is not None and endpoint.kind is EndpointKind.BROWSER:
+    if endpoint is not None and endpoint.kind.is_softphone:
         store.setdefault("device_id", endpoint.device_id)
         store.setdefault("local_name", endpoint.name)
     return store
@@ -356,7 +356,7 @@ def _browser_endpoint(hass: HomeAssistant, endpoint_id: object):
     registry = _endpoint_registry(hass)
     selector = str(endpoint_id or "").strip()
     endpoint = registry.get(selector) if registry is not None and selector else None
-    if endpoint is not None and endpoint.kind is EndpointKind.BROWSER:
+    if endpoint is not None and endpoint.kind.is_softphone:
         return endpoint
     return None
 
@@ -378,7 +378,7 @@ def _update_browser_presence(
         counts.pop(endpoint_id, None)
 
     endpoint = _browser_endpoint(hass, endpoint_id)
-    if endpoint is not None:
+    if endpoint is not None and endpoint.kind is not EndpointKind.COMPANION:
         availability = (
             EndpointAvailability.AVAILABLE if current else EndpointAvailability.OFFLINE
         )
@@ -992,11 +992,11 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
             else store.get("device_id", "")
         ),
         "name": endpoint.name if endpoint is not None else _ha_peer_name(hass),
-        "endpoint_type": EndpointKind.BROWSER.value,
+        "endpoint_type": endpoint.kind.value if endpoint is not None else EndpointKind.BROWSER.value,
         "available": bool(
             endpoint is not None
             and endpoint.availability is EndpointAvailability.AVAILABLE
-            and connected_cards
+            and (connected_cards or endpoint.kind is EndpointKind.COMPANION)
         ),
         "enabled": bool(
             endpoint is not None
@@ -1340,7 +1340,7 @@ def _ha_softphone_device(
     state = _ha_softphone_state(hass, endpoint_id)
     return {
         "endpoint_id": endpoint_id,
-        "endpoint_type": EndpointKind.BROWSER.value,
+        "endpoint_type": state.get("endpoint_type", EndpointKind.BROWSER.value),
         "device_id": state.get("device_id") or "",
         "name": state.get("name") or _ha_peer_name(hass),
         "extension": state.get("extension", ""),
@@ -1364,7 +1364,7 @@ def _ha_softphone_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
     devices = [
         _ha_softphone_device(hass, endpoint.endpoint_id)
         for endpoint in registry.endpoints
-        if endpoint.kind is EndpointKind.BROWSER
+        if endpoint.kind.is_softphone
     ]
     return devices
 
@@ -1483,14 +1483,14 @@ def _endpoint_id_from_selector(
 
     for device in _values(device_id):
         endpoint = registry.by_device_id(device) if registry is not None else None
-        if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
+        if endpoint is None or not endpoint.kind.is_softphone:
             unresolved.append(device)
             continue
         selected_ids.add(endpoint.endpoint_id)
 
     for entity in _values(entity_id):
         endpoint = _by_current_entity_id(entity)
-        if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
+        if endpoint is None or not endpoint.kind.is_softphone:
             unresolved.append(entity)
             continue
         selected_ids.add(endpoint.endpoint_id)
@@ -1499,7 +1499,7 @@ def _endpoint_id_from_selector(
         resolved_id = _endpoint_store_id(explicit)
         if registry is not None:
             endpoint = registry.get(resolved_id)
-            if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
+            if endpoint is None or not endpoint.kind.is_softphone:
                 raise ValueError(f"Unknown Home Assistant phone endpoint: {explicit}")
             # EndpointRegistry lookup is case-insensitive; every downstream
             # store, event and presence key must nevertheless use the stable
@@ -1730,7 +1730,7 @@ async def websocket_resolve_device(
     device_id = str(msg.get("device_id") or "")
     registry = _endpoint_registry(hass)
     endpoint = registry.by_device_id(device_id) if registry is not None else None
-    if endpoint is not None and endpoint.kind is EndpointKind.BROWSER:
+    if endpoint is not None and endpoint.kind.is_softphone:
         require_websocket_endpoint_read(hass, connection, endpoint)
         connection.send_result(
             msg["id"],

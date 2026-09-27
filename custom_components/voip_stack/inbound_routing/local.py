@@ -60,7 +60,7 @@ async def _claim_source(
     state: str,
     route_kind: str,
 ) -> SipInviteResult | None:
-    if source_endpoint is None or source_endpoint.kind is EndpointKind.BROWSER:
+    if source_endpoint is None or source_endpoint.kind.is_softphone:
         return None
     registry.upsert(
         invite.call_id,

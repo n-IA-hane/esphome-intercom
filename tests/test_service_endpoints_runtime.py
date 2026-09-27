@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 import importlib.util
 from pathlib import Path
 import sys
@@ -35,10 +34,17 @@ class ServiceValidationError(ValueError):
         self.translation_placeholders = translation_placeholders
 
 
-class EndpointKind(Enum):
-    BROWSER = "browser"
-    SIP_ACCOUNT = "sip_account"
-    ESPHOME = "esphome"
+def _load_endpoint_kind():
+    """Use the production endpoint contract instead of copying its enum."""
+    name = "_service_endpoint_kind_contract"
+    spec = importlib.util.spec_from_file_location(name, PKG_DIR / "phone_endpoint.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module.EndpointKind
+
+
+EndpointKind = _load_endpoint_kind()
 
 
 @dataclass

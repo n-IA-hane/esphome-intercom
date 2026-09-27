@@ -210,7 +210,7 @@ async def async_forward_existing_call(
             if (
                 decision.action is RouteAction.ANSWER_HA
                 and target is not None
-                and target.kind is EndpointKind.BROWSER
+                and target.kind.is_softphone
             ):
                 from .pbx_routing import browser_endpoint_can_ring
 
@@ -295,7 +295,7 @@ async def async_forward_existing_call(
             )
             if (
                 target_browser_endpoint is None
-                or target_browser_endpoint.kind is not EndpointKind.BROWSER
+                or not target_browser_endpoint.kind.is_softphone
             ):
                 raise _service_error(
                     f"destination {destination} is not a configured Home Assistant phone",
@@ -515,7 +515,7 @@ async def async_forward_existing_call(
             preanswered = registry.resource_for(call_id, "preanswered")
             if decision.action is RouteAction.ANSWER_HA:
                 endpoint = target_browser_endpoint
-                if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
+                if endpoint is None or not endpoint.kind.is_softphone:
                     raise RuntimeError("target Home Assistant phone disappeared")
                 if endpoint.dnd:
                     raise RuntimeError("target Home Assistant phone is in DND")

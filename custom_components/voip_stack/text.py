@@ -42,7 +42,7 @@ _SETTINGS = (
 
 
 def _is_browser_phone(endpoint) -> bool:
-    return endpoint.kind is EndpointKind.BROWSER
+    return endpoint.kind.is_softphone
 
 
 async def async_setup_entry(

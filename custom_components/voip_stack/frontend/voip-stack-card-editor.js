@@ -243,9 +243,10 @@ class VoipStackCardEditor extends HTMLElement {
       ? "Preferred Home Assistant phone"
       : "-- Select device --");
     const newOptions = [placeholder];
-    const selectableDevices = this._devices.filter((device) => softphoneMode
-      ? this._isSoftphoneDevice(device) && !!device.device_id
-      : !this._isSoftphoneDevice(device));
+    const selectableDevices = this._devices.filter((device) =>
+      device.endpoint_type !== "companion" && (softphoneMode
+        ? this._isSoftphoneDevice(device) && !!device.device_id
+        : !this._isSoftphoneDevice(device)));
     const configuredDeviceId = String(
       this._config.device_id || this._config.entity_id || "",
     );

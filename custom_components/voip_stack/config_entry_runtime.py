@@ -116,13 +116,13 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         previous_browser_ids = {
             endpoint.endpoint_id
             for endpoint in tuple(getattr(runtime.endpoints, "endpoints", ()))
-            if endpoint.kind is EndpointKind.BROWSER
+            if endpoint.kind.is_softphone
         }
         sync_registry_from_entry(hass, entry)
         for subentry in phone_subentries(entry):
             endpoint_id = str(subentry.data.get("endpoint_id") or "").strip()
             endpoint = runtime.endpoints.get(endpoint_id) if endpoint_id else None
-            if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
+            if endpoint is None or not endpoint.kind.is_softphone:
                 continue
             await _async_load_ha_softphone_store(
                 hass,
@@ -133,7 +133,7 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
         current_browser_ids = {
             endpoint.endpoint_id
             for endpoint in tuple(runtime.endpoints.endpoints)
-            if endpoint.kind is EndpointKind.BROWSER
+            if endpoint.kind.is_softphone
         }
         removed_browser_ids = previous_browser_ids - current_browser_ids
         presence = runtime.softphone_presence

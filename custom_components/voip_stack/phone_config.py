@@ -426,7 +426,7 @@ def async_setup_endpoint_registry(
     for subentry in phone_subentries(entry):
         endpoint = endpoint_from_subentry(entry, subentry)
         if (
-            endpoint.kind is EndpointKind.BROWSER
+            endpoint.kind.is_softphone
             and endpoint.availability is not EndpointAvailability.UNAVAILABLE
             and int(presence.get(endpoint.endpoint_id, 0) or 0) > 0
         ):
@@ -453,7 +453,7 @@ def async_setup_endpoint_registry(
             return
         pending_removals.discard(endpoint_id)
         removed = registry.remove(endpoint_id)
-        if removed.kind is EndpointKind.BROWSER:
+        if removed.kind.is_softphone:
             # An endpoint removed while busy stays alive until its terminal
             # transition.  By then the config-entry update that initiated the
             # removal has already run, so clear page-presence bookkeeping here
@@ -525,7 +525,7 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 # instead of inheriting the disabled runtime state forever.
                 availability = (
                     EndpointAvailability.AVAILABLE
-                    if candidate.kind is EndpointKind.BROWSER
+                    if candidate.kind.is_softphone
                     and int(presence.get(candidate.endpoint_id, 0) or 0) > 0
                     else EndpointAvailability.OFFLINE
                 )
@@ -539,7 +539,7 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 active_call_id=previous.active_call_id,
             )
         elif (
-            candidate.kind is EndpointKind.BROWSER
+            candidate.kind.is_softphone
             and candidate.availability is not EndpointAvailability.UNAVAILABLE
             and int(presence.get(candidate.endpoint_id, 0) or 0) > 0
         ):
@@ -548,7 +548,7 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             )
         registry.upsert(candidate)
     for endpoint in tuple(registry.endpoints):
-        if endpoint.kind in {EndpointKind.BROWSER, EndpointKind.SIP_ACCOUNT} and (
+        if endpoint.kind in {EndpointKind.BROWSER, EndpointKind.COMPANION, EndpointKind.SIP_ACCOUNT} and (
             endpoint.endpoint_id not in configured
         ):
             if endpoint.active_call_id:
@@ -564,7 +564,7 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             else:
                 pending_removals.discard(endpoint.endpoint_id)
                 removed = registry.remove(endpoint.endpoint_id)
-                if removed.kind is EndpointKind.BROWSER:
+                if removed.kind.is_softphone:
                     _clear_browser_runtime(
                         presence, runtime.softphones, removed.endpoint_id
                     )

@@ -125,7 +125,7 @@ async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
     browser_endpoints = [
         endpoint
         for endpoint in endpoint_registry.endpoints
-        if endpoint.kind is EndpointKind.BROWSER
+        if endpoint.kind.is_softphone
         and endpoint.availability is not EndpointAvailability.UNAVAILABLE
     ]
     for endpoint in browser_endpoints:
@@ -135,14 +135,14 @@ async def async_build_peer_snapshot(hass: HomeAssistant) -> list[Peer]:
                 device={
                     "device_id": endpoint.device_id,
                     "endpoint_id": endpoint.endpoint_id,
-                    "endpoint_type": EndpointKind.BROWSER.value,
+                    "endpoint_type": endpoint.kind.value,
                     "sip_transport": "tcp",
                     "capabilities": sorted(endpoint.capabilities),
                 },
                 name=endpoint.name,
                 host=local_ip or "",
                 endpoint_id=endpoint.endpoint_id,
-                endpoint_kind=EndpointKind.BROWSER.value,
+                endpoint_kind=endpoint.kind.value,
                 capabilities=tuple(sorted(endpoint.capabilities)),
                 local_ha=True,
                 sip_port=int(cfg["sip_port"]),

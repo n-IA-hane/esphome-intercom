@@ -347,7 +347,7 @@ async def async_route_trunk_invite(
             peers,
             roster,
         ) or preferred_browser_phone(hass)
-        if target_endpoint is not None and target_endpoint.kind is EndpointKind.BROWSER:
+        if target_endpoint is not None and target_endpoint.kind.is_softphone:
             runtime.defer_invite_to_softphone(
                 invite,
                 route_kind="trunk",

@@ -162,6 +162,23 @@
         },
         "reconfigure": {
           "title": "Reconfigure phone"
+        },
+        "companion": {
+          "title": "Companion phone",
+          "description": "Configure calls to this registered Companion app. Enable the phone to make it available as a call destination.",
+          "data": {
+            "name": "Name",
+            "extension": "Extension",
+            "enabled": "Enabled",
+            "dnd": "Do not disturb",
+            "ring_group": "Ring group",
+            "conference_group": "Conference group",
+            "conference_ring": "Ring for conference calls"
+          },
+          "data_description": {
+            "name": "Required phone name used by the card, phonebook and call routing.",
+            "extension": "Optional unique dialable extension. The logical phone remains ringable when no browser card is connected."
+          }
         }
       },
       "error": {

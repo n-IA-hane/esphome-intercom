@@ -62,7 +62,7 @@ def resolve_inbound_target(
         if (
             candidate is None
             or candidate.availability is EndpointAvailability.AVAILABLE
-            or candidate.kind is EndpointKind.BROWSER
+            or candidate.kind.is_softphone
             or candidate.offline_policy is not OfflinePolicy.FORWARD
         ):
             return TargetResolution(decision, candidate)
@@ -134,7 +134,7 @@ def validate_target_endpoint(
         )
     if (
         endpoint.availability is EndpointAvailability.OFFLINE
-        and endpoint.kind is not EndpointKind.BROWSER
+        and not endpoint.kind.is_softphone
     ):
         # Registrar devices persist while offline, but a missing Contact
         # cannot receive a standards-based SIP dialog.

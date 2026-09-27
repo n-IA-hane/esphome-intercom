@@ -878,7 +878,7 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         """Choose which standard endpoint implementation to add."""
         if user_input is not None:
             self._kind = EndpointKind(str(user_input[CONF_PHONE_KIND]))
-            if self._kind is EndpointKind.BROWSER:
+            if self._kind.is_softphone:
                 return await self.async_step_browser()
             return await self.async_step_sip_account()
         return self.async_show_form(
@@ -935,6 +935,21 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             data_schema=self._common_schema(sip_account=True),
         )
 
+    async def async_step_companion(self, user_input=None):
+        """Configure a discovered native phone without converting it to a browser."""
+        schema = self._common_schema(sip_account=False)
+        schema = vol.Schema({key: value for key, value in schema.schema.items()
+            if key.schema not in {CONF_PHONE_VIDEO_ENABLED, CONF_PHONE_AUTO_ANSWER, CONF_PHONE_SEND_VIDEO}})
+        errors = {}
+        if user_input is not None:
+            data, errors = self._normalized_common(user_input, kind=EndpointKind.COMPANION)
+            if not errors:
+                from .companion_protocol import CONF_MOBILE_APP_ENTRY_ID
+                data.update({CONF_MOBILE_APP_ENTRY_ID: self._current_data()[CONF_MOBILE_APP_ENTRY_ID],
+                    CONF_PHONE_VIDEO_ENABLED: False, CONF_PHONE_AUTO_ANSWER: False, CONF_PHONE_SEND_VIDEO: False})
+                return self._finish(data)
+        return self.async_show_form(step_id="companion", data_schema=schema, errors=errors)
+
     async def async_step_reconfigure(self, user_input=None):
         """Keep endpoint identity and kind stable while editing settings."""
         self._reconfigure = True
@@ -942,6 +957,8 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         self._kind = EndpointKind(
             str(current.get(CONF_PHONE_KIND) or EndpointKind.BROWSER.value)
         )
-        if self._kind is EndpointKind.BROWSER:
+        if self._kind is EndpointKind.COMPANION:
+            return await self.async_step_companion(user_input)
+        if self._kind.is_softphone:
             return await self.async_step_browser(user_input)
         return await self.async_step_sip_account(user_input)

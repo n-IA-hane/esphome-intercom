@@ -622,7 +622,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     await _async_setup_shared(hass)
     for subentry in phone_subentries(entry):
         endpoint = endpoint_registry.get(str(subentry.data.get("endpoint_id") or ""))
-        if endpoint is None or endpoint.kind is not EndpointKind.BROWSER:
+        if endpoint is None or not endpoint.kind.is_softphone:
             continue
         await _async_load_ha_softphone_store(
             hass,
@@ -651,6 +651,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     await _async_start_sip_trunk(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_config_entry_updated))
+    from .companion_phones import CompanionPhones
+    from .companion_view import register_companion_view
+
+    register_companion_view(hass)
+    entry.runtime_data.companion_phones = CompanionPhones(hass, entry)
+    await entry.runtime_data.companion_phones.setup()
     create_runtime_task(hass, _deferred_phonebook_sync(hass))
     return True
 

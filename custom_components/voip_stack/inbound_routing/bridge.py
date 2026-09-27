@@ -360,13 +360,13 @@ async def route_sip_bridge(
     logical_source_endpoint = (
         source_endpoint
         if source_endpoint is not None
-        and source_endpoint.kind is not EndpointKind.BROWSER
+        and not source_endpoint.kind.is_softphone
         else None
     )
     logical_target_endpoint = (
         target_endpoint
         if target_endpoint is not None
-        and target_endpoint.kind is not EndpointKind.BROWSER
+        and not target_endpoint.kind.is_softphone
         else None
     )
     if logical_source_endpoint is not None or logical_target_endpoint is not None:
