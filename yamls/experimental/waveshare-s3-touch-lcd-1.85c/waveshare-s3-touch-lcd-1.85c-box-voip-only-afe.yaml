@@ -54,8 +54,8 @@ substitutions:
 
   # Local sources keep repository builds reproducible. Release examples replace
   # these with the corresponding pinned public component revisions.
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
+  voip_stack_components_source: "../../../../esphome-voip-stack/esphome/components"
+  audio_stack_components_source: "../../../../esphome-audio-stack/esphome/components"
 
   i2s_mclk_pin: GPIO2
   i2s_bclk_pin: GPIO48
@@ -71,8 +71,8 @@ external_components:
     components: [esp_audio_stack, esp_afe]
 
 packages:
-  voip_transport: github://n-IA-hane/esphome-intercom/packages/voip/transport.yaml@main
-  afe_entities: github://n-IA-hane/esphome-intercom/packages/esp_afe/single_mic_entities.yaml@main
+  voip_transport: !include ../../../packages/voip/transport.yaml
+  afe_entities: !include ../../../packages/esp_afe/single_mic_entities.yaml
 
 esphome:
   min_version: 2026.9.0
