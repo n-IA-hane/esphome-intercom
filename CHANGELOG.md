@@ -240,10 +240,11 @@ Attachments: sanitized YAML, HA diagnostics, HA/ESP logs,
 ```
 
 Review attachments for passwords, tokens, authentication data and other private
-information before sharing them. A report that only says "it does not work",
-without reproduction details or supporting logs, may be closed as incomplete.
+information before sharing them.
 
-If you ignore these instructions and open a useless issue anyway, I'll get pissed off like there's no tomorrow.
+If you ignore these instructions and open an "it does not work" issue without
+reproduction details or supporting logs, I'll get pissed off like there's no
+tomorrow and close it as incomplete.
 
 Thanks to everyone who donated to support the project.
 

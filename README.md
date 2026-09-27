@@ -718,10 +718,11 @@ Attachments: sanitized YAML, HA diagnostics, HA/ESP logs, full diagnostic blocks
 ```
 
 Never publish SIP passwords, authentication data, API keys or tokens. Review
-configuration files, logs and captures before attaching them. Issues without
-enough information to reproduce or classify the fault may be closed as incomplete.
+configuration files, logs and captures before attaching them.
 
-If you ignore these instructions and open a useless issue anyway, I'll get pissed off like there's no tomorrow.
+If you ignore these instructions and open an "it does not work" issue without
+reproduction details or supporting logs, I'll get pissed off like there's no
+tomorrow and close it as incomplete.
 
 ## Support the project
 
