@@ -13,7 +13,6 @@
 
 switch:
   - platform: voip_stack
-    voip_stack_id: phone
     auto_answer:
       id: auto_answer_switch
       name: Auto Answer

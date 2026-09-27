@@ -7,7 +7,6 @@
 
 switch:
   - platform: esp_audio_stack
-    esp_audio_stack_id: audio_stack
     aec:
       id: aec_switch
       name: Echo Cancellation

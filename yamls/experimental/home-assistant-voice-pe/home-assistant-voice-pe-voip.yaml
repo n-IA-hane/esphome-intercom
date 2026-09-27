@@ -211,7 +211,6 @@ binary_sensor:
 
 button:
   - platform: voip_stack
-    voip_stack_id: phone
     call:
       name: Call
       id: call_button

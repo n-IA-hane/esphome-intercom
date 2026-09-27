@@ -238,12 +238,10 @@ esp_aec:
 microphone:
   - platform: esp_audio_stack
     id: mic_main
-    esp_audio_stack_id: audio_stack
 
 speaker:
   - platform: esp_audio_stack
     id: hw_speaker
-    esp_audio_stack_id: audio_stack
     sample_rate: 48000
     bits_per_sample: 16
     timeout: 1s

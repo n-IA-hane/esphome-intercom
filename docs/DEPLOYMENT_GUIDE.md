@@ -58,6 +58,11 @@ itself. Enable `custom_services: true` in the existing `api:` block; do not add
 the retired phonebook subscription package. See the
 [ESP phone migration](ESP_ENTITY_SURFACE.md#migrating-an-existing-phone).
 
+When using Audio Stack, declare a single `esp_audio_stack` instance. Its
+microphone, speaker and controls find it automatically, so the maintained YAMLs
+omit `esp_audio_stack_id`. Shared-bus and split-bus modes are both managed by
+that one instance. Keep the stack's `id` if your actions or lambdas use it.
+
 Supported audio shapes:
 
 - full duplex: microphone plus speaker;

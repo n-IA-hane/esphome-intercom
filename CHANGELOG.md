@@ -73,6 +73,9 @@ disable the old rule to avoid handling the same call twice. Follow the
 
 ### ESP firmware: Generic validation and device improvements
 
+- **Simpler YAML examples:** redundant `esp_audio_stack_id` and `voip_stack_id`
+  references are omitted. Each component supports one instance per ESP, and its
+  child platforms already resolve that instance automatically.
 - **Simpler phone setup:** HA discovery, phonebook reception and call controls
   are built into the ESP VoIP component. Separate VoIP HA packages are retired;
   see the migration steps below.

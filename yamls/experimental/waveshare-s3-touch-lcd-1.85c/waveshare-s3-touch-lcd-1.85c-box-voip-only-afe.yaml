@@ -439,12 +439,10 @@ esp_afe:
 microphone:
   - platform: esp_audio_stack
     id: mic_afe
-    esp_audio_stack_id: audio_stack
 
 speaker:
   - platform: esp_audio_stack
     id: hw_speaker
-    esp_audio_stack_id: audio_stack
     sample_rate: 32000
     bits_per_sample: 16
 
@@ -455,7 +453,6 @@ speaker:
 
 number:
   - platform: esp_audio_stack
-    esp_audio_stack_id: audio_stack
     master_volume:
       name: "Speaker Volume"
       speaker_id: hw_speaker

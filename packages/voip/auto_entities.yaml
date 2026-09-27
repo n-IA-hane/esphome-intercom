@@ -3,7 +3,6 @@
 # component to AUTO_LOAD primary entity platforms.
 switch:
   - platform: voip_stack
-    voip_stack_id: phone
     auto_answer:
       name: Auto Answer
       restore_mode: RESTORE_DEFAULT_ON
@@ -13,7 +12,6 @@ switch:
 
 number:
   - platform: voip_stack
-    voip_stack_id: phone
     master_volume:
       name: Master Volume
     mic_gain:

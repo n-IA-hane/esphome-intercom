@@ -2,7 +2,6 @@
 
 switch:
   - platform: voip_stack
-    voip_stack_id: phone
     video_send:
       name: Send Video
       # Idle: preference for the next call. In call: SIP direction update.

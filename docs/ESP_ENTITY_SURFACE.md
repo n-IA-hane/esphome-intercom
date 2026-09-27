@@ -24,6 +24,14 @@ and speaker-only phones are supported: omit the direction you do not have.
 This works with native ESPHome audio or Audio Stack. Voice Assistant, a display
 and the runtime controller are not prerequisites.
 
+## One stack per ESP
+
+An ESP firmware currently supports one `voip_stack` instance. Its entity
+platforms bind to it automatically; `voip_stack_id` is optional and omitted in
+the maintained YAMLs. Keep `id: phone` when other actions, lambdas or runtime
+bindings reference it. This simplification does not remove microphone/speaker
+selection or the IDs needed to connect other components.
+
 ## What appears automatically
 
 When the native API is present, `voip_stack` creates the existing **VoIP

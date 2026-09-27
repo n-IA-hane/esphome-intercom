@@ -16,7 +16,6 @@ substitutions:
 
 number:
   - platform: esp_audio_stack
-    esp_audio_stack_id: audio_stack
     master_volume:
       id: master_volume
       name: Master Volume

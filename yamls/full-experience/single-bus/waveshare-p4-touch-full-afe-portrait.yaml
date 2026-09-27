@@ -486,7 +486,6 @@ esp_afe:
 microphone:
   - platform: esp_audio_stack
     id: mic_afe
-    esp_audio_stack_id: audio_stack
 
 # Speaker pipeline: mixes media, TTS and VoIP RX into the hardware speaker
 
@@ -494,7 +493,6 @@ speaker:
   # Hardware output: writes 48kHz PCM to I2S bus
   - platform: esp_audio_stack
     id: hw_speaker
-    esp_audio_stack_id: audio_stack
     sample_rate: 48000
     bits_per_sample: 16
     timeout: 1s

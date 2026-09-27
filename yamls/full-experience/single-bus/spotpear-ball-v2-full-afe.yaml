@@ -472,7 +472,6 @@ esp_afe:
 microphone:
   - platform: esp_audio_stack
     id: mic_afe
-    esp_audio_stack_id: audio_stack
 
 speaker:
   # Keep floating-point resampling on Core1, separate from AFE feed on Core0.
@@ -490,7 +489,6 @@ speaker:
     task_priority: 11
   - platform: esp_audio_stack
     id: hw_speaker
-    esp_audio_stack_id: audio_stack
     sample_rate: 48000
     bits_per_sample: 16
     # ESPHome's mixer task can stop after all sources drain without forwarding
