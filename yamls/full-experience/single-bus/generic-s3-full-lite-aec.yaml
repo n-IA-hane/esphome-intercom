@@ -273,7 +273,6 @@ logger:
 # =============================================================================
 
 esp_audio_stack:
-  id: audio_stack
   # Keep microphone capture and AEC separate from the VoIP tasks on core 0.
   task_core: 1
   i2s_lrclk_pin: ${i2s_lrclk_pin}
@@ -463,15 +462,15 @@ select:
                       format: "Switching AEC mode to %s"
                       args: ['x.c_str()']
                   - micro_wake_word.stop:
-                  - esp_audio_stack.stop: audio_stack
+                  - esp_audio_stack.stop:
                   - wait_until:
                       condition:
-                        esp_audio_stack.is_idle: audio_stack
+                        esp_audio_stack.is_idle:
                       timeout: 2s
                   - esp_aec.set_mode:
                       id: aec_processor
                       mode: !lambda 'return x;'
-                  - esp_audio_stack.start: audio_stack
+                  - esp_audio_stack.start:
                   - delay: 300ms
                   - if:
                       condition:

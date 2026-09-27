@@ -410,7 +410,6 @@ light:
 # and speaker output through the shared esp_audio_stack component.
 
 esp_audio_stack:
-  id: audio_stack
   # Keep the realtime I2S/AFE bridge stack internal on P4. Display, media and
   # XIP already exercise PSRAM/cache; an external task stack can make a
   # processed AFE frame miss its 64 ms publication slot.
@@ -3135,10 +3134,10 @@ select:
                       format: "Switching AEC mode to %s"
                       args: ['x.c_str()']
                   - micro_wake_word.stop:
-                  - esp_audio_stack.stop: audio_stack
+                  - esp_audio_stack.stop:
                   - wait_until:
                       condition:
-                        esp_audio_stack.is_idle: audio_stack
+                        esp_audio_stack.is_idle:
                       timeout: 2s
                   - esp_afe.set_mode:
                       id: afe_processor
@@ -3151,7 +3150,7 @@ select:
                       condition:
                         lambda: 'return id(afe_processor).is_reconfigure_idle() && id(afe_processor).get_last_reconfigure_ok();'
                       then:
-                        - esp_audio_stack.start: audio_stack
+                        - esp_audio_stack.start:
                         - delay: 300ms
                         - if:
                             condition:

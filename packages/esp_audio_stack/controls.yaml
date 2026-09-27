@@ -2,7 +2,7 @@
 # User controls for audio-stack devices
 # =============================================================================
 # Drop-in for devices using:
-#   esp_audio_stack id: audio_stack
+#   one esp_audio_stack component
 #   speaker id: hw_speaker
 #
 # Exposes the stable user-facing controls:
@@ -33,4 +33,3 @@ button:
     icon: mdi:clipboard-text-search
     on_press:
       - esp_audio_stack.dump_diagnostics:
-          id: audio_stack

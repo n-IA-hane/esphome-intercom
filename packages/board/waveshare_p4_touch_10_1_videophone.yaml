@@ -96,7 +96,6 @@ light:
 # ES7210/ES8311 share one 48 kHz TDM bus. Slots 0 and 2 are microphones;
 # slot 1 is the electrical playback reference used by the AFE AEC.
 esp_audio_stack:
-  id: audio_stack
   audio_task_stack_in_psram: false
   i2s_lrclk_pin: ${i2s_lrclk_pin}
   i2s_bclk_pin: ${i2s_bclk_pin}

@@ -9,7 +9,6 @@
 #   - script id `update_status` from the voip-only YAML reducer
 #
 voip_stack:
-  id: phone
 
   on_calling:
     - script.execute: update_status

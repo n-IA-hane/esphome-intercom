@@ -16,7 +16,6 @@ substitutions:
   voip_rtp_port: "40000"
 
 voip_stack:
-  id: phone
   # SIP signaling: udp by default; set voip_transport: tcp for SIP/TCP.
   transport: ${voip_transport}
   sip_port: ${voip_sip_port}
@@ -29,4 +28,3 @@ button:
     icon: mdi:clipboard-text-search
     on_press:
       - voip_stack.dump_diagnostics:
-          id: phone

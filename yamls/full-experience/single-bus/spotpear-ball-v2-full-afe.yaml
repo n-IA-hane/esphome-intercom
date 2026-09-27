@@ -402,7 +402,6 @@ light:
 # Spotpear supplies the playback reference as the ES8311 stereo right channel.
 
 esp_audio_stack:
-  id: audio_stack
   i2s_lrclk_pin: ${i2s_lrclk_pin}
   i2s_bclk_pin: ${i2s_bclk_pin}
   i2s_mclk_pin: ${i2s_mclk_pin}
@@ -2922,7 +2921,7 @@ script:
     then:
       - if:
           condition:
-            lambda: return id(phone).is_idle();
+            voip_stack.is_idle:
           then:
             - lambda: |-
                 id(voip_dialer_active) = true;
@@ -3169,13 +3168,17 @@ binary_sensor:
                     else:
                       - if:
                           condition:
-                            lambda: return id(current_mode) == 1 && id(phone).is_idle();
+                            and:
+                              - lambda: return id(current_mode) == 1;
+                              - voip_stack.is_idle:
                           then:
                             - voip_stack.call_toggle:
                           else:
                             - if:
                                 condition:
-                                  lambda: return id(current_mode) == 1 && id(phone).is_active();
+                                  and:
+                                    - lambda: return id(current_mode) == 1;
+                                    - voip_stack.is_active:
                                 then:
                                   - voip_stack.call_toggle:
                                 else:
@@ -3191,7 +3194,9 @@ binary_sensor:
         then:
           - if:
               condition:
-                lambda: return id(current_mode) == 1 && id(phone).is_ringing();
+                and:
+                  - lambda: return id(current_mode) == 1;
+                  - voip_stack.is_ringing:
               then:
                 - voip_stack.decline_call:
               else:
@@ -3206,7 +3211,9 @@ binary_sensor:
                     else:
                       - if:
                           condition:
-                            lambda: return id(current_mode) == 1 && id(phone).is_idle();
+                            and:
+                              - lambda: return id(current_mode) == 1;
+                              - voip_stack.is_idle:
                           then:
                             - voip_stack.next_contact:
       # Long press (3s): switch VA <-> VoIP
@@ -3215,7 +3222,9 @@ binary_sensor:
         then:
           - if:
               condition:
-                lambda: return id(current_mode) == 1 && id(phone).is_idle();
+                and:
+                  - lambda: return id(current_mode) == 1;
+                  - voip_stack.is_idle:
               then:
                 - script.execute: switch_to_va
               else:
@@ -3506,10 +3515,10 @@ select:
                       format: "Switching AEC mode to %s"
                       args: ['x.c_str()']
                   - micro_wake_word.stop:
-                  - esp_audio_stack.stop: audio_stack
+                  - esp_audio_stack.stop:
                   - wait_until:
                       condition:
-                        esp_audio_stack.is_idle: audio_stack
+                        esp_audio_stack.is_idle:
                       timeout: 2s
                   - esp_afe.set_mode:
                       id: afe_processor
@@ -3522,7 +3531,7 @@ select:
                       condition:
                         lambda: 'return id(afe_processor).is_reconfigure_idle() && id(afe_processor).get_last_reconfigure_ok();'
                       then:
-                        - esp_audio_stack.start: audio_stack
+                        - esp_audio_stack.start:
                         - delay: 300ms
                         - if:
                             condition:

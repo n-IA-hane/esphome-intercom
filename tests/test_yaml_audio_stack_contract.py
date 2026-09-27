@@ -24,7 +24,17 @@ def test_ota_waits_for_audio_stack_idle_without_blocking_main_loop() -> None:
         "packages/ota/full_audio_maintenance.yaml",
         "packages/ota/full_audio_lvgl_maintenance.yaml",
     ):
-        text = (ROOT / relative).read_text(encoding="utf-8")
-        assert "- esp_audio_stack.stop: audio_stack" in text
-        assert "esp_audio_stack.is_idle: audio_stack" in text
-        assert "timeout: 2s" in text
+        from esphome import yaml_util
+
+        config = yaml_util.load_yaml(ROOT / relative)
+        steps = config["ota"][0]["on_begin"]
+        stop_index = next(i for i, step in enumerate(steps) if "esp_audio_stack.stop" in step)
+        wait_index = next(
+            i for i, step in enumerate(steps)
+            if "esp_audio_stack.is_idle" in step.get("wait_until", {}).get("condition", {})
+        )
+        assert stop_index < wait_index
+        assert steps[stop_index]["esp_audio_stack.stop"] is None
+        wait = steps[wait_index]["wait_until"]
+        assert wait["condition"]["esp_audio_stack.is_idle"] is None
+        assert wait["timeout"] == "2s"

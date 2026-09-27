@@ -221,7 +221,6 @@ output:
 # =============================================================================
 
 esp_audio_stack:
-  id: audio_stack
   # Keep AEC processing separate from the Opus/network tasks on core 0.
   task_core: 1
   rx_bus:
@@ -281,7 +280,6 @@ speaker:
 # endpoint.
 
 voip_stack:
-  id: phone
   buffers_in_psram: true
   audio:
     # Opus is the VoIP-only default. RTP uses opus/48000/2 (RFC7587);
@@ -366,11 +364,11 @@ select:
             - logger.log:
                 format: "Switching AEC mode to %s"
                 args: ['x.c_str()']
-            - esp_audio_stack.stop: audio_stack
+            - esp_audio_stack.stop:
             - esp_aec.set_mode:
                 id: aec_processor
                 mode: !lambda 'return x;'
-            - esp_audio_stack.start: audio_stack
+            - esp_audio_stack.start:
       # Reflect actual live mode (covers rejection and silent hardware mode).
       - lambda: |-
           id(aec_mode_select).publish_state(id(aec_processor).get_mode_name());

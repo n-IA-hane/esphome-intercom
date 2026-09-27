@@ -277,7 +277,6 @@ output:
 # Bus I2S: enables separate hardware backends for mic RX and speaker TX
 
 esp_audio_stack:
-  id: audio_stack
   rx_bus:
     i2s_num: 0
     i2s_bclk_pin: ${rx_i2s_bclk_pin}
@@ -488,15 +487,15 @@ select:
                       format: "Switching AEC mode to %s"
                       args: ['x.c_str()']
                   - micro_wake_word.stop:
-                  - esp_audio_stack.stop: audio_stack
+                  - esp_audio_stack.stop:
                   - wait_until:
                       condition:
-                        esp_audio_stack.is_idle: audio_stack
+                        esp_audio_stack.is_idle:
                       timeout: 2s
                   - esp_aec.set_mode:
                       id: aec_processor
                       mode: !lambda 'return x;'
-                  - esp_audio_stack.start: audio_stack
+                  - esp_audio_stack.start:
                   - delay: 300ms
                   - if:
                       condition:

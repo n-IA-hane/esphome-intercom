@@ -61,7 +61,8 @@ the retired phonebook subscription package. See the
 When using Audio Stack, declare a single `esp_audio_stack` instance. Its
 microphone, speaker and controls find it automatically, so the maintained YAMLs
 omit `esp_audio_stack_id`. Shared-bus and split-bus modes are both managed by
-that one instance. Keep the stack's `id` if your actions or lambdas use it.
+that one instance. The stack declaration, actions and idle condition can omit
+IDs too. Add a stack `id` only if your custom lambdas or named references need it.
 
 Supported audio shapes:
 

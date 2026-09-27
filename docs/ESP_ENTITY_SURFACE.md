@@ -28,8 +28,10 @@ and the runtime controller are not prerequisites.
 
 An ESP firmware currently supports one `voip_stack` instance. Its entity
 platforms bind to it automatically; `voip_stack_id` is optional and omitted in
-the maintained YAMLs. Keep `id: phone` when other actions, lambdas or runtime
-bindings reference it. This simplification does not remove microphone/speaker
+the maintained YAMLs. Headless profiles can also omit the stack declaration ID:
+parameterless actions and conditions resolve it automatically, and the runtime
+observer can use an empty `voip_stack:` binding. Display profiles still declare
+`id: phone` where custom rendering lambdas read caller names, state or contacts. This simplification does not remove microphone/speaker
 selection or the IDs needed to connect other components.
 
 ## What appears automatically

@@ -402,7 +402,6 @@ light:
 # later after the single-mic path boots and plays.
 
 esp_audio_stack:
-  id: audio_stack
   i2s_lrclk_pin: ${i2s_lrclk_pin}
   i2s_bclk_pin: ${i2s_bclk_pin}
   i2s_mclk_pin: ${i2s_mclk_pin}
@@ -2988,7 +2987,9 @@ binary_sensor:
               else:
                 - if:
                     condition:
-                      lambda: return id(current_mode) == 1 && id(phone).is_idle();
+                      and:
+                        - lambda: return id(current_mode) == 1;
+                        - voip_stack.is_idle:
                     then:
                       - voip_stack.call_toggle:
                     else:
@@ -3022,7 +3023,9 @@ binary_sensor:
               else:
                 - if:
                     condition:
-                      lambda: return id(current_mode) == 1 && id(phone).is_idle();
+                      and:
+                        - lambda: return id(current_mode) == 1;
+                        - voip_stack.is_idle:
                     then:
                       - voip_stack.next_contact:
       # Long press (3s): switch VA <-> VoIP
@@ -3031,7 +3034,9 @@ binary_sensor:
         then:
           - if:
               condition:
-                lambda: return id(current_mode) == 1 && id(phone).is_idle();
+                and:
+                  - lambda: return id(current_mode) == 1;
+                  - voip_stack.is_idle:
               then:
                 - script.execute: switch_to_va
               else:
@@ -3314,15 +3319,15 @@ select:
                       format: "Switching AEC mode to %s"
                       args: ['x.c_str()']
                   - micro_wake_word.stop:
-                  - esp_audio_stack.stop: audio_stack
+                  - esp_audio_stack.stop:
                   - wait_until:
                       condition:
-                        esp_audio_stack.is_idle: audio_stack
+                        esp_audio_stack.is_idle:
                       timeout: 2s
                   - esp_aec.set_mode:
                       id: aec_processor
                       mode: !lambda 'return x;'
-                  - esp_audio_stack.start: audio_stack
+                  - esp_audio_stack.start:
                   - delay: 300ms
                   - if:
                       condition:

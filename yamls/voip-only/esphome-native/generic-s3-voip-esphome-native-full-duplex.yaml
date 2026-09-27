@@ -276,7 +276,6 @@ speaker:
 # both native mic and speaker are configured at that rate.
 
 voip_stack:
-  id: phone
   task_stacks_in_psram: true
   buffers_in_psram: true
   audio:

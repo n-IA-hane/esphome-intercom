@@ -2,7 +2,7 @@
 # Speaker power gating for audio-stack devices (switch enable)
 # =============================================================================
 # Expects:
-#   - esp_audio_stack id: audio_stack
+#   - one esp_audio_stack component
 #   - switch id: speaker_enable
 #   - switch id: speaker_mute
 #
@@ -15,7 +15,6 @@ substitutions:
   audio_stack_speaker_idle_delay: 30s
 
 esp_audio_stack:
-  id: !extend audio_stack
   on_amplifier_required:
     - script.stop: audio_stack_speaker_idle_powerdown
     - if:

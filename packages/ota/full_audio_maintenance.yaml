@@ -4,9 +4,8 @@
 # ESPHome emits ota.on_begin before esp_ota_begin(), so this hook can quiesce
 # audio tasks before flash erase/write preparation starts.
 #
-# Required IDs:
-#   - audio_stack
-#   - VoIP
+# Required components: one Audio Stack and one VoIP Stack.
+# Other required IDs:
 #   - mww
 #   - speaker_media_player
 #   - script: start_mww_when_ready
@@ -32,10 +31,10 @@ ota:
       - voice_assistant.stop:
       - micro_wake_word.stop:
       - voip_stack.stop:
-      - esp_audio_stack.stop: audio_stack
+      - esp_audio_stack.stop:
       - wait_until:
           condition:
-            esp_audio_stack.is_idle: audio_stack
+            esp_audio_stack.is_idle:
           timeout: 2s
     on_abort:
       - script.execute: ota_full_audio_restore
@@ -53,6 +52,6 @@ script:
       - globals.set:
           id: g_ota_in_progress
           value: "false"
-      - esp_audio_stack.start: audio_stack
+      - esp_audio_stack.start:
       # The SIP listener remains available. Do not dial after an OTA failure.
       - script.execute: start_mww_when_ready

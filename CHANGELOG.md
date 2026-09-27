@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+Use existing Audio Stack actions and conditions without fixed IDs. Headless
+profiles also use automatic VoIP and runtime-observer binding. Replace simple
+VoIP state lambdas with component conditions, preserving active-versus-idle
+semantics. Display rendering keeps explicit IDs where it reads phone data.
+
 ## 2026.10.0: build call flows with Home Assistant automations
 
 Changes since stable **2026.9.2**.

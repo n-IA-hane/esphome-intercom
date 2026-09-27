@@ -18,5 +18,4 @@ packages:
   voip_full_runtime_callbacks: !include ../voip/full_runtime_callbacks.yaml
 
 voip_stack:
-  id: phone
   network_socket_headroom: 8

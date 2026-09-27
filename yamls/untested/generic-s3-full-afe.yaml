@@ -253,7 +253,6 @@ logger:
 # =============================================================================
 
 esp_audio_stack:
-  id: audio_stack
   i2s_lrclk_pin: ${i2s_lrclk_pin}
   i2s_bclk_pin: ${i2s_bclk_pin}
   i2s_din_pin: ${i2s_din_pin}
@@ -480,10 +479,10 @@ select:
                       format: "Switching AEC mode to %s"
                       args: ['x.c_str()']
                   - micro_wake_word.stop:
-                  - esp_audio_stack.stop: audio_stack
+                  - esp_audio_stack.stop:
                   - wait_until:
                       condition:
-                        esp_audio_stack.is_idle: audio_stack
+                        esp_audio_stack.is_idle:
                       timeout: 2s
                   - esp_afe.set_mode:
                       id: afe_processor
@@ -496,7 +495,7 @@ select:
                       condition:
                         lambda: 'return id(afe_processor).is_reconfigure_idle() && id(afe_processor).get_last_reconfigure_ok();'
                       then:
-                        - esp_audio_stack.start: audio_stack
+                        - esp_audio_stack.start:
                         - delay: 300ms
                         - if:
                             condition:

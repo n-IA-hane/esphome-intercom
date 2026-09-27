@@ -4,7 +4,6 @@
 # hook scripts and ringtone stop logic. It does not define VA/MWW controls.
 
 voip_stack:
-  id: phone
   on_calling:
     - script.execute:
         id: ui_call_started
@@ -26,7 +25,8 @@ voip_stack:
     # already own the UI when an older call's terminal callback arrives.
     - if:
         condition:
-          lambda: 'return !id(phone).is_active();'
+          not:
+            voip_stack.is_active:
         then:
           - script.execute:
               id: ui_call_ended
@@ -35,7 +35,8 @@ voip_stack:
   on_call_failed:
     - if:
         condition:
-          lambda: 'return !id(phone).is_active();'
+          not:
+            voip_stack.is_active:
         then:
           - script.execute:
               id: ui_call_ended

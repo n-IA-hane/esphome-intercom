@@ -225,7 +225,6 @@ microphone:
 
 voip_stack:
   use_ha_as_first_contact: true
-  id: phone
   task_stacks_in_psram: true
   buffers_in_psram: true
   audio:

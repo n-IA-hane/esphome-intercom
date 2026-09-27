@@ -4,9 +4,8 @@
 # ESPHome emits ota.on_begin before esp_ota_begin(), so this hook can quiesce
 # busy audio/UI tasks before flash erase/write preparation starts.
 #
-# Required IDs:
-#   - audio_stack
-#   - VoIP
+# Required components: one Audio Stack and one VoIP Stack.
+# Other required IDs:
 #   - mww
 #   - speaker_media_player
 #   - scripts: ai_animation_loop, timer_alarm_loop, start_mww_when_ready, draw_display
@@ -36,10 +35,10 @@ ota:
       - voice_assistant.stop:
       - micro_wake_word.stop:
       - voip_stack.stop:
-      - esp_audio_stack.stop: audio_stack
+      - esp_audio_stack.stop:
       - wait_until:
           condition:
-            esp_audio_stack.is_idle: audio_stack
+            esp_audio_stack.is_idle:
           timeout: 2s
       - lvgl.pause:
           show_snow: false
@@ -60,7 +59,7 @@ script:
           id: g_ota_in_progress
           value: "false"
       - lvgl.resume:
-      - esp_audio_stack.start: audio_stack
+      - esp_audio_stack.start:
       # VoIP stop only ends a call; start would dial the selected contact.
       - script.execute: start_mww_when_ready
       - script.execute: draw_display

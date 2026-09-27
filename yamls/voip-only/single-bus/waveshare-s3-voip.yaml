@@ -235,7 +235,6 @@ tca9555:
     i2c_id: internal_i2c
 
 esp_audio_stack:
-  id: audio_stack
   i2s_lrclk_pin: ${i2s_lrclk_pin}
   i2s_bclk_pin: ${i2s_bclk_pin}
   i2s_mclk_pin: ${i2s_mclk_pin}
@@ -337,7 +336,6 @@ media_player:
 # endpoint.
 
 voip_stack:
-  id: phone
   task_stacks_in_psram: true
   audio_task_stacks_in_psram: true
   buffers_in_psram: true
@@ -412,11 +410,11 @@ select:
             - logger.log:
                 format: "Switching AEC mode to %s"
                 args: ['x.c_str()']
-            - esp_audio_stack.stop: audio_stack
+            - esp_audio_stack.stop:
             - esp_aec.set_mode:
                 id: aec_processor
                 mode: !lambda 'return x;'
-            - esp_audio_stack.start: audio_stack
+            - esp_audio_stack.start:
       # Reflect actual live mode (covers rejection and silent hardware mode).
       - lambda: |-
           id(aec_mode_select).publish_state(id(aec_processor).get_mode_name());
