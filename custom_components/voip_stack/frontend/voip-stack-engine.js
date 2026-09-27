@@ -644,6 +644,17 @@ class VoipStackEngine extends EventTarget {
     return true;
   }
 
+  activateSoftphoneController(owner, controllerKey, endpointId) {
+    if (!owner || owner.isConnected === false) return false;
+    const endpoint = String(endpointId || "").trim();
+    const key = String(controllerKey || "").trim();
+    if (!endpoint || !key) return false;
+    const current = this._softphoneControllers.get(key);
+    if (current && current !== owner && this.softphoneCallIdFor(endpoint)) return false;
+    this._softphoneControllers.set(key, owner);
+    return true;
+  }
+
   releaseSoftphoneController(owner, endpointId) {
     const endpoint = String(endpointId || "").trim();
     if (!owner || this._softphoneControllers.get(endpoint) !== owner) return false;

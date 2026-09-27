@@ -218,6 +218,21 @@ for (const mode of ["retry", "already-ended", "new-call", "offline", "denied"]) 
 
 // Browser media capability is checked before SIP Answer or Call. Missing
 // getUserMedia must fail here, not after a remote dialog has received 200 OK.
+const presentation = new Engine();
+const cardOwner = {{ isConnected: true }};
+const popupOwner = {{ isConnected: true }};
+assert.equal(presentation.claimSoftphoneController(cardOwner, "device:default"), true);
+assert.equal(presentation.claimSoftphoneController(popupOwner, "device:default"), false);
+assert.equal(presentation.activateSoftphoneController(popupOwner, "device:default", "default"), true);
+presentation.claimSoftphoneSession("popup-call", "default");
+assert.equal(presentation.claimSoftphoneController(cardOwner, "device:default"), false);
+assert.equal(presentation.activateSoftphoneController(cardOwner, "device:default", "default"), false);
+presentation.releaseSoftphoneSession("popup-call", "default");
+assert.equal(presentation.activateSoftphoneController(cardOwner, "device:default", "default"), true);
+presentation.claimSoftphoneSession("card-call", "default");
+assert.equal(presentation.activateSoftphoneController(popupOwner, "device:default", "default"), false);
+presentation.releaseSoftphoneSession("card-call", "default");
+
 const audioPreflight = new Engine();
 await assert.rejects(
   audioPreflight.prepareAudioCall(),

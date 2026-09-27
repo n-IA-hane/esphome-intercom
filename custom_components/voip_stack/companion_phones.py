@@ -24,7 +24,6 @@ from .runtime_data import require_runtime_data
 from .websocket_api import HA_SOFTPHONE_STATE_EVENT
 
 _LOGGER = logging.getLogger(__name__)
-_INVITATION_LIFETIME = 120.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,8 +38,9 @@ class CompanionBinding:
 @dataclass(frozen=True, slots=True)
 class CompanionInvitation:
     token: CompanionCallToken
-    expires: float
+    expires: float | None
     caller: str
+    phase: str = "ringing"
 
 
 def companion_display_name(hass: HomeAssistant, mobile: ConfigEntry) -> str:
@@ -162,19 +162,23 @@ class CompanionPhones:
             return
         phase = event.data.get("state")
         previous = self.invitations.get(endpoint_id)
-        if phase == "ringing":
+        if phase in {"calling", "remote_ringing", "connecting", "ringing", "in_call"}:
             call_id = str(event.data.get("call_id", ""))
             generation = call_registry(self.hass).current_generation(call_id)
             if generation is None:
                 return
             token = CompanionCallToken(binding.registration_id, call_id, generation)
-            if previous is not None and previous.token == token:
+            if previous is not None and previous.token == token and previous.phase == phase:
                 return
-            invitation = CompanionInvitation(token, time.monotonic() + _INVITATION_LIFETIME,
-                str(event.data.get("caller") or event.data.get("peer_name") or "Home Assistant"))
+            invitation = CompanionInvitation(
+                token, previous.expires if previous and previous.token == token else None,
+                str(event.data.get("caller") or event.data.get("peer_name") or "Home Assistant"), str(phase))
             self.invitations[endpoint_id] = invitation
-            create_runtime_task(self.hass, self._notify(binding, invitation, "ring"))
-        elif phase not in {"connecting", "in_call", "ringing"} and previous is not None:
+            if phase == "ringing" and event.data.get("direction") != "outgoing" and (previous is None or previous.token != token):
+                create_runtime_task(self.hass, self._notify(binding, invitation, "ring"))
+            elif phase == "in_call" and event.data.get("direction") == "outgoing":
+                create_runtime_task(self.hass, self._notify(binding, invitation, "refresh"))
+        elif previous is not None and str(event.data.get("call_id", "")) == previous.token.call_id:
             self.invitations.pop(endpoint_id, None)
             create_runtime_task(self.hass, self._notify(binding, previous, "cancel"))
 

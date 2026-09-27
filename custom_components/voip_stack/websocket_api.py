@@ -983,7 +983,17 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
         rtp_rx_bytes=_runtime_counter(store, runtime, "rtp_rx_bytes"),
         last_sip_event=last_event,
     )
+    native_call = None
+    if endpoint is not None and endpoint.kind is EndpointKind.COMPANION and call_id:
+        manager = getattr(entry_runtime, "companion_phones", None)
+        binding = manager.bindings.get(endpoint_id) if manager is not None else None
+        generation = registry.current_generation(call_id)
+        if binding is not None and generation is not None:
+            from .companion_protocol import CompanionCallToken
+            token = CompanionCallToken(binding.registration_id, call_id, generation)
+            native_call = {"callId": call_id, "callPath": token.path()}
     return {
+        "native_call": native_call,
         **phone,
         "endpoint_id": endpoint_id,
         "device_id": (
@@ -1338,8 +1348,11 @@ def _ha_softphone_device(
 ) -> dict[str, Any]:
     endpoint_id = _endpoint_store_id(endpoint_id)
     state = _ha_softphone_state(hass, endpoint_id)
+    manager = getattr(require_runtime_data(hass), "companion_phones", None)
+    binding = manager.bindings.get(endpoint_id) if manager is not None else None
     return {
         "endpoint_id": endpoint_id,
+        "mobile_device_id": binding.mobile_device_id if binding else None,
         "endpoint_type": state.get("endpoint_type", EndpointKind.BROWSER.value),
         "device_id": state.get("device_id") or "",
         "name": state.get("name") or _ha_peer_name(hass),

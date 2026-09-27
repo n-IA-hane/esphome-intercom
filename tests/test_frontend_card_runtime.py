@@ -91,6 +91,7 @@ const engine = {{
   addEventListener() {{}},
   removeEventListener() {{}},
   claimSoftphoneController(card) {{ return !!card?.isConnected; }},
+  activateSoftphoneController(card) {{ return !!card?.isConnected; }},
   releaseSoftphoneController() {{}},
   claimVideoCanvas() {{ return false; }},
   releaseVideoCanvas() {{ return false; }},

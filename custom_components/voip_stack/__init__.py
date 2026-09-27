@@ -316,7 +316,13 @@ async def _handle_sip_call_target_service(
     )
     if not call.return_response:
         return None
-    return result.as_service_response()
+    response = result.as_service_response()
+    if result.phone.kind.value == "companion":
+        manager = _runtime_data(call.hass).companion_phones
+        invitation = manager.invitations.get(result.phone.endpoint_id) if manager else None
+        if invitation is not None and invitation.token.call_id == result.call_id:
+            response["native_call"] = {"callId": result.call_id, "callPath": invitation.token.path()}
+    return response
 
 
 async def _originate_phone_action(

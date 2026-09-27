@@ -385,7 +385,7 @@ class PhoneAdapterRegistry:
                 return self._endpoint_handle(endpoint, frozenset())
             if endpoint.kind.is_softphone:
                 capabilities = ALL_PHONE_OPERATIONS
-                if endpoint.kind is EndpointKind.COMPANION:
+                if endpoint.kind is EndpointKind.COMPANION and not call.data.get("media_client_id"):
                     capabilities = capabilities - {PhoneOperation.ORIGINATE}
                 return self._endpoint_handle(endpoint, capabilities)
 

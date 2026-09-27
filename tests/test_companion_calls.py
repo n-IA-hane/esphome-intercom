@@ -216,3 +216,58 @@ async def test_disabled_companion_support_preserves_phone_and_makes_it_unavailab
     assert endpoint is not None
     assert endpoint.availability.value == "unavailable"
     assert endpoint.active_call_id == "call-1"
+
+
+@pytest.mark.asyncio
+async def test_outgoing_native_call_notifies_connection_without_incoming_ring(fixture, monkeypatch):
+    f = fixture
+    manager = phones.CompanionPhones(f.hass, SimpleNamespace())
+    manager.bindings[f.binding.endpoint_id] = f.binding
+    manager._notify = AsyncMock()
+    tasks = []
+    monkeypatch.setattr(phones, "call_registry", lambda hass: SimpleNamespace(current_generation=lambda c: 7))
+    monkeypatch.setattr(phones, "create_runtime_task", lambda hass, coro: tasks.append(asyncio.create_task(coro)))
+    for phase in ("calling", "remote_ringing", "in_call", "in_call", "idle"):
+        manager._call_changed(SimpleNamespace(data={"endpoint_id": f.binding.endpoint_id,
+            "call_id": "call-1", "state": phase, "direction": "outgoing", "callee": "Office"}))
+    await asyncio.gather(*tasks)
+    assert [call.args[2] for call in manager._notify.await_args_list] == ["refresh", "cancel"]
+    assert manager.invitations == {}
+
+
+@pytest.mark.asyncio
+async def test_old_terminal_event_cannot_cancel_a_new_native_invitation(fixture, monkeypatch):
+    f = fixture
+    manager = phones.CompanionPhones(f.hass, SimpleNamespace())
+    manager.bindings[f.binding.endpoint_id] = f.binding
+    manager.invitations[f.binding.endpoint_id] = f.invitation
+    manager._notify = AsyncMock()
+    manager._call_changed(SimpleNamespace(data={"endpoint_id": f.binding.endpoint_id,
+        "call_id": "old-call", "state": "idle"}))
+    assert manager.invitations[f.binding.endpoint_id] == f.invitation
+    manager._notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_connected_outgoing_descriptor_uses_existing_media_transport(fixture):
+    f = fixture
+    f.snapshot.update(state="in_call", direction="outgoing", callee="Office")
+    response = await views.CompanionCallView().get(f.request)
+    import json
+    description = json.loads(response.text)
+    assert description["direction"] == "outgoing"
+    assert description["caller"] == "Office"
+    path = urlsplit(description["media_path"])
+    assert path.path == "/api/voip_stack/ws"
+    assert parse_qs(path.query)["endpoint_id"] == [f.binding.endpoint_id]
+    assert parse_qs(path.query)["call_id"] == [f.token.call_id]
+
+
+@pytest.mark.asyncio
+async def test_native_invitation_without_domain_deadline_does_not_invent_ring_timeout(fixture):
+    f = fixture
+    from dataclasses import replace
+    f.manager.invitations[f.binding.endpoint_id] = replace(f.invitation, expires=None)
+    response = await views.CompanionCallView().get(f.request)
+    import json
+    assert json.loads(response.text)["remaining_ms"] is None

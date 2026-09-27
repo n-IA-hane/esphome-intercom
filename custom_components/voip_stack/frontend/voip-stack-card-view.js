@@ -235,6 +235,7 @@ export function buildMainCardSkeleton(cardVersion) {
         text-align: center;
         color-scheme: light dark;
       }
+      .keypad-grid[hidden] { display: none; }
       .keypad-grid {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -937,7 +938,7 @@ export function buildMainCardSkeleton(cardVersion) {
       card, videoCanvas, nativeCameraHost, videoShade,
       header, headerName,
       destRow, destValueWrap, destValue, destSelect, prevBtn, nextBtn, offlinePanel,
-      keypadPanel, keypadInput, keypadKeys,
+      keypadPanel, keypadInput, keypadKeys, keypadGrid,
       answerBtn, declineBtn, hangupBtn, hangupState, hangupPeer, hangupStats, hangupDuration, callBtn, placeholderBtn,
       statusIndicator, statusText, statusReason,
       runtimeControls, keypadBtn, keypadLabel, settingsBtn, settingsPanel,

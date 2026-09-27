@@ -48,16 +48,23 @@ class CompanionCallView(HomeAssistantView):
             or not registry.is_generation_current(call_id, generation)):
             raise web.HTTPGone(text="Call is no longer active for this phone")
         snapshot = _ha_softphone_state(hass, binding.endpoint_id)
-        if snapshot.get("state") == "ringing" and invitation.expires <= time.monotonic():
+        if snapshot.get("state") == "ringing" and invitation.expires is not None and invitation.expires <= time.monotonic():
             raise web.HTTPGone(text="Call invitation expired")
         return hass, binding, invitation, endpoint, snapshot
 
     def _description(self, invitation, snapshot, media_path=None):
+        outgoing = snapshot.get("direction") == "outgoing"
+        if outgoing and snapshot.get("state") == "in_call" and media_path is None:
+            media_path = "/api/voip_stack/ws?" + urlencode({
+                "endpoint_id": companion_endpoint_id(invitation.token.registration_id),
+                "call_id": invitation.token.call_id,
+            })
         return web.json_response({
             "id": invitation.token.call_id,
             "state": snapshot.get("state", "idle"),
-            "caller": invitation.caller,
-            "remaining_ms": max(0, round((invitation.expires - time.monotonic()) * 1000)),
+            "caller": str(snapshot.get("peer_name") or snapshot.get("callee") or invitation.caller) if outgoing else invitation.caller,
+            "direction": "outgoing" if outgoing else "incoming",
+            "remaining_ms": max(0, round((invitation.expires - time.monotonic()) * 1000)) if invitation.expires is not None else None,
             "media_path": media_path,
         })
 
