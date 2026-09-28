@@ -1,6 +1,30 @@
 # Changelog
 
-## Unreleased
+## 2026.10.1-dev
+
+Changes since stable **2026.10.0**. This is a development preview.
+
+### Home Assistant
+
+- Add a **Register the trunk** choice. Static trunks can place and receive calls
+  without REGISTER, using an explicit list of permitted incoming SIP source IPs
+  or CIDR networks. Credentials are optional in this mode; INVITE digest remains
+  available when required by the peer.
+- Show source-IP settings only for static trunks and registration expiry only
+  for registered trunks. Diagnostics distinguish registration from route availability.
+- Include experimental, opt-in Companion phone discovery and a dashboard composer.
+  Native phone calls require a compatible experimental Companion build; the menu
+  entry requires the proposed frontend API. Official HA and Companion releases do
+  not yet provide these APIs. See the pending upstream proposals before testing
+  those features.
+
+Static-trunk qualification covers real baresip calls over UDP and TCP, measured
+bidirectional audio, termination from both sides, repeated calls, SIP captures
+without REGISTER, and rejection of an untrusted source attempting external routing.
+Tests against the requesting user's gateway and carrier-specific deployments are
+still requested. Setup: [SIP trunk guide](docs/SIP_TRUNK.md#static-trunk-without-register).
+
+### ESPHome configuration
 
 Use existing Audio Stack actions and conditions without fixed IDs. Headless
 profiles also use automatic VoIP and runtime-observer binding. Replace simple

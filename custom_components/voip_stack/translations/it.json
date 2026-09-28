@@ -14,7 +14,8 @@
           "media_capture": "Registra audio privato per la diagnostica",
           "experimental_sip_video": "Abilita video SIP per il softphone Home Assistant",
           "sip_registrar_enabled": "Abilita account softphone SIP locali",
-          "trunk_enabled": "Abilita trunk SIP opzionale"
+          "trunk_enabled": "Abilita trunk SIP opzionale",
+          "companion_enabled": "Abilita telefoni Companion"
         },
         "data_description": {
           "sip_port": "Porta di ascolto dell'endpoint SIP HA. HA accetta signaling SIP sia su UDP sia su TCP su questa porta.",
@@ -26,7 +27,8 @@
           "media_capture": "Registra esplicitamente audio privato delle chiamate: fino a 15 secondi per direzione del softphone HA e 8 secondi per tratta relay, salvati come WAV/JSON in ~/.cache/voip_stack_debug (permessi 0700) e limitati a 24 file / 64 MiB. Mantienilo disabilitato salvo durante una cattura diagnostica.",
           "experimental_sip_video": "Permette al softphone Home Assistant di negoziare video SIP con telefoni, softphone e videocitofoni standard compatibili. H.264, VP8 e JPEG usano un percorso diretto nel browser. Gli endpoint audio ESP restano solo audio. Richiede HTTPS e un browser compatibile.",
           "sip_registrar_enabled": "Accetta REGISTER da softphone locali come Zoiper, Linphone o baresip usando account gestiti dai servizi VoIP Stack.",
-          "trunk_enabled": "Mostra le impostazioni provider/PBX. Se disattivo, non parte nessuna registrazione trunk, rotta esterna o raccolta DTMF."
+          "trunk_enabled": "Mostra le impostazioni provider/PBX. Se disattivo, non parte nessuna registrazione trunk, rotta esterna o raccolta DTMF.",
+          "companion_enabled": "Rileva le app Companion compatibili come telefoni separati per le chiamate in ingresso. I nomi seguono il device tracker mobile_app. Richiede una versione Companion con supporto alle chiamate native."
         }
       },
       "video": {
@@ -57,7 +59,7 @@
       },
       "trunk": {
         "title": "Trunk SIP opzionale",
-        "description": "Registra Home Assistant a un trunk provider/PBX. Le chiamate in ingresso usano la rubrica centrale e possono offrire un breve punto di decisione alle automazioni sperimentali.",
+        "description": "Collega Home Assistant a un gestore o PBX. Le chiamate in ingresso seguono le regole configurate e le eventuali automazioni.",
         "data": {
           "trunk_transport": "Transport SIP trunk",
           "trunk_server": "Server trunk",
@@ -72,7 +74,8 @@
           "trunk_inbound_mode": "Gestione chiamate in ingresso",
           "automation_routing_enabled": "Consenti alle automazioni di scegliere la destinazione in ingresso",
           "trunk_dtmf_timeout_ms": "Timeout DTMF (secondi)",
-          "trunk_dtmf_terminator": "Terminatore DTMF"
+          "trunk_dtmf_terminator": "Terminatore DTMF",
+          "trunk_allowed_ips": "Indirizzi IP autorizzati in ingresso"
         },
         "data_description": {
           "trunk_transport": "Transport SIP usato da HA verso il provider.",
@@ -88,7 +91,15 @@
           "trunk_inbound_mode": "Instrada subito evita la raccolta cifre. Raccogli interno con DTMF risponde prima sul trunk e permette alle cifre esplicite di scegliere un interno della rubrica.",
           "automation_routing_enabled": "Prima di usare la destinazione di fallback, pubblica una breve richiesta di instradamento a cui può rispondere un'automazione. Le cifre DTMF esplicite mantengono sempre la priorità.",
           "trunk_dtmf_timeout_ms": "Timeout tra cifre usato in modalità DTMF. Per la prima cifra sono disponibili 10 secondi. Default 3 secondi, massimo 10 secondi.",
-          "trunk_dtmf_terminator": "Terminatore opzionale, per esempio #. Vuoto significa che decide timeout o match esatto con una extension in rubrica."
+          "trunk_dtmf_terminator": "Terminatore opzionale, per esempio #. Vuoto significa che decide timeout o match esatto con una extension in rubrica.",
+          "trunk_allowed_ips": "Inserisci separatamente ogni IP sorgente o rete CIDR autorizzati. Possono differire dal server in uscita. Obbligatori senza registrazione."
+        }
+      },
+      "trunk_mode": {
+        "title": "Registrazione trunk",
+        "description": "Lascia attivo per un account del gestore. Disattiva per un trunk statico senza REGISTER. Configura gli IP autorizzati nel passaggio successivo.",
+        "data": {
+          "trunk_register": "Registra il trunk"
         }
       }
     },
@@ -98,7 +109,8 @@
       "assist_extension_conflict": "L'interno dell'assistente vocale è già usato da un'altra rotta.",
       "trunk_server_required": "Il server trunk è obbligatorio.",
       "trunk_username_required": "Lo username trunk è obbligatorio.",
-      "trunk_password_required": "La password trunk è obbligatoria."
+      "trunk_password_required": "La password trunk è obbligatoria.",
+      "trunk_allowed_ips_invalid": "Inserisci almeno un IP o una rete CIDR validi. Non sono ammesse reti /0 senza restrizioni."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack riconfigurato correttamente.",
@@ -162,6 +174,22 @@
         },
         "reconfigure": {
           "title": "Riconfigura telefono"
+        },
+        "companion": {
+          "title": "Telefono Companion",
+          "description": "Configura questo telefono Companion. Il nome segue il relativo device tracker mobile_app.",
+          "data": {
+            "extension": "Interno",
+            "enabled": "Abilitato",
+            "dnd": "Non disturbare",
+            "ring_group": "Gruppo di chiamata",
+            "conference_group": "Gruppo conferenza",
+            "conference_ring": "Squilla per le conferenze"
+          },
+          "data_description": {
+            "name": "Nome obbligatorio usato da card, rubrica e instradamento.",
+            "extension": "Interno componibile opzionale e univoco. Il telefono logico resta chiamabile anche senza card browser collegata."
+          }
         }
       },
       "error": {

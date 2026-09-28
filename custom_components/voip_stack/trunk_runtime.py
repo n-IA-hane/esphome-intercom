@@ -9,6 +9,8 @@ from homeassistant.core import HomeAssistant
 
 from .config import transport_config, trunk_config, trunk_enabled
 from .const import (
+    CONF_TRUNK_REGISTER,
+    CONF_TRUNK_ALLOWED_IPS,
     CONF_TRUNK_AUTH_USERNAME,
     CONF_TRUNK_DOMAIN,
     CONF_TRUNK_EXPIRES,
@@ -38,6 +40,8 @@ async def async_start_sip_trunk(hass: HomeAssistant, *, local_ip: str) -> bool:
     trunk = SipTrunkClient(
         config=SipTrunkConfig(
             enabled=True,
+            register=bool(cfg[CONF_TRUNK_REGISTER]),
+            allowed_ips=tuple(cfg[CONF_TRUNK_ALLOWED_IPS]),
             transport=str(cfg[CONF_TRUNK_TRANSPORT]),
             server=str(cfg[CONF_TRUNK_SERVER]),
             port=int(cfg[CONF_TRUNK_PORT]),

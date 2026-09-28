@@ -7,6 +7,7 @@ import logging
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
+from .trunk_policy import trunk_available
 from .call_projection import publish_phone_projection
 from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .authorization import async_require_service_admin
@@ -215,7 +216,7 @@ async def async_originate_browser_call(
     trunk = sip_trunk(hass)
     trunk_cfg = _get_trunk_config(hass)
     trunk_ready = _trunk_enabled(trunk_cfg) and bool(
-        getattr(trunk, "registered", False)
+        trunk_available(trunk)
     )
     sensor = hass.states.get("sensor.voip_phonebook")
     roster_json = (
@@ -316,7 +317,7 @@ async def async_originate_browser_call(
     )
     if route.action is RouteAction.TRUNK and not use_trunk:
         raise _service_error(
-            f"{target} requires a registered SIP trunk",
+            f"{target} requires an available SIP trunk",
             "trunk_required",
             destination=target,
         )

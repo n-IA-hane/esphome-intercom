@@ -96,7 +96,7 @@ when installing the Home Assistant integration alone.
 | Ring groups | Ring several eligible endpoints; the first answer wins and the losing branches are cancelled. | [Groups](docs/GROUPS.md#ring-group) |
 | Audio conferences | Host a local audio conference in HA and optionally ring its members. | [Groups](docs/GROUPS.md#conference-group) |
 | Callable Assist | Give a native Assist pipeline an extension and talk to it from ESP, SIP or trunk callers. | [Assist calls](#assist-as-a-phone-extension) |
-| External calls | Register an optional provider/PBX trunk for inbound and outbound calls. | [SIP trunk](docs/SIP_TRUNK.md) |
+| External calls | Connect an optional provider/PBX trunk using registration or source-IP authorization. | [SIP trunk](docs/SIP_TRUNK.md) |
 | Contextual routing | Use native HA entities, conditions and services for presence, schedules, no-answer forwarding and in-call DTMF. | [Automation cookbook](docs/AUTOMATION_DIALPLAN.md) |
 
 ## Fastest start
@@ -491,8 +491,9 @@ call completion, fallback, time limits, concurrent callers and troubleshooting.
 
 ## Optional SIP trunk
 
-The trunk is disabled by default. Enable it only when HA must register to a
-provider or another PBX.
+The trunk is disabled by default. Enable it to connect HA to a provider or another
+PBX. Keep **Register the trunk** enabled for account registration, or disable it
+for a static trunk and configure the allowed incoming SIP source IPs.
 
 Inbound mode can route immediately or collect an internal extension through
 negotiated RTP `telephone-event`/compatible SIP INFO DTMF. Outbound contacts

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
 
+from .trunk_policy import trunk_available
 from .core import sdp as sip_sdp
 from .core.audio_format import (
     HA_SIP_PCM_FORMATS,
@@ -90,10 +91,10 @@ MAX_PENDING_HA_INVITES = 64
 
 
 def _classify_trunk_invite(invite, *, enabled: bool, trunk):
-    """Apply the authoritative registered-trunk source classification."""
+    """Apply the authoritative trunk source classification."""
 
     trusted = False
-    if enabled and getattr(trunk, "registered", False):
+    if enabled and trunk_available(trunk):
         if invite.received_via_trunk:
             trusted = True
         else:

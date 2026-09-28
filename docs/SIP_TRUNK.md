@@ -1,7 +1,7 @@
 # Optional SIP trunk
 
-Home Assistant can optionally register one SIP trunk account with a provider or
-PBX. This does not change the local contract: ESP devices remain direct SIP
+Home Assistant can connect one SIP trunk to a provider or PBX, either with
+registration or as a static trunk authorized by source IP. This does not change the local contract: ESP devices remain direct SIP
 phones and do not register to the provider.
 
 When the trunk is disabled, no trunk registration, external outbound routing or
@@ -21,18 +21,55 @@ endpoint identity and media ports:
 - optional local SIP registrar
 - optional trunk enable switch
 
-Only when the trunk switch is enabled does the second setup step ask for trunk
-details:
+Enable the trunk, then choose **Register the trunk**. It is enabled by default
+for existing provider accounts. The following step asks for trunk details:
 
-- transport: `udp` or `tcp`
+- transport: `udp`, `tcp` or `tls`
 - server, port and optional domain
 - username, optional auth username and password
-- REGISTER expiration
+- REGISTER expiration when registration is enabled
+- allowed incoming IP addresses when registration is disabled
 - optional outbound proxy
 - inbound default target
 - incoming routing mode: Direct or DTMF extension selection
 - optional experimental automation routing override
 - DTMF timeout and optional terminator
+
+### Static trunk without REGISTER
+
+Disable **Register the trunk** when the other PBX or provider routes calls to a
+fixed SIP address instead of accepting account registrations. In this mode:
+
+1. Set **Trunk server** and **Trunk SIP port** to the destination for outbound calls.
+2. Add each **Allowed incoming IP address**, or CIDR network, supplied by the provider.
+   These are the source addresses of its SIP signaling, which may differ from the
+   outbound server. Use literal IPv4/IPv6 addresses or restricted networks; `/0`
+   entries are rejected. This list is required and is shown only in static mode.
+3. Configure the other system to send inbound calls to HA's reachable SIP address
+   and listening port. Without REGISTER, HA does not publish this destination to it.
+4. Select the incoming destination or routing automation as usual.
+
+For example, a local gateway at `192.168.1.50:5060` can be both the outbound server
+and the allowed incoming address `192.168.1.50`. A provider with several signaling
+servers needs each permitted source address or network listed separately.
+
+Username and password are optional in static mode. Keep credentials if the peer
+challenges outbound INVITEs; disabling REGISTER does not disable SIP digest support.
+The username also supplies the outbound SIP identity when configured.
+
+HA sends no REGISTER, registration refresh or unregister in this mode. OPTIONS
+is not used to simulate registration. Availability means the static route is
+configured, not that the remote peer has been probed successfully. Calls still
+report connection failures normally. The allowed IP list applies to SIP signaling,
+not the RTP media addresses negotiated in SDP.
+
+Calls from a matching source use the existing trunk routing rules. Other sources
+do not acquire trunk privileges; registered phones and ESP endpoints keep their
+existing call paths. Local phonebook destinations, DTMF and automation routing
+continue to use the shared call implementation. This option does not add multiple
+trunks or change how the inbound fallback destination is selected.
+
+### Registered trunk
 
 The REGISTER Request-URI identifies the registrar domain, for example
 `sip:example.invalid`. The account address of record remains in `To` and
@@ -54,11 +91,12 @@ Local targets still resolve through the phonebook first.
 - A known phonebook name routes direct or via HA according to the roster.
 - A logical name can be bridged by HA.
 - A contact `number` or unresolved external-looking number can route through
-  the registered trunk. Local/internal digits should be modeled as
+  the available trunk. Local/internal digits should be modeled as
   `extension`.
 
-If the trunk is configured but not registered, outbound unresolved targets fail
-as routing errors. There is no proprietary intercom compatibility route.
+In registration mode, the trunk must be registered before routing unresolved
+outbound targets. In static mode, the configured route is available without
+registration. There is no proprietary intercom compatibility route.
 
 ## Inbound routing
 

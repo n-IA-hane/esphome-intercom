@@ -15,6 +15,8 @@ from .const import (
     CONF_VIDEO_CAMERA_SEND,
     CONF_VIDEO_TRANSCODING,
     CONF_REGISTRAR_ENABLED,
+    CONF_TRUNK_REGISTER,
+    CONF_TRUNK_ALLOWED_IPS,
     CONF_TRUNK_AUTH_USERNAME,
     CONF_TRUNK_DOMAIN,
     CONF_TRUNK_DTMF_ENABLED,
@@ -82,6 +84,8 @@ def entry_trunk_config(entry: ConfigEntry | None = None) -> dict:
     dtmf_enabled = inbound_mode == TRUNK_INBOUND_MODE_DTMF and dtmf_timeout_ms > 0
     return {
         CONF_TRUNK_ENABLED: bool(data.get(CONF_TRUNK_ENABLED, False)),
+        CONF_TRUNK_REGISTER: bool(data.get(CONF_TRUNK_REGISTER, True)),
+        CONF_TRUNK_ALLOWED_IPS: data.get(CONF_TRUNK_ALLOWED_IPS, []),
         CONF_TRUNK_TRANSPORT: str(data.get(CONF_TRUNK_TRANSPORT) or "udp")
         .strip()
         .lower(),
@@ -148,8 +152,11 @@ def trunk_enabled(cfg: dict) -> bool:
     return bool(
         cfg.get(CONF_TRUNK_ENABLED)
         and cfg.get(CONF_TRUNK_SERVER)
-        and cfg.get(CONF_TRUNK_USERNAME)
-        and cfg.get(CONF_TRUNK_PASSWORD)
+        and (
+            (cfg.get(CONF_TRUNK_USERNAME) and cfg.get(CONF_TRUNK_PASSWORD))
+            if cfg.get(CONF_TRUNK_REGISTER, True)
+            else cfg.get(CONF_TRUNK_ALLOWED_IPS)
+        )
     )
 
 

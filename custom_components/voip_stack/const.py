@@ -61,3 +61,6 @@ HA_SOFTPHONE_CALL_STATE_ENTITY_ID = "sensor.voip_stack_call_state"
 
 VOIP_STACK_SIP_PORT = 5060
 VOIP_STACK_RTP_PORT = 40000
+
+CONF_TRUNK_REGISTER = "trunk_register"
+CONF_TRUNK_ALLOWED_IPS = "trunk_allowed_ips"

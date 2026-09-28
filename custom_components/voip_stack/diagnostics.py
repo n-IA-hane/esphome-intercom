@@ -142,6 +142,8 @@ def _trunk_summary(hass: HomeAssistant, bucket: dict[str, Any]) -> dict[str, Any
     return {
         "enabled": bool(data.get("trunk_enabled")),
         "registered": bool(data.get("trunk_registered")),
+        "registration_enabled": bool(data.get("trunk_registration_enabled", True)),
+        "ready": bool(data.get("trunk_ready", data.get("trunk_registered"))),
         "status_code": int(data.get("trunk_status_code") or 0),
         "transport": str(data.get("trunk_transport") or ""),
         "expires_at": float(data.get("trunk_expires_at") or 0.0),

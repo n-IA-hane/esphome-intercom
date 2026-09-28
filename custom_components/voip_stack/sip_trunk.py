@@ -20,6 +20,7 @@ import time
 import uuid
 from typing import Any, Awaitable, Callable
 
+from .trunk_policy import trusted_networks
 from .sip_capture import send_sip_datagram
 
 from .core import sip
@@ -77,6 +78,8 @@ class SipTrunkConfig:
     password: str
     expires: int
     outbound_proxy: str = ""
+    register: bool = True
+    allowed_ips: tuple[str, ...] = ()
 
 
 class SipTrunkClient:
@@ -90,6 +93,9 @@ class SipTrunkClient:
         tls_context: ssl.SSLContext | None = None,
     ) -> None:
         self.config = config
+        self._trusted_networks = (
+            trusted_networks(config.allowed_ips) if not config.register else ()
+        )
         self.local_ip = local_ip
         self.local_sip_port = int(local_sip_port)
         self.transport_name = (config.transport or "udp").upper()
@@ -258,7 +264,18 @@ class SipTrunkClient:
             await self.stop()
             raise
 
+    @property
+    def ready(self) -> bool:
+        """Static peers use the existing listener and per-call SIP transports."""
+        return not self._stopped and (
+            self.registered if self.config.register else bool(self._trusted_networks)
+        )
+
     async def _start(self) -> None:
+        if not self.config.register:
+            self.last_sip_event = "STATIC"
+            self.status_reason = "Registration disabled; inbound IP allowlist active"
+            return
         try:
             if self.transport_name in {"TCP", "TLS"}:
                 await self._connect_tcp()
@@ -626,9 +643,17 @@ class SipTrunkClient:
         source_port: int,
         signaling_transport: str,
     ) -> bool:
-        """Identify an inbound request using the configured UDP peer ACL."""
+        """Identify an inbound request using the trunk source policy."""
 
         del source_port
+        if not self.config.register:
+            source = self._normalize_ip(source_host)
+            return bool(
+                self.ready
+                and str(signaling_transport or "").upper() == self.transport_name
+                and source
+                and any(ipaddress.ip_address(source) in network for network in self._trusted_networks)
+            )
         return bool(
             self.registered
             and self.transport_name == "UDP"
@@ -976,6 +1001,8 @@ class SipTrunkClient:
         expires: int | None = None,
         timeout: float = SIP_TIMER_F,
     ) -> str:
+        if not self.config.register:
+            return "registration_disabled"
         expires_value = int(self.config.expires if expires is None else expires)
         auth_values: dict[str, str] = {}
         auth_challenges = DigestChallengeTracker()
@@ -1190,6 +1217,8 @@ class SipTrunkClient:
         return {
             "trunk_enabled": bool(self.config.enabled),
             "trunk_registered": self.registered,
+            "trunk_registration_enabled": self.config.register,
+            "trunk_ready": self.ready,
             "trunk_status_code": self.status_code,
             "trunk_status_reason": self.status_reason,
             "trunk_expires_at": self.expires_at,

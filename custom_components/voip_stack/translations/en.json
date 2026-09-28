@@ -59,7 +59,7 @@
       },
       "trunk": {
         "title": "Optional SIP Trunk",
-        "description": "Register Home Assistant to one provider/PBX trunk. Incoming calls use the central phonebook and may optionally expose a short decision point to experimental automations.",
+        "description": "Connect Home Assistant to one provider or PBX. Incoming calls follow the configured routing and optional automations.",
         "data": {
           "trunk_transport": "Trunk SIP transport",
           "trunk_server": "Trunk server",
@@ -74,7 +74,8 @@
           "trunk_inbound_mode": "Incoming call handling",
           "automation_routing_enabled": "Allow automations to select the inbound destination",
           "trunk_dtmf_timeout_ms": "DTMF timeout (seconds)",
-          "trunk_dtmf_terminator": "DTMF terminator"
+          "trunk_dtmf_terminator": "DTMF terminator",
+          "trunk_allowed_ips": "Allowed incoming IP addresses"
         },
         "data_description": {
           "trunk_transport": "SIP transport used from HA to the provider.",
@@ -90,7 +91,15 @@
           "trunk_inbound_mode": "Route immediately skips digit collection. Collect extension with DTMF answers the trunk leg first and lets explicit digits select a phonebook extension.",
           "automation_routing_enabled": "Before using the fallback destination, publish a short routing request that an automation may answer. Explicit DTMF digits always keep priority.",
           "trunk_dtmf_timeout_ms": "Inter-digit timeout used in DTMF mode. The first digit is allowed 10 seconds. Default is 3 seconds, maximum is 10 seconds.",
-          "trunk_dtmf_terminator": "Optional terminator digit such as #. Empty means timeout or exact phonebook extension match decides."
+          "trunk_dtmf_terminator": "Optional terminator digit such as #. Empty means timeout or exact phonebook extension match decides.",
+          "trunk_allowed_ips": "Enter each permitted source IP or CIDR network separately. These may differ from the outbound server. Required without registration."
+        }
+      },
+      "trunk_mode": {
+        "title": "Trunk registration",
+        "description": "Keep this enabled for a provider account. Disable it for a static trunk that accepts calls without REGISTER. Configure allowed incoming IPs in the next step.",
+        "data": {
+          "trunk_register": "Register the trunk"
         }
       }
     },
@@ -100,7 +109,8 @@
       "assist_extension_conflict": "The voice assistant extension is already used by another route.",
       "trunk_server_required": "Trunk server is required.",
       "trunk_username_required": "Trunk username is required.",
-      "trunk_password_required": "Trunk password is required."
+      "trunk_password_required": "Trunk password is required.",
+      "trunk_allowed_ips_invalid": "Enter at least one valid IP or CIDR network. An unrestricted /0 network is not allowed."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigured successfully.",

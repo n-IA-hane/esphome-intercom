@@ -25,6 +25,7 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
+from .trunk_policy import trusted_networks
 from .config_validation import extension_conflicts, route_namespace_conflicts
 from .phone_config import (
     CONF_PHONE_AUTO_ANSWER,
@@ -65,6 +66,8 @@ from .const import (
     CONF_VIDEO_TRANSCODING,
     CONF_PHONEBOOK_CONTACTS,
     CONF_REGISTRAR_ENABLED,
+    CONF_TRUNK_REGISTER,
+    CONF_TRUNK_ALLOWED_IPS,
     CONF_TRUNK_AUTH_USERNAME,
     CONF_TRUNK_DOMAIN,
     CONF_TRUNK_DTMF_ENABLED,
@@ -155,6 +158,8 @@ def _disabled_trunk_data(data: dict, existing: Mapping[str, Any]) -> dict:
     data.update(
         {
             CONF_TRUNK_ENABLED: False,
+            CONF_TRUNK_REGISTER: legacy_value(CONF_TRUNK_REGISTER, True),
+            CONF_TRUNK_ALLOWED_IPS: legacy_value(CONF_TRUNK_ALLOWED_IPS, []),
             CONF_TRUNK_TRANSPORT: legacy_value(CONF_TRUNK_TRANSPORT, "udp"),
             CONF_TRUNK_SERVER: legacy_value(CONF_TRUNK_SERVER, ""),
             CONF_TRUNK_PORT: int(legacy_value(CONF_TRUNK_PORT, VOIP_STACK_SIP_PORT)),
@@ -345,7 +350,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                     existing.get(CONF_ASSIST_ADVANCED_CALL_CONTEXT, False)
                 )
                 if user_input[CONF_TRUNK_ENABLED]:
-                    return await self.async_step_trunk()
+                    return await self.async_step_trunk_mode()
                 data = dict(self._base_input)
                 _disabled_trunk_data(data, existing)
                 current_entry, _existing = self._current_entry_data()
@@ -392,7 +397,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 existing.get(CONF_ASSIST_ADVANCED_CALL_CONTEXT, False)
             )
             if self._base_input[CONF_TRUNK_ENABLED]:
-                return await self.async_step_trunk()
+                return await self.async_step_trunk_mode()
             data = dict(self._base_input)
             _disabled_trunk_data(data, existing)
             current_entry, _existing = self._current_entry_data()
@@ -461,7 +466,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                     user_input.get(CONF_ASSIST_ADVANCED_CALL_CONTEXT, False)
                 )
                 if self._base_input[CONF_TRUNK_ENABLED]:
-                    return await self.async_step_trunk()
+                    return await self.async_step_trunk_mode()
                 data = dict(self._base_input)
                 _disabled_trunk_data(data, existing)
                 current_entry, _existing = self._current_entry_data()
@@ -471,8 +476,28 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self._store_entry(data)
         return self.async_show_form(step_id="assist", data_schema=schema, errors=errors)
 
+    async def async_step_trunk_mode(self, user_input=None):
+        _entry, existing = self._current_entry_data()
+        if user_input is not None:
+            self._trunk_register = bool(user_input[CONF_TRUNK_REGISTER])
+            return await self.async_step_trunk()
+        return self.async_show_form(
+            step_id="trunk_mode",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_TRUNK_REGISTER,
+                        default=existing.get(CONF_TRUNK_REGISTER, True),
+                    ): BooleanSelector(),
+                }
+            ),
+        )
+
     async def async_step_trunk(self, user_input=None):
         _current_entry, existing = self._current_entry_data()
+        register = getattr(
+            self, "_trunk_register", existing.get(CONF_TRUNK_REGISTER, True)
+        )
         legacy_timeout = _dtmf_timeout_seconds(
             existing.get(CONF_TRUNK_DTMF_TIMEOUT_MS, 3000)
         )
@@ -563,8 +588,37 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 ): TextSelector(),
             }
         )
+        if not register:
+            fields = {
+                key: value
+                for key, value in schema.schema.items()
+                if key.schema not in {
+                    CONF_TRUNK_USERNAME, CONF_TRUNK_PASSWORD, CONF_TRUNK_EXPIRES
+                }
+            }
+            fields[vol.Optional(CONF_TRUNK_USERNAME, default=defaults[CONF_TRUNK_USERNAME])] = TextSelector()
+            fields[vol.Optional(CONF_TRUNK_PASSWORD, default=defaults[CONF_TRUNK_PASSWORD])] = TextSelector(
+                TextSelectorConfig(type=TextSelectorType.PASSWORD)
+            )
+            fields[vol.Required(CONF_TRUNK_ALLOWED_IPS, default=existing.get(CONF_TRUNK_ALLOWED_IPS, []))] = TextSelector(
+                TextSelectorConfig(multiple=True)
+            )
+            schema = vol.Schema(fields)
         errors: dict[str, str] = {}
         if user_input is not None:
+            user_input = dict(user_input)
+            user_input[CONF_TRUNK_REGISTER] = register
+            user_input.setdefault(CONF_TRUNK_EXPIRES, defaults[CONF_TRUNK_EXPIRES])
+            if not register:
+                try:
+                    user_input[CONF_TRUNK_ALLOWED_IPS] = [
+                        str(network)
+                        for network in trusted_networks(user_input.get(CONF_TRUNK_ALLOWED_IPS))
+                    ]
+                except ValueError:
+                    errors[CONF_TRUNK_ALLOWED_IPS] = "trunk_allowed_ips_invalid"
+            else:
+                user_input[CONF_TRUNK_ALLOWED_IPS] = []
             for k in (CONF_TRUNK_PORT, CONF_TRUNK_EXPIRES, CONF_TRUNK_DTMF_TIMEOUT_MS):
                 user_input[k] = int(user_input[k])
             user_input[CONF_TRUNK_DTMF_TIMEOUT_MS] = (
@@ -608,9 +662,9 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self._store_entry(_disabled_trunk_data(data, existing))
             if not user_input[CONF_TRUNK_SERVER]:
                 errors["base"] = "trunk_server_required"
-            elif not user_input[CONF_TRUNK_USERNAME]:
+            elif register and not user_input[CONF_TRUNK_USERNAME]:
                 errors["base"] = "trunk_username_required"
-            elif not user_input[CONF_TRUNK_PASSWORD]:
+            elif register and not user_input[CONF_TRUNK_PASSWORD]:
                 errors["base"] = "trunk_password_required"
             if not errors:
                 data = dict(self._base_input or _base_entry_data(existing))

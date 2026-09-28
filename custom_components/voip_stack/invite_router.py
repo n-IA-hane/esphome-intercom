@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
+from .trunk_policy import trunk_available
 from .core import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
 from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk, registration_data
@@ -408,7 +409,7 @@ async def route_invite(
     trunk_cfg = _get_trunk_config(hass)
     trunk = sip_trunk(hass)
     trunk_ready = _trunk_enabled(trunk_cfg) and bool(
-        getattr(trunk, "registered", False)
+        trunk_available(trunk)
     )
     bridge_to_trunk = bool(
         not force_ha_softphone and decision.action is RouteAction.TRUNK and trunk_ready

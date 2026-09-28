@@ -372,3 +372,21 @@ def test_dtmf_preanswer_creates_call_owner_before_attaching_artifacts(
         for resource in session.resources
     )
     assert session.named_tasks[f"trunk_route:{invite.call_id}"] is owned_task
+
+
+def test_static_trunk_classifies_only_explicitly_allowed_sources():
+    from custom_components.voip_stack.sip_trunk import SipTrunkClient, SipTrunkConfig
+
+    trunk = SipTrunkClient(
+        config=SipTrunkConfig(enabled=True, transport="udp", server="198.51.100.20",
+                             port=5060, domain="", username="", auth_username="",
+                             password="", expires=300, register=False,
+                             allowed_ips=("198.51.100.20",)),
+        local_ip="192.0.2.1", local_sip_port=5060,
+    )
+    assert not trunk.registered
+    assert endpoint_runtime._classify_trunk_invite(_invite(), enabled=True, trunk=trunk).received_via_trunk
+    from dataclasses import replace
+    stranger = replace(_invite(), source_host="198.51.100.21")
+    assert not endpoint_runtime._classify_trunk_invite(stranger, enabled=True, trunk=trunk).received_via_trunk
+    assert not endpoint_runtime._classify_trunk_invite(_invite(), enabled=False, trunk=trunk).received_via_trunk

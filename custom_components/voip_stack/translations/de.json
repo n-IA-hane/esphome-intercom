@@ -14,7 +14,8 @@
           "media_capture": "Nehmen Sie den Ton privater Anrufe zur Diagnose auf",
           "experimental_sip_video": "Aktivieren Sie SIP-Video für das Home Assistant-Softphone",
           "sip_registrar_enabled": "Aktivieren Sie lokale SIP-Konten",
-          "trunk_enabled": "Aktivieren Sie den optionalen SIP-Trunk"
+          "trunk_enabled": "Aktivieren Sie den optionalen SIP-Trunk",
+          "companion_enabled": "Companion-Telefone aktivieren"
         },
         "data_description": {
           "sip_port": "Abhörport für den HA-SIP-Endpunkt. HA akzeptiert SIP-Signalisierung über UDP und TCP an diesem Port.",
@@ -26,7 +27,8 @@
           "media_capture": "Zeichnet ausdrücklich private Anrufmedien auf: bis zu 15 Sekunden je HA-Softphone-Richtung und 8 Sekunden je Relay-Abschnitt, gespeichert als WAV/JSON in ~/.cache/voip_stack_debug (Modus 0700) und begrenzt auf 24 Dateien / 64 MiB. Nur für Diagnoseaufzeichnungen aktivieren.",
           "experimental_sip_video": "Lassen Sie das Home Assistant-Softphone SIP-Video mit kompatiblen Standardtelefonen, Softphones und Türstationen aushandeln. H.264, VP8 und JPEG verwenden den Browser-Medienpfad. Standard-ESP-Endpunkte sind weiterhin nur für Audio verfügbar. Qualifizierte ESP32-P4-Profile können JPEG oder H.264 aushandeln. Erfordert HTTPS und einen kompatiblen Browser.",
           "sip_registrar_enabled": "Akzeptiert REGISTER von lokalen SIP-Endpunkten wie VoIP-Telefonen, Zoiper, Linphone oder baresip über Konten, die von VoIP Stack verwaltet werden.",
-          "trunk_enabled": "Provider-/PBX-Trunk-Einstellungen anzeigen. Wenn deaktiviert, wird keine Trunk-Registrierung, externe Route oder DTMF-Sammlung gestartet."
+          "trunk_enabled": "Provider-/PBX-Trunk-Einstellungen anzeigen. Wenn deaktiviert, wird keine Trunk-Registrierung, externe Route oder DTMF-Sammlung gestartet.",
+          "companion_enabled": "Kompatible Companion-Apps als eigene Telefone für eingehende Anrufe erkennen. Namen folgen dem mobile_app-Gerätetracker. Erfordert eine Companion-Version mit nativer Anrufunterstützung."
         }
       },
       "video": {
@@ -57,7 +59,7 @@
       },
       "trunk": {
         "title": "Optionaler SIP-Trunk",
-        "description": "Registriert Home Assistant an einem Provider- oder PBX-Trunk. Eingehende Anrufe verwenden das zentrale Telefonbuch und können optional einen kurzen Entscheidungspunkt für experimentelle Automatisierungen bereitstellen.",
+        "description": "Home Assistant mit einem Anbieter oder einer Telefonanlage verbinden. Eingehende Anrufe folgen den konfigurierten Regeln und optionalen Automationen.",
         "data": {
           "trunk_transport": "Trunk-SIP-Transport",
           "trunk_server": "Trunk-Server",
@@ -72,7 +74,8 @@
           "trunk_inbound_mode": "Bearbeitung eingehender Anrufe",
           "automation_routing_enabled": "Erlauben Sie Automatisierungen, das eingehende Ziel auszuwählen",
           "trunk_dtmf_timeout_ms": "DTMF-Timeout (Sekunden)",
-          "trunk_dtmf_terminator": "DTMF-Terminator"
+          "trunk_dtmf_terminator": "DTMF-Terminator",
+          "trunk_allowed_ips": "Erlaubte eingehende IP-Adressen"
         },
         "data_description": {
           "trunk_transport": "SIP-Transport von HA zum Anbieter verwendet.",
@@ -88,7 +91,15 @@
           "trunk_inbound_mode": "Route überspringt sofort die Ziffernerfassung. Beim Sammeln der Nebenstelle mit DTMF wird zunächst die Amtsleitung beantwortet, und durch explizite Ziffern kann eine Telefonbuch-Nebenstelle ausgewählt werden.",
           "automation_routing_enabled": "Veröffentlichen Sie vor der Verwendung des Fallback-Ziels eine kurze Routing-Anfrage, die möglicherweise von einer Automatisierung beantwortet wird. Explizite DTMF-Ziffern behalten immer Vorrang.",
           "trunk_dtmf_timeout_ms": "Zeitüberschreitung zwischen Ziffern, die im DTMF-Modus verwendet wird. Die erste Ziffer darf 10 Sekunden lang sein. Der Standardwert beträgt 3 Sekunden, der Höchstwert 10 Sekunden.",
-          "trunk_dtmf_terminator": "Optionale Abschlussziffer, z. B. #. Leer bedeutet Zeitüberschreitung oder genaue Übereinstimmung mit der Telefonbucherweiterung."
+          "trunk_dtmf_terminator": "Optionale Abschlussziffer, z. B. #. Leer bedeutet Zeitüberschreitung oder genaue Übereinstimmung mit der Telefonbucherweiterung.",
+          "trunk_allowed_ips": "Jede erlaubte Quell-IP oder jedes CIDR-Netz einzeln eingeben. Diese können vom ausgehenden Server abweichen. Ohne Registrierung erforderlich."
+        }
+      },
+      "trunk_mode": {
+        "title": "Trunk-Registrierung",
+        "description": "Für ein Anbieterkonto aktiviert lassen. Für einen statischen Trunk ohne REGISTER deaktivieren. Erlaubte eingehende IPs werden im nächsten Schritt festgelegt.",
+        "data": {
+          "trunk_register": "Trunk registrieren"
         }
       }
     },
@@ -98,7 +109,8 @@
       "assist_extension_conflict": "Die Sprachassistent-Nebenstelle wird bereits von einer anderen Route verwendet.",
       "trunk_server_required": "Trunk-Server ist erforderlich.",
       "trunk_username_required": "Trunk-Benutzername ist erforderlich.",
-      "trunk_password_required": "Trunk-Passwort ist erforderlich."
+      "trunk_password_required": "Trunk-Passwort ist erforderlich.",
+      "trunk_allowed_ips_invalid": "Mindestens eine gültige IP oder ein CIDR-Netz eingeben. Uneingeschränkte /0-Netze sind nicht erlaubt."
     },
     "abort": {
       "reconfigure_successful": "VoIP-Stack erfolgreich neu konfiguriert.",
@@ -162,6 +174,22 @@
         },
         "reconfigure": {
           "title": "Telefon neu konfigurieren"
+        },
+        "companion": {
+          "title": "Companion-Telefon",
+          "description": "Dieses Companion-Telefon konfigurieren. Der Name folgt seinem mobile_app-Gerätetracker.",
+          "data": {
+            "extension": "Nebenstelle",
+            "enabled": "Aktiviert",
+            "dnd": "Bitte nicht stören",
+            "ring_group": "Ringgruppe",
+            "conference_group": "Konferenzgruppe",
+            "conference_ring": "Bei Telefonkonferenzen klingeln"
+          },
+          "data_description": {
+            "name": "Erforderlicher Telefonname, der von der Karte, dem Telefonbuch und der Anrufweiterleitung verwendet wird.",
+            "extension": "Optionale, eindeutig wählbare Nebenstelle. Das logische Telefon bleibt klingelbar, wenn keine Browserkarte angeschlossen ist."
+          }
         }
       },
       "error": {

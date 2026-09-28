@@ -7,6 +7,7 @@ import logging
 
 from homeassistant.core import HomeAssistant
 
+from .trunk_policy import trunk_available
 from .core.audio_format import (
     AudioFormat,
     HA_SIP_PCM_RX_FORMATS,
@@ -216,7 +217,7 @@ def ha_router_decision(hass: HomeAssistant, target: str, entries: list):
     trunk = sip_trunk(hass)
     configured_trunk = trunk_config(hass)
     trunk_ready = trunk_enabled(configured_trunk) and bool(
-        getattr(trunk, "registered", False)
+        trunk_available(trunk)
     )
     return resolve_ha_router(target, entries, trunk_ready=trunk_ready)
 

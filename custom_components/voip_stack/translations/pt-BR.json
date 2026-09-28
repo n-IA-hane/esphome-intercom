@@ -14,7 +14,8 @@
           "media_capture": "Gravar áudio privado das chamadas para diagnóstico",
           "experimental_sip_video": "Ativar vídeo SIP para o softphone do Home Assistant",
           "sip_registrar_enabled": "Ativar contas SIP locais",
-          "trunk_enabled": "Ativar tronco SIP opcional"
+          "trunk_enabled": "Ativar tronco SIP opcional",
+          "companion_enabled": "Ativar telefones Companion"
         },
         "data_description": {
           "sip_port": "Porta de escuta do endpoint SIP do Home Assistant. O Home Assistant aceita sinalização SIP por UDP e TCP nessa porta.",
@@ -26,7 +27,8 @@
           "media_capture": "Grava explicitamente o áudio privado das chamadas: até 15 segundos por direção do softphone do Home Assistant e 8 segundos por perna de retransmissão, armazenados como WAV/JSON em ~/.cache/voip_stack_debug (modo 0700) e limitados a 24 arquivos / 64 MiB. Mantenha desativado, exceto durante a coleta de uma captura de diagnóstico.",
           "experimental_sip_video": "Permite que o softphone do Home Assistant negocie vídeo SIP com telefones, softphones e interfones compatíveis. H.264, VP8 e JPEG usam o caminho de mídia do navegador. Endpoints ESP padrão permanecem somente com áudio; perfis ESP32-P4 qualificados podem negociar JPEG ou H.264. Requer HTTPS e um navegador compatível.",
           "sip_registrar_enabled": "Aceita REGISTER de endpoints SIP locais, como telefones VoIP, Zoiper, Linphone ou baresip, usando contas gerenciadas pelos serviços do VoIP Stack.",
-          "trunk_enabled": "Exibe as configurações do tronco de provedor/PBX. Quando desativado, não inicia registro do tronco, rota externa nem coletor DTMF."
+          "trunk_enabled": "Exibe as configurações do tronco de provedor/PBX. Quando desativado, não inicia registro do tronco, rota externa nem coletor DTMF.",
+          "companion_enabled": "Detectar apps Companion compatíveis como telefones separados para chamadas recebidas. Os nomes seguem o device tracker mobile_app. Requer uma versão Companion com suporte a chamadas nativas."
         }
       },
       "video": {
@@ -57,7 +59,7 @@
       },
       "trunk": {
         "title": "Tronco SIP opcional",
-        "description": "Registra o Home Assistant em um tronco de provedor/PBX. As chamadas recebidas usam a agenda telefônica central e podem opcionalmente expor um ponto de decisão curto para automações experimentais.",
+        "description": "Conecte o Home Assistant a um provedor ou PBX. Chamadas recebidas seguem as regras configuradas e automações opcionais.",
         "data": {
           "trunk_transport": "Transporte SIP do tronco",
           "trunk_server": "Servidor do tronco",
@@ -72,7 +74,8 @@
           "trunk_inbound_mode": "Tratamento de chamadas recebidas",
           "automation_routing_enabled": "Permitir que automações selecionem o destino de entrada",
           "trunk_dtmf_timeout_ms": "Tempo limite do DTMF (segundos)",
-          "trunk_dtmf_terminator": "Finalizador DTMF"
+          "trunk_dtmf_terminator": "Finalizador DTMF",
+          "trunk_allowed_ips": "Endereços IP de entrada permitidos"
         },
         "data_description": {
           "trunk_transport": "Transporte SIP usado pelo Home Assistant até o provedor.",
@@ -88,7 +91,15 @@
           "trunk_inbound_mode": "O modo de rota imediata ignora a coleta de dígitos. O modo de coleta por DTMF atende primeiro a perna do tronco e permite que os dígitos selecionem explicitamente uma extensão da agenda.",
           "automation_routing_enabled": "Antes de usar o destino alternativo, publica uma solicitação curta de roteamento que uma automação pode atender. Dígitos DTMF explícitos sempre têm prioridade.",
           "trunk_dtmf_timeout_ms": "Tempo entre dígitos usado no modo DTMF. O primeiro dígito pode levar até 10 segundos. O padrão é 3 segundos e o máximo é 10 segundos.",
-          "trunk_dtmf_terminator": "Dígito finalizador opcional, como #. Vazio significa que o tempo limite ou uma correspondência exata de extensão na agenda decide."
+          "trunk_dtmf_terminator": "Dígito finalizador opcional, como #. Vazio significa que o tempo limite ou uma correspondência exata de extensão na agenda decide.",
+          "trunk_allowed_ips": "Insira cada IP de origem ou rede CIDR permitida separadamente. Podem ser diferentes do servidor de saída. Obrigatórios sem registro."
+        }
+      },
+      "trunk_mode": {
+        "title": "Registro do tronco",
+        "description": "Mantenha ativado para uma conta de provedor. Desative para um tronco estático sem REGISTER. Configure os IPs de entrada permitidos na próxima etapa.",
+        "data": {
+          "trunk_register": "Registrar o tronco"
         }
       }
     },
@@ -98,7 +109,8 @@
       "assist_extension_conflict": "A extensão do assistente de voz já está sendo usada por outra rota.",
       "trunk_server_required": "O servidor do tronco é obrigatório.",
       "trunk_username_required": "O usuário do tronco é obrigatório.",
-      "trunk_password_required": "A senha do tronco é obrigatória."
+      "trunk_password_required": "A senha do tronco é obrigatória.",
+      "trunk_allowed_ips_invalid": "Insira pelo menos um IP ou uma rede CIDR válida. Redes /0 sem restrições não são permitidas."
     },
     "abort": {
       "reconfigure_successful": "VoIP Stack reconfigurado com sucesso.",
@@ -162,6 +174,22 @@
         },
         "reconfigure": {
           "title": "Reconfigurar telefone"
+        },
+        "companion": {
+          "title": "Telefone Companion",
+          "description": "Configure este telefone Companion. O nome segue seu device tracker mobile_app.",
+          "data": {
+            "extension": "Extensão",
+            "enabled": "Ativado",
+            "dnd": "Não perturbe",
+            "ring_group": "Grupo de toque",
+            "conference_group": "Grupo de conferência",
+            "conference_ring": "Tocar para chamadas de conferência"
+          },
+          "data_description": {
+            "name": "Nome obrigatório do telefone usado pelo card, pela agenda telefônica e pelo roteamento de chamadas.",
+            "extension": "Extensão discável exclusiva opcional. O telefone lógico continua podendo receber chamadas mesmo sem um card de navegador conectado."
+          }
         }
       },
       "error": {
