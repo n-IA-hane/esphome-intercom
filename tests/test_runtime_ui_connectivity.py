@@ -80,7 +80,9 @@ def regression_binary(tmp_path_factory):
     for callback in ("on_hangup", "on_call_failed"):
         guarded = voip_callbacks[callback][0]["if"]
         assert guarded["then"][0]["script.execute"]["id"] == "ui_call_ended"
-        terminal_guards[callback] = guarded["condition"]["lambda"]
+        # The package now uses the native condition instead of a YAML lambda.
+        assert guarded["condition"] == {"not": {"voip_stack.is_active": None}}
+        terminal_guards[callback] = "return !phone.is_active();"
 
     constants = "\n".join(
         f"constexpr int {key} = {value};"

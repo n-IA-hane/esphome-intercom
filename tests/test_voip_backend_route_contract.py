@@ -321,7 +321,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
 
         self.assertIn('call.data.get("device_id")', body)
         self.assertIn("registry.by_device_id(device_id)", body)
-        self.assertIn("endpoint.kind is not EndpointKind.BROWSER", body)
+        self.assertIn("not endpoint.kind.is_softphone", body)
         self.assertNotIn('call.data.get("entity_id")', body)
         self.assertNotIn('call.data.get("endpoint_id")', body)
         self.assertNotIn("source_device_id", body)
@@ -1555,7 +1555,7 @@ class VoipBackendRouteContractTest(unittest.TestCase):
             "endpoint.offline_policy is OfflinePolicy.UNAVAILABLE",
             target_checks,
         )
-        self.assertIn("endpoint.kind is not EndpointKind.BROWSER", target_checks)
+        self.assertIn("not endpoint.kind.is_softphone", target_checks)
 
     def test_video_invites_stage_video_until_dtmf_selects_a_peer(self) -> None:
         trunk_branch = self.inbound_trunk
