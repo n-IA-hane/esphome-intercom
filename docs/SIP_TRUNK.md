@@ -24,7 +24,7 @@ endpoint identity and media ports:
 Enable the trunk, then choose **Register the trunk**. It is enabled by default
 for existing provider accounts. The following step asks for trunk details:
 
-- transport: `udp`, `tcp` or `tls`
+- transport: `udp` or `tcp`; `tls` is available for registered trunks
 - server, port and optional domain
 - username, optional auth username and password
 - REGISTER expiration when registration is enabled
@@ -38,7 +38,7 @@ for existing provider accounts. The following step asks for trunk details:
 ### Static trunk without REGISTER
 
 Disable **Register the trunk** when the other PBX or provider routes calls to a
-fixed SIP address instead of accepting account registrations. In this mode:
+fixed SIP address instead of accepting account registrations. In this mode (UDP or TCP):
 
 1. Set **Trunk server** and **Trunk SIP port** to the destination for outbound calls.
 2. Add each **Allowed incoming IP address**, or CIDR network, supplied by the provider.

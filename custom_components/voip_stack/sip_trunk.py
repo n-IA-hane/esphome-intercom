@@ -92,6 +92,8 @@ class SipTrunkClient:
         target_resolver: SipServerResolver | None = None,
         tls_context: ssl.SSLContext | None = None,
     ) -> None:
+        if not config.register and config.transport.lower() not in {"udp", "tcp"}:
+            raise ValueError("Static trunks require UDP or TCP; inbound TLS requires registration")
         self.config = config
         self._trusted_networks = (
             trusted_networks(config.allowed_ips) if not config.register else ()

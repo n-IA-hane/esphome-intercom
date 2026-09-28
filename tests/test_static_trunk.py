@@ -16,7 +16,7 @@ def config(**kwargs):
     )
 
 
-@pytest.mark.parametrize("transport", ["udp", "tcp", "tls"])
+@pytest.mark.parametrize("transport", ["udp", "tcp"])
 def test_static_trunk_lifecycle_never_registers_or_allocates_refresh_socket(transport):
     async def run():
         trunk = sip_trunk.SipTrunkClient(config=config(transport=transport), local_ip="127.0.0.1", local_sip_port=15060)
@@ -55,3 +55,8 @@ def test_registered_trunk_still_requires_registration_before_trusting_sources():
     trunk.registered = True
     assert trunk.ready
     assert trunk.accepts_inbound_source("127.0.0.2", 5060, "UDP")
+
+
+def test_static_trunk_does_not_advertise_an_unavailable_tls_listener():
+    with pytest.raises(ValueError, match="Static trunks require UDP or TCP"):
+        sip_trunk.SipTrunkClient(config=config(transport="tls"), local_ip="127.0.0.1", local_sip_port=15060)

@@ -18,6 +18,8 @@ async def test_mode_switch_hides_registration_expiry_and_requires_source_acl(has
     fields = {key.schema for key in form["data_schema"].schema}
     assert "trunk_allowed_ips" in fields
     assert "trunk_register_expires" not in fields
+    transport = next(value for key, value in form["data_schema"].schema.items() if key.schema == "trunk_transport")
+    assert transport.config["options"] == ["udp", "tcp"]
     values = form["data_schema"]({"trunk_server": "127.0.0.1", "trunk_allowed_ips": ["127.0.0.2"]})
     flow._store_entry = Mock(side_effect=lambda data: data)
     flow.async_set_unique_id = __import__('unittest.mock', fromlist=['AsyncMock']).AsyncMock()
