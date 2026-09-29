@@ -152,6 +152,33 @@ not that the remote provider received it. A wildcard local socket address can
 appear as `0.0.0.0` or `::`; it is not a measured on-wire source address. Router
 or host packet capture may still be needed for NAT or network-delivery faults.
 
+### A call fails before an outbound INVITE appears
+
+Attach the integration's debug log alongside the SIP capture. In **Settings >
+Devices & services**, enable debug logging for VoIP Stack, reproduce one call,
+then disable debug logging and download the log. A refused TCP connection has
+no SIP message to record, so it cannot appear in the application PCAP.
+
+For outbound calls, the log identifies each transport attempt by Call-ID,
+transport and destination address/port. A successful attempt reports the local
+port and elapsed time. A failed attempt includes the exception type, operating
+system error number and elapsed time, even when no INVITE was sent.
+
+`reason=message_size` means an initially UDP request exceeded 1300 bytes and
+triggered a TCP attempt. This can happen when video adds more SDP to the SIP
+request; it does not mean the video itself uses TCP. If every TCP connection
+candidate is explicitly refused/reset or reports protocol-unreachable before
+the request is sent, the client retries the original UDP route once, as described
+in RFC 3261 section 18.1.1. The log marks this with
+`reason=connection_rejected_before_send`. Timeouts and unrelated errors do not
+enable that retry. Explicit transport choices and reused registration flows
+remain unchanged, and TLS is never downgraded by this recovery.
+
+These entries describe application-level attempts and outcomes, not captured
+TCP SYN/RST packets. For an on-wire handshake or firewall diagnosis, capture
+traffic on the HA host or router. Review addresses and call identifiers before
+sharing logs; authentication headers are not added by these diagnostic entries.
+
 ## ESP does not ring
 
 - Confirm the peer sends a SIP `INVITE` to the ESP `sip_port`.

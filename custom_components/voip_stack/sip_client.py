@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from dataclasses import dataclass, replace
+import errno
 import logging
 import re
 import secrets
@@ -1807,26 +1808,53 @@ class SipCallClient:
         except (OSError, RuntimeError, sip.SipError) as err:
             return self._transport_failure(err, target, remote_host, remote_sip_port)
         endpoint_index = -1
+        selection_errors: list[OSError | RuntimeError] = []
 
         async def select_next_endpoint() -> bool:
             nonlocal endpoint_index
+            selection_errors.clear()
             while endpoint_index + 1 < len(endpoints):
                 endpoint_index += 1
-                selected_host, selected_port, selected_transport = endpoints[endpoint_index]
+                selected_host, selected_port, selected_transport = endpoints[
+                    endpoint_index
+                ]
                 if selected_transport != self.signaling_transport:
                     continue
+                started = asyncio.get_running_loop().time()
+                _LOGGER.debug(
+                    "SIP transport attempt call_id=%s transport=%s remote=%s:%s",
+                    self.dialog_ids.call_id,
+                    selected_transport,
+                    selected_host,
+                    selected_port,
+                )
                 try:
                     await self._select_initial_signaling_target(
                         selected_host,
                         selected_port,
                     )
+                    _LOGGER.debug(
+                        "SIP transport ready call_id=%s transport=%s remote=%s:%s local_port=%s elapsed_ms=%.1f",
+                        self.dialog_ids.call_id,
+                        selected_transport,
+                        selected_host,
+                        selected_port,
+                        self.local_sip_port,
+                        (asyncio.get_running_loop().time() - started) * 1000,
+                    )
                     return True
                 except (ConnectionError, OSError, RuntimeError) as err:
+                    selection_errors.append(err)
                     _LOGGER.info(
-                        "SIP initial target unavailable %s:%s transport=%s error=%s",
+                        "SIP initial target unavailable %s:%s transport=%s call_id=%s "
+                        "error_type=%s errno=%s elapsed_ms=%.1f error=%s",
                         selected_host,
                         selected_port,
                         selected_transport,
+                        self.dialog_ids.call_id,
+                        type(err).__name__,
+                        getattr(err, "errno", None),
+                        (asyncio.get_running_loop().time() - started) * 1000,
                         err,
                     )
             return False
@@ -1903,6 +1931,14 @@ class SipCallClient:
             # MTU is unknown. Rebuild every transport-bearing field before
             # connecting so the Request-URI, Via and Contact all describe the
             # TCP transaction that is actually sent.
+            udp_endpoints = endpoints
+            udp_request_uri = request_uri
+            udp_route_uri = route_uri
+            _LOGGER.debug(
+                "SIP request transport upgrade call_id=%s bytes=%s from=UDP to=TCP reason=message_size",
+                self.dialog_ids.call_id,
+                len(raw),
+            )
             if self.transport is not None:
                 self.transport.close()
                 self.transport = None
@@ -1949,12 +1985,49 @@ class SipCallClient:
                 )
             endpoint_index = -1
             if not await select_next_endpoint():
-                return self._transport_failure(
-                    OSError("every resolved SIP TCP target is unreachable"),
-                    target,
-                    remote_host,
-                    remote_sip_port,
+                if self._cancel_requested or self._closing or self._closed:
+                    self._invite_transaction_active = False
+                    return "cancelled"
+                # RFC 3261 18.1.1 permits UDP retry after refusal/reset or ICMP
+                # protocol-unreachable (ENOPROTOOPT on Linux), not a timeout.
+                if not selection_errors or not all(
+                    isinstance(error, OSError)
+                    and error.errno
+                    in {errno.ECONNREFUSED, errno.ECONNRESET, errno.ENOPROTOOPT}
+                    for error in selection_errors
+                ):
+                    return self._transport_failure(
+                        selection_errors[-1]
+                        if selection_errors
+                        else OSError("no SIP TCP target"),
+                        target,
+                        remote_host,
+                        remote_sip_port,
+                    )
+                _LOGGER.info(
+                    "SIP request transport fallback call_id=%s bytes=%s from=TCP to=UDP "
+                    "reason=connection_rejected_before_send",
+                    self.dialog_ids.call_id,
+                    len(raw),
                 )
+                self.signaling_transport = "UDP"
+                transport_param = (("transport", "udp"),)
+                request_uri = udp_request_uri
+                logical_uri = sip.parse_sip_uri(request_uri)
+                route_uri = udp_route_uri
+                self._tls_server_name = route_uri.host
+                self._resolved_signaling_target = None
+                endpoints = udp_endpoints
+                endpoint_index = -1
+                if not await select_next_endpoint():
+                    return self._transport_failure(
+                        selection_errors[-1]
+                        if selection_errors
+                        else OSError("no SIP UDP target"),
+                        target,
+                        remote_host,
+                        remote_sip_port,
+                    )
             contact_uri = str(
                 sip.SipUri(
                     self.local_uri_user,
@@ -1971,8 +2044,9 @@ class SipCallClient:
             self._pending_remote_uri = remote_uri
             raw = self._build_pending_invite()
             _LOGGER.info(
-                "SIP initial request is %s bytes; using TCP per RFC 3261 section 18.1.1",
+                "SIP initial request is %s bytes; selected %s per RFC 3261 section 18.1.1",
                 len(raw),
+                self.signaling_transport,
             )
         elif (
             self.signaling_transport == "UDP"
@@ -2005,6 +2079,9 @@ class SipCallClient:
 
         sip.mark_sip_event(self, "INVITE")
         while True:
+            if self._cancel_requested or self._closing or self._closed:
+                self._invite_transaction_active = False
+                return "cancelled"
             try:
                 await self._send_raw(raw, remote_host, int(remote_sip_port))
                 break
@@ -4299,11 +4376,10 @@ class SipCallClient:
         """Request cancellation by the coroutine that owns the INVITE transaction."""
         if (
             not self._invite_transaction_active
-            or not self._has_signaling_path()
             or not self._pending_request_uri
         ):
             _LOGGER.info(
-                "SIP CANCEL skipped: no signaling path call_id=%s transport=%s pending_uri=%s",
+                "SIP CANCEL skipped: no active INVITE call_id=%s transport=%s pending_uri=%s",
                 self.dialog_ids.call_id,
                 self.signaling_transport,
                 bool(self._pending_request_uri),

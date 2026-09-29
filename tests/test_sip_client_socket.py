@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+import errno
 
 from .voip_phase1_support import (
     Path,
@@ -3197,6 +3198,302 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selected, [("192.0.2.20", 5060), ("192.0.2.21", 5060)])
         self.assertEqual(len(sent_branches), 2)
         self.assertNotEqual(sent_branches[0], sent_branches[1])
+
+    async def test_video_invite_recovers_on_real_udp_only_peer_and_redials(
+        self,
+    ) -> None:
+        received = []
+
+        class Peer(asyncio.DatagramProtocol):
+            def connection_made(self, transport):
+                self.transport = transport
+
+            def datagram_received(self, data, addr):
+                request = sip.parse_message(data)
+                received.append(request)
+                if request.method not in {"INVITE", "BYE"}:
+                    return
+                headers = [
+                    (key, request.header(key))
+                    for key in ("Via", "From", "Call-ID", "CSeq")
+                ]
+                headers.append(
+                    (
+                        "To",
+                        request.header("To")
+                        if ";tag=" in request.header("To")
+                        else request.header("To") + ";tag=panel",
+                    )
+                )
+                body = b""
+                if request.method == "INVITE":
+                    host, port = self.transport.get_extra_info("sockname")[:2]
+                    headers.extend(
+                        (
+                            ("Contact", f"<sip:panel@{host}:{port};transport=udp>"),
+                            ("Content-Type", "application/sdp"),
+                        )
+                    )
+                    fmt = sdp.RtpPcmFormat(8, "PCMA", 8000, 1, 20)
+                    video = sdp.offered_video_formats(request.body)[0]
+                    body = sdp.build_answer_directional(
+                        "127.0.0.1",
+                        "127.0.0.1",
+                        45000,
+                        fmt,
+                        fmt,
+                        remote_sdp=request.body,
+                        video_port=45002,
+                        video_format=video,
+                        video_direction="recvonly",
+                    ).encode()
+                self.transport.sendto(
+                    sip.build_response(200, "OK", headers, body), addr
+                )
+
+        transport, _peer = await asyncio.get_running_loop().create_datagram_endpoint(
+            Peer, local_addr=("127.0.0.1", 0)
+        )
+        port = transport.get_extra_info("sockname")[1]
+        # Reserve the matching TCP port without listening: connect gets a real RST.
+        refused_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        refused_tcp.bind(("127.0.0.1", port))
+        try:
+            for _ in range(2):
+                client = sip_client.SipCallClient(
+                    local_ip="127.0.0.1",
+                    local_name="Caller",
+                    local_sip_port=0,
+                    local_rtp_port=41000,
+                    signaling_transport="UDP",
+                    include_common_codecs=True,
+                    local_video_rtp_port=41002,
+                    video_formats=sdp.DEFAULT_VIDEO_FORMATS,
+                    generic_video_relay=True,
+                )
+                try:
+                    with self.assertLogs(sip_client._LOGGER, level="DEBUG") as logs:
+                        result = await client.invite(
+                            target="panel",
+                            remote_host="127.0.0.1",
+                            remote_sip_port=port,
+                            request_uri=f"sip:panel@127.0.0.1:{port}",
+                            timeout=2,
+                        )
+                    self.assertEqual(result, "in_call")
+                    self.assertEqual(client.signaling_transport, "UDP")
+                    self.assertIsNotNone(client.dialog)
+                    self.assertIsNotNone(client.dialog.video_format)
+                    self.assertIn(
+                        "error_type=ConnectionRefusedError", "\n".join(logs.output)
+                    )
+                    self.assertIn(
+                        "reason=connection_rejected_before_send", "\n".join(logs.output)
+                    )
+                    self.assertEqual(await client.terminate(), "remote_hangup")
+                finally:
+                    await client.close()
+                self.assertIsNone(client.transport)
+                self.assertIsNone(client.writer)
+                self.assertIsNone(client.dialog)
+            self.assertEqual([r.method for r in received], ["INVITE", "ACK", "BYE"] * 2)
+        finally:
+            refused_tcp.close()
+            transport.close()
+
+    async def test_size_triggered_tcp_fallback_requires_connection_rejection(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "refused",
+                "UDP",
+                (ConnectionRefusedError(errno.ECONNREFUSED, "refused"),),
+                False,
+                "busy",
+                "UDP",
+            ),
+            (
+                "reset",
+                "UDP",
+                (ConnectionResetError(errno.ECONNRESET, "reset"),),
+                False,
+                "busy",
+                "UDP",
+            ),
+            (
+                "protocol",
+                "UDP",
+                (OSError(errno.ENOPROTOOPT, "protocol unreachable"),),
+                False,
+                "busy",
+                "UDP",
+            ),
+            (
+                "timeout",
+                "UDP",
+                (TimeoutError(errno.ETIMEDOUT, "timeout"),),
+                False,
+                "transport_unreachable",
+                "TCP",
+            ),
+            (
+                "permission",
+                "UDP",
+                (PermissionError(errno.EACCES, "denied"),),
+                False,
+                "transport_unreachable",
+                "TCP",
+            ),
+            (
+                "mixed",
+                "UDP",
+                (ConnectionRefusedError(errno.ECONNREFUSED, "refused"), TimeoutError()),
+                False,
+                "transport_unreachable",
+                "TCP",
+            ),
+            (
+                "second_tcp",
+                "UDP",
+                (ConnectionRefusedError(errno.ECONNREFUSED, "refused"), None),
+                False,
+                "busy",
+                "TCP",
+            ),
+            (
+                "explicit_tcp",
+                "TCP",
+                (ConnectionRefusedError(errno.ECONNREFUSED, "refused"),),
+                False,
+                "transport_unreachable",
+                "TCP",
+            ),
+            (
+                "tls",
+                "TLS",
+                (ConnectionRefusedError(errno.ECONNREFUSED, "refused"),),
+                False,
+                "transport_unreachable",
+                "TLS",
+            ),
+            (
+                "cancel",
+                "UDP",
+                (ConnectionRefusedError(errno.ECONNREFUSED, "refused"),),
+                True,
+                "cancelled",
+                "TCP",
+            ),
+        )
+        for name, initial, failures, cancel, expected, final_transport in cases:
+            with self.subTest(name=name):
+                attempts = []
+                sent = []
+
+                class Resolver:
+                    async def resolve(self, _uri, *, transport):
+                        return (
+                            types.SimpleNamespace(
+                                endpoints=lambda: tuple(
+                                    (f"192.0.2.{20 + i}", 5060, transport)
+                                    for i in range(
+                                        len(failures) if transport != "UDP" else 1
+                                    )
+                                )
+                            ),
+                        )
+
+                client = sip_client.SipCallClient(
+                    local_ip="192.0.2.10",
+                    local_name="Caller",
+                    local_sip_port=5060,
+                    local_rtp_port=41000,
+                    signaling_transport=initial,
+                    target_resolver=Resolver(),
+                    include_common_codecs=True,
+                    local_video_rtp_port=41002,
+                    video_formats=sdp.DEFAULT_VIDEO_FORMATS,
+                )
+
+                async def select(host, port):
+                    attempts.append(client.signaling_transport)
+                    client._resolved_signaling_target = (host, port)
+                    client.local_sip_port = 51000 + len(attempts)
+                    if client.signaling_transport != "UDP":
+                        if cancel:
+                            self.assertTrue(client.request_cancel())
+                        failure = failures[int(host.rsplit(".", 1)[1]) - 20]
+                        if failure is not None:
+                            raise failure
+
+                async def send(raw, _host, _port):
+                    sent.append(raw)
+
+                async def read(_timeout):
+                    request = sip.parse_message(sent[0])
+                    headers = [
+                        (key, request.header(key))
+                        for key in ("Via", "From", "Call-ID", "CSeq")
+                    ]
+                    headers.append(("To", request.header("To") + ";tag=remote"))
+                    return sip.parse_message(
+                        sip.build_response(486, "Busy Here", headers)
+                    ), ("192.0.2.20", 5060)
+
+                client._select_initial_signaling_target = select
+                client._send_raw = send
+                client._read_response = read
+                uri = "sip:panel@192.0.2.20;line=registered"
+                if initial != "UDP":
+                    uri += ";transport=" + initial.lower()
+                try:
+                    with self.assertLogs(sip_client._LOGGER, level="DEBUG") as logs:
+                        result = await client.invite(
+                            target="panel",
+                            remote_host="192.0.2.20",
+                            remote_sip_port=5060,
+                            request_uri=uri,
+                            timeout=1,
+                        )
+                    self.assertEqual(result, expected)
+                    self.assertEqual(client.signaling_transport, final_transport)
+                    self.assertIn(
+                        "call_id=" + client.dialog_ids.call_id, "\n".join(logs.output)
+                    )
+                    self.assertIn("error_type=", "\n".join(logs.output))
+                    invites = [
+                        sip.parse_message(raw)
+                        for raw in sent
+                        if raw.startswith(b"INVITE ")
+                    ]
+                    if expected == "busy":
+                        self.assertEqual(len(invites), 1)
+                        self.assertIn(
+                            "SIP/2.0/" + final_transport, invites[0].header("Via")
+                        )
+                        self.assertIn(
+                            ":" + str(client.local_sip_port),
+                            invites[0].header("Contact"),
+                        )
+                        if final_transport == "UDP":
+                            self.assertEqual(attempts, ["UDP", "TCP", "UDP"])
+                            self.assertEqual(invites[0].uri, uri)
+                            self.assertNotIn(
+                                "transport=tcp", invites[0].header("Contact")
+                            )
+                            self.assertIn(
+                                "reason=connection_rejected_before_send",
+                                "\n".join(logs.output),
+                            )
+                    else:
+                        self.assertEqual(invites, [])
+                        self.assertNotIn(
+                            "reason=connection_rejected_before_send",
+                            "\n".join(logs.output),
+                        )
+                finally:
+                    await client.close()
 
     async def test_large_udp_invite_is_rebuilt_and_sent_over_tcp(self) -> None:
         resolved_transports: list[str] = []

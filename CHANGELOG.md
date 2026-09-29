@@ -6,6 +6,11 @@ Changes since stable **2026.10.0**. This is a development preview.
 
 ### Home Assistant
 
+- Retry the original UDP route when a size-triggered TCP connection attempt is
+  explicitly rejected before sending the INVITE. This allows large offers to
+  reach UDP-only peers without overriding explicit TCP/TLS configuration.
+- Add Call-ID, transport, destination, elapsed time and OS error details to
+  outbound connection diagnostics, including failures absent from SIP captures.
 - Fix direct inbound trunk routing: resolve the called phonebook destination
   before using the fallback, and preserve the original called number for routing
   automations. An Assist/group fallback no longer bypasses the automation window.
