@@ -199,12 +199,13 @@ async def route_invite(
                 str(trunk_cfg.get(CONF_TRUNK_INBOUND_DEFAULT_TARGET) or "HA").strip()
                 or "HA"
             )
-            invite = replace(
-                invite,
-                target=default_target,
-                target_route=default_target,
-            )
-            decision = _inbound_route_decision(invite, peers, roster_entries)
+            # Keep the original called address for routing automations. Only an
+            # unmatched destination uses the configured inbound fallback.
+            if decision.entry is None and not _is_ha_target(invite.routing_target):
+                fallback_invite = replace(
+                    invite, target=default_target, target_route=default_target
+                )
+                decision = _inbound_route_decision(fallback_invite, peers, roster_entries)
             trunk_direct_preprocessed = True
     registry = _call_registry(hass)
     endpoint_registry = endpoint_directory(hass)
@@ -241,10 +242,10 @@ async def route_invite(
             to_tag="",
             decline_reason="capacity_exhausted",
         )
-    if decision.action is RouteAction.AUTOMATION:
+    if not trunk_direct_preprocessed and decision.action is RouteAction.AUTOMATION:
         from .automation_call import route_automation_call
         return await route_automation_call(runtime, invite, decision, registry, source_endpoint)
-    if decision.action is RouteAction.ASSIST:
+    if not trunk_direct_preprocessed and decision.action is RouteAction.ASSIST:
         called_extension = (
             str(decision.entry.extension or invite.routing_target)
             if decision.entry is not None
@@ -260,7 +261,7 @@ async def route_invite(
             source="sip",
             called_extension=called_extension,
         )
-    if decision.action is RouteAction.GROUP:
+    if not trunk_direct_preprocessed and decision.action is RouteAction.GROUP:
         return await route_local_group(
             runtime=runtime,
             invite=invite,
@@ -285,7 +286,7 @@ async def route_invite(
         "caller": invite.caller,
         "callee": decision.target or invite.target,
         "destination": decision.entry.display_name if decision.entry is not None else invite.target,
-        "called_extension": decision.entry.extension if decision.entry is not None else invite.target,
+        "called_extension": invite.routing_target if trunk_invite else (decision.entry.extension if decision.entry is not None else invite.target),
         "ingress": "trunk" if trunk_invite else "extension",
     }, options) for options in registration_data(hass).route_trigger_filters.values())
     automation_route = await request_route_override(
@@ -324,9 +325,9 @@ async def route_invite(
             decision.sip_uri or "-",
         )
 
-        # An automation selects a dial-plan destination, not a transport
-        # shortcut. Re-enter the canonical PBX dispatcher for destination
-        # types that were resolved before the automation window.
+    if route_action != "answer_ha":
+        # Dispatch the selected destination after the automation window,
+        # including a direct trunk's unchanged phonebook/fallback decision.
         if decision.action is RouteAction.AUTOMATION:
             from .automation_call import route_automation_call
             return await route_automation_call(runtime, invite, decision, registry, source_endpoint)

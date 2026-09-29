@@ -87,7 +87,7 @@
           "trunk_password": "Senha de autenticação Digest.",
           "trunk_register_expires": "Expiração do REGISTER em segundos.",
           "trunk_outbound_proxy": "Host de proxy opcional ou sip:host:porta usado como próximo salto da sinalização.",
-          "trunk_inbound_default_target": "Nome da agenda, URI SIP, extensão ou número usado somente quando nenhuma extensão DTMF ou automação selecionar outro destino.",
+          "trunk_inbound_default_target": "No roteamento imediato, usada somente quando o destino chamado não está na agenda. A seleção DTMF e as automações podem escolher outro destino.",
           "trunk_inbound_mode": "O modo de rota imediata ignora a coleta de dígitos. O modo de coleta por DTMF atende primeiro a perna do tronco e permite que os dígitos selecionem explicitamente uma extensão da agenda.",
           "automation_routing_enabled": "Antes de usar o destino alternativo, publica uma solicitação curta de roteamento que uma automação pode atender. Dígitos DTMF explícitos sempre têm prioridade.",
           "trunk_dtmf_timeout_ms": "Tempo entre dígitos usado no modo DTMF. O primeiro dígito pode levar até 10 segundos. O padrão é 3 segundos e o máximo é 10 segundos.",

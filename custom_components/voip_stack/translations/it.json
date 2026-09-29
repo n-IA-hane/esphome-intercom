@@ -87,7 +87,7 @@
           "trunk_password": "Password digest auth.",
           "trunk_register_expires": "Scadenza REGISTER in secondi.",
           "trunk_outbound_proxy": "Proxy opzionale o sip:host:port usato come next hop di signaling.",
-          "trunk_inbound_default_target": "Nome rubrica, URI SIP, interno o numero usato solo quando nessun interno DTMF e nessuna automazione selezionano un'altra destinazione.",
+          "trunk_inbound_default_target": "Nella modalità immediata viene usata solo se la destinazione chiamata non è in rubrica. La selezione DTMF e le automazioni possono scegliere una destinazione diversa.",
           "trunk_inbound_mode": "Instrada subito evita la raccolta cifre. Raccogli interno con DTMF risponde prima sul trunk e permette alle cifre esplicite di scegliere un interno della rubrica.",
           "automation_routing_enabled": "Prima di usare la destinazione di fallback, pubblica una breve richiesta di instradamento a cui può rispondere un'automazione. Le cifre DTMF esplicite mantengono sempre la priorità.",
           "trunk_dtmf_timeout_ms": "Timeout tra cifre usato in modalità DTMF. Per la prima cifra sono disponibili 10 secondi. Default 3 secondi, massimo 10 secondi.",

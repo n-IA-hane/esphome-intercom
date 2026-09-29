@@ -139,3 +139,39 @@ async def test_route_capacity_rejects_before_allocating_more_state(
     assert result.status == 503
     assert result.decline_reason == "capacity_exhausted"
     assert len(pending) == 64
+
+
+@pytest.mark.parametrize("known", [True, False])
+@pytest.mark.asyncio
+async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_unknown(monkeypatch, known):
+    from dataclasses import replace
+    from custom_components.voip_stack.inbound_routing.automation import AutomationRoute
+    from custom_components.voip_stack.sip_listener import SipInviteResult
+
+    _patch_route_prefix(monkeypatch)
+    original = replace(_invite(), target="601", target_route="601")
+    destination = SimpleNamespace(extension="601", display_name="Bedroom")
+    fallback = SimpleNamespace(extension="777", display_name="Assistant")
+    initial = RouteDecision(RouteAction.FORWARD if known else RouteAction.TRUNK,
+                            target="Bedroom" if known else "601", entry=destination if known else None)
+    selected_fallback = RouteDecision(RouteAction.ASSIST, target="Assistant", entry=fallback)
+    runtime = _runtime()
+    runtime.is_trunk_invite = Mock(return_value=True)
+    runtime.is_ha_target = Mock(return_value=False)
+    runtime.get_trunk_config = Mock(return_value={"trunk_inbound_mode": "direct", "trunk_inbound_default_target": "Assistant", "automation_routing_enabled": True})
+    runtime.inbound_route_decision = Mock(side_effect=lambda invite, *_: initial if invite.routing_target == "601" else selected_fallback)
+    monkeypatch.setattr(invite_router, "registration_data", lambda h: SimpleNamespace(route_trigger_filters={}))
+    request = AsyncMock(return_value=AutomationRoute(action="decline"))
+    monkeypatch.setattr(invite_router, "request_route_override", request)
+    monkeypatch.setattr(invite_router, "automation_rejection", lambda **kw: SipInviteResult(603, "Decline", to_tag=""))
+    assist = AsyncMock(return_value=SipInviteResult(488, "Wrong route", to_tag=""))
+    monkeypatch.setattr(invite_router, "route_local_assist", assist)
+
+    result = await invite_router.route_invite(runtime, original)
+
+    assert result.status == 603
+    request.assert_awaited_once()
+    assert request.await_args.kwargs["invite"] is original
+    assert request.await_args.kwargs["invite"].routing_target == "601"
+    assert request.await_args.kwargs["decision"] == (initial if known else selected_fallback)
+    assist.assert_not_awaited()

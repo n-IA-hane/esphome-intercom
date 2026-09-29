@@ -127,6 +127,11 @@ async def request_route_override(
         source_host=invite.source_host,
         caller_route=invite.routing_caller,
         target_route=invite.routing_target,
+        dialed_target=invite.routing_target,
+        called_extension=(
+            invite.routing_target if trunk_invite
+            else str(getattr(decision.entry, "extension", "") or invite.routing_target)
+        ),
         target=decision.target,
         default_destination=decision.target,
         fallback_destination=decision.target,

@@ -87,7 +87,7 @@
           "trunk_password": "Digest-Authentifizierungskennwort.",
           "trunk_register_expires": "REGISTER-Ablauf in Sekunden.",
           "trunk_outbound_proxy": "Optionaler Proxy-Host oder sip:host:port, der als nächster Signalisierungs-Hop verwendet wird.",
-          "trunk_inbound_default_target": "Telefonbuchname, SIP-URI, Durchwahl oder Nummer werden nur verwendet, wenn keine DTMF-Nebenstelle oder Automatisierung ein anderes Ziel auswählt.",
+          "trunk_inbound_default_target": "Beim sofortigen Routing nur verwendet, wenn das angerufene Ziel nicht im Telefonbuch steht. DTMF-Auswahl und Routing-Automationen können ein anderes Ziel wählen.",
           "trunk_inbound_mode": "Route überspringt sofort die Ziffernerfassung. Beim Sammeln der Nebenstelle mit DTMF wird zunächst die Amtsleitung beantwortet, und durch explizite Ziffern kann eine Telefonbuch-Nebenstelle ausgewählt werden.",
           "automation_routing_enabled": "Veröffentlichen Sie vor der Verwendung des Fallback-Ziels eine kurze Routing-Anfrage, die möglicherweise von einer Automatisierung beantwortet wird. Explizite DTMF-Ziffern behalten immer Vorrang.",
           "trunk_dtmf_timeout_ms": "Zeitüberschreitung zwischen Ziffern, die im DTMF-Modus verwendet wird. Die erste Ziffer darf 10 Sekunden lang sein. Der Standardwert beträgt 3 Sekunden, der Höchstwert 10 Sekunden.",

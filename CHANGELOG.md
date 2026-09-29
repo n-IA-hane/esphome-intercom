@@ -6,6 +6,9 @@ Changes since stable **2026.10.0**. This is a development preview.
 
 ### Home Assistant
 
+- Fix direct inbound trunk routing: resolve the called phonebook destination
+  before using the fallback, and preserve the original called number for routing
+  automations. An Assist/group fallback no longer bypasses the automation window.
 - Add a **Register the trunk** choice. Static trunks can place and receive calls
   without REGISTER, using an explicit list of permitted incoming SIP source IPs
   or CIDR networks. Credentials are optional in this mode; INVITE digest remains

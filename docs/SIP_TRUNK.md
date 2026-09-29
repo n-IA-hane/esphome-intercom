@@ -67,7 +67,7 @@ Calls from a matching source use the existing trunk routing rules. Other sources
 do not acquire trunk privileges; registered phones and ESP endpoints keep their
 existing call paths. Local phonebook destinations, DTMF and automation routing
 continue to use the shared call implementation. This option does not add multiple
-trunks or change how the inbound fallback destination is selected.
+trunks or add a separate routing engine.
 
 ### Registered trunk
 
@@ -107,8 +107,12 @@ routable number.
 
 Choose one routing mode in the config flow:
 
-- **Direct to default destination** skips DTMF collection and immediately
-  resolves the configured target through the phonebook.
+- **Route immediately** first resolves the destination from the incoming SIP
+  request against the phonebook. A known extension or contact keeps its normal
+  routing and availability rules. Only an unknown destination uses **Fallback
+  destination**. Routing automations can override this choice; their event retains
+  the original called address in `target_route`, `dialed_target` and
+  `called_extension`, including when the fallback points to Assist or a group.
 - **DTMF extension selection** answers the trunk leg with SDP, collects
   negotiated telephone-event or SIP INFO digits, and resolves explicit digits
   as phonebook extensions.

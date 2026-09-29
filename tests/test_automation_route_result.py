@@ -23,7 +23,8 @@ def test_answer_ha_route_preserves_selected_endpoint() -> None:
     assert route.endpoint_id == "browser:casa"
 
 
-async def test_route_request_commits_identity_before_projection(monkeypatch) -> None:
+@pytest.mark.parametrize("trunk_invite", [False, True])
+async def test_route_request_commits_identity_before_projection(monkeypatch, trunk_invite) -> None:
     registry = SipEndpointRuntime()
     registry.activate()
     registry.upsert("call-1", state="connecting")
@@ -47,10 +48,10 @@ async def test_route_request_commits_identity_before_projection(monkeypatch) -> 
     invite = SimpleNamespace(
         call_id="call-1",
         caller="Alice",
-        target="Casa",
+        target="601",
         source_host="192.0.2.5",
         routing_caller="Alice",
-        routing_target="Casa",
+        routing_target="601",
         send_format=wire,
         recv_format=wire,
         selected_format=SimpleNamespace(
@@ -58,7 +59,7 @@ async def test_route_request_commits_identity_before_projection(monkeypatch) -> 
         ),
     )
     decision = SimpleNamespace(
-        action=SimpleNamespace(value="ha"), target="Casa", sip_uri=""
+        action=SimpleNamespace(value="ha"), target="Casa", sip_uri="", entry=None
     )
     runtime = SimpleNamespace(hass=object(), ha_peer_name=lambda _hass: "Lab")
 
@@ -69,7 +70,7 @@ async def test_route_request_commits_identity_before_projection(monkeypatch) -> 
         registered_source=False,
         caller_is_trusted_endpoint=True,
         automation_routing_enabled=True,
-        trunk_invite=False,
+        trunk_invite=trunk_invite,
     )
 
     assert result.action == "default"
@@ -77,3 +78,7 @@ async def test_route_request_commits_identity_before_projection(monkeypatch) -> 
     assert session is not None
     assert (session.caller, session.callee) == ("Alice", "Casa")
     assert projected and projected[0][0] is session
+
+    assert projected[0][1]["target_route"] == "601"
+    assert projected[0][1]["dialed_target"] == "601"
+    assert projected[0][1]["called_extension"] == "601"
