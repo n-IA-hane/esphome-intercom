@@ -29,6 +29,12 @@ still requested. Setup: [SIP trunk guide](docs/SIP_TRUNK.md#static-trunk-without
 
 ### ESPHome configuration
 
+- Backport [ESPHome's mixer restart fix](https://github.com/esphome/esphome/pull/19368): a start request received while
+  the previous worker is stopping survives cleanup. No new worker or buffer is added.
+- Playback queue-full errors now include queue and source/speaker state snapshots
+  to help investigate persistent audio stalls. Long-uptime validation for #129
+  remains in progress; updating HACS alone does not update an ESP firmware.
+
 Use existing Audio Stack actions and conditions without fixed IDs. Headless
 profiles also use automatic VoIP and runtime-observer binding. Replace simple
 VoIP state lambdas with component conditions, preserving active-versus-idle

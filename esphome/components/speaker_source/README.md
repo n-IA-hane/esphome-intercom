@@ -29,3 +29,21 @@ Upstream proposals for the remaining compatibility changes:
 
 Recheck these differences when updating the stable ESPHome baseline. An open
 proposal is not a replacement for a released upstream fix.
+
+## Diagnose a stalled control queue
+
+A full control queue now logs its first waiting command and the state of both
+playback pipelines. Keep the complete block: queue depth, active/target/pending/
+stopping source states, speaker state and pending frame count. The head command
+codes are 0 (replace URI), 1 (enqueue URI), 2 (advance playlist), 3 (play current)
+and 4 (player command).
+
+During an investigation, the same snapshot can be requested from a main-loop
+lambda with `id(speaker_media_player).dump_diagnostics()` (use your player ID).
+For example, an optional `interval` automation can request it every 60 seconds.
+Use logger level INFO or more verbose. The snapshot does not clear the queue,
+stop playback, or log media URLs. It adds no periodic work unless you configure it.
+
+A source's pending frame count alone is not proof of a blocked output: after its
+IDLE notification, final output callbacks may no longer be attributed to that
+source. Compare it with speaker state and the mixer/output buffers.
