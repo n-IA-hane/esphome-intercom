@@ -82,3 +82,64 @@ int main() {
         ["bash", "-c", 'ulimit -c 0; exec "$1"', "bash", str(binary)],
         check=True, capture_output=True, text=True,
     )
+
+
+def test_queue_snapshot_reads_state_without_mutating_or_logging_urls(tmp_path):
+    """The diagnostic reports the blocked owner without changing queue progress."""
+    source = (ROOT / "esphome/components/speaker_source/speaker_source_media_player.cpp").read_text()
+    begin = source.index("void SpeakerSourceMediaPlayer::dump_diagnostics()")
+    method = source[begin:source.index("void SpeakerSourceMediaPlayer::setup()", begin)]
+    code = r'''
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <cstdio>
+#include <string>
+#include <vector>
+#define ESP_LOGI(tag, fmt, ...) std::printf(fmt "\n", __VA_ARGS__)
+#define YESNO(value) ((value) ? "YES" : "NO")
+constexpr int pdTRUE=1;
+namespace media_source {
+enum class MediaSourceState {IDLE,PLAYING,PAUSED,ERROR};
+struct MediaSource {MediaSourceState value=MediaSourceState::IDLE; auto get_state(){return value;}};
+}
+struct Speaker {bool is_stopped(){return false;}bool is_running(){return true;}bool get_pause_state(){return false;}bool has_buffered_data(){return false;}};
+struct MediaPlayerControlCommand {int type=3;unsigned pipeline=1;};
+struct Queue {int depth=4;MediaPlayerControlCommand head;};
+int xQueuePeek(Queue* q,MediaPlayerControlCommand* h,int){*h=q->head;return q->depth?1:0;}
+int uxQueueMessagesWaiting(Queue* q){return q->depth;}
+struct Pipeline {
+ Speaker* speaker=nullptr;std::atomic<media_source::MediaSource*> active_source{nullptr};
+ media_source::MediaSource *pending_source=nullptr,*stopping_source=nullptr;
+ std::vector<std::string> playlist;unsigned playlist_index=0;std::atomic<unsigned> pending_frames{0};
+ bool is_configured(){return speaker!=nullptr;}
+};
+struct SpeakerSourceMediaPlayer {
+ Queue* media_control_command_queue_=nullptr;std::array<Pipeline,2> pipelines_;
+ media_source::MediaSource source;
+ unsigned get_playlist_position_(unsigned i){return pipelines_[i].playlist_index;}
+ media_source::MediaSource* find_source_for_uri_(const std::string&,unsigned){return &source;}
+ void dump_diagnostics();
+};
+''' + method + r'''
+int main(){
+ SpeakerSourceMediaPlayer player;player.dump_diagnostics();
+ Queue queue;Speaker speaker;player.media_control_command_queue_=&queue;
+ auto &p=player.pipelines_[1];p.speaker=&speaker;p.active_source=&player.source;
+ p.playlist={"https://private.example/secret-token"};p.pending_frames=13;
+ player.dump_diagnostics();
+ assert(queue.depth==4 && queue.head.type==3 && queue.head.pipeline==1);
+ assert(p.playlist_index==0 && p.playlist.size()==1 && p.pending_frames==13);
+ assert(p.active_source==&player.source && player.source.value==media_source::MediaSourceState::IDLE);
+}
+'''
+    cpp = tmp_path / "snapshot.cpp"
+    binary = tmp_path / "snapshot"
+    cpp.write_text(code)
+    subprocess.run(["g++", "-std=c++17", str(cpp), "-o", str(binary)], check=True, capture_output=True, text=True)
+    result = subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+    assert "depth=4 head=3 pipeline=1" in result.stdout
+    assert "active=idle target=idle" in result.stdout
+    assert "pending_frames=13" in result.stdout
+    assert "stopped=NO running=YES" in result.stdout
+    assert "secret-token" not in result.stdout

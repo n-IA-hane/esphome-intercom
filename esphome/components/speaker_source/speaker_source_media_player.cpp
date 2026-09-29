@@ -58,6 +58,42 @@ void SpeakerSourceMediaPlayer::dump_config() {
                 this->volume_increment_, this->volume_min_, this->volume_max_);
 }
 
+// Called on the main loop, including when a control command cannot be queued.
+void SpeakerSourceMediaPlayer::dump_diagnostics() {
+  if (this->media_control_command_queue_ == nullptr)
+    return;
+  MediaPlayerControlCommand head{};
+  const bool has_head = xQueuePeek(this->media_control_command_queue_, &head, 0) == pdTRUE;
+  ESP_LOGI(TAG, "Control queue: depth=%u head=%d pipeline=%d (0=media,1=announcement)",
+           (unsigned) uxQueueMessagesWaiting(this->media_control_command_queue_),
+           has_head ? (int) head.type : -1, has_head ? (int) head.pipeline : -1);
+  const auto state_name = [](media_source::MediaSource *source) -> const char * {
+    if (source == nullptr) return "none";
+    switch (source->get_state()) {
+      case media_source::MediaSourceState::IDLE: return "idle";
+      case media_source::MediaSourceState::PLAYING: return "playing";
+      case media_source::MediaSourceState::PAUSED: return "paused";
+      case media_source::MediaSourceState::ERROR: return "error";
+      default: return "unknown";
+    }
+  };
+  for (uint8_t index = 0; index < this->pipelines_.size(); ++index) {
+    auto &ps = this->pipelines_[index];
+    if (!ps.is_configured()) continue;
+    media_source::MediaSource *target = nullptr;
+    if (ps.playlist_index < ps.playlist.size())
+      target = this->find_source_for_uri_(ps.playlist[this->get_playlist_position_(index)], index);
+    ESP_LOGI(TAG, "Pipeline %u: playlist=%u/%u active=%s target=%s pending=%s stopping=%s pending_frames=%u",
+             index, (unsigned) ps.playlist_index, (unsigned) ps.playlist.size(),
+             state_name(ps.active_source.load(std::memory_order_relaxed)), state_name(target),
+             state_name(ps.pending_source), state_name(ps.stopping_source),
+             (unsigned) ps.pending_frames.load(std::memory_order_relaxed));
+    ESP_LOGI(TAG, "Pipeline %u speaker: stopped=%s running=%s paused=%s buffered=%s",
+             index, YESNO(ps.speaker->is_stopped()), YESNO(ps.speaker->is_running()),
+             YESNO(ps.speaker->get_pause_state()), YESNO(ps.speaker->has_buffered_data()));
+  }
+}
+
 void SpeakerSourceMediaPlayer::setup() {
   this->state = media_player::MEDIA_PLAYER_STATE_IDLE;
 
@@ -379,6 +415,7 @@ void SpeakerSourceMediaPlayer::queue_command_(MediaPlayerControlCommand::Type ty
   cmd.pipeline = pipeline;
   if (xQueueSend(this->media_control_command_queue_, &cmd, 0) != pdTRUE) {
     ESP_LOGE(TAG, "Queue full, command dropped");
+          this->dump_diagnostics();
   }
 }
 
@@ -728,6 +765,7 @@ void SpeakerSourceMediaPlayer::control(const media_player::MediaPlayerCall &call
     if (xQueueSend(this->media_control_command_queue_, &control_command, 0) != pdTRUE) {
       delete control_command.data.uri;
       ESP_LOGE(TAG, "Queue full, URI dropped");
+      this->dump_diagnostics();
     }
     return;
   }
@@ -760,6 +798,7 @@ void SpeakerSourceMediaPlayer::control(const media_player::MediaPlayerCall &call
         control_command.data.command = cmd.value();
         if (xQueueSend(this->media_control_command_queue_, &control_command, 0) != pdTRUE) {
           ESP_LOGE(TAG, "Queue full, command dropped");
+          this->dump_diagnostics();
         }
         return;
     }

@@ -154,6 +154,7 @@ class SpeakerSourceMediaPlayer final : public Component, public media_player::Me
   void setup() override;
   void loop() override;
   void dump_config() override;
+  void dump_diagnostics();
 
   // MediaPlayer implementations
   media_player::MediaPlayerTraits get_traits() override;
