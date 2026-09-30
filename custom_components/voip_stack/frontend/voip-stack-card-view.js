@@ -278,6 +278,17 @@ export function buildMainCardSkeleton(cardVersion) {
       }
       .voip-button[hidden] { display: none; }
       .voip-button.small { width: var(--voip-small-button-size, 80px); height: var(--voip-small-button-size, 80px); font-size: 0.9em; }
+      .card:not(.video-active) .voip-button {
+        box-sizing: border-box;
+        width: max-content;
+        min-width: var(--voip-button-size, 100px);
+        height: auto;
+        aspect-ratio: 1;
+        padding: 12px;
+        flex-shrink: 0;
+        white-space: nowrap;
+      }
+      .card:not(.video-active) .voip-button.small { min-width: var(--voip-small-button-size, 80px); }
       .voip-button.call { background: #4caf50; color: white; }
       .voip-button.answer { background: #4caf50; color: white; animation: ring-pulse 1s infinite; }
       .voip-button.decline { background: #f44336; color: white; animation: ring-pulse 1s infinite; }
