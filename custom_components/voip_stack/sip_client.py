@@ -3333,7 +3333,7 @@ class SipCallClient:
                 # answer validation strict.
                 allow_inactive_rejected_media_port=local_video_rtp_port == 0,
                 # local_video_direction below remains bounded by our offer.
-                allow_video_sendrecv_capability=True,
+                allow_video_direction_capability=True,
             )
             audio = sdp.negotiate_answer_directional(
                 answer.body,
@@ -3933,6 +3933,8 @@ class SipCallClient:
                     self._local_sdp_body,
                     msg.body,
                     allow_omitted_trailing_media=True,
+                    # The local video direction below intersects both peers.
+                    allow_video_direction_capability=True,
                 )
                 local_offer_direction = str(
                     sdp.parse_sdp(self._local_sdp_body)["direction"]

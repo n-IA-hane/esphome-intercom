@@ -6,6 +6,10 @@ Changes since stable **2026.10.0**. This is a development preview.
 
 ### Home Assistant
 
+- Keep audio calls established when a SIP peer answers a one-way video offer
+  with the same one-way direction. The effective video direction is bounded by
+  both peers, becoming inactive when neither can supply the requested stream;
+  a later video change can restore it on the same call.
 - Retry the original UDP route when a size-triggered TCP connection attempt is
   explicitly rejected before sending the INVITE. This allows large offers to
   reach UDP-only peers without overriding explicit TCP/TLS configuration.

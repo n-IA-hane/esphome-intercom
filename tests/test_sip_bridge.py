@@ -249,6 +249,29 @@ class SipBridgeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(offered, ())
 
+    def test_equal_receive_only_video_keeps_bridge_inactive_until_sender_returns(self) -> None:
+        invite, dialog, _unused = self._cross_codec_video_fixture()
+        video = dataclasses.replace(dialog.video_format, direction="recvonly")
+        invite = dataclasses.replace(invite, video_format=video)
+        dialog.video_format = video
+        dialog.local_video_format = video
+        dialog.local_video_direction = "inactive"
+        relay = sip_bridge.build_pending_invite_video_relay(
+            invite, remote_host=dialog.remote_host, left_port=44000,
+            right_port=44002, sockets=(None, None, None, None),
+        )
+        answer = sip_bridge.configure_answered_invite_video_relay(invite, dialog, relay)
+        self.assertIsNotNone(answer)
+        self.assertEqual(answer.direction, "inactive")
+        self.assertEqual(relay.left.video_format.direction, "inactive")
+        self.assertFalse(relay.transcoding)
+        invite = dataclasses.replace(invite, video_format=dataclasses.replace(video, direction="sendrecv"))
+        dialog.local_video_direction = "sendonly"
+        answer = sip_bridge.configure_answered_invite_video_relay(invite, dialog, relay)
+        self.assertIsNotNone(answer)
+        self.assertEqual(answer.direction, "recvonly")
+        self.assertEqual(relay.left.video_format.direction, "sendonly")
+
     def test_cross_codec_video_answer_configures_bidirectional_ffmpeg(self) -> None:
         invite, dialog, relay = self._cross_codec_video_fixture()
         hass = types.SimpleNamespace(data={})

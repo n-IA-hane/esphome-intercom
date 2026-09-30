@@ -658,8 +658,35 @@ class SdpPcmProfileTest(unittest.TestCase):
                         sdp.validate_sdp_answer(offer, answer)
                     with self.assertRaises(sdp.SdpError):
                         sdp.validate_sdp_answer(
-                            offer, answer, allow_video_sendrecv_capability=True,
+                            offer, answer, allow_video_direction_capability=True,
                         )
+
+    def test_video_direction_capability_intersection_keeps_strict_default(self) -> None:
+        audio = audio_format.AudioFormat(16000, "s16le", 1, 20)
+        for direction in ("sendonly", "recvonly"):
+            offer = sdp.build_offer_directional(
+                "192.0.2.10", "192.0.2.10", 40000, [audio], [audio],
+                video_port=40002, video_formats=sdp.DEFAULT_VIDEO_FORMATS,
+                video_direction=direction,
+            )
+            pcm = sdp.offered_pcm_formats(offer)[0]
+            video = sdp.offered_video_formats(offer)[0]
+            answer = sdp.build_answer_directional(
+                "192.0.2.20", "192.0.2.20", 41000, pcm, pcm,
+                remote_sdp=offer, video_port=41002, video_format=video,
+                video_direction=direction,
+            )
+            with self.assertRaisesRegex(sdp.SdpError, "direction"):
+                sdp.validate_sdp_answer(offer, answer)
+            sdp.validate_sdp_answer(offer, answer, allow_video_direction_capability=True)
+            self.assertEqual(sdp.constrained_video_direction(
+                direction, allow_send=direction == "sendonly",
+                allow_receive=direction == "recvonly",
+            ), "inactive")
+            # This opt-in does not permit a peer to revive explicitly inactive video.
+            inactive_offer = offer.rsplit("a=" + direction, 1)[0] + "a=inactive\r\n"
+            with self.assertRaisesRegex(sdp.SdpError, "direction"):
+                sdp.validate_sdp_answer(inactive_offer, answer, allow_video_direction_capability=True)
 
     def test_sdp_origin_rewrite_preserves_identity_and_detects_real_changes(self) -> None:
         fmt = audio_format.AudioFormat(16000, "s16le", 1, 20)

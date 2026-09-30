@@ -3259,7 +3259,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         refused_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         refused_tcp.bind(("127.0.0.1", port))
         try:
-            for _ in range(2):
+            for initial_direction in ("sendrecv", "recvonly"):
                 client = sip_client.SipCallClient(
                     local_ip="127.0.0.1",
                     local_name="Caller",
@@ -3269,6 +3269,7 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                     include_common_codecs=True,
                     local_video_rtp_port=41002,
                     video_formats=sdp.DEFAULT_VIDEO_FORMATS,
+                    video_direction=initial_direction,
                     generic_video_relay=True,
                 )
                 try:
@@ -3290,13 +3291,31 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
                     self.assertIn(
                         "reason=connection_rejected_before_send", "\n".join(logs.output)
                     )
+                    self.assertEqual(client.dialog.local_audio_direction, "sendrecv")
+                    self.assertEqual(client.dialog.local_video_direction,
+                                     "sendonly" if initial_direction == "sendrecv" else "inactive")
+                    call_id = client.dialog.call_id
+                    audio = (client.dialog.send_format, client.dialog.recv_format)
+                    for direction, effective in (("recvonly", "inactive"), ("sendrecv", "sendonly")):
+                        previous = client.dialog
+                        candidate = await client.async_prepare_video_reinvite(
+                            local_video_rtp_port=41002,
+                            video_formats=sdp.DEFAULT_VIDEO_FORMATS,
+                            video_direction=direction, timeout=2,
+                        )
+                        self.assertIsNotNone(candidate)
+                        self.assertEqual(candidate.local_video_direction, effective)
+                        self.assertEqual(candidate.local_audio_direction, "sendrecv")
+                        self.assertEqual((candidate.send_format, candidate.recv_format), audio)
+                        self.assertTrue(client.commit_prepared_reinvite(previous, candidate))
+                        self.assertEqual(client.dialog.call_id, call_id)
                     self.assertEqual(await client.terminate(), "remote_hangup")
                 finally:
                     await client.close()
                 self.assertIsNone(client.transport)
                 self.assertIsNone(client.writer)
                 self.assertIsNone(client.dialog)
-            self.assertEqual([r.method for r in received], ["INVITE", "ACK", "BYE"] * 2)
+            self.assertEqual([r.method for r in received], (["INVITE", "ACK"] * 3 + ["BYE"]) * 2)
         finally:
             refused_tcp.close()
             transport.close()

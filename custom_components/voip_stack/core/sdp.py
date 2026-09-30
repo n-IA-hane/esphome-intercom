@@ -1983,7 +1983,7 @@ def validate_sdp_answer(
     *,
     allow_omitted_trailing_media: bool = False,
     allow_inactive_rejected_media_port: bool = False,
-    allow_video_sendrecv_capability: bool = False,
+    allow_video_direction_capability: bool = False,
 ) -> None:
     """Validate the RFC 3264 media-section and direction answer contract.
 
@@ -2117,14 +2117,14 @@ def validate_sdp_answer(
         offer_direction = normalize_direction(str(offered_section["direction"]))
         answer_direction = normalize_direction(str(answered_section["direction"]))
         if answer_direction not in allowed_directions[offer_direction]:
-            # Some UAs report sendrecv capabilities rather than the effective
-            # one-way answer. As in PJSIP, an opting-in caller must intersect
-            # this with its local offer; it must never widen local send rights.
+            # Some UAs report video capabilities rather than an effective
+            # answer direction. Opting-in callers must intersect with their
+            # offer, as PJSIP does, including inactive for equal one-way sides.
             if (
-                allow_video_sendrecv_capability
+                allow_video_direction_capability
                 and media == "video"
-                and answer_direction == "sendrecv"
                 and offer_direction in {"sendonly", "recvonly"}
+                and answer_direction in {"sendrecv", offer_direction}
             ):
                 continue
             raise SdpError(
