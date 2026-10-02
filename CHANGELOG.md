@@ -6,6 +6,11 @@ Changes since stable **2026.10.0**. This is a development preview.
 
 ### Home Assistant
 
+- Fix phonebook delivery to remote ESPHome devices. A remote test exposed an
+  unnecessary lookup using the ESP's advertised IP address, which could differ
+  from the address configured in HA. Delivery now uses the resolved ESPHome
+  service identity and the existing API connection. This requires an integration
+  update and HA restart, with no ESP firmware update.
 - Keep audio calls established when a SIP peer answers a one-way video offer
   with the same one-way direction. The effective video direction is bounded by
   both peers, becoming inactive when neither can supply the requested stream;
