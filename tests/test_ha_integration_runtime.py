@@ -407,9 +407,11 @@ async def test_entry_runtime_owns_call_projection_and_detached_tasks(
     assert runtime.tasks == set()
 
 
+@pytest.mark.parametrize("advertised_host", ["192.0.2.10", "198.51.100.20", None])
 async def test_phonebook_pushes_only_changed_content_and_rehydrates_one_device(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
+    advertised_host: str | None,
 ) -> None:
     from homeassistant.const import EVENT_SERVICE_REGISTERED
 
@@ -443,17 +445,11 @@ async def test_phonebook_pushes_only_changed_content_and_rehydrates_one_device(
         "_get_voip_devices",
         AsyncMock(
             return_value=[
-                {"host": "192.0.2.10", "name": "P4"},
-                {"host": "192.0.2.11", "name": "S3"},
+                {"host": advertised_host, "name": "P4", "route_id": "p4"},
+                {"host": "192.0.2.11", "name": "S3", "route_id": "s3"},
             ]
         ),
     )
-    resolver = MagicMock()
-    resolver.route_id_for_host.side_effect = {
-        "192.0.2.10": "p4",
-        "192.0.2.11": "s3",
-    }.get
-    monkeypatch.setattr(phonebook_runtime, "get_resolver", lambda _hass: resolver)
 
     deliveries: list[tuple[str, str]] = []
 

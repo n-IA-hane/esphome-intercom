@@ -6,7 +6,6 @@ import logging
 
 from homeassistant.core import HomeAssistant
 
-from .device_resolver import get_resolver
 from .peer import Peer
 from .runtime_data import runtime_data, sip_registrar
 from .websocket_api import _get_voip_devices
@@ -68,14 +67,13 @@ async def push_roster_json_to_esps(
     async with runtime.phonebook_push_lock:
         devices = await _get_voip_devices(hass)
         services = available_esphome_services(hass)
-        resolver = get_resolver(hass)
         for device in devices:
-            if not device.get("host"):
-                continue
-            slug = resolver.route_id_for_host(device["host"])
+            # Use the owning ESPHome entry resolved by the device registry.
+            # Its API connection may use a different address from SIP discovery.
+            slug = str(device.get("route_id") or "").strip()
             if not slug:
-                _LOGGER.debug(
-                    "Phonebook push skipped for %s: no ESPHome route id",
+                _LOGGER.warning(
+                    "Phonebook push skipped for %s: no resolved ESPHome service identity",
                     device.get("name"),
                 )
                 continue
