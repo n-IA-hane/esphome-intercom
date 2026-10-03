@@ -2,7 +2,8 @@
 
 Based on ESPHome 2026.9.0, tag commit
 `c6e4c87e525dd343e470d8dea368957a002f6505`. ESPHome licensing and authorship
-apply to the copied source files.
+apply to the copied source files. The upstream LICENSE is included: runtime
+C++ code is GPLv3 and Python code is MIT.
 
 This fork adds `task_core: -1 | 0 | 1`. The default `-1` keeps the upstream
 unpinned task creation behavior. Core 1 is rejected on single-core targets.

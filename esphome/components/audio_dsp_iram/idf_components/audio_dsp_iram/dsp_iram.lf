@@ -1,0 +1,20 @@
+# ESP32-S3 placement of hot functions identified by JTAG PC sampling.
+# No algorithm or data-buffer changes.
+[mapping:audio_fft_hot_iram]
+archive: libespressif__dl_fft.a
+entries:
+    if IDF_TARGET_ESP32S3 = y:
+        dl_fft2r_fc32_aes3 (noflash)
+        dl_fft4r_fc32_aes3 (noflash)
+        dl_fft2r_fc32_ansi:dl_rfft_pre_proc_fc32_ansi (noflash)
+        dl_fft2r_fc32_ansi:dl_rfft_post_proc_fc32_ansi (noflash)
+        dl_fft2r_fc32_ansi:dl_bitrev2r_fc32_ansi (noflash)
+        dl_rfft_f32:dl_rfft_f32_run (noflash)
+        dl_rfft_f32:dl_irfft_f32_run (noflash)
+
+[mapping:audio_resampler_dot_iram]
+archive: libesphome__esp-audio-libs.a
+entries:
+    if IDF_TARGET_ESP32S3 = y:
+        dsps_dotprod_f32_ae32 (noflash)
+        dsps_dotprod_f32_aes3 (noflash)

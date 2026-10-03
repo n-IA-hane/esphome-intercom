@@ -1,8 +1,7 @@
 # =============================================================================
 # Waveshare ESP32-S3-Touch-LCD-1.85C-BOX V2 / FULL / SKU 30684
-# EXPERIMENTAL: not qualified for unattended use. V1 has different audio hardware.
-# Known failure: music + dual-mic AFE can starve loopTask and trigger its watchdog.
-# Do not treat successful compilation or individual calls as full qualification.
+# Development FULL profile for V2. V1 has different audio hardware.
+# Keep the DSP placement and explicit task affinities for this full workload.
 # Our WS3 dual-mic audio configuration with the Spotpear round-screen interface.
 # Support: https://github.com/sponsors/n-IA-hane
 # Hardware: https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85C/Resources-And-Documents
@@ -26,7 +25,7 @@
 # All avatar images are native 360x360 RGB565, without runtime scaling.
 # Eight idle poses reuse the original forward/backward timeline. Source PNGs
 # remain unchanged. Opaque originals need no alpha plane. OTA headroom is tight
-# (78,864 bytes on the measured local full build); verify every build size.
+# and must be checked in the compiler size report for each build.
 # BOOT: click starts/stops Assist or handles the current call; long press
 # switches between Assist and VoIP. The touch UI also provides contacts,
 # dialing, settings, timers and media controls.
@@ -186,6 +185,9 @@ esphome:
 esp32:
   board: esp32-s3-devkitc-1
   flash_size: 16MB
+  # Match the W25Q128 flash wiring and Waveshare reference firmware. DIO limits
+  # read throughput while AFE, wake word, playback and native-size images coexist.
+  flash_mode: qio
   framework:
     type: esp-idf
     advanced:
@@ -193,6 +195,9 @@ esp32:
       # Firmware size and runtime headroom require qualification on this board.
       compiler_optimization: PERF
     sdkconfig_options:
+      CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB: "y"
+      # Keep Wi-Fi off the core dedicated to dual-microphone AFE feed.
+      CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_1: "y"
       # Run instructions from the faster octal PSRAM to preserve full-duplex
       # AFE/MWW/VoIP cadence. Measure remaining PSRAM after all tasks start.
       # Keep the larger read-only assets in flash; mirroring both would exhaust
@@ -219,11 +224,15 @@ external_components:
   - source: ${voip_stack_components_source}
     components: [voip_stack]
   - source: ${ext_components_source}
-    components: [speaker, voice_assistant, micro_wake_word]
+    components: [speaker, voice_assistant, micro_wake_word, audio_dsp_iram]
   - source: ${runtime_controller_components_source}
     components: [runtime_controller]
   - source: ${audio_stack_components_source}
     components: [esp_audio_stack, esp_afe, resampler]
+
+# Build-only placement of the profiled FFT/dot-product kernels in internal RAM.
+# Adds no runtime component, task or audio buffer.
+audio_dsp_iram:
 
 # The reducer owns large bounded rule/configuration tables but never touches
 # them from ISR or DMA contexts. Keep those tables in PSRAM on this constrained
@@ -265,8 +274,7 @@ api:
 
 logger:
   hardware_uart: USB_SERIAL_JTAG
-  # DEBUG keeps SIP signaling + AEC/i2s lifecycle visible.
-  # Mute chatty ESPHome built-ins below; project components stay at DEBUG.
+  # Normal field logging; enable DEBUG explicitly for deeper investigation.
   level: INFO
   logs:
     voip_stack: INFO
@@ -360,7 +368,7 @@ esp_audio_stack:
   # ES8311/NS4150 path drops perceived loudness too aggressively with the
   # codec-dev default ~-50 dB floor. Keep 0% as mute, but make 70% usable.
   master_volume_min_db: -30.0
-  task_core: 0
+  task_core: 1
   task_priority: 19
   task_stack_size: 8192
   i2s_lrclk_pin: ${i2s_lrclk_pin}
@@ -396,20 +404,23 @@ esp_afe:
   type: fd
   mode: high_perf
   mic_num: 2
+  # Prefill the existing AFE output FIFO before consumption. One native-frame
+  # reserve absorbs delivery jitter during Assist/call transitions.
+  output_prebuffer_frames: 1
   aec_filter_length: 4
   aec_nlp_level: normal
   memory_alloc_mode: more_psram
-  # Keep the expensive AFE feed on Core 1, away from Wi-Fi and VoIP on Core 0.
-  # GMF fetch/result delivery stays on the other core. Both microphones and
-  # the full-duplex high-performance algorithms remain enabled.
+  # AFE feed owns Core 0; result delivery and wake word run on Core 1.
+  # Explicit affinity avoids floating-point tasks competing on whichever
+  # core happened to start them. Both microphones retain full processing.
   task_core: 1
   task_priority: 5
   ringbuf_size: 8
-  feed_task_core: 1
+  feed_task_core: 0
   feed_task_priority: 5
   feed_task_stack_size: 3072
-  fetch_task_core: 0
-  fetch_task_priority: 5
+  fetch_task_core: 1
+  fetch_task_priority: 9
   fetch_task_stack_size: 3072
   se_enabled: true
   ns_enabled: true
@@ -434,16 +445,16 @@ microphone:
     id: mic_afe
 
 speaker:
-  # Playback conversion uses Core 0 at the normal resampler priority.
-  # Keep it separate from the expensive dual-mic AFE feed on Core 1.
+  # Playback conversion runs on Core 1 at normal resampler priority,
+  # separate from the dual-microphone AFE feed on Core 0.
   - id: !extend media_speaker_input
-    task_core: 0
+    task_core: 1
     task_priority: 1
   - id: !extend tts_speaker_input
-    task_core: 0
+    task_core: 1
     task_priority: 1
   - id: !extend voip_speaker_input
-    task_core: 0
+    task_core: 1
     task_priority: 1
   - platform: esp_audio_stack
     id: hw_speaker
@@ -521,7 +532,7 @@ media_player:
 
 micro_wake_word:
   # Explicit affinity separates inference from AFE feed across restarts.
-  task_core: 0
+  task_core: 1
   id: mww
   microphone: mic_afe    # Post-AEC: SR linear AEC preserves spectral features
   stop_after_detection: false
@@ -1086,6 +1097,9 @@ lvgl:
   log_level: WARN
   # Geometry that touches LVGL objects runs only after LVGL has created them.
   on_boot:
+    - lambda: |-
+        lv_animimg_set_reverse_duration(id(idle_anim), 2300);
+        lv_animimg_set_reverse_delay(id(idle_anim), 2000);
     - script.execute: compute_layout_metrics
     - script.execute: reposition_widgets
   top_layer:
@@ -1152,7 +1166,7 @@ lvgl:
       on_swipe_up:
         - script.execute: swipe_to_voip
       widgets:
-        # Eight unique poses, reused forward/backward; original 6.6s timeline and end hold.
+        # Eight original poses; LVGL owns reverse playback and the 2s end hold.
         - animimg:
             id: idle_anim
             align: CENTER
@@ -1160,60 +1174,14 @@ lvgl:
             height: 360
             src:
               - idle_00
-              - idle_00
-              - idle_03
-              - idle_03
               - idle_03
               - idle_05
-              - idle_05
-              - idle_08
-              - idle_08
               - idle_08
               - idle_11
-              - idle_11
-              - idle_11
-              - idle_14
-              - idle_14
               - idle_14
               - idle_16
-              - idle_16
               - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_16
-              - idle_16
-              - idle_14
-              - idle_14
-              - idle_14
-              - idle_11
-              - idle_11
-              - idle_11
-              - idle_08
-              - idle_08
-              - idle_08
-              - idle_05
-              - idle_05
-              - idle_03
-              - idle_03
-              - idle_03
-              - idle_00
-            duration: 6600ms
+            duration: 2300ms
             auto_start: false
 
     # ========================================================================
