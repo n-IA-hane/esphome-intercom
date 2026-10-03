@@ -219,7 +219,7 @@ external_components:
   - source: ${voip_stack_components_source}
     components: [voip_stack]
   - source: ${ext_components_source}
-    components: [speaker, voice_assistant]
+    components: [speaker, voice_assistant, micro_wake_word]
   - source: ${runtime_controller_components_source}
     components: [runtime_controller]
   - source: ${audio_stack_components_source}
@@ -520,6 +520,8 @@ media_player:
 # =============================================================================
 
 micro_wake_word:
+  # Explicit affinity separates inference from AFE feed across restarts.
+  task_core: 0
   id: mww
   microphone: mic_afe    # Post-AEC: SR linear AEC preserves spectral features
   stop_after_detection: false
