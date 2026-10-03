@@ -1,6 +1,8 @@
 # =============================================================================
 # Waveshare ESP32-S3-Touch-LCD-1.85C-BOX V2 / FULL / SKU 30684
-# Hardware qualification in progress; V1 has different audio hardware.
+# EXPERIMENTAL: not qualified for unattended use. V1 has different audio hardware.
+# Known failure: music + dual-mic AFE can starve loopTask and trigger its watchdog.
+# Do not treat successful compilation or individual calls as full qualification.
 # Our WS3 dual-mic audio configuration with the Spotpear round-screen interface.
 # Support: https://github.com/sponsors/n-IA-hane
 # Hardware: https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85C/Resources-And-Documents
@@ -21,8 +23,10 @@
 #                                                  └──> [ES7210 reference]
 #
 # ST77916: 360x360 QSPI. CST816 touch and LCD reset use TCA9554 P0/P1.
-# Avatar frames are stored at 240x240 and scaled to the display by LVGL,
-# retaining all animation frames while leaving room for two OTA app slots.
+# All avatar images are native 360x360 RGB565, without runtime scaling.
+# Eight idle poses reuse the original forward/backward timeline. Source PNGs
+# remain unchanged. Opaque originals need no alpha plane. OTA headroom is tight
+# (78,864 bytes on the measured local full build); verify every build size.
 # BOOT: click starts/stops Assist or handles the current call; long press
 # switches between Assist and VoIP. The touch UI also provides contacts,
 # dialing, settings, timers and media controls.
@@ -944,6 +948,10 @@ font:
     size: 30
     glyphsets:
       - GF_Latin_Core
+    extras:
+      - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+        glyphs:
+          - "\U000F06CB" # contacts (address book)
   - file:
       type: gfonts
       family: Roboto Mono
@@ -957,165 +965,93 @@ image:
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/error.png
     id: assistant_gui_error
-    resize: 240x240
+    resize: 360x360
     type: RGB565
-    transparency: alpha_channel
+    transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/listening.png
     id: assistant_gui_listening
-    resize: 240x240
+    resize: 360x360
     type: RGB565
-    transparency: alpha_channel
+    transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/thinking.png
     id: assistant_gui_thinking
-    resize: 240x240
+    resize: 360x360
     type: RGB565
-    transparency: alpha_channel
+    transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/timer_finished.png
     id: assistant_gui_timer_finished
-    resize: 240x240
+    resize: 360x360
     type: RGB565
-    transparency: alpha_channel
+    transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/loading.png
     id: assistant_gui_initializing
-    resize: 240x240
+    resize: 360x360
     type: RGB565
-    transparency: alpha_channel
+    transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/error_no_wifi.png
     id: error_no_wifi
-    resize: 240x240
+    resize: 360x360
     type: RGB565
-    transparency: alpha_channel
+    transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/error_no_ha.png
     id: error_no_ha
-    resize: 240x240
+    resize: 360x360
     type: RGB565
-    transparency: alpha_channel
+    transparency: opaque
 
   # Idle animation frames (20 frames @ 5fps)
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_00.png
     id: idle_00
-    resize: 240x240
-    type: RGB565
-    transparency: opaque
-  - platform: file
-    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_01.png
-    id: idle_01
-    resize: 240x240
-    type: RGB565
-    transparency: opaque
-  - platform: file
-    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_02.png
-    id: idle_02
-    resize: 240x240
+    resize: 360x360
     type: RGB565
     transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_03.png
     id: idle_03
-    resize: 240x240
-    type: RGB565
-    transparency: opaque
-  - platform: file
-    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_04.png
-    id: idle_04
-    resize: 240x240
+    resize: 360x360
     type: RGB565
     transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_05.png
     id: idle_05
-    resize: 240x240
-    type: RGB565
-    transparency: opaque
-  - platform: file
-    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_06.png
-    id: idle_06
-    resize: 240x240
-    type: RGB565
-    transparency: opaque
-  - platform: file
-    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_07.png
-    id: idle_07
-    resize: 240x240
+    resize: 360x360
     type: RGB565
     transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_08.png
     id: idle_08
-    resize: 240x240
-    type: RGB565
-    transparency: opaque
-  - platform: file
-    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_09.png
-    id: idle_09
-    resize: 240x240
-    type: RGB565
-    transparency: opaque
-  - platform: file
-    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_10.png
-    id: idle_10
-    resize: 240x240
+    resize: 360x360
     type: RGB565
     transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_11.png
     id: idle_11
-    resize: 240x240
-    type: RGB565
-    transparency: opaque
-  - platform: file
-    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_12.png
-    id: idle_12
-    resize: 240x240
-    type: RGB565
-    transparency: opaque
-  - platform: file
-    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_13.png
-    id: idle_13
-    resize: 240x240
+    resize: 360x360
     type: RGB565
     transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_14.png
     id: idle_14
-    resize: 240x240
-    type: RGB565
-    transparency: opaque
-  - platform: file
-    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_15.png
-    id: idle_15
-    resize: 240x240
+    resize: 360x360
     type: RGB565
     transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_16.png
     id: idle_16
-    resize: 240x240
-    type: RGB565
-    transparency: opaque
-  - platform: file
-    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_17.png
-    id: idle_17
-    resize: 240x240
-    type: RGB565
-    transparency: opaque
-  - platform: file
-    file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_18.png
-    id: idle_18
-    resize: 240x240
+    resize: 360x360
     type: RGB565
     transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/idle_19.png
     id: idle_19
-    resize: 240x240
+    resize: 360x360
     type: RGB565
     transparency: opaque
 
@@ -1123,19 +1059,19 @@ image:
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/happy.png
     id: mood_happy
-    resize: 240x240
+    resize: 360x360
     type: RGB565
     transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/neutral.png
     id: mood_neutral
-    resize: 240x240
+    resize: 360x360
     type: RGB565
     transparency: opaque
   - platform: file
     file: ${assets_base}assets/images/assistant/${ai_avatar}/angry.png
     id: mood_angry
-    resize: 240x240
+    resize: 360x360
     type: RGB565
     transparency: opaque
 
@@ -1148,7 +1084,6 @@ lvgl:
   log_level: WARN
   # Geometry that touches LVGL objects runs only after LVGL has created them.
   on_boot:
-    - lambda: lv_img_set_zoom(id(idle_anim), 384);
     - script.execute: compute_layout_metrics
     - script.execute: reposition_widgets
   top_layer:
@@ -1206,7 +1141,6 @@ lvgl:
         - image:
             align: CENTER
             src: assistant_gui_initializing
-            zoom: 1.5
 
     # ========================================================================
     # VA: IDLE PAGE
@@ -1216,67 +1150,67 @@ lvgl:
       on_swipe_up:
         - script.execute: swipe_to_voip
       widgets:
-        # Idle animation: fwd 0→19 + 2s hold + bwd 18→0 = 55 frames @ 120ms = 6.6s
+        # Eight unique poses, reused forward/backward; original 6.6s timeline and end hold.
         - animimg:
             id: idle_anim
             align: CENTER
-            width: 240
-            height: 240
+            width: 360
+            height: 360
             src:
               - idle_00
-              - idle_01
-              - idle_02
+              - idle_00
               - idle_03
-              - idle_04
-              - idle_05
-              - idle_06
-              - idle_07
-              - idle_08
-              - idle_09
-              - idle_10
-              - idle_11
-              - idle_12
-              - idle_13
-              - idle_14
-              - idle_15
-              - idle_16
-              - idle_17
-              - idle_18
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_19
-              - idle_18
-              - idle_17
-              - idle_16
-              - idle_15
-              - idle_14
-              - idle_13
-              - idle_12
-              - idle_11
-              - idle_10
-              - idle_09
-              - idle_08
-              - idle_07
-              - idle_06
-              - idle_05
-              - idle_04
               - idle_03
-              - idle_02
-              - idle_01
+              - idle_03
+              - idle_05
+              - idle_05
+              - idle_08
+              - idle_08
+              - idle_08
+              - idle_11
+              - idle_11
+              - idle_11
+              - idle_14
+              - idle_14
+              - idle_14
+              - idle_16
+              - idle_16
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_19
+              - idle_16
+              - idle_16
+              - idle_14
+              - idle_14
+              - idle_14
+              - idle_11
+              - idle_11
+              - idle_11
+              - idle_08
+              - idle_08
+              - idle_08
+              - idle_05
+              - idle_05
+              - idle_03
+              - idle_03
+              - idle_03
+              - idle_00
             duration: 6600ms
             auto_start: false
 
@@ -1291,7 +1225,6 @@ lvgl:
         - image:
             align: CENTER
             src: assistant_gui_listening
-            zoom: 1.5
 
     # ========================================================================
     # VA: THINKING PAGE (chord-width text, same layout as replying)
@@ -1305,7 +1238,6 @@ lvgl:
         - image:
             align: CENTER
             src: assistant_gui_thinking
-            zoom: 1.5
         # Chord-width labels: y and width set by reposition_widgets from text_row_y/chord_widths_cache
         - label:
             id: think_line_0
@@ -1424,7 +1356,6 @@ lvgl:
             id: mood_bg
             align: CENTER
             src: mood_neutral
-            zoom: 1.5
         # Chord-width text labels: y and width set by reposition_widgets from text_row_y/chord_widths_cache
         - label:
             id: reply_line_0
@@ -1546,7 +1477,6 @@ lvgl:
         - image:
             align: CENTER
             src: assistant_gui_error
-            zoom: 1.5
 
     # ========================================================================
     # VA: MUTED PAGE
@@ -1565,7 +1495,6 @@ lvgl:
         - image:
             align: CENTER
             src: assistant_gui_timer_finished
-            zoom: 1.5
 
     # ========================================================================
     # VA: NO HA PAGE
@@ -1576,7 +1505,6 @@ lvgl:
         - image:
             align: CENTER
             src: error_no_ha
-            zoom: 1.5
 
     # ========================================================================
     # VA: NO WIFI PAGE
@@ -1587,7 +1515,6 @@ lvgl:
         - image:
             align: CENTER
             src: error_no_wifi
-            zoom: 1.5
 
     # ========================================================================
     # VOIP: IDLE PAGE
