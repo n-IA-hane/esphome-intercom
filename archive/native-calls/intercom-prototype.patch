@@ -1,0 +1,2130 @@
+diff --git a/README.md b/README.md
+index 02e82652..6019ac98 100644
+--- a/README.md
++++ b/README.md
+@@ -173,6 +173,9 @@ HA-bridged sequences are in [`docs/CALL_FLOWS.md`](docs/CALL_FLOWS.md).
+ 
+ ## Logical Home Assistant phones
+ 
++Experimental [native Companion phones](docs/COMPANION_CALLS.md) are separate
++from dashboard phones and require a compatible Companion build.
++
+ The integration creates one ordinary Home Assistant browser phone on first
+ setup, named from Home Assistant's location. Add or remove phones
+ from:
+diff --git a/custom_components/voip_stack/__init__.py b/custom_components/voip_stack/__init__.py
+index 5874c76a..6e418654 100644
+--- a/custom_components/voip_stack/__init__.py
++++ b/custom_components/voip_stack/__init__.py
+@@ -143,15 +143,6 @@ async def async_migrate_entry(
+ 
+         replace_contacts(hass, config_entry, contact_dicts(config_entry))
+         hass.config_entries.async_update_entry(config_entry, version=6)
+-    if config_entry.version == 6 and config_entry.minor_version < 2:
+-        # Retire only the experimental native-app phones. mobile_app itself,
+-        # browser phones, SIP accounts and ESPHome devices remain untouched.
+-        for subentry in tuple(config_entry.subentries.values()):
+-            if subentry.subentry_type == "phone" and subentry.data.get("kind") == "companion":
+-                hass.config_entries.async_remove_subentry(config_entry, subentry.subentry_id)
+-        data = dict(config_entry.data)
+-        data.pop("companion_enabled", None)
+-        hass.config_entries.async_update_entry(config_entry, data=data, minor_version=2)
+     return True
+ 
+ 
+@@ -326,6 +317,11 @@ async def _handle_sip_call_target_service(
+     if not call.return_response:
+         return None
+     response = result.as_service_response()
++    if result.phone.kind.value == "companion":
++        manager = _runtime_data(call.hass).companion_phones
++        invitation = manager.invitations.get(result.phone.endpoint_id) if manager else None
++        if invitation is not None and invitation.token.call_id == result.call_id:
++            response["native_call"] = {"callId": result.call_id, "callPath": invitation.token.path()}
+     return response
+ 
+ 
+@@ -661,6 +657,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
+     await _async_start_sip_trunk(hass)
+     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+     entry.async_on_unload(entry.add_update_listener(_async_config_entry_updated))
++    from .companion_phones import CompanionPhones
++    from .companion_view import register_companion_view
++
++    register_companion_view(hass)
++    entry.runtime_data.companion_phones = CompanionPhones(hass, entry)
++    await entry.runtime_data.companion_phones.setup()
+     create_runtime_task(hass, _deferred_phonebook_sync(hass))
+     return True
+ 
+diff --git a/custom_components/voip_stack/companion_phones.py b/custom_components/voip_stack/companion_phones.py
+new file mode 100644
+index 00000000..44b6e1d0
+--- /dev/null
++++ b/custom_components/voip_stack/companion_phones.py
+@@ -0,0 +1,212 @@
++"""Discover native mobile phones and deliver addressed call invitations."""
++
++from __future__ import annotations
++
++import asyncio
++from dataclasses import dataclass
++import logging
++import time
++
++from homeassistant.config_entries import ConfigEntry
++from homeassistant.core import HomeAssistant, callback
++from homeassistant.helpers import device_registry as dr, entity_registry as er
++from homeassistant.components import persistent_notification
++
++from .companion_protocol import CAPABILITY_KEY, COMMAND, CONF_COMPANION_ENABLED, CONF_MOBILE_APP_ENTRY_ID, CompanionCallToken, companion_endpoint_id
++from .const import DOMAIN
++from .config_validation import route_namespace_conflicts
++from .phonebook_services import _runtime_route_mappings, _entry_mapping
++from .store import manual_roster_entries
++from .endpoint_lifecycle import call_registry, create_runtime_task
++from .phone_config import _add_phone_subentry, browser_phone_data, phone_subentries, sync_registry_from_entry, update_phone_subentry
++from .phone_endpoint import EndpointAvailability, EndpointKind
++from .runtime_data import require_runtime_data
++from .websocket_api import HA_SOFTPHONE_STATE_EVENT
++
++_LOGGER = logging.getLogger(__name__)
++
++
++@dataclass(frozen=True, slots=True)
++class CompanionBinding:
++    registration_id: str
++    mobile_device_id: str
++    endpoint_id: str
++    user_id: str
++    webhook_id: str
++
++
++@dataclass(frozen=True, slots=True)
++class CompanionInvitation:
++    token: CompanionCallToken
++    expires: float | None
++    caller: str
++    phase: str = "ringing"
++
++
++def companion_display_name(hass: HomeAssistant, mobile: ConfigEntry) -> str:
++    """Follow the registered mobile tracker without requiring location updates."""
++    trackers = [entity for entity in er.async_entries_for_config_entry(er.async_get(hass), mobile.entry_id)
++                if entity.domain == "device_tracker" and entity.platform == "mobile_app"
++                and entity.unique_id == mobile.data.get("device_id")]
++    if len(trackers) == 1:
++        tracker = trackers[0]
++        return str(tracker.name or tracker.original_name or mobile.data.get("device_name") or mobile.title)
++    return str(mobile.data.get("device_name") or mobile.title)
++
++
++def companion_name_conflicts(hass: HomeAssistant, endpoint_id: str, name: str) -> bool:
++    existing = [entry for entry in _runtime_route_mappings(hass) if entry.get("id") != endpoint_id]
++    existing.extend(_entry_mapping(entry) for entry in manual_roster_entries(hass))
++    return bool(route_namespace_conflicts(candidate_routes=(name,), existing=existing))
++
++
++class CompanionPhones:
++    """Own discovery and notification delivery, never routing or media resources."""
++
++    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
++        self.hass = hass
++        self.entry = entry
++        self.bindings: dict[str, CompanionBinding] = {}
++        self.invitations: dict[str, CompanionInvitation] = {}
++        self._entry_unsubs: dict[str, object] = {}
++        self._sync_lock = asyncio.Lock()
++        self._unsubs: list = []
++
++    async def setup(self) -> None:
++        await self.sync()
++        self._unsubs.extend((
++            self.hass.bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, self._device_changed),
++            self.hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._device_changed),
++            self.hass.bus.async_listen(HA_SOFTPHONE_STATE_EVENT, self._call_changed),
++            self.entry.add_update_listener(self._entry_changed),
++        ))
++        self.entry.async_on_unload(self.close)
++
++    @callback
++    def close(self) -> None:
++        for unsubscribe in [*self._unsubs, *self._entry_unsubs.values()]:
++            unsubscribe()
++        self._unsubs.clear()
++        self._entry_unsubs.clear()
++        self.bindings.clear()
++        self.invitations.clear()
++
++    @callback
++    def _device_changed(self, event) -> None:
++        create_runtime_task(self.hass, self.sync())
++
++    async def _entry_changed(self, hass, entry) -> None:
++        await self.sync()
++
++    async def sync(self) -> None:
++        async with self._sync_lock:
++            devices = dr.async_get(self.hass)
++            bindings = {}
++            unavailable = set()
++            existing = {str(p.data.get("endpoint_id")): p for p in phone_subentries(self.entry)}
++            mobiles = self.hass.config_entries.async_entries("mobile_app")
++            if not self.entry.data.get(CONF_COMPANION_ENABLED, False):
++                mobiles = []
++            for mobile in mobiles:
++                if mobile.entry_id not in self._entry_unsubs:
++                    self._entry_unsubs[mobile.entry_id] = mobile.add_update_listener(self._entry_changed)
++                if mobile.data.get("app_data", {}).get(CAPABILITY_KEY) != 1:
++                    continue
++                registered_devices = dr.async_entries_for_config_entry(devices, mobile.entry_id)
++                if len(registered_devices) != 1:
++                    continue
++                device = registered_devices[0]
++                endpoint_id = companion_endpoint_id(mobile.entry_id)
++                binding = CompanionBinding(mobile.entry_id, device.id, endpoint_id,
++                    str(mobile.data.get("user_id", "")), str(mobile.data.get("webhook_id", "")))
++                if not binding.user_id or not binding.webhook_id:
++                    continue
++                bindings[endpoint_id] = binding
++                name = companion_display_name(self.hass, mobile)
++                notification_id = f"{DOMAIN}_companion_name_{mobile.entry_id}"
++                if companion_name_conflicts(self.hass, endpoint_id, name):
++                    _LOGGER.error("Companion phone name %s conflicts with another phonebook destination", name)
++                    persistent_notification.async_create(self.hass,
++                        f'The Companion tracker name "{name}" is already used by another VoIP destination. '
++                        'Choose a unique tracker name to synchronize this phone.',
++                        title="VoIP Stack: duplicate Companion name", notification_id=notification_id)
++                    unavailable.add(endpoint_id)
++                    continue
++                persistent_notification.async_dismiss(self.hass, notification_id)
++                if endpoint_id not in existing:
++                    data = browser_phone_data(self.hass, self.entry, endpoint_id=endpoint_id)
++                    data.update(kind=EndpointKind.COMPANION.value, name=name, enabled=True,
++                        extension="", ring_group="", conference_group="", video_enabled=False,
++                        send_video=False, **{CONF_MOBILE_APP_ENTRY_ID: mobile.entry_id})
++                    _add_phone_subentry(self.hass, self.entry, data=data, title=name)
++                    sync_registry_from_entry(self.hass, self.entry)
++                elif existing[endpoint_id].data.get("name") != name:
++                    update_phone_subentry(self.hass, self.entry, endpoint_id, {"name": name})
++
++            self.bindings = bindings
++            sync_registry_from_entry(self.hass, self.entry)
++            directory = require_runtime_data(self.hass).endpoints
++            for phone in phone_subentries(self.entry):
++                endpoint_id = str(phone.data.get("endpoint_id", ""))
++                endpoint = directory.get(endpoint_id)
++                if endpoint is None or endpoint.kind is not EndpointKind.COMPANION:
++                    continue
++                available = endpoint_id in bindings and endpoint_id not in unavailable and bool(phone.data.get("enabled", True))
++                directory.update(endpoint_id, availability=EndpointAvailability.AVAILABLE if available else EndpointAvailability.UNAVAILABLE)
++
++    @callback
++    def _call_changed(self, event) -> None:
++        endpoint_id = str(event.data.get("endpoint_id", ""))
++        binding = self.bindings.get(endpoint_id)
++        if binding is None:
++            return
++        phase = event.data.get("state")
++        previous = self.invitations.get(endpoint_id)
++        if phase in {"calling", "remote_ringing", "connecting", "ringing", "in_call"}:
++            call_id = str(event.data.get("call_id", ""))
++            generation = call_registry(self.hass).current_generation(call_id)
++            if generation is None:
++                return
++            token = CompanionCallToken(binding.registration_id, call_id, generation)
++            if previous is not None and previous.token == token and previous.phase == phase:
++                return
++            invitation = CompanionInvitation(
++                token, previous.expires if previous and previous.token == token else None,
++                str(event.data.get("caller") or event.data.get("peer_name") or "Home Assistant"), str(phase))
++            self.invitations[endpoint_id] = invitation
++            if phase == "ringing" and event.data.get("direction") != "outgoing" and (previous is None or previous.token != token):
++                create_runtime_task(self.hass, self._notify(binding, invitation, "ring"))
++            elif phase == "in_call" and event.data.get("direction") == "outgoing":
++                create_runtime_task(self.hass, self._notify(binding, invitation, "refresh"))
++        elif previous is not None and str(event.data.get("call_id", "")) == previous.token.call_id:
++            self.invitations.pop(endpoint_id, None)
++            create_runtime_task(self.hass, self._notify(binding, previous, "cancel"))
++
++    async def _notify(self, binding: CompanionBinding, invitation: CompanionInvitation, action: str) -> None:
++        from homeassistant.components.mobile_app.util import get_notify_service
++        from homeassistant.exceptions import HomeAssistantError
++
++        service = get_notify_service(self.hass, binding.webhook_id)
++        if service is None:
++            _LOGGER.warning("Companion notification service unavailable for device %s", binding.mobile_device_id)
++            return
++        try:
++            await self.hass.services.async_call("notify", service, {
++                "message": COMMAND,
++                "data": {"call_action": action, "call_id": invitation.token.call_id,
++                    "call_path": invitation.token.path(), "priority": "high", "ttl": 0},
++            }, blocking=True)
++        except HomeAssistantError:
++            # Provider errors can include secret webhook IDs; report only the device.
++            _LOGGER.warning("Failed to deliver Companion call to device %s", binding.mobile_device_id)
++            current = self.invitations.get(binding.endpoint_id)
++            registry = call_registry(self.hass)
++            if action == "ring" and current == invitation and registry.is_generation_current(
++                invitation.token.call_id, invitation.token.generation
++            ):
++                endpoint = require_runtime_data(self.hass).endpoints.get(binding.endpoint_id)
++                if endpoint is not None:
++                    await self.hass.services.async_call("voip_stack", "decline", {
++                        "device_id": endpoint.device_id, "call_id": invitation.token.call_id,
++                        "status": 480, "reason": "Companion unavailable",
++                    }, blocking=True)
+diff --git a/custom_components/voip_stack/companion_protocol.py b/custom_components/voip_stack/companion_protocol.py
+new file mode 100644
+index 00000000..e3f4c8bf
+--- /dev/null
++++ b/custom_components/voip_stack/companion_protocol.py
+@@ -0,0 +1,30 @@
++"""Identity and wire contract for native Companion call clients."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from urllib.parse import urlencode
++
++PROTOCOL_VERSION = 1
++CAPABILITY_KEY = "native_calls"
++COMMAND = "command_call"
++CONF_COMPANION_ENABLED = "companion_enabled"
++CONF_MOBILE_APP_ENTRY_ID = "mobile_app_entry_id"
++CALL_PATH = "/api/voip_stack/companion/call"
++
++
++@dataclass(frozen=True, slots=True)
++class CompanionCallToken:
++    """Bind a mobile registration to one authoritative call generation."""
++
++    registration_id: str
++    call_id: str
++    generation: int
++
++    def path(self) -> str:
++        return f"{CALL_PATH}?{urlencode({'registration_id': self.registration_id, 'call_id': self.call_id, 'generation': self.generation})}"
++
++
++def companion_endpoint_id(registration_id: str) -> str:
++    """Keep endpoint identity stable through device and phone renames."""
++    return f"companion:{registration_id}"
+diff --git a/custom_components/voip_stack/companion_view.py b/custom_components/voip_stack/companion_view.py
+new file mode 100644
+index 00000000..4fa1729e
+--- /dev/null
++++ b/custom_components/voip_stack/companion_view.py
+@@ -0,0 +1,132 @@
++"""Authenticated native call controls, delegated to the existing phone services."""
++
++from __future__ import annotations
++
++import asyncio
++import time
++from urllib.parse import urlencode
++
++from aiohttp import web
++from homeassistant.components.http import HomeAssistantView
++from homeassistant.core import Context, callback
++
++from .authorization import require_http_control
++from .companion_protocol import CALL_PATH, companion_endpoint_id
++from .endpoint_lifecycle import call_registry
++from .runtime_data import require_runtime_data, registration_data
++from .websocket_api import HA_SOFTPHONE_STATE_EVENT, _ha_softphone_state
++
++
++class CompanionCallView(HomeAssistantView):
++    url = CALL_PATH
++    name = "api:voip_stack:companion:call"
++    requires_auth = True
++
++    def _resolve(self, request):
++        user_id = require_http_control(request)
++        hass = request.app["hass"]
++        runtime = require_runtime_data(hass)
++        manager = runtime.companion_phones
++        if manager is None:
++            raise web.HTTPServiceUnavailable()
++        registration_id = str(request.query.get("registration_id", ""))
++        binding = manager.bindings.get(companion_endpoint_id(registration_id))
++        if binding is None or binding.user_id != user_id:
++            raise web.HTTPForbidden()
++        call_id = str(request.query.get("call_id", ""))
++        try:
++            generation = int(request.query.get("generation", ""))
++        except ValueError as err:
++            raise web.HTTPBadRequest(text="Missing call generation") from err
++        invitation = manager.invitations.get(binding.endpoint_id)
++        registry = call_registry(hass)
++        endpoint = runtime.endpoints.get(binding.endpoint_id)
++        if (invitation is None or invitation.token.call_id != call_id
++            or invitation.token.generation != generation
++            or endpoint is None or not endpoint.active_call_id
++            or registry.resolve_session_id(endpoint.active_call_id) != registry.resolve_session_id(call_id)
++            or not registry.is_generation_current(call_id, generation)):
++            raise web.HTTPGone(text="Call is no longer active for this phone")
++        snapshot = _ha_softphone_state(hass, binding.endpoint_id)
++        if snapshot.get("state") == "ringing" and invitation.expires is not None and invitation.expires <= time.monotonic():
++            raise web.HTTPGone(text="Call invitation expired")
++        return hass, binding, invitation, endpoint, snapshot
++
++    def _description(self, invitation, snapshot, media_path=None):
++        outgoing = snapshot.get("direction") == "outgoing"
++        if outgoing and snapshot.get("state") == "in_call" and media_path is None:
++            media_path = "/api/voip_stack/ws?" + urlencode({
++                "endpoint_id": companion_endpoint_id(invitation.token.registration_id),
++                "call_id": invitation.token.call_id,
++            })
++        return web.json_response({
++            "id": invitation.token.call_id,
++            "state": snapshot.get("state", "idle"),
++            "caller": str(snapshot.get("peer_name") or snapshot.get("callee") or invitation.caller) if outgoing else invitation.caller,
++            "direction": "outgoing" if outgoing else "incoming",
++            "remaining_ms": max(0, round((invitation.expires - time.monotonic()) * 1000)) if invitation.expires is not None else None,
++            "media_path": media_path,
++        })
++
++    async def get(self, request):
++        _, _, invitation, _, snapshot = self._resolve(request)
++        return self._description(invitation, snapshot)
++
++    async def post(self, request):
++        hass, binding, invitation, endpoint, snapshot = self._resolve(request)
++        body = await request.json()
++        if not isinstance(body, dict) or body.get("action") not in {"answer", "decline", "hangup"}:
++            raise web.HTTPBadRequest(text="Invalid call action")
++        action = body["action"]
++        data = {"device_id": endpoint.device_id, "call_id": invitation.token.call_id}
++        media_path = None
++        if action == "answer":
++            if snapshot.get("state") != "ringing":
++                raise web.HTTPConflict(text="Call is not ringing")
++            client_id = str(body.get("client_id", ""))
++            from .authorization import _MEDIA_CLIENT_ID
++            if not _MEDIA_CLIENT_ID.fullmatch(client_id):
++                raise web.HTTPBadRequest(text="Invalid media client identity")
++            data.update(send_video=False, media_client_id=client_id)
++            media_path = "/api/voip_stack/ws?" + urlencode({
++                "endpoint_id": binding.endpoint_id, "call_id": invitation.token.call_id,
++                "client_id": client_id,
++            })
++        changed = asyncio.Event()
++
++        @callback
++        def call_changed(event):
++            if event.data.get("endpoint_id") == binding.endpoint_id:
++                changed.set()
++
++        unsubscribe = hass.bus.async_listen(HA_SOFTPHONE_STATE_EVENT, call_changed)
++        try:
++            # Revalidate after reading the request body, before issuing any command.
++            self._resolve(request)
++            await hass.services.async_call("voip_stack", action, data, blocking=True,
++                context=Context(user_id=request["hass_user"].id))
++            if action != "answer":
++                return self._description(invitation, {"state": "idle"})
++            # Answering a fork selects its winner before the bridge commits.
++            # Wait for the existing projection; do not treat command acceptance
++            # as proof that this phone's media is ready.
++            async with asyncio.timeout(3):
++                while True:
++                    changed.clear()
++                    _, _, _, _, current = self._resolve(request)
++                    if current.get("state") == "in_call":
++                        return self._description(invitation, current, media_path)
++                    if current.get("state") not in {"ringing", "connecting"}:
++                        raise web.HTTPGone(text="Call ended while answering")
++                    await changed.wait()
++        except TimeoutError as err:
++            raise web.HTTPGatewayTimeout(text="Call answer did not complete") from err
++        finally:
++            unsubscribe()
++
++
++def register_companion_view(hass):
++    registration = registration_data(hass)
++    if not registration.companion_view:
++        hass.http.register_view(CompanionCallView)
++        registration.companion_view = True
+diff --git a/custom_components/voip_stack/config_flow.py b/custom_components/voip_stack/config_flow.py
+index e98bc41b..5f7a465d 100644
+--- a/custom_components/voip_stack/config_flow.py
++++ b/custom_components/voip_stack/config_flow.py
+@@ -50,6 +50,7 @@ from .phone_config import (
+     phone_subentries,
+ )
+ from .phone_endpoint import EndpointKind, OfflinePolicy
++from .companion_protocol import CONF_COMPANION_ENABLED
+ from .sip_registrar import generate_password, normalize_username
+ from .const import (
+     CONF_ASSIST_ADVANCED_CALL_CONTEXT,
+@@ -224,7 +225,6 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
+     """Handle a config flow for VoIP Stack."""
+ 
+     VERSION = 6
+-    MINOR_VERSION = 2
+     _base_input: dict | None = None
+ 
+     @classmethod
+@@ -278,6 +278,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
+             CONF_ASSIST_ENDPOINT_ENABLED: existing.get(
+                 CONF_ASSIST_ENDPOINT_ENABLED, False
+             ),
++            CONF_COMPANION_ENABLED: existing.get(CONF_COMPANION_ENABLED, False),
+             CONF_DEBUG_MODE: existing.get(CONF_DEBUG_MODE, False),
+             CONF_MEDIA_CAPTURE: existing.get(CONF_MEDIA_CAPTURE, False),
+             CONF_SIP_VIDEO: existing.get(CONF_SIP_VIDEO, False),
+@@ -301,6 +302,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
+                     CONF_ASSIST_ENDPOINT_ENABLED,
+                     default=defaults[CONF_ASSIST_ENDPOINT_ENABLED],
+                 ): BooleanSelector(),
++                vol.Optional(CONF_COMPANION_ENABLED, default=defaults[CONF_COMPANION_ENABLED]): BooleanSelector(),
+                 vol.Required(
+                     CONF_DEBUG_MODE, default=defaults[CONF_DEBUG_MODE]
+                 ): BooleanSelector(),
+@@ -990,6 +992,24 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
+             data_schema=self._common_schema(sip_account=True),
+         )
+ 
++    async def async_step_companion(self, user_input=None):
++        """Configure a discovered native phone without converting it to a browser."""
++        schema = self._common_schema(sip_account=False)
++        schema = vol.Schema({key: value for key, value in schema.schema.items()
++            if key.schema not in {CONF_PHONE_NAME, CONF_PHONE_VIDEO_ENABLED, CONF_PHONE_AUTO_ANSWER, CONF_PHONE_SEND_VIDEO}})
++        errors = {}
++        if user_input is not None:
++            data, errors = self._normalized_common(
++                {**user_input, CONF_PHONE_NAME: self._current_data()[CONF_PHONE_NAME]},
++                kind=EndpointKind.COMPANION,
++            )
++            if not errors:
++                from .companion_protocol import CONF_MOBILE_APP_ENTRY_ID
++                data.update({CONF_MOBILE_APP_ENTRY_ID: self._current_data()[CONF_MOBILE_APP_ENTRY_ID],
++                    CONF_PHONE_VIDEO_ENABLED: False, CONF_PHONE_AUTO_ANSWER: False, CONF_PHONE_SEND_VIDEO: False})
++                return self._finish(data)
++        return self.async_show_form(step_id="companion", data_schema=schema, errors=errors)
++
+     async def async_step_reconfigure(self, user_input=None):
+         """Keep endpoint identity and kind stable while editing settings."""
+         self._reconfigure = True
+@@ -997,6 +1017,8 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
+         self._kind = EndpointKind(
+             str(current.get(CONF_PHONE_KIND) or EndpointKind.BROWSER.value)
+         )
++        if self._kind is EndpointKind.COMPANION:
++            return await self.async_step_companion(user_input)
+         if self._kind.is_softphone:
+             return await self.async_step_browser(user_input)
+         return await self.async_step_sip_account(user_input)
+diff --git a/custom_components/voip_stack/endpoint_device.py b/custom_components/voip_stack/endpoint_device.py
+index ac0605a1..9802d401 100644
+--- a/custom_components/voip_stack/endpoint_device.py
++++ b/custom_components/voip_stack/endpoint_device.py
+@@ -23,7 +23,7 @@ if TYPE_CHECKING:
+     from .phone_endpoint import PhoneEndpoint
+ 
+ 
+-MANAGED_ENDPOINT_KINDS = frozenset({"browser", "sip_account"})
++MANAGED_ENDPOINT_KINDS = frozenset({"browser", "companion", "sip_account"})
+ ENDPOINT_DEVICE_PREFIX = "phone_endpoint:"
+ BROWSER_PHONE_DEVICE_MODEL = "Home Assistant softphone"
+ SIP_ACCOUNT_DEVICE_MODEL = "SIP account"
+@@ -65,7 +65,9 @@ def endpoint_device_info(endpoint: PhoneEndpoint) -> DeviceInfo | None:
+     if not is_managed_endpoint(endpoint):
+         return None
+     model = BROWSER_PHONE_DEVICE_MODEL
+-    if enum_value(endpoint.kind) == "sip_account":
++    if enum_value(endpoint.kind) == "companion":
++        model = "Companion phone"
++    elif enum_value(endpoint.kind) == "sip_account":
+         model = SIP_ACCOUNT_DEVICE_MODEL
+     return DeviceInfo(
+         identifiers={(DOMAIN, endpoint_device_identifier(endpoint.endpoint_id))},
+diff --git a/custom_components/voip_stack/endpoint_routing.py b/custom_components/voip_stack/endpoint_routing.py
+index 0cbd1b7b..24a2a878 100644
+--- a/custom_components/voip_stack/endpoint_routing.py
++++ b/custom_components/voip_stack/endpoint_routing.py
+@@ -140,7 +140,7 @@ def sip_target_has_unspecified_audio(
+         or info.get("endpoint_kind")
+         or ""
+     )
+-    if kind in {"esphome", "browser", "assist"}:
++    if kind in {"esphome", "browser", "companion", "assist"}:
+         return False
+     return not any(
+         _rtp_capability_tokens(peer, entry, direction, device)
+diff --git a/custom_components/voip_stack/frontend/__init__.py b/custom_components/voip_stack/frontend/__init__.py
+index 848df0f5..fc97f1ee 100644
+--- a/custom_components/voip_stack/frontend/__init__.py
++++ b/custom_components/voip_stack/frontend/__init__.py
+@@ -6,6 +6,7 @@ from pathlib import Path
+ from homeassistant.components.http import StaticPathConfig
+ from homeassistant.components.frontend import (
+     DATA_EXTRA_MODULE_URL,
++    add_extra_js_url,
+     remove_extra_js_url,
+ )
+ from homeassistant.core import HomeAssistant
+@@ -39,9 +40,12 @@ class JSModuleRegistration:
+         modules = self.hass.data.get(DATA_EXTRA_MODULE_URL)
+         if modules is not None:
+             menu_url = f"{URL_BASE}/voip-stack-menu.js"
++            stamp = await self.hass.async_add_executor_job(_frontend_asset_stamp)
++            versioned = f"{menu_url}?v={INTEGRATION_VERSION}-{stamp}"
+             for registered in tuple(modules.urls):
+-                if registered.split("?")[0] == menu_url:
++                if registered.split("?")[0] == menu_url and registered != versioned:
+                     remove_extra_js_url(self.hass, registered)
++            add_extra_js_url(self.hass, versioned)
+ 
+         if self.lovelace is None:
+             _LOGGER.warning("Lovelace data not available, skipping resource registration")
+diff --git a/custom_components/voip_stack/frontend/voip-stack-card-editor.js b/custom_components/voip_stack/frontend/voip-stack-card-editor.js
+index 87332911..3aed06b8 100644
+--- a/custom_components/voip_stack/frontend/voip-stack-card-editor.js
++++ b/custom_components/voip_stack/frontend/voip-stack-card-editor.js
+@@ -244,9 +244,9 @@ class VoipStackCardEditor extends HTMLElement {
+       : "-- Select device --");
+     const newOptions = [placeholder];
+     const selectableDevices = this._devices.filter((device) =>
+-      softphoneMode
++      device.endpoint_type !== "companion" && (softphoneMode
+         ? this._isSoftphoneDevice(device) && !!device.device_id
+-        : !this._isSoftphoneDevice(device));
++        : !this._isSoftphoneDevice(device)));
+     const configuredDeviceId = String(
+       this._config.device_id || this._config.entity_id || "",
+     );
+diff --git a/custom_components/voip_stack/frontend/voip-stack-card.js b/custom_components/voip_stack/frontend/voip-stack-card.js
+index f0b47d24..40208ee4 100644
+--- a/custom_components/voip_stack/frontend/voip-stack-card.js
++++ b/custom_components/voip_stack/frontend/voip-stack-card.js
+@@ -79,6 +79,10 @@ const _voip_log = {
+   debug: _ic_dbg ? console.debug.bind(console) : () => {},
+ };
+ 
++if (window.customDashboardActions) {
++  await import(`./voip-stack-menu.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
++}
++
+ class VoipStackCard extends HTMLElement {
+   constructor() {
+     super();
+@@ -384,6 +388,19 @@ class VoipStackCard extends HTMLElement {
+       (!callId || voipStackEngine.callId === callId);
+   }
+ 
++  set presentation(value) {
++    this._presentation = value === "composer" ? "composer" : "card";
++    if (this._presentation === "composer") {
++      this._softphoneKeypadOpen = true;
++      this._mirrorKeypadOpen = true;
++    }
++    this._render();
++  }
++
++  get callActive() {
++    return this._starting || this._stopping || ["calling", "ringing", "remote_ringing", "connecting", "answering", "in_call", "terminating"].includes(this._softphoneSnapshot?.state);
++  }
++
+   _ownsSoftphoneMedia(snapshot = this._softphoneSnapshot || {}) {
+     if (!this._isHaSoftphoneMode()) return false;
+     if (!this._isSoftphoneController()) return false;
+@@ -415,6 +432,7 @@ class VoipStackCard extends HTMLElement {
+   }
+ 
+   _isSoftphoneController() {
++    if (this.nativeCallContext) return false;
+     return this.isConnected && this._isHaSoftphoneMode() &&
+       voipStackEngine.claimSoftphoneController(this, this._softphoneRuntimeKey());
+   }
+@@ -1055,6 +1073,10 @@ class VoipStackCard extends HTMLElement {
+   }
+ 
+   _syncRingtoneRequest(state) {
++    if (this.nativeCallContext) {
++      voipStackEngine.clearRingtoneRequest(this._ringtoneRequestKey);
++      return;
++    }
+     voipStackEngine.setRingtoneRequest(
+       this._ringtoneRequestKey,
+       this._isIncomingSoftphoneRing(state),
+@@ -1645,6 +1667,11 @@ class VoipStackCard extends HTMLElement {
+   }
+ 
+   _render() {
++    const active = this.callActive;
++    if (active !== this._lastCallActive) {
++      this._lastCallActive = active;
++      this.dispatchEvent(new CustomEvent("call-activity-changed", { detail: { active } }));
++    }
+     if (this._isPhonebookMode()) {
+       this._renderPhonebook();
+       return;
+@@ -1845,17 +1872,22 @@ class VoipStackCard extends HTMLElement {
+     const keypadOpen = this._keypadOpen();
+     const inCallDtmf = softphoneMode &&
+       espState.toLowerCase() === "in_call" && showHangup;
+-    els.destRow.hidden = !showCall || keypadOpen;
++    const composerDestination = this._presentation === "composer" && softphoneMode;
++    els.destRow.hidden = !showCall || (keypadOpen && !composerDestination);
+     els.destValue.textContent = this._contactCyclerDestination(destination);
+     if (els.destSelect) {
+-      els.destSelect.hidden = !softphoneMode || keypadOpen;
+-      els.destValueWrap.classList.toggle("selecting", softphoneMode && !keypadOpen);
++      els.destSelect.hidden = !softphoneMode || (keypadOpen && !composerDestination);
++      els.destValueWrap.classList.toggle("selecting", softphoneMode && (!keypadOpen || composerDestination));
+       this._renderSoftphoneDestinationSelect(els.destSelect);
+     }
+     if (els.keypadPanel) {
+       els.keypadPanel.hidden = !((showCall || inCallDtmf) && keypadOpen);
+       els.keypadInput.value = this._manualTarget();
+       els.keypadInput.hidden = inCallDtmf;
++      const composer = this._presentation === "composer";
++      els.keypadInput.inputMode = composer ? "text" : "tel";
++      if (els.keypadGrid) els.keypadGrid.hidden = composer && !inCallDtmf;
++      if (composer) this._renderComposerSuggestions(els.keypadInput);
+       for (const btn of Object.values(els.keypadKeys || {})) {
+         btn.disabled = buttonDisabled;
+       }
+@@ -1864,7 +1896,7 @@ class VoipStackCard extends HTMLElement {
+         if (els.keypadKeys["⌫"]) els.keypadKeys["⌫"].disabled = true;
+       }
+     }
+-    const hideContactCycler = softphoneMode || keypadOpen;
++    const hideContactCycler = this._presentation === "composer" || softphoneMode || keypadOpen;
+     els.prevBtn.disabled = buttonDisabled || hideContactCycler;
+     els.nextBtn.disabled = buttonDisabled || hideContactCycler;
+     els.prevBtn.hidden = hideContactCycler;
+@@ -1909,7 +1941,7 @@ class VoipStackCard extends HTMLElement {
+     els.runtimeControls.hidden = !showRuntimeOptions;
+     els.keypadBtn.hidden = !(
+       (showCall || inCallDtmf) && showRuntimeOptions && canUseKeypad
+-    );
++    ) || (this._presentation === "composer" && showCall);
+     const keypadLabel = this._t(keypadOpen ? "Contacts" : "Keypad");
+     els.keypadLabel.textContent = keypadLabel;
+     els.keypadBtn.setAttribute("aria-label", keypadLabel);
+@@ -1925,12 +1957,12 @@ class VoipStackCard extends HTMLElement {
+       ? !!this._autoAnswer
+       : this._entityState(this._autoAnswerSwitchEntityId).toLowerCase() === "on";
+     if (els.ringtoneRow) {
+-      els.ringtoneRow.hidden = !(showSettingsPanel && this._isHaSoftphoneMode());
++      els.ringtoneRow.hidden = !(showSettingsPanel && this._isHaSoftphoneMode() && !this.nativeCallContext);
+       els.ringtoneCheckbox.checked = !!this._ringtoneEnabled;
+     }
+     if (els.microphoneAntiAliasRow) {
+       els.microphoneAntiAliasRow.hidden =
+-        !(showSettingsPanel && this._isHaSoftphoneMode());
++        !(showSettingsPanel && this._isHaSoftphoneMode() && !this.nativeCallContext);
+       els.microphoneAntiAliasCheckbox.checked = this._micAntiAliasEnabled;
+     }
+     if (els.videoCameraRow) {
+@@ -1962,7 +1994,7 @@ class VoipStackCard extends HTMLElement {
+     }
+     const idleMediaView = els.mediaDeviceViews?.[0];
+     if (idleMediaView) {
+-      idleMediaView.root.hidden = !(showSettingsPanel && softphoneMode);
++      idleMediaView.root.hidden = !(showSettingsPanel && softphoneMode && !this.nativeCallContext);
+     }
+     this._renderMediaDeviceViews();
+     this._applyHangupAudioLevel(
+@@ -2143,8 +2175,31 @@ class VoipStackCard extends HTMLElement {
+     select.replaceChildren(...options);
+   }
+ 
++  _renderComposerSuggestions(input) {
++    const targets = this._softphoneTargets();
++    const key = JSON.stringify(targets.map((target) => [target.name, target.extension]));
++    if (!this._composerSuggestions) {
++      this._composerSuggestions = document.createElement("datalist");
++      this._composerSuggestions.id = "voip-composer-destinations";
++      input.setAttribute("list", this._composerSuggestions.id);
++      input.parentNode.appendChild(this._composerSuggestions);
++    }
++    if (key === this._composerSuggestionKey) return;
++    this._composerSuggestionKey = key;
++    this._composerSuggestions.replaceChildren(...targets.map((target) => {
++      const option = document.createElement("option");
++      option.value = String(target.extension || target.name || "");
++      option.label = target.name || option.value;
++      return option;
++    }));
++  }
++
+   _setSoftphoneTarget(deviceId) {
+     this._softphoneTargetDeviceId = deviceId || null;
++    if (this._presentation === "composer") {
++      const target = this._getSoftphoneTargetDevice();
++      this._softphoneManualTarget = String(target?.extension || target?.name || "");
++    }
+     this._saveSoftphoneTargetPreference(this._softphoneTargetDeviceId);
+     this._render();
+   }
+@@ -2183,6 +2238,14 @@ class VoipStackCard extends HTMLElement {
+   _pressKeypadKey(key) {
+     const inCallDtmf = this._isHaSoftphoneMode() &&
+       String(this._softphoneSnapshot?.state || "").toLowerCase() === "in_call";
++    if (inCallDtmf && this.nativeCallContext) {
++      if (/^[0-9*#A-D]$/.test(key)) {
++        void this._hass.auth.external.sendMessage({ type: "call/control", payload: {
++          callId: this._sessionCallId(), callPath: this._softphoneSnapshot?.native_call?.callPath, action: "dtmf", digit: key,
++        } }).catch((error) => this._showError(error.message || String(error)));
++      }
++      return;
++    }
+     if (inCallDtmf) {
+       if (key !== "Clear" && key !== "⌫" && !voipStackEngine.sendDtmf(key)) {
+         this._showError("DTMF is unavailable for this call.");
+@@ -2223,9 +2286,9 @@ class VoipStackCard extends HTMLElement {
+   async _startCall() {
+     if (this._starting || this._stopping) return;
+     const softphoneAction = this._isHaSoftphoneMode();
+-    const mediaIntentToken = softphoneAction ? {} : null;
++    const mediaIntentToken = softphoneAction && !this.nativeCallContext ? {} : null;
+     if (
+-      softphoneAction &&
++      softphoneAction && !this.nativeCallContext &&
+       (
+         this._otherPhoneOwnsBrowserMedia() ||
+         !voipStackEngine.tryAcquireMediaIntent(
+@@ -2247,6 +2310,10 @@ class VoipStackCard extends HTMLElement {
+     try {
+       const deviceInfo = await this._getDeviceInfo();
+       if (operationId !== this._callOperationId) return;
++      if (softphoneAction && this.nativeCallContext) {
++        await this._startNativeCall(operationId);
++        return;
++      }
+       if (softphoneAction) {
+         await this._startHaSoftphoneCall(deviceInfo, operationId);
+         return;
+@@ -2285,6 +2352,38 @@ class VoipStackCard extends HTMLElement {
+     }
+   }
+ 
++  async _startNativeCall(operationId) {
++    const destination = this._manualTarget().trim() || this._getSoftphoneTargetDevice()?.name;
++    if (!destination) throw new Error("No destination entered");
++    const hass = this._hass;
++    const external = hass.auth.external;
++    const scope = this._softphoneServiceScope();
++    const isCurrent = () => operationId === this._callOperationId && this._hass?.connection === hass.connection;
++    const prepared = await external.sendMessage({ type: "call/prepare" });
++    if (!isCurrent()) return;
++    let callId = "";
++    const abandon = async () => {
++      if (!callId) return;
++      const ownedCallId = callId;
++      callId = "";
++      await hass.callService("voip_stack", "hangup", { ...scope, call_id: ownedCallId });
++    };
++    try {
++      const result = await hass.callWS({ type: "call_service", domain: "voip_stack", service: "call",
++        return_response: true, service_data: { ...scope, destination,
++          media_client_id: prepared.mediaClientId, send_video: false } });
++      const response = result.response || result;
++      callId = response.call?.call_id || "";
++      if (!isCurrent()) { await abandon(); return; }
++      if (!response.native_call) throw new Error("The native call is no longer available.");
++      await external.sendMessage({ type: "call/start", payload: response.native_call });
++      if (!isCurrent()) await abandon();
++    } catch (error) {
++      await abandon();
++      throw error;
++    }
++  }
++
+   async _startHaSoftphoneCall(softphoneInfo, operationId) {
+     const manualTarget = this._softphoneKeypadOpen ? this._softphoneManualTarget.trim() : "";
+     const target = manualTarget
+@@ -2346,6 +2445,15 @@ class VoipStackCard extends HTMLElement {
+       ? String(options.callId || this._sessionCallId() || "")
+       : "";
+     if (softphoneAction && !callId) return;
++    if (this.nativeCallContext) {
++      try {
++        await this._hass.auth.external.sendMessage({ type: "call/control", payload: {
++          callId, callPath: this._softphoneSnapshot?.native_call?.callPath, action: "answer",
++        } });
++      } catch (error) { this._showError(error.message || String(error)); }
++      return;
++    }
++
+     const mediaIntentToken = softphoneAction ? {} : null;
+     if (
+       softphoneAction &&
+diff --git a/custom_components/voip_stack/frontend/voip-stack-composer.js b/custom_components/voip_stack/frontend/voip-stack-composer.js
+new file mode 100644
+index 00000000..13e4f42d
+--- /dev/null
++++ b/custom_components/voip_stack/frontend/voip-stack-composer.js
+@@ -0,0 +1,141 @@
++const version = new URL(import.meta.url).searchParams.get("v") || "dev";
++const { voipStackEngine } = await import(`./voip-stack-engine.js?v=${encodeURIComponent(version)}`);
++const { voipStackTranslate } = await import(`./voip-stack-i18n.js?v=${encodeURIComponent(version)}`);
++
++/** Persistent HA dialog: minimizing keeps the existing phone/media owner alive. */
++class VoipStackComposer extends HTMLElement {
++  constructor() {
++    super();
++    this.attachShadow({ mode: "open" });
++    this._phones = [];
++    this._selected = "";
++    this._loading = null;
++    this._dialog = document.createElement("ha-dialog");
++    this._dialog.setAttribute("header-title", "VoIP Stack");
++    this._dialog.setAttribute("width", "medium");
++    this._dialog.addEventListener("closed", (event) => {
++      if (event.target === this._dialog) this._closed();
++    });
++    this._form = document.createElement("ha-form");
++    this._form.addEventListener("value-changed", (event) => {
++      if (this._phone?.callActive) return;
++      this._select(event.detail.value.caller);
++    });
++    this._error = document.createElement("ha-alert");
++    this._error.setAttribute("alert-type", "error");
++    this._error.hidden = true;
++    this._phone = document.createElement("voip-stack-card");
++    this._phone.style.display = "none";
++    this._phone.addEventListener("call-activity-changed", () => this._renderForm());
++    this._dialog.append(this._form, this._error, this._phone);
++    this.shadowRoot.append(this._dialog);
++    this._sync = () => this._renderForm();
++  }
++
++  connectedCallback() {
++    voipStackEngine.addEventListener("state", this._sync);
++  }
++
++  disconnectedCallback() {
++    voipStackEngine.removeEventListener("state", this._sync);
++  }
++
++  set hass(hass) {
++    this._hass = hass;
++    this._form.hass = hass;
++    if (this._selected) this._phone.hass = hass;
++    this._renderForm();
++    if (this._open && !this._selected && !this._loading) void this.showDialog();
++  }
++
++  async showDialog() {
++    this._dialog.open = true;
++    this._open = true;
++    if (!this._hass || this._loading || this._phone.callActive) return;
++    this._loading = this._loadPhones();
++    try { await this._loading; } finally { this._loading = null; }
++  }
++
++  closeDialog() {
++    this._dialog.open = false;
++    this._closed();
++    return true;
++  }
++
++  _closed() {
++    this._dialog.open = false;
++    if (!this._open) return;
++    this._open = false;
++    this.dispatchEvent(new CustomEvent("dialog-closed", {
++      detail: { dialog: "voip-stack-composer" }, bubbles: true, composed: true,
++    }));
++  }
++
++  async _loadPhones() {
++    try {
++      const hass = this._hass;
++      const external = hass.auth.external;
++      const capabilities = external ? await external.sendMessage({ type: "config/get" }) : null;
++      const nativeContext = capabilities?.nativeCalls === 1
++        ? await external.sendMessage({ type: "call/context" }) : null;
++      const result = await hass.callWS({ type: "voip_stack/list_devices" });
++      if (this._hass?.auth !== hass.auth) return;
++      this._nativeContext = nativeContext;
++      this._phones = (result.devices || []).filter((phone) =>
++        phone.endpoint_type === "browser" || phone.endpoint_type === "esphome" ||
++        (phone.endpoint_type === "companion" && phone.mobile_device_id === this._nativeContext?.deviceId));
++      const selected = this._phones.find((phone) => phone.device_id === this._selected)
++        || (this._nativeContext
++          ? this._phones.find((phone) => phone.endpoint_type === "companion" && phone.mobile_device_id === this._nativeContext.deviceId)
++          : this._phones.find((phone) => phone.endpoint_id === "default"));
++      if (selected) this._select(selected.device_id);
++      else {
++        this._selected = "";
++        this._phone.style.display = "none";
++        this._showError(
++          !external
++            ? "No app connection was detected. Open the experimental Companion app, or select a browser phone."
++            : capabilities?.nativeCalls !== 1
++              ? "This app does not report native calling support. Open the experimental Companion app."
++              : !nativeContext?.deviceId
++                ? "The app has not provided its phone identity for this Home Assistant server."
++                : "This app has no matching calling phone on this Home Assistant server.",
++        );
++      }
++      this._renderForm();
++    } catch (error) { this._showError(error.message || String(error)); }
++  }
++
++  _select(deviceId) {
++    const phone = this._phones.find((item) => item.device_id === deviceId);
++    if (!phone || this._phone.callActive) return;
++    this._selected = deviceId;
++    this._error.hidden = true;
++    this._phone.nativeCallContext = phone.endpoint_type === "companion" ? this._nativeContext : null;
++    this._phone.setConfig({ type: "custom:voip-stack-card", mode: phone.endpoint_type === "esphome" ? "esp_mirror" : "ha_softphone", device_id: deviceId });
++    this._phone.presentation = "composer";
++    this._phone.hass = this._hass;
++    this._phone.style.display = "";
++    this._renderForm();
++  }
++
++  _renderForm() {
++    if (!this._hass) return;
++    this._form.computeLabel = () => voipStackTranslate(this._hass, "Call from (your phone)");
++    this._form.computeHelper = () => voipStackTranslate(this._hass, "This device places the call. Choose who to call under Destination.");
++    this._form.data = { caller: this._selected };
++    this._form.disabled = !!this._phone.callActive;
++    this._form.schema = [{ name: "caller", required: true, selector: {
++      select: { mode: "dropdown", options: this._phones.map((phone) => ({
++        value: phone.device_id, label: phone.name,
++      })) },
++    } }];
++  }
++
++  _showError(message) {
++    this._error.textContent = voipStackTranslate(this._hass, message);
++    this._error.hidden = false;
++  }
++}
++
++if (!customElements.get("voip-stack-composer")) customElements.define("voip-stack-composer", VoipStackComposer);
+diff --git a/custom_components/voip_stack/frontend/voip-stack-i18n.js b/custom_components/voip_stack/frontend/voip-stack-i18n.js
+index 1cea8646..5e7bf7b0 100644
+--- a/custom_components/voip_stack/frontend/voip-stack-i18n.js
++++ b/custom_components/voip_stack/frontend/voip-stack-i18n.js
+@@ -1,4 +1,15 @@
+ const PT_BR = {
++  "No app connection was detected. Open the experimental Companion app, or select a browser phone.": "Nenhuma conexão com o aplicativo foi detectada. Abra o aplicativo Companion experimental ou selecione um telefone do navegador.",
++  "This app does not report native calling support. Open the experimental Companion app.": "Este aplicativo não informa suporte a chamadas nativas. Abra o aplicativo Companion experimental.",
++  "The app has not provided its phone identity for this Home Assistant server.": "O aplicativo não forneceu sua identidade de telefone para este servidor Home Assistant.",
++  "This app has no matching calling phone on this Home Assistant server.": "Este aplicativo não tem um telefone correspondente neste servidor Home Assistant.",
++  "Calling phone": "Telefone de origem",
++  "Call from (your phone)": "Ligar de (seu telefone)",
++  "This device places the call. Choose who to call under Destination.": "Este dispositivo faz a chamada. Escolha para quem ligar em Destino.",
++  "The default Home Assistant phone is unavailable. Choose a calling phone.": "O telefone padrão do Home Assistant está indisponível. Escolha um telefone de origem.",
++  "The native call is no longer available.": "A chamada nativa não está mais disponível.",
++  "Microphone access is required to place a native call": "É necessário permitir o acesso ao microfone para fazer uma chamada nativa",
++  "The native call is unavailable or the command was rejected": "A chamada nativa está indisponível ou o comando foi rejeitado",
+   "Active call": "Chamada ativa",
+   "Active": "Ativa",
+   "call": "chamada",
+@@ -103,6 +114,17 @@ const PT_BR = {
+ };
+ 
+ const DE = {
++  "No app connection was detected. Open the experimental Companion app, or select a browser phone.": "Keine App-Verbindung erkannt. Öffne die experimentelle Companion-App oder wähle ein Browser-Telefon.",
++  "This app does not report native calling support. Open the experimental Companion app.": "Diese App meldet keine Unterstützung für native Anrufe. Öffne die experimentelle Companion-App.",
++  "The app has not provided its phone identity for this Home Assistant server.": "Die App hat ihre Telefonidentität für diesen Home-Assistant-Server nicht bereitgestellt.",
++  "This app has no matching calling phone on this Home Assistant server.": "Dieser App ist auf diesem Home-Assistant-Server kein passendes Telefon zugeordnet.",
++  "Calling phone": "Anrufendes Telefon",
++  "Call from (your phone)": "Anrufen von (dein Telefon)",
++  "This device places the call. Choose who to call under Destination.": "Dieses Gerät führt den Anruf aus. Wähle unter Ziel aus, wen du anrufen möchtest.",
++  "The default Home Assistant phone is unavailable. Choose a calling phone.": "Das Standardtelefon von Home Assistant ist nicht verfügbar. Wähle ein anrufendes Telefon.",
++  "The native call is no longer available.": "Der native Anruf ist nicht mehr verfügbar.",
++  "Microphone access is required to place a native call": "Für einen nativen Anruf ist der Mikrofonzugriff erforderlich",
++  "The native call is unavailable or the command was rejected": "Der native Anruf ist nicht verfügbar oder der Befehl wurde abgelehnt",
+   "Active call": "Aktiver Anruf",
+   "Active": "Aktiv",
+   "call": "Anruf",
+diff --git a/custom_components/voip_stack/frontend/voip-stack-menu.js b/custom_components/voip_stack/frontend/voip-stack-menu.js
+new file mode 100644
+index 00000000..13526f09
+--- /dev/null
++++ b/custom_components/voip_stack/frontend/voip-stack-menu.js
+@@ -0,0 +1,21 @@
++const version = new URL(import.meta.url).searchParams.get("v") || "dev";
++const composerUrl = new URL(`./voip-stack-composer.js?v=${encodeURIComponent(version)}`, import.meta.url).href;
++const cardUrl = new URL(`./voip-stack-card.js?v=${encodeURIComponent(version)}`, import.meta.url).href;
++
++// Dashboard resources use the proposed frontend API only when it is available.
++// Older frontends retain their existing cards without DOM injection.
++await customElements.whenDefined("home-assistant");
++window.customDashboardActions?.register({
++  id: "voip_stack:phone",
++  icon: "mdi:phone",
++  label: () => "VoIP Stack",
++  visible: ({ hass }) => hass.config.components.includes("voip_stack"),
++  execute: async ({ showDialog }) => {
++    await import(cardUrl);
++    await showDialog({
++      dialogTag: "voip-stack-composer",
++      dialogImport: () => import(composerUrl),
++      dialogParams: {},
++    });
++  },
++});
+diff --git a/custom_components/voip_stack/phone_config.py b/custom_components/voip_stack/phone_config.py
+index 69af9411..24cbda85 100644
+--- a/custom_components/voip_stack/phone_config.py
++++ b/custom_components/voip_stack/phone_config.py
+@@ -548,7 +548,7 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+             )
+         registry.upsert(candidate)
+     for endpoint in tuple(registry.endpoints):
+-        if endpoint.kind in {EndpointKind.BROWSER, EndpointKind.SIP_ACCOUNT} and (
++        if endpoint.kind in {EndpointKind.BROWSER, EndpointKind.COMPANION, EndpointKind.SIP_ACCOUNT} and (
+             endpoint.endpoint_id not in configured
+         ):
+             if endpoint.active_call_id:
+diff --git a/custom_components/voip_stack/phone_control.py b/custom_components/voip_stack/phone_control.py
+index 76d60e85..81f35462 100644
+--- a/custom_components/voip_stack/phone_control.py
++++ b/custom_components/voip_stack/phone_control.py
+@@ -290,6 +290,7 @@ class PhoneAdapterRegistry:
+         ).strip()
+         self._adapters: dict[EndpointKind, PhoneAdapter] = {
+             EndpointKind.BROWSER: BrowserPhoneAdapter(),
++            EndpointKind.COMPANION: BrowserPhoneAdapter(),
+             EndpointKind.ESPHOME: EspHomePhoneAdapter(),
+         }
+ 
+@@ -384,6 +385,8 @@ class PhoneAdapterRegistry:
+                 return self._endpoint_handle(endpoint, frozenset())
+             if endpoint.kind.is_softphone:
+                 capabilities = ALL_PHONE_OPERATIONS
++                if endpoint.kind is EndpointKind.COMPANION and not call.data.get("media_client_id"):
++                    capabilities = capabilities - {PhoneOperation.ORIGINATE}
+                 return self._endpoint_handle(endpoint, capabilities)
+ 
+         device = await async_resolve_source_device(
+diff --git a/custom_components/voip_stack/phone_endpoint.py b/custom_components/voip_stack/phone_endpoint.py
+index 98cd7d44..a9b8c701 100644
+--- a/custom_components/voip_stack/phone_endpoint.py
++++ b/custom_components/voip_stack/phone_endpoint.py
+@@ -11,13 +11,14 @@ class EndpointKind(StrEnum):
+     """Supported logical endpoint implementations."""
+ 
+     BROWSER = "browser"
++    COMPANION = "companion"
+     SIP_ACCOUNT = "sip_account"
+     ESPHOME = "esphome"
+ 
+     @property
+     def is_softphone(self) -> bool:
+         """Use the HA-owned signaling and authenticated WebSocket media path."""
+-        return self is EndpointKind.BROWSER
++        return self in {EndpointKind.BROWSER, EndpointKind.COMPANION}
+ 
+ 
+ class EndpointAvailability(StrEnum):
+diff --git a/custom_components/voip_stack/runtime_data.py b/custom_components/voip_stack/runtime_data.py
+index e4811e9f..2df0532c 100644
+--- a/custom_components/voip_stack/runtime_data.py
++++ b/custom_components/voip_stack/runtime_data.py
+@@ -14,6 +14,7 @@ from .endpoint_registry import EndpointRegistry
+ from .phone_endpoint import EndpointKind, PhoneEndpoint
+ 
+ if TYPE_CHECKING:
++    from .companion_phones import CompanionPhones
+     from .device_resolver import VoipDeviceResolver
+     from .pbx_runtime import SipEndpointRuntime
+     from .phone_control import PhoneAdapterRegistry
+@@ -94,6 +95,7 @@ class VoipStackRuntime:
+     phonebook_push_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+     esp_state_event_bridge_unsub: Any | None = None
+     phonebook_service_event_unsub: Any | None = None
++    companion_phones: CompanionPhones | None = None
+ 
+ 
+ type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]
+@@ -105,6 +107,7 @@ class VoipStackRegistration:
+ 
+     initialized: bool = False
+     audio_view: bool = False
++    companion_view: bool = False
+     video_view: bool = False
+     assist_intents: bool = False
+     route_trigger_filters: dict[object, dict] = field(default_factory=dict)
+diff --git a/custom_components/voip_stack/service_endpoints.py b/custom_components/voip_stack/service_endpoints.py
+index c9a83a16..0a0cb818 100644
+--- a/custom_components/voip_stack/service_endpoints.py
++++ b/custom_components/voip_stack/service_endpoints.py
+@@ -63,7 +63,7 @@ def service_configured_endpoint(hass: HomeAssistant, call: ServiceCall):
+             ),
+             "unknown_phone_device" if device_id else "phone_selection_required",
+         )
+-    if endpoint.kind not in {EndpointKind.BROWSER, EndpointKind.SIP_ACCOUNT}:
++    if endpoint.kind not in {EndpointKind.BROWSER, EndpointKind.COMPANION, EndpointKind.SIP_ACCOUNT}:
+         raise _service_error(
+             "The selected Device is not an integration-owned phone",
+             "phone_not_integration_owned",
+diff --git a/custom_components/voip_stack/strings.json b/custom_components/voip_stack/strings.json
+index f76ffe58..af033252 100644
+--- a/custom_components/voip_stack/strings.json
++++ b/custom_components/voip_stack/strings.json
+@@ -14,7 +14,8 @@
+           "media_capture": "Record private call audio for diagnostics",
+           "experimental_sip_video": "Enable SIP video for the Home Assistant softphone",
+           "sip_registrar_enabled": "Enable local SIP accounts",
+-          "trunk_enabled": "Enable optional SIP trunk"
++          "trunk_enabled": "Enable optional SIP trunk",
++          "companion_enabled": "Enable Companion phones"
+         },
+         "data_description": {
+           "sip_port": "Listen port for the HA SIP endpoint. HA accepts SIP signaling over both UDP and TCP on this port.",
+@@ -26,7 +27,8 @@
+           "media_capture": "Explicitly records private call audio: up to 15 seconds per HA-softphone direction and 8 seconds per relay leg, stored as WAV/JSON in ~/.cache/voip_stack_debug (mode 0700) and pruned to 24 files / 64 MiB. Keep disabled unless collecting a diagnostic capture.",
+           "experimental_sip_video": "Let the Home Assistant softphone negotiate SIP video with compatible standard phones, softphones and door stations. H.264, VP8 and JPEG use the browser media path. Standard ESP endpoints remain audio-only; qualified ESP32-P4 profiles can negotiate JPEG or H.264. Requires HTTPS and a compatible browser.",
+           "sip_registrar_enabled": "Accept REGISTER from local SIP endpoints such as VoIP phones, Zoiper, Linphone or baresip using accounts managed by VoIP Stack services.",
+-          "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration, external route or DTMF collector starts."
++          "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration, external route or DTMF collector starts.",
++          "companion_enabled": "Discover compatible Companion apps as separate incoming-call phones. Their names follow their mobile_app device tracker. Requires a Companion build with native call support."
+         }
+       },
+       "video": {
+@@ -172,6 +174,22 @@
+         },
+         "reconfigure": {
+           "title": "Reconfigure phone"
++        },
++        "companion": {
++          "title": "Companion phone",
++          "description": "Configure this Companion phone. Its name follows its mobile_app device tracker.",
++          "data": {
++            "extension": "Extension",
++            "enabled": "Enabled",
++            "dnd": "Do not disturb",
++            "ring_group": "Ring group",
++            "conference_group": "Conference group",
++            "conference_ring": "Ring for conference calls"
++          },
++          "data_description": {
++            "name": "Required phone name used by the card, phonebook and call routing.",
++            "extension": "Optional unique dialable extension. The logical phone remains ringable when no browser card is connected."
++          }
+         }
+       },
+       "error": {
+diff --git a/custom_components/voip_stack/translations/de.json b/custom_components/voip_stack/translations/de.json
+index 759c9f26..8e9cdc8e 100644
+--- a/custom_components/voip_stack/translations/de.json
++++ b/custom_components/voip_stack/translations/de.json
+@@ -14,7 +14,8 @@
+           "media_capture": "Nehmen Sie den Ton privater Anrufe zur Diagnose auf",
+           "experimental_sip_video": "Aktivieren Sie SIP-Video für das Home Assistant-Softphone",
+           "sip_registrar_enabled": "Aktivieren Sie lokale SIP-Konten",
+-          "trunk_enabled": "Aktivieren Sie den optionalen SIP-Trunk"
++          "trunk_enabled": "Aktivieren Sie den optionalen SIP-Trunk",
++          "companion_enabled": "Companion-Telefone aktivieren"
+         },
+         "data_description": {
+           "sip_port": "Abhörport für den HA-SIP-Endpunkt. HA akzeptiert SIP-Signalisierung über UDP und TCP an diesem Port.",
+@@ -26,7 +27,8 @@
+           "media_capture": "Zeichnet ausdrücklich private Anrufmedien auf: bis zu 15 Sekunden je HA-Softphone-Richtung und 8 Sekunden je Relay-Abschnitt, gespeichert als WAV/JSON in ~/.cache/voip_stack_debug (Modus 0700) und begrenzt auf 24 Dateien / 64 MiB. Nur für Diagnoseaufzeichnungen aktivieren.",
+           "experimental_sip_video": "Lassen Sie das Home Assistant-Softphone SIP-Video mit kompatiblen Standardtelefonen, Softphones und Türstationen aushandeln. H.264, VP8 und JPEG verwenden den Browser-Medienpfad. Standard-ESP-Endpunkte sind weiterhin nur für Audio verfügbar. Qualifizierte ESP32-P4-Profile können JPEG oder H.264 aushandeln. Erfordert HTTPS und einen kompatiblen Browser.",
+           "sip_registrar_enabled": "Akzeptiert REGISTER von lokalen SIP-Endpunkten wie VoIP-Telefonen, Zoiper, Linphone oder baresip über Konten, die von VoIP Stack verwaltet werden.",
+-          "trunk_enabled": "Provider-/PBX-Trunk-Einstellungen anzeigen. Wenn deaktiviert, wird keine Trunk-Registrierung, externe Route oder DTMF-Sammlung gestartet."
++          "trunk_enabled": "Provider-/PBX-Trunk-Einstellungen anzeigen. Wenn deaktiviert, wird keine Trunk-Registrierung, externe Route oder DTMF-Sammlung gestartet.",
++          "companion_enabled": "Kompatible Companion-Apps als eigene Telefone für eingehende Anrufe erkennen. Namen folgen dem mobile_app-Gerätetracker. Erfordert eine Companion-Version mit nativer Anrufunterstützung."
+         }
+       },
+       "video": {
+@@ -172,6 +174,22 @@
+         },
+         "reconfigure": {
+           "title": "Telefon neu konfigurieren"
++        },
++        "companion": {
++          "title": "Companion-Telefon",
++          "description": "Dieses Companion-Telefon konfigurieren. Der Name folgt seinem mobile_app-Gerätetracker.",
++          "data": {
++            "extension": "Nebenstelle",
++            "enabled": "Aktiviert",
++            "dnd": "Bitte nicht stören",
++            "ring_group": "Ringgruppe",
++            "conference_group": "Konferenzgruppe",
++            "conference_ring": "Bei Telefonkonferenzen klingeln"
++          },
++          "data_description": {
++            "name": "Erforderlicher Telefonname, der von der Karte, dem Telefonbuch und der Anrufweiterleitung verwendet wird.",
++            "extension": "Optionale, eindeutig wählbare Nebenstelle. Das logische Telefon bleibt klingelbar, wenn keine Browserkarte angeschlossen ist."
++          }
+         }
+       },
+       "error": {
+diff --git a/custom_components/voip_stack/translations/en.json b/custom_components/voip_stack/translations/en.json
+index 2cf70cfb..b73dea1d 100644
+--- a/custom_components/voip_stack/translations/en.json
++++ b/custom_components/voip_stack/translations/en.json
+@@ -14,7 +14,8 @@
+           "media_capture": "Record private call audio for diagnostics",
+           "experimental_sip_video": "Enable SIP video for the Home Assistant softphone",
+           "sip_registrar_enabled": "Enable local SIP accounts",
+-          "trunk_enabled": "Enable optional SIP trunk"
++          "trunk_enabled": "Enable optional SIP trunk",
++          "companion_enabled": "Enable Companion phones"
+         },
+         "data_description": {
+           "sip_port": "Listen port for the HA SIP endpoint. HA accepts SIP signaling over both UDP and TCP on this port.",
+@@ -26,7 +27,8 @@
+           "media_capture": "Explicitly records private call audio: up to 15 seconds per HA-softphone direction and 8 seconds per relay leg, stored as WAV/JSON in ~/.cache/voip_stack_debug (mode 0700) and pruned to 24 files / 64 MiB. Keep disabled unless collecting a diagnostic capture.",
+           "experimental_sip_video": "Let the Home Assistant softphone negotiate SIP video with compatible standard phones, softphones and door stations. H.264, VP8 and JPEG use the browser media path. Standard ESP endpoints remain audio-only; qualified ESP32-P4 profiles can negotiate JPEG or H.264. Requires HTTPS and a compatible browser.",
+           "sip_registrar_enabled": "Accept REGISTER from local SIP endpoints such as VoIP phones, Zoiper, Linphone or baresip using accounts managed by VoIP Stack services.",
+-          "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration, external route or DTMF collector starts."
++          "trunk_enabled": "Show provider/PBX trunk settings. When disabled, no trunk registration, external route or DTMF collector starts.",
++          "companion_enabled": "Discover compatible Companion apps as separate incoming-call phones. Their names follow their mobile_app device tracker. Requires a Companion build with native call support."
+         }
+       },
+       "video": {
+@@ -172,6 +174,22 @@
+         },
+         "reconfigure": {
+           "title": "Reconfigure phone"
++        },
++        "companion": {
++          "title": "Companion phone",
++          "description": "Configure this Companion phone. Its name follows its mobile_app device tracker.",
++          "data": {
++            "extension": "Extension",
++            "enabled": "Enabled",
++            "dnd": "Do not disturb",
++            "ring_group": "Ring group",
++            "conference_group": "Conference group",
++            "conference_ring": "Ring for conference calls"
++          },
++          "data_description": {
++            "name": "Required phone name used by the card, phonebook and call routing.",
++            "extension": "Optional unique dialable extension. The logical phone remains ringable when no browser card is connected."
++          }
+         }
+       },
+       "error": {
+diff --git a/custom_components/voip_stack/translations/it.json b/custom_components/voip_stack/translations/it.json
+index bd31b1b4..d8ee452a 100644
+--- a/custom_components/voip_stack/translations/it.json
++++ b/custom_components/voip_stack/translations/it.json
+@@ -14,7 +14,8 @@
+           "media_capture": "Registra audio privato per la diagnostica",
+           "experimental_sip_video": "Abilita video SIP per il softphone Home Assistant",
+           "sip_registrar_enabled": "Abilita account softphone SIP locali",
+-          "trunk_enabled": "Abilita trunk SIP opzionale"
++          "trunk_enabled": "Abilita trunk SIP opzionale",
++          "companion_enabled": "Abilita telefoni Companion"
+         },
+         "data_description": {
+           "sip_port": "Porta di ascolto dell'endpoint SIP HA. HA accetta signaling SIP sia su UDP sia su TCP su questa porta.",
+@@ -26,7 +27,8 @@
+           "media_capture": "Registra esplicitamente audio privato delle chiamate: fino a 15 secondi per direzione del softphone HA e 8 secondi per tratta relay, salvati come WAV/JSON in ~/.cache/voip_stack_debug (permessi 0700) e limitati a 24 file / 64 MiB. Mantienilo disabilitato salvo durante una cattura diagnostica.",
+           "experimental_sip_video": "Permette al softphone Home Assistant di negoziare video SIP con telefoni, softphone e videocitofoni standard compatibili. H.264, VP8 e JPEG usano un percorso diretto nel browser. Gli endpoint audio ESP restano solo audio. Richiede HTTPS e un browser compatibile.",
+           "sip_registrar_enabled": "Accetta REGISTER da softphone locali come Zoiper, Linphone o baresip usando account gestiti dai servizi VoIP Stack.",
+-          "trunk_enabled": "Mostra le impostazioni provider/PBX. Se disattivo, non parte nessuna registrazione trunk, rotta esterna o raccolta DTMF."
++          "trunk_enabled": "Mostra le impostazioni provider/PBX. Se disattivo, non parte nessuna registrazione trunk, rotta esterna o raccolta DTMF.",
++          "companion_enabled": "Rileva le app Companion compatibili come telefoni separati per le chiamate in ingresso. I nomi seguono il device tracker mobile_app. Richiede una versione Companion con supporto alle chiamate native."
+         }
+       },
+       "video": {
+@@ -172,6 +174,22 @@
+         },
+         "reconfigure": {
+           "title": "Riconfigura telefono"
++        },
++        "companion": {
++          "title": "Telefono Companion",
++          "description": "Configura questo telefono Companion. Il nome segue il relativo device tracker mobile_app.",
++          "data": {
++            "extension": "Interno",
++            "enabled": "Abilitato",
++            "dnd": "Non disturbare",
++            "ring_group": "Gruppo di chiamata",
++            "conference_group": "Gruppo conferenza",
++            "conference_ring": "Squilla per le conferenze"
++          },
++          "data_description": {
++            "name": "Nome obbligatorio usato da card, rubrica e instradamento.",
++            "extension": "Interno componibile opzionale e univoco. Il telefono logico resta chiamabile anche senza card browser collegata."
++          }
+         }
+       },
+       "error": {
+diff --git a/custom_components/voip_stack/translations/pt-BR.json b/custom_components/voip_stack/translations/pt-BR.json
+index bad1e0c3..7335d515 100644
+--- a/custom_components/voip_stack/translations/pt-BR.json
++++ b/custom_components/voip_stack/translations/pt-BR.json
+@@ -14,7 +14,8 @@
+           "media_capture": "Gravar áudio privado das chamadas para diagnóstico",
+           "experimental_sip_video": "Ativar vídeo SIP para o softphone do Home Assistant",
+           "sip_registrar_enabled": "Ativar contas SIP locais",
+-          "trunk_enabled": "Ativar tronco SIP opcional"
++          "trunk_enabled": "Ativar tronco SIP opcional",
++          "companion_enabled": "Ativar telefones Companion"
+         },
+         "data_description": {
+           "sip_port": "Porta de escuta do endpoint SIP do Home Assistant. O Home Assistant aceita sinalização SIP por UDP e TCP nessa porta.",
+@@ -26,7 +27,8 @@
+           "media_capture": "Grava explicitamente o áudio privado das chamadas: até 15 segundos por direção do softphone do Home Assistant e 8 segundos por perna de retransmissão, armazenados como WAV/JSON em ~/.cache/voip_stack_debug (modo 0700) e limitados a 24 arquivos / 64 MiB. Mantenha desativado, exceto durante a coleta de uma captura de diagnóstico.",
+           "experimental_sip_video": "Permite que o softphone do Home Assistant negocie vídeo SIP com telefones, softphones e interfones compatíveis. H.264, VP8 e JPEG usam o caminho de mídia do navegador. Endpoints ESP padrão permanecem somente com áudio; perfis ESP32-P4 qualificados podem negociar JPEG ou H.264. Requer HTTPS e um navegador compatível.",
+           "sip_registrar_enabled": "Aceita REGISTER de endpoints SIP locais, como telefones VoIP, Zoiper, Linphone ou baresip, usando contas gerenciadas pelos serviços do VoIP Stack.",
+-          "trunk_enabled": "Exibe as configurações do tronco de provedor/PBX. Quando desativado, não inicia registro do tronco, rota externa nem coletor DTMF."
++          "trunk_enabled": "Exibe as configurações do tronco de provedor/PBX. Quando desativado, não inicia registro do tronco, rota externa nem coletor DTMF.",
++          "companion_enabled": "Detectar apps Companion compatíveis como telefones separados para chamadas recebidas. Os nomes seguem o device tracker mobile_app. Requer uma versão Companion com suporte a chamadas nativas."
+         }
+       },
+       "video": {
+@@ -172,6 +174,22 @@
+         },
+         "reconfigure": {
+           "title": "Reconfigurar telefone"
++        },
++        "companion": {
++          "title": "Telefone Companion",
++          "description": "Configure este telefone Companion. O nome segue seu device tracker mobile_app.",
++          "data": {
++            "extension": "Extensão",
++            "enabled": "Ativado",
++            "dnd": "Não perturbe",
++            "ring_group": "Grupo de toque",
++            "conference_group": "Grupo de conferência",
++            "conference_ring": "Tocar para chamadas de conferência"
++          },
++          "data_description": {
++            "name": "Nome obrigatório do telefone usado pelo card, pela agenda telefônica e pelo roteamento de chamadas.",
++            "extension": "Extensão discável exclusiva opcional. O telefone lógico continua podendo receber chamadas mesmo sem um card de navegador conectado."
++          }
+         }
+       },
+       "error": {
+diff --git a/custom_components/voip_stack/websocket_api.py b/custom_components/voip_stack/websocket_api.py
+index aad45d86..a959bd70 100644
+--- a/custom_components/voip_stack/websocket_api.py
++++ b/custom_components/voip_stack/websocket_api.py
+@@ -378,7 +378,7 @@ def _update_browser_presence(
+         counts.pop(endpoint_id, None)
+ 
+     endpoint = _browser_endpoint(hass, endpoint_id)
+-    if endpoint is not None:
++    if endpoint is not None and endpoint.kind is not EndpointKind.COMPANION:
+         availability = (
+             EndpointAvailability.AVAILABLE if current else EndpointAvailability.OFFLINE
+         )
+@@ -983,7 +983,17 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
+         rtp_rx_bytes=_runtime_counter(store, runtime, "rtp_rx_bytes"),
+         last_sip_event=last_event,
+     )
++    native_call = None
++    if endpoint is not None and endpoint.kind is EndpointKind.COMPANION and call_id:
++        manager = getattr(entry_runtime, "companion_phones", None)
++        binding = manager.bindings.get(endpoint_id) if manager is not None else None
++        generation = registry.current_generation(call_id)
++        if binding is not None and generation is not None:
++            from .companion_protocol import CompanionCallToken
++            token = CompanionCallToken(binding.registration_id, call_id, generation)
++            native_call = {"callId": call_id, "callPath": token.path()}
+     return {
++        "native_call": native_call,
+         **phone,
+         "endpoint_id": endpoint_id,
+         "device_id": (
+@@ -996,7 +1006,7 @@ def _ha_softphone_state(hass: HomeAssistant, endpoint_id: str) -> dict[str, Any]
+         "available": bool(
+             endpoint is not None
+             and endpoint.availability is EndpointAvailability.AVAILABLE
+-            and connected_cards
++            and (connected_cards or endpoint.kind is EndpointKind.COMPANION)
+         ),
+         "enabled": bool(
+             endpoint is not None
+@@ -1338,8 +1348,11 @@ def _ha_softphone_device(
+ ) -> dict[str, Any]:
+     endpoint_id = _endpoint_store_id(endpoint_id)
+     state = _ha_softphone_state(hass, endpoint_id)
++    manager = getattr(require_runtime_data(hass), "companion_phones", None)
++    binding = manager.bindings.get(endpoint_id) if manager is not None else None
+     return {
+         "endpoint_id": endpoint_id,
++        "mobile_device_id": binding.mobile_device_id if binding else None,
+         "endpoint_type": state.get("endpoint_type", EndpointKind.BROWSER.value),
+         "device_id": state.get("device_id") or "",
+         "name": state.get("name") or _ha_peer_name(hass),
+diff --git a/docs/BREAKING_CHANGES.md b/docs/BREAKING_CHANGES.md
+index 54c7cdfe..6c5eef56 100644
+--- a/docs/BREAKING_CHANGES.md
++++ b/docs/BREAKING_CHANGES.md
+@@ -1,19 +1,5 @@
+ # Breaking changes
+ 
+-## Unreleased: native Companion prototype archived
+-
+-The experimental dashboard-menu composer and native Companion phone endpoints
+-are no longer included. Existing experimental Companion phone subentries are
+-removed during migration. Official mobile_app registrations and notifications,
+-normal dashboard phones, SIP accounts and ESPHome devices are preserved.
+-Update any automations that explicitly targeted a retired native-app phone.
+-
+-The prototype is preserved on the
+-[`archive/companion-native-calls-prototype-20261004` branch](https://github.com/n-IA-hane/esphome-intercom/tree/archive/companion-native-calls-prototype-20261004).
+-It is historical design material, not a supported installation. Future work
+-will depend on the official Core, Companion and frontend APIs. Reload the
+-dashboard or restart the Companion app after updating to discard the old menu.
+-
+ ## 2026.10.1: coordinated firmware sources
+ 
+ The HA update does not require an ESP firmware update. When adopting the new
+diff --git a/docs/COMPANION_CALLS.md b/docs/COMPANION_CALLS.md
+new file mode 100644
+index 00000000..e94d1d28
+--- /dev/null
++++ b/docs/COMPANION_CALLS.md
+@@ -0,0 +1,43 @@
++# Native incoming calls in Companion (experimental)
++
++This feature requires a Companion build that advertises native call support. It is not available simply by updating VoIP Stack while keeping an unmodified Companion app.
++
++A compatible app can receive a call addressed to its own phone identity, answer or decline from Android's call notification, exchange audio through the communication channel and hang up. Home Assistant handles routing and codec conversion. The shared dashboard composer sends call commands to the native phone; it does not implement a second audio engine or a native dialer screen.
++
++## Enable a phone
++
++1. Register the compatible Companion app with Home Assistant normally.
++2. Reconfigure VoIP Stack and enable **Enable Companion phones**.
++3. Find the discovered phone in VoIP Stack. You do not need to add a browser phone or create a SIP account for the app.
++4. Optionally configure an extension or the existing phone options. New phones do not join any group automatically.
++5. Call the phone by its name or configured extension. Allow microphone access when answering for the first time.
++
++The phone name follows the display name of its `mobile_app` device tracker. For example, `CPH2709` becomes `App Daniele` when that tracker is renamed. The registration remains the phone's identity, so changing the tracker entity ID does not create a second phone. Location updates are not required; a disabled tracker can still supply its registry name. If the tracker is absent, the app's registered device name is used.
++
++Names must be unique in the VoIP phonebook. A collision produces an error and a persistent notification instead of silently inventing a different name. Correct the tracker name to restore availability. The last valid phone configuration is retained during a conflict.
++
++Existing references by stable phone identity survive renaming. Automation text that explicitly contains the old name must be updated, or use a stable identifier or extension.
++
++## Card and native phone are separate
++
++Dashboard cards keep their own identities and browser audio behavior, including when displayed inside Companion. They do not automatically become the app's native phone. Native Companion phones are excluded from the card's owner selector.
++
++Disabling Companion support makes its phones unavailable without deleting their saved configuration. Enabling it again reuses the same phone identities.
++
++## Audio and limits
++
++The app uses Android Core-Telecom and communication audio, so the call-volume control applies. PCM formats are negotiated with HA; 48 kHz has been measured in the emulator. Device and Bluetooth routes can impose their own limits.
++
++## Dial from the dashboard menu
++
++The experimental frontend adds **VoIP Stack** to the dashboard menu. This requires the proposed generic menu API in Home Assistant's frontend; updating the integration alone does not add that API to a released frontend.
++
++The composer selects the default Home Assistant browser phone on a desktop. In a compatible Companion app it selects that app's phone identity. The **Calling phone** selector allows another supported source to be chosen before starting the call. Type a name, extension, group or SIP address in the destination field, or select a phonebook suggestion. The input uses the normal text keyboard. During a conversation, the keypad sends DTMF.
++
++When a browser call starts from the popup, the popup controls the page's existing media engine. A card for the same phone displays the call state without opening another microphone. A call started from the card keeps the card as its controller. Opening the popup alone does not transfer audio.
++
++For a native Companion call, Android owns the communication audio and ongoing call notification. Close the popup or leave the dashboard and continue the call; use **Hang up** in the system notification to end it. Minimizing a browser popup also keeps its call alive in that page, and the menu reopens its controls. Closing the browser page is different from minimizing the popup.
++
++The test APK contains a separately qualified Core-Telecom source correction for a retained result receiver. This correction must be submitted and incorporated upstream before the standard dependency can be described as fixed. It is not silently applied to normal builds.
++
++Local notification delivery has been tested in an Android emulator. Firebase remote wake, physical phone/tablet behavior and Bluetooth routes need separate qualification. iOS needs its own CallKit implementation and testing; Android results do not qualify iOS.
+diff --git a/scripts/test_suite.sh b/scripts/test_suite.sh
+index a8d141e0..298492e2 100755
+--- a/scripts/test_suite.sh
++++ b/scripts/test_suite.sh
+@@ -88,6 +88,7 @@ path_mode=$(
+ pytest_args=(tests -q --tb=short)
+ ha_tests=(
+   tests/test_trunk_config_flow.py
++  tests/test_companion_calls.py
+   tests/test_automation_call.py
+   tests/test_call_trigger.py
+   tests/test_call_deadlines_runtime.py
+diff --git a/tests/test_companion_calls.py b/tests/test_companion_calls.py
+new file mode 100644
+index 00000000..324ad53b
+--- /dev/null
++++ b/tests/test_companion_calls.py
+@@ -0,0 +1,273 @@
++"""Native clients must stay scoped to their registration and live call generation."""
++
++from types import SimpleNamespace
++from unittest.mock import AsyncMock
++import asyncio
++import time
++from urllib.parse import parse_qs, urlsplit
++
++from aiohttp import web
++import pytest
++
++from custom_components.voip_stack import companion_view as views
++from custom_components.voip_stack import companion_phones as phones
++from custom_components.voip_stack.companion_protocol import CompanionCallToken
++from custom_components.voip_stack.endpoint_registry import EndpointRegistry
++from custom_components.voip_stack.phone_endpoint import EndpointKind, PhoneEndpoint
++
++pytestmark = pytest.mark.ha
++
++
++@pytest.fixture
++def fixture(monkeypatch):
++    token = CompanionCallToken("registration-1", "call-1", 7)
++    binding = phones.CompanionBinding("registration-1", "mobile-1", "companion:registration-1", "user-1", "webhook-1")
++    invitation = phones.CompanionInvitation(token, time.monotonic() + 30, "Door")
++    directory = EndpointRegistry()
++    directory.register(PhoneEndpoint(binding.endpoint_id, "Mobile", EndpointKind.COMPANION, active_call_id="call-1", device_id="phone-1"))
++    manager = SimpleNamespace(bindings={binding.endpoint_id: binding}, invitations={binding.endpoint_id: invitation})
++    runtime = SimpleNamespace(companion_phones=manager, endpoints=directory)
++    registry = SimpleNamespace(resolve_session_id=lambda x: x, is_generation_current=lambda c, g: c == "call-1" and g == 7)
++    listeners = []
++    def listen(event_type, listener):
++        listeners.append(listener)
++        return lambda: listeners.remove(listener)
++    hass = SimpleNamespace(services=SimpleNamespace(async_call=AsyncMock()),
++        bus=SimpleNamespace(async_listen=listen), listeners=listeners)
++    user = SimpleNamespace(id="user-1", permissions=SimpleNamespace(check_entity=lambda *args: True))
++    class Request(dict):
++        app = {"hass": hass}
++        query = {k: v[0] for k, v in parse_qs(urlsplit(token.path()).query).items()}
++        async def json(self):
++            return self.body
++    request = Request(hass_user=user)
++    snapshot = {"state": "ringing", "call_id": "call-1"}
++    monkeypatch.setattr(views, "require_runtime_data", lambda h: runtime)
++    monkeypatch.setattr(views, "call_registry", lambda h: registry)
++    monkeypatch.setattr(views, "_ha_softphone_state", lambda *args: snapshot)
++    return SimpleNamespace(token=token, binding=binding, invitation=invitation, manager=manager,
++        runtime=runtime, registry=registry, hass=hass, user=user, request=request, snapshot=snapshot)
++
++
++@pytest.mark.asyncio
++async def test_matching_registration_can_read_its_ringing_call(fixture):
++    response = await views.CompanionCallView().get(fixture.request)
++    assert response.status == 200
++    assert '"id": "call-1"' in response.text
++
++
++@pytest.mark.parametrize("change", ["user", "registration", "call", "generation", "claim", "terminated", "expired"])
++@pytest.mark.asyncio
++async def test_unrelated_or_stale_invitation_cannot_control_call(fixture, change):
++    f = fixture
++    if change == "user": f.user.id = "user-2"
++    elif change == "registration": f.request.query["registration_id"] = "other"
++    elif change == "call": f.request.query["call_id"] = "other"
++    elif change == "generation": f.request.query["generation"] = "6"
++    elif change == "claim":
++        f.runtime.endpoints.release_call(f.binding.endpoint_id, "call-1")
++        f.runtime.endpoints.claim_call(f.binding.endpoint_id, "other")
++    elif change == "terminated": f.registry.is_generation_current = lambda *args: False
++    elif change == "expired": f.manager.invitations[f.binding.endpoint_id] = phones.CompanionInvitation(f.token, 0, "Door")
++    f.request.body = {"action": "answer", "client_id": "native-client-123456"}
++    with pytest.raises((web.HTTPForbidden, web.HTTPGone)):
++        await views.CompanionCallView().post(f.request)
++    f.hass.services.async_call.assert_not_awaited()
++
++
++@pytest.mark.asyncio
++async def test_native_answer_uses_existing_phone_service_and_scoped_media(fixture):
++    f = fixture
++    async def answer(*args, **kwargs):
++        f.snapshot["state"] = "in_call"
++    f.hass.services.async_call.side_effect = answer
++    f.request.body = {"action": "answer", "client_id": "native-client-123456"}
++    response = await views.CompanionCallView().post(f.request)
++    assert response.status == 200
++    args = f.hass.services.async_call.await_args
++    assert args.args[:2] == ("voip_stack", "answer")
++    assert args.args[2]["device_id"] == "phone-1"
++    assert args.args[2]["call_id"] == "call-1"
++    assert args.kwargs["context"].user_id == "user-1"
++    assert "/api/voip_stack/ws?" in response.text
++    assert "native-client-123456" in response.text
++
++
++@pytest.mark.asyncio
++async def test_only_selected_native_phone_gets_one_ring_and_one_cancel(monkeypatch, fixture):
++    f = fixture
++    manager = phones.CompanionPhones(f.hass, SimpleNamespace())
++    manager.bindings[f.binding.endpoint_id] = f.binding
++    manager._notify = AsyncMock()
++    tasks = []
++    monkeypatch.setattr(phones, "call_registry", lambda h: SimpleNamespace(current_generation=lambda c: 7))
++    monkeypatch.setattr(phones, "create_runtime_task", lambda h, c: tasks.append(asyncio.create_task(c)))
++    def event(endpoint, state):
++        return SimpleNamespace(data={"endpoint_id": endpoint, "call_id": "call-1", "state": state, "caller": "Door"})
++    manager._call_changed(event("browser:another-room", "ringing"))
++    manager._call_changed(event(f.binding.endpoint_id, "ringing"))
++    manager._call_changed(event(f.binding.endpoint_id, "ringing"))
++    manager._call_changed(event(f.binding.endpoint_id, "in_call"))
++    manager._call_changed(event(f.binding.endpoint_id, "idle"))
++    await asyncio.gather(*tasks)
++    assert [c.args[2] for c in manager._notify.await_args_list] == ["ring", "cancel"]
++    assert all(c.args[0] == f.binding for c in manager._notify.await_args_list)
++    assert manager.invitations == {}
++
++
++@pytest.mark.asyncio
++async def test_fork_answer_waits_for_commit_and_releases_subscription(fixture):
++    f = fixture
++    def committed():
++        f.snapshot["state"] = "in_call"
++        for listener in tuple(f.hass.listeners):
++            listener(SimpleNamespace(data={"endpoint_id": f.binding.endpoint_id}))
++    async def answer(*args, **kwargs):
++        f.snapshot["state"] = "connecting"
++        asyncio.get_running_loop().call_soon(committed)
++    f.hass.services.async_call.side_effect = answer
++    f.request.body = {"action": "answer", "client_id": "native-client-123456"}
++    response = await views.CompanionCallView().post(f.request)
++    assert '"state": "in_call"' in response.text
++    assert f.hass.listeners == []
++
++
++@pytest.mark.asyncio
++async def test_cancel_during_answer_releases_subscription(fixture):
++    f = fixture
++    def cancelled():
++        f.manager.invitations.clear()
++        for listener in tuple(f.hass.listeners):
++            listener(SimpleNamespace(data={"endpoint_id": f.binding.endpoint_id}))
++    async def answer(*args, **kwargs):
++        f.snapshot["state"] = "connecting"
++        asyncio.get_running_loop().call_soon(cancelled)
++    f.hass.services.async_call.side_effect = answer
++    f.request.body = {"action": "answer", "client_id": "native-client-123456"}
++    with pytest.raises(web.HTTPGone):
++        await views.CompanionCallView().post(f.request)
++    assert f.hass.listeners == []
++
++
++@pytest.mark.asyncio
++async def test_call_replaced_while_reading_body_cannot_receive_old_command(fixture):
++    f = fixture
++    async def changed_body():
++        f.runtime.endpoints.release_call(f.binding.endpoint_id, "call-1")
++        f.runtime.endpoints.claim_call(f.binding.endpoint_id, "replacement")
++        return {"action": "answer", "client_id": "native-client-123456"}
++    f.request.json = changed_body
++    with pytest.raises(web.HTTPGone):
++        await views.CompanionCallView().post(f.request)
++    f.hass.services.async_call.assert_not_awaited()
++    assert f.hass.listeners == []
++
++
++@pytest.mark.asyncio
++async def test_failed_answer_removes_its_event_listener(fixture):
++    f = fixture
++    f.request.body = {"action": "answer", "client_id": "native-client-123456"}
++    f.hass.services.async_call.side_effect = RuntimeError("Answer could not commit")
++    with pytest.raises(RuntimeError, match="Answer could not commit"):
++        await views.CompanionCallView().post(f.request)
++    assert f.hass.listeners == []
++
++
++def test_phone_name_follows_tracker_without_changing_identity(monkeypatch):
++    mobile = SimpleNamespace(entry_id="registration", title="CPH2709",
++        data={"device_id": "installation-id", "device_name": "CPH2709"})
++    tracker = SimpleNamespace(domain="device_tracker", platform="mobile_app",
++        unique_id="installation-id", name=None, original_name="CPH2709",
++        entity_id="device_tracker.cph2709", disabled_by="user")
++    battery = SimpleNamespace(domain="sensor", platform="mobile_app", unique_id="battery",
++        name="Unrelated battery name")
++    monkeypatch.setattr(phones.er, "async_get", lambda _: object())
++    monkeypatch.setattr(phones.er, "async_entries_for_config_entry", lambda *_: [battery, tracker])
++    identity = phones.companion_endpoint_id(mobile.entry_id)
++    assert phones.companion_display_name(None, mobile) == "CPH2709"
++    tracker.name = "App Daniele"
++    tracker.entity_id = "device_tracker.daniele"
++    assert phones.companion_display_name(None, mobile) == "App Daniele"
++    assert phones.companion_endpoint_id(mobile.entry_id) == identity
++
++
++def test_tracker_absence_does_not_require_location_permission(monkeypatch):
++    mobile = SimpleNamespace(entry_id="registration", title="Fallback", data={"device_name": "Tablet"})
++    monkeypatch.setattr(phones.er, "async_get", lambda _: object())
++    monkeypatch.setattr(phones.er, "async_entries_for_config_entry", lambda *_: [])
++    assert phones.companion_display_name(None, mobile) == "Tablet"
++
++
++@pytest.mark.asyncio
++async def test_disabled_companion_support_preserves_phone_and_makes_it_unavailable(monkeypatch, fixture):
++    f = fixture
++    phone = SimpleNamespace(data={"endpoint_id": f.binding.endpoint_id, "kind": "companion", "enabled": True})
++    entry = SimpleNamespace(data={phones.CONF_COMPANION_ENABLED: False})
++    f.hass.config_entries = SimpleNamespace(async_entries=lambda _: [])
++    manager = phones.CompanionPhones(f.hass, entry)
++    manager.bindings[f.binding.endpoint_id] = f.binding
++    monkeypatch.setattr(phones.dr, "async_get", lambda _: object())
++    monkeypatch.setattr(phones, "phone_subentries", lambda _: [phone])
++    monkeypatch.setattr(phones, "sync_registry_from_entry", lambda *_: None)
++    monkeypatch.setattr(phones, "require_runtime_data", lambda _: f.runtime)
++    await manager.sync()
++    assert manager.bindings == {}
++    endpoint = f.runtime.endpoints.get(f.binding.endpoint_id)
++    assert endpoint is not None
++    assert endpoint.availability.value == "unavailable"
++    assert endpoint.active_call_id == "call-1"
++
++
++@pytest.mark.asyncio
++async def test_outgoing_native_call_notifies_connection_without_incoming_ring(fixture, monkeypatch):
++    f = fixture
++    manager = phones.CompanionPhones(f.hass, SimpleNamespace())
++    manager.bindings[f.binding.endpoint_id] = f.binding
++    manager._notify = AsyncMock()
++    tasks = []
++    monkeypatch.setattr(phones, "call_registry", lambda hass: SimpleNamespace(current_generation=lambda c: 7))
++    monkeypatch.setattr(phones, "create_runtime_task", lambda hass, coro: tasks.append(asyncio.create_task(coro)))
++    for phase in ("calling", "remote_ringing", "in_call", "in_call", "idle"):
++        manager._call_changed(SimpleNamespace(data={"endpoint_id": f.binding.endpoint_id,
++            "call_id": "call-1", "state": phase, "direction": "outgoing", "callee": "Office"}))
++    await asyncio.gather(*tasks)
++    assert [call.args[2] for call in manager._notify.await_args_list] == ["refresh", "cancel"]
++    assert manager.invitations == {}
++
++
++@pytest.mark.asyncio
++async def test_old_terminal_event_cannot_cancel_a_new_native_invitation(fixture, monkeypatch):
++    f = fixture
++    manager = phones.CompanionPhones(f.hass, SimpleNamespace())
++    manager.bindings[f.binding.endpoint_id] = f.binding
++    manager.invitations[f.binding.endpoint_id] = f.invitation
++    manager._notify = AsyncMock()
++    manager._call_changed(SimpleNamespace(data={"endpoint_id": f.binding.endpoint_id,
++        "call_id": "old-call", "state": "idle"}))
++    assert manager.invitations[f.binding.endpoint_id] == f.invitation
++    manager._notify.assert_not_called()
++
++
++@pytest.mark.asyncio
++async def test_connected_outgoing_descriptor_uses_existing_media_transport(fixture):
++    f = fixture
++    f.snapshot.update(state="in_call", direction="outgoing", callee="Office")
++    response = await views.CompanionCallView().get(f.request)
++    import json
++    description = json.loads(response.text)
++    assert description["direction"] == "outgoing"
++    assert description["caller"] == "Office"
++    path = urlsplit(description["media_path"])
++    assert path.path == "/api/voip_stack/ws"
++    assert parse_qs(path.query)["endpoint_id"] == [f.binding.endpoint_id]
++    assert parse_qs(path.query)["call_id"] == [f.token.call_id]
++
++
++@pytest.mark.asyncio
++async def test_native_invitation_without_domain_deadline_does_not_invent_ring_timeout(fixture):
++    f = fixture
++    from dataclasses import replace
++    f.manager.invitations[f.binding.endpoint_id] = replace(f.invitation, expires=None)
++    response = await views.CompanionCallView().get(f.request)
++    import json
++    assert json.loads(response.text)["remaining_ms"] is None
+diff --git a/tests/test_frontend_card_runtime.py b/tests/test_frontend_card_runtime.py
+index e54b8c75..485c8bec 100644
+--- a/tests/test_frontend_card_runtime.py
++++ b/tests/test_frontend_card_runtime.py
+@@ -1146,6 +1146,51 @@ const degradedVideo = makeCard();
+     assert.match(degradedVideo._els.statusReason.textContent, /Video unavailable/i);
+ assert.match(degradedVideo._els.statusReason.textContent, /allocate video media/i);
+ 
++// A composer destination changes the callee, never the native calling phone.
++const destinationCard = makeCard();
++destinationCard.config.device_id = "companion-phone";
++destinationCard.nativeCallContext = {{ deviceId: "mobile" }};
++destinationCard._presentation = "composer";
++destinationCard._softphoneKeypadOpen = true;
++destinationCard._softphoneManualTarget = "old destination";
++destinationCard._getSoftphoneTargetDevice = () => ({{ device_id: "esp-target", name: "Generic S3", extension: "430" }});
++destinationCard._saveSoftphoneTargetPreference = () => {{}};
++destinationCard._renderComposerSuggestions = () => {{}};
++destinationCard._setSoftphoneTarget("esp-target");
++assert.equal(destinationCard._manualTarget(), "430");
++assert.equal(destinationCard.config.device_id, "companion-phone");
++assert.equal(destinationCard.config.mode, "ha_softphone");
++assert.equal(destinationCard.nativeCallContext.deviceId, "mobile");
++assert.equal(destinationCard._els.destRow.hidden, false);
++assert.equal(destinationCard._els.destSelect.hidden, false);
++
++// ESP composer presentation must never expose the card's contact cycler.
++const espComposer = makeCard();
++espComposer.config = {{ mode: "esp_mirror", device_id: "esp-source" }};
++espComposer._renderComposerSuggestions = () => {{}};
++espComposer.presentation = "composer";
++assert.equal(espComposer._mirrorKeypadOpen, true);
++for (const keypadOpen of [true, false]) {{
++  espComposer._mirrorKeypadOpen = keypadOpen;
++  espComposer._render();
++  assert.equal(espComposer._els.prevBtn.hidden, true);
++  assert.equal(espComposer._els.nextBtn.hidden, true);
++  assert.equal(espComposer._els.prevBtn.style.display, "none");
++  assert.equal(espComposer._els.nextBtn.style.display, "none");
++}}
++
++// Containers receive terminal activity changes even without a later HA entity update.
++const activityCard = makeCard();
++const activityEvents = [];
++activityCard.addEventListener("call-activity-changed", event => activityEvents.push(event.detail.active));
++activityCard._starting = true;
++activityCard._render();
++activityCard._starting = false;
++activityCard._softphoneSnapshot = {{ state: "idle" }};
++activityCard._render();
++activityCard._render();
++assert.deepEqual(activityEvents.slice(-2), [true, false]);
++
+ // Cancelling an outbound start before its reply has no call ID yet. Invalidate
+ // the start operation without issuing an unscoped terminal command.
+ const pendingStartCancel = makeCard();
+@@ -1157,6 +1202,49 @@ assert.equal(serviceCalls.length, beforePendingCancel);
+ assert.equal(pendingStartCancel._starting, false);
+ assert.equal(pendingStartCancel._errorMsg, "");
+ 
++// Native starts must honor the same user cancellation as browser starts.
++for (const blockedStage of ["prepare", "create"]) {{
++  const native = makeCard();
++  native.nativeCallContext = {{ deviceId: "mobile" }};
++  native.config.device_id = "original-phone";
++  native._callOperationId = 1;
++  native._starting = true;
++  native._manualTarget = () => "Desk";
++  native._loadSoftphoneState = async () => {{}};
++  native._render = () => {{}};
++  const observed = [];
++  let release;
++  let entered;
++  const waiting = new Promise(resolve => {{ release = resolve; }});
++  const reached = new Promise(resolve => {{ entered = resolve; }});
++  native._hass.auth = {{ external: {{ async sendMessage(message) {{
++    observed.push(message.type);
++    if (message.type === "call/prepare") {{
++      if (blockedStage === "prepare") {{ entered(); await waiting; }}
++      return {{ mediaClientId: "native-client" }};
++    }}
++    return {{}};
++  }} }} }};
++  native._hass.callWS = async () => {{
++    observed.push("create");
++    if (blockedStage === "create") {{ entered(); await waiting; }}
++    return {{ response: {{ call: {{ call_id: "created-native" }},
++      native_call: {{ callId: "created-native", callPath: "/api/call?generation=1" }} }} }};
++  }};
++  native._hass.callService = async (domain, service, data) => observed.push({{ service, ...data }});
++  const starting = native._startNativeCall(1);
++  await reached;
++  await native._hangup();
++  native.config.device_id = "another-phone";
++  release();
++  await starting;
++  assert.equal(observed.includes("call/start"), false, "Cancelled start must not attach native audio");
++  assert.equal(observed.includes("create"), blockedStage === "create");
++  const hangups = observed.filter(value => typeof value === "object");
++  assert.equal(hangups.length, blockedStage === "create" ? 1 : 0);
++  if (hangups.length) assert.deepEqual(hangups[0], {{ service: "hangup", device_id: "original-phone", call_id: "created-native" }});
++}}
++
+ // A rejected Hangup keeps the exact call claim and attached media available
+ // so the user can retry instead of silently becoming a spectator.
+ const rejectedHangup = makeCard();
+diff --git a/tests/test_frontend_composer_runtime.py b/tests/test_frontend_composer_runtime.py
+new file mode 100644
+index 00000000..34d95622
+--- /dev/null
++++ b/tests/test_frontend_composer_runtime.py
+@@ -0,0 +1,95 @@
++"""Composer dialog lifecycle against the HA persistent-dialog contract."""
++from pathlib import Path
++import json
++import shutil
++import subprocess
++
++import pytest
++
++pytestmark = pytest.mark.js_runtime
++
++
++@pytest.mark.skipif(shutil.which('node') is None, reason='Node.js is unavailable')
++def test_composer_reopens_after_user_dismissal_and_ignores_child_overlays():
++    source = Path(__file__).resolve().parents[1] / 'custom_components/voip_stack/frontend/voip-stack-composer.js'
++    script = r'''
++import fs from 'node:fs';
++import assert from 'node:assert/strict';
++class Element extends EventTarget {
++  constructor() { super(); this.children = []; this.open = false; this.style = {}; }
++  attachShadow() { return this.shadowRoot = new Element(); }
++  setAttribute() {}
++  setConfig(config) { this.config = config; }
++  append(...children) { this.children.push(...children); }
++  appendChild(child) { this.children.push(child); }
++}
++globalThis.HTMLElement = Element;
++globalThis.document = { createElement: () => new Element() };
++const classes = new Map();
++globalThis.customElements = { get: n => classes.get(n), define: (n, c) => classes.set(n, c) };
++globalThis.engine = new EventTarget();
++let source = fs.readFileSync(SOURCE, 'utf8')
++ .replace(/^const version = .*;$/m, '')
++ .replace(/^const \{ voipStackEngine \} = .*;$/m, 'const voipStackEngine = globalThis.engine;')
++ .replace(/^const \{ voipStackTranslate \} = .*;$/m, 'const voipStackTranslate = (_, text) => text;');
++await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
++const Composer = classes.get('voip-stack-composer');
++const composer = new Composer();
++const phone = composer._phone;
++let closed = 0;
++composer.addEventListener('dialog-closed', () => closed++);
++// HA closes the inner overlay without writing its public `open` input.
++// The owner must reset that input before the next showDialog().
++for (const active of [false, true, false]) {
++ phone.callActive = active;
++ await composer.showDialog();
++ assert.equal(composer._dialog.open, true);
++ assert.equal(composer._open, true);
++ const nested = new Event('closed');
++ Object.defineProperty(nested, 'target', { value: composer._form });
++ composer._dialog.dispatchEvent(nested);
++ assert.equal(composer._open, true, 'A child selector must not close the composer');
++ composer._dialog.dispatchEvent(new Event('closed'));
++ assert.equal(composer._dialog.open, false);
++ assert.equal(composer._open, false);
++ assert.equal(composer._phone, phone, 'Closing the window preserves its media owner');
++ assert.equal(phone.callActive, active);
++ await composer.showDialog();
++ assert.equal(composer._dialog.open, true);
++ assert.equal(composer._open, true);
++ composer.closeDialog();
++ const before = closed;
++ composer._dialog.dispatchEvent(new Event('closed'));
++ assert.equal(closed, before, 'The hide animation must not report a second close');
++}
++assert.equal(closed, 6);
++const devices = [{device_id:'native-phone',endpoint_type:'companion',mobile_device_id:'mobile'},
++ {device_id:'browser-phone',endpoint_type:'browser',endpoint_id:'default'}];
++const messages=[];
++const auth = { external: { config: {}, sendMessage: async ({type}) => {
++ messages.push(type);
++ return type === 'config/get' ? {nativeCalls:1} : {deviceId:'mobile'};
++}}};
++const native = new Composer();
++native.hass = {auth,callWS:async()=>({devices})};
++await native.showDialog();
++assert.deepEqual(messages,['config/get','call/context']);
++assert.equal(native._selected,'native-phone');
++assert.equal(native._phone.nativeCallContext.deviceId,'mobile');
++assert.equal(native._phone.style.display,'');
++for (const [external, expected] of [
++ [undefined, 'No app connection'],
++ [{sendMessage:async()=>({})}, 'does not report native calling support'],
++ [{sendMessage:async({type})=>type==='config/get'?{nativeCalls:1}:{deviceId:null}}, 'has not provided'],
++ [{sendMessage:async({type})=>type==='config/get'?{nativeCalls:1}:{deviceId:'other'}}, 'no matching calling phone'],
++]) {
++ const missing=new Composer();
++ missing.hass={auth:{external},callWS:async()=>({devices:devices.filter(d=>d.endpoint_type==='companion')})};
++ await missing.showDialog();
++ assert.equal(missing._selected,'');
++ assert.equal(missing._phone.style.display,'none');
++ assert.ok(missing._error.textContent.includes(expected),missing._error.textContent);
++}
++
++'''.replace('SOURCE', json.dumps(str(source)))
++    subprocess.run(['node', '--input-type=module', '-e', script], check=True, capture_output=True, text=True)
+diff --git a/tests/test_ha_integration_runtime.py b/tests/test_ha_integration_runtime.py
+index 8dd54cab..7a90576c 100644
+--- a/tests/test_ha_integration_runtime.py
++++ b/tests/test_ha_integration_runtime.py
+@@ -1059,44 +1059,3 @@ async def test_long_extension_can_be_published_as_ha_text(hass, extension):
+     updated = registry.update(endpoint.endpoint_id, extension='1000000004')
+     entity.apply_endpoint(updated)
+     assert hass.states.get(entity.entity_id).state == '1000000004'
+-
+-
+-async def test_retired_native_phones_migrate_without_removing_supported_phones(hass):
+-    from homeassistant.config_entries import ConfigSubentry
+-    from homeassistant.helpers import entity_registry as er
+-    from custom_components.voip_stack import async_migrate_entry
+-
+-    entry = MockConfigEntry(
+-        domain=DOMAIN, version=6, minor_version=1,
+-        data={"companion_enabled": True, "sip_port": 5060},
+-    )
+-    entry.add_to_hass(hass)
+-    kinds = ("browser", "sip_account", "companion")
+-    children = {}
+-    registry = er.async_get(hass)
+-    for kind in kinds:
+-        child = ConfigSubentry(
+-            data={"kind": kind, "endpoint_id": kind, "name": kind},
+-            subentry_type="phone", title=kind, unique_id=kind,
+-        )
+-        hass.config_entries.async_add_subentry(entry, child)
+-        children[kind] = child
+-        registry.async_get_or_create(
+-            "sensor", DOMAIN, kind, config_entry=entry,
+-            config_subentry_id=child.subentry_id,
+-        )
+-    mobile = MockConfigEntry(domain="mobile_app", data={"device_name": "Phone"})
+-    mobile.add_to_hass(hass)
+-    tracker = registry.async_get_or_create(
+-        "device_tracker", "mobile_app", "phone", config_entry=mobile,
+-    )
+-
+-    assert await async_migrate_entry(hass, entry)
+-    assert entry.version == 6 and entry.minor_version == 2
+-    assert dict(entry.data) == {"sip_port": 5060}
+-    assert set(entry.subentries) == {children[k].subentry_id for k in ("browser", "sip_account")}
+-    assert registry.async_get_entity_id("sensor", DOMAIN, "companion") is None
+-    assert registry.async_get(tracker.entity_id) is tracker
+-    assert hass.config_entries.async_get_entry(mobile.entry_id) is mobile
+-    assert await async_migrate_entry(hass, entry)
+-    assert len(entry.subentries) == 2
+diff --git a/tests/test_inbound_softphone_routing.py b/tests/test_inbound_softphone_routing.py
+index 3ceb449a..95946384 100644
+--- a/tests/test_inbound_softphone_routing.py
++++ b/tests/test_inbound_softphone_routing.py
+@@ -50,10 +50,11 @@ class _Result:
+ class _EndpointKind(StrEnum):
+     BROWSER = "browser"
+     ESPHOME = "esphome"
++    COMPANION = "companion"
+ 
+     @property
+     def is_softphone(self):
+-        return self is self.BROWSER
++        return self in {self.BROWSER, self.COMPANION}
+ 
+ 
+ 
+diff --git a/tests/test_phone_control_ha.py b/tests/test_phone_control_ha.py
+index d74e357e..0cae90cc 100644
+--- a/tests/test_phone_control_ha.py
++++ b/tests/test_phone_control_ha.py
+@@ -382,3 +382,18 @@ async def test_esphome_hangup_terminates_owned_pbx_session(
+     assert result.call_id == "p4-call"
+     termination.terminate.assert_awaited_once()
+     invoke.assert_not_awaited()
++
++
++async def test_incoming_companion_does_not_advertise_unimplemented_originate() -> None:
++    endpoint = _endpoint(
++        endpoint_id="companion:mobile", device_id="device-mobile",
++        name="Mobile", kind=EndpointKind.COMPANION,
++    )
++    endpoints = EndpointRegistry()
++    endpoints.register(endpoint)
++    hass = MagicMock()
++    registry = PhoneAdapterRegistry(hass, endpoints)
++    call = _call(hass, device_id=endpoint.device_id, destination="P4")
++    with pytest.raises(ServiceValidationError) as raised:
++        await registry.originate(call, OriginateRequest(destination="P4"))
++    assert raised.value.translation_key == "phone_operation_not_supported"
+diff --git a/tests/test_softphone_originate.py b/tests/test_softphone_originate.py
+index 8a1c4983..b892a9fb 100644
+--- a/tests/test_softphone_originate.py
++++ b/tests/test_softphone_originate.py
+@@ -46,10 +46,11 @@ class _Availability(Enum):
+ class _EndpointKind(Enum):
+     BROWSER = "browser"
+     ESPHOME = "esphome"
++    COMPANION = "companion"
+ 
+     @property
+     def is_softphone(self):
+-        return self is self.BROWSER
++        return self in {self.BROWSER, self.COMPANION}
+ 
+ 
+ 

@@ -1,0 +1,20 @@
+{
+  "android": {
+    "upstream_base": "d120c7dcd0683e163a2379883ba9299af071e1cb",
+    "local_head": "7281ff6b4cf3bc05e966f7f091fee73dbc7ceef2",
+    "includes_uncommitted": true,
+    "patch_bytes": 141058,
+    "omitted_generated_assets": "Changelog screenshot PNG baselines; regenerate if needed"
+  },
+  "frontend": {
+    "upstream_base": "e7d76ce6c9df915cbb96d3be565f3405e0ee8f30",
+    "local_head": "c1bfe36902ee63c020a02d078ce2e274861cb6aa",
+    "includes_uncommitted": false,
+    "patch_bytes": 11625
+  },
+  "intercom": {
+    "snapshot": "6581cfea712d0e13bf88c5aff3fa97b9e27123ab",
+    "retirement_commit": "9e67c004",
+    "patch_direction": "retirement commit to historical prototype snapshot"
+  }
+}

@@ -1,0 +1,2476 @@
+diff --git a/app/gradle.lockfile b/app/gradle.lockfile
+index 50ed506..753a26a 100644
+--- a/app/gradle.lockfile
++++ b/app/gradle.lockfile
+@@ -78,6 +78,7 @@ androidx.coordinatorlayout:coordinatorlayout:1.1.0=fullDebugAndroidTestCompileCl
+ androidx.core:core-ktx:1.19.0=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugAndroidTestRuntimeClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugAndroidTestRuntimeClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
+ androidx.core:core-remoteviews:1.1.0=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
+ androidx.core:core-splashscreen:1.2.0=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
++androidx.core:core-telecom:1.0.1=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
+ androidx.core:core-viewtree:1.0.0=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugAndroidTestRuntimeClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugAndroidTestRuntimeClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
+ androidx.core:core:1.19.0=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugAndroidTestRuntimeClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugAndroidTestRuntimeClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
+ androidx.cursoradapter:cursoradapter:1.0.0=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index ec65f7a..d0aad8d 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -88,6 +88,8 @@
+     <uses-feature android:name="android.software.leanback" android:required="false" />
+     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+ 
++    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
++    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+     <application
+         android:name="io.homeassistant.companion.android.HomeAssistantApplication"
+         android:allowBackup="true"
+@@ -111,6 +113,8 @@
+         Android shortcuts are tied to its component name; renaming it will permanently
+         break all user-created shortcuts from previous versions.
+         -->
++        <service android:name=".calls.NativeCallService" android:exported="false"
++            android:foregroundServiceType="phoneCall|microphone" />
+         <activity
+             android:name="io.homeassistant.companion.android.launch.LaunchActivity"
+             android:exported="true"
+@@ -159,6 +163,11 @@
+             android:exported="false"
+             android:targetActivity="io.homeassistant.companion.android.launch.LaunchActivity" />
+ 
++        <activity-alias
++            android:name="io.homeassistant.companion.android.launch.CallPermission"
++            android:exported="false"
++            android:targetActivity="io.homeassistant.companion.android.launch.LaunchActivity" />
++
+         <!-- Start things like SensorWorker on device boot -->
+         <receiver android:name=".websocket.WebsocketBroadcastReceiver"
+             android:exported="true">
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/ApplicationModule.kt b/app/src/main/kotlin/io/homeassistant/companion/android/ApplicationModule.kt
+index fc0a621..6ee00ec 100644
+--- a/app/src/main/kotlin/io/homeassistant/companion/android/ApplicationModule.kt
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/ApplicationModule.kt
+@@ -22,6 +22,14 @@ import kotlin.time.ExperimentalTime
+ @Module
+ @InstallIn(SingletonComponent::class)
+ object ApplicationModule {
++    @Provides
++    @io.homeassistant.companion.android.common.data.integration.NativeCallsSupport
++    fun providesNativeCallsSupport(@ApplicationContext context: Context): Boolean =
++        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
++            context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TELECOM) &&
++            !context.isAutomotive() &&
++            !io.homeassistant.companion.android.util.QuestUtil.isQuest
++
+     @Provides
+     @Singleton
+     fun providesAppVersion(): AppVersion = AppVersion(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallAudio.kt b/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallAudio.kt
+new file mode 100644
+index 0000000..862485a
+--- /dev/null
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallAudio.kt
+@@ -0,0 +1,227 @@
++package io.homeassistant.companion.android.calls
++
++import android.annotation.SuppressLint
++import android.media.AudioAttributes
++import android.media.AudioFormat
++import android.media.AudioRecord
++import android.media.AudioTrack
++import android.media.MediaRecorder
++import io.homeassistant.companion.android.common.data.call.NativeCallAudioPaths
++import io.homeassistant.companion.android.common.data.call.NativeCallIoDispatcher
++import io.homeassistant.companion.android.common.data.call.NativeCallPcmFormat
++import io.homeassistant.companion.android.common.data.call.NativeCallRepository
++import io.homeassistant.companion.android.common.util.kotlinJsonMapper
++import java.io.IOException
++import javax.inject.Inject
++import kotlinx.coroutines.CompletableDeferred
++import kotlinx.coroutines.CoroutineDispatcher
++import kotlinx.coroutines.awaitCancellation
++import kotlinx.coroutines.channels.BufferOverflow
++import kotlinx.coroutines.channels.Channel
++import kotlinx.coroutines.coroutineScope
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.collectLatest
++import kotlinx.coroutines.flow.filterNotNull
++import kotlinx.coroutines.isActive
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
++import kotlinx.serialization.json.JsonObject
++import kotlinx.serialization.json.booleanOrNull
++import kotlinx.serialization.json.jsonObject
++import kotlinx.serialization.json.jsonPrimitive
++import okhttp3.Response
++import okhttp3.WebSocket
++import okhttp3.WebSocketListener
++import okio.ByteString
++import okio.ByteString.Companion.toByteString
++
++private const val AUDIO_FRAME_TAG: Byte = 1
++private const val AUDIO_QUEUE_FRAMES = 8
++private const val AUDIO_DEVICE_BUFFER_FRAMES = 4
++private const val MAX_AUDIO_MESSAGE_BYTES = 4096
++private const val MAX_PENDING_SEND_BYTES = 32768L
++
++internal data class CallAudioFormats(
++    val tx: NativeCallPcmFormat,
++    val rx: NativeCallPcmFormat,
++    val paths: NativeCallAudioPaths,
++)
++
++/** Owns native capture/playback only; the server remains the call owner. */
++internal class NativeCallAudio @Inject constructor(
++    private val repository: NativeCallRepository,
++    @NativeCallIoDispatcher private val ioDispatcher: CoroutineDispatcher,
++) {
++    private var activeSocket: WebSocket? = null
++
++    fun sendDtmf(digit: String): Boolean {
++        if (!Regex("[0-9*#A-D]").matches(digit)) return false
++        return activeSocket?.send("{\"type\":\"dtmf\",\"digit\":\"$digit\",\"duration_ms\":160}") == true
++    }
++
++    /** Run PCM audio until the server closes the session or the owner cancels it. */
++    suspend fun run(serverId: Int, path: String) = coroutineScope {
++        val ended = CompletableDeferred<Unit>()
++        val formats = MutableStateFlow<CallAudioFormats?>(null)
++        val playback = Channel<ByteArray>(AUDIO_QUEUE_FRAMES, BufferOverflow.DROP_OLDEST)
++        var negotiation = JsonObject(emptyMap())
++        val listener = object : WebSocketListener() {
++            override fun onMessage(webSocket: WebSocket, text: String) {
++                try {
++                    val message = kotlinJsonMapper.parseToJsonElement(text).jsonObject
++                    negotiation = JsonObject(negotiation + message)
++                    val tx = negotiation["tx_format"]?.jsonPrimitive?.content ?: return
++                    val rx = negotiation["rx_format"]?.jsonPrimitive?.content ?: return
++                    val paths = NativeCallAudioPaths.from(
++                        negotiation["audio_mode"]?.jsonPrimitive?.content ?: "full_duplex",
++                        negotiation["audio_direction"]?.jsonPrimitive?.content ?: "sendrecv",
++                        negotiation["remote_connection_held"]?.jsonPrimitive?.booleanOrNull ?: false,
++                    )
++                    formats.value =
++                        CallAudioFormats(NativeCallPcmFormat.parse(tx), NativeCallPcmFormat.parse(rx), paths)
++                } catch (error: IllegalArgumentException) {
++                    ended.completeExceptionally(IOException("Invalid call audio negotiation", error))
++                }
++            }
++
++            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
++                if (bytes.size !in 2..MAX_AUDIO_MESSAGE_BYTES || bytes[0] != AUDIO_FRAME_TAG) {
++                    ended.completeExceptionally(IOException("Invalid call audio frame"))
++                    return
++                }
++                playback.trySend(bytes.substring(1).toByteArray())
++            }
++
++            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
++                ended.complete(Unit)
++            }
++            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
++                webSocket.close(code, null)
++                ended.complete(Unit)
++            }
++            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
++                ended.completeExceptionally(IOException("Call audio transport failed", t))
++            }
++        }
++        val socket = repository.openMedia(serverId, path, listener)
++        activeSocket = socket
++        val mediaJob = launch {
++            formats.filterNotNull().collectLatest { format ->
++                while (playback.tryReceive().isSuccess) { /* Drop frames from the previous format. */ }
++                playAndRecord(format, playback, socket)
++            }
++        }
++        try {
++            ended.await()
++        } finally {
++            activeSocket = null
++            mediaJob.cancel()
++            socket.cancel()
++            playback.close()
++        }
++    }
++
++    @SuppressLint("MissingPermission") // The answer UI obtains RECORD_AUDIO before entering this scope.
++    private suspend fun playAndRecord(
++        formats: CallAudioFormats,
++        playback: Channel<ByteArray>,
++        socket: WebSocket,
++    ): Nothing = withContext(ioDispatcher) {
++        var track: AudioTrack? = null
++        var record: AudioRecord? = null
++        try {
++            if (formats.paths.playback) track = openPlayback(formats.rx)
++            if (formats.paths.capture) record = openCapture(formats.tx)
++            if (!socket.send("{\"type\":\"audio_ready\"}")) throw IOException("Call audio transport closed")
++            val microphone = record
++            val speaker = track
++            coroutineScope {
++                if (speaker != null) launch(ioDispatcher) { playFrames(speaker, formats.rx, playback) }
++                if (microphone != null) launch(ioDispatcher) { sendFrames(microphone, formats.tx, socket) }
++                awaitCancellation()
++            }
++        } catch (error: UnsupportedOperationException) {
++            throw IOException("Native audio device could not be opened", error)
++        } finally {
++            if (record?.recordingState == AudioRecord.RECORDSTATE_RECORDING) record.stop()
++            record?.release()
++            if (track?.playState == AudioTrack.PLAYSTATE_PLAYING) track.stop()
++            track?.release()
++        }
++    }
++
++    private fun openPlayback(format: NativeCallPcmFormat): AudioTrack {
++        val mask = if (format.channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
++        val minimum = AudioTrack.getMinBufferSize(format.sampleRate, mask, AudioFormat.ENCODING_PCM_16BIT)
++        require(minimum > 0) { "Audio route does not support negotiated playback" }
++        val track = AudioTrack.Builder()
++            .setAudioAttributes(
++                AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
++                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build(),
++            )
++            .setAudioFormat(
++                AudioFormat.Builder().setSampleRate(format.sampleRate).setChannelMask(mask)
++                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build(),
++            )
++            .setTransferMode(AudioTrack.MODE_STREAM)
++            .setBufferSizeInBytes(maxOf(minimum, format.frameBytes * AUDIO_DEVICE_BUFFER_FRAMES)).build()
++        try {
++            check(track.state == AudioTrack.STATE_INITIALIZED)
++            track.play()
++            return track
++        } catch (error: IllegalStateException) {
++            track.release()
++            throw error
++        }
++    }
++
++    @SuppressLint("MissingPermission") // The answer UI obtains RECORD_AUDIO before entering this scope.
++    private fun openCapture(format: NativeCallPcmFormat): AudioRecord {
++        val mask = if (format.channels == 1) AudioFormat.CHANNEL_IN_MONO else AudioFormat.CHANNEL_IN_STEREO
++        val minimum = AudioRecord.getMinBufferSize(format.sampleRate, mask, AudioFormat.ENCODING_PCM_16BIT)
++        require(minimum > 0) { "Audio route does not support negotiated capture" }
++        val record = AudioRecord.Builder().setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
++            .setAudioFormat(
++                AudioFormat.Builder().setSampleRate(format.sampleRate).setChannelMask(mask)
++                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build(),
++            )
++            .setBufferSizeInBytes(maxOf(minimum, format.frameBytes * AUDIO_DEVICE_BUFFER_FRAMES)).build()
++        try {
++            check(record.state == AudioRecord.STATE_INITIALIZED)
++            record.startRecording()
++            return record
++        } catch (error: IllegalStateException) {
++            record.release()
++            throw error
++        }
++    }
++
++    private suspend fun playFrames(track: AudioTrack, format: NativeCallPcmFormat, frames: Channel<ByteArray>) {
++        for (frame in frames) {
++            require(frame.size % (format.channels * 2) == 0) { "Unaligned PCM frame" }
++            var offset = 0
++            while (kotlinx.coroutines.currentCoroutineContext().isActive && offset < frame.size) {
++                val written = track.write(frame, offset, frame.size - offset, AudioTrack.WRITE_BLOCKING)
++                if (written <= 0) throw IOException("Call playback failed: $written")
++                offset += written
++            }
++        }
++    }
++
++    private suspend fun sendFrames(record: AudioRecord, format: NativeCallPcmFormat, socket: WebSocket) {
++        val frame = ByteArray(format.frameBytes + 1)
++        frame[0] = AUDIO_FRAME_TAG
++        val context = kotlinx.coroutines.currentCoroutineContext()
++        while (context.isActive) {
++            var offset = 1
++            while (context.isActive && offset < frame.size) {
++                val read = record.read(frame, offset, frame.size - offset, AudioRecord.READ_BLOCKING)
++                if (read <= 0) throw IOException("Call capture failed: $read")
++                offset += read
++            }
++            if (context.isActive && socket.queueSize() < MAX_PENDING_SEND_BYTES && !socket.send(frame.toByteString())) {
++                throw IOException("Call audio transport closed")
++            }
++        }
++    }
++}
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallCallbacks.kt b/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallCallbacks.kt
+new file mode 100644
+index 0000000..a7420a7
+--- /dev/null
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallCallbacks.kt
+@@ -0,0 +1,20 @@
++package io.homeassistant.companion.android.calls
++
++/** Release call-owned closures even if Telecom retains a completed result receiver. */
++internal class NativeCallCallbacks(onAnswer: suspend () -> Unit, onDisconnect: suspend () -> Unit) : AutoCloseable {
++    private var answerHandler: (suspend () -> Unit)? = onAnswer
++    private var disconnectHandler: (suspend () -> Unit)? = onDisconnect
++
++    suspend fun answer() {
++        answerHandler?.invoke()
++    }
++
++    suspend fun disconnect() {
++        disconnectHandler?.invoke()
++    }
++
++    override fun close() {
++        answerHandler = null
++        disconnectHandler = null
++    }
++}
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallDispatcher.kt b/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallDispatcher.kt
+new file mode 100644
+index 0000000..134f1bc
+--- /dev/null
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallDispatcher.kt
+@@ -0,0 +1,145 @@
++package io.homeassistant.companion.android.calls
++
++import android.content.Context
++import android.os.Build
++import dagger.hilt.android.qualifiers.ApplicationContext
++import io.homeassistant.companion.android.common.data.call.NativeCallDescription
++import io.homeassistant.companion.android.common.data.call.NativeCallInvitation
++import io.homeassistant.companion.android.common.data.call.NativeCallRepository
++import io.homeassistant.companion.android.common.data.integration.NativeCallsSupport
++import io.homeassistant.companion.android.common.util.SdkVersion
++import java.io.IOException
++import javax.inject.Inject
++import kotlinx.coroutines.NonCancellable
++import kotlinx.coroutines.withContext
++import timber.log.Timber
++
++/** Validates addressed invitations before starting native ringing. */
++class NativeCallDispatcher @Inject internal constructor(
++    @ApplicationContext private val context: Context,
++    private val repository: NativeCallRepository,
++    private val state: NativeCallStateRepository,
++    @NativeCallsSupport private val supported: Boolean,
++) {
++    suspend fun receive(serverId: Int, data: Map<String, String>) {
++        if (!supported || !SdkVersion.isAtLeast(Build.VERSION_CODES.O)) return
++        val invitation = try {
++            NativeCallInvitation(serverId, data["call_id"].orEmpty(), data["call_path"].orEmpty())
++        } catch (error: IllegalArgumentException) {
++            Timber.w(error, "Invalid native call invitation for server %d", serverId)
++            return
++        }
++        when (data["call_action"]) {
++            "refresh" -> state.send(NativeCallCommand.Refresh(invitation))
++            "cancel" -> state.send(NativeCallCommand.Cancel(invitation))
++            "ring" -> if (state.state.value?.invitation != invitation) receiveInvitation(invitation)
++        }
++    }
++
++    fun control(serverId: Int, callId: String, action: String, digit: String?, callPath: String): Boolean {
++        val current = state.state.value ?: return false
++        return if (current.invitation.serverId == serverId &&
++            current.invitation.callId == callId &&
++            current.invitation.path == callPath
++        ) {
++            val command = commandFor(current, action, digit)
++            command != null && state.send(command)
++        } else {
++            false
++        }
++    }
++
++    private fun commandFor(current: NativeCallState, action: String, digit: String?): NativeCallCommand? {
++        val invitation = current.invitation
++        return when (action) {
++            "answer" -> if (current.phase == NativeCallPhase.Ringing) NativeCallCommand.Answer(invitation) else null
++            "hangup" -> NativeCallCommand.End(invitation)
++            "dtmf" -> if (current.phase == NativeCallPhase.Active &&
++                digit != null &&
++                Regex("[0-9*#A-D]").matches(digit)
++            ) {
++                NativeCallCommand.Dtmf(invitation, digit)
++            } else {
++                null
++            }
++            else -> null
++        }
++    }
++
++    val mediaClientId: String get() = repository.mediaClientId
++
++    suspend fun startOutgoing(invitation: NativeCallInvitation): Boolean {
++        if (!supported || !SdkVersion.isAtLeast(Build.VERSION_CODES.O)) return false
++        return receiveInvitation(invitation, outgoing = true)
++    }
++
++    private suspend fun receiveInvitation(invitation: NativeCallInvitation, outgoing: Boolean = false): Boolean {
++        val reserved = state.start(NativeCallState(invitation, "", NativeCallPhase.Validating))
++        var started = false
++        try {
++            val description = repository.request(invitation)
++            if (eligible(description, outgoing)) {
++                started = if (reserved) {
++                    state.isCurrent(invitation) && startService(invitation, description, outgoing)
++                } else {
++                    if (state.state.value?.invitation != invitation) {
++                        repository.request(invitation, if (outgoing) "hangup" else "decline")
++                    }
++                    false
++                }
++            }
++        } catch (error: IOException) {
++            Timber.e(error, "Failed to validate call for server %d", invitation.serverId)
++        } catch (error: IllegalArgumentException) {
++            Timber.w(error, "Invalid call description for server %d", invitation.serverId)
++        } finally {
++            if (reserved && !started) releaseReservation(invitation, outgoing)
++        }
++        return started
++    }
++
++    private suspend fun releaseReservation(invitation: NativeCallInvitation, outgoing: Boolean) {
++        try {
++            if (state.state.value?.termination is NativeCallCommand.End) {
++                withContext(NonCancellable) {
++                    repository.request(invitation, if (outgoing) "hangup" else "decline")
++                }
++            }
++        } catch (error: IOException) {
++            Timber.d(error, "Call provider unavailable while releasing pending call")
++        } finally {
++            state.finish(invitation)
++        }
++    }
++
++    private fun eligible(description: NativeCallDescription, outgoing: Boolean): Boolean = if (outgoing) {
++        description.direction == "outgoing" &&
++            description.state in setOf("calling", "remote_ringing", "connecting", "in_call")
++    } else {
++        description.state == "ringing" && (description.remainingMs?.let { it > 0 } != false)
++    }
++
++    private suspend fun startService(
++        invitation: NativeCallInvitation,
++        description: NativeCallDescription,
++        outgoing: Boolean,
++    ): Boolean {
++        val phase = if (outgoing) NativeCallPhase.Connecting else NativeCallPhase.Ringing
++        val terminalAction = if (outgoing) "hangup" else "decline"
++        if (!state.publish(NativeCallState(invitation, description.caller, phase))) return false
++        val started = try {
++            NativeCallService.start(context, invitation, description)
++            true
++        } catch (error: IllegalStateException) {
++            Timber.e(error, "Failed to start call service for server %d", invitation.serverId)
++            false
++        } catch (error: SecurityException) {
++            Timber.e(error, "Call service permission denied for server %d", invitation.serverId)
++            false
++        }
++        if (!started) {
++            repository.request(invitation, terminalAction)
++        }
++        return started
++    }
++}
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallNotifications.kt b/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallNotifications.kt
+new file mode 100644
+index 0000000..dd8cda0
+--- /dev/null
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallNotifications.kt
+@@ -0,0 +1,69 @@
++package io.homeassistant.companion.android.calls
++
++import android.Manifest
++import android.app.Notification
++import android.app.NotificationChannel
++import android.app.NotificationManager
++import android.app.PendingIntent
++import android.content.Context
++import android.content.pm.PackageManager
++import androidx.core.app.NotificationCompat
++import androidx.core.app.Person
++import androidx.core.content.ContextCompat
++import io.homeassistant.companion.android.common.R as commonR
++import io.homeassistant.companion.android.launch.LaunchActivity
++
++internal const val CALL_NOTIFICATION_ID = 49001
++private const val CALL_CHANNEL_ID = "native_calls"
++
++internal fun callNotification(context: Context, state: NativeCallState): Notification {
++    val manager = context.getSystemService(NotificationManager::class.java)
++    manager.createNotificationChannel(
++        NotificationChannel(
++            CALL_CHANNEL_ID,
++            context.getString(commonR.string.native_calls),
++            NotificationManager.IMPORTANCE_HIGH,
++        ),
++    )
++    val invitation = state.invitation
++    val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
++    val openApp = PendingIntent.getActivity(context, 0, LaunchActivity.newInstance(context), flags)
++    fun requestPermission(): PendingIntent = PendingIntent.getActivity(
++        context,
++        1,
++        LaunchActivity.callPermissionIntent(
++            context,
++            invitation,
++        ).setData(NativeCallService.answerIntent(context, invitation).data),
++        flags,
++    )
++    val end = PendingIntent.getService(context, 2, NativeCallService.endIntent(context, invitation), flags)
++    val answer = if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
++        PackageManager.PERMISSION_GRANTED
++    ) {
++        PendingIntent.getService(context, 3, NativeCallService.answerIntent(context, invitation), flags)
++    } else {
++        requestPermission()
++    }
++    val person = Person.Builder().setName(state.caller).setImportant(true).build()
++    val style = if (state.phase ==
++        NativeCallPhase.Ringing
++    ) {
++        NotificationCompat.CallStyle.forIncomingCall(person, end, answer)
++    } else {
++        NotificationCompat.CallStyle.forOngoingCall(person, end)
++    }
++    return NotificationCompat.Builder(context, CALL_CHANNEL_ID)
++        .setSmallIcon(commonR.drawable.ic_stat_ic_notification).setContentTitle(state.caller)
++        .setContentText(
++            context.getString(
++                when (state.phase) {
++                    NativeCallPhase.Ringing -> commonR.string.native_call_incoming
++                    NativeCallPhase.Validating, NativeCallPhase.Connecting -> commonR.string.native_call_connecting
++                    NativeCallPhase.Active -> commonR.string.native_call_active
++                },
++            ),
++        )
++        .setStyle(style).setCategory(NotificationCompat.CATEGORY_CALL).setOngoing(true)
++        .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setContentIntent(openApp).build()
++}
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallService.kt b/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallService.kt
+new file mode 100644
+index 0000000..950f838
+--- /dev/null
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallService.kt
+@@ -0,0 +1,360 @@
++package io.homeassistant.companion.android.calls
++
++import android.Manifest
++import android.content.Context
++import android.content.Intent
++import android.content.pm.PackageManager
++import android.content.pm.ServiceInfo
++import android.media.Ringtone
++import android.media.RingtoneManager
++import android.net.Uri
++import android.os.Build
++import android.telecom.DisconnectCause
++import androidx.annotation.RequiresApi
++import androidx.core.content.ContextCompat
++import androidx.core.telecom.CallAttributesCompat
++import androidx.core.telecom.CallControlResult
++import androidx.core.telecom.CallControlScope
++import androidx.core.telecom.CallException
++import androidx.core.telecom.CallsManager
++import androidx.lifecycle.LifecycleService
++import androidx.lifecycle.lifecycleScope
++import dagger.hilt.android.AndroidEntryPoint
++import io.homeassistant.companion.android.common.data.call.NativeCallDescription
++import io.homeassistant.companion.android.common.data.call.NativeCallInvitation
++import io.homeassistant.companion.android.common.data.call.NativeCallIoDispatcher
++import io.homeassistant.companion.android.common.data.call.NativeCallRepository
++import java.io.IOException
++import javax.inject.Inject
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.CoroutineDispatcher
++import kotlinx.coroutines.Job
++import kotlinx.coroutines.NonCancellable
++import kotlinx.coroutines.coroutineScope
++import kotlinx.coroutines.delay
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
++import kotlinx.coroutines.withTimeoutOrNull
++import timber.log.Timber
++
++private const val CLEANUP_TIMEOUT_MS = 3000L
++
++private const val EXTRA_SERVER = "call_server"
++private const val EXTRA_ID = "call_id"
++private const val EXTRA_PATH = "call_path"
++private const val EXTRA_CALLER = "call_caller"
++private const val EXTRA_OUTGOING = "call_outgoing"
++private const val EXTRA_REMAINING = "call_remaining_ms"
++private const val ACTION_END = "native_call_end"
++private const val ACTION_ANSWER = "native_call_answer"
++
++/** One foreground lifetime for the native presentation and PCM adapter. */
++@RequiresApi(Build.VERSION_CODES.O)
++@AndroidEntryPoint
++internal class NativeCallService : LifecycleService() {
++    @Inject lateinit var repository: NativeCallRepository
++
++    @Inject lateinit var state: NativeCallStateRepository
++
++    @Inject lateinit var audio: NativeCallAudio
++
++    @Inject @NativeCallIoDispatcher
++    lateinit var ioDispatcher: CoroutineDispatcher
++    private var session: Job? = null
++
++    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
++        super.onStartCommand(intent, flags, startId)
++        val invitation = intent?.let {
++            NativeCallInvitation(
++                it.getIntExtra(EXTRA_SERVER, -1),
++                it.getStringExtra(EXTRA_ID).orEmpty(),
++                it.getStringExtra(EXTRA_PATH).orEmpty(),
++            )
++        } ?: return START_NOT_STICKY
++        when {
++            intent.action == ACTION_END || intent.action == ACTION_ANSWER -> {
++                if (session?.isActive == true) {
++                    state.send(
++                        if (intent.action == ACTION_ANSWER) {
++                            NativeCallCommand.Answer(invitation)
++                        } else {
++                            NativeCallCommand.End(invitation)
++                        },
++                    )
++                } else {
++                    stopSelf(startId)
++                }
++            }
++            session?.isActive != true -> {
++                val incoming =
++                    NativeCallState(
++                        invitation,
++                        intent.getStringExtra(EXTRA_CALLER).orEmpty(),
++                        if (intent.getBooleanExtra(
++                                EXTRA_OUTGOING,
++                                false,
++                            )
++                        ) {
++                            NativeCallPhase.Connecting
++                        } else {
++                            NativeCallPhase.Ringing
++                        },
++                    )
++                if (publish(incoming)) {
++                    session =
++                        lifecycleScope.launch { runCall(incoming, intent.getLongExtra(EXTRA_REMAINING, 0)) }
++                } else {
++                    state.finish(invitation)
++                    stopSelf(startId)
++                }
++            }
++        }
++        return START_NOT_STICKY
++    }
++
++    private fun publish(value: NativeCallState): Boolean {
++        if (!state.publish(value)) return false
++        val notification = callNotification(this, value)
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++            val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or
++                if (value.phase == NativeCallPhase.Active &&
++                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
++                ) {
++                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
++                } else {
++                    0
++                }
++            startForeground(CALL_NOTIFICATION_ID, notification, types)
++        } else {
++            startForeground(CALL_NOTIFICATION_ID, notification)
++        }
++        return true
++    }
++
++    private suspend fun runCall(incoming: NativeCallState, remainingMs: Long) {
++        val invitation = incoming.invitation
++        try {
++            runCallSession(incoming, remainingMs)
++        } catch (error: CallException) {
++            Timber.e(error, "Telecom rejected call for server %d with code %d", invitation.serverId, error.code)
++        } catch (error: IOException) {
++            Timber.e(error, "Failed native call transport for server %d", invitation.serverId)
++        } catch (error: IllegalArgumentException) {
++            Timber.e(error, "Invalid native call data for server %d", invitation.serverId)
++        } catch (error: CancellationException) {
++            throw error
++        } catch (error: IllegalStateException) {
++            Timber.e(error, "Failed native call state for server %d", invitation.serverId)
++        } finally {
++            stopForeground(STOP_FOREGROUND_REMOVE)
++            stopSelf()
++            state.finish(invitation)
++        }
++    }
++
++    private suspend fun runCallSession(incoming: NativeCallState, remainingMs: Long) = coroutineScope {
++        val callScope = this
++        val workers = mutableListOf<Job>()
++        val invitation = incoming.invitation
++        val clientId = repository.mediaClientId
++        val outgoing = incoming.phase == NativeCallPhase.Connecting
++        val calls = CallsManager(applicationContext)
++        var control: CallControlScope? = null
++        var answered = false
++        var ringtone: Ringtone? = null
++        val terminalAction = { if (answered || outgoing) "hangup" else "decline" }
++        suspend fun connectMedia(description: NativeCallDescription) {
++            if (answered) return
++            val mediaPath = activateMedia(incoming, description) ?: return
++            answered = true
++            ringtone?.stop()
++            workers += callScope.launch {
++                try {
++                    audio.run(invitation.serverId, mediaPath)
++                } finally {
++                    control?.disconnect(DisconnectCause(DisconnectCause.REMOTE))
++                }
++            }
++        }
++        suspend fun answer() {
++            if (!publish(incoming.copy(phase = NativeCallPhase.Connecting))) return
++            connectMedia(repository.request(invitation, "answer", clientId))
++        }
++        suspend fun refresh() {
++            refreshOutgoingMedia(invitation, control, outgoing && !answered, ::connectMedia)
++        }
++
++        val callbacks = NativeCallCallbacks(
++            onAnswer = { answer() },
++            onDisconnect = { repository.request(invitation, terminalAction(), clientId) },
++        )
++
++        try {
++            ringtone = preparePresentation(calls, outgoing)
++            calls.addCall(
++                callAttributes(incoming),
++                onAnswer = { callbacks.answer() },
++                onDisconnect = { callbacks.disconnect() },
++                onSetActive = {},
++                onSetInactive = { throw IllegalStateException("Hold is not advertised") },
++            ) {
++                control = this
++                if (!outgoing && remainingMs > 0) {
++                    workers += callScope.launch {
++                        expireUnanswered(remainingMs, this@addCall) { answered }
++                    }
++                }
++                if (outgoing) workers += callScope.launch { refresh() }
++                val callControl = this
++                workers += callScope.launch {
++                    handleCommands(invitation, callControl, ::answer, ::refresh, terminalAction)
++                }
++            }
++        } finally {
++            callbacks.close()
++            workers.forEach { it.cancel() }
++            ringtone?.stop()
++            finishProviderCall(invitation, terminalAction())
++        }
++    }
++
++    private fun activateMedia(incoming: NativeCallState, description: NativeCallDescription): String? {
++        if (!state.isCurrent(incoming.invitation)) return null
++        val path = checkedMediaPath(description)
++        return if (publish(incoming.copy(phase = NativeCallPhase.Active))) path else null
++    }
++
++    private suspend fun expireUnanswered(remainingMs: Long, control: CallControlScope, answered: () -> Boolean) {
++        delay(remainingMs)
++        if (!answered()) control.disconnect(DisconnectCause(DisconnectCause.MISSED))
++    }
++
++    private fun checkedMediaPath(description: NativeCallDescription): String {
++        check(
++            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
++                PackageManager.PERMISSION_GRANTED,
++        ) {
++            "Microphone permission is required to answer"
++        }
++        check(description.state == "in_call" && description.mediaPath != null) { "Call is no longer answerable" }
++        return requireNotNull(description.mediaPath)
++    }
++
++    private suspend fun refreshOutgoingMedia(
++        invitation: NativeCallInvitation,
++        control: CallControlScope?,
++        enabled: Boolean,
++        connectMedia: suspend (NativeCallDescription) -> Unit,
++    ) {
++        if (!enabled) return
++        val description = repository.request(invitation)
++        if (description.state == "in_call" &&
++            control?.setActive() is CallControlResult.Success
++        ) {
++            connectMedia(description)
++        }
++    }
++
++    private suspend fun finishProviderCall(invitation: NativeCallInvitation, action: String) {
++        withContext(NonCancellable) {
++            withTimeoutOrNull(CLEANUP_TIMEOUT_MS) {
++                try {
++                    repository.request(invitation, action, repository.mediaClientId)
++                } catch (error: IOException) {
++                    Timber.d(error, "Call provider already unavailable during cleanup")
++                }
++            }
++        }
++    }
++
++    private suspend fun preparePresentation(calls: CallsManager, outgoing: Boolean): Ringtone? =
++        withContext(ioDispatcher) {
++            calls.registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE)
++            if (outgoing) {
++                null
++            } else {
++                RingtoneManager.getRingtone(
++                    this@NativeCallService,
++                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
++                )
++                    ?.also { tone ->
++                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) tone.isLooping = true
++                        tone.play()
++                    }
++            }
++        }
++
++    private suspend fun handleCommands(
++        invitation: NativeCallInvitation,
++        control: CallControlScope,
++        answerCall: suspend () -> Unit,
++        refreshCall: suspend () -> Unit,
++        terminalAction: () -> String,
++    ) {
++        while (true) {
++            val command = state.nextCommand()
++            if (command.invitation != invitation) continue
++            when (command) {
++                is NativeCallCommand.Answer -> {
++                    if (control.answer(
++                            CallAttributesCompat.CALL_TYPE_AUDIO_CALL,
++                        ) is CallControlResult.Success
++                    ) {
++                        answerCall()
++                    }
++                }
++                is NativeCallCommand.End -> {
++                    finishProviderCall(invitation, terminalAction())
++                    control.disconnect(DisconnectCause(DisconnectCause.LOCAL))
++                    return
++                }
++                is NativeCallCommand.Dtmf -> audio.sendDtmf(command.digit)
++                is NativeCallCommand.Refresh -> refreshCall()
++                is NativeCallCommand.Cancel -> {
++                    control.disconnect(DisconnectCause(DisconnectCause.REMOTE))
++                    return
++                }
++            }
++        }
++    }
++
++    companion object {
++        fun start(context: Context, invitation: NativeCallInvitation, description: NativeCallDescription) {
++            ContextCompat.startForegroundService(
++                context,
++                baseIntent(context, invitation)
++                    .putExtra(EXTRA_CALLER, description.caller).putExtra(EXTRA_REMAINING, description.remainingMs ?: 0L)
++                    .putExtra(EXTRA_OUTGOING, description.direction == "outgoing"),
++            )
++        }
++        fun answerIntent(context: Context, invitation: NativeCallInvitation): Intent =
++            baseIntent(context, invitation).setAction(ACTION_ANSWER)
++        fun endIntent(context: Context, invitation: NativeCallInvitation): Intent =
++            baseIntent(context, invitation).setAction(ACTION_END)
++        private fun baseIntent(context: Context, invitation: NativeCallInvitation): Intent =
++            Intent(context, NativeCallService::class.java)
++                .setData(
++                    Uri.Builder().scheme(
++                        "homeassistant-call",
++                    ).authority(
++                        invitation.serverId.toString(),
++                    ).appendPath(invitation.callId).appendQueryParameter("session", invitation.path).build(),
++                )
++                .putExtra(EXTRA_SERVER, invitation.serverId)
++                .putExtra(EXTRA_ID, invitation.callId).putExtra(EXTRA_PATH, invitation.path)
++    }
++}
++
++@RequiresApi(Build.VERSION_CODES.O)
++private fun callAttributes(incoming: NativeCallState): CallAttributesCompat = CallAttributesCompat(
++    incoming.caller,
++    Uri.fromParts("homeassistant-call", incoming.invitation.callId, null),
++    if (incoming.phase ==
++        NativeCallPhase.Connecting
++    ) {
++        CallAttributesCompat.DIRECTION_OUTGOING
++    } else {
++        CallAttributesCompat.DIRECTION_INCOMING
++    },
++    callCapabilities = 0,
++)
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallState.kt b/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallState.kt
+new file mode 100644
+index 0000000..526c107
+--- /dev/null
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/calls/NativeCallState.kt
+@@ -0,0 +1,82 @@
++package io.homeassistant.companion.android.calls
++
++import io.homeassistant.companion.android.common.data.call.NativeCallInvitation
++import javax.inject.Inject
++import javax.inject.Singleton
++import kotlinx.coroutines.channels.Channel
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.asStateFlow
++import kotlinx.coroutines.flow.update
++import kotlinx.coroutines.flow.updateAndGet
++import kotlinx.coroutines.selects.select
++
++internal sealed interface NativeCallPhase {
++    data object Validating : NativeCallPhase
++    data object Ringing : NativeCallPhase
++    data object Connecting : NativeCallPhase
++    data object Active : NativeCallPhase
++}
++
++internal data class NativeCallState(
++    val invitation: NativeCallInvitation,
++    val caller: String,
++    val phase: NativeCallPhase,
++    val termination: NativeCallCommand.Terminal? = null,
++)
++
++internal sealed interface NativeCallCommand {
++    val invitation: NativeCallInvitation
++    data class Answer(override val invitation: NativeCallInvitation) : NativeCallCommand
++    sealed interface Terminal : NativeCallCommand
++    data class End(override val invitation: NativeCallInvitation) : Terminal
++    data class Cancel(override val invitation: NativeCallInvitation) : Terminal
++    data class Dtmf(override val invitation: NativeCallInvitation, val digit: String) : NativeCallCommand
++    data class Refresh(override val invitation: NativeCallInvitation) : NativeCallCommand
++}
++
++/** Call-scoped mailbox; terminal intent survives command backpressure. */
++@Singleton
++internal class NativeCallStateRepository @Inject constructor() {
++    private val mutableState = MutableStateFlow<NativeCallState?>(null)
++    val state = mutableState.asStateFlow()
++    val commands = Channel<NativeCallCommand>(4)
++    private val terminalWakeup = Channel<NativeCallCommand.Terminal>(Channel.CONFLATED)
++
++    fun start(state: NativeCallState): Boolean = mutableState.compareAndSet(null, state)
++
++    fun publish(state: NativeCallState): Boolean = mutableState.updateAndGet { current ->
++        if (current?.invitation == state.invitation && current.termination == null) state else current
++    } == state
++
++    fun isCurrent(invitation: NativeCallInvitation): Boolean =
++        state.value?.let { it.invitation == invitation && it.termination == null } == true
++
++    fun finish(invitation: NativeCallInvitation) {
++        mutableState.update { current -> if (current?.invitation == invitation) null else current }
++    }
++
++    fun send(command: NativeCallCommand): Boolean = if (command is NativeCallCommand.Terminal) {
++        terminate(command)
++    } else {
++        isCurrent(command.invitation) && commands.trySend(command).isSuccess
++    }
++
++    suspend fun nextCommand(): NativeCallCommand = state.value?.termination ?: select {
++        terminalWakeup.onReceive { it }
++        commands.onReceive { it }
++    }
++
++    private fun terminate(command: NativeCallCommand.Terminal): Boolean {
++        val current = mutableState.updateAndGet { current ->
++            if (current?.invitation == command.invitation && current.termination == null) {
++                current.copy(termination = command)
++            } else {
++                current
++            }
++        }
++        val terminal = current?.termination
++        if (current?.invitation != command.invitation || terminal == null) return false
++        terminalWakeup.trySend(terminal)
++        return true
++    }
++}
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/changelog/ChangelogContent.kt b/app/src/main/kotlin/io/homeassistant/companion/android/changelog/ChangelogContent.kt
+index ef08450..d733c2e 100644
+--- a/app/src/main/kotlin/io/homeassistant/companion/android/changelog/ChangelogContent.kt
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/changelog/ChangelogContent.kt
+@@ -14,6 +14,10 @@ import io.homeassistant.companion.android.settings.SettingsActivity
+  */
+ internal val currentChangelog = Changelog(
+     new = listOf(
++        ChangelogEntry(
++            contentRes = commonR.string.changelog_entry_native_calls,
++            platforms = setOf(ChangelogPlatform.APP),
++        ),
+         ChangelogEntry(
+             contentRes = commonR.string.changelog_entry_assistant_volume_sensor,
+             platforms = setOf(ChangelogPlatform.APP, ChangelogPlatform.AUTOMOTIVE, ChangelogPlatform.WEAR),
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/FrontendViewModel.kt b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/FrontendViewModel.kt
+index 700b047..a3baa43 100644
+--- a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/FrontendViewModel.kt
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/FrontendViewModel.kt
+@@ -11,7 +11,9 @@ import androidx.lifecycle.viewModelScope
+ import androidx.navigation.toRoute
+ import com.google.zxing.BarcodeFormat
+ import dagger.hilt.android.lifecycle.HiltViewModel
++import io.homeassistant.companion.android.calls.NativeCallDispatcher
+ import io.homeassistant.companion.android.common.R as commonR
++import io.homeassistant.companion.android.common.data.call.NativeCallInvitation
+ import io.homeassistant.companion.android.common.data.connectivity.ConnectivityCheckRepository
+ import io.homeassistant.companion.android.common.data.connectivity.ConnectivityCheckState
+ import io.homeassistant.companion.android.common.data.keychain.KeyChainRepository
+@@ -33,6 +35,9 @@ import io.homeassistant.companion.android.frontend.error.FrontendConnectionError
+ import io.homeassistant.companion.android.frontend.error.errorActions
+ import io.homeassistant.companion.android.frontend.exoplayer.FrontendExoPlayerManager
+ import io.homeassistant.companion.android.frontend.externalbus.FrontendExternalBusRepository
++import io.homeassistant.companion.android.frontend.externalbus.outgoing.NativeCallContextResultMessage
++import io.homeassistant.companion.android.frontend.externalbus.outgoing.NativeCallPreparedResultMessage
++import io.homeassistant.companion.android.frontend.externalbus.outgoing.NativeCallStartedResultMessage
+ import io.homeassistant.companion.android.frontend.externalbus.outgoing.NavigateToMessage
+ import io.homeassistant.companion.android.frontend.externalbus.outgoing.SuccessResultMessage
+ import io.homeassistant.companion.android.frontend.filechooser.FileChooserManager
+@@ -134,6 +139,7 @@ internal class FrontendViewModel @VisibleForTesting constructor(
+     private val barcodeScannerHandler: FrontendBarcodeScannerHandler,
+     private val matterThreadHandler: FrontendMatterThreadHandler,
+     private val keyChainRepository: KeyChainRepository,
++    private val nativeCallDispatcher: NativeCallDispatcher,
+ ) : ViewModel(),
+     FrontendConnectionErrorStateProvider {
+ 
+@@ -159,6 +165,7 @@ internal class FrontendViewModel @VisibleForTesting constructor(
+         barcodeScannerHandler: FrontendBarcodeScannerHandler,
+         matterThreadHandler: FrontendMatterThreadHandler,
+         keyChainRepository: KeyChainRepository,
++        nativeCallDispatcher: NativeCallDispatcher,
+     ) : this(
+         initialServerId = savedStateHandle.toRoute<FrontendRoute>().serverId,
+         initialTarget = savedStateHandle.toRoute<FrontendRoute>().target,
+@@ -181,6 +188,7 @@ internal class FrontendViewModel @VisibleForTesting constructor(
+         barcodeScannerHandler = barcodeScannerHandler,
+         matterThreadHandler = matterThreadHandler,
+         keyChainRepository = keyChainRepository,
++        nativeCallDispatcher = nativeCallDispatcher,
+     )
+ 
+     /**
+@@ -886,6 +894,59 @@ internal class FrontendViewModel @VisibleForTesting constructor(
+ 
+     private suspend fun handleMessageResult(result: FrontendHandlerEvent) {
+         when (result) {
++            is FrontendHandlerEvent.NativeCallControl -> {
++                val serverId = _viewState.value.serverId
++                val allowed = result.action != "answer" || permissionManager.checkMicrophonePermission()
++                val accepted =
++                    allowed &&
++                        _viewState.value.serverId == serverId &&
++                        nativeCallDispatcher.control(
++                            serverId,
++                            result.callId,
++                            result.action,
++                            result.digit,
++                            result.callPath,
++                        )
++                externalBusRepository.send(NativeCallStartedResultMessage(result.messageId, accepted))
++            }
++            is FrontendHandlerEvent.NativeCallPrepare -> {
++                val serverId = _viewState.value.serverId
++                val granted =
++                    _viewState.value is FrontendViewState.Content && permissionManager.checkMicrophonePermission()
++                val available = _viewState.value is FrontendViewState.Content && _viewState.value.serverId == serverId
++                externalBusRepository.send(
++                    if (available) {
++                        NativeCallPreparedResultMessage(
++                            result.messageId,
++                            if (granted) nativeCallDispatcher.mediaClientId else null,
++                        )
++                    } else {
++                        NativeCallStartedResultMessage(result.messageId, false)
++                    },
++                )
++            }
++            is FrontendHandlerEvent.NativeCallStart -> {
++                val started = if (_viewState.value is FrontendViewState.Content) {
++                    try {
++                        nativeCallDispatcher.startOutgoing(
++                            NativeCallInvitation(_viewState.value.serverId, result.callId, result.callPath),
++                        )
++                    } catch (
++                        _: IllegalArgumentException,
++                    ) {
++                        false
++                    }
++                } else {
++                    false
++                }
++                externalBusRepository.send(NativeCallStartedResultMessage(result.messageId, started))
++            }
++            is FrontendHandlerEvent.NativeCallContext -> externalBusRepository.send(
++                NativeCallContextResultMessage(
++                    result.messageId,
++                    serverManager.getServer(_viewState.value.serverId)?.deviceRegistryId,
++                ),
++            )
+             is FrontendHandlerEvent.Connected -> onConnected()
+ 
+             is FrontendHandlerEvent.Disconnected -> {
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/externalbus/incoming/IncomingExternalBusMessage.kt b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/externalbus/incoming/IncomingExternalBusMessage.kt
+index 011b344..32271c1 100644
+--- a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/externalbus/incoming/IncomingExternalBusMessage.kt
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/externalbus/incoming/IncomingExternalBusMessage.kt
+@@ -350,3 +350,36 @@ data class BarcodeNotifyPayload(val message: String)
+ @Serializable
+ @SerialName("bar_code/close")
+ data class BarcodeCloseMessage(override val id: Int? = null) : IncomingExternalBusMessage
++
++/** Identify this app registration on the currently displayed Home Assistant server. */
++@Serializable
++@SerialName("call/context")
++data class NativeCallContextMessage(override val id: Int? = null) : IncomingExternalBusMessage
++
++/** Request microphone permission before a provider creates an outgoing call. */
++@Serializable
++@SerialName("call/prepare")
++data class NativeCallPrepareMessage(override val id: Int? = null) : IncomingExternalBusMessage
++
++/** Attach native communication audio to an authorized provider-created call. */
++@Serializable
++@SerialName("call/start")
++data class NativeCallStartMessage(override val id: Int? = null, val payload: NativeCallStartPayload) :
++    IncomingExternalBusMessage
++
++@Serializable
++data class NativeCallStartPayload(val callId: String, val callPath: String)
++
++/** Controls only the matching native call on the displayed server. */
++@Serializable
++@SerialName("call/control")
++data class NativeCallControlMessage(override val id: Int? = null, val payload: NativeCallControlPayload) :
++    IncomingExternalBusMessage
++
++@Serializable
++data class NativeCallControlPayload(
++    val callId: String,
++    val action: String,
++    val digit: String? = null,
++    val callPath: String,
++)
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/externalbus/outgoing/OutgoingExternalBusMessage.kt b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/externalbus/outgoing/OutgoingExternalBusMessage.kt
+index 0a02f4d..5742dc4 100644
+--- a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/externalbus/outgoing/OutgoingExternalBusMessage.kt
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/externalbus/outgoing/OutgoingExternalBusMessage.kt
+@@ -63,6 +63,7 @@ object ConfigResultMessage {
+         hasBarCodeScanner: Int,
+         canSetupImprov: Boolean,
+         appVersion: AppVersion,
++        nativeCalls: Int? = null,
+     ): OutgoingExternalBusMessage {
+         return ResultMessage(
+             id = id,
+@@ -74,7 +75,7 @@ object ConfigResultMessage {
+                     hasBarCodeScanner,
+                     canSetupImprov,
+                     appVersion,
+-                ),
++                ).copy(nativeCalls = nativeCalls),
+             ),
+         )
+     }
+@@ -101,6 +102,9 @@ object ConfigResultMessage {
+         val hasAssistSettings: Boolean = true,
+         val hasSplashscreen: Boolean = true,
+         val hasMatterStatusReport: Boolean = true,
++        @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
++        @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
++        val nativeCalls: Int? = null,
+     ) {
+         companion object {
+             fun create(
+@@ -141,3 +145,53 @@ object EntityAddToActionsResultMessage {
+     @Serializable
+     private data class EntityAddToActionsResult(val actions: List<ExternalEntityAddToAction>)
+ }
++
++object NativeCallContextResultMessage {
++    operator fun invoke(id: Int?, deviceId: String?): OutgoingExternalBusMessage = ResultMessage(
++        id = id,
++        result = kotlinx.serialization.json.buildJsonObject {
++            put("deviceId", deviceId?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: JsonNull)
++        },
++    )
++}
++
++object NativeCallPreparedResultMessage {
++    operator fun invoke(id: Int?, clientId: String?): OutgoingExternalBusMessage = ResultMessage(
++        id = id,
++        success = clientId != null,
++        result = kotlinx.serialization.json.buildJsonObject {
++            put("mediaClientId", clientId?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: JsonNull)
++        },
++        error = if (clientId != null) {
++            JsonNull
++        } else {
++            kotlinx.serialization.json.buildJsonObject {
++                put("code", kotlinx.serialization.json.JsonPrimitive("microphone_permission_required"))
++                put(
++                    "message",
++                    kotlinx.serialization.json.JsonPrimitive("Microphone access is required to place a native call"),
++                )
++            }
++        },
++    )
++}
++
++object NativeCallStartedResultMessage {
++    operator fun invoke(id: Int?, started: Boolean): OutgoingExternalBusMessage = ResultMessage(
++        id = id,
++        success = started,
++        error = if (started) {
++            JsonNull
++        } else {
++            kotlinx.serialization.json.buildJsonObject {
++                put("code", kotlinx.serialization.json.JsonPrimitive("native_call_unavailable"))
++                put(
++                    "message",
++                    kotlinx.serialization.json.JsonPrimitive(
++                        "The native call is unavailable or the command was rejected",
++                    ),
++                )
++            }
++        },
++    )
++}
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/handler/FrontendHandlerEvent.kt b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/handler/FrontendHandlerEvent.kt
+index 2db3587..64eff02 100644
+--- a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/handler/FrontendHandlerEvent.kt
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/handler/FrontendHandlerEvent.kt
+@@ -14,6 +14,17 @@ import io.homeassistant.companion.android.frontend.navigation.FrontendEvent
+  */
+ sealed interface FrontendHandlerEvent {
+ 
++    data class NativeCallControl(
++        val messageId: Int?,
++        val callId: String,
++        val action: String,
++        val digit: String?,
++        val callPath: String,
++    ) : FrontendHandlerEvent
++    data class NativeCallPrepare(val messageId: Int?) : FrontendHandlerEvent
++    data class NativeCallStart(val messageId: Int?, val callId: String, val callPath: String) : FrontendHandlerEvent
++    data class NativeCallContext(val messageId: Int?) : FrontendHandlerEvent
++
+     /**
+      * Frontend reported connection established.
+      */
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/handler/FrontendMessageHandler.kt b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/handler/FrontendMessageHandler.kt
+index f3da46b..458dda7 100644
+--- a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/handler/FrontendMessageHandler.kt
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/handler/FrontendMessageHandler.kt
+@@ -3,6 +3,7 @@ package io.homeassistant.companion.android.frontend.handler
+ import android.content.pm.PackageManager
+ import androidx.core.net.toUri
+ import dagger.hilt.android.scopes.ViewModelScoped
++import io.homeassistant.companion.android.common.data.integration.NativeCallsSupport
+ import io.homeassistant.companion.android.common.util.AppVersion
+ import io.homeassistant.companion.android.di.qualifiers.IsAutomotive
+ import io.homeassistant.companion.android.frontend.EvaluateJavascriptUsage
+@@ -28,6 +29,10 @@ import io.homeassistant.companion.android.frontend.externalbus.incoming.ImprovCo
+ import io.homeassistant.companion.android.frontend.externalbus.incoming.ImprovScanMessage
+ import io.homeassistant.companion.android.frontend.externalbus.incoming.IncomingExternalBusMessage
+ import io.homeassistant.companion.android.frontend.externalbus.incoming.MatterCommissionMessage
++import io.homeassistant.companion.android.frontend.externalbus.incoming.NativeCallContextMessage
++import io.homeassistant.companion.android.frontend.externalbus.incoming.NativeCallControlMessage
++import io.homeassistant.companion.android.frontend.externalbus.incoming.NativeCallPrepareMessage
++import io.homeassistant.companion.android.frontend.externalbus.incoming.NativeCallStartMessage
+ import io.homeassistant.companion.android.frontend.externalbus.incoming.OpenAssistMessage
+ import io.homeassistant.companion.android.frontend.externalbus.incoming.OpenAssistSettingsMessage
+ import io.homeassistant.companion.android.frontend.externalbus.incoming.OpenSettingsMessage
+@@ -81,6 +86,7 @@ class FrontendMessageHandler @Inject constructor(
+     private val bluetoothCapabilities: BluetoothCapabilities,
+     private val entityAddToManager: FrontendEntityAddToManager,
+     @param:IsAutomotive private val isAutomotive: Boolean,
++    @param:NativeCallsSupport private val nativeCallsSupport: Boolean = false,
+ ) : FrontendJsHandler,
+     FrontendBusObserver {
+ 
+@@ -154,6 +160,20 @@ class FrontendMessageHandler @Inject constructor(
+ 
+     private suspend fun handleMessage(message: IncomingExternalBusMessage): FrontendHandlerEvent {
+         return when (message) {
++            is NativeCallControlMessage -> FrontendHandlerEvent.NativeCallControl(
++                message.id,
++                message.payload.callId,
++                message.payload.action,
++                message.payload.digit,
++                message.payload.callPath,
++            )
++            is NativeCallPrepareMessage -> FrontendHandlerEvent.NativeCallPrepare(message.id)
++            is NativeCallStartMessage -> FrontendHandlerEvent.NativeCallStart(
++                message.id,
++                message.payload.callId,
++                message.payload.callPath,
++            )
++            is NativeCallContextMessage -> FrontendHandlerEvent.NativeCallContext(message.id)
+             is ConnectionStatusMessage -> {
+                 val isConnected = message.payload.isConnected
+                 Timber.d("Connection status: ${if (isConnected) "connected" else "disconnected"}")
+@@ -325,6 +345,7 @@ class FrontendMessageHandler @Inject constructor(
+             hasBarCodeScanner = hasBarCodeScanner,
+             canSetupImprov = bluetoothCapabilities.hasBluetoothLe(),
+             appVersion = appVersion,
++            nativeCalls = if (nativeCallsSupport) 1 else null,
+         )
+         externalBusRepository.send(response)
+     }
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/permissions/PermissionManager.kt b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/permissions/PermissionManager.kt
+index 995f57f..d153965 100644
+--- a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/permissions/PermissionManager.kt
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/permissions/PermissionManager.kt
+@@ -62,6 +62,11 @@ internal class PermissionManager @Inject constructor(
+ 
+     private val queue = SingleSlotQueue<PermissionRequest>()
+ 
++    suspend fun checkMicrophonePermission(): Boolean {
++        if (permissionChecker.hasPermission(Manifest.permission.RECORD_AUDIO)) return true
++        return queue.awaitResult { onResult -> PermissionRequest.Microphone(onResult) }
++    }
++
+     /** The current pending permission request that needs user approval, or null if none. */
+     val pendingPermissionRequest: StateFlow<PermissionRequest?> = queue
+ 
+@@ -297,15 +302,15 @@ internal class PermissionManager @Inject constructor(
+ 
+         return shouldAskNotificationPermission ?: true
+     }
++}
+ 
+-    private fun mapToAndroidPermission(webViewResource: String): String? {
+-        return when (webViewResource) {
+-            WebViewPermissionRequest.RESOURCE_VIDEO_CAPTURE -> android.Manifest.permission.CAMERA
+-            WebViewPermissionRequest.RESOURCE_AUDIO_CAPTURE -> android.Manifest.permission.RECORD_AUDIO
+-            else -> {
+-                Timber.w("Unknown WebView permission resource: $webViewResource")
+-                null
+-            }
++private fun mapToAndroidPermission(webViewResource: String): String? {
++    return when (webViewResource) {
++        WebViewPermissionRequest.RESOURCE_VIDEO_CAPTURE -> android.Manifest.permission.CAMERA
++        WebViewPermissionRequest.RESOURCE_AUDIO_CAPTURE -> android.Manifest.permission.RECORD_AUDIO
++        else -> {
++            Timber.w("Unknown WebView permission resource: $webViewResource")
++            null
+         }
+     }
+ }
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/permissions/PermissionRequest.kt b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/permissions/PermissionRequest.kt
+index d51cbb7..063fe22 100644
+--- a/app/src/main/kotlin/io/homeassistant/companion/android/frontend/permissions/PermissionRequest.kt
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/frontend/permissions/PermissionRequest.kt
+@@ -18,6 +18,7 @@ import androidx.annotation.RequiresApi
+  * so the slot is freed automatically and the manager can react to the result inline.
+  */
+ internal sealed interface PermissionRequest {
++    class Microphone(override val onResult: (Boolean) -> Unit) : SinglePermission(Manifest.permission.RECORD_AUDIO)
+ 
+     /** The Android runtime permissions to request. */
+     val permissions: List<String>
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/launch/LaunchActivity.kt b/app/src/main/kotlin/io/homeassistant/companion/android/launch/LaunchActivity.kt
+index 22a669a..426e0c3 100644
+--- a/app/src/main/kotlin/io/homeassistant/companion/android/launch/LaunchActivity.kt
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/launch/LaunchActivity.kt
+@@ -1,5 +1,6 @@
+ package io.homeassistant.companion.android.launch
+ 
++import android.Manifest
+ import android.app.PictureInPictureParams
+ import android.content.ComponentName
+ import android.content.Context
+@@ -11,6 +12,7 @@ import android.os.Parcelable
+ import android.view.ViewTreeObserver
+ import androidx.activity.compose.LocalActivity
+ import androidx.activity.compose.setContent
++import androidx.activity.result.contract.ActivityResultContracts
+ import androidx.activity.viewModels
+ import androidx.appcompat.app.AppCompatActivity
+ import androidx.compose.material3.SnackbarDuration
+@@ -24,6 +26,7 @@ import androidx.compose.runtime.remember
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.platform.LocalView
+ import androidx.compose.ui.res.stringResource
++import androidx.core.content.ContextCompat
+ import androidx.core.content.IntentCompat
+ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+ import androidx.core.view.WindowInsetsCompat.Type.systemBars
+@@ -39,9 +42,13 @@ import dev.chrisbanes.haze.hazeSource
+ import dev.chrisbanes.haze.rememberHazeState
+ import io.homeassistant.companion.android.authenticator.Authenticator
+ import io.homeassistant.companion.android.authenticator.Authenticator.Companion.AuthenticationResult
++import io.homeassistant.companion.android.calls.NativeCallCommand
++import io.homeassistant.companion.android.calls.NativeCallPhase
++import io.homeassistant.companion.android.calls.NativeCallStateRepository
+ import io.homeassistant.companion.android.changelog.navigation.ChangelogAutoShowEffect
+ import io.homeassistant.companion.android.common.R as commonR
+ import io.homeassistant.companion.android.common.compose.theme.HATheme
++import io.homeassistant.companion.android.common.data.call.NativeCallInvitation
+ import io.homeassistant.companion.android.common.sensors.SensorWorker
+ import io.homeassistant.companion.android.common.util.CheckLocalNetworkPermissionUseCase
+ import io.homeassistant.companion.android.common.util.SdkVersion
+@@ -60,6 +67,7 @@ import kotlinx.coroutines.launch
+ import kotlinx.parcelize.Parcelize
+ 
+ private const val DEEP_LINK_KEY = "deep_link_key"
++private const val CALL_PERMISSION_ALIAS_CLASS = "io.homeassistant.companion.android.launch.CallPermission"
+ 
+ /**
+  * Fully qualified class name of the non-exported `<activity-alias>` declared in the manifest.
+@@ -127,6 +135,10 @@ class LaunchActivity : AppCompatActivity() {
+          */
+         data class NavigateTo(val target: FrontendTarget, val serverId: Int) : DeepLink
+ 
++        /** Request microphone access for an addressed incoming native call. */
++        @Parcelize
++        data class RequestCallPermission(val serverId: Int, val callId: String, val path: String) : DeepLink
++
+         /**
+          * Opens the Wear OS device onboarding flow.
+          * @property wearName The name of the Wear device being onboarded.
+@@ -136,6 +148,13 @@ class LaunchActivity : AppCompatActivity() {
+     }
+ 
+     companion object {
++        /** Ask for microphone access without displaying the dashboard over the keyguard. */
++        internal fun callPermissionIntent(context: Context, invitation: NativeCallInvitation): Intent = newInstance(
++            context,
++            DeepLink.RequestCallPermission(invitation.serverId, invitation.callId, invitation.path),
++        )
++            .setComponent(ComponentName(context, CALL_PERMISSION_ALIAS_CLASS))
++
+         /**
+          * Builds an intent to start [LaunchActivity].
+          *
+@@ -158,6 +177,36 @@ class LaunchActivity : AppCompatActivity() {
+         }
+     }
+ 
++    @Inject internal lateinit var nativeCallState: NativeCallStateRepository
++
++    private val callMicrophonePermission =
++        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
++            if (granted) pendingNativeCall()?.let { nativeCallState.send(NativeCallCommand.Answer(it)) }
++        }
++
++    private fun pendingNativeCall(): NativeCallInvitation? {
++        if (intent.component?.className != CALL_PERMISSION_ALIAS_CLASS) return null
++        val link = IntentCompat.getParcelableExtra(intent, DEEP_LINK_KEY, DeepLink::class.java)
++        return (link as? DeepLink.RequestCallPermission)?.let {
++            NativeCallInvitation(it.serverId, it.callId, it.path)
++        }?.takeIf {
++            nativeCallState.state.value?.let { current ->
++                current.invitation == it && current.phase == NativeCallPhase.Ringing
++            } == true
++        }
++    }
++
++    private fun requestCallPermission() {
++        val invitation = pendingNativeCall() ?: return
++        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
++            PackageManager.PERMISSION_GRANTED
++        ) {
++            nativeCallState.send(NativeCallCommand.Answer(invitation))
++        } else {
++            callMicrophonePermission.launch(Manifest.permission.RECORD_AUDIO)
++        }
++    }
++
+     private val viewModel: LaunchViewModel by viewModels(
+         extrasProducer = {
+             defaultViewModelCreationExtras.withCreationCallback<LaunchViewModelFactory> {
+@@ -177,6 +226,7 @@ class LaunchActivity : AppCompatActivity() {
+         }
+ 
+         super.onCreate(savedInstanceState)
++        if (savedInstanceState == null) requestCallPermission()
+         val splashScreen = installSplashScreen()
+ 
+         splashScreen.setKeepOnScreenCondition {
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/launch/LaunchViewModel.kt b/app/src/main/kotlin/io/homeassistant/companion/android/launch/LaunchViewModel.kt
+index 6fb8c3c..824a1d1 100644
+--- a/app/src/main/kotlin/io/homeassistant/companion/android/launch/LaunchViewModel.kt
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/launch/LaunchViewModel.kt
+@@ -206,6 +206,8 @@ internal class LaunchViewModel @VisibleForTesting constructor(
+ 
+     private suspend fun handleInitialState(initialDeepLink: LaunchActivity.DeepLink?) {
+         when (initialDeepLink) {
++            is LaunchActivity.DeepLink.RequestCallPermission ->
++                connectToServer(initialDeepLink.serverId, FrontendTarget.Default)
+             is LaunchActivity.DeepLink.OpenOnboarding -> navigateToOnboarding(
+                 initialDeepLink.urlToOnboard,
+                 hideExistingServers = initialDeepLink.hideExistingServers,
+diff --git a/app/src/main/kotlin/io/homeassistant/companion/android/notifications/MessagingManager.kt b/app/src/main/kotlin/io/homeassistant/companion/android/notifications/MessagingManager.kt
+index 88fb48c..1c5ae0e 100644
+--- a/app/src/main/kotlin/io/homeassistant/companion/android/notifications/MessagingManager.kt
++++ b/app/src/main/kotlin/io/homeassistant/companion/android/notifications/MessagingManager.kt
+@@ -137,6 +137,7 @@ class MessagingManager @Inject constructor(
+     private val assistConfigManager: AssistConfigManager,
+     private val defaultAssistantManager: DefaultAssistantManager,
+     private val bluetoothSensorManager: BluetoothSensorManager,
++    private val nativeCallDispatcher: io.homeassistant.companion.android.calls.NativeCallDispatcher,
+ ) {
+     companion object {
+         const val APP_PREFIX = "app://"
+@@ -366,6 +367,9 @@ class MessagingManager @Inject constructor(
+ 
+             val allowCommands = serverManager.integrationRepository(webhookServerId).isTrusted()
+             when {
++                jsonData[NotificationData.MESSAGE] == "command_call" && allowCommands -> {
++                    nativeCallDispatcher.receive(webhookServerId, jsonData)
++                }
+                 jsonData[NotificationData.MESSAGE] == REQUEST_LOCATION_UPDATE && allowCommands -> {
+                     Timber.d("Request location update")
+                     requestAccurateLocationUpdate()
+diff --git a/app/src/test/kotlin/io/homeassistant/companion/android/calls/NativeCallCallbacksTest.kt b/app/src/test/kotlin/io/homeassistant/companion/android/calls/NativeCallCallbacksTest.kt
+new file mode 100644
+index 0000000..11445a2
+--- /dev/null
++++ b/app/src/test/kotlin/io/homeassistant/companion/android/calls/NativeCallCallbacksTest.kt
+@@ -0,0 +1,28 @@
++package io.homeassistant.companion.android.calls
++
++import kotlinx.coroutines.test.runTest
++import org.junit.jupiter.api.Assertions.assertEquals
++import org.junit.jupiter.api.Test
++
++class NativeCallCallbacksTest {
++    @Test
++    fun `Given a finished call when Telecom retains callbacks then late callbacks do nothing`() = runTest {
++        val events = mutableListOf<String>()
++        val callbacks = NativeCallCallbacks(
++            onAnswer = { events += "answer" },
++            onDisconnect = { events += "disconnect" },
++        )
++        callbacks.answer()
++        callbacks.disconnect()
++        assertEquals(listOf("answer", "disconnect"), events)
++        callbacks.close()
++        callbacks.close()
++        callbacks.answer()
++        callbacks.disconnect()
++        assertEquals(listOf("answer", "disconnect"), events)
++        val next = NativeCallCallbacks(onAnswer = { events += "next" }, onDisconnect = {})
++        next.answer()
++        callbacks.disconnect()
++        assertEquals(listOf("answer", "disconnect", "next"), events)
++    }
++}
+diff --git a/app/src/test/kotlin/io/homeassistant/companion/android/calls/NativeCallDispatcherTest.kt b/app/src/test/kotlin/io/homeassistant/companion/android/calls/NativeCallDispatcherTest.kt
+new file mode 100644
+index 0000000..febadeb
+--- /dev/null
++++ b/app/src/test/kotlin/io/homeassistant/companion/android/calls/NativeCallDispatcherTest.kt
+@@ -0,0 +1,69 @@
++package io.homeassistant.companion.android.calls
++
++import android.content.Context
++import io.homeassistant.companion.android.common.data.call.NativeCallDescription
++import io.homeassistant.companion.android.common.data.call.NativeCallInvitation
++import io.homeassistant.companion.android.common.data.call.NativeCallRepository
++import io.homeassistant.companion.android.common.util.SdkVersion
++import io.mockk.coEvery
++import io.mockk.coVerify
++import io.mockk.mockk
++import io.mockk.verify
++import kotlinx.coroutines.CompletableDeferred
++import kotlinx.coroutines.ExperimentalCoroutinesApi
++import kotlinx.coroutines.async
++import kotlinx.coroutines.test.runCurrent
++import kotlinx.coroutines.test.runTest
++import org.junit.jupiter.api.Assertions.assertEquals
++import org.junit.jupiter.api.Assertions.assertFalse
++import org.junit.jupiter.api.Assertions.assertTrue
++import org.junit.jupiter.api.Test
++import org.junit.jupiter.api.assertNull
++
++@OptIn(ExperimentalCoroutinesApi::class)
++class NativeCallDispatcherTest {
++    @Test
++    fun `Given a native call when frontend controls another server or call then reject it`() {
++        val state = NativeCallStateRepository()
++        val token = NativeCallInvitation(2, "current", "/api/provider/call?generation=2")
++        state.start(NativeCallState(token, "Desk", NativeCallPhase.Ringing))
++        val dispatcher = NativeCallDispatcher(mockk(), mockk(), state, true)
++        assertFalse(dispatcher.control(1, "current", "answer", null, token.path))
++        assertFalse(dispatcher.control(2, "previous", "hangup", null, token.path))
++        assertFalse(dispatcher.control(2, "current", "dtmf", "1", token.path))
++        assertTrue(state.commands.tryReceive().isFailure)
++        assertTrue(dispatcher.control(2, "current", "answer", null, token.path))
++        assertTrue(state.commands.tryReceive().getOrNull() is NativeCallCommand.Answer)
++        state.publish(NativeCallState(token, "Desk", NativeCallPhase.Active))
++        assertFalse(dispatcher.control(2, "current", "dtmf", "123", token.path))
++        assertTrue(dispatcher.control(2, "current", "dtmf", "#", token.path))
++        assertTrue(state.commands.tryReceive().getOrNull() is NativeCallCommand.Dtmf)
++        assertFalse(dispatcher.control(2, "current", "hangup", null, "/api/provider/call?generation=1"))
++        state.finish(token)
++        assertFalse(dispatcher.control(2, "current", "hangup", null, token.path))
++    }
++
++    @Test
++    fun `Given cancellation during validation when the old response arrives then do not start a service`() = runTest {
++        SdkVersion.sdkInt = 34
++        val context = mockk<Context>(relaxed = true)
++        val repository = mockk<NativeCallRepository>()
++        val state = NativeCallStateRepository()
++        val token = NativeCallInvitation(1, "pending", "/api/provider/call?generation=1")
++        val description = CompletableDeferred<NativeCallDescription>()
++        coEvery { repository.request(token) } coAnswers { description.await() }
++        val dispatcher = NativeCallDispatcher(context, repository, state, true)
++        val data = mapOf("call_id" to token.callId, "call_path" to token.path, "call_action" to "ring")
++        val validation = async { dispatcher.receive(1, data) }
++        runCurrent()
++        assertEquals(NativeCallPhase.Validating, state.state.value?.phase)
++        dispatcher.receive(1, data)
++        dispatcher.receive(1, data + ("call_action" to "cancel"))
++        description.complete(NativeCallDescription(token.callId, "ringing", "Peer"))
++        validation.await()
++        assertNull(state.state.value)
++        coVerify(exactly = 1) { repository.request(token) }
++        verify(exactly = 0) { context.startService(any()) }
++        verify(exactly = 0) { context.startForegroundService(any()) }
++    }
++}
+diff --git a/app/src/test/kotlin/io/homeassistant/companion/android/calls/NativeCallStateRepositoryTest.kt b/app/src/test/kotlin/io/homeassistant/companion/android/calls/NativeCallStateRepositoryTest.kt
+new file mode 100644
+index 0000000..974f579
+--- /dev/null
++++ b/app/src/test/kotlin/io/homeassistant/companion/android/calls/NativeCallStateRepositoryTest.kt
+@@ -0,0 +1,81 @@
++package io.homeassistant.companion.android.calls
++
++import io.homeassistant.companion.android.common.data.call.NativeCallInvitation
++import kotlinx.coroutines.test.runTest
++import org.junit.jupiter.api.Assertions.assertEquals
++import org.junit.jupiter.api.Assertions.assertFalse
++import org.junit.jupiter.api.Assertions.assertTrue
++import org.junit.jupiter.api.Test
++
++class NativeCallStateRepositoryTest {
++    @Test
++    fun `Given another generation or server when answering then leave the current call alone`() {
++        val repository = NativeCallStateRepository()
++        val current = NativeCallInvitation(1, "call", "/api/call?generation=2")
++        repository.start(NativeCallState(current, "Door", NativeCallPhase.Ringing))
++        assertFalse(repository.send(NativeCallCommand.Answer(current.copy(serverId = 2))))
++        assertFalse(repository.send(NativeCallCommand.End(current.copy(path = "/api/call?generation=1"))))
++        assertTrue(repository.commands.tryReceive().isFailure)
++        assertTrue(repository.send(NativeCallCommand.Answer(current)))
++    }
++
++    @Test
++    fun `Given a finished call when a late button is pressed then ignore it`() {
++        val repository = NativeCallStateRepository()
++        assertFalse(repository.send(NativeCallCommand.Answer(NativeCallInvitation(1, "call", "/api/call"))))
++    }
++
++    @Test
++    fun `Given a reserved call when another invitation arrives then only its owner can clear it`() {
++        val repository = NativeCallStateRepository()
++        val first = NativeCallInvitation(1, "call", "/api/call?generation=1")
++        val next = first.copy(path = "/api/call?generation=2")
++        assertTrue(repository.start(NativeCallState(first, "Door", NativeCallPhase.Ringing)))
++        assertFalse(repository.start(NativeCallState(next, "Door", NativeCallPhase.Ringing)))
++        repository.finish(first)
++        assertTrue(repository.start(NativeCallState(next, "Door", NativeCallPhase.Ringing)))
++        repository.finish(first)
++        repository.publish(NativeCallState(first, "Door", NativeCallPhase.Active))
++        assertTrue(repository.state.value?.invitation == next)
++        assertTrue(repository.send(NativeCallCommand.Answer(next)))
++    }
++
++    @Test
++    fun `Given a full DTMF queue when terminating then retain termination and reject further digits`() {
++        val invitation = NativeCallInvitation(1, "call", "/api/call?generation=1")
++        for (terminal in listOf(NativeCallCommand.End(invitation), NativeCallCommand.Cancel(invitation))) {
++            val repository = NativeCallStateRepository()
++            repository.start(NativeCallState(invitation, "Peer", NativeCallPhase.Active))
++            repeat(4) { assertTrue(repository.send(NativeCallCommand.Dtmf(invitation, "1"))) }
++            assertTrue(repository.send(terminal))
++            assertFalse(repository.send(NativeCallCommand.Dtmf(invitation, "2")))
++        }
++    }
++
++    @Test
++    fun `Given a cancelled validation when its reply arrives then it cannot become ringing`() = runTest {
++        val repository = NativeCallStateRepository()
++        val first = NativeCallInvitation(1, "call", "/api/call?generation=1")
++        val next = first.copy(path = "/api/call?generation=2")
++        assertTrue(repository.start(NativeCallState(first, "", NativeCallPhase.Validating)))
++        assertTrue(repository.send(NativeCallCommand.Cancel(first)))
++        assertFalse(repository.publish(NativeCallState(first, "Late caller", NativeCallPhase.Ringing)))
++        assertEquals(NativeCallCommand.Cancel(first), repository.nextCommand())
++        repository.finish(first)
++        assertTrue(repository.start(NativeCallState(next, "Peer", NativeCallPhase.Ringing)))
++        assertFalse(repository.send(NativeCallCommand.End(first)))
++        assertTrue(repository.isCurrent(next))
++    }
++
++    @Test
++    fun `Given competing terminal intents when the queue is full then the first intent wins`() = runTest {
++        val repository = NativeCallStateRepository()
++        val invitation = NativeCallInvitation(1, "call", "/api/call?generation=1")
++        repository.start(NativeCallState(invitation, "Peer", NativeCallPhase.Active))
++        repeat(4) { assertTrue(repository.send(NativeCallCommand.Dtmf(invitation, "1"))) }
++        assertTrue(repository.send(NativeCallCommand.End(invitation)))
++        assertTrue(repository.send(NativeCallCommand.Cancel(invitation)))
++        assertEquals(NativeCallCommand.End(invitation), repository.nextCommand())
++        assertFalse(repository.publish(NativeCallState(invitation, "Late update", NativeCallPhase.Active)))
++    }
++}
+diff --git a/app/src/test/kotlin/io/homeassistant/companion/android/frontend/FrontendViewModelTest.kt b/app/src/test/kotlin/io/homeassistant/companion/android/frontend/FrontendViewModelTest.kt
+index 94c1834..eee2d27 100644
+--- a/app/src/test/kotlin/io/homeassistant/companion/android/frontend/FrontendViewModelTest.kt
++++ b/app/src/test/kotlin/io/homeassistant/companion/android/frontend/FrontendViewModelTest.kt
+@@ -42,6 +42,8 @@ import io.homeassistant.companion.android.frontend.exoplayer.ExoPlayerUiState
+ import io.homeassistant.companion.android.frontend.exoplayer.FrontendExoPlayerManager
+ import io.homeassistant.companion.android.frontend.externalbus.FrontendExternalBusRepository
+ import io.homeassistant.companion.android.frontend.externalbus.incoming.HapticType
++import io.homeassistant.companion.android.frontend.externalbus.outgoing.NativeCallContextResultMessage
++import io.homeassistant.companion.android.frontend.externalbus.outgoing.NativeCallStartedResultMessage
+ import io.homeassistant.companion.android.frontend.externalbus.outgoing.SuccessResultMessage
+ import io.homeassistant.companion.android.frontend.filechooser.FileChooserManager
+ import io.homeassistant.companion.android.frontend.gesture.FrontendGestureManager
+@@ -157,6 +159,32 @@ class FrontendViewModelTest {
+         every { scanRequested } returns improvScanRequestedFlow
+     }
+ 
++    @Test
++    fun `Given native call context request then use the displayed server registration`() = runTest {
++        val messageFlow = MutableSharedFlow<FrontendHandlerEvent>()
++        every { frontendBusObserver.messageResults() } returns messageFlow
++        val displayedServer = mockServer(url = "https://second.test", name = "Second", serverId = 2)
++        every { displayedServer.deviceRegistryId } returns "second-device"
++        coEvery { serverManager.getServer(2) } returns displayedServer
++        createViewModel(serverId = 2)
++        advanceUntilIdle()
++        messageFlow.emit(FrontendHandlerEvent.NativeCallContext(41))
++        advanceUntilIdle()
++        coVerify { externalBusRepository.send(NativeCallContextResultMessage(41, "second-device")) }
++    }
++
++    @Test
++    fun `Given frontend is not ready when preparing a native call then do not report missing permission`() = runTest {
++        val messageFlow = MutableSharedFlow<FrontendHandlerEvent>()
++        every { frontendBusObserver.messageResults() } returns messageFlow
++        createViewModel()
++        advanceUntilIdle()
++        messageFlow.emit(FrontendHandlerEvent.NativeCallPrepare(42))
++        advanceUntilIdle()
++        coVerify { externalBusRepository.send(NativeCallStartedResultMessage(42, false)) }
++        coVerify(exactly = 0) { permissionManager.checkMicrophonePermission() }
++    }
++
+     private fun createViewModel(
+         serverId: Int = this.serverId,
+         path: String? = null,
+@@ -191,6 +219,7 @@ class FrontendViewModelTest {
+             barcodeScannerHandler = FrontendBarcodeScannerHandler(externalBusRepository, dialogManager),
+             matterThreadHandler = matterThreadHandler,
+             keyChainRepository = keyChainRepository,
++            nativeCallDispatcher = mockk(relaxed = true),
+         )
+     }
+ 
+diff --git a/automotive/gradle.lockfile b/automotive/gradle.lockfile
+index 16558f5..fccd6af 100644
+--- a/automotive/gradle.lockfile
++++ b/automotive/gradle.lockfile
+@@ -78,6 +78,7 @@ androidx.coordinatorlayout:coordinatorlayout:1.1.0=fullDebugAndroidTestCompileCl
+ androidx.core:core-ktx:1.19.0=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugAndroidTestRuntimeClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugAndroidTestRuntimeClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
+ androidx.core:core-remoteviews:1.1.0=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
+ androidx.core:core-splashscreen:1.2.0=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
++androidx.core:core-telecom:1.0.1=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
+ androidx.core:core-viewtree:1.0.0=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugAndroidTestRuntimeClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugAndroidTestRuntimeClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
+ androidx.core:core:1.19.0=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugAndroidTestRuntimeClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugAndroidTestRuntimeClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
+ androidx.cursoradapter:cursoradapter:1.0.0=fullDebugAndroidTestCompileClasspath,fullDebugAndroidTestLintChecksClasspath,fullDebugCompileClasspath,fullDebugLintChecksClasspath,fullDebugRuntimeClasspath,fullDebugScreenshotTestCompileClasspath,fullDebugScreenshotTestLintChecksClasspath,fullDebugScreenshotTestRuntimeClasspath,fullDebugUnitTestCompileClasspath,fullDebugUnitTestLintChecksClasspath,fullDebugUnitTestRuntimeClasspath,fullReleaseCompileClasspath,fullReleaseLintChecksClasspath,fullReleaseRuntimeClasspath,fullReleaseScreenshotTestCompileClasspath,fullReleaseScreenshotTestLintChecksClasspath,fullReleaseScreenshotTestRuntimeClasspath,minimalDebugAndroidTestCompileClasspath,minimalDebugAndroidTestLintChecksClasspath,minimalDebugCompileClasspath,minimalDebugLintChecksClasspath,minimalDebugRuntimeClasspath,minimalDebugScreenshotTestCompileClasspath,minimalDebugScreenshotTestLintChecksClasspath,minimalDebugScreenshotTestRuntimeClasspath,minimalDebugUnitTestCompileClasspath,minimalDebugUnitTestLintChecksClasspath,minimalDebugUnitTestRuntimeClasspath,minimalReleaseCompileClasspath,minimalReleaseLintChecksClasspath,minimalReleaseRuntimeClasspath,minimalReleaseScreenshotTestCompileClasspath,minimalReleaseScreenshotTestLintChecksClasspath,minimalReleaseScreenshotTestRuntimeClasspath
+diff --git a/build-logic/convention/src/main/kotlin/AndroidApplicationDependenciesConventionPlugin.kt b/build-logic/convention/src/main/kotlin/AndroidApplicationDependenciesConventionPlugin.kt
+index 44b801b..aa2b6fd 100644
+--- a/build-logic/convention/src/main/kotlin/AndroidApplicationDependenciesConventionPlugin.kt
++++ b/build-logic/convention/src/main/kotlin/AndroidApplicationDependenciesConventionPlugin.kt
+@@ -83,6 +83,7 @@ class AndroidApplicationDependenciesConventionPlugin : Plugin<Project> {
+                     "implementation"(libs.core.remoteviews)
+                     "implementation"(libs.core.splashscreen)
+                     "implementation"(libs.core.ktx)
++                    "implementation"(libs.androidx.core.telecom)
+                     "implementation"(libs.accompanist.permissions)
+                     "implementation"(libs.androidx.hilt.navigation.compose)
+ 
+diff --git a/common/src/main/kotlin/io/homeassistant/companion/android/common/data/call/NativeCall.kt b/common/src/main/kotlin/io/homeassistant/companion/android/common/data/call/NativeCall.kt
+new file mode 100644
+index 0000000..35f3a4a
+--- /dev/null
++++ b/common/src/main/kotlin/io/homeassistant/companion/android/common/data/call/NativeCall.kt
+@@ -0,0 +1,89 @@
++package io.homeassistant.companion.android.common.data.call
++
++import kotlinx.serialization.SerialName
++import kotlinx.serialization.Serializable
++import okhttp3.HttpUrl
++
++private const val MAX_CALL_ID_LENGTH = 256
++private const val MAX_CALL_PATH_LENGTH = 2048
++private const val PCM_FORMAT_FIELDS = 4
++private const val MIN_PCM_FRAME_MS = 5
++private const val MAX_PCM_FRAME_MS = 40
++private const val MILLISECONDS_PER_SECOND = 1000
++private const val MAX_PCM_MESSAGE_BYTES = 4096
++private val PCM_SAMPLE_RATES = setOf(8000, 16000, 24000, 32000, 48000)
++
++/** One server-scoped invitation; its path identifies the call generation. */
++data class NativeCallInvitation(val serverId: Int, val callId: String, val path: String) {
++    init {
++        require(serverId > 0) { "An explicit registered server is required" }
++        require(callId.isNotBlank() && callId.length <= MAX_CALL_ID_LENGTH) { "Invalid call identity" }
++        require(path.length <= MAX_CALL_PATH_LENGTH && path.startsWith("/api/") && !path.contains('\\')) {
++            "Invalid call path"
++        }
++    }
++}
++
++/** Resolve only API paths on the authenticated Home Assistant origin. */
++fun nativeCallUrl(base: HttpUrl, path: String): HttpUrl {
++    require(path.startsWith("/api/") && !path.contains('\\')) { "Invalid call API path" }
++    val url = requireNotNull(base.resolve(path)) { "Invalid call URL" }
++    require(url.scheme == base.scheme && url.host == base.host && url.port == base.port) { "Call origin changed" }
++    require(
++        url.encodedPath.startsWith("/api/") && url.fragment == null && url.username.isEmpty() && url.password.isEmpty(),
++    ) {
++        "Invalid call API URL"
++    }
++    return url
++}
++
++/** Authoritative server state, checked before ringing and again before answering. */
++@Serializable
++data class NativeCallDescription(
++    val id: String,
++    val state: String,
++    val caller: String,
++    @SerialName("remaining_ms") val remainingMs: Long? = null,
++    @SerialName("media_path") val mediaPath: String? = null,
++    val direction: String = "incoming",
++)
++
++/** PCM framing shared by the native media adapter and its server. */
++data class NativeCallPcmFormat(val sampleRate: Int, val channels: Int, val frameMs: Int) {
++    val frameBytes: Int get() = sampleRate * channels * frameMs / MILLISECONDS_PER_SECOND * 2
++
++    companion object {
++        /** Reject unsupported encodings before allocating Android audio resources. */
++        fun parse(token: String): NativeCallPcmFormat {
++            val parts = token.split(':')
++            require(parts.size == PCM_FORMAT_FIELDS && parts[1] == "s16le") { "Unsupported call audio encoding" }
++            val rate = parts[0].toInt()
++            val channels = parts[2].toInt()
++            val duration = parts[3].toInt()
++            require(rate in PCM_SAMPLE_RATES && channels in 1..2 && duration in MIN_PCM_FRAME_MS..MAX_PCM_FRAME_MS) {
++                "Unsupported call audio format"
++            }
++            require(rate * duration % MILLISECONDS_PER_SECOND == 0) { "Fractional call audio frame" }
++            return NativeCallPcmFormat(rate, channels, duration).also {
++                require(it.frameBytes < MAX_PCM_MESSAGE_BYTES) { "Call audio frame exceeds transport limit" }
++            }
++        }
++    }
++}
++
++/** Local capture/playback permissions derived from the negotiated call media. */
++data class NativeCallAudioPaths(val capture: Boolean, val playback: Boolean) {
++    companion object {
++        /** Apply the peer capability and local SDP direction before opening audio devices. */
++        fun from(mode: String, direction: String, held: Boolean): NativeCallAudioPaths {
++            require(mode in setOf("full_duplex", "mic_only", "speaker_only")) { "Invalid call audio mode" }
++            require(direction in setOf("sendrecv", "sendonly", "recvonly", "inactive")) {
++                "Invalid call audio direction"
++            }
++            return NativeCallAudioPaths(
++                capture = !held && mode != "mic_only" && direction in setOf("sendrecv", "sendonly"),
++                playback = !held && mode != "speaker_only" && direction in setOf("sendrecv", "recvonly"),
++            )
++        }
++    }
++}
+diff --git a/common/src/main/kotlin/io/homeassistant/companion/android/common/data/call/NativeCallModule.kt b/common/src/main/kotlin/io/homeassistant/companion/android/common/data/call/NativeCallModule.kt
+new file mode 100644
+index 0000000..e284eec
+--- /dev/null
++++ b/common/src/main/kotlin/io/homeassistant/companion/android/common/data/call/NativeCallModule.kt
+@@ -0,0 +1,24 @@
++package io.homeassistant.companion.android.common.data.call
++
++import dagger.Module
++import dagger.Provides
++import dagger.hilt.InstallIn
++import dagger.hilt.components.SingletonComponent
++import javax.inject.Qualifier
++import kotlinx.coroutines.CoroutineDispatcher
++import kotlinx.coroutines.Dispatchers
++
++/** Blocking native audio and call descriptor work. */
++@Qualifier
++@Retention(AnnotationRetention.RUNTIME)
++annotation class NativeCallIoDispatcher
++
++@Module
++@InstallIn(SingletonComponent::class)
++internal object NativeCallModule {
++    // The DI boundary selects the real dispatcher; consumers receive it through injection.
++    @Suppress("InjectDispatcher")
++    @Provides
++    @NativeCallIoDispatcher
++    fun ioDispatcher(): CoroutineDispatcher = Dispatchers.IO
++}
+diff --git a/common/src/main/kotlin/io/homeassistant/companion/android/common/data/call/NativeCallRepository.kt b/common/src/main/kotlin/io/homeassistant/companion/android/common/data/call/NativeCallRepository.kt
+new file mode 100644
+index 0000000..6d8444f
+--- /dev/null
++++ b/common/src/main/kotlin/io/homeassistant/companion/android/common/data/call/NativeCallRepository.kt
+@@ -0,0 +1,111 @@
++package io.homeassistant.companion.android.common.data.call
++
++import io.homeassistant.companion.android.common.data.servers.ServerManager
++import io.homeassistant.companion.android.common.data.servers.firstUrlOrNull
++import io.homeassistant.companion.android.common.util.di.SuspendProvider
++import io.homeassistant.companion.android.common.util.kotlinJsonMapper
++import java.io.IOException
++import java.util.UUID
++import java.util.concurrent.TimeUnit
++import javax.inject.Inject
++import javax.inject.Singleton
++import kotlin.coroutines.resume
++import kotlin.coroutines.resumeWithException
++import kotlinx.coroutines.CoroutineDispatcher
++import kotlinx.coroutines.suspendCancellableCoroutine
++import kotlinx.coroutines.withContext
++import kotlinx.serialization.SerializationException
++import kotlinx.serialization.json.buildJsonObject
++import kotlinx.serialization.json.put
++import okhttp3.Call
++import okhttp3.Callback
++import okhttp3.HttpUrl.Companion.toHttpUrl
++import okhttp3.MediaType.Companion.toMediaType
++import okhttp3.OkHttpClient
++import okhttp3.Request
++import okhttp3.RequestBody.Companion.toRequestBody
++import okhttp3.Response
++import okhttp3.WebSocket
++import okhttp3.WebSocketListener
++
++private const val MAX_CALL_DESCRIPTION_BYTES = 16_384L
++private const val REQUEST_TIMEOUT_SECONDS = 5L
++private const val SOCKET_PING_SECONDS = 15L
++
++/** Authenticated access to a call provider on an already registered HA server. */
++@Singleton
++class NativeCallRepository @Inject constructor(
++    private val serverManager: ServerManager,
++    private val clientProvider: SuspendProvider<OkHttpClient>,
++    @NativeCallIoDispatcher private val ioDispatcher: CoroutineDispatcher,
++) {
++    val mediaClientId: String = UUID.randomUUID().toString()
++
++    /** Fetch or control the exact call referenced by an invitation. */
++    suspend fun request(
++        invitation: NativeCallInvitation,
++        action: String? = null,
++        clientId: String = "",
++    ): NativeCallDescription {
++        val builder = authorizedRequest(invitation.serverId, invitation.path)
++        if (action != null) {
++            val body = buildJsonObject {
++                put("action", action)
++                put("client_id", clientId)
++            }
++            builder.post(body.toString().toRequestBody("application/json".toMediaType()))
++        }
++        val client = clientProvider().newBuilder().followRedirects(false).followSslRedirects(false)
++            .callTimeout(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS).build()
++        val response = client.newCall(builder.build()).awaitResponse()
++        return response.use {
++            withContext(ioDispatcher) {
++                if (!it.isSuccessful) throw IOException("Call provider returned HTTP ${it.code}")
++                val source = it.body.source()
++                require(!source.request(MAX_CALL_DESCRIPTION_BYTES + 1)) { "Call description is too large" }
++                val description = try {
++                    kotlinJsonMapper.decodeFromString<NativeCallDescription>(source.readUtf8())
++                } catch (_: SerializationException) {
++                    // Decoder messages may contain private response content.
++                    throw IOException("Invalid call description")
++                }
++                require(description.id == invitation.callId) { "Call identity changed" }
++                description
++            }
++        }
++    }
++
++    /** Open a bounded PCM session without handing credentials to the WebView. */
++    suspend fun openMedia(serverId: Int, path: String, listener: WebSocketListener): WebSocket {
++        val base = authorizedRequest(serverId, path).build()
++        val url = base.url.newBuilder().setQueryParameter("client_id", mediaClientId).build()
++        val request = base.newBuilder().url(url).build()
++        return clientProvider().newBuilder().followRedirects(false).followSslRedirects(false)
++            .pingInterval(SOCKET_PING_SECONDS, TimeUnit.SECONDS).build().newWebSocket(request, listener)
++    }
++
++    private suspend fun authorizedRequest(serverId: Int, path: String): Request.Builder {
++        requireNotNull(serverManager.getServer(serverId)) { "Unknown call server" }
++        val connection = serverManager.connectionStateProvider(serverId)
++        val base = requireNotNull(connection.urlFlow().firstUrlOrNull()) {
++            "No permitted server URL"
++        }.toString().toHttpUrl()
++        val url = nativeCallUrl(base, path)
++        require(connection.canSafelySendCredentials(url.toString())) { "Unsafe call connection" }
++        val token = serverManager.authenticationRepository(serverId).buildBearerToken()
++        return Request.Builder().url(url).header("Authorization", token)
++    }
++}
++
++private suspend fun Call.awaitResponse(): Response = suspendCancellableCoroutine { continuation ->
++    continuation.invokeOnCancellation { cancel() }
++    enqueue(object : Callback {
++        override fun onFailure(call: Call, e: IOException) {
++            if (continuation.isActive) continuation.resumeWithException(e)
++        }
++
++        override fun onResponse(call: Call, response: Response) {
++            continuation.resume(response) { _, value, _ -> value.close() }
++        }
++    })
++}
+diff --git a/common/src/main/kotlin/io/homeassistant/companion/android/common/data/integration/DeviceRegistration.kt b/common/src/main/kotlin/io/homeassistant/companion/android/common/data/integration/DeviceRegistration.kt
+index f9bc429..96867bb 100644
+--- a/common/src/main/kotlin/io/homeassistant/companion/android/common/data/integration/DeviceRegistration.kt
++++ b/common/src/main/kotlin/io/homeassistant/companion/android/common/data/integration/DeviceRegistration.kt
+@@ -14,3 +14,7 @@ data class DeviceRegistration(
+ @Qualifier
+ @Retention(AnnotationRetention.RUNTIME)
+ annotation class PushWebsocketSupport
++
++@Qualifier
++@Retention(AnnotationRetention.RUNTIME)
++annotation class NativeCallsSupport
+diff --git a/common/src/main/kotlin/io/homeassistant/companion/android/common/data/integration/IntegrationRepository.kt b/common/src/main/kotlin/io/homeassistant/companion/android/common/data/integration/IntegrationRepository.kt
+index 741cc34..644c933 100644
+--- a/common/src/main/kotlin/io/homeassistant/companion/android/common/data/integration/IntegrationRepository.kt
++++ b/common/src/main/kotlin/io/homeassistant/companion/android/common/data/integration/IntegrationRepository.kt
+@@ -105,6 +105,7 @@ internal class IntegrationRepositoryFactory @Inject constructor(
+     @NamedModel private val model: String,
+     @NamedOsVersion private val osVersion: String,
+     @NamedDeviceId private val deviceId: String,
++    @NativeCallsSupport private val nativeCallsSupport: Boolean,
+ ) {
+     suspend fun create(serverId: Int): IntegrationRepositoryImpl {
+         return IntegrationRepositoryImpl(
+@@ -116,6 +117,7 @@ internal class IntegrationRepositoryFactory @Inject constructor(
+             model = model,
+             osVersion = osVersion,
+             deviceId = deviceId,
++            nativeCallsSupport = nativeCallsSupport,
+         )
+     }
+ }
+diff --git a/common/src/main/kotlin/io/homeassistant/companion/android/common/data/integration/impl/IntegrationRepositoryImpl.kt b/common/src/main/kotlin/io/homeassistant/companion/android/common/data/integration/impl/IntegrationRepositoryImpl.kt
+index 36f1e7c..7d76068 100644
+--- a/common/src/main/kotlin/io/homeassistant/companion/android/common/data/integration/impl/IntegrationRepositoryImpl.kt
++++ b/common/src/main/kotlin/io/homeassistant/companion/android/common/data/integration/impl/IntegrationRepositoryImpl.kt
+@@ -78,6 +78,8 @@ class IntegrationRepositoryImpl @AssistedInject constructor(
+     @NamedModel private val model: String,
+     @NamedOsVersion private val osVersion: String,
+     @NamedDeviceId private val deviceId: String,
++    @io.homeassistant.companion.android.common.data.integration.NativeCallsSupport private val nativeCallsSupport:
++    Boolean = false,
+ ) : IntegrationRepository {
+ 
+     companion object {
+@@ -713,6 +715,9 @@ class IntegrationRepositoryImpl @AssistedInject constructor(
+         val pushToken = deviceRegistration.pushToken ?: oldDeviceRegistration.pushToken
+ 
+         val appData = mutableMapOf<String, Any>("push_websocket_channel" to deviceRegistration.pushWebsocket)
++        if (nativeCallsSupport) {
++            appData["native_calls"] = 1
++        }
+         if (!pushToken.isNullOrBlank()) {
+             appData["push_url"] = PUSH_URL
+             appData["push_token"] = pushToken
+diff --git a/common/src/main/res/values/strings.xml b/common/src/main/res/values/strings.xml
+index 01b03e3..4c782c0 100644
+--- a/common/src/main/res/values/strings.xml
++++ b/common/src/main/res/values/strings.xml
+@@ -1537,4 +1537,8 @@
+     <string name="learn_more">Learn more</string>
+     <string name="default_assistant_required">Home Assistant must be your default assistant to perform %s.</string>
+     <string name="hidden_entity">Hidden entity</string>
++    <string name="native_calls">Phone calls</string>
++    <string name="native_call_incoming">Incoming call</string>
++    <string name="native_call_connecting">Connecting</string>
++    <string name="native_call_active">In call</string>
+ </resources>
+diff --git a/common/src/main/res/values/strings_changelog.xml b/common/src/main/res/values/strings_changelog.xml
+index b3c5d7d..4e68eda 100644
+--- a/common/src/main/res/values/strings_changelog.xml
++++ b/common/src/main/res/values/strings_changelog.xml
+@@ -14,4 +14,5 @@
+     <string name="changelog_entry_tiles">Modernized settings for &lt;b&gt;tiles&lt;/b&gt;</string>
+     <string name="changelog_entry_gesture_action">Added a new gesture action for &lt;b&gt;Open page in browser&lt;/b&gt;</string>
+     <string name="changelog_entry_bug_fixes">Bug fixes and dependency updates everywhere</string>
++    <string name="changelog_entry_native_calls">Receive audio calls from compatible Home Assistant integrations with native call notifications and call volume controls.</string>
+ </resources>
+diff --git a/common/src/test/kotlin/io/homeassistant/companion/android/common/CommonTestModule.kt b/common/src/test/kotlin/io/homeassistant/companion/android/common/CommonTestModule.kt
+index fa84c4d..eb1487e 100644
+--- a/common/src/test/kotlin/io/homeassistant/companion/android/common/CommonTestModule.kt
++++ b/common/src/test/kotlin/io/homeassistant/companion/android/common/CommonTestModule.kt
+@@ -14,6 +14,10 @@ import javax.inject.Singleton
+ @Module
+ @InstallIn(SingletonComponent::class)
+ object CommonTestModule {
++    @Provides
++    @io.homeassistant.companion.android.common.data.integration.NativeCallsSupport
++    fun providesNativeCallsSupport(): Boolean = false
++
+     @Provides
+     @Singleton
+     fun providesAppVersion(): AppVersion = AppVersion.from("1.0.0 (1)")
+diff --git a/common/src/test/kotlin/io/homeassistant/companion/android/common/data/call/NativeCallTest.kt b/common/src/test/kotlin/io/homeassistant/companion/android/common/data/call/NativeCallTest.kt
+new file mode 100644
+index 0000000..a0c6e59
+--- /dev/null
++++ b/common/src/test/kotlin/io/homeassistant/companion/android/common/data/call/NativeCallTest.kt
+@@ -0,0 +1,61 @@
++package io.homeassistant.companion.android.common.data.call
++
++import okhttp3.HttpUrl.Companion.toHttpUrl
++import org.junit.jupiter.api.Assertions.assertEquals
++import org.junit.jupiter.api.Assertions.assertThrows
++import org.junit.jupiter.api.Test
++import org.junit.jupiter.params.ParameterizedTest
++import org.junit.jupiter.params.provider.CsvSource
++
++class NativeCallTest {
++    @Test
++    fun `Given a native PCM token when parsed then retain 48 kHz without narrowing it`() {
++        val format = NativeCallPcmFormat.parse("48000:s16le:1:10")
++        assertEquals(48000, format.sampleRate)
++        assertEquals(960, format.frameBytes)
++    }
++
++    @Test
++    fun `Given an invalid format when parsed then reject before opening hardware`() {
++        listOf("48000:f32:1:10", "999999:s16le:1:10", "48000:s16le:8:10", "48000:s16le:1:0", "48000:s16le:2:40", "bad").forEach {
++            assertThrows(IllegalArgumentException::class.java) { NativeCallPcmFormat.parse(it) }
++        }
++    }
++
++    @Test
++    fun `Given an API path when resolved then preserve authenticated server origin`() {
++        val base = "https://ha.example:8123/".toHttpUrl()
++        assertEquals("ha.example", nativeCallUrl(base, "/api/calls?id=one").host)
++        listOf("https://other.example/api/call", "//other.example/api/call", "/api/../../outside", "/api/call#fragment", "/api/\\other").forEach {
++            assertThrows(IllegalArgumentException::class.java) { nativeCallUrl(base, it) }
++        }
++    }
++
++    @Test
++    fun `Given an implicit active server when invited then reject ambiguous routing`() {
++        assertThrows(IllegalArgumentException::class.java) { NativeCallInvitation(-1, "call", "/api/call") }
++    }
++
++    @ParameterizedTest
++    @CsvSource(
++        "full_duplex,sendrecv,true,true",
++        "full_duplex,sendonly,true,false",
++        "full_duplex,recvonly,false,true",
++        "full_duplex,inactive,false,false",
++        "mic_only,sendrecv,false,true",
++        "mic_only,sendonly,false,false",
++        "mic_only,recvonly,false,true",
++        "speaker_only,sendrecv,true,false",
++        "speaker_only,sendonly,true,false",
++        "speaker_only,recvonly,false,false",
++    )
++    fun `Given negotiated media when selecting devices then open only permitted paths`(
++        mode: String,
++        direction: String,
++        capture: Boolean,
++        playback: Boolean,
++    ) {
++        assertEquals(NativeCallAudioPaths(capture, playback), NativeCallAudioPaths.from(mode, direction, false))
++        assertEquals(NativeCallAudioPaths(false, false), NativeCallAudioPaths.from(mode, direction, true))
++    }
++}
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 0c0a10c..9666e52 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -33,6 +33,7 @@ compose-bom = "2026.08.00"
+ composeLintChecks = "1.6.0"
+ connectClient = "1.1.0"
+ constraintlayout = "2.2.2"
++coreTelecom = "1.0.1"
+ coreKtx = "1.19.0"
+ core-splashscreen = "1.2.0"
+ core-remoteviews = "1.1.0"
+@@ -122,6 +123,7 @@ homeassistant-android-dependencies = { id = "homeassistant.android.dependencies"
+ homeassistant-android-flavor = { id = "homeassistant.android.flavor" }
+ 
+ [libraries]
++androidx-core-telecom = { module = "androidx.core:core-telecom", version.ref = "coreTelecom" }
+ aboutlibraries-compose-m3 = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "aboutlibraries" }
+ accompanist-permissions = { module = "com.google.accompanist:accompanist-permissions", version.ref = "accompanist" }
+ activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
+diff --git a/testing-unit/gradle.lockfile b/testing-unit/gradle.lockfile
+index 7c8b196..bb8e712 100644
+--- a/testing-unit/gradle.lockfile
++++ b/testing-unit/gradle.lockfile
+@@ -324,4 +324,4 @@ org.ow2.asm:asm-tree:9.9=androidLintTool
+ org.ow2.asm:asm:9.9=androidLintTool
+ org.slf4j:slf4j-api:2.0.18=ktlint
+ org.snakeyaml:snakeyaml-engine:2.10=detekt
+-empty=androidJdkImage,androidTestUtil,coreLibraryDesugaring,debugAndroidTestAnnotationProcessorClasspath,debugAndroidTestImplementationDependenciesMetadata,debugAnnotationProcessorClasspath,debugImplementationDependenciesMetadata,debugUnitTestAnnotationProcessorClasspath,debugUnitTestImplementationDependenciesMetadata,detektPlugins,kotlinCompilerPluginClasspath,kotlinCompilerPluginClasspathDebug,kotlinCompilerPluginClasspathDebugAndroidTest,kotlinCompilerPluginClasspathDebugUnitTest,kotlinCompilerPluginClasspathRelease,lintChecks,lintPublish,releaseAnnotationProcessorClasspath,releaseImplementationDependenciesMetadata
++empty=androidApis,androidJdkImage,androidTestUtil,coreLibraryDesugaring,debugAndroidTestAnnotationProcessorClasspath,debugAndroidTestImplementationDependenciesMetadata,debugAnnotationProcessorClasspath,debugImplementationDependenciesMetadata,debugUnitTestAnnotationProcessorClasspath,debugUnitTestImplementationDependenciesMetadata,detektPlugins,kotlinCompilerPluginClasspath,kotlinCompilerPluginClasspathDebug,kotlinCompilerPluginClasspathDebugAndroidTest,kotlinCompilerPluginClasspathDebugUnitTest,kotlinCompilerPluginClasspathRelease,lintChecks,lintPublish,releaseAnnotationProcessorClasspath,releaseImplementationDependenciesMetadata
+diff --git a/wear/src/main/kotlin/io/homeassistant/companion/android/ApplicationModule.kt b/wear/src/main/kotlin/io/homeassistant/companion/android/ApplicationModule.kt
+index 545db8b..55d324f 100644
+--- a/wear/src/main/kotlin/io/homeassistant/companion/android/ApplicationModule.kt
++++ b/wear/src/main/kotlin/io/homeassistant/companion/android/ApplicationModule.kt
+@@ -18,9 +18,15 @@ import kotlin.time.ExperimentalTime
+ import kotlinx.coroutines.tasks.await
+ import timber.log.Timber
+ 
++private const val NATIVE_CALLS_SUPPORTED = false
++
+ @Module
+ @InstallIn(SingletonComponent::class)
+ object ApplicationModule {
++    @Provides
++    @io.homeassistant.companion.android.common.data.integration.NativeCallsSupport
++    fun providesNativeCallsSupport(): Boolean = NATIVE_CALLS_SUPPORTED
++
+     @Provides
+     @Singleton
+     fun providesAppVersion(): AppVersion = AppVersion(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
+diff --git a/app/src/test/kotlin/io/homeassistant/companion/android/calls/NativeCallAudioTest.kt b/app/src/test/kotlin/io/homeassistant/companion/android/calls/NativeCallAudioTest.kt
+new file mode 100644
+index 0000000..80d6b1d
+--- /dev/null
++++ b/app/src/test/kotlin/io/homeassistant/companion/android/calls/NativeCallAudioTest.kt
+@@ -0,0 +1,103 @@
++package io.homeassistant.companion.android.calls
++
++import android.media.AudioRecord
++import android.media.AudioTrack
++import dagger.hilt.android.testing.HiltTestApplication
++import io.homeassistant.companion.android.common.data.call.NativeCallRepository
++import io.mockk.coEvery
++import io.mockk.every
++import io.mockk.mockk
++import io.mockk.mockkConstructor
++import io.mockk.mockkStatic
++import io.mockk.unmockkAll
++import io.mockk.verify
++import java.io.IOException
++import kotlinx.coroutines.ExperimentalCoroutinesApi
++import kotlinx.coroutines.async
++import kotlinx.coroutines.test.StandardTestDispatcher
++import kotlinx.coroutines.test.advanceUntilIdle
++import kotlinx.coroutines.test.runTest
++import okhttp3.WebSocket
++import okhttp3.WebSocketListener
++import org.junit.After
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.annotation.Config
++
++@RunWith(RobolectricTestRunner::class)
++@Config(application = HiltTestApplication::class, sdk = [34])
++@OptIn(ExperimentalCoroutinesApi::class)
++class NativeCallAudioTest {
++    @After fun tearDown() {
++        unmockkAll()
++    }
++
++    @Test fun `Given playback initialization failure then close the socket and allow another session`() = checkFailure(false)
++
++    @Test fun `Given capture initialization failure then release playback and allow another session`() = checkFailure(true)
++
++    private fun checkFailure(failCapture: Boolean) = runTest {
++        val repository = mockk<NativeCallRepository>()
++        val socket = mockk<WebSocket>(relaxed = true)
++        val track = mockk<AudioTrack>(relaxed = true)
++        val trackBuilder = mockk<AudioTrack.Builder>()
++        val recordBuilder = mockk<AudioRecord.Builder>()
++        mockkStatic(AudioTrack::class, AudioRecord::class)
++        mockkConstructor(AudioTrack.Builder::class, AudioRecord.Builder::class)
++        every { AudioTrack.getMinBufferSize(any(), any(), any()) } returns 1024
++        every { AudioRecord.getMinBufferSize(any(), any(), any()) } returns 1024
++        every { anyConstructed<AudioTrack.Builder>().setAudioAttributes(any()) } returns trackBuilder
++        every { trackBuilder.setAudioFormat(any()) } returns trackBuilder
++        every { trackBuilder.setTransferMode(any()) } returns trackBuilder
++        every { trackBuilder.setBufferSizeInBytes(any()) } returns trackBuilder
++        if (failCapture) {
++            every { trackBuilder.build() } returns track
++        } else {
++            every { trackBuilder.build() } throws UnsupportedOperationException("Playback unavailable")
++        }
++        every { track.state } returns AudioTrack.STATE_INITIALIZED
++        every { track.playState } returns AudioTrack.PLAYSTATE_PLAYING
++        every { anyConstructed<AudioRecord.Builder>().setAudioSource(any()) } returns recordBuilder
++        every { recordBuilder.setAudioFormat(any()) } returns recordBuilder
++        every { recordBuilder.setBufferSizeInBytes(any()) } returns recordBuilder
++        every { recordBuilder.build() } throws UnsupportedOperationException("Capture unavailable")
++        var listener: WebSocketListener? = null
++        val direction = "sendrecv"
++        coEvery { repository.openMedia(any(), any(), any()) } coAnswers {
++            listener = thirdArg()
++            listener!!.onMessage(socket, """{"tx_format":"48000:s16le:1:10","rx_format":"48000:s16le:1:10","audio_direction":"$direction"}""")
++            socket
++        }
++        every { socket.send(any<String>()) } answers {
++            listener!!.onClosed(socket, 1000, "")
++            true
++        }
++        val audio = NativeCallAudio(repository, StandardTestDispatcher(testScheduler))
++        val failed = async { runCatching { audio.run(1, "/api/example/media") } }
++        advanceUntilIdle()
++        val error = failed.await().exceptionOrNull()
++        assertTrue(error is IOException)
++        assertEquals("Native audio device could not be opened", error?.message)
++        assertTrue(generateSequence(error) { it.cause }.last() is UnsupportedOperationException)
++        verify(exactly = 1) { socket.cancel() }
++        verify(exactly = if (failCapture) 1 else 0) { track.release() }
++        val nextTrack = mockk<AudioTrack>(relaxed = true)
++        val nextRecord = mockk<AudioRecord>(relaxed = true)
++        every { nextTrack.state } returns AudioTrack.STATE_INITIALIZED
++        every { nextTrack.playState } returns AudioTrack.PLAYSTATE_PLAYING
++        every { nextRecord.state } returns AudioRecord.STATE_INITIALIZED
++        every { nextRecord.recordingState } returns AudioRecord.RECORDSTATE_RECORDING
++        every { trackBuilder.build() } returns nextTrack
++        every { recordBuilder.build() } returns nextRecord
++        val retry = async { audio.run(1, "/api/example/next-media") }
++        advanceUntilIdle()
++        retry.await()
++        verify(exactly = 2) { socket.cancel() }
++        verify(exactly = if (failCapture) 1 else 0) { track.release() }
++        verify(exactly = 1) { nextTrack.release() }
++        verify(exactly = 1) { nextRecord.release() }
++    }
++}
+diff --git a/common/src/test/kotlin/io/homeassistant/companion/android/common/data/call/NativeCallRepositoryTest.kt b/common/src/test/kotlin/io/homeassistant/companion/android/common/data/call/NativeCallRepositoryTest.kt
+new file mode 100644
+index 0000000..8f6751b
+--- /dev/null
++++ b/common/src/test/kotlin/io/homeassistant/companion/android/common/data/call/NativeCallRepositoryTest.kt
+@@ -0,0 +1,94 @@
++package io.homeassistant.companion.android.common.data.call
++
++import io.homeassistant.companion.android.common.data.authentication.AuthenticationRepository
++import io.homeassistant.companion.android.common.data.servers.ServerConnectionStateProvider
++import io.homeassistant.companion.android.common.data.servers.ServerManager
++import io.homeassistant.companion.android.common.data.servers.UrlState
++import io.homeassistant.companion.android.common.util.di.SuspendProvider
++import io.mockk.Runs
++import io.mockk.coEvery
++import io.mockk.every
++import io.mockk.just
++import io.mockk.mockk
++import io.mockk.slot
++import java.net.URI
++import kotlin.coroutines.CoroutineContext
++import kotlinx.coroutines.CoroutineDispatcher
++import kotlinx.coroutines.ExperimentalCoroutinesApi
++import kotlinx.coroutines.flow.flowOf
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.test.runCurrent
++import kotlinx.coroutines.test.runTest
++import okhttp3.Call
++import okhttp3.Callback
++import okhttp3.MediaType
++import okhttp3.OkHttpClient
++import okhttp3.Protocol
++import okhttp3.Request
++import okhttp3.Response
++import okhttp3.ResponseBody
++import okio.Buffer
++import okio.BufferedSource
++import okio.ForwardingSource
++import okio.buffer
++import org.junit.jupiter.api.Assertions.assertEquals
++import org.junit.jupiter.api.Assertions.assertNotNull
++import org.junit.jupiter.api.Test
++
++@OptIn(ExperimentalCoroutinesApi::class)
++class NativeCallRepositoryTest {
++    @Test
++    fun `Given response headers when cancelled before body dispatch then release the response`() = runTest {
++        val manager = mockk<ServerManager>()
++        val connection = mockk<ServerConnectionStateProvider>()
++        val authentication = mockk<AuthenticationRepository>()
++        coEvery { manager.getServer(1) } returns mockk()
++        coEvery { manager.connectionStateProvider(1) } returns connection
++        coEvery { manager.authenticationRepository(1) } returns authentication
++        every { connection.urlFlow(any()) } returns flowOf(UrlState.HasUrl(URI("https://example.test").toURL()))
++        coEvery { connection.canSafelySendCredentials(any()) } returns true
++        coEvery { authentication.buildBearerToken() } returns "Bearer test-credential"
++        val call = mockk<Call>(relaxed = true)
++        val callback = slot<Callback>()
++        val client = mockk<OkHttpClient>()
++        val builder = mockk<OkHttpClient.Builder>()
++        every { client.newBuilder() } returns builder
++        every { builder.followRedirects(any()) } returns builder
++        every { builder.followSslRedirects(any()) } returns builder
++        every { builder.callTimeout(any<Long>(), any()) } returns builder
++        every { builder.build() } returns client
++        every { client.newCall(any()) } returns call
++        every { call.enqueue(capture(callback)) } just Runs
++        var pending: Runnable? = null
++        val dispatcher = object : CoroutineDispatcher() {
++            override fun dispatch(context: CoroutineContext, block: Runnable) {
++                pending = block
++            }
++        }
++        var closes = 0
++        val source = object : ForwardingSource(Buffer().writeUtf8("{}")) {
++            override fun close() {
++                closes++
++                super.close()
++            }
++        }.buffer()
++        val body = object : ResponseBody() {
++            override fun contentType(): MediaType? = null
++            override fun contentLength(): Long = 2
++            override fun source(): BufferedSource = source
++        }
++        val response = Response.Builder().request(Request.Builder().url("https://example.test/api/call").build())
++            .protocol(Protocol.HTTP_1_1).code(200).message("OK").body(body).build()
++        val repository = NativeCallRepository(manager, SuspendProvider { client }, dispatcher)
++        val job = launch { repository.request(NativeCallInvitation(1, "call", "/api/call")) }
++        runCurrent()
++        callback.captured.onResponse(call, response)
++        runCurrent()
++        assertNotNull(pending)
++        job.cancel()
++        pending!!.run()
++        runCurrent()
++        job.join()
++        assertEquals(1, closes)
++    }
++}

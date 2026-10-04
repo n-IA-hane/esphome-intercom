@@ -1,0 +1,345 @@
+diff --git a/src/data/dashboard_actions.ts b/src/data/dashboard_actions.ts
+new file mode 100644
+index 0000000..a216e8b
+--- /dev/null
++++ b/src/data/dashboard_actions.ts
+@@ -0,0 +1,82 @@
++import type { ShowDialogParams } from "../dialogs/make-dialog-manager";
++import type { HomeAssistant } from "../types";
++
++export interface DashboardActionContext {
++  hass: HomeAssistant;
++  host: HTMLElement;
++  path: string;
++  showDialog: (options: ShowDialogParams<unknown>) => Promise<void>;
++}
++
++/** An action contributed by an already loaded dashboard resource. */
++export interface DashboardAction {
++  id: `${string}:${string}`;
++  icon: string;
++  label: (context: DashboardActionContext) => string;
++  visible?: (context: DashboardActionContext) => boolean;
++  execute: (context: DashboardActionContext) => void | Promise<void>;
++}
++
++export interface ResolvedDashboardAction {
++  action: DashboardAction;
++  label: string;
++}
++
++export class DashboardActions {
++  private _actions = new Map<string, DashboardAction>();
++
++  private _listeners = new Set<() => void>();
++
++  /** Replaces the same namespaced ID. Disposing an old registration is harmless. */
++  public register(action: DashboardAction): () => void {
++    if (!/^[a-z][a-z0-9_]*:[a-z][a-z0-9_-]*$/.test(action.id)) {
++      throw new Error("Dashboard actions require a namespaced ID");
++    }
++    if (
++      !action.icon.startsWith("mdi:") ||
++      typeof action.execute !== "function"
++    ) {
++      throw new Error("Dashboard actions require an MDI icon and an action");
++    }
++    const registered = Object.freeze({ ...action });
++    this._actions.set(action.id, registered);
++    this._notify();
++    return () => {
++      if (this._actions.get(action.id) !== registered) return;
++      this._actions.delete(action.id);
++      this._notify();
++    };
++  }
++
++  public subscribe(listener: () => void): () => void {
++    this._listeners.add(listener);
++    return () => this._listeners.delete(listener);
++  }
++
++  public resolve(context: DashboardActionContext): ResolvedDashboardAction[] {
++    const result: ResolvedDashboardAction[] = [];
++    for (const action of this._actions.values()) {
++      try {
++        if (action.visible && !action.visible(context)) continue;
++        const label = action.label(context);
++        if (label) result.push({ action, label });
++      } catch (error) {
++        // A broken resource must not prevent built-in dashboard actions rendering.
++        reportError(error);
++      }
++    }
++    return result;
++  }
++
++  private _notify(): void {
++    for (const listener of this._listeners) listener();
++  }
++}
++
++export const dashboardActions = new DashboardActions();
++
++declare global {
++  interface Window {
++    customDashboardActions: Pick<DashboardActions, "register">;
++  }
++}
+diff --git a/src/external_app/external_messaging.ts b/src/external_app/external_messaging.ts
+index 5d40074..0caae0f 100644
+--- a/src/external_app/external_messaging.ts
++++ b/src/external_app/external_messaging.ts
+@@ -78,6 +78,33 @@ interface EMOutgoingMessageImportThreadCredentials extends EMMessage {
+ }
+ 
+ interface EMOutgoingMessageWithAnswer {
++  "call/context": {
++    request: EMMessage & { type: "call/context" };
++    response: { deviceId: string | null };
++  };
++  "call/prepare": {
++    request: EMMessage & { type: "call/prepare" };
++    response: { mediaClientId: string };
++  };
++  "call/start": {
++    request: EMMessage & {
++      type: "call/start";
++      payload: { callId: string; callPath: string };
++    };
++    response: null;
++  };
++  "call/control": {
++    request: EMMessage & {
++      type: "call/control";
++      payload: {
++        callId: string;
++        callPath: string;
++        action: "answer" | "hangup" | "dtmf";
++        digit?: string;
++      };
++    };
++    response: null;
++  };
+   "config/get": {
+     request: EMOutgoingMessageConfigGet;
+     response: ExternalConfig;
+@@ -388,6 +415,7 @@ type EMIncomingMessage =
+ type EMIncomingMessageHandler = (msg: EMIncomingMessageCommands) => boolean;
+ 
+ export interface ExternalConfig {
++  nativeCalls?: number;
+   hasSettingsScreen?: boolean;
+   hasSidebar?: boolean;
+   canWriteTag?: boolean;
+diff --git a/src/panels/lovelace/hui-root.ts b/src/panels/lovelace/hui-root.ts
+index e60b7d4..385fb81 100644
+--- a/src/panels/lovelace/hui-root.ts
++++ b/src/panels/lovelace/hui-root.ts
+@@ -24,6 +24,11 @@ import { customElement, property, state } from "lit/decorators";
+ import { classMap } from "lit/directives/class-map";
+ import { ifDefined } from "lit/directives/if-defined";
+ import memoizeOne from "memoize-one";
++import {
++  dashboardActions,
++  type DashboardActionContext,
++  type ResolvedDashboardAction,
++} from "../../data/dashboard_actions";
+ import { isComponentLoaded } from "../../common/config/is_component_loaded";
+ import { UndoRedoController } from "../../common/controllers/undo-redo-controller";
+ import { fireEvent } from "../../common/dom/fire_event";
+@@ -366,9 +371,15 @@ class HUIRoot extends LitElement {
+       });
+     }
+ 
++    const contributedActions =
++      this._editMode || this.hass.kioskMode
++        ? []
++        : dashboardActions.resolve(this._dashboardActionContext());
+     const overflowItems = items.filter((i) => i.visible && i.overflow);
+     const overflowCanPromote =
+-      overflowItems.length === 1 && overflowItems[0].overflow_can_promote;
++      contributedActions.length === 0 &&
++      overflowItems.length === 1 &&
++      overflowItems[0].overflow_can_promote;
+     const buttonItems = items.filter(
+       (i) => i.visible && (!i.overflow || overflowCanPromote)
+     );
+@@ -421,7 +432,10 @@ class HUIRoot extends LitElement {
+       result.push(button);
+     });
+ 
+-    if (overflowItems.length && !overflowCanPromote) {
++    if (
++      (overflowItems.length || contributedActions.length) &&
++      !overflowCanPromote
++    ) {
+       result.push(html`
+         <ha-dropdown
+           slot="actionItems"
+@@ -441,6 +455,14 @@ class HUIRoot extends LitElement {
+               ${title}
+             </ha-dropdown-item>`;
+           })}
++          ${contributedActions.map(
++            (item) => html`
++              <ha-dropdown-item .value=${item.action.id} .data=${item}>
++                <ha-icon slot="icon" .icon=${item.action.icon}></ha-icon>
++                ${item.label}
++              </ha-dropdown-item>
++            `
++          )}
+         </ha-dropdown>
+       `);
+     }
+@@ -687,8 +709,25 @@ class HUIRoot extends LitElement {
+     });
+   }
+ 
++  private _dashboardActionsUnsubscribe?: () => void;
++
++  private _dashboardActionContext(): DashboardActionContext {
++    return {
++      hass: this.hass,
++      host: this,
++      path: this.route?.path ?? "",
++      showDialog: async (options) => {
++        await import("../../components/ha-dialog");
++        fireEvent(this, "show-dialog", options);
++      },
++    };
++  }
++
+   public connectedCallback(): void {
+     super.connectedCallback();
++    this._dashboardActionsUnsubscribe = dashboardActions.subscribe(() =>
++      this.requestUpdate()
++    );
+     window.addEventListener("scroll", this._handleWindowScroll, {
+       passive: true,
+     });
+@@ -700,6 +739,8 @@ class HUIRoot extends LitElement {
+ 
+   public disconnectedCallback(): void {
+     super.disconnectedCallback();
++    this._dashboardActionsUnsubscribe?.();
++    this._dashboardActionsUnsubscribe = undefined;
+     window.removeEventListener("scroll", this._handleWindowScroll);
+     window.removeEventListener("popstate", this._handlePopState);
+     window.removeEventListener("location-changed", this._locationChanged);
+@@ -1310,9 +1351,17 @@ class HUIRoot extends LitElement {
+   }
+ 
+   private _handleOverflowItemSelect(
+-    ev: HaDropdownSelectEvent<ActionItem["key"], ActionItem>
++    ev: HaDropdownSelectEvent<string, ActionItem | ResolvedDashboardAction>
+   ) {
+     const item = ev.detail.item.data;
++    if (item && "action" in item) {
++      void Promise.resolve()
++        .then(() => item.action.execute(this._dashboardActionContext()))
++        .catch((error) => {
++          showAlertDialog(this, { text: String(error) });
++        });
++      return;
++    }
+     if (item?.subItems) {
+       const title = [this.hass!.localize(item.key), item.suffix].join(" ");
+       showListItemsDialog(this, {
+diff --git a/src/resources/custom-card-support.ts b/src/resources/custom-card-support.ts
+index dbf420c..21ee64f 100644
+--- a/src/resources/custom-card-support.ts
++++ b/src/resources/custom-card-support.ts
+@@ -1,4 +1,9 @@
+ import { css, html, LitElement } from "lit";
++import { dashboardActions } from "../data/dashboard_actions";
++
++window.customDashboardActions = {
++  register: (action) => dashboardActions.register(action),
++};
+ 
+ (LitElement.prototype as any).html = html;
+ (LitElement.prototype as any).css = css;
+diff --git a/test/data/dashboard_actions.test.ts b/test/data/dashboard_actions.test.ts
+new file mode 100644
+index 0000000..8d3e0ca
+--- /dev/null
++++ b/test/data/dashboard_actions.test.ts
+@@ -0,0 +1,77 @@
++import { describe, expect, it, vi } from "vitest";
++import {
++  DashboardActions,
++  type DashboardAction,
++  type DashboardActionContext,
++} from "../../src/data/dashboard_actions";
++import type { HomeAssistant } from "../../src/types";
++
++const context: DashboardActionContext = {
++  hass: { language: "en" } as HomeAssistant,
++  host: document.createElement("div"),
++  path: "/home",
++  showDialog: vi.fn(),
++};
++const action = (id: DashboardAction["id"]): DashboardAction => ({
++  id,
++  icon: "mdi:phone",
++  label: ({ hass }) => hass.language,
++  execute: vi.fn(),
++});
++
++describe("dashboard action registrations", () => {
++  it("replaces duplicate IDs without letting stale cleanup remove the new action", () => {
++    const registry = new DashboardActions();
++    const first = registry.register(action("example:call"));
++    const second = registry.register(action("example:call"));
++    first();
++    expect(registry.resolve(context)).toHaveLength(1);
++    second();
++    expect(registry.resolve(context)).toHaveLength(0);
++  });
++  it("resolves labels and visibility from the current context", () => {
++    const registry = new DashboardActions();
++    registry.register({
++      ...action("example:call"),
++      visible: (ctx) => ctx.path === "/home",
++    });
++    expect(registry.resolve(context)[0].label).toBe("en");
++    expect(
++      registry.resolve({
++        ...context,
++        hass: { language: "it" } as HomeAssistant,
++      })[0].label
++    ).toBe("it");
++    expect(registry.resolve({ ...context, path: "/other" })).toEqual([]);
++  });
++  it("unsubscribes views without removing their registrations", () => {
++    const registry = new DashboardActions();
++    const listener = vi.fn();
++    const stop = registry.subscribe(listener);
++    registry.register(action("example:call"));
++    stop();
++    registry.register(action("another:call"));
++    expect(listener).toHaveBeenCalledTimes(1);
++    expect(registry.resolve(context)).toHaveLength(2);
++  });
++  it("isolates a broken resource and reports its exception", () => {
++    const report = vi.fn();
++    vi.stubGlobal("reportError", report);
++    try {
++      const registry = new DashboardActions();
++      registry.register({
++        ...action("broken:call"),
++        label: () => {
++          throw new Error("invalid label");
++        },
++      });
++      registry.register(action("example:call"));
++      expect(registry.resolve(context).map((item) => item.action.id)).toEqual([
++        "example:call",
++      ]);
++      expect(report).toHaveBeenCalledOnce();
++    } finally {
++      vi.unstubAllGlobals();
++    }
++  });
++});
