@@ -13,7 +13,9 @@ class VoipStackComposer extends HTMLElement {
     this._dialog = document.createElement("ha-dialog");
     this._dialog.setAttribute("header-title", "VoIP Stack");
     this._dialog.setAttribute("width", "medium");
-    this._dialog.addEventListener("closed", () => this._closed());
+    this._dialog.addEventListener("closed", (event) => {
+      if (event.target === this._dialog) this._closed();
+    });
     this._form = document.createElement("ha-form");
     this._form.addEventListener("value-changed", (event) => {
       if (this._phone?.callActive) return;
@@ -23,6 +25,8 @@ class VoipStackComposer extends HTMLElement {
     this._error.setAttribute("alert-type", "error");
     this._error.hidden = true;
     this._phone = document.createElement("voip-stack-card");
+    this._phone.style.display = "none";
+    this._phone.addEventListener("call-activity-changed", () => this._renderForm());
     this._dialog.append(this._form, this._error, this._phone);
     this.shadowRoot.append(this._dialog);
     this._sync = () => this._renderForm();
@@ -59,6 +63,7 @@ class VoipStackComposer extends HTMLElement {
   }
 
   _closed() {
+    this._dialog.open = false;
     if (!this._open) return;
     this._open = false;
     this.dispatchEvent(new CustomEvent("dialog-closed", {
@@ -68,10 +73,14 @@ class VoipStackComposer extends HTMLElement {
 
   async _loadPhones() {
     try {
-      const result = await this._hass.callWS({ type: "voip_stack/list_devices" });
-      const external = this._hass.auth.external;
-      this._nativeContext = external?.config?.nativeCalls === 1
+      const hass = this._hass;
+      const external = hass.auth.external;
+      const capabilities = external ? await external.sendMessage({ type: "config/get" }) : null;
+      const nativeContext = capabilities?.nativeCalls === 1
         ? await external.sendMessage({ type: "call/context" }) : null;
+      const result = await hass.callWS({ type: "voip_stack/list_devices" });
+      if (this._hass?.auth !== hass.auth) return;
+      this._nativeContext = nativeContext;
       this._phones = (result.devices || []).filter((phone) =>
         phone.endpoint_type === "browser" || phone.endpoint_type === "esphome" ||
         (phone.endpoint_type === "companion" && phone.mobile_device_id === this._nativeContext?.deviceId));
@@ -80,7 +89,19 @@ class VoipStackComposer extends HTMLElement {
           ? this._phones.find((phone) => phone.endpoint_type === "companion" && phone.mobile_device_id === this._nativeContext.deviceId)
           : this._phones.find((phone) => phone.endpoint_id === "default"));
       if (selected) this._select(selected.device_id);
-      else this._showError("The default Home Assistant phone is unavailable. Choose a calling phone.");
+      else {
+        this._selected = "";
+        this._phone.style.display = "none";
+        this._showError(
+          !external
+            ? "No app connection was detected. Open the experimental Companion app, or select a browser phone."
+            : capabilities?.nativeCalls !== 1
+              ? "This app does not report native calling support. Open the experimental Companion app."
+              : !nativeContext?.deviceId
+                ? "The app has not provided its phone identity for this Home Assistant server."
+                : "This app has no matching calling phone on this Home Assistant server.",
+        );
+      }
       this._renderForm();
     } catch (error) { this._showError(error.message || String(error)); }
   }
@@ -94,12 +115,14 @@ class VoipStackComposer extends HTMLElement {
     this._phone.setConfig({ type: "custom:voip-stack-card", mode: phone.endpoint_type === "esphome" ? "esp_mirror" : "ha_softphone", device_id: deviceId });
     this._phone.presentation = "composer";
     this._phone.hass = this._hass;
+    this._phone.style.display = "";
     this._renderForm();
   }
 
   _renderForm() {
     if (!this._hass) return;
-    this._form.computeLabel = () => voipStackTranslate(this._hass, "Calling phone");
+    this._form.computeLabel = () => voipStackTranslate(this._hass, "Call from (your phone)");
+    this._form.computeHelper = () => voipStackTranslate(this._hass, "This device places the call. Choose who to call under Destination.");
     this._form.data = { caller: this._selected };
     this._form.disabled = !!this._phone.callActive;
     this._form.schema = [{ name: "caller", required: true, selector: {

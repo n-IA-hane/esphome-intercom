@@ -1,4 +1,15 @@
 const PT_BR = {
+  "No app connection was detected. Open the experimental Companion app, or select a browser phone.": "Nenhuma conexão com o aplicativo foi detectada. Abra o aplicativo Companion experimental ou selecione um telefone do navegador.",
+  "This app does not report native calling support. Open the experimental Companion app.": "Este aplicativo não informa suporte a chamadas nativas. Abra o aplicativo Companion experimental.",
+  "The app has not provided its phone identity for this Home Assistant server.": "O aplicativo não forneceu sua identidade de telefone para este servidor Home Assistant.",
+  "This app has no matching calling phone on this Home Assistant server.": "Este aplicativo não tem um telefone correspondente neste servidor Home Assistant.",
+  "Calling phone": "Telefone de origem",
+  "Call from (your phone)": "Ligar de (seu telefone)",
+  "This device places the call. Choose who to call under Destination.": "Este dispositivo faz a chamada. Escolha para quem ligar em Destino.",
+  "The default Home Assistant phone is unavailable. Choose a calling phone.": "O telefone padrão do Home Assistant está indisponível. Escolha um telefone de origem.",
+  "The native call is no longer available.": "A chamada nativa não está mais disponível.",
+  "Microphone access is required to place a native call": "É necessário permitir o acesso ao microfone para fazer uma chamada nativa",
+  "The native call is unavailable or the command was rejected": "A chamada nativa está indisponível ou o comando foi rejeitado",
   "Active call": "Chamada ativa",
   "Active": "Ativa",
   "call": "chamada",
@@ -103,6 +114,17 @@ const PT_BR = {
 };
 
 const DE = {
+  "No app connection was detected. Open the experimental Companion app, or select a browser phone.": "Keine App-Verbindung erkannt. Öffne die experimentelle Companion-App oder wähle ein Browser-Telefon.",
+  "This app does not report native calling support. Open the experimental Companion app.": "Diese App meldet keine Unterstützung für native Anrufe. Öffne die experimentelle Companion-App.",
+  "The app has not provided its phone identity for this Home Assistant server.": "Die App hat ihre Telefonidentität für diesen Home-Assistant-Server nicht bereitgestellt.",
+  "This app has no matching calling phone on this Home Assistant server.": "Dieser App ist auf diesem Home-Assistant-Server kein passendes Telefon zugeordnet.",
+  "Calling phone": "Anrufendes Telefon",
+  "Call from (your phone)": "Anrufen von (dein Telefon)",
+  "This device places the call. Choose who to call under Destination.": "Dieses Gerät führt den Anruf aus. Wähle unter Ziel aus, wen du anrufen möchtest.",
+  "The default Home Assistant phone is unavailable. Choose a calling phone.": "Das Standardtelefon von Home Assistant ist nicht verfügbar. Wähle ein anrufendes Telefon.",
+  "The native call is no longer available.": "Der native Anruf ist nicht mehr verfügbar.",
+  "Microphone access is required to place a native call": "Für einen nativen Anruf ist der Mikrofonzugriff erforderlich",
+  "The native call is unavailable or the command was rejected": "Der native Anruf ist nicht verfügbar oder der Befehl wurde abgelehnt",
   "Active call": "Aktiver Anruf",
   "Active": "Aktiv",
   "call": "Anruf",
