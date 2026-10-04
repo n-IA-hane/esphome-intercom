@@ -1146,51 +1146,6 @@ const degradedVideo = makeCard();
     assert.match(degradedVideo._els.statusReason.textContent, /Video unavailable/i);
 assert.match(degradedVideo._els.statusReason.textContent, /allocate video media/i);
 
-// A composer destination changes the callee, never the native calling phone.
-const destinationCard = makeCard();
-destinationCard.config.device_id = "companion-phone";
-destinationCard.nativeCallContext = {{ deviceId: "mobile" }};
-destinationCard._presentation = "composer";
-destinationCard._softphoneKeypadOpen = true;
-destinationCard._softphoneManualTarget = "old destination";
-destinationCard._getSoftphoneTargetDevice = () => ({{ device_id: "esp-target", name: "Generic S3", extension: "430" }});
-destinationCard._saveSoftphoneTargetPreference = () => {{}};
-destinationCard._renderComposerSuggestions = () => {{}};
-destinationCard._setSoftphoneTarget("esp-target");
-assert.equal(destinationCard._manualTarget(), "430");
-assert.equal(destinationCard.config.device_id, "companion-phone");
-assert.equal(destinationCard.config.mode, "ha_softphone");
-assert.equal(destinationCard.nativeCallContext.deviceId, "mobile");
-assert.equal(destinationCard._els.destRow.hidden, false);
-assert.equal(destinationCard._els.destSelect.hidden, false);
-
-// ESP composer presentation must never expose the card's contact cycler.
-const espComposer = makeCard();
-espComposer.config = {{ mode: "esp_mirror", device_id: "esp-source" }};
-espComposer._renderComposerSuggestions = () => {{}};
-espComposer.presentation = "composer";
-assert.equal(espComposer._mirrorKeypadOpen, true);
-for (const keypadOpen of [true, false]) {{
-  espComposer._mirrorKeypadOpen = keypadOpen;
-  espComposer._render();
-  assert.equal(espComposer._els.prevBtn.hidden, true);
-  assert.equal(espComposer._els.nextBtn.hidden, true);
-  assert.equal(espComposer._els.prevBtn.style.display, "none");
-  assert.equal(espComposer._els.nextBtn.style.display, "none");
-}}
-
-// Containers receive terminal activity changes even without a later HA entity update.
-const activityCard = makeCard();
-const activityEvents = [];
-activityCard.addEventListener("call-activity-changed", event => activityEvents.push(event.detail.active));
-activityCard._starting = true;
-activityCard._render();
-activityCard._starting = false;
-activityCard._softphoneSnapshot = {{ state: "idle" }};
-activityCard._render();
-activityCard._render();
-assert.deepEqual(activityEvents.slice(-2), [true, false]);
-
 // Cancelling an outbound start before its reply has no call ID yet. Invalidate
 // the start operation without issuing an unscoped terminal command.
 const pendingStartCancel = makeCard();
@@ -1201,49 +1156,6 @@ await pendingStartCancel._hangup();
 assert.equal(serviceCalls.length, beforePendingCancel);
 assert.equal(pendingStartCancel._starting, false);
 assert.equal(pendingStartCancel._errorMsg, "");
-
-// Native starts must honor the same user cancellation as browser starts.
-for (const blockedStage of ["prepare", "create"]) {{
-  const native = makeCard();
-  native.nativeCallContext = {{ deviceId: "mobile" }};
-  native.config.device_id = "original-phone";
-  native._callOperationId = 1;
-  native._starting = true;
-  native._manualTarget = () => "Desk";
-  native._loadSoftphoneState = async () => {{}};
-  native._render = () => {{}};
-  const observed = [];
-  let release;
-  let entered;
-  const waiting = new Promise(resolve => {{ release = resolve; }});
-  const reached = new Promise(resolve => {{ entered = resolve; }});
-  native._hass.auth = {{ external: {{ async sendMessage(message) {{
-    observed.push(message.type);
-    if (message.type === "call/prepare") {{
-      if (blockedStage === "prepare") {{ entered(); await waiting; }}
-      return {{ mediaClientId: "native-client" }};
-    }}
-    return {{}};
-  }} }} }};
-  native._hass.callWS = async () => {{
-    observed.push("create");
-    if (blockedStage === "create") {{ entered(); await waiting; }}
-    return {{ response: {{ call: {{ call_id: "created-native" }},
-      native_call: {{ callId: "created-native", callPath: "/api/call?generation=1" }} }} }};
-  }};
-  native._hass.callService = async (domain, service, data) => observed.push({{ service, ...data }});
-  const starting = native._startNativeCall(1);
-  await reached;
-  await native._hangup();
-  native.config.device_id = "another-phone";
-  release();
-  await starting;
-  assert.equal(observed.includes("call/start"), false, "Cancelled start must not attach native audio");
-  assert.equal(observed.includes("create"), blockedStage === "create");
-  const hangups = observed.filter(value => typeof value === "object");
-  assert.equal(hangups.length, blockedStage === "create" ? 1 : 0);
-  if (hangups.length) assert.deepEqual(hangups[0], {{ service: "hangup", device_id: "original-phone", call_id: "created-native" }});
-}}
 
 // A rejected Hangup keeps the exact call claim and attached media available
 // so the user can retry instead of silently becoming a spectator.

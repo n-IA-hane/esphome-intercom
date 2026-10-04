@@ -143,6 +143,15 @@ async def async_migrate_entry(
 
         replace_contacts(hass, config_entry, contact_dicts(config_entry))
         hass.config_entries.async_update_entry(config_entry, version=6)
+    if config_entry.version == 6 and config_entry.minor_version < 2:
+        # Retire only the experimental native-app phones. mobile_app itself,
+        # browser phones, SIP accounts and ESPHome devices remain untouched.
+        for subentry in tuple(config_entry.subentries.values()):
+            if subentry.subentry_type == "phone" and subentry.data.get("kind") == "companion":
+                hass.config_entries.async_remove_subentry(config_entry, subentry.subentry_id)
+        data = dict(config_entry.data)
+        data.pop("companion_enabled", None)
+        hass.config_entries.async_update_entry(config_entry, data=data, minor_version=2)
     return True
 
 
@@ -317,11 +326,6 @@ async def _handle_sip_call_target_service(
     if not call.return_response:
         return None
     response = result.as_service_response()
-    if result.phone.kind.value == "companion":
-        manager = _runtime_data(call.hass).companion_phones
-        invitation = manager.invitations.get(result.phone.endpoint_id) if manager else None
-        if invitation is not None and invitation.token.call_id == result.call_id:
-            response["native_call"] = {"callId": result.call_id, "callPath": invitation.token.path()}
     return response
 
 
@@ -657,12 +661,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: VoipStackConfigEntry) ->
     await _async_start_sip_trunk(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_config_entry_updated))
-    from .companion_phones import CompanionPhones
-    from .companion_view import register_companion_view
-
-    register_companion_view(hass)
-    entry.runtime_data.companion_phones = CompanionPhones(hass, entry)
-    await entry.runtime_data.companion_phones.setup()
     create_runtime_task(hass, _deferred_phonebook_sync(hass))
     return True
 

@@ -14,8 +14,7 @@
           "media_capture": "Registra audio privato per la diagnostica",
           "experimental_sip_video": "Abilita video SIP per il softphone Home Assistant",
           "sip_registrar_enabled": "Abilita account softphone SIP locali",
-          "trunk_enabled": "Abilita trunk SIP opzionale",
-          "companion_enabled": "Abilita telefoni Companion"
+          "trunk_enabled": "Abilita trunk SIP opzionale"
         },
         "data_description": {
           "sip_port": "Porta di ascolto dell'endpoint SIP HA. HA accetta signaling SIP sia su UDP sia su TCP su questa porta.",
@@ -27,8 +26,7 @@
           "media_capture": "Registra esplicitamente audio privato delle chiamate: fino a 15 secondi per direzione del softphone HA e 8 secondi per tratta relay, salvati come WAV/JSON in ~/.cache/voip_stack_debug (permessi 0700) e limitati a 24 file / 64 MiB. Mantienilo disabilitato salvo durante una cattura diagnostica.",
           "experimental_sip_video": "Permette al softphone Home Assistant di negoziare video SIP con telefoni, softphone e videocitofoni standard compatibili. H.264, VP8 e JPEG usano un percorso diretto nel browser. Gli endpoint audio ESP restano solo audio. Richiede HTTPS e un browser compatibile.",
           "sip_registrar_enabled": "Accetta REGISTER da softphone locali come Zoiper, Linphone o baresip usando account gestiti dai servizi VoIP Stack.",
-          "trunk_enabled": "Mostra le impostazioni provider/PBX. Se disattivo, non parte nessuna registrazione trunk, rotta esterna o raccolta DTMF.",
-          "companion_enabled": "Rileva le app Companion compatibili come telefoni separati per le chiamate in ingresso. I nomi seguono il device tracker mobile_app. Richiede una versione Companion con supporto alle chiamate native."
+          "trunk_enabled": "Mostra le impostazioni provider/PBX. Se disattivo, non parte nessuna registrazione trunk, rotta esterna o raccolta DTMF."
         }
       },
       "video": {
@@ -174,22 +172,6 @@
         },
         "reconfigure": {
           "title": "Riconfigura telefono"
-        },
-        "companion": {
-          "title": "Telefono Companion",
-          "description": "Configura questo telefono Companion. Il nome segue il relativo device tracker mobile_app.",
-          "data": {
-            "extension": "Interno",
-            "enabled": "Abilitato",
-            "dnd": "Non disturbare",
-            "ring_group": "Gruppo di chiamata",
-            "conference_group": "Gruppo conferenza",
-            "conference_ring": "Squilla per le conferenze"
-          },
-          "data_description": {
-            "name": "Nome obbligatorio usato da card, rubrica e instradamento.",
-            "extension": "Interno componibile opzionale e univoco. Il telefono logico resta chiamabile anche senza card browser collegata."
-          }
         }
       },
       "error": {

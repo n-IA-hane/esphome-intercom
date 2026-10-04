@@ -63,7 +63,7 @@ def service_configured_endpoint(hass: HomeAssistant, call: ServiceCall):
             ),
             "unknown_phone_device" if device_id else "phone_selection_required",
         )
-    if endpoint.kind not in {EndpointKind.BROWSER, EndpointKind.COMPANION, EndpointKind.SIP_ACCOUNT}:
+    if endpoint.kind not in {EndpointKind.BROWSER, EndpointKind.SIP_ACCOUNT}:
         raise _service_error(
             "The selected Device is not an integration-owned phone",
             "phone_not_integration_owned",

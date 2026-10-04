@@ -1,5 +1,19 @@
 # Breaking changes
 
+## Unreleased: native Companion prototype archived
+
+The experimental dashboard-menu composer and native Companion phone endpoints
+are no longer included. Existing experimental Companion phone subentries are
+removed during migration. Official mobile_app registrations and notifications,
+normal dashboard phones, SIP accounts and ESPHome devices are preserved.
+Update any automations that explicitly targeted a retired native-app phone.
+
+The prototype is preserved on the
+[`archive/companion-native-calls-prototype-20261004` branch](https://github.com/n-IA-hane/esphome-intercom/tree/archive/companion-native-calls-prototype-20261004).
+It is historical design material, not a supported installation. Future work
+will depend on the official Core, Companion and frontend APIs. Reload the
+dashboard or restart the Companion app after updating to discard the old menu.
+
 ## 2026.10.1: coordinated firmware sources
 
 The HA update does not require an ESP firmware update. When adopting the new

@@ -548,7 +548,7 @@ def sync_registry_from_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             )
         registry.upsert(candidate)
     for endpoint in tuple(registry.endpoints):
-        if endpoint.kind in {EndpointKind.BROWSER, EndpointKind.COMPANION, EndpointKind.SIP_ACCOUNT} and (
+        if endpoint.kind in {EndpointKind.BROWSER, EndpointKind.SIP_ACCOUNT} and (
             endpoint.endpoint_id not in configured
         ):
             if endpoint.active_call_id:

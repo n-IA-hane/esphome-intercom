@@ -173,9 +173,6 @@ HA-bridged sequences are in [`docs/CALL_FLOWS.md`](docs/CALL_FLOWS.md).
 
 ## Logical Home Assistant phones
 
-Experimental [native Companion phones](docs/COMPANION_CALLS.md) are separate
-from dashboard phones and require a compatible Companion build.
-
 The integration creates one ordinary Home Assistant browser phone on first
 setup, named from Home Assistant's location. Add or remove phones
 from:

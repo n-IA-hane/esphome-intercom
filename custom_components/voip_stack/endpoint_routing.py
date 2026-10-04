@@ -140,7 +140,7 @@ def sip_target_has_unspecified_audio(
         or info.get("endpoint_kind")
         or ""
     )
-    if kind in {"esphome", "browser", "companion", "assist"}:
+    if kind in {"esphome", "browser", "assist"}:
         return False
     return not any(
         _rtp_capability_tokens(peer, entry, direction, device)

@@ -46,11 +46,10 @@ class _Availability(Enum):
 class _EndpointKind(Enum):
     BROWSER = "browser"
     ESPHOME = "esphome"
-    COMPANION = "companion"
 
     @property
     def is_softphone(self):
-        return self in {self.BROWSER, self.COMPANION}
+        return self is self.BROWSER
 
 
 

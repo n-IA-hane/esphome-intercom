@@ -1059,3 +1059,44 @@ async def test_long_extension_can_be_published_as_ha_text(hass, extension):
     updated = registry.update(endpoint.endpoint_id, extension='1000000004')
     entity.apply_endpoint(updated)
     assert hass.states.get(entity.entity_id).state == '1000000004'
+
+
+async def test_retired_native_phones_migrate_without_removing_supported_phones(hass):
+    from homeassistant.config_entries import ConfigSubentry
+    from homeassistant.helpers import entity_registry as er
+    from custom_components.voip_stack import async_migrate_entry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN, version=6, minor_version=1,
+        data={"companion_enabled": True, "sip_port": 5060},
+    )
+    entry.add_to_hass(hass)
+    kinds = ("browser", "sip_account", "companion")
+    children = {}
+    registry = er.async_get(hass)
+    for kind in kinds:
+        child = ConfigSubentry(
+            data={"kind": kind, "endpoint_id": kind, "name": kind},
+            subentry_type="phone", title=kind, unique_id=kind,
+        )
+        hass.config_entries.async_add_subentry(entry, child)
+        children[kind] = child
+        registry.async_get_or_create(
+            "sensor", DOMAIN, kind, config_entry=entry,
+            config_subentry_id=child.subentry_id,
+        )
+    mobile = MockConfigEntry(domain="mobile_app", data={"device_name": "Phone"})
+    mobile.add_to_hass(hass)
+    tracker = registry.async_get_or_create(
+        "device_tracker", "mobile_app", "phone", config_entry=mobile,
+    )
+
+    assert await async_migrate_entry(hass, entry)
+    assert entry.version == 6 and entry.minor_version == 2
+    assert dict(entry.data) == {"sip_port": 5060}
+    assert set(entry.subentries) == {children[k].subentry_id for k in ("browser", "sip_account")}
+    assert registry.async_get_entity_id("sensor", DOMAIN, "companion") is None
+    assert registry.async_get(tracker.entity_id) is tracker
+    assert hass.config_entries.async_get_entry(mobile.entry_id) is mobile
+    assert await async_migrate_entry(hass, entry)
+    assert len(entry.subentries) == 2

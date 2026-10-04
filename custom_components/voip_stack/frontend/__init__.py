@@ -6,7 +6,6 @@ from pathlib import Path
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.frontend import (
     DATA_EXTRA_MODULE_URL,
-    add_extra_js_url,
     remove_extra_js_url,
 )
 from homeassistant.core import HomeAssistant
@@ -40,12 +39,9 @@ class JSModuleRegistration:
         modules = self.hass.data.get(DATA_EXTRA_MODULE_URL)
         if modules is not None:
             menu_url = f"{URL_BASE}/voip-stack-menu.js"
-            stamp = await self.hass.async_add_executor_job(_frontend_asset_stamp)
-            versioned = f"{menu_url}?v={INTEGRATION_VERSION}-{stamp}"
             for registered in tuple(modules.urls):
-                if registered.split("?")[0] == menu_url and registered != versioned:
+                if registered.split("?")[0] == menu_url:
                     remove_extra_js_url(self.hass, registered)
-            add_extra_js_url(self.hass, versioned)
 
         if self.lovelace is None:
             _LOGGER.warning("Lovelace data not available, skipping resource registration")

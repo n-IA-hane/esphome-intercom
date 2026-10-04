@@ -382,18 +382,3 @@ async def test_esphome_hangup_terminates_owned_pbx_session(
     assert result.call_id == "p4-call"
     termination.terminate.assert_awaited_once()
     invoke.assert_not_awaited()
-
-
-async def test_incoming_companion_does_not_advertise_unimplemented_originate() -> None:
-    endpoint = _endpoint(
-        endpoint_id="companion:mobile", device_id="device-mobile",
-        name="Mobile", kind=EndpointKind.COMPANION,
-    )
-    endpoints = EndpointRegistry()
-    endpoints.register(endpoint)
-    hass = MagicMock()
-    registry = PhoneAdapterRegistry(hass, endpoints)
-    call = _call(hass, device_id=endpoint.device_id, destination="P4")
-    with pytest.raises(ServiceValidationError) as raised:
-        await registry.originate(call, OriginateRequest(destination="P4"))
-    assert raised.value.translation_key == "phone_operation_not_supported"

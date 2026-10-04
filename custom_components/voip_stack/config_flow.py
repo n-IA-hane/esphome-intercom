@@ -50,7 +50,6 @@ from .phone_config import (
     phone_subentries,
 )
 from .phone_endpoint import EndpointKind, OfflinePolicy
-from .companion_protocol import CONF_COMPANION_ENABLED
 from .sip_registrar import generate_password, normalize_username
 from .const import (
     CONF_ASSIST_ADVANCED_CALL_CONTEXT,
@@ -225,6 +224,7 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for VoIP Stack."""
 
     VERSION = 6
+    MINOR_VERSION = 2
     _base_input: dict | None = None
 
     @classmethod
@@ -278,7 +278,6 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_ASSIST_ENDPOINT_ENABLED: existing.get(
                 CONF_ASSIST_ENDPOINT_ENABLED, False
             ),
-            CONF_COMPANION_ENABLED: existing.get(CONF_COMPANION_ENABLED, False),
             CONF_DEBUG_MODE: existing.get(CONF_DEBUG_MODE, False),
             CONF_MEDIA_CAPTURE: existing.get(CONF_MEDIA_CAPTURE, False),
             CONF_SIP_VIDEO: existing.get(CONF_SIP_VIDEO, False),
@@ -302,7 +301,6 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_ASSIST_ENDPOINT_ENABLED,
                     default=defaults[CONF_ASSIST_ENDPOINT_ENABLED],
                 ): BooleanSelector(),
-                vol.Optional(CONF_COMPANION_ENABLED, default=defaults[CONF_COMPANION_ENABLED]): BooleanSelector(),
                 vol.Required(
                     CONF_DEBUG_MODE, default=defaults[CONF_DEBUG_MODE]
                 ): BooleanSelector(),
@@ -992,24 +990,6 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
             data_schema=self._common_schema(sip_account=True),
         )
 
-    async def async_step_companion(self, user_input=None):
-        """Configure a discovered native phone without converting it to a browser."""
-        schema = self._common_schema(sip_account=False)
-        schema = vol.Schema({key: value for key, value in schema.schema.items()
-            if key.schema not in {CONF_PHONE_NAME, CONF_PHONE_VIDEO_ENABLED, CONF_PHONE_AUTO_ANSWER, CONF_PHONE_SEND_VIDEO}})
-        errors = {}
-        if user_input is not None:
-            data, errors = self._normalized_common(
-                {**user_input, CONF_PHONE_NAME: self._current_data()[CONF_PHONE_NAME]},
-                kind=EndpointKind.COMPANION,
-            )
-            if not errors:
-                from .companion_protocol import CONF_MOBILE_APP_ENTRY_ID
-                data.update({CONF_MOBILE_APP_ENTRY_ID: self._current_data()[CONF_MOBILE_APP_ENTRY_ID],
-                    CONF_PHONE_VIDEO_ENABLED: False, CONF_PHONE_AUTO_ANSWER: False, CONF_PHONE_SEND_VIDEO: False})
-                return self._finish(data)
-        return self.async_show_form(step_id="companion", data_schema=schema, errors=errors)
-
     async def async_step_reconfigure(self, user_input=None):
         """Keep endpoint identity and kind stable while editing settings."""
         self._reconfigure = True
@@ -1017,8 +997,6 @@ class PhoneSubentryFlowHandler(ConfigSubentryFlow):
         self._kind = EndpointKind(
             str(current.get(CONF_PHONE_KIND) or EndpointKind.BROWSER.value)
         )
-        if self._kind is EndpointKind.COMPANION:
-            return await self.async_step_companion(user_input)
         if self._kind.is_softphone:
             return await self.async_step_browser(user_input)
         return await self.async_step_sip_account(user_input)

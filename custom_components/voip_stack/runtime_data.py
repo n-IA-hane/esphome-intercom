@@ -14,7 +14,6 @@ from .endpoint_registry import EndpointRegistry
 from .phone_endpoint import EndpointKind, PhoneEndpoint
 
 if TYPE_CHECKING:
-    from .companion_phones import CompanionPhones
     from .device_resolver import VoipDeviceResolver
     from .pbx_runtime import SipEndpointRuntime
     from .phone_control import PhoneAdapterRegistry
@@ -95,7 +94,6 @@ class VoipStackRuntime:
     phonebook_push_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     esp_state_event_bridge_unsub: Any | None = None
     phonebook_service_event_unsub: Any | None = None
-    companion_phones: CompanionPhones | None = None
 
 
 type VoipStackConfigEntry = ConfigEntry[VoipStackRuntime]
@@ -107,7 +105,6 @@ class VoipStackRegistration:
 
     initialized: bool = False
     audio_view: bool = False
-    companion_view: bool = False
     video_view: bool = False
     assist_intents: bool = False
     route_trigger_filters: dict[object, dict] = field(default_factory=dict)

@@ -14,8 +14,7 @@
           "media_capture": "Gravar áudio privado das chamadas para diagnóstico",
           "experimental_sip_video": "Ativar vídeo SIP para o softphone do Home Assistant",
           "sip_registrar_enabled": "Ativar contas SIP locais",
-          "trunk_enabled": "Ativar tronco SIP opcional",
-          "companion_enabled": "Ativar telefones Companion"
+          "trunk_enabled": "Ativar tronco SIP opcional"
         },
         "data_description": {
           "sip_port": "Porta de escuta do endpoint SIP do Home Assistant. O Home Assistant aceita sinalização SIP por UDP e TCP nessa porta.",
@@ -27,8 +26,7 @@
           "media_capture": "Grava explicitamente o áudio privado das chamadas: até 15 segundos por direção do softphone do Home Assistant e 8 segundos por perna de retransmissão, armazenados como WAV/JSON em ~/.cache/voip_stack_debug (modo 0700) e limitados a 24 arquivos / 64 MiB. Mantenha desativado, exceto durante a coleta de uma captura de diagnóstico.",
           "experimental_sip_video": "Permite que o softphone do Home Assistant negocie vídeo SIP com telefones, softphones e interfones compatíveis. H.264, VP8 e JPEG usam o caminho de mídia do navegador. Endpoints ESP padrão permanecem somente com áudio; perfis ESP32-P4 qualificados podem negociar JPEG ou H.264. Requer HTTPS e um navegador compatível.",
           "sip_registrar_enabled": "Aceita REGISTER de endpoints SIP locais, como telefones VoIP, Zoiper, Linphone ou baresip, usando contas gerenciadas pelos serviços do VoIP Stack.",
-          "trunk_enabled": "Exibe as configurações do tronco de provedor/PBX. Quando desativado, não inicia registro do tronco, rota externa nem coletor DTMF.",
-          "companion_enabled": "Detectar apps Companion compatíveis como telefones separados para chamadas recebidas. Os nomes seguem o device tracker mobile_app. Requer uma versão Companion com suporte a chamadas nativas."
+          "trunk_enabled": "Exibe as configurações do tronco de provedor/PBX. Quando desativado, não inicia registro do tronco, rota externa nem coletor DTMF."
         }
       },
       "video": {
@@ -174,22 +172,6 @@
         },
         "reconfigure": {
           "title": "Reconfigurar telefone"
-        },
-        "companion": {
-          "title": "Telefone Companion",
-          "description": "Configure este telefone Companion. O nome segue seu device tracker mobile_app.",
-          "data": {
-            "extension": "Extensão",
-            "enabled": "Ativado",
-            "dnd": "Não perturbe",
-            "ring_group": "Grupo de toque",
-            "conference_group": "Grupo de conferência",
-            "conference_ring": "Tocar para chamadas de conferência"
-          },
-          "data_description": {
-            "name": "Nome obrigatório do telefone usado pelo card, pela agenda telefônica e pelo roteamento de chamadas.",
-            "extension": "Extensão discável exclusiva opcional. O telefone lógico continua podendo receber chamadas mesmo sem um card de navegador conectado."
-          }
         }
       },
       "error": {

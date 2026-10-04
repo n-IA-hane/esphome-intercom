@@ -14,8 +14,7 @@
           "media_capture": "Nehmen Sie den Ton privater Anrufe zur Diagnose auf",
           "experimental_sip_video": "Aktivieren Sie SIP-Video für das Home Assistant-Softphone",
           "sip_registrar_enabled": "Aktivieren Sie lokale SIP-Konten",
-          "trunk_enabled": "Aktivieren Sie den optionalen SIP-Trunk",
-          "companion_enabled": "Companion-Telefone aktivieren"
+          "trunk_enabled": "Aktivieren Sie den optionalen SIP-Trunk"
         },
         "data_description": {
           "sip_port": "Abhörport für den HA-SIP-Endpunkt. HA akzeptiert SIP-Signalisierung über UDP und TCP an diesem Port.",
@@ -27,8 +26,7 @@
           "media_capture": "Zeichnet ausdrücklich private Anrufmedien auf: bis zu 15 Sekunden je HA-Softphone-Richtung und 8 Sekunden je Relay-Abschnitt, gespeichert als WAV/JSON in ~/.cache/voip_stack_debug (Modus 0700) und begrenzt auf 24 Dateien / 64 MiB. Nur für Diagnoseaufzeichnungen aktivieren.",
           "experimental_sip_video": "Lassen Sie das Home Assistant-Softphone SIP-Video mit kompatiblen Standardtelefonen, Softphones und Türstationen aushandeln. H.264, VP8 und JPEG verwenden den Browser-Medienpfad. Standard-ESP-Endpunkte sind weiterhin nur für Audio verfügbar. Qualifizierte ESP32-P4-Profile können JPEG oder H.264 aushandeln. Erfordert HTTPS und einen kompatiblen Browser.",
           "sip_registrar_enabled": "Akzeptiert REGISTER von lokalen SIP-Endpunkten wie VoIP-Telefonen, Zoiper, Linphone oder baresip über Konten, die von VoIP Stack verwaltet werden.",
-          "trunk_enabled": "Provider-/PBX-Trunk-Einstellungen anzeigen. Wenn deaktiviert, wird keine Trunk-Registrierung, externe Route oder DTMF-Sammlung gestartet.",
-          "companion_enabled": "Kompatible Companion-Apps als eigene Telefone für eingehende Anrufe erkennen. Namen folgen dem mobile_app-Gerätetracker. Erfordert eine Companion-Version mit nativer Anrufunterstützung."
+          "trunk_enabled": "Provider-/PBX-Trunk-Einstellungen anzeigen. Wenn deaktiviert, wird keine Trunk-Registrierung, externe Route oder DTMF-Sammlung gestartet."
         }
       },
       "video": {
@@ -174,22 +172,6 @@
         },
         "reconfigure": {
           "title": "Telefon neu konfigurieren"
-        },
-        "companion": {
-          "title": "Companion-Telefon",
-          "description": "Dieses Companion-Telefon konfigurieren. Der Name folgt seinem mobile_app-Gerätetracker.",
-          "data": {
-            "extension": "Nebenstelle",
-            "enabled": "Aktiviert",
-            "dnd": "Bitte nicht stören",
-            "ring_group": "Ringgruppe",
-            "conference_group": "Konferenzgruppe",
-            "conference_ring": "Bei Telefonkonferenzen klingeln"
-          },
-          "data_description": {
-            "name": "Erforderlicher Telefonname, der von der Karte, dem Telefonbuch und der Anrufweiterleitung verwendet wird.",
-            "extension": "Optionale, eindeutig wählbare Nebenstelle. Das logische Telefon bleibt klingelbar, wenn keine Browserkarte angeschlossen ist."
-          }
         }
       },
       "error": {

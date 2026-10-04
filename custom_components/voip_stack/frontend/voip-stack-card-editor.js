@@ -244,9 +244,9 @@ class VoipStackCardEditor extends HTMLElement {
       : "-- Select device --");
     const newOptions = [placeholder];
     const selectableDevices = this._devices.filter((device) =>
-      device.endpoint_type !== "companion" && (softphoneMode
+      softphoneMode
         ? this._isSoftphoneDevice(device) && !!device.device_id
-        : !this._isSoftphoneDevice(device)));
+        : !this._isSoftphoneDevice(device));
     const configuredDeviceId = String(
       this._config.device_id || this._config.entity_id || "",
     );

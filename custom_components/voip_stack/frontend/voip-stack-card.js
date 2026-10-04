@@ -79,10 +79,6 @@ const _voip_log = {
   debug: _ic_dbg ? console.debug.bind(console) : () => {},
 };
 
-if (window.customDashboardActions) {
-  await import(`./voip-stack-menu.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
-}
-
 class VoipStackCard extends HTMLElement {
   constructor() {
     super();
@@ -388,19 +384,6 @@ class VoipStackCard extends HTMLElement {
       (!callId || voipStackEngine.callId === callId);
   }
 
-  set presentation(value) {
-    this._presentation = value === "composer" ? "composer" : "card";
-    if (this._presentation === "composer") {
-      this._softphoneKeypadOpen = true;
-      this._mirrorKeypadOpen = true;
-    }
-    this._render();
-  }
-
-  get callActive() {
-    return this._starting || this._stopping || ["calling", "ringing", "remote_ringing", "connecting", "answering", "in_call", "terminating"].includes(this._softphoneSnapshot?.state);
-  }
-
   _ownsSoftphoneMedia(snapshot = this._softphoneSnapshot || {}) {
     if (!this._isHaSoftphoneMode()) return false;
     if (!this._isSoftphoneController()) return false;
@@ -432,7 +415,6 @@ class VoipStackCard extends HTMLElement {
   }
 
   _isSoftphoneController() {
-    if (this.nativeCallContext) return false;
     return this.isConnected && this._isHaSoftphoneMode() &&
       voipStackEngine.claimSoftphoneController(this, this._softphoneRuntimeKey());
   }
@@ -1073,10 +1055,6 @@ class VoipStackCard extends HTMLElement {
   }
 
   _syncRingtoneRequest(state) {
-    if (this.nativeCallContext) {
-      voipStackEngine.clearRingtoneRequest(this._ringtoneRequestKey);
-      return;
-    }
     voipStackEngine.setRingtoneRequest(
       this._ringtoneRequestKey,
       this._isIncomingSoftphoneRing(state),
@@ -1667,11 +1645,6 @@ class VoipStackCard extends HTMLElement {
   }
 
   _render() {
-    const active = this.callActive;
-    if (active !== this._lastCallActive) {
-      this._lastCallActive = active;
-      this.dispatchEvent(new CustomEvent("call-activity-changed", { detail: { active } }));
-    }
     if (this._isPhonebookMode()) {
       this._renderPhonebook();
       return;
@@ -1872,22 +1845,17 @@ class VoipStackCard extends HTMLElement {
     const keypadOpen = this._keypadOpen();
     const inCallDtmf = softphoneMode &&
       espState.toLowerCase() === "in_call" && showHangup;
-    const composerDestination = this._presentation === "composer" && softphoneMode;
-    els.destRow.hidden = !showCall || (keypadOpen && !composerDestination);
+    els.destRow.hidden = !showCall || keypadOpen;
     els.destValue.textContent = this._contactCyclerDestination(destination);
     if (els.destSelect) {
-      els.destSelect.hidden = !softphoneMode || (keypadOpen && !composerDestination);
-      els.destValueWrap.classList.toggle("selecting", softphoneMode && (!keypadOpen || composerDestination));
+      els.destSelect.hidden = !softphoneMode || keypadOpen;
+      els.destValueWrap.classList.toggle("selecting", softphoneMode && !keypadOpen);
       this._renderSoftphoneDestinationSelect(els.destSelect);
     }
     if (els.keypadPanel) {
       els.keypadPanel.hidden = !((showCall || inCallDtmf) && keypadOpen);
       els.keypadInput.value = this._manualTarget();
       els.keypadInput.hidden = inCallDtmf;
-      const composer = this._presentation === "composer";
-      els.keypadInput.inputMode = composer ? "text" : "tel";
-      if (els.keypadGrid) els.keypadGrid.hidden = composer && !inCallDtmf;
-      if (composer) this._renderComposerSuggestions(els.keypadInput);
       for (const btn of Object.values(els.keypadKeys || {})) {
         btn.disabled = buttonDisabled;
       }
@@ -1896,7 +1864,7 @@ class VoipStackCard extends HTMLElement {
         if (els.keypadKeys["⌫"]) els.keypadKeys["⌫"].disabled = true;
       }
     }
-    const hideContactCycler = this._presentation === "composer" || softphoneMode || keypadOpen;
+    const hideContactCycler = softphoneMode || keypadOpen;
     els.prevBtn.disabled = buttonDisabled || hideContactCycler;
     els.nextBtn.disabled = buttonDisabled || hideContactCycler;
     els.prevBtn.hidden = hideContactCycler;
@@ -1941,7 +1909,7 @@ class VoipStackCard extends HTMLElement {
     els.runtimeControls.hidden = !showRuntimeOptions;
     els.keypadBtn.hidden = !(
       (showCall || inCallDtmf) && showRuntimeOptions && canUseKeypad
-    ) || (this._presentation === "composer" && showCall);
+    );
     const keypadLabel = this._t(keypadOpen ? "Contacts" : "Keypad");
     els.keypadLabel.textContent = keypadLabel;
     els.keypadBtn.setAttribute("aria-label", keypadLabel);
@@ -1957,12 +1925,12 @@ class VoipStackCard extends HTMLElement {
       ? !!this._autoAnswer
       : this._entityState(this._autoAnswerSwitchEntityId).toLowerCase() === "on";
     if (els.ringtoneRow) {
-      els.ringtoneRow.hidden = !(showSettingsPanel && this._isHaSoftphoneMode() && !this.nativeCallContext);
+      els.ringtoneRow.hidden = !(showSettingsPanel && this._isHaSoftphoneMode());
       els.ringtoneCheckbox.checked = !!this._ringtoneEnabled;
     }
     if (els.microphoneAntiAliasRow) {
       els.microphoneAntiAliasRow.hidden =
-        !(showSettingsPanel && this._isHaSoftphoneMode() && !this.nativeCallContext);
+        !(showSettingsPanel && this._isHaSoftphoneMode());
       els.microphoneAntiAliasCheckbox.checked = this._micAntiAliasEnabled;
     }
     if (els.videoCameraRow) {
@@ -1994,7 +1962,7 @@ class VoipStackCard extends HTMLElement {
     }
     const idleMediaView = els.mediaDeviceViews?.[0];
     if (idleMediaView) {
-      idleMediaView.root.hidden = !(showSettingsPanel && softphoneMode && !this.nativeCallContext);
+      idleMediaView.root.hidden = !(showSettingsPanel && softphoneMode);
     }
     this._renderMediaDeviceViews();
     this._applyHangupAudioLevel(
@@ -2175,31 +2143,8 @@ class VoipStackCard extends HTMLElement {
     select.replaceChildren(...options);
   }
 
-  _renderComposerSuggestions(input) {
-    const targets = this._softphoneTargets();
-    const key = JSON.stringify(targets.map((target) => [target.name, target.extension]));
-    if (!this._composerSuggestions) {
-      this._composerSuggestions = document.createElement("datalist");
-      this._composerSuggestions.id = "voip-composer-destinations";
-      input.setAttribute("list", this._composerSuggestions.id);
-      input.parentNode.appendChild(this._composerSuggestions);
-    }
-    if (key === this._composerSuggestionKey) return;
-    this._composerSuggestionKey = key;
-    this._composerSuggestions.replaceChildren(...targets.map((target) => {
-      const option = document.createElement("option");
-      option.value = String(target.extension || target.name || "");
-      option.label = target.name || option.value;
-      return option;
-    }));
-  }
-
   _setSoftphoneTarget(deviceId) {
     this._softphoneTargetDeviceId = deviceId || null;
-    if (this._presentation === "composer") {
-      const target = this._getSoftphoneTargetDevice();
-      this._softphoneManualTarget = String(target?.extension || target?.name || "");
-    }
     this._saveSoftphoneTargetPreference(this._softphoneTargetDeviceId);
     this._render();
   }
@@ -2238,14 +2183,6 @@ class VoipStackCard extends HTMLElement {
   _pressKeypadKey(key) {
     const inCallDtmf = this._isHaSoftphoneMode() &&
       String(this._softphoneSnapshot?.state || "").toLowerCase() === "in_call";
-    if (inCallDtmf && this.nativeCallContext) {
-      if (/^[0-9*#A-D]$/.test(key)) {
-        void this._hass.auth.external.sendMessage({ type: "call/control", payload: {
-          callId: this._sessionCallId(), callPath: this._softphoneSnapshot?.native_call?.callPath, action: "dtmf", digit: key,
-        } }).catch((error) => this._showError(error.message || String(error)));
-      }
-      return;
-    }
     if (inCallDtmf) {
       if (key !== "Clear" && key !== "⌫" && !voipStackEngine.sendDtmf(key)) {
         this._showError("DTMF is unavailable for this call.");
@@ -2286,9 +2223,9 @@ class VoipStackCard extends HTMLElement {
   async _startCall() {
     if (this._starting || this._stopping) return;
     const softphoneAction = this._isHaSoftphoneMode();
-    const mediaIntentToken = softphoneAction && !this.nativeCallContext ? {} : null;
+    const mediaIntentToken = softphoneAction ? {} : null;
     if (
-      softphoneAction && !this.nativeCallContext &&
+      softphoneAction &&
       (
         this._otherPhoneOwnsBrowserMedia() ||
         !voipStackEngine.tryAcquireMediaIntent(
@@ -2310,10 +2247,6 @@ class VoipStackCard extends HTMLElement {
     try {
       const deviceInfo = await this._getDeviceInfo();
       if (operationId !== this._callOperationId) return;
-      if (softphoneAction && this.nativeCallContext) {
-        await this._startNativeCall(operationId);
-        return;
-      }
       if (softphoneAction) {
         await this._startHaSoftphoneCall(deviceInfo, operationId);
         return;
@@ -2349,38 +2282,6 @@ class VoipStackCard extends HTMLElement {
         this._ensureHaSoftphoneAudioPath(this._softphoneSnapshot || {});
         this._render();
       }
-    }
-  }
-
-  async _startNativeCall(operationId) {
-    const destination = this._manualTarget().trim() || this._getSoftphoneTargetDevice()?.name;
-    if (!destination) throw new Error("No destination entered");
-    const hass = this._hass;
-    const external = hass.auth.external;
-    const scope = this._softphoneServiceScope();
-    const isCurrent = () => operationId === this._callOperationId && this._hass?.connection === hass.connection;
-    const prepared = await external.sendMessage({ type: "call/prepare" });
-    if (!isCurrent()) return;
-    let callId = "";
-    const abandon = async () => {
-      if (!callId) return;
-      const ownedCallId = callId;
-      callId = "";
-      await hass.callService("voip_stack", "hangup", { ...scope, call_id: ownedCallId });
-    };
-    try {
-      const result = await hass.callWS({ type: "call_service", domain: "voip_stack", service: "call",
-        return_response: true, service_data: { ...scope, destination,
-          media_client_id: prepared.mediaClientId, send_video: false } });
-      const response = result.response || result;
-      callId = response.call?.call_id || "";
-      if (!isCurrent()) { await abandon(); return; }
-      if (!response.native_call) throw new Error("The native call is no longer available.");
-      await external.sendMessage({ type: "call/start", payload: response.native_call });
-      if (!isCurrent()) await abandon();
-    } catch (error) {
-      await abandon();
-      throw error;
     }
   }
 
@@ -2445,15 +2346,6 @@ class VoipStackCard extends HTMLElement {
       ? String(options.callId || this._sessionCallId() || "")
       : "";
     if (softphoneAction && !callId) return;
-    if (this.nativeCallContext) {
-      try {
-        await this._hass.auth.external.sendMessage({ type: "call/control", payload: {
-          callId, callPath: this._softphoneSnapshot?.native_call?.callPath, action: "answer",
-        } });
-      } catch (error) { this._showError(error.message || String(error)); }
-      return;
-    }
-
     const mediaIntentToken = softphoneAction ? {} : null;
     if (
       softphoneAction &&
