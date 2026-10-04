@@ -1,3 +1,5 @@
+> **Historical prototype archive.** This branch preserves the retired native Companion calling and dashboard-menu experiment. It is not a supported installation. Read the [architecture notes and source patches](archive/native-calls/README.md). Use the maintained `main`/`dev` branches for current development and releases.
+
 # ❤️ Support the future of this project
 
 This project is developed and maintained by **one person, as a private individual**, with no company, commercial sponsor, or organization funding its development.
