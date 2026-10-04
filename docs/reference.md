@@ -445,3 +445,12 @@ accepts 1-3600 seconds. Native VoIP triggers bind the call automatically.
 Caller cancellation stops the wait; expiry permits the next action. A completed
 native automation ends a still-unanswered call with SIP 480. See the
 [no-answer recipe](AUTOMATION_DIALPLAN.md#leave-an-incoming-call-unanswered).
+
+## Per-phone trunk permission
+
+`voip_stack.set_external_call_access` takes a required `device_id` and Boolean
+`allowed`. All phones start with external access enabled. Administrators and
+automations can persistently restrict a browser, SIP-account or ESPHome phone
+without disabling the trunk for other phones. See
+[external call permissions](SERVICES.md#external-call-permissions) for scope and
+[the automation editor example](AUTOMATION_DIALPLAN.md#control-external-calls-per-phone).

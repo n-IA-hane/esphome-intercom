@@ -7,7 +7,7 @@ import logging
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
-from .trunk_policy import trunk_available
+from .trunk_policy import external_call_denied, is_trunk_uri, trunk_available
 from .call_projection import publish_phone_projection
 from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .authorization import async_require_service_admin
@@ -230,6 +230,11 @@ async def async_originate_browser_call(
         target=target,
         source_endpoint_id=endpoint_id,
     )
+    if external_call_denied(cfg, endpoint_id) and (
+        route.action is RouteAction.TRUNK
+        or is_trunk_uri(route.sip_uri, trunk_cfg, getattr(trunk, "active_registrar_target", None))
+    ):
+        raise _service_error("External calls are disabled for this phone", "external_calls_disabled")
     if browser_destination is not None:
         from .local_softphone_bridge import LocalBridgeError
         from .local_softphone_runtime import start_local_softphone_call

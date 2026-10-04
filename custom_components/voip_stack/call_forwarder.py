@@ -67,13 +67,14 @@ from .outbound_bridge_commit import (
     async_commit_outbound_bridge,
 )
 from .pbx_routing import unique_group_members as _unique_group_members
-from .phone_endpoint import EndpointAvailability, EndpointKind
+from .phone_endpoint import EndpointAvailability
 from .phonebook_runtime import registered_roster_entries as _registered_roster_entries
 from .ring_group import (
     settle_browser_candidates as _settle_ring_browser_candidates,
 )
 from .ring_group_fork import build_ring_group_fork
 from .router import RouteAction
+from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, call_external_call_denied, is_trunk_uri
 from .route_abort import (
     RouteAbortContext,
     RouteAbortIntent,
@@ -187,6 +188,19 @@ async def async_forward_existing_call(
             limit=8,
         )
 
+    def _check_external_route(decision):
+        if not cfg.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS):
+            return
+        from .runtime_data import require_runtime_data, sip_trunk
+
+        access_runtime = require_runtime_data(hass)
+        trunk = sip_trunk(hass)
+        if (decision.action is RouteAction.TRUNK or is_trunk_uri(
+            decision.sip_uri, access_runtime.trunk_config,
+            getattr(trunk, "active_registrar_target", None),
+        )) and call_external_call_denied(access_runtime, call_id):
+            raise _service_error("External calls are disabled for this phone", "external_calls_disabled")
+
     local_source = None
     invite = registry.artifact_for(call_id, "pending_invite")
     if invite is None:
@@ -204,6 +218,7 @@ async def async_forward_existing_call(
                 )
             roster_entries = _roster_from_peers(hass, peers, _registered_roster_entries(hass))
             decision = runtime.route_resolver.route(destination, roster_entries)
+            _check_external_route(decision)
             target = runtime.route_resolver.logical_endpoint(
                 decision.target or destination, peers, roster_entries,
             )
@@ -242,6 +257,14 @@ async def async_forward_existing_call(
                 f"call_id {call_id} is not a forwardable pending or ringing HA-owned call",
                 "call_not_forwardable", call_id=call_id,
             )
+    if cfg.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS):
+        # Reject before cancelling an existing ringing attempt or claiming its
+        # route. The normal generation checks below still guard this await.
+        access_peers = await _async_build_peer_snapshot(hass)
+        access_roster = _roster_from_peers(
+            hass, access_peers, _registered_roster_entries(hass)
+        )
+        _check_external_route(runtime.route_resolver.route(destination, access_roster))
     artifacts = call_runtime_artifacts(hass)
     call_artifacts = artifacts.artifacts_for(call_id)
     if call_artifacts is None:
@@ -287,6 +310,7 @@ async def async_forward_existing_call(
             _registered_roster_entries(hass),
         )
         decision = runtime.route_resolver.route(destination, roster_entries)
+        _check_external_route(decision)
         if decision.action is RouteAction.ANSWER_HA:
             target_browser_endpoint = runtime.route_resolver.logical_endpoint(
                 decision.target or destination,

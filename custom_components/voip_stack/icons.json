@@ -150,6 +150,9 @@
       "sections": {
         "advanced": "mdi:tune-variant"
       }
+    },
+    "set_external_call_access": {
+      "service": "mdi:phone-lock"
     }
   },
   "triggers": {

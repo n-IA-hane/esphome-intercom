@@ -314,3 +314,72 @@ def test_unknown_codec_policy_preserves_declared_endpoint_constraints(kind, tx, 
 def test_declared_opus_capabilities_are_not_replaced_by_generic_offer():
     peer = Peer(name="Opus", host="192.0.2.62", sip_audio_tx_formats=("OPUS/48000/2/20",))
     assert endpoint_routing.sip_target_has_unspecified_audio(peer, None) is False
+
+
+@pytest.mark.parametrize("conference", [False, True])
+@pytest.mark.parametrize("use_trunk,uri", [
+    (True, "sip:441234567890@provider.example"),
+    (False, "sip:441234567890@provider.example"),
+    (False, "sip:441234567890@198.51.100.8"),
+])
+def test_restricted_group_member_is_rejected_before_allocating_media(monkeypatch, use_trunk, uri, conference):
+    from custom_components.voip_stack import runtime_data
+    dialer, created, reused = _dialer(monkeypatch)
+    dialer.config["external_call_blocked_endpoints"] = ["sip:restricted"]
+    session = SimpleNamespace(metadata={"source_endpoint_id": "sip:restricted"})
+    access_runtime = SimpleNamespace(
+        transport_config=dialer.config,
+        trunk_config={"trunk_server": "provider.example"},
+        sip=SimpleNamespace(get_session=lambda _: session),
+    )
+    monkeypatch.setattr(runtime_data, "require_runtime_data", lambda _: access_runtime)
+    monkeypatch.setattr(endpoint_dialing, "sip_trunk", lambda _: SimpleNamespace(active_registrar_target=("198.51.100.8", 5060)))
+    allocate = Mock(side_effect=AssertionError("must not allocate forbidden leg"))
+    monkeypatch.setattr(endpoint_dialing.RtpPortReservation, "allocate", allocate)
+    leg = dialer.prepare_outbound_leg(
+        member="External", peers=[], roster_entries=[], local_name="HA",
+        local_rtp_port_index=0, uri_override=uri,
+        invite=None if conference else SimpleNamespace(call_id="call"),
+        source_call_id="call" if conference else "",
+        policy=endpoint_dialing.OutboundLegPolicy(use_trunk_flow=use_trunk),
+    )
+    assert leg is None
+    assert not created
+    allocate.assert_not_called()
+    reused.assert_not_called()
+
+
+async def test_conference_retains_initiator_access_for_outbound_members(monkeypatch):
+    from custom_components.voip_stack import conference_ringing, runtime_data
+    from custom_components.voip_stack.roster import RosterEntry
+
+    dialer, created, _reused = _dialer(monkeypatch)
+    dialer.config["external_call_blocked_endpoints"] = ["sip:restricted"]
+    session = SimpleNamespace(metadata={"source_endpoint_id": "sip:restricted"})
+    registry = SimpleNamespace(
+        sessions={"owner": session}, resolve_session_id=lambda value: value,
+        get_session=lambda call_id: session if call_id == "owner" else None,
+    )
+    access_runtime = SimpleNamespace(
+        transport_config=dialer.config, trunk_config={"trunk_server": "provider.example"}, sip=registry,
+    )
+    monkeypatch.setattr(runtime_data, "require_runtime_data", lambda _: access_runtime)
+    monkeypatch.setattr(endpoint_dialing, "sip_trunk", lambda _: None)
+    monkeypatch.setattr(conference_ringing, "call_registry", lambda _: registry)
+    monkeypatch.setattr(conference_ringing, "conference_manager", lambda *a, **kw: SimpleNamespace(rooms={}))
+    monkeypatch.setattr(conference_ringing, "endpoint_directory", lambda _: SimpleNamespace())
+    allocate = Mock(side_effect=AssertionError("conference must not allocate forbidden member"))
+    monkeypatch.setattr(endpoint_dialing.RtpPortReservation, "allocate", allocate)
+    runtime = conference_ringing.ConferenceRingRuntime(
+        hass=dialer.hass, config=dialer.config, local_ip=dialer.local_ip,
+        on_inbound_timeout=Mock(), browser_leg_for_member=lambda *_: None,
+        prepare_outbound_leg=dialer.prepare_outbound_leg,
+    )
+    await conference_ringing.async_ring_conference_members(
+        runtime, room_name="Room", caller="Restricted", source_host="192.0.2.30",
+        entry=RosterEntry(id="Room", metadata={"ring_members": ["External"]}), peers=[],
+        roster_entries=[RosterEntry(id="External", sip_uri="sip:441234567890@provider.example")],
+        owner_call_id="owner",
+    )
+    assert not created
+    allocate.assert_not_called()

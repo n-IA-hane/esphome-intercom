@@ -7,6 +7,20 @@ phones and do not register to the provider.
 When the trunk is disabled, no trunk registration, external outbound routing or
 inbound DTMF collector is started.
 
+## Which phones may use the trunk?
+
+Every phone is allowed by default. Use **VoIP Stack: Set external call access**
+from an automation or Developer tools to restrict a selected browser phone,
+SIP account or ESPHome phone. The permission persists through restart and rename.
+It controls new outgoing trunk legs routed through HA, including forwarding and
+transfers. Incoming and internal calls continue; changing the permission does
+not hang up a call already established.
+
+See [the editor walkthrough](AUTOMATION_DIALPLAN.md#control-external-calls-per-phone)
+and [permission scope](SERVICES.md#external-call-permissions). This per-phone
+permission is separate from the source-IP list that authenticates a static
+trunk's incoming traffic.
+
 ## Setup flow
 
 The first VoIP Stack setup step configures HA's local SIP

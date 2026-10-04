@@ -29,10 +29,10 @@ from .media_ports import (
 )
 from .outbound_attempts import BrowserLeg, OutboundLeg
 from .pbx_routing import roster_entry_for_target
-from .phone_endpoint import EndpointKind
 from .peer import sip_uri_for_peer
 from .runtime_data import preferred_browser_phone, sip_trunk
 from .trunk_signaling import reuse_registered_trunk_flow
+from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, call_external_call_denied, is_trunk_uri
 from .core.sip import parse_sip_uri
 from .sip_bridge import build_pending_invite_video_relay, video_bridge_offer_formats
 from .sip_client import SipCallClient
@@ -145,6 +145,7 @@ class EndpointDialer:
         tier: int = 0,
         order: int = 0,
         invite: SipInvite | None = None,
+        source_call_id: str = "",
         port_reservation: RtpPortReservation | None = None,
         roster_entry_override: RosterEntry | None = None,
         policy: OutboundLegPolicy | None = None,
@@ -161,6 +162,19 @@ class EndpointDialer:
         uri = parse_sip_uri(uri_override) if uri_override else resolved_uri
         if uri is None or self.route_resolver.is_local_listener_uri(uri):
             return None
+        if self.config.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS):
+            from .runtime_data import require_runtime_data
+
+            access_runtime = require_runtime_data(self.hass)
+            trunk = sip_trunk(self.hass)
+            if (policy.use_trunk_flow or is_trunk_uri(
+                str(uri), access_runtime.trunk_config,
+                getattr(trunk, "active_registrar_target", None),
+            )) and call_external_call_denied(
+                access_runtime, invite.call_id if invite is not None else source_call_id
+            ):
+                _LOGGER.info("External call denied for group or forward member=%s", member)
+                return None
         owns_ports = port_reservation is None
         ports = port_reservation or RtpPortReservation.allocate(self.hass)
         video_relay = None

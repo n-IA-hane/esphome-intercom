@@ -9,6 +9,8 @@ from .phone_endpoint import PhoneEndpoint
 from .runtime_data import VoipStackRuntime
 from .roster import find_entry, parse_roster_json
 from .sip_client import SipCallClient, SipTransferResult
+from .router import RouteAction, resolve_ha_router
+from .trunk_policy import call_external_call_denied, is_trunk_uri
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +105,53 @@ def _attended_target(
     )
 
 
+def _external_transfer_denied(runtime, call_id, target, remote_uri, local_uri="") -> bool:
+    """Apply the existing call's access policy before delegating a REFER."""
+    if not call_external_call_denied(runtime, call_id):
+        return False
+    trunk_config = runtime.trunk_config
+    trunk = runtime.sip.component("trunk")
+    active_target = getattr(trunk, "active_registrar_target", None)
+    if is_trunk_uri(target.uri, trunk_config, active_target):
+        return True
+    uri = sip.parse_sip_uri(target.uri)
+    phonebook = getattr(runtime, "phonebook_sensor", None)
+    attributes = phonebook.extra_state_attributes if phonebook is not None else {}
+    roster_json = str((attributes or {}).get("roster_json") or "")
+    entries = parse_roster_json(roster_json) if roster_json else []
+    local = sip.parse_sip_uri(local_uri) if local_uri else None
+    local_target = bool(local and sip.sip_endpoints_equal(
+        uri.host, uri.port, local.host, local.port
+    ))
+    if local_target:
+        # Follow HA's own dial plan; an extension is not necessarily external.
+        route = resolve_ha_router(uri.user, entries, trunk_ready=True)
+        # REFER delegates a new call to the peer, losing this session's
+        # restricted origin. Groups and automation can create later trunk legs;
+        # only HA-owned forwarding can retain the origin across those routes.
+        return route.action in {
+            RouteAction.TRUNK, RouteAction.GROUP, RouteAction.AUTOMATION,
+        } or is_trunk_uri(
+            route.sip_uri, trunk_config, active_target
+        )
+    if not is_trunk_uri(remote_uri, trunk_config, active_target):
+        return False
+    # A provider executes REFER itself. Only a known direct local destination
+    # is safe here; an unknown remote target could create another trunk call.
+    entry = find_entry(entries, uri.user)
+    if entry is not None:
+        known_uri = sip.parse_sip_uri(entry.sip_uri) if entry.sip_uri else None
+        if known_uri is not None and sip.sip_endpoints_equal(
+            uri.host, uri.port, known_uri.host, known_uri.port
+        ):
+            return False
+        if entry.address and sip.sip_endpoints_equal(
+            uri.host, uri.port, entry.address, entry.port
+        ):
+            return False
+    return True
+
+
 async def async_transfer_call(
     runtime: VoipStackRuntime,
     request: CallTransferRequest,
@@ -124,6 +173,13 @@ async def async_transfer_call(
         target = _attended_target(consultation)
     else:
         target = _blind_target(runtime, remote_uri, request.destination)
+    local_uri = (
+        client.dialog.local_uri
+        if client is not None and client.dialog is not None
+        else str(sip.SipUri("HA", server.local_ip, server.local_sip_port))
+    )
+    if _external_transfer_denied(runtime, request.call_id, target, remote_uri, local_uri):
+        return SipTransferResult(False, 403, "external_calls_disabled")
     if server is not None:
         return await server.async_refer(request.call_id, target) or SipTransferResult(False, 0, "call_not_found")
     return await client.refer(target)
@@ -139,4 +195,8 @@ async def async_transfer_target(
     client = _client_for_call(runtime, call_id)
     if client is None or client.dialog is None:
         return SipTransferResult(False, 0, "call_not_found")
+    if _external_transfer_denied(
+        runtime, call_id, target, client.dialog.remote_uri, client.dialog.local_uri
+    ):
+        return SipTransferResult(False, 403, "external_calls_disabled")
     return await client.refer(target)

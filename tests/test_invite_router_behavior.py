@@ -175,3 +175,39 @@ async def test_direct_trunk_preserves_called_target_and_uses_fallback_only_if_un
     assert request.await_args.kwargs["invite"].routing_target == "601"
     assert request.await_args.kwargs["decision"] == (initial if known else selected_fallback)
     assist.assert_not_awaited()
+
+
+@pytest.mark.parametrize("override", [False, True])
+async def test_restricted_registered_caller_cannot_egress_after_route_override(monkeypatch, override):
+    from custom_components.voip_stack.roster import RosterEntry
+    _patch_route_prefix(monkeypatch)
+    runtime = _runtime()
+    runtime.config["external_call_blocked_endpoints"] = ["sip:alice"]
+    runtime.registrar.registration_matches_source.return_value = True
+    route = RouteDecision(RouteAction.TRUNK, target="441234567890")
+    runtime.inbound_route_decision.return_value = (
+        RouteDecision(RouteAction.FORWARD, target="Desk", sip_uri="sip:desk@192.0.2.20")
+        if override else route
+    )
+    runtime.ha_router_decision.return_value = route
+    runtime.get_trunk_config.return_value = {"trunk_server": "provider.example"}
+    runtime.trunk_enabled.return_value = True
+    caller = RosterEntry(id="alice", metadata={"endpoint_id": "sip:alice"})
+    monkeypatch.setattr(invite_router, "_roster_entry_for_target", lambda *_: caller)
+    registry = SimpleNamespace(artifact_items=lambda _: iter(()), get_session=lambda _: None)
+    monkeypatch.setattr(invite_router, "_call_registry", lambda _: registry)
+    monkeypatch.setattr(invite_router, "registration_data", lambda _: SimpleNamespace(route_trigger_filters={}))
+    monkeypatch.setattr(invite_router, "request_route_override", AsyncMock(return_value=SimpleNamespace(
+        action="forward" if override else "", destination="441234567890" if override else "",
+    )))
+    monkeypatch.setattr(invite_router, "automation_rejection", lambda **_: None)
+    monkeypatch.setattr(invite_router, "resolve_inbound_target", lambda **kwargs: SimpleNamespace(
+        failure=None, decision=kwargs["decision"], endpoint=None,
+    ))
+    monkeypatch.setattr(invite_router, "sip_trunk", lambda _: SimpleNamespace(ready=True))
+    bridge = AsyncMock(side_effect=AssertionError("forbidden call must not start bridge"))
+    monkeypatch.setattr(invite_router, "route_sip_bridge", bridge)
+    result = await invite_router.route_invite(runtime, _invite())
+    assert result.status == 403
+    assert result.decline_reason == "external_calls_disabled"
+    bridge.assert_not_awaited()

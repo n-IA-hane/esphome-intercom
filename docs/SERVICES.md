@@ -7,6 +7,38 @@ fallback routing.
 The card uses these services too. The card does not implement private routing
 logic.
 
+## External call permissions
+
+### `voip_stack.set_external_call_access`
+
+Choose a **Phone** and switch **Allow external calls** on or off. The phone
+can be a browser softphone, a configured SIP account, or a discovered ESPHome
+phone. Every phone is allowed initially. Both `device_id` and `allowed` are
+required, so the action never silently applies a restriction to another phone.
+
+The setting is saved in the integration configuration and follows the phone's
+stable identity through renaming and Home Assistant restarts. Removing and
+recreating a phone creates a new identity with the default permission.
+Administrators and automations can change this setting; ordinary users cannot
+restore their own access through the service.
+
+Blocking external access prevents new trunk legs from that phone, including
+forwards and transfers through HA. An already established call continues.
+Internal calls and incoming calls remain available. A restricted phone taking
+part in a call cannot use that call to create a new external trunk leg.
+
+A restricted call can still transfer to a known internal phone. SIP REFER to
+an HA group or Automation contact is rejected for restricted calls: the other
+phone would start a new call under its own identity, losing the original
+permission. Ordinary calls to groups and Automation contacts retain their
+origin in HA and remain subject to the checks on each outgoing leg.
+
+This controls routes handled by VoIP Stack in Home Assistant. It cannot prevent
+a physical phone from calling another SIP server directly outside HA. Configure
+that phone and your network accordingly if you need a security boundary.
+
+See the [editor walkthrough](AUTOMATION_DIALPLAN.md#control-external-calls-per-phone).
+
 ## Softphone services
 
 A native VoIP trigger supplies the current call to call-handling actions,

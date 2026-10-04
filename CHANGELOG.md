@@ -4,6 +4,12 @@
 
 Changes since stable **2026.10.1**.
 
+- Add **Set external call access** (`voip_stack.set_external_call_access`) to
+  persistently allow or block new trunk calls per phone. All phones are allowed
+  by default. Restrictions follow stable identity and apply to HA routing,
+  forwards and transfers. Incoming/internal and established calls continue.
+  Requested in [#119](https://github.com/n-IA-hane/esphome-intercom/issues/119).
+
 - Add **Wait without answering** (`voip_stack.wait_unanswered`) for Automation
   contacts. Keep SIP ringing without accepting the call or starting media,
   then continue the automation or end unanswered at its completion. Caller

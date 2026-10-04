@@ -518,6 +518,9 @@ negotiated RTP `telephone-event`/compatible SIP INFO DTMF. Outbound contacts
 with public numbers use the same trunk. Explicit digits, no-digit fallback and
 automation overrides have distinct, documented precedence.
 
+Use **Set external call access** to allow or block trunk calls per phone.
+See the [automation editor walkthrough](docs/AUTOMATION_DIALPLAN.md#control-external-calls-per-phone).
+
 See [`docs/SIP_TRUNK.md`](docs/SIP_TRUNK.md) before exposing the listener beyond
 a trusted network.
 

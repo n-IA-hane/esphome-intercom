@@ -203,6 +203,10 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
     phonebook_set_schema = vol.Schema(
         {vol.Required("roster_json"): ROSTER_JSON_TEXT}, extra=vol.PREVENT_EXTRA
     )
+    external_call_access_schema = vol.Schema({
+        vol.Required("device_id"): IDENTIFIER_TEXT,
+        vol.Required("allowed"): cv.boolean,
+    }, extra=vol.PREVENT_EXTRA)
     set_dnd_schema = vol.Schema(
         {
             **phone_selector_fields,
@@ -257,6 +261,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
 
     admin_services = {
         "purge_devices",
+        "set_external_call_access",
         "add_contact",
         "remove_contact",
         "set_contacts",
@@ -344,6 +349,10 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(DOMAIN, "push_phonebook", handler_for("push_phonebook"))
+    hass.services.async_register(
+        DOMAIN, "set_external_call_access", handler_for("set_external_call_access"),
+        schema=external_call_access_schema, supports_response=SupportsResponse.OPTIONAL,
+    )
     hass.services.async_register(DOMAIN, "set_dnd", handler_for("set_dnd"), schema=set_dnd_schema)
     hass.services.async_register(
         DOMAIN,

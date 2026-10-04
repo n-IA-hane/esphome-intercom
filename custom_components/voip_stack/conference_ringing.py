@@ -133,6 +133,7 @@ async def async_ring_conference_members(
                 roster_entries=roster_entries,
                 local_name=room_name,
                 local_rtp_port_index=0,
+                source_call_id=owner_call_id,
             )
         except RuntimeError as err:
             _LOGGER.warning(

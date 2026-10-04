@@ -596,6 +596,31 @@ push_phonebook:
     again when an ESPHome *_set_roster_json service registers after reboot.
     Use this for diagnostics or manual recovery.
 
+set_external_call_access:
+  name: Set external call access
+  description: >-
+    Allow or block new calls through the external trunk for a phone. Applies
+    to calls routed by Home Assistant, including forwarding and transfers.
+    All phones are allowed by default. The setting survives restarts and
+    renaming. Existing calls and incoming or internal calls remain available.
+    Requires an administrator or an automation.
+  fields:
+    device_id:
+      name: Phone
+      description: Browser phone, registered SIP account or discovered ESPHome phone to configure.
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: voip_stack
+            - integration: esphome
+    allowed:
+      name: Allow external calls
+      description: Turn off to block new external trunk calls from this phone. Turn on to restore access.
+      required: true
+      selector:
+        boolean:
+
 set_dnd:
   name: Set do not disturb
   description: Enable or disable do not disturb on a Home Assistant phone.

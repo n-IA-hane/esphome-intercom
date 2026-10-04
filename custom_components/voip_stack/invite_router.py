@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.core import HomeAssistant
 
-from .trunk_policy import trunk_available
+from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, external_call_denied, is_trunk_uri, trunk_available
 from .core import sdp as sip_sdp
 from .call_scope import pending_routes as _pending_routes
 from .runtime_data import endpoint_directory, preferred_browser_phone, sip_trunk, registration_data
@@ -415,6 +415,15 @@ async def route_invite(
     bridge_to_trunk = bool(
         not force_ha_softphone and decision.action is RouteAction.TRUNK and trunk_ready
     )
+    if not force_ha_softphone and runtime.config.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS) and external_call_denied(
+        runtime.config, source_endpoint_id, session=registry.get_session(invite.call_id)
+    ) and (
+        decision.action is RouteAction.TRUNK
+        or is_trunk_uri(decision.sip_uri, trunk_cfg, getattr(trunk, "active_registrar_target", None))
+    ):
+        return SipInviteResult(
+            403, "Forbidden", to_tag="", decline_reason="external_calls_disabled"
+        )
     if invalid_target := validate_target_endpoint(
         invite=invite,
         endpoint=target_endpoint,

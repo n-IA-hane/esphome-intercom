@@ -162,3 +162,39 @@ async def test_forward_rejects_concurrent_owner_without_replacing_it(
     finally:
         owner.cancel()
         await asyncio.gather(owner, return_exceptions=True)
+
+
+@pytest.mark.parametrize("direct_uri", [False, True])
+async def test_forbidden_external_forward_preserves_current_call(monkeypatch, direct_uri):
+    from unittest.mock import AsyncMock
+    from custom_components.voip_stack import runtime_data
+    from custom_components.voip_stack.router import RouteAction, RouteDecision
+
+    invite = object()
+    registry = _registry(invite=invite)
+    registry.get_session = lambda _: SimpleNamespace(metadata={"source_endpoint_id": "sip:restricted"})
+    runtime = _runtime()
+    runtime.config["external_call_blocked_endpoints"] = ["sip:restricted"]
+    runtime.route_resolver.route.return_value = RouteDecision(
+        RouteAction.DIRECT if direct_uri else RouteAction.TRUNK,
+        sip_uri="sip:441234567890@provider.example" if direct_uri else "",
+    )
+    access_runtime = SimpleNamespace(
+        transport_config=runtime.config, trunk_config={"trunk_server": "provider.example"}, sip=registry,
+    )
+    monkeypatch.setattr(call_forwarder, "_call_registry", lambda _: registry)
+    monkeypatch.setattr(call_forwarder, "_async_build_peer_snapshot", AsyncMock(return_value=[]))
+    monkeypatch.setattr(call_forwarder, "_roster_from_peers", lambda *_: [])
+    monkeypatch.setattr(call_forwarder, "_registered_roster_entries", lambda _: [])
+    monkeypatch.setattr(runtime_data, "require_runtime_data", lambda _: access_runtime)
+    monkeypatch.setattr(runtime_data, "sip_trunk", lambda _: None)
+    artifacts = Mock(side_effect=AssertionError("must reject before claiming or cancelling route"))
+    monkeypatch.setattr(call_forwarder, "call_runtime_artifacts", artifacts)
+    with pytest.raises(ServiceValidationError) as caught:
+        await call_forwarder.async_forward_existing_call(
+            runtime, call_id="call-1", destination="441234567890",
+        )
+    assert caught.value.translation_key == "external_calls_disabled"
+    artifacts.assert_not_called()
+    runtime.prepare_outbound_leg.assert_not_called()
+    assert registry.artifact_for("call-1", "pending_invite") is invite

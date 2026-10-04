@@ -38,6 +38,7 @@ from .const import (
     VOIP_STACK_SIP_PORT,
 )
 from .runtime_data import runtime_data
+from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS
 
 
 def entry_assist_config(entry: ConfigEntry | None = None) -> dict:
@@ -58,6 +59,7 @@ def entry_assist_config(entry: ConfigEntry | None = None) -> dict:
 def entry_transport_config(entry: ConfigEntry | None = None) -> dict:
     data = entry.data if entry is not None else {}
     return {
+        EXTERNAL_CALL_BLOCKED_ENDPOINTS: tuple(data.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS, ())),
         CONF_REGISTRAR_ENABLED: bool(data.get(CONF_REGISTRAR_ENABLED, False)),
         "sip_port": int(data.get("sip_port", VOIP_STACK_SIP_PORT)),
         "rtp_port": int(data.get("rtp_port", VOIP_STACK_RTP_PORT)),

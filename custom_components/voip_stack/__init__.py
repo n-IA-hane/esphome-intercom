@@ -35,7 +35,6 @@ from .const import (
     CONF_MEDIA_CAPTURE,
     CONF_PREFERRED_PHONE_DEVICE_ID,
     CONF_SIP_VIDEO,
-    CONF_PHONEBOOK_CONTACTS,
     CONF_AUTOMATION_ROUTING_ENABLED,
     CONF_TRUNK_DTMF_ENABLED,
     CONF_TRUNK_DTMF_TIMEOUT_MS,
@@ -466,6 +465,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     account_handlers = build_account_service_handlers(_refresh_and_push_phonebook)
     phonebook_handlers = build_phonebook_service_handlers(_refresh_and_push_phonebook)
     from .automation_call import async_tts_say, async_wait_for_dtmf, async_wait_unanswered
+    from .external_call_access import async_set_external_call_access
 
     await async_register_services(
         hass,
@@ -476,6 +476,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "hangup": _handle_sip_hangup_service,
             **phonebook_handlers,
             "set_dnd": _handle_set_dnd_service,
+            "set_external_call_access": async_set_external_call_access,
             "set_auto_answer": _handle_set_auto_answer_service,
             "set_send_video": _handle_set_send_video_service,
             "set_ha_softphone_settings": _handle_set_ha_softphone_settings_service,

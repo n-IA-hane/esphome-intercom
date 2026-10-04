@@ -429,6 +429,9 @@
     },
     "unknown_phone_device": {
       "message": "Das ausgewählte Home Assistant-Telefongerät ist unbekannt."
+    },
+    "external_calls_disabled": {
+      "message": "Externe Anrufe sind für dieses Telefon deaktiviert."
     }
   },
   "entity": {

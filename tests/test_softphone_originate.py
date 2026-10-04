@@ -447,3 +447,25 @@ def test_outgoing_dahua_receive_only_offer_is_scoped(
         else:
             assert captured['video_direction'] == 'sendrecv'
             assert fmt.packetization_mode == 1
+
+
+@pytest.mark.parametrize("action,uri", [
+    (_RouteAction.TRUNK, ""),
+    (_RouteAction.DIRECT, "sip:441234567890@provider.example"),
+])
+def test_restricted_browser_rejects_trunk_before_call_start(softphone_originate, action, uri):
+    module = softphone_originate
+    hass = SimpleNamespace(data={"voip_stack": {}}, states=SimpleNamespace(get=lambda _: None))
+    source = SimpleNamespace(endpoint_id="caller", device_id="browser", availability=_Availability.AVAILABLE)
+    route = SimpleNamespace(action=action, sip_uri=uri, entry=None)
+    module._get_transport_config = Mock(return_value={"external_call_blocked_endpoints": ["caller"]})
+    module._get_trunk_config = Mock(return_value={"trunk_server": "provider.example"})
+    module.resolve_ha_router = Mock(return_value=route)
+    module._async_resolve_browser_destination = AsyncMock(return_value=(route, "441234567890", None))
+    module._async_prepare_ha_outbound_call = AsyncMock()
+    with pytest.raises(_ServiceValidationError) as caught:
+        asyncio.run(module.async_originate_browser_call(
+            _call(hass, destination="441234567890"), endpoint_id="caller", browser_endpoint=source,
+        ))
+    assert caught.value.translation_key == "external_calls_disabled"
+    module._async_prepare_ha_outbound_call.assert_not_awaited()

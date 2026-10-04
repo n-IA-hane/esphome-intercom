@@ -15,9 +15,9 @@ from .phone_config import (
     phone_subentries,
     sync_registry_from_entry,
 )
-from .phone_endpoint import EndpointKind
 from .phonebook_runtime import push_roster_json_to_esps
 from .runtime_data import runtime_data, sip_registrar
+from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS
 from .store import manual_roster_entries, sip_accounts
 from .websocket_api import (
     _async_load_ha_softphone_store,
@@ -67,7 +67,7 @@ def entry_runtime_signature(entry: ConfigEntry) -> dict:
     return {
         key: value
         for key, value in entry.data.items()
-        if key not in {CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS}
+        if key not in {CONF_PHONEBOOK_CONTACTS, CONF_SIP_ACCOUNTS, EXTERNAL_CALL_BLOCKED_ENDPOINTS}
     }
 
 
@@ -88,6 +88,9 @@ async def async_config_entry_updated(hass: HomeAssistant, entry: ConfigEntry) ->
     runtime = runtime_data(hass)
     if runtime is None:
         return
+    runtime.transport_config[EXTERNAL_CALL_BLOCKED_ENDPOINTS] = tuple(
+        entry.data.get(EXTERNAL_CALL_BLOCKED_ENDPOINTS, ())
+    )
     runtime_signature = entry_runtime_signature(entry)
     phone_signature = entry_phone_signature(entry)
     from .contact_config import contact_dicts

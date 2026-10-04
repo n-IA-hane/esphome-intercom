@@ -25,7 +25,7 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from .trunk_policy import trusted_networks
+from .trunk_policy import EXTERNAL_CALL_BLOCKED_ENDPOINTS, trusted_networks
 from .config_validation import extension_conflicts, route_namespace_conflicts
 from .phone_config import (
     CONF_PHONE_AUTO_ANSWER,
@@ -251,6 +251,15 @@ class VoipStackConfigFlow(ConfigFlow, domain=DOMAIN):
         if current_entry is None or current_entry.version >= 6:
             data.pop(CONF_PHONEBOOK_CONTACTS, None)
         if current_entry is not None:
+            # Phone permissions are managed by their action, not this wizard.
+            # Read the current entry so an action run while the form was open
+            # is preserved rather than replaced by an older form snapshot.
+            if EXTERNAL_CALL_BLOCKED_ENDPOINTS in current_entry.data:
+                data[EXTERNAL_CALL_BLOCKED_ENDPOINTS] = list(
+                    current_entry.data[EXTERNAL_CALL_BLOCKED_ENDPOINTS]
+                )
+            else:
+                data.pop(EXTERNAL_CALL_BLOCKED_ENDPOINTS, None)
             return self.async_update_and_abort(
                 current_entry,
                 data=data,
