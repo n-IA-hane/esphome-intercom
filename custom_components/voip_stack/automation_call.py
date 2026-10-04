@@ -274,6 +274,18 @@ class AutomationCall:
             call, play, timeout=float(call.data.get("timeout", 120))
         )
 
+    async def wait_unanswered(self, call: ServiceCall) -> None:
+        """Keep the existing ringing application unaccepted without media."""
+        if self.answered or self.session.state != CallState.RINGING.value:
+            raise ServiceValidationError("Wait without answering requires an unanswered automation call")
+
+        async def wait() -> None:
+            self.require_current()
+            await asyncio.sleep(float(call.data.get("duration", 60)))
+            self.require_current()
+
+        await self.run_operation(call, wait, timeout=None)
+
     async def wait_for_dtmf(self, call: ServiceCall) -> dict:
         from .websocket_api import SIP_DTMF_EVENT
         from homeassistant.core import callback
@@ -404,6 +416,11 @@ async def async_tts_say(call: ServiceCall) -> None:
         await application.say(call)
     except Exception as err:
         raise ServiceValidationError(f"Announcement failed: {err}") from err
+
+
+async def async_wait_unanswered(call: ServiceCall) -> None:
+    application, call = await resolve_application_action(call)
+    await application.wait_unanswered(call)
 
 
 async def async_wait_for_dtmf(call: ServiceCall) -> dict:

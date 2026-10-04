@@ -436,3 +436,12 @@ response. Other conditions are `voip_stack.is_call_state`,
 
 Add contact is a separate integration configuration flow. Contacts have their
 own configuration records and do not create phone devices or entities.
+
+### Wait without answering
+
+`voip_stack.wait_unanswered` keeps an unanswered Automation contact call ringing
+without accepting it or opening media. `duration` defaults to 60 seconds and
+accepts 1-3600 seconds. Native VoIP triggers bind the call automatically.
+Caller cancellation stops the wait; expiry permits the next action. A completed
+native automation ends a still-unanswered call with SIP 480. See the
+[no-answer recipe](AUTOMATION_DIALPLAN.md#leave-an-incoming-call-unanswered).

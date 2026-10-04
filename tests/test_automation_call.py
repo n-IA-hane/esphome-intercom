@@ -500,3 +500,103 @@ async def test_announcement_handoff_keeps_the_same_rtp_sender_state(application)
         assert provisional["audio_rtp_source"] is source
     finally:
         await registry.request_termination(app.session.call_id, TerminationIntent("test_done"))
+
+
+async def test_wait_unanswered_keeps_ringing_without_answer_or_media(application):
+    app, registry, peer, released = application
+    app.contact.metadata['automation_timeout'] = 0.01
+    app.arm_deadline()
+    try:
+        await app.wait_unanswered(service(app, duration=0.04))
+        assert app.session.live and app.session.state == 'ringing'
+        assert not app.answered and app.media is None
+        module.send_final_response.assert_not_called()
+        with pytest.raises(BlockingIOError):
+            peer.recv(2048)
+        assert released == []
+        assert app.operation is None and not app.lock.locked()
+    finally:
+        await registry.request_termination(app.session.call_id, TerminationIntent('test_done'))
+    assert app.deadline is None
+
+
+async def test_caller_cancel_interrupts_unanswered_wait(application):
+    app, registry, _peer, released = application
+    task = asyncio.create_task(app.wait_unanswered(service(app, duration=60)))
+    async with asyncio.timeout(2):
+        while app.operation is None:
+            await asyncio.sleep(0)
+    await registry.request_termination(app.session.call_id, TerminationIntent('remote_cancelled'))
+    result, = await asyncio.gather(task, return_exceptions=True)
+    assert isinstance(result, asyncio.CancelledError)
+    assert app.operation is None and app.deadline is None
+    assert not app.answered and app.media is None and released == []
+    module.send_final_response.assert_not_called()
+
+
+async def test_unanswered_wait_rejects_an_already_answered_call(application):
+    app, registry, _peer, _released = application
+    app.answered = True
+    try:
+        with pytest.raises(ServiceValidationError, match='unanswered'):
+            await app.wait_unanswered(service(app, duration=1))
+        assert not app.controller
+        assert app.operation is None
+    finally:
+        await registry.request_termination(app.session.call_id, TerminationIntent('test_done'))
+
+
+async def test_wait_then_forward_does_not_answer_early(application):
+    app, registry, _peer, _released = application
+    registry.forward_call = AsyncMock()
+    try:
+        await app.wait_unanswered(service(app, duration=0.01))
+        await app.forward('Reception')
+        registry.forward_call.assert_awaited_once_with(
+            call_id=app.session.call_id, destination='Reception', on_failure='resume',
+        )
+        assert not app.answered and app.media is None
+        module.send_final_response.assert_not_called()
+    finally:
+        await registry.request_termination(app.session.call_id, TerminationIntent('test_done'))
+
+
+async def test_native_ha_script_waits_without_call_id_then_finishes_unanswered(application, monkeypatch):
+    from homeassistant.helpers.script import Script
+    from homeassistant.helpers.trigger import TriggerConfig
+    from custom_components.voip_stack import automation_context, trigger, services
+
+    app, registry, _peer, _released = application
+    monkeypatch.setattr(automation_context, 'call_registry', lambda _: registry)
+    monkeypatch.setattr(trigger, 'call_registry', lambda _: registry)
+    await services.async_register_services(app.hass, {'wait_unanswered': module.async_wait_unanswered})
+    script = Script(app.hass, [{'action':'voip_stack.wait_unanswered','data':{'duration':1}}], 'Unanswered test', 'automation')
+    finished = asyncio.Event()
+    tasks = []
+    def runner(payload, description, context):
+        task = app.hass.async_create_task(script.async_run({'trigger':payload}, context))
+        tasks.append(task)
+        task.add_done_callback(lambda _: finished.set())
+        return task
+    subject = trigger.VoipCallTrigger(app.hass, TriggerConfig('voip_stack.call_received',options={'destination':'Welcome'}))
+    detach = await subject.async_attach_runner(runner)
+    terminate = registry.request_termination
+    captured = []
+    def capture(call_id, intent, **kwargs):
+        captured.append(intent)
+        return terminate(call_id, intent, **kwargs)
+    monkeypatch.setattr(registry, 'request_termination', capture)
+    try:
+        app.hass.bus.async_fire(trigger.CALL_EVENT, {
+            'event_type':'automation_requested','call_id':app.session.call_id,
+            'generation':app.session.generation,'callee':'Welcome',
+        })
+        await asyncio.wait_for(finished.wait(),3)
+        await app.hass.async_block_till_done()
+        assert len(captured)==1
+        assert captured[0] == TerminationIntent.final_response('timeout',480)
+        assert app.controller and not app.answered and app.media is None
+        module.send_final_response.assert_not_called()
+    finally:
+        detach()
+        await terminate(app.session.call_id, TerminationIntent('test_done'))

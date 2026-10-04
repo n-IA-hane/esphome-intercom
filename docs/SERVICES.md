@@ -437,6 +437,26 @@ that execution ends its call. A successful forward hands the call to the new
 destination instead. Observational automations, such as notifications, do not
 end calls merely because their action sequence finished.
 
+### `voip_stack.wait_unanswered`
+
+**Wait without answering** keeps an unanswered Automation contact call in its
+existing ringing state. `duration` is the number of seconds to wait (default
+60, range 1-3600). The contact route sends SIP `180 Ringing`; this action sends
+no `200 OK` to the INVITE and starts no audio stream, TTS or physical ringtone.
+It rejects an already answered call. Put it before any TTS or keypad action.
+
+The native VoIP trigger supplies the Call-ID automatically. The action claims
+that execution's call and suspends the contact's initial inactivity timer while
+waiting. Caller cancellation cancels the wait through the existing call owner.
+At expiry the next action runs, for example `voip_stack.forward`. If the native
+automation ends with the call still unanswered, it ends with SIP `480`, not BYE.
+Errors or automation cancellation use the contact's normal fallback policy.
+
+For provider no-answer forwarding, choose a duration longer than the provider's
+configured forwarding interval and leave the contact fallback empty. The
+provider must implement that forwarding; HA cannot guarantee its policy.
+See [the no-answer recipe](AUTOMATION_DIALPLAN.md#leave-an-incoming-call-unanswered).
+
 ### `voip_stack.wait_for_dtmf`
 
 Wait for keypad input from the caller of an automation contact. The call is

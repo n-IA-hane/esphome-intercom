@@ -23,7 +23,8 @@ def registry(monkeypatch):
     return registry
 
 
-async def test_native_runner_binds_each_call_across_await(hass, registry):
+@pytest.mark.parametrize("action_name", ["tts_say", "wait_unanswered"])
+async def test_native_runner_binds_each_call_across_await(hass, registry, action_name):
     sessions = [
         registry.upsert(name, state="ringing", owner="automation")
         for name in ("one", "two")
@@ -36,7 +37,7 @@ async def test_native_runner_binds_each_call_across_await(hass, registry):
     async def action():
         await ready.wait()
         call = automation_context.bind_call_action(
-            ServiceCall(hass, "voip_stack", "tts_say", {})
+            ServiceCall(hass, "voip_stack", action_name, {})
         )
         seen.append((call.data["call_id"], call.data["expected_generation"]))
         return object()

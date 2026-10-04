@@ -91,6 +91,12 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         vol.Optional("options", default=dict): dict,
         vol.Optional("timeout", default=120): vol.All(vol.Coerce(float), vol.Range(min=1, max=600)),
     }, extra=vol.PREVENT_EXTRA)
+    unanswered_wait_schema = vol.Schema({
+        **phone_selector_fields,
+        vol.Optional("call_id", default=""): SHORT_TEXT,
+        vol.Optional("expected_generation"): SEQUENCE,
+        vol.Optional("duration", default=60): vol.All(vol.Coerce(float), vol.Range(min=1, max=3600)),
+    }, extra=vol.PREVENT_EXTRA)
     dtmf_wait_schema = vol.Schema({
         **phone_selector_fields,
         vol.Optional("call_id", default=""): SHORT_TEXT,
@@ -269,6 +275,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         # global event-entity control cannot affect another user's call.
         "tts_say",
         "wait_for_dtmf",
+        "wait_unanswered",
         "route",
         "select_inbound_destination",
         "set_deadline",
@@ -300,6 +307,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(DOMAIN, "tts_say", handler_for("tts_say"), schema=tts_say_schema)
+    hass.services.async_register(DOMAIN, "wait_unanswered", handler_for("wait_unanswered"), schema=unanswered_wait_schema)
     hass.services.async_register(DOMAIN, "wait_for_dtmf", handler_for("wait_for_dtmf"), schema=dtmf_wait_schema, supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(DOMAIN, "forward", handler_for("forward"), schema=sip_forward_schema)
     hass.services.async_register(

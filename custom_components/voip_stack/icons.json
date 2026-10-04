@@ -144,6 +144,12 @@
     },
     "capture_sip": {
       "service": "mdi:lan-connect"
+    },
+    "wait_unanswered": {
+      "service": "mdi:timer-sand",
+      "sections": {
+        "advanced": "mdi:tune-variant"
+      }
     }
   },
   "triggers": {

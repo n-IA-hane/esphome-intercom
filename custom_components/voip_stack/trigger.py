@@ -90,7 +90,11 @@ class VoipCallTrigger(Trigger):
             else:
                 registry.request_termination(
                     execution.token.call_id,
-                    TerminationIntent.bye("local_hangup"),
+                    (
+                        TerminationIntent.bye("local_hangup")
+                        if application.answered
+                        else TerminationIntent.final_response("timeout", 480)
+                    ),
                     generation=execution.token.generation,
                 )
 

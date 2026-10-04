@@ -41,6 +41,7 @@ CALL_ACTIONS = frozenset(
         "set_deadline",
         "cancel_deadline",
         "wait_for_dtmf",
+        "wait_unanswered",
     }
 )
 
@@ -55,6 +56,7 @@ def bind_call_action(call: ServiceCall) -> ServiceCall:
         "transfer",
         "tts_say",
         "wait_for_dtmf",
+        "wait_unanswered",
         "route",
         "select_inbound_destination",
     }:
@@ -101,7 +103,7 @@ def bind_call_action(call: ServiceCall) -> ServiceCall:
         device_id = execution.snapshot.get("device_id")
         if device_id:
             data["device_id"] = device_id
-    if call.service in {"tts_say", "forward", "wait_for_dtmf"}:
+    if call.service in {"tts_say", "forward", "wait_for_dtmf", "wait_unanswered"}:
         expected = data.get("expected_generation")
         if expected is not None and expected != execution.token.generation:
             raise ServiceValidationError(

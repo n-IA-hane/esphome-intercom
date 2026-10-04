@@ -213,10 +213,88 @@ finish that delay and execute non-VoIP actions afterwards, even if the call
 has ended. The protection above concerns VoIP actions selecting their original
 call. Use appropriate conditions for unrelated lights, locks or notifications.
 
-For a long waiting sequence, start with TTS or keypad input so the automation
-takes control of the contact. A delay before the first call-handling action
+For a long waiting sequence, start with **Wait without answering**, TTS or
+keypad input so the automation takes control of the contact. A delay before the first call-handling action
 still counts against the contact's initial "Wait for an automation" limit.
 After TTS has taken control, a later delay belongs to that native execution.
+
+## Leave an incoming call unanswered
+
+Use **Wait without answering** when the caller should receive a ringing
+indication but no local phone should ring or answer. This is useful when an
+external provider forwards an unanswered call to a mobile phone.
+
+1. Add a phonebook contact of type **Automation**, named `No answer`. Leave its
+   fallback empty. No address, SIP account or physical phone is needed.
+2. Route the desired incoming calls to that contact. For a trunk fallback,
+   select it as the direct incoming destination and do not use DTMF collection,
+   which answers first. Normal explicit called-number routing still takes
+   precedence; use your routing automation if all trunk calls must be overridden.
+3. In the automation editor choose **VoIP call received**, destination
+   `No answer`, then the action **Wait without answering**.
+
+```yaml
+alias: VoIP - Leave incoming call unanswered
+mode: parallel
+max: 10
+triggers:
+  - trigger: voip_stack.call_received
+    options:
+      destination: No answer
+conditions: []
+actions:
+  - action: voip_stack.wait_unanswered
+    data:
+      duration: 60
+```
+
+The initial contact route sends SIP `180 Ringing`. No speaker, microphone or
+media session is opened by the wait. If the caller or provider cancels, cleanup
+cancels the wait. If 60 seconds expire first, this example ends the unanswered
+INVITE with SIP `480 Temporarily Unavailable`. It never answers and then hangs
+up. A provider may treat a final rejection differently from its own no-answer
+timer, so set the duration longer than that timer and verify the result with
+your provider. This is not packet dropping or a SIP `486 Busy` response.
+
+To send **every trunk call** to this contact instead of relying on a fallback
+only for unknown called numbers, add this routing automation as well. Keep the
+trunk in direct routing mode rather than DTMF mode:
+
+```yaml
+alias: VoIP - Incoming trunk to No answer
+mode: parallel
+max: 10
+triggers:
+  - trigger: voip_stack.route_requested
+    options:
+      ingress: trunk
+actions:
+  - action: voip_stack.select_inbound_destination
+    data:
+      destination: No answer
+```
+
+The first automation owns the wait; this second one only selects its destination.
+Outgoing trunk calls keep their existing route and registration behavior.
+
+You can instead append **Forward current call** to send the still-unanswered
+call to a real destination after the wait:
+
+```yaml
+actions:
+  - action: voip_stack.wait_unanswered
+    data:
+      duration: 15
+  - action: voip_stack.forward
+    data:
+      destination: Home phone
+```
+
+Put this wait before TTS or keypad input. Those actions answer the call, after
+which **Wait without answering** reports an error. Unlike a plain HA Delay,
+this action explicitly takes control of the automation call and participates
+in cancellation. It uses the same call identity, ownership and cleanup as the
+other native VoIP actions; no Call-ID needs to be entered in the editor.
 
 ## Start in the Home Assistant editor
 
@@ -308,6 +386,7 @@ matches key `1` received by the preceding input-wait action:
 | Wait for an automation | Maximum wait for a contact to be taken into control, default 30 seconds |
 | Maximum announcement duration | Browser readiness, TTS generation and transmission together, default 120 seconds, under Advanced options |
 | Wait for digits | Input wait after answering, default 10 seconds |
+| Wait without answering | Ringing wait before answering, default 60 seconds |
 
 After a native automation takes control of a contact, its HA waits belong to
 that execution. Successful completion ends the call if it was not forwarded.

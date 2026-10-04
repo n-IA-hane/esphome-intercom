@@ -907,6 +907,52 @@ tts_say:
               - integration: esphome
 
 
+wait_unanswered:
+  name: Wait without answering
+  description: Keep an unanswered Automation contact call ringing without answering
+    or starting audio. The next action runs after the wait. If this is the last
+    action, the call ends unanswered. Caller cancellation stops the wait.
+  fields:
+    duration:
+      name: Duration
+      description: Seconds to wait without answering, from 1 to 3600. Defaults to
+        60. For provider no-answer forwarding, allow more time than the provider's
+        forwarding timer.
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 3600
+          step: 1
+          unit_of_measurement: s
+          mode: box
+    advanced:
+      name: Advanced options
+      collapsed: true
+      fields:
+        device_id:
+          name: Phone for manual execution
+          description: Only needed outside a native VoIP trigger. The phone must
+            have an unanswered call handled by an Automation contact.
+          selector:
+            device:
+              filter:
+              - integration: voip_stack
+              - integration: esphome
+        call_id:
+          name: Call ID
+          description: For legacy actions outside a native VoIP trigger.
+          selector:
+            text: {}
+        expected_generation:
+          name: Call generation
+          selector:
+            number:
+              min: 1
+              max: 2147483647
+              mode: box
+
+
 wait_for_dtmf:
   name: Wait for keypad input
   description: Wait for digits from the caller on this automation call. The next condition

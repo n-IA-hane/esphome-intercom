@@ -1,16 +1,20 @@
 # Changelog
 
-## Unreleased
+## 2026.10.3-dev
+
+Changes since stable **2026.10.1**.
+
+- Add **Wait without answering** (`voip_stack.wait_unanswered`) for Automation
+  contacts. Keep SIP ringing without accepting the call or starting media,
+  then continue the automation or end unanswered at its completion. Caller
+  cancellation stops the wait. Includes a provider no-answer routing recipe
+  for [#117](https://github.com/n-IA-hane/esphome-intercom/issues/117).
 
 - Add an experimental ESP32-S3-BOX-3 Full AFE profile using both ES7210
   microphones through standard I2S and a software echo reference. Reuses the
   existing dual-mic backend and includes per-slot level diagnostics. Firmware
   compilation passed; physical qualification is pending in
   [#116](https://github.com/n-IA-hane/esphome-intercom/issues/116).
-
-## 2026.10.3-dev
-
-Changes since stable **2026.10.1**.
 
 - Fix outgoing browser calls to recognized Dahua SIP peers with the local
   camera off: offer receive-only H.264 mode 0 when SIP video is enabled, so a
