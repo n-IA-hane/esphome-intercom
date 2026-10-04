@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add an experimental ESP32-S3-BOX-3 Full AFE profile using both ES7210
+  microphones through standard I2S and a software echo reference. Reuses the
+  existing dual-mic backend and includes per-slot level diagnostics. Firmware
+  compilation passed; physical qualification is pending in
+  [#116](https://github.com/n-IA-hane/esphome-intercom/issues/116).
+
 ## 2026.10.3-dev
 
 Changes since stable **2026.10.1**.

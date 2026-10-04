@@ -1,113 +1,27 @@
-# ==============================================================================================
-# ESP32-S3-BOX-3 / Assist + VoIP / single active ADC microphone
-# Status: contributor-tested (mwhdc); not hardware-qualified by the maintainer
+# ESP32-S3-BOX-3 / FULL / experimental dual-microphone AFE
+# Derived from the contributor-tested AEC profile by mwhdc (issue #80).
+# Dual-mic request: https://github.com/n-IA-hane/esphome-intercom/issues/116
+# Maintainer has no BOX-3: compile validation is not hardware qualification.
+# Keep esp32-s3-box-3-full-aec.yaml as the single-mic reference.
+#
+#  MIC1 + MIC2 -> ES7210 (0x40) -> STD I2S left/right -> dual-mic AFE
+#                                                       ^       |
+#  Speaker playback -> software AEC reference -----------+       v
+#                                                     mono microphone
+#                                                     MWW / Assist / VoIP
+#  Media / TTS / VoIP -> mixer -> ES8311 (0x18) -> amplifier / speaker
+#
+# Two physical microphones share the ES7210 data output on GPIO16.
+# Select ADC MIC1/MIC2 (0x03), capture both STD slots and feed MMR to AFE.
+# There is no hardware playback-reference slot in this configuration.
+# Do not copy the Waveshare four-slot TDM mapping onto this board.
+#
+# Codec I2C GPIO8/18; I2S MCLK2, BCLK17, LRCLK45, DIN16, DOUT15; amp46.
+# Existing display, touch, dock, buttons and playback configuration are retained.
+# Low-cost FD keeps both microphones, AEC and speech enhancement enabled.
+# This first candidate requires measurements of channel levels, echo, available
+# internal/DMA memory and concurrent Assist/VoIP/media operation on real hardware.
 # Support: https://github.com/sponsors/n-IA-hane
-#
-# Main packages:
-#   presets/full_voice_voip_runtime.yaml; runtime_controller/full_controller.yaml
-#   audio/shared_mono_mixer_48k.yaml; media_player/runtime_controller_mono_media_player_48k.yaml
-#   voice_assistant/timers_runtime.yaml; esp32-s3-box-3-additions.yaml
-#
-# Capture and software playback reference:
-# ┌─────────────────────────┐     ┌───────────────────────┐
-# │    ES7210 MIC1 (0x01)   ├────>│    48 kHz -> 16 kHz   ├───┐
-# │     microphone input    │     │  audio_stack capture  │   │   ┌─────────────────────────┐
-# └─────────────────────────┘     └───────────────────────┘   └──>│   esp_aec fd_high_perf  │
-#                                                              ┌─>│    16 kHz processing    │
-# ┌─────────────────────────┐     ┌───────────────────────┐    │  └────────────┬────────────┘
-# │   PCM: previous_frame   ├────>│    48 kHz -> 16 kHz   ├────┘               │
-# │   AEC reference input   │     │ audio_stack reference │                    v
-# └─────────────────────────┘     └───────────────────────┘       ┌─────────────────────────┐
-#                                                                 │         mic_main        │
-#                                                                 │    VA / MWW / VoIP TX   │
-#                                                                 └─────────────────────────┘
-#
-# Shared playback mixer (first column is a resampler input):
-# ┌─────────────────────────┐
-# │   media_speaker_input   ├────┐
-# │    media_mixer_input    │    │     ┌──────────────────────┐      ┌─────────────────────────┐
-# └─────────────────────────┘    ├────>│     audio_mixer      ├─────>│        hw_speaker       │
-# ┌─────────────────────────┐    │     │     48 kHz mono      │      │   ES8311 DAC / 48 kHz   │
-# │    tts_speaker_input    ├────┤     └──────────────────────┘      └─────────────────────────┘
-# │     tts_mixer_input     │    │
-# └─────────────────────────┘    │
-# ┌─────────────────────────┐    │
-# │    voip_speaker_input   ├────┘
-# │     voip_mixer_input    │
-# └─────────────────────────┘
-#
-# This preset enables one of the board's two wired microphones; it is not a dual-mic AFE.
-# Box-3 has no hardware TDM reference in this configuration.
-# Existing contributor notes, amplifier enable, LCD-backlight status and pin notes remain below.
-# ==============================================================================================
-
-# =============================================================================
-# ESP32-S3-BOX-3 VOIP + VA AEC LIGHT - Single I2S bus, ES7210/ES8311 codec
-# =============================================================================
-# Tested by contributor; untested by maintainer.
-# Contributor: mwhdc
-# Source: https://github.com/n-IA-hane/esphome-intercom/issues/80
-#
-# The maintainer does not own this board. Repository validation covers YAML and
-# compilation only; field behaviour remains based on the contributor's report.
-#
-# Adapted from yamls/full-experience/single-bus/generic-s3-full-aec.yaml and
-# esphome/wake-word-voice-assistants/esp32-s3-box-3/esp32-s3-box-3.yaml
-#
-# Full-featured lightweight config: VoIP + Media Player + mixer + VA/MWW.
-# Box-3 has a real ES7210 ADC + ES8311 DAC codec (unlike the no-codec generic-s3
-# profile this file started from), so esp_audio_stack owns codec I2C init via
-# its `codec:` block instead of talking to raw ADC/DAC-less I2S pins.
-#
-# HARDWARE (ESP32-S3-BOX-3):
-#   - Board: esp32s3box (ESP32-S3R8, 16MB flash, octal PSRAM)
-#   - Codec: ES7210 ADC (two wired microphones, one enabled here) + ES8311 DAC, both on I2C
-#   - Mic and speaker SHARE BCLK + LRCLK (same I2S bus, full-duplex) + MCLK
-#   - Speaker amp has a dedicated enable GPIO that must be driven high
-#   - No addressable status LED on this board. runtime_controller's `outputs:
-#     led:` is hard-required by full_controller.yaml (not optional), so this
-#     profile repoints it at Box-3's own LCD backlight (monochromatic, GPIO47)
-#     instead of the generic profile's WS2812 status_led package. Effects that
-#     need an addressable strip (Ringing/Blink/pulses) silently no-op on a
-#     monochromatic light; state changes still show as backlight brightness
-#     steps.
-#
-# VERIFIED AGAINST COMPONENT SOURCE (esphome-audio-stack, esphome-runtime-
-# controller checked out locally):
-#   - codec.input.mic_selected passes straight through to Espressif's
-#     es7210_codec_cfg_t.mic_selected bitmask (bit0=MIC1). Box-3 wires two
-#     microphones; this contributor-tested baseline enables only MIC1 (0x01).
-#     The sibling full-afe profile enables both microphones for field testing.
-#   - codec.input.gain_db left at this component's own default (30.0 dB)
-#     rather than copying Waveshare's tuned 24.0 dB, since Box-3's mic/PCB
-#     differs and there's no evidence 24.0 is the right number here.
-#   - slot_bit_width/correct_dc_offset from the no-codec generic-s3 profile
-#     were dropped: those exist to frame raw MEMS-mic I2S bitstreams with no
-#     codec register config. With ES7210/ES8311 present, esp_audio_stack's
-#     own "auto" slot width (matches bits_per_sample) is what the validated
-#     waveshare-s3-full-afe.yaml codec profile uses, so this follows suit.
-#
-# KNOWN OPEN QUESTIONS (monitor and adjust):
-#   - mic_selected/gain_db above are correct in shape but not volume-tested;
-#     adjust gain_db if capture is too quiet/clipped.
-#   - codec.output.no_dac_ref mirrors aec_reference: previous_frame (software
-#     reference instead of a hardware loopback reference); revisit together if
-#     echo cancellation performs poorly.
-#   - If perceived speaker volume seems too quiet in the low/mid range,
-#     esp_audio_stack.master_volume_min_db: -30.0 is a documented fix for the
-#     same ES8311 codec-dev default on waveshare-s3-full-afe.yaml; untested
-#     here since amp circuits differ.
-#
-# GPIO PINOUT (from esp32-s3-box-3.yaml):
-#   Codec I2C:  SDA=GPIO8, SCL=GPIO18
-#   Shared I2S: MCLK=GPIO2, BCLK=GPIO17, LRCLK=GPIO45, DIN=GPIO16 (mic), DOUT=GPIO15 (speaker)
-#   Speaker enable: GPIO46
-#
-# =============================================================================
-
-# =============================================================================
-# PROJECT SETUP
-# =============================================================================
 
 substitutions:
   # Hardware-shared identity: dropping firmware-variant suffix keeps build cache
@@ -179,7 +93,7 @@ packages:
   speaker_media_player: github://n-IA-hane/esphome-intercom/packages/media_player/runtime_controller_mono_media_player_48k.yaml@main
   va_timers: github://n-IA-hane/esphome-intercom/packages/voice_assistant/timers_runtime.yaml@main
   audio_stack_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/controls.yaml@main
-  aec_controls: github://n-IA-hane/esphome-intercom/packages/esp_audio_stack/aec_controls.yaml@main
+  afe_entities: github://n-IA-hane/esphome-intercom/packages/esp_afe/dual_mic_entities.yaml@main
   # Not part of esphome-intercom - Box-3 display/touch hardware plus the
   # optional ESP32-S3-BOX-3-SENSOR dock. Safe to delete this one line + its
   # file on a headless build, a different board, or a unit without the dock.
@@ -255,7 +169,7 @@ external_components:
   - source: ${runtime_controller_components_source}
     components: [runtime_controller]
   - source: ${audio_stack_components_source}
-    components: [esp_audio_stack, esp_aec]
+    components: [esp_audio_stack, esp_afe]
 
 # =============================================================================
 # CONNECTIVITY
@@ -352,19 +266,19 @@ esp_audio_stack:
   i2s_dout_pin: ${i2s_dout_pin}
   sample_rate: 48000
   output_sample_rate: 16000
-  processor_id: aec_processor
+  processor_id: afe_processor
   # Software AEC reference (no hardware loopback/TDM reference slot on Box-3).
   aec_reference: previous_frame
+  rx_slot_mode: stereo
+  rx_mic_slots: [left, right]
   buffers_in_psram: true
   codec:
     i2c_id: internal_i2c
     input:
       type: es7210
       address: 0x40
-      # This baseline enables MIC1 only. The Box-3 has two microphones wired
-      # to MIC1/MIC2; using both also requires a matching dual-mic bus/AFE
-      # configuration, not just changing this ADC channel mask.
-      mic_selected: 0x01
+      # STD I2S maps MIC1/MIC2 to left/right in esp_codec_dev.
+      mic_selected: 0x03
       # Component default (30.0dB); no board-specific data to justify changing it.
       gain_db: 30.0
     output:
@@ -373,11 +287,25 @@ esp_audio_stack:
       use_mclk: true
       no_dac_ref: true
 
-esp_aec:
-  id: aec_processor
-  sample_rate: 16000
-  filter_length: 4
-  mode: fd_high_perf
+esp_afe:
+  id: afe_processor
+  type: fd
+  mode: low_cost
+  mic_num: 2
+  se_enabled: true
+  aec_enabled: true
+  ns_enabled: false
+  agc_enabled: false
+  vad_enabled: true
+  aec_filter_length: 4
+  memory_alloc_mode: more_psram
+  task_core: 1
+  task_priority: 5
+  feed_task_core: 0
+  fetch_task_core: 1
+  feed_buf_in_psram: true
+  feed_ring_in_psram: true
+  fetch_ring_in_psram: true
 
 microphone:
   - platform: esp_audio_stack
@@ -540,24 +468,23 @@ select:
     name: AEC Mode
     id: aec_mode_select
     icon: mdi:tune-vertical
-    # Keep runtime switching within the full-duplex AEC engine.
+    # Start with the lower-cost dual-mic FD profile until hardware qualification.
     options:
       - "fd_low_cost"
       - "fd_high_perf"
-    initial_option: "fd_high_perf"
-    # Non-optimistic: HA reflects the live component mode, not the value the
-    # user clicked. If the switch is rejected (e.g. internal RAM fragmented)
-    # or the component falls back to the previous mode, the select shows the
-    # actual mode rather than a fictitious one.
+    initial_option: "fd_low_cost"
+    # Non-optimistic: template_select::control runs the set_action first
+    # and only auto-publishes `index` when optimistic=true, overwriting
+    # whatever we published. With optimistic=false, the final lambda
+    # publish_state drives HA state from the live esp_afe mode.
     optimistic: false
-    restore_value: true
+    restore_value: false
     set_action:
       - if:
           condition:
-            lambda: 'return id(init_in_progress);'
+            lambda: |-
+              return !id(init_in_progress) && x != id(afe_processor).get_mode_name();
           then:
-            - logger.log: "AEC mode select: skipping during boot"
-          else:
             - if:
                 condition:
                   or:
@@ -578,17 +505,38 @@ select:
                       condition:
                         esp_audio_stack.is_idle:
                       timeout: 2s
-                  - esp_aec.set_mode:
-                      id: aec_processor
+                  - esp_afe.set_mode:
+                      id: afe_processor
                       mode: !lambda 'return x;'
-                  - esp_audio_stack.start:
-                  - delay: 300ms
+                  - wait_until:
+                      condition:
+                        lambda: 'return id(afe_processor).is_reconfigure_idle();'
+                      timeout: 20s
                   - if:
                       condition:
-                        switch.is_off: mute
+                        lambda: 'return id(afe_processor).is_reconfigure_idle() && id(afe_processor).get_last_reconfigure_ok();'
                       then:
-                        - micro_wake_word.start:
-                        - script.execute: boost_mww_priority
-      # Reflect actual live mode (covers rejection and silent hardware mode).
+                        - esp_audio_stack.start:
+                        - delay: 300ms
+                        - if:
+                            condition:
+                              switch.is_off: mute
+                            then:
+                              - script.execute: start_mww_when_ready
+                      else:
+                        - logger.log:
+                            level: ERROR
+                            tag: main
+                            format: "AFE mode switch did not complete cleanly; audio restart skipped"
       - lambda: |-
-          id(aec_mode_select).publish_state(id(aec_processor).get_mode_name());
+          id(aec_mode_select).publish_state(id(afe_processor).get_mode_name());
+
+# Enable these entities in HA if hidden by default. Speak near each microphone
+# and compare both readings; this does not require disabling AEC.
+sensor:
+  - platform: esp_audio_stack
+    std_slot_levels:
+      - name: Microphone Left Level
+        slot: left
+      - name: Microphone Right Level
+        slot: right
