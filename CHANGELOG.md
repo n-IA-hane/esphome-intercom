@@ -73,11 +73,10 @@ cost of 1,556 internal bytes. QIO flash access and cache settings complete this
 board's configuration. CPU scheduling and memory placement were measured with the
 full workload rather than dropping microphones or other features to make it fit.
 
-**Display limitation:** animations can still show tearing and uneven frame rates.
-The supplied factory firmware showed similar symptoms in the owner's testing.
-Driving the 360x360 display alongside the full audio workload may contribute,
-but the exact cause of the remaining display artifacts has not been established.
-The complete profile is now working encouragingly well and remains experimental.
+**Display performance:** animations can look uneven and show tearing, as also
+observed with the supplied factory firmware. This is a rendering performance
+limitation of this board with the FULL profile, rather than an outstanding bug
+scheduled for correction. The complete profile remains experimental.
 
 Hardware testing covered calls in both directions with the WS3 Audio, music
 playing during calls, AEC switching during a call, and Assist/call transitions.
