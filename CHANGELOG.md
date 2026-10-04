@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Fix outgoing browser calls to recognized Dahua SIP peers with the local
+  camera off: offer receive-only H.264 mode 0 when SIP video is enabled, so a
+  VTO response with video and no H.264 format parameters can establish audio
+  and incoming video. Camera capture, other peer offers and strict SDP media
+  ordering remain unchanged. Covers the reported negotiation in
+  [#115](https://github.com/n-IA-hane/esphome-intercom/issues/115); physical
+  device confirmation is still pending.
+
 ## 2026.10.1
 
 Changes since stable **2026.10.0**.

@@ -285,6 +285,14 @@ leg to a compatible PCM format.
 - Dahua `PCM/16000` is a vendor little-endian format, not RFC `L16`. It is
   enabled automatically only for a `Dahua UAC/...` User-Agent. A generic peer
   offering that token is rejected rather than globally changing PCM semantics.
+- For a destination identified by the existing Dahua SIP profile, an outgoing
+  browser call with the local camera off now offers receive-only H.264 mode 0.
+  This accommodates VTO answers that omit H.264 `fmtp` parameters and add video
+  even when called without a local camera. Enable SIP video globally and for
+  the calling/receiving phone; the camera-send permission can remain disabled.
+  The offer does not enable browser camera capture. Other SIP peers and calls
+  with camera transmission requested keep their existing offers. This specific
+  path is covered by simulated SIP exchanges; physical VTO retesting is needed.
 - If HA-to-VTO immediately returns `486 Busy Here`, give the originating HA
   phone its own extension/name instead of making it appear to call from the
   VTO's own account. Some firmware rejects an apparent self-call.

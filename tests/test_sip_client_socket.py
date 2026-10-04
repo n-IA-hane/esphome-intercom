@@ -5653,3 +5653,77 @@ class SipClientSocketTest(unittest.IsolatedAsyncioTestCase):
         decision = router.resolve_esp_origin("Cucina", entries, "sip:Cucina@192.168.1.10:5060;transport=tcp")
         self.assertEqual(decision.action, router.RouteAction.DIRECT)
         self.assertEqual(decision.sip_uri, "sip:Cucina@192.168.1.31")
+
+    async def test_dahua_receive_only_h264_without_fmtp_survives_answer_and_redial(self) -> None:
+        """A legacy answer must not require a browser camera or fake sendrecv offer."""
+        requests = []
+
+        class DoorStation(asyncio.DatagramProtocol):
+            def connection_made(self, transport):
+                self.transport = transport
+
+            def datagram_received(self, raw, address):
+                request = sip.parse_message(raw)
+                requests.append(request)
+                if request.method not in {"INVITE", "BYE"}:
+                    return
+                headers = [(key, request.header(key)) for key in ("Via", "From", "Call-ID", "CSeq")]
+                to = request.header("To")
+                headers.append(("To", to if ";tag=" in to else to + ";tag=door"))
+                body = b""
+                if request.method == "INVITE":
+                    port = self.transport.get_extra_info("sockname")[1]
+                    headers.extend([
+                        ("Contact", f"<sip:door@127.0.0.1:{port}>"),
+                        ("Content-Type", "application/sdp"),
+                    ])
+                    # Reported by issue #115: no H.264 fmtp, sendrecv even
+                    # when HA offers recvonly. Keep the wire answer independent
+                    # of our offer builder and codec negotiation helpers.
+                    body = (
+                        "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Door\r\n"
+                        "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+                        "m=audio 45000 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na=sendrecv\r\n"
+                        "m=video 45002 RTP/AVP 105\r\na=rtpmap:105 H264/90000\r\na=sendrecv\r\n"
+                    ).encode()
+                self.transport.sendto(sip.build_response(200, "OK", headers, body), address)
+
+        transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
+            DoorStation, local_addr=("127.0.0.1", 0),
+        )
+        port = transport.get_extra_info("sockname")[1]
+        audio = sdp.RtpPcmFormat(0, "PCMU", 8000, 1, 20)
+        video = sdp.RtpVideoFormat(
+            payload_type=105, profile_level_id="42001f",
+            packetization_mode=0, level_asymmetry_allowed=False,
+        )
+        try:
+            for _ in range(2):
+                requests.clear()
+                client = sip_client.SipCallClient(
+                    local_ip="127.0.0.1", local_name="Browser", local_sip_port=0,
+                    local_rtp_port=41000, supported_send_rtp_formats=(audio,),
+                    supported_recv_rtp_formats=(audio,), local_video_rtp_port=41002,
+                    video_formats=(video,), video_direction="recvonly",
+                )
+                try:
+                    result = await client.invite(
+                        target="door", remote_host="127.0.0.1", remote_sip_port=port,
+                        request_uri=f"sip:door@127.0.0.1:{port}", timeout=2,
+                    )
+                    self.assertEqual(result, "in_call")
+                    self.assertIsNotNone(client.dialog)
+                    self.assertEqual(client.dialog.local_audio_direction, "sendrecv")
+                    self.assertEqual(client.dialog.local_video_direction, "recvonly")
+                    self.assertEqual(client.dialog.video_format.packetization_mode, 0)
+                    self.assertTrue(sdp.browser_video_receive_supported(client.dialog.video_format))
+                    self.assertFalse(sdp.browser_video_send_supported(client.dialog.video_format))
+                    self.assertIn(b"a=recvonly", requests[0].body)
+                    self.assertFalse(any(request.method == "BYE" for request in requests))
+                    await client.terminate(timeout=2)
+                finally:
+                    await client.close()
+                self.assertIsNone(client.transport)
+                self.assertIsNone(client.dialog)
+        finally:
+            transport.close()

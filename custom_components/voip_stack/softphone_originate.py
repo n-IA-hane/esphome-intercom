@@ -511,11 +511,29 @@ async def async_originate_browser_call(
         and target_video_enabled
         and (use_trunk or not native_audio_endpoint or esphome_sip_endpoint)
     )
-    video_enabled = bool(
+    camera_send_enabled = bool(
         video_capable
         and cfg.get(CONF_VIDEO_CAMERA_SEND, False)
         and call.data.get("send_video", False)
     )
+    target_video_codec = str(
+        entry_metadata.get("sip_video_codec")
+        or ((dest_device or {}).get("sip_video_codec"))
+        or ""
+    ).strip()
+    # Some Dahua door stations add H.264 even to an audio-only answer. Offer
+    # an honest receive-only stream for the existing peer profile instead of
+    # accepting an unsolicited m-line or requiring the user's camera.
+    dahua_receive_only = bool(
+        video_capable
+        and not camera_send_enabled
+        and not use_trunk
+        and not native_audio_endpoint
+        and str(entry_metadata.get("sip_profile") or "").strip().lower() == "dahua"
+        and target_video_codec.upper() in {"", "H264"}
+        and (target_endpoint is None or target_endpoint.supports("video"))
+    )
+    video_enabled = camera_send_enabled or dahua_receive_only
     video_reservation = None
     video_rtp_socket = None
     video_rtcp_socket = None
@@ -540,14 +558,14 @@ async def async_originate_browser_call(
         local_rtp_port = _allocate_sip_rtp_port(hass)
         local_video_rtp_port = 0
     from .core.sdp import (
+        DEFAULT_H264_FORMAT,
         DEFAULT_VIDEO_FORMATS,
         browser_video_send_supported,
         video_offer_formats_for_target_codec,
     )
 
-    # An outgoing browser call adds video only for an explicit per-call camera
-    # intent. Incoming offers remain independently answerable as recvonly.
-    camera_send_enabled = video_enabled
+    # Ordinary outgoing calls retain explicit camera intent. The scoped
+    # receive-only profile below does not change the browser camera setting.
     offered_video_formats = (
         tuple(
             item for item in DEFAULT_VIDEO_FORMATS if browser_video_send_supported(item)
@@ -555,15 +573,23 @@ async def async_originate_browser_call(
         if camera_send_enabled
         else DEFAULT_VIDEO_FORMATS
     )
-    target_video_codec = str(
-        entry_metadata.get("sip_video_codec")
-        or ((dest_device or {}).get("sip_video_codec"))
-        or ""
-    ).strip()
     offered_video_formats = video_offer_formats_for_target_codec(
         target_video_codec,
         offered_video_formats,
     )
+    if dahua_receive_only:
+        # RFC 6184 defaults an absent fmtp to Baseline Level 1, mode 0.
+        # Advertise our existing Level 3.1 receive envelope; the answer may
+        # select a lower level. Mode 0 is supported by the receive bridge.
+        offered_video_formats = (
+            replace(
+                DEFAULT_H264_FORMAT,
+                payload_type=105,
+                profile_level_id="42001f",
+                packetization_mode=0,
+                level_asymmetry_allowed=False,
+            ),
+        )
 
     provider_identity = (
         _trunk_leg_identity(trunk_cfg, local_name) if use_trunk else local_name

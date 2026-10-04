@@ -32,6 +32,7 @@ class _RouteAction(Enum):
     REJECT = "reject"
     GROUP = "group"
     ASSIST = "assist"
+    AUTOMATION = "automation"
     DIRECT = "direct"
     FORWARD = "forward"
     BRIDGE = "bridge"
@@ -367,3 +368,82 @@ def test_offline_browser_phone_remains_a_local_ringing_destination(
     )
 
     assert resolved == (route, "Casa", destination)
+
+
+@pytest.mark.parametrize(
+    ('profile', 'camera', 'global_video', 'source_video', 'kind', 'peer_video', 'camera_allowed', 'expected'),
+    [
+        ('dahua', False, True, True, '', True, True, 'recvonly_mode0'),
+        ('dahua', False, True, True, 'sip_account', True, True, 'recvonly_mode0'),
+        ('dahua', True, True, True, '', True, True, 'sendrecv_mode1'),
+        ('', False, True, True, '', True, True, 'audio_only'),
+        ('', True, True, True, '', True, True, 'sendrecv_mode1'),
+        ('dahua', False, False, True, '', True, True, 'audio_only'),
+        ('dahua', False, True, False, '', True, True, 'audio_only'),
+        ('dahua', False, True, True, 'sip_account', False, True, 'audio_only'),
+        ('', True, True, True, 'esphome', False, True, 'audio_only'),
+        ('', True, True, True, 'esphome', True, True, 'sendrecv_mode1'),
+        ('dahua', False, True, True, 'esphome', True, True, 'audio_only'),
+        ('dahua', False, True, True, '', True, False, 'recvonly_mode0'),
+        ('', True, True, True, '', True, False, 'audio_only'),
+    ],
+)
+def test_outgoing_dahua_receive_only_offer_is_scoped(
+    softphone_originate, profile, camera, global_video, source_video,
+    kind, peer_video, camera_allowed, expected,
+):
+    module = softphone_originate
+    endpoint = SimpleNamespace(
+        endpoint_id='caller', device_id='browser', sip_uri_user='browser',
+        availability=_Availability.AVAILABLE,
+        supports=lambda capability: source_video if capability == 'video' else True,
+    )
+    metadata = {'sip_profile': profile, 'sip_video_codec': 'h264', 'registered': True}
+    if kind:
+        metadata['endpoint_kind'] = kind
+        metadata['endpoint_id'] = 'destination'
+    target = SimpleNamespace(
+        kind=SimpleNamespace(is_softphone=False), dnd=False, active_call_id='',
+        availability=_Availability.AVAILABLE, device_id='peer',
+        supports=lambda capability: peer_video if capability == 'video' else True,
+    )
+    hass = SimpleNamespace(
+        data={'voip_stack': {'endpoint_registry': SimpleNamespace(get=lambda _: target if kind else None)}},
+        states=SimpleNamespace(get=lambda _: None),
+    )
+    entry = SimpleNamespace(metadata=metadata, sip_uri='sip:door@192.0.2.10', display_name='Door')
+    route = SimpleNamespace(action=_RouteAction.DIRECT, reason=None, entry=entry, sip_uri=entry.sip_uri)
+    module.resolve_ha_router = Mock(return_value=route)
+    module._async_resolve_browser_destination = AsyncMock(return_value=(route, 'Door', None))
+    module._get_transport_config = Mock(return_value={
+        'sip_port': 5060, 'sip_video': global_video, 'video_camera_send': camera_allowed,
+    })
+    module.reserve_sip_video_media = Mock(return_value=(SimpleNamespace(ports=(40000, 40002)), object(), object()))
+    captured = {}
+    class OfferCaptured(Exception):
+        pass
+    def capture(**kwargs):
+        captured.update(kwargs)
+        raise OfferCaptured
+    sys.modules[f'{module.__package__}.sip_client'].SipCallClient = capture
+    with pytest.raises(OfferCaptured):
+        asyncio.run(module.async_originate_browser_call(
+            _call(hass, destination='Door', send_video=camera),
+            endpoint_id='caller', browser_endpoint=endpoint,
+        ))
+    if expected == 'audio_only':
+        assert captured['video_formats'] == ()
+        assert captured['local_video_rtp_port'] == 0
+        module.reserve_sip_video_media.assert_not_called()
+    else:
+        fmt, = captured['video_formats']
+        assert captured['local_video_rtp_port'] == 40002
+        assert fmt.encoding == 'H264'
+        if expected == 'recvonly_mode0':
+            assert captured['video_direction'] == 'recvonly'
+            assert fmt.packetization_mode == 0
+            assert fmt.profile_level_id == '42001f'
+            assert not fmt.level_asymmetry_allowed
+        else:
+            assert captured['video_direction'] == 'sendrecv'
+            assert fmt.packetization_mode == 1
