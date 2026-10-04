@@ -31,16 +31,6 @@ Changes since stable **2026.10.0**. This is a development preview.
   for registered trunks. Diagnostics distinguish registration from route availability.
 - Let circular call buttons grow to fit longer translated labels while preserving
   their shape and placement.
-- Include experimental, opt-in Companion phone discovery and a dashboard composer.
-  Native phone calls require a compatible experimental Companion build; the menu
-  entry requires the proposed frontend API. Official HA and Companion releases do
-  not provide these APIs. The upstream proposals are closed; these remain prototype
-  features requiring modified builds, rather than support in the official apps.
-- Refine the experimental composer: distinguish the calling phone from the
-  destination, retain contact selection beside the keypad, reopen the dialog
-  after dismissal, and report missing app capabilities or identity more clearly.
-  Cancel an outgoing native call if its initiating operation becomes obsolete
-  during asynchronous setup.
 
 Static-trunk qualification covers real baresip calls over UDP and TCP, measured
 bidirectional audio, termination from both sides, repeated calls, SIP captures
