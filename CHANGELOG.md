@@ -91,7 +91,7 @@ Espressif ESP32-S3-BOX-3 require different configurations.
 | --- | --- |
 | ![Animated-avatar screen on the Waveshare 1.85C-BOX V2](docs/images/waveshare-185c-box-v2/avatar.jpg) | ![VoIP touch dialpad on the Waveshare 1.85C-BOX V2](docs/images/waveshare-185c-box-v2/dialpad.jpg) |
 
-[Photo of the V2 model label](docs/images/waveshare-185c-box-v2/model-label.jpg).
+![V2 model label identifying the supported Waveshare hardware](docs/images/waveshare-185c-box-v2/model-label.jpg)
 
 #### Other ESPHome changes
 

@@ -186,12 +186,14 @@ def test_local_markdown_links_resolve() -> None:
 
 def test_every_documentation_image_is_embedded() -> None:
     embedded: set[str] = set()
-    for document in MARKDOWN_FILES:
+    for document in (*MARKDOWN_FILES, ROOT / "CHANGELOG.md"):
         text = document.read_text()
         for target in (*MARKDOWN_IMAGE.findall(text), *HTML_IMAGE.findall(text)):
             embedded.add(Path(urlsplit(target).path).name)
     orphaned = sorted(
-        image.name for image in (DOCS / "images").iterdir() if image.name not in embedded
+        image.relative_to(DOCS / "images").as_posix()
+        for image in (DOCS / "images").rglob("*")
+        if image.is_file() and image.name not in embedded
     )
     assert not orphaned, "Unembedded docs/images assets: " + ", ".join(orphaned)
 
