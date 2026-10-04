@@ -1,6 +1,6 @@
 # Breaking changes
 
-## Unreleased: native Companion prototype archived
+## 2026.10.3-dev: native Companion prototype archived
 
 The experimental dashboard-menu composer and native Companion phone endpoints
 are no longer included. Existing experimental Companion phone subentries are

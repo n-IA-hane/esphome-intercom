@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 2026.10.3-dev
+
+Changes since stable **2026.10.1**.
 
 - Fix outgoing browser calls to recognized Dahua SIP peers with the local
   camera off: offer receive-only H.264 mode 0 when SIP video is enabled, so a
@@ -9,6 +11,11 @@
   ordering remain unchanged. Covers the reported negotiation in
   [#115](https://github.com/n-IA-hane/esphome-intercom/issues/115); physical
   device confirmation is still pending.
+- Archive the experimental native Companion calling and dashboard-menu
+  composer. Remove their runtime/API/UI code and migrate away their virtual
+  phone subentries. Official mobile_app registrations and ordinary browser,
+  SIP and ESPHome phones are preserved. Historical source and design notes
+  remain on the dedicated archive branch.
 
 ## 2026.10.1
 
