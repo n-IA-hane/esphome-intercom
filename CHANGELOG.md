@@ -4,7 +4,7 @@
 
 Changes since stable **2026.10.0**. This is a development preview.
 
-### Home Assistant
+### Home Assistant backend and dashboard card
 
 - Fix phonebook delivery to remote ESPHome devices. A remote test exposed an
   unnecessary lookup using the ESP's advertised IP address, which could differ
@@ -29,11 +29,18 @@ Changes since stable **2026.10.0**. This is a development preview.
   available when required by the peer.
 - Show source-IP settings only for static trunks and registration expiry only
   for registered trunks. Diagnostics distinguish registration from route availability.
+- Let circular call buttons grow to fit longer translated labels while preserving
+  their shape and placement.
 - Include experimental, opt-in Companion phone discovery and a dashboard composer.
   Native phone calls require a compatible experimental Companion build; the menu
   entry requires the proposed frontend API. Official HA and Companion releases do
-  not yet provide these APIs. See the pending upstream proposals before testing
-  those features.
+  not provide these APIs. The upstream proposals are closed; these remain prototype
+  features requiring modified builds, rather than support in the official apps.
+- Refine the experimental composer: distinguish the calling phone from the
+  destination, retain contact selection beside the keypad, reopen the dialog
+  after dismissal, and report missing app capabilities or identity more clearly.
+  Cancel an outgoing native call if its initiating operation becomes obsolete
+  during asynchronous setup.
 
 Static-trunk qualification covers real baresip calls over UDP and TCP, measured
 bidirectional audio, termination from both sides, repeated calls, SIP captures
@@ -42,6 +49,51 @@ Tests against the requesting user's gateway and carrier-specific deployments are
 still requested. Setup: [SIP trunk guide](docs/SIP_TRUNK.md#static-trunk-without-register).
 
 ### ESPHome configuration
+
+#### Experimental FULL support: Waveshare 1.85C-BOX V2
+
+Add a FULL profile for **Waveshare ESP32-S3-Touch-LCD-1.85C-BOX V2
+(SKU 30684)**, combining dual-microphone AFE/AEC, micro wake word, Home Assistant
+Voice Assistant, bidirectional VoIP, HTTP media, Sendspin and the circular
+360x360 touch interface with animated avatar, contacts and dialpad.
+
+It was a tough one, but the S3 BOX FULL is finally in testing!
+
+Getting the complete workload running together required a temporary micro wake
+word fork with explicit CPU core affinity. We plan to propose that option to
+ESPHome; no upstream PR for it has been submitted yet. The profile separates
+wake word inference from dual-microphone AFE processing and places audio tasks
+deliberately across the two cores.
+
+Audio work also uncovered processed samples waiting inside GMF for another input
+iteration. The updated Audio Stack receives them directly from the existing AFE
+fetch task. This path adds no task or audio buffer. Profiling then guided placement
+of selected FFT and dot-product functions in internal instruction RAM, at a measured
+cost of 1,556 internal bytes. QIO flash access and cache settings complete this
+board's configuration. CPU scheduling and memory placement were measured with the
+full workload rather than dropping microphones or other features to make it fit.
+
+**Display limitation:** animations can still show tearing and uneven frame rates.
+The supplied factory firmware showed similar symptoms in the owner's testing.
+Driving the 360x360 display alongside the full audio workload may contribute,
+but the exact cause of the remaining display artifacts has not been established.
+The complete profile is now working encouragingly well and remains experimental.
+
+Hardware testing covered calls in both directions with the WS3 Audio, music
+playing during calls, AEC switching during a call, and Assist/call transitions.
+Support starts as experimental while broader everyday-use feedback is collected.
+This profile targets the Waveshare V2 hardware specifically; the V1 and
+Espressif ESP32-S3-BOX-3 require different configurations.
+
+[FULL YAML](yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full-afe.yaml)
+
+| Avatar and status display | Touch dialpad |
+| --- | --- |
+| ![Animated-avatar screen on the Waveshare 1.85C-BOX V2](docs/images/waveshare-185c-box-v2/avatar.jpg) | ![VoIP touch dialpad on the Waveshare 1.85C-BOX V2](docs/images/waveshare-185c-box-v2/dialpad.jpg) |
+
+[Photo of the V2 model label](docs/images/waveshare-185c-box-v2/model-label.jpg).
+
+#### Other ESPHome changes
 
 - Backport [ESPHome's mixer restart fix](https://github.com/esphome/esphome/pull/19368): a start request received while
   the previous worker is stopping survives cleanup. No new worker or buffer is added.
