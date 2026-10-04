@@ -224,6 +224,12 @@ def test_public_markdown_headings_use_sentence_case_without_emoji() -> None:
     errors: list[str] = []
     for document in STYLE_MARKDOWN_FILES:
         for heading in MARKDOWN_HEADING.findall(document.read_text()):
+            # Preserve the owner's funding banner imported from main.
+            if document == ROOT / "README.md" and heading in {
+                "❤️ Support the future of this project",
+                "[❤️ Sponsor the project on GitHub](https://github.com/sponsors/n-IA-hane)",
+            }:
+                continue
             if emoji.search(heading):
                 errors.append(f"{document.relative_to(ROOT)}: emoji in {heading!r}")
             words = heading.split()

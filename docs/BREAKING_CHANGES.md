@@ -1,5 +1,19 @@
 # Breaking changes
 
+## 2026.10.1: coordinated firmware sources
+
+The HA update does not require an ESP firmware update. When adopting the new
+maintained firmware YAMLs, update their component sources together: ESP VoIP
+Stack 2026.10.1, Runtime Controller 2026.10.1 and Audio Stack 2026.10.2.
+They are available from the corresponding `main` branches.
+
+Shared packages use the new `voip_stack.is_active` condition, so combining them
+with an older ESP VoIP component fails validation. The Waveshare 1.85C-BOX V2
+FULL profile also requires the included experimental MWW core-affinity component
+and the new AFE output path. Start from its maintained V2 YAML.
+
+ESPHome 2026.9.0 remains the minimum; newer releases are not excluded.
+
 ## 2026.10.0: coordinated update and call automations
 
 HA and ESP firmware do not need matching version numbers for this release.

@@ -21,17 +21,17 @@ Even a small contribution helps cover the real costs of keeping the project acti
 
 # VoIP Stack for ESPHome and Home Assistant
 
-Stable release: [2026.10.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.0).
+Stable release: [2026.10.1](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.1).
 Requires Home Assistant **2026.7.0 or newer**. Firmware builds require ESPHome
 **2026.9.0 or newer**.
 
-The updated firmware profiles use ESP VoIP Stack **2026.10.0**, Runtime Controller
-**2026.10.0**, and Audio Stack **2026.10.1** from their `main` branches. HA and ESP
+The updated firmware profiles use ESP VoIP Stack **2026.10.1**, Runtime Controller
+**2026.10.1**, and Audio Stack **2026.10.2** from their `main` branches. HA and ESP
 firmware do not need matching version numbers. Rebuilding ESP firmware is
-recommended to receive the device fixes, especially on Generic S3; it is separate
+recommended to receive the updated AFE delivery and playback fixes; it is separate
 from updating HA through HACS.
 
-See the [2026.10.0 changes](CHANGELOG.md) and
+See the [2026.10.1 changes](CHANGELOG.md) and
 [upgrade instructions](docs/BREAKING_CHANGES.md#2026100-coordinated-update-and-call-automations).
 
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3%20%7C%20ESP32--P4-blue.svg)](#supported-hardware)
@@ -585,7 +585,23 @@ Before every upgrade:
 Never assume an automation still has the same contract merely because the
 integration loaded successfully.
 
-## What's new in 2026.10.0
+## What's new in 2026.10.1
+
+Static SIP trunks can now operate without registration, with explicit allowed
+incoming source IPs. Remote ESP phonebooks reuse HA's connected ESPHome service
+identity. SIP interoperability fixes preserve audio through one-way video direction
+conflicts, and translated card buttons grow to fit their labels.
+
+The Waveshare 1.85C-BOX V2 gains an experimental FULL profile with dual microphones,
+AFE/AEC, voice features, calls, media and the circular touch UI. The coordinated
+Audio Stack update delivers processed AFE samples without waiting for another
+input iteration. Playback also includes the upstream mixer restart correction
+and additional queue diagnostics.
+
+See the [release notes](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.1)
+for photographs, validation details and update instructions.
+
+## Previous release: 2026.10.0
 
 - Native call triggers, conditions and actions make greetings, forwarding,
   unanswered-call rules and DTMF menus available in HA's normal automation editor.

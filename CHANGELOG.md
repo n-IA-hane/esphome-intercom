@@ -1,8 +1,8 @@
 # Changelog
 
-## 2026.10.1-dev
+## 2026.10.1
 
-Changes since stable **2026.10.0**. This is a development preview.
+Changes since stable **2026.10.0**.
 
 ### Home Assistant backend and dashboard card
 
