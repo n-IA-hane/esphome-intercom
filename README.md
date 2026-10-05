@@ -1,25 +1,26 @@
-# ❤️ Support the future of this project
+# VoIP Stack for Home Assistant and ESPHome
 
-This project is developed and maintained by **one person, as a private individual**, with no company, commercial sponsor, or organization funding its development.
+**An open-source SIP phone system for Home Assistant and ESPHome.**
 
-Until now, development tools, subscriptions, testing hardware and services have been paid entirely from my personal income.
+Make and receive audio and video calls from your Home Assistant dashboard.
+Connect SIP phones, ESP32 intercoms and a provider or PBX trunk. Use ordinary
+Home Assistant automations to decide which phones ring, play spoken messages,
+handle keypad input and forward unanswered calls.
 
-With the rising cost of living and everyday expenses in Italy, continuing to personally absorb all of these costs has become financially unsustainable.
+- **Home Assistant:** browser phones, video calls, a shared phonebook, ring
+  groups and conferences.
+- **ESPHome:** turn supported ESP32 devices into SIP phones and intercoms.
+- **Automations as dialplan:** build your own call handling with native
+  triggers, conditions and actions.
 
-The project will remain **free and open source**. No features are being placed behind a paywall.
+Start with two dashboard phones, or connect an ESPHome device using a maintained
+firmware profile. Add the features you need as your system grows.
 
-However, without more community support, development, testing, hardware support and bug fixing will inevitably have to slow down.
+**[Install VoIP Stack](#installation) · [Choose an ESPHome device](#supported-hardware) · [Build call automations](docs/AUTOMATION_DIALPLAN.md)**
 
-If this project is useful to you, please consider supporting its continued development:
+*Developed independently and supported by the community. [❤️ Sponsor the project](https://github.com/sponsors/n-IA-hane)*
 
-## [❤️ Sponsor the project on GitHub](https://github.com/sponsors/n-IA-hane)
-
-Even a small contribution helps cover the real costs of keeping the project active.
-
-> **You are not paying to unlock features. You are helping make continued development possible.**
-
-
-# VoIP Stack for ESPHome and Home Assistant
+![VoIP Stack dashboard and central phonebook](docs/images/voip-dashboard-phonebook.png)
 
 Stable release: [2026.10.1](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.1).
 Requires Home Assistant **2026.7.0 or newer**. Firmware builds require ESPHome
@@ -38,37 +39,6 @@ See the [2026.10.1 changes](CHANGELOG.md) and
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-native-blue.svg)](https://www.home-assistant.io)
 [![ESPHome](https://img.shields.io/badge/ESPHome-2026.9.0%2B-18bcf2.svg)](https://esphome.io)
 
-Turn ESPHome audio devices and Home Assistant into a local SIP phone system,
-or use the maintained full-experience firmware to combine VoIP with a complete
-ESPHome voice satellite.
-
-ESP devices become standards-based SIP phones, with audio on every maintained
-VoIP profile and optional video on qualified ESP32-P4 profiles. Home Assistant
-can be a SIP video softphone, call router, RTP bridge, local registrar,
-conference focus, callable Assist destination and optional trunk endpoint.
-Browser phones, wall tablets, ESP room stations, standard SIP clients and an
-external PBX can share one phonebook without requiring a separate Asterisk or
-FreeSWITCH server for the normal home use case.
-
-VoIP is only one part of the project. The optional full-experience ESP YAMLs
-also provide an independent on-device Voice Assistant, Micro Wake Word, media
-playback, TTS, Sendspin support, runtime audio controls and touch interfaces.
-That local assistant is not created or controlled by calling Assist over SIP.
-
-The project therefore has three cooperating, independently useful surfaces:
-
-| Surface | Runs on | Purpose |
-|---|---|---|
-| ESP VoIP endpoint | ESPHome device | A standards-based SIP/RTP phone, with audio and optional qualified P4 video. |
-| Home Assistant VoIP Stack | Home Assistant | Browser phones, PBX routing, registrar, bridges, groups, conferences, callable Assist and an optional trunk. |
-| Full ESP experience | ESPHome device | A local voice satellite with wake word, Voice Assistant, media, TTS, optional Sendspin, runtime UI and VoIP. |
-
-Install only the surfaces you need. A VoIP-only ESP does not require the local
-Voice Assistant, and a full-experience ESP keeps its local assistant even when
-no SIP Assist extension is configured.
-
-![VoIP Stack dashboard and central phonebook](docs/images/voip-dashboard-phonebook.png)
-
 ![Dashboard demo](docs/images/dashboard.gif)
 
 _One dashboard can control a browser phone, an ESP endpoint and the shared
@@ -81,20 +51,6 @@ phonebook. Each room phone still has its own identity and call state._
     <td align="center"><img src="docs/images/assistant-animated.gif" width="180"/><br/><b>ESP Voice Assistant</b></td>
     <td align="center"><img src="docs/images/assistant-speaking.jpg" width="180"/><br/><b>ESP TTS response</b></td>
     <td align="center"><img src="docs/images/lvgl-audio-volume.jpg" width="180"/><br/><b>Runtime audio controls</b></td>
-  </tr>
-</table>
-
-<table>
-  <tr>
-    <td>
-      <strong>Support this project</strong><br/>
-      If this work is useful to you, please consider a donation. It helps cover
-      development tools, services and test hardware, which means better
-      compatibility and fewer regressions for everyone.<br/><br/>
-      <a href="https://github.com/sponsors/n-IA-hane">
-        <img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-red?logo=github" alt="Sponsor"/>
-      </a>
-    </td>
   </tr>
 </table>
 
@@ -148,6 +104,35 @@ calls, SIP accounts, groups, Assist, trunks and diagnostics. The
 single-bus, dual-bus, lightweight AEC and full AFE profiles.
 
 ## How it works
+
+Turn ESPHome audio devices and Home Assistant into a local SIP phone system,
+or use the maintained full-experience firmware to combine VoIP with a complete
+ESPHome voice satellite.
+
+ESP devices become standards-based SIP phones, with audio on every maintained
+VoIP profile and optional video on qualified ESP32-P4 profiles. Home Assistant
+can be a SIP video softphone, call router, RTP bridge, local registrar,
+conference focus, callable Assist destination and optional trunk endpoint.
+Browser phones, wall tablets, ESP room stations, standard SIP clients and an
+external PBX can share one phonebook without requiring a separate Asterisk or
+FreeSWITCH server for the normal home use case.
+
+VoIP is only one part of the project. The optional full-experience ESP YAMLs
+also provide an independent on-device Voice Assistant, Micro Wake Word, media
+playback, TTS, Sendspin support, runtime audio controls and touch interfaces.
+That local assistant is not created or controlled by calling Assist over SIP.
+
+The project therefore has three cooperating, independently useful surfaces:
+
+| Surface | Runs on | Purpose |
+|---|---|---|
+| ESP VoIP endpoint | ESPHome device | A standards-based SIP/RTP phone, with audio and optional qualified P4 video. |
+| Home Assistant VoIP Stack | Home Assistant | Browser phones, PBX routing, registrar, bridges, groups, conferences, callable Assist and an optional trunk. |
+| Full ESP experience | ESPHome device | A local voice satellite with wake word, Voice Assistant, media, TTS, optional Sendspin, runtime UI and VoIP. |
+
+Install only the surfaces you need. A VoIP-only ESP does not require the local
+Voice Assistant, and a full-experience ESP keeps its local assistant even when
+no SIP Assist extension is configured.
 
 ![Home Assistant as a local SIP and PBX hub](docs/images/home-assistant-local-sip-pbx.png)
 
@@ -767,9 +752,23 @@ tomorrow and close it as incomplete.
 
 ## Support the project
 
-If this work is useful, consider
-[sponsoring it on GitHub](https://github.com/sponsors/n-IA-hane). Donations help
-cover development tools, services and test hardware.
+This project is developed and maintained by **one person, as a private individual**, with no company, commercial sponsor, or organization funding its development.
+
+Until now, development tools, subscriptions, testing hardware and services have been paid entirely from my personal income.
+
+With the rising cost of living and everyday expenses in Italy, continuing to personally absorb all of these costs has become financially unsustainable.
+
+The project will remain **free and open source**. No features are being placed behind a paywall.
+
+However, without more community support, development, testing, hardware support and bug fixing will inevitably have to slow down.
+
+If this project is useful to you, please consider supporting its continued development:
+
+**[❤️ Sponsor the project on GitHub](https://github.com/sponsors/n-IA-hane)**
+
+Even a small contribution helps cover the real costs of keeping the project active.
+
+> **You are not paying to unlock features. You are helping make continued development possible.**
 
 For bug reports and hardware feedback, follow the
 [issue-reporting instructions](#before-opening-an-issue) above.
