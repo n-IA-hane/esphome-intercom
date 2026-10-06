@@ -39,7 +39,8 @@ from .runtime_data import (
     endpoint_directory,
     sip_endpoint_runtime,
 )
-from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder
+from .sip_client import RtpPayloadEncoder
+from .rtp_audio_receiver import RtpAudioReceiver
 from .sip_listener import SipInvite, SipInviteResult
 from .websocket_api import _fire_call_event
 from .phone_endpoint import EndpointAvailability, EndpointKind
@@ -87,7 +88,7 @@ class _ConferenceLeg:
     endpoint_id: str = ""
     local_ports: tuple[int, int] = (0, 0)
     transport: asyncio.DatagramTransport | None = None
-    decoder: RtpPayloadDecoder | None = None
+    decoder: RtpAudioReceiver | None = None
     encoder: RtpPayloadEncoder | None = None
     local_out: asyncio.Queue[bytes] | None = None
     client: Any | None = None
@@ -175,7 +176,7 @@ class ConferenceRoom:
                 local_ports=local_ports,
                 transport=transport,
                 port_reservation=port_reservation,
-                decoder=RtpPayloadDecoder(invite.recv_format),
+                decoder=RtpAudioReceiver(invite.recv_format, tuple(getattr(invite, "recv_formats", ()))),
                 encoder=RtpPayloadEncoder(invite.send_format),
                 in_converter=PcmFrameConverter(invite.recv_format.audio_format, CONFERENCE_FORMAT),
                 out_converter=PcmFrameConverter(CONFERENCE_FORMAT, invite.send_format.audio_format),
@@ -260,7 +261,7 @@ class ConferenceRoom:
                 local_ports=local_ports,
                 transport=transport,
                 port_reservation=port_reservation,
-                decoder=RtpPayloadDecoder(dialog.recv_format),
+                decoder=RtpAudioReceiver(dialog.recv_format, tuple(getattr(dialog, "recv_formats", ()))),
                 encoder=RtpPayloadEncoder(dialog.send_format),
                 in_converter=PcmFrameConverter(dialog.recv_format.audio_format, CONFERENCE_FORMAT),
                 out_converter=PcmFrameConverter(CONFERENCE_FORMAT, dialog.send_format.audio_format),
@@ -300,21 +301,21 @@ class ConferenceRoom:
             return
         try:
             packet = parse_packet(data)
-            if packet.payload_type != leg.decoder.fmt.payload_type:
+            if leg.decoder.format_for(packet.payload_type) is None:
                 raise ValueError(
-                    f"payload type {packet.payload_type} != expected {leg.decoder.fmt.payload_type}"
+                    f"unnegotiated payload type {packet.payload_type}"
                 )
             if leg.rx_ssrc is not None and packet.ssrc != leg.rx_ssrc:
                 raise ValueError(f"SSRC {packet.ssrc} != latched {leg.rx_ssrc}")
-            pcm = leg.decoder.decode(packet.payload)
-            if not pcm:
+            pcm_frames = leg.decoder.decode(packet.payload_type, packet.payload)
+            if not pcm_frames:
                 return
             if leg.rx_ssrc is None:
                 leg.rx_ssrc = packet.ssrc
                 leg.remote_port = int(addr[1])
             elif int(addr[1]) != leg.remote_port:
                 leg.remote_port = int(addr[1])
-            frames = leg.in_converter.convert(pcm)
+            frames = [frame for pcm in pcm_frames for frame in leg.in_converter.convert(pcm)]
         except Exception as err:
             _LOGGER.debug("Conference RTP frame ignored room=%s call_id=%s: %s", self.name, call_id, err)
             return

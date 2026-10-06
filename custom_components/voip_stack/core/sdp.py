@@ -234,6 +234,7 @@ class RtpDtmfDirection:
 class RtpPcmDirection:
     send: RtpPcmFormat
     recv: RtpPcmFormat
+    recv_formats: tuple[RtpPcmFormat, ...] = ()
 
     @property
     def selected_format(self) -> RtpPcmFormat:
@@ -3164,24 +3165,40 @@ def negotiate_answer_directional(
             local_recv_preferred,
         )
         if explicit is not None:
-            return explicit
-        return _negotiate_answer_with_offer_payloads(
-            answered_formats,
-            offered_pcm_formats(
-                local_offer_sdp,
-                allow_dahua_pcm=allow_dahua_pcm,
-            ),
-            local_send_preferred,
-            local_recv_preferred,
-            format_direction,
+            # The ESP directional extension has a separate per-payload contract.
+            return replace(explicit, recv_formats=(explicit.recv,) if local_direction in {"recvonly", "sendrecv"} else ())
+        offered_formats = offered_pcm_formats(
+            local_offer_sdp, allow_dahua_pcm=allow_dahua_pcm
         )
-    return _negotiate_for_local_direction(
+        selected = _negotiate_answer_with_offer_payloads(
+            answered_formats, offered_formats,
+            local_send_preferred, local_recv_preferred, format_direction,
+        )
+        if selected is None:
+            return None
+        receive = []
+        if local_direction in {"recvonly", "sendrecv"}:
+            # RFC 3264 6.1: the answerer sends any common codec using the
+            # offer's PT. Its receive preference does not select our sole RX.
+            for offered in offered_formats:
+                if not any(_same_rtp_audio_codec(offered, answer) for answer in answered_formats):
+                    continue
+                for local in local_recv_preferred:
+                    compatible = _rtp_compatible_audio(offered, local)
+                    if compatible is not None:
+                        receive.append(replace(offered, frame_ms=compatible.frame_ms))
+                        break
+        return replace(selected, recv_formats=tuple(receive))
+    selected = _negotiate_for_local_direction(
         answered_formats,
         local_send_preferred,
         local_recv_preferred,
         format_direction,
         prefer_offer_order=True,
     )
+    if selected is None:
+        return None
+    return replace(selected, recv_formats=(selected.recv,) if local_direction in {"recvonly", "sendrecv"} else ())
 
 
 def _negotiate_audio_flow_attributes(

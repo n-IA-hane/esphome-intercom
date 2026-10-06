@@ -49,7 +49,8 @@ from .media_call_lifetime import (
 from .queue_utils import drain_queue, put_drop_oldest
 from .runtime_data import conference_component, registration_data, require_runtime_data
 from .session_cleanup import async_wait_for_cleanup
-from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder
+from .sip_client import RtpPayloadEncoder
+from .rtp_audio_receiver import RtpAudioReceiver
 from .media_ws_session import (
     async_claimed_media_websocket,
     async_prepare_media_websocket_request,
@@ -111,6 +112,7 @@ class _SoftphoneMediaSession:
     remote_rtp_port: int
     send_format: Any
     recv_format: Any
+    recv_formats: tuple[Any, ...] = ()
     signaling_host: str = ""
     local_audio_direction: str = "sendrecv"
     remote_audio_connection_held: bool = False
@@ -532,6 +534,7 @@ def _active_softphone_media_session(
                 remote_rtp_port=int(invite.remote_rtp_port),
                 send_format=invite.send_format,
                 recv_format=invite.recv_format,
+                recv_formats=getattr(invite, "recv_formats", ()),
                 signaling_host=invite.source_host,
                 local_audio_direction=str(invite.local_audio_direction),
                 remote_audio_connection_held=bool(
@@ -571,6 +574,7 @@ def _active_softphone_media_session(
                 remote_rtp_port=int(dialog.remote_rtp_port),
                 send_format=dialog.send_format,
                 recv_format=dialog.recv_format,
+                recv_formats=getattr(dialog, "recv_formats", ()),
                 signaling_host=dialog.remote_host,
                 local_audio_direction=str(dialog.local_audio_direction),
                 remote_audio_connection_held=bool(
@@ -805,6 +809,7 @@ async def _run_audio_session(
     latched_rtp_ssrc: int | None = None
     last_audio_sequence: int | None = None
     last_audio_timestamp: int | None = None
+    last_audio_format = None
     remote_rtp_host = str(session.remote_rtp_host)
     remote_rtp_port = int(session.remote_rtp_port)
     applied_media_generation = int(session.media_generation)
@@ -819,7 +824,7 @@ async def _run_audio_session(
         if media_capture_enabled(hass)
         else None
     )
-    rtp_decoder: RtpPayloadDecoder
+    rtp_decoder: RtpAudioReceiver
     rtp_encoder: RtpPayloadEncoder
     dtmf_decoder = (
         RtpDtmfDecoder(session.dtmf_payload_type)
@@ -899,7 +904,7 @@ async def _run_audio_session(
     async def refresh_media_state(generation: int) -> None:
         nonlocal applied_media_generation, remote_rtp_host, remote_rtp_port
         nonlocal latched_rtp_source, latched_rtp_ssrc, logged_first_rtp
-        nonlocal last_audio_sequence, last_audio_timestamp
+        nonlocal last_audio_sequence, last_audio_timestamp, last_audio_format
         nonlocal rtp_decoder, rtp_encoder
         nonlocal dtmf_decoder
         nonlocal debug_capture
@@ -912,7 +917,9 @@ async def _run_audio_session(
             # part of it.  A re-INVITE may change PT, codec, rate or ptime; using
             # the previous encoder with the new RTP metadata would put invalid
             # media on the wire.
-            next_decoder = RtpPayloadDecoder(session.recv_format)
+            next_decoder = RtpAudioReceiver(
+                session.recv_format, session.recv_formats, previous=rtp_decoder
+            )
             next_encoder = RtpPayloadEncoder(session.send_format)
             next_dtmf_decoder = (
                 RtpDtmfDecoder(session.dtmf_payload_type)
@@ -929,6 +936,7 @@ async def _run_audio_session(
             logged_first_rtp = False
             last_audio_sequence = None
             last_audio_timestamp = None
+            last_audio_format = None
             protocol.dropped_packets += drain_queue(queue)
             rtp_decoder = next_decoder
             rtp_encoder = next_encoder
@@ -951,7 +959,7 @@ async def _run_audio_session(
 
     try:
         await ws.send_json(negotiation_payload())
-        rtp_decoder = RtpPayloadDecoder(session.recv_format)
+        rtp_decoder = RtpAudioReceiver(session.recv_format, session.recv_formats)
         rtp_encoder = RtpPayloadEncoder(session.send_format)
     except asyncio.CancelledError:
         transport.close()
@@ -977,7 +985,7 @@ async def _run_audio_session(
     async def rtp_to_ws() -> None:
         nonlocal latched_rtp_source, latched_rtp_ssrc, logged_first_rtp
         nonlocal remote_rtp_host, remote_rtp_port
-        nonlocal last_audio_sequence, last_audio_timestamp
+        nonlocal last_audio_sequence, last_audio_timestamp, last_audio_format
         observed_generation = int(session.media_generation)
         while not closed.is_set():
             if observed_generation != session.media_generation:
@@ -1018,7 +1026,8 @@ async def _run_audio_session(
                         len(data),
                     )
                     logged_first_rtp = True
-                if packet.payload_type != session.recv_format.payload_type:
+                received_format = rtp_decoder.format_for(packet.payload_type)
+                if received_format is None:
                     counters["drop_payload_type"] += 1
                     continue
                 if session.local_audio_direction not in {"recvonly", "sendrecv"}:
@@ -1028,16 +1037,10 @@ async def _run_audio_session(
                     counters["drop_addr"] += 1
                     continue
                 try:
-                    rtp.validate_audio_payload_size(
-                        packet.payload,
-                        session.recv_format,
-                    )
+                    frames = rtp_decoder.decode(packet.payload_type, packet.payload)
                 except rtp.RtpError as err:
                     counters["drop_payload_size"] += 1
                     _LOGGER.debug("HA softphone RTP RX oversized audio drop: %s", err)
-                    continue
-                pcm = rtp_decoder.decode(packet.payload)
-                if not pcm:
                     continue
                 source = (str(addr[0]), int(addr[1]))
                 if latched_rtp_source is None:
@@ -1064,26 +1067,29 @@ async def _run_audio_session(
                     else 0
                 )
                 expected_timestamp_delta = int(
-                    session.recv_format.rtp_timestamp_step
+                    received_format.rtp_timestamp_step
                 )
                 remote_silence_resume = (
                     last_audio_sequence is not None
+                    and last_audio_format == received_format
                     and sequence_delta == 1
                     and timestamp_delta > expected_timestamp_delta * 2
                 )
                 last_audio_sequence = packet.sequence
                 last_audio_timestamp = packet.timestamp
+                last_audio_format = received_format
                 counters["rtp_rx"] += 1
                 counters["rtp_rx_bytes"] += len(data)
-                if debug_capture is not None:
-                    debug_capture.note_rtp_rx(loop.time(), pcm)
                 async with ws_send_lock:
                     if remote_silence_resume:
                         await ws.send_json({"type": "remote_silence_resume"})
-                    await ws.send_bytes(encode_audio_frame(pcm))
-                if debug_capture is not None:
-                    debug_capture.note_ws_send(loop.time())
-                counters["ws_tx"] += 1
+                    for pcm in frames:
+                        if debug_capture is not None:
+                            debug_capture.note_rtp_rx(loop.time(), pcm)
+                        await ws.send_bytes(encode_audio_frame(pcm))
+                        if debug_capture is not None:
+                            debug_capture.note_ws_send(loop.time())
+                        counters["ws_tx"] += 1
                 publish_counters()
             except (ConnectionError, RuntimeError):
                 # A dead browser transport ends this media owner. Treating it

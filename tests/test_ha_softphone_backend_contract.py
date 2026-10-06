@@ -267,7 +267,8 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             "\n    try:", 1
         )[0]
 
-        self.assertIn("next_decoder = RtpPayloadDecoder(session.recv_format)", refresh)
+        self.assertIn("next_decoder = RtpAudioReceiver(", refresh)
+        self.assertIn("session.recv_format, session.recv_formats, previous=rtp_decoder", refresh)
         self.assertIn("next_encoder = RtpPayloadEncoder(session.send_format)", refresh)
         self.assertNotIn("tx_frame_delay", refresh)
         self.assertNotIn("tx_silence_pcm", refresh)

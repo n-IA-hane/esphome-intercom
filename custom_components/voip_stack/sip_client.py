@@ -290,6 +290,8 @@ class SipDialog(DialogSignalingState):
     remote_video_connection_held: bool = False
     local_video_rtp_port: int = 0
     local_video_direction: str = "inactive"
+    recv_formats: tuple[sdp.RtpPcmFormat, ...] = ()
+    recv_payload_history: tuple[sdp.RtpPcmFormat, ...] = ()
 
     @property
     def selected_format(self) -> sdp.RtpPcmFormat:
@@ -302,6 +304,31 @@ class SipDialog(DialogSignalingState):
     @property
     def recv_video_format(self) -> sdp.RtpVideoFormat | None:
         return self.local_video_format or self.video_format
+
+
+def _validate_receive_payload_update(
+    current: SipDialog | None, formats: tuple[sdp.RtpPcmFormat, ...]
+) -> tuple[sdp.RtpPcmFormat, ...]:
+    """Keep each receive PT's codec immutable for this dialog's lifetime."""
+    history = (
+        current.recv_payload_history or current.recv_formats or (current.recv_format,)
+        if current is not None else ()
+    )
+    mappings: dict[int, sdp.RtpPcmFormat] = {}
+    for fmt in (*history, *formats):
+        if not isinstance(fmt, sdp.RtpPcmFormat):
+            continue  # An initial delayed-offer seed has only decoded PCM.
+        if not 0 <= fmt.payload_type <= 127:
+            raise sdp.SdpError("SDP receive payload type is outside the RTP range")
+        previous = mappings.get(fmt.payload_type)
+        if previous is not None and (
+            previous.encoding, previous.sample_rate, previous.channels
+        ) != (fmt.encoding, fmt.sample_rate, fmt.channels):
+            raise sdp.SdpError("SDP update changed an existing receive payload codec")
+        mappings.setdefault(fmt.payload_type, fmt)
+    # At most 128 entries. History validates SDP; it does not keep decoders or
+    # retired receive formats active beyond their separate media grace period.
+    return tuple(mappings.values())
 
 
 @dataclass(frozen=True, slots=True)
@@ -1201,6 +1228,8 @@ class SipCallClient:
         return bool(
             previous.send_format.wire_token() == updated.send_format.wire_token()
             and previous.recv_format.wire_token() == updated.recv_format.wire_token()
+            and (previous.recv_formats or (previous.recv_format,))
+            == (updated.recv_formats or (updated.recv_format,))
             and previous.remote_rtp_host == updated.remote_rtp_host
             and previous.remote_rtp_port == updated.remote_rtp_port
             and previous.remote_audio_direction == updated.remote_audio_direction
@@ -1248,6 +1277,9 @@ class SipCallClient:
             )
             if selected is None:
                 return None
+            recv_payload_history = _validate_receive_payload_update(
+                current, selected.recv_formats if local_offer_sdp else (selected.recv,)
+            )
             parsed = sdp.parse_sdp(request.body)
             accepted_video = tuple(
                 dict.fromkeys(
@@ -1345,6 +1377,8 @@ class SipCallClient:
                 remote_rtp_port=int(parsed["media_port"]),
                 send_format=selected.send,
                 recv_format=selected.recv,
+                recv_formats=selected.recv_formats if local_offer_sdp else (selected.recv,),
+                recv_payload_history=recv_payload_history,
                 remote_target_uri=remote_target,
                 dtmf_payload_type=(
                     dtmf_direction.recv.payload_type
@@ -3337,14 +3371,15 @@ class SipCallClient:
             )
             audio = sdp.negotiate_answer_directional(
                 answer.body,
-                [fmt.audio_format for fmt in sdp.offered_pcm_formats(offer)],
-                [fmt.audio_format for fmt in sdp.offered_pcm_formats(offer)],
+                [fmt.audio_format for fmt in sdp.offered_pcm_formats(offer, allow_dahua_pcm=self.include_dahua_pcm)],
+                [fmt.audio_format for fmt in sdp.offered_pcm_formats(offer, allow_dahua_pcm=self.include_dahua_pcm)],
                 local_offer_direction=current.local_audio_direction,
                 local_offer_sdp=offer,
                 allow_dahua_pcm=self.include_dahua_pcm,
             )
             if audio is None:
                 return None
+            recv_payload_history = _validate_receive_payload_update(current, audio.recv_formats)
             parsed = sdp.parse_sdp(answer.body)
             video_pair = (
                 sdp.negotiate_video_answer_directional(
@@ -3395,6 +3430,8 @@ class SipCallClient:
                 remote_rtp_port=int(parsed["media_port"]),
                 send_format=audio.send,
                 recv_format=audio.recv,
+                recv_formats=audio.recv_formats,
+                recv_payload_history=recv_payload_history,
                 remote_target_uri=remote_target,
                 dtmf_payload_type=(
                     dtmf_recv.payload_type if dtmf_recv is not None else None
@@ -3947,6 +3984,8 @@ class SipCallClient:
                 local_offer_sdp=self._local_sdp_body or None,
                 allow_dahua_pcm=self.include_dahua_pcm,
             )
+            if selected is not None:
+                recv_payload_history = _validate_receive_payload_update(self.dialog, selected.recv_formats)
         except Exception as err:
             selected = None
             negotiation_error = err
@@ -4039,6 +4078,8 @@ class SipCallClient:
             remote_uri=remote_uri,
             send_format=selected.send,
             recv_format=selected.recv,
+            recv_formats=selected.recv_formats,
+            recv_payload_history=recv_payload_history,
             remote_target_uri=remote_target_uri,
             route_set=route_set,
             dtmf_payload_type=(dtmf_recv.payload_type if dtmf_recv else None),

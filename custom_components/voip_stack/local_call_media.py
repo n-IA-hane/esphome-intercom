@@ -14,7 +14,8 @@ from .core import rtp
 from .core.audio_format import AudioFormat
 from .core.audio_pcm import PcmFrameConverter
 from .queue_utils import put_drop_oldest
-from .sip_client import RtpPayloadDecoder, RtpPayloadEncoder
+from .sip_client import RtpPayloadEncoder
+from .rtp_audio_receiver import RtpAudioReceiver
 from .sip_listener import SipInvite
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ class LocalCallMedia:
         self.closed = asyncio.Event()
         self.rx_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=_RX_QUEUE_FRAMES)
         self.tx_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=_TX_QUEUE_FRAMES)
-        self.decoder = RtpPayloadDecoder(invite.recv_format)
+        self.decoder = RtpAudioReceiver(invite.recv_format, tuple(getattr(invite, "recv_formats", ())))
         self.encoder = RtpPayloadEncoder(invite.send_format)
         self.rx_converter = PcmFrameConverter(
             invite.recv_format.audio_format, LOCAL_PCM_FORMAT
@@ -117,7 +118,10 @@ class LocalCallMedia:
         # Codec construction and PCM converter validation may fail.  Do all of
         # that work before returning the SIP 200 so the active RTP contract is
         # left untouched when the new offer cannot be supported.
-        decoder = RtpPayloadDecoder(updated.recv_format)
+        decoder = RtpAudioReceiver(
+            updated.recv_format, tuple(getattr(updated, "recv_formats", ())),
+            previous=self.decoder,
+        )
         encoder = RtpPayloadEncoder(updated.send_format)
         rx_converter = PcmFrameConverter(
             updated.recv_format.audio_format, LOCAL_PCM_FORMAT
@@ -249,7 +253,7 @@ class LocalCallMedia:
                     if digit and telephone_event_code(digit) in self._dtmf_events:
                         self.on_dtmf("left", digit, "rtp_event")
                     return
-            if packet.payload_type != self.invite.recv_format.payload_type:
+            if self.decoder.format_for(packet.payload_type) is None:
                 self.counters["drop_payload_type"] += 1
                 return
             if self.remote_ssrc is None:
@@ -260,14 +264,14 @@ class LocalCallMedia:
                 return
             elif int(addr[1]) != self.remote_rtp_port:
                 self.remote_rtp_port = int(addr[1])
-            pcm = self.decoder.decode(packet.payload)
-            if not pcm:
+            pcm_frames = self.decoder.decode(packet.payload_type, packet.payload)
+            if not pcm_frames:
                 return
             self.counters["rtp_rx"] += 1
             if not self._accepting_input:
                 self.counters["rx_suppressed"] += 1
                 return
-            for frame in self.rx_converter.convert(pcm):
+            for frame in (frame for pcm in pcm_frames for frame in self.rx_converter.convert(pcm)):
                 if put_drop_oldest(self.rx_queue, frame):
                     self.counters["drop_rx_queue"] += 1
         except Exception as err:  # noqa: BLE001 - malformed media cannot end the call.

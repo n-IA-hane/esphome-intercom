@@ -179,7 +179,6 @@ class RtpProfileTest(unittest.TestCase):
             send_rtp_format=pcm,
         )
         with (
-            mock.patch.object(sip_rtp_bridge, "RtpPayloadDecoder", return_value=object()),
             mock.patch.object(sip_rtp_bridge, "RtpPayloadEncoder", return_value=object()),
         ):
             relay = sip_rtp_bridge.SipRtpRelay(

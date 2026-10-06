@@ -391,3 +391,27 @@ sessions, legs, routes, SIP clients, browser owners, active audio/video
 sessions, media locks, transcoders and allocated RTP ports. A terminal lab test
 must return `call_scoped_quiescent` to `true`; an idle card alone is not proof
 that teardown completed.
+
+## Negotiated audio receive formats
+
+The codec selected for transmission and the set accepted for reception are
+separate contracts. For an outgoing offer, HA keeps the codec-compatible
+intersection of the offer and answer as receive formats, using the payload
+numbers from its own offer. Transmit selection continues to use the answer.
+A peer can therefore send PCM/16000 while HA transmits PCMU when both were
+negotiated. A payload number alone never identifies a dynamic codec.
+
+The shared RTP audio receiver validates each packet against its negotiated
+mapping and uses the existing decoders and PCM converter. Browser, local
+application, conference and bridge consumers retain their existing PCM format.
+Compatible bridge packets pass through unchanged; another accepted codec is
+converted when required. Unnegotiated payloads remain rejected.
+
+On re-INVITE, receive mappings may overlap for up to 60 seconds, following
+[RFC 3264 section 8.3.2](https://www.rfc-editor.org/rfc/rfc3264.html#section-8.3.2).
+A valid newly introduced payload can end that overlap earlier. The dialog keeps
+bounded payload identity history so a previously used payload cannot silently
+become a different codec. Codec switches discard incomplete converted audio
+from the previous format and preserve the destination RTP clock.
+
+This changes HA media handling, not ESP firmware or codec preference lists.

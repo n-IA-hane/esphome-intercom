@@ -255,7 +255,7 @@ def test_media_update_is_staged_and_commits_assist_audio_contract() -> None:
     assert session.invite is updated
     assert session.remote_rtp_port == 42000
     assert session.remote_ssrc is None
-    assert session.decoder.fmt == updated_format
+    assert session.decoder.selected_format == updated_format
     assert session.encoder.fmt == updated_format
     assert session.rx_converter.src == updated_format.audio_format
     assert session.tx_converter.dst == updated_format.audio_format

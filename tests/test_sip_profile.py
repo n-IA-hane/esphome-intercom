@@ -267,7 +267,6 @@ class SipProfileTest(unittest.TestCase):
         l16 = sdp.RtpPcmFormat(96, "L16", 16000, 1, 20)
         g722 = sdp.RtpPcmFormat(9, "G722", 8000, 1, 20)
         with (
-            patch.object(sip_rtp_bridge, "RtpPayloadDecoder", PassthroughCodec),
             patch.object(sip_rtp_bridge, "RtpPayloadEncoder", PassthroughCodec),
         ):
             relay = sip_rtp_bridge.SipRtpRelay(

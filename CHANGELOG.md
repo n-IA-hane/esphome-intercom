@@ -4,6 +4,15 @@
 
 Changes since stable **2026.10.1**.
 
+- Fix negotiated receive audio being restricted to the preferred transmit codec
+  when a SIP answer accepts multiple codecs. Keep the receive payload mappings
+  from the local offer, decode accepted alternatives into the existing PCM
+  contract, and preserve compatible RTP passthrough. Covers Dahua PCM/16000
+  received while HA transmits PCMU, reported in
+  [#115](https://github.com/n-IA-hane/esphome-intercom/issues/115). Re-INVITE
+  updates preserve a bounded transition window and reject conflicting payload
+  reassignment before committing media. No ESP firmware update is required.
+
 - Add **Set external call access** (`voip_stack.set_external_call_access`) to
   persistently allow or block new trunk calls per phone. All phones are allowed
   by default. Restrictions follow stable identity and apply to HA routing,

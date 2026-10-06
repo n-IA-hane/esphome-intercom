@@ -129,6 +129,7 @@ def _load_audio_ws_runtime_module():
         "media_debug": _load_intercom_module("media_debug"),
         "queue_utils": _load_intercom_module("queue_utils"),
         "sip_client": sip_client,
+        "rtp_audio_receiver": _load_intercom_module("rtp_audio_receiver"),
         "websocket_owner": _load_intercom_module("websocket_owner"),
     }
     for name, module in dependencies.items():
