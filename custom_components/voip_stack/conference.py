@@ -43,7 +43,7 @@ from .sip_client import RtpPayloadEncoder
 from .rtp_audio_receiver import RtpAudioReceiver
 from .sip_listener import SipInvite, SipInviteResult
 from .websocket_api import _fire_call_event
-from .phone_endpoint import EndpointAvailability, EndpointKind
+from .phone_endpoint import EndpointAvailability
 
 _LOGGER = logging.getLogger(__name__)
 

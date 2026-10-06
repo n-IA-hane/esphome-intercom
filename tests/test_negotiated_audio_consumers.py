@@ -1,6 +1,5 @@
 """Alternate negotiated audio payloads through existing relay and local sinks."""
 
-import asyncio
 import struct
 import sys
 from types import SimpleNamespace
