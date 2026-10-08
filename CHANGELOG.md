@@ -4,6 +4,26 @@
 
 Changes since stable **2026.10.1**.
 
+- Add opt-in native HA response templates for VoIP voice commands, preserving
+  existing custom sentences. English, Italian and German examples include
+  resolved contact names and localized errors. Based on
+  [#137](https://github.com/n-IA-hane/esphome-intercom/pull/137).
+- Reconcile every mixer source when forced shared-output stop discards accepted
+  audio, and wait for the mixer writer to exit before stopping that output.
+  Together with the Audio Stack pending-reset admission fix, this addresses two
+  reproduced playback-stall paths from the investigation of
+  [#129](https://github.com/n-IA-hane/esphome-intercom/issues/129). Three targeted
+  Spotpear cycles passed; long-uptime validation remains open.
+
+
+- Add an explicit Dahua symmetric-audio mode: after validated incoming audio,
+  transmit with the same codec only when negotiated in that direction. Keep
+  browser/application PCM stable, use the answer's TX payload mapping and
+  preserve DTMF across changes. RTP clock changes use a new source identity.
+  This provides a targeted hardware test for the remaining one-way audio in
+  [#115](https://github.com/n-IA-hane/esphome-intercom/issues/115), without
+  changing the default policy for other devices.
+
 - Expose Dahua compatibility and audio-offer choices in contact creation,
   editing and `add_contact`. Static Dahua contacts use common 20 ms audio and
   the existing receive-only H.264 profile without pretending to be registered.
