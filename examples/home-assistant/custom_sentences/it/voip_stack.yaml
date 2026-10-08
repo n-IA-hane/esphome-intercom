@@ -22,6 +22,30 @@ intents:
           - "rifiuta"
           - "rifiuta la chiamata"
 
+responses:
+  intents:
+    VoipCall:
+      default: "Chiamata in corso..."
+# Do not use if normal recognition sound should be played
+#    VoipHangup:
+#      default: "Ok"
+#    VoipAnswer:
+#      default: "Ok"
+#    VoipDecline:
+#      default: "Ok"
+  errors:
+    voip_stack_calling_failed_unknown_origin: "Non so a quale dispositivo VoIP appartiene."
+    voip_stack_calling_failed_missing_target: "Quale contatto VoIP devo chiamare?"
+    voip_stack_calling_failed_no_contact: "Non riesco a trovare un contatto con questo nome."
+    voip_stack_calling_failed_ambiguous: "Ci sono più contatti con questo nome."
+    voip_stack_calling_failed_ambiguous_area: "Ci sono più aree con questo nome."
+    voip_stack_calling_failed_no_devices: "L'area non dispone di alcun dispositivo VoIP."
+    voip_stack_calling_failed_multiple_devices: "L'area dispone di più di un dispositivo."
+    voip_stack_calling_failed: "La chiamata non è riuscita."
+    voip_stack_hangup_failed: "Non è stato possibile riagganciare."
+    voip_stack_answer_failed: "Non è stato possibile stabilire la chiamata."
+    voip_stack_decline_failed: "Non è stato possibile rifiutare la chiamata."
+
 lists:
   target:
     wildcard: true

@@ -97,12 +97,6 @@ def _resolve_contact_name(raw_name: str, contacts: list[ContactCandidate]) -> Co
     return ContactResolution(canonical=match.canonical, matches=(match.canonical,), source=match.source)
 
 
-def _response(intent_obj: Intent, speech: str) -> IntentResponse:
-    response = intent_obj.create_response()
-    response.async_set_speech(speech)
-    return response
-
-
 async def _voip_devices(hass: HomeAssistant) -> list[dict[str, Any]]:
     from .websocket_api import _get_voip_devices
 
@@ -334,7 +328,7 @@ class _VoipIntentHandler(IntentHandler):
         origin = await _origin_device(intent_obj)
         if origin is None:
             _LOGGER.info("Assist VoIP command rejected: unknown source device_id=%s", intent_obj.device_id)
-            return _response(intent_obj, "I do not know which VoIP device heard that.")
+            raise intent.IntentHandleError("I do not know which VoIP device heard that.", "voip_stack_calling_failed_unknown_origin")
         return origin
 
 
@@ -363,14 +357,14 @@ class VoipCallIntentHandler(_VoipIntentHandler):
         resolved = await _resolve_contact_or_area(intent_obj.hass, spoken_target)
         if resolved.error == "missing":
             _LOGGER.info("Assist VoIP call rejected: missing target source=%s", origin.get("name"))
-            return _response(intent_obj, "Which VoIP contact should I call?")
+            raise intent.IntentHandleError("Which VoIP contact should I call?", "voip_stack_calling_failed_missing_target")
         if resolved.error == "not_found":
             _LOGGER.info(
                 "Assist VoIP call rejected: target not found source=%s spoken=%r",
                 origin.get("name"),
                 spoken_target,
             )
-            return _response(intent_obj, f"I cannot find an VoIP contact named {spoken_target}.")
+            raise intent.IntentHandleError("I cannot find an VoIP contact named "+spoken_target+".", "voip_stack_calling_failed_no_contact")
         if resolved.error == "ambiguous":
             _LOGGER.info(
                 "Assist VoIP call rejected: ambiguous contact source=%s spoken=%r matches=%s",
@@ -378,7 +372,7 @@ class VoipCallIntentHandler(_VoipIntentHandler):
                 spoken_target,
                 ", ".join(resolved.matches),
             )
-            return _response(intent_obj, f"The VoIP contact {spoken_target} is ambiguous.")
+            raise intent.IntentHandleError("The VoIP contact "+spoken_target+" is ambiguous.", "voip_stack_calling_failed_ambiguous")
         if resolved.error == "ambiguous_area":
             _LOGGER.info(
                 "Assist VoIP call rejected: ambiguous area source=%s spoken=%r matches=%s",
@@ -386,14 +380,14 @@ class VoipCallIntentHandler(_VoipIntentHandler):
                 spoken_target,
                 ", ".join(resolved.matches),
             )
-            return _response(intent_obj, f"The Home Assistant area {spoken_target} is ambiguous.")
+            raise intent.IntentHandleError("The Home Assistant area "+spoken_target+" is ambiguous.", "voip_stack_calling_failed_ambiguous_area")
         if resolved.error == "area_empty":
             _LOGGER.info(
                 "Assist VoIP call rejected: empty area source=%s spoken=%r",
                 origin.get("name"),
                 spoken_target,
             )
-            return _response(intent_obj, f"The Home Assistant area {spoken_target} has no VoIP device.")
+            raise intent.IntentHandleError("The Home Assistant area "+spoken_target+" has no VoIP device.", "voip_stack_calling_failed_no_devices")
         if resolved.error == "ambiguous_area_device":
             _LOGGER.info(
                 "Assist VoIP call rejected: area has multiple VoIP devices source=%s spoken=%r matches=%s",
@@ -401,10 +395,7 @@ class VoipCallIntentHandler(_VoipIntentHandler):
                 spoken_target,
                 ", ".join(resolved.matches),
             )
-            return _response(
-                intent_obj,
-                f"The Home Assistant area {spoken_target} has more than one VoIP device.",
-            )
+            raise intent.IntentHandleError("The Home Assistant area "+spoken_target+" has more than one VoIP device.", "voip_stack_calling_failed_multiple_devices")
 
         try:
             if _normalize_contact(resolved.canonical) == _normalize_contact(_ha_peer_name(intent_obj.hass)):
@@ -433,7 +424,7 @@ class VoipCallIntentHandler(_VoipIntentHandler):
                 spoken_target,
                 err,
             )
-            return _response(intent_obj, f"I could not call {resolved.canonical}.")
+            raise intent.IntentHandleError("I could not call "+resolved.canonical, "voip_stack_calling_failed")
         _LOGGER.info(
             "Assist VoIP call: %s -> %s (spoken=%r source=%s)",
             origin.get("name"),
@@ -441,7 +432,8 @@ class VoipCallIntentHandler(_VoipIntentHandler):
             spoken_target,
             resolved.source,
         )
-        return _response(intent_obj, f"Calling {resolved.canonical}.")
+        response = intent_obj.create_response()
+        return response
 
 
 class VoipHangupIntentHandler(_VoipIntentHandler):
@@ -464,9 +456,10 @@ class VoipHangupIntentHandler(_VoipIntentHandler):
             )
         except Exception as err:
             _LOGGER.error("Assist VoIP hangup failed for %s: %s", origin.get("name"), err)
-            return _response(intent_obj, "I could not hang up the VoIP call.")
-        return _response(intent_obj, "OK.")
+            raise intent.IntentHandleError("Assist VoIP hangup failed for "+origin.get("name")+":"+ str(err), "voip_stack_hangup_failed")
 
+        response = intent_obj.create_response()
+        return response
 
 class VoipAnswerIntentHandler(_VoipIntentHandler):
     """Answer the call on the satellite that heard the command."""
@@ -488,9 +481,10 @@ class VoipAnswerIntentHandler(_VoipIntentHandler):
             )
         except Exception as err:
             _LOGGER.error("Assist VoIP answer failed for %s: %s", origin.get("name"), err)
-            return _response(intent_obj, "I could not answer the VoIP call.")
-        return _response(intent_obj, "Answering.")
+            raise intent.IntentHandleError("Assist VoIP answer failed for "+origin.get("name")+":"+ str(err), "voip_stack_answer_failed")
 
+        response = intent_obj.create_response()
+        return response
 
 class VoipDeclineIntentHandler(_VoipIntentHandler):
     """Decline the call on the satellite that heard the command."""
@@ -515,8 +509,10 @@ class VoipDeclineIntentHandler(_VoipIntentHandler):
             )
         except Exception as err:
             _LOGGER.error("Assist VoIP decline failed for %s: %s", origin.get("name"), err)
-            return _response(intent_obj, "I could not decline the VoIP call.")
-        return _response(intent_obj, "Declining.")
+            raise intent.IntentHandleError("Assist VoIP decline failed for "+origin.get("name")+":"+ str(err), "voip_stack_decline_failed")
+
+        response = intent_obj.create_response()
+        return response
 
 
 def async_register_assist_intents(hass: HomeAssistant) -> None:
