@@ -21,6 +21,30 @@ intents:
           - "decline"
           - "decline the call"
 
+responses:
+  intents:
+    VoipCall:
+      default: "Calling..."
+# Do not use if normal recognition sound should be played
+#    VoipHangup:
+#      default: "Ok"
+#    VoipAnswer:
+#      default: "Ok"
+#    VoipDecline:
+#      default: "Ok"
+  errors:
+    voip_stack_calling_failed_unknown_origin: "I don't know which VoIP device this belongs to."
+    voip_stack_calling_failed_missing_target: "Which VoIP contact should I call?"
+    voip_stack_calling_failed_no_contact: "I can't find a contact with that name."
+    voip_stack_calling_failed_ambiguous: "There are multiple contacts with that name."
+    voip_stack_calling_failed_ambiguous_area: "There are multiple areas with that name."
+    voip_stack_calling_failed_no_devices: "The area has no VoIP device."
+    voip_stack_calling_failed_multiple_devices: "The area has more than one device."
+    voip_stack_calling_failed: "Call failed."
+    voip_stack_hangup_failed: "Hang up failed."
+    voip_stack_answer_failed: "Call could not be connected."
+    voip_stack_decline_failed: "Decline failed."
+
 lists:
   target:
     wildcard: true

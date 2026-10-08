@@ -1,0 +1,53 @@
+language: de
+intents:
+  VoipCall:
+    data:
+      - sentences:
+          - "rufe {target} an"
+          - "{target} anrufen"
+
+  VoipHangup:
+    data:
+      - sentences:
+          - "auflegen"
+          - "anruf beenden"
+
+  VoipAnswer:
+    data:
+      - sentences:
+          - "anruf annehmen"
+          - "annehmen"
+
+  VoipDecline:
+    data:
+      - sentences:
+          - "[anruf ]ablehnen[.]"
+
+responses:
+  intents:
+    VoipCall:
+      default: "Rufe an..."
+# Do not use if normal recognition sound should be played
+#    VoipHangup:    
+#      default: "Ok"
+#    VoipAnswer:
+#      default: "Ok"
+#    VoipDecline:
+#      default: "Ok"
+  errors:
+    voip_stack_calling_failed_unknown_origin: "Ich weiß nicht, welches VoIP Gerät das gehört hat."
+    voip_stack_calling_failed_missing_target: "Welchen VoIP Kontakt soll ich anrufen?"
+    voip_stack_calling_failed_no_contact: "Ich kann kein Kontakt mit diesem Namen finden."
+    voip_stack_calling_failed_ambiguous: "Es gibt mehrere Kontakte mit diesem Namen."
+    voip_stack_calling_failed_ambiguous_area: "Es gibt mehrere Bereiche mit diesem Namen."
+    voip_stack_calling_failed_no_devices: "Der Bereich hat kein VoIP Gerät."
+    voip_stack_calling_failed_multiple_devices: "Der Bereich hat mehr als ein Gerät."
+    voip_stack_calling_failed: "Anruf ist fehlgeschlagen."
+    voip_stack_hangup_failed: "Auflegen ist fehlgeschlagen."
+    voip_stack_answer_failed: "Anruf konnte nicht aufgebaut werden."
+    voip_stack_decline_failed: "Ablehnen ist fehlgeschlagen"
+    
+
+lists:
+  target:
+    wildcard: true
