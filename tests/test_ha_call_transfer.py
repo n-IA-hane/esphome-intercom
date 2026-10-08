@@ -131,3 +131,52 @@ async def test_transfer_service_closes_only_the_successful_current_call(
     assert terminate.await_count == int(accepted and current)
     if accepted and current:
         assert terminate.await_args.args[:2] == ("original", "forwarded")
+
+
+@pytest.mark.parametrize("destination", ["Wakeup-Caller", "666"])
+async def test_automation_transfer_targets_ha_listener_not_remote_phone(destination):
+    import json
+    source = _established("source", "remote", "bedroom")
+    source.refer = AsyncMock(return_value=SipTransferResult(True, 200, "completed"))
+    runtime = SimpleNamespace(
+        sip=SimpleNamespace(sip_clients_snapshot=lambda: {"source": source}),
+        endpoints=SimpleNamespace(resolve=lambda _: None),
+        phonebook_sensor=SimpleNamespace(extra_state_attributes={"roster_json": json.dumps([
+            {"id": "HA", "address": "192.0.2.1", "port": 5070,
+             "metadata": {"local_ha": True, "sip_transport": "tcp"}},
+            {"id": "Wakeup-Caller", "extension": "666", "metadata": {"virtual_endpoint": "automation"}},
+        ])}),
+    )
+    result = await call_transfer.async_transfer_call(
+        runtime, call_transfer.CallTransferRequest("source", destination)
+    )
+    assert result.accepted
+    expected = sip_transfer.SipReferTarget("sip:666@192.0.2.1:5070;transport=tcp")
+    source.refer.assert_awaited_once_with(expected)
+    assert "127.0.0.2" not in expected.uri
+
+
+def test_automation_transfer_without_extension_uses_listener_fallback():
+    import json
+    runtime = SimpleNamespace(
+        transport_config={"advertise_host": "ha.example.test", "sip_port": 5080},
+        sip=SimpleNamespace(component=lambda _: SimpleNamespace(local_ip="192.0.2.1", local_sip_port=5060)),
+        phonebook_sensor=SimpleNamespace(extra_state_attributes={"roster_json": json.dumps([
+            {"id": "Wakeup-Caller", "metadata": {"virtual_endpoint": "automation"}},
+        ])}),
+    )
+    target = call_transfer._blind_target(runtime, "sip:bedroom@192.0.2.20", "Wakeup-Caller")
+    assert target.uri == "sip:Wakeup-Caller@ha.example.test:5080"
+
+
+def test_automation_transfer_without_reachable_ha_address_fails_explicitly():
+    import json
+    from custom_components.voip_stack.core import sip
+    runtime = SimpleNamespace(
+        transport_config={}, sip=SimpleNamespace(component=lambda _: None),
+        phonebook_sensor=SimpleNamespace(extra_state_attributes={"roster_json": json.dumps([
+            {"id": "Wakeup", "metadata": {"virtual_endpoint": "automation"}},
+        ])}),
+    )
+    with pytest.raises(sip.SipError, match="Home Assistant SIP address is unavailable"):
+        call_transfer._blind_target(runtime, "sip:bedroom@192.0.2.20", "Wakeup")

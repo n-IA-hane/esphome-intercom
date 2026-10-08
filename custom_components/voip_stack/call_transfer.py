@@ -9,7 +9,7 @@ from .phone_endpoint import PhoneEndpoint
 from .runtime_data import VoipStackRuntime
 from .roster import find_entry, parse_roster_json
 from .sip_client import SipCallClient, SipTransferResult
-from .router import RouteAction, resolve_ha_router
+from .router import RouteAction, ha_uri_for, resolve_ha_router
 from .trunk_policy import call_external_call_denied, is_trunk_uri
 
 
@@ -61,7 +61,24 @@ def _blind_target(
     phonebook = getattr(runtime, "phonebook_sensor", None)
     attributes = phonebook.extra_state_attributes if phonebook is not None else {}
     roster_json = str((attributes or {}).get("roster_json") or "")
-    entry = find_entry(parse_roster_json(roster_json), raw) if roster_json else None
+    entries = parse_roster_json(roster_json) if roster_json else []
+    entry = find_entry(entries, raw)
+    if entry is not None and entry.metadata.get("virtual_endpoint") == "automation":
+        if not entry.enabled:
+            raise sip.SipError("transfer destination is disabled")
+        target = entry.extension or entry.id
+        uri = ha_uri_for(target, entries)
+        if not uri:
+            # A REFER asks the remote phone to dial again. Its own SIP host
+            # cannot execute an HA automation; use the shared HA listener.
+            config = runtime.transport_config
+            server = runtime.sip.component("udp_listener") if runtime.sip is not None else None
+            host = str(config.get("advertise_host") or getattr(server, "local_ip", "") or "").strip()
+            if not host or host in {"0.0.0.0", "::"}:
+                raise sip.SipError("Home Assistant SIP address is unavailable for transfer")
+            port = int(config.get("sip_port") or getattr(server, "local_sip_port", 5060))
+            uri = ha_uri_for(target, entries, str(sip.SipUri("HA", host, port)))
+        return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(uri)))
     if entry is not None and entry.sip_uri:
         return sip_transfer.SipReferTarget(str(sip.parse_sip_uri(entry.sip_uri)))
     endpoint = runtime.endpoints.resolve(raw)
