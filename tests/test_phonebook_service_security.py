@@ -25,8 +25,11 @@ def _load_phonebook_services(monkeypatch, route_conflicts=None):
     homeassistant.__path__ = []
     core = types.ModuleType("homeassistant.core")
     core.ServiceCall = object
+    exceptions = types.ModuleType("homeassistant.exceptions")
+    exceptions.ServiceValidationError = ValueError
     monkeypatch.setitem(sys.modules, "homeassistant", homeassistant)
     monkeypatch.setitem(sys.modules, "homeassistant.core", core)
+    monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions)
 
     const = types.ModuleType(f"{PACKAGE}.const")
     const.DOMAIN = "voip_stack"

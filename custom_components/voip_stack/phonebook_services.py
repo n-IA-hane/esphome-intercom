@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from homeassistant.core import ServiceCall
+from homeassistant.exceptions import ServiceValidationError
 
 from .config import assist_config
 from .config_validation import route_namespace_conflicts
@@ -93,6 +94,10 @@ def _validate_contact_namespace(
         accepted.append(_entry_mapping(entry))
 
 
+class ContactProfileError(ValueError):
+    """A contact's explicit SIP compatibility settings are inconsistent."""
+
+
 def contact_from_data(data: Mapping[str, Any]) -> RosterEntry:
     """Normalize a contact from either the HA editor or a service request."""
     name = str(data["name"]).strip()
@@ -123,6 +128,21 @@ def contact_from_data(data: Mapping[str, Any]) -> RosterEntry:
         if key in data and metadata_value(key) is not None
         },
     }
+    profile = str(data.get("sip_profile", metadata.get("sip_profile", "auto"))).strip().lower()
+    audio = str(data.get("dahua_audio", metadata.get("dahua_audio", "auto"))).strip().lower()
+    if profile not in {"auto", "dahua"} or audio not in {"auto", "standard", "pcm"}:
+        raise ContactProfileError("Unknown SIP profile or Dahua audio mode")
+    if audio != "auto" and profile != "dahua":
+        raise ContactProfileError("Select the Dahua SIP profile before choosing its audio compatibility")
+    if (data.get("type") == "automation" or metadata.get("virtual_endpoint") == "automation") and (
+        profile != "auto" or audio != "auto"
+    ):
+        raise ContactProfileError("Automation contacts cannot select a SIP device profile")
+    for key, value in (("sip_profile", profile), ("dahua_audio", audio)):
+        if value == "auto":
+            metadata.pop(key, None)
+        else:
+            metadata[key] = value
     address = str(data.get("address") or "").strip()
     sip_uri = str(data.get("sip_uri") or "").strip()
     extension = str(data.get("extension") or "").strip()
@@ -162,7 +182,10 @@ def build_phonebook_service_handlers(
 
     async def add_contact(call: ServiceCall) -> None:
         hass = call.hass
-        entry = contact_from_data(call.data)
+        try:
+            entry = contact_from_data(call.data)
+        except ContactProfileError as err:
+            raise ServiceValidationError(str(err)) from err
         entry_keys = {
             normalize_roster_key(entry.id),
             normalize_roster_key(entry.name),

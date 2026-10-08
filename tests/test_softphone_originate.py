@@ -469,3 +469,110 @@ def test_restricted_browser_rejects_trunk_before_call_start(softphone_originate,
         ))
     assert caught.value.translation_key == "external_calls_disabled"
     module._async_prepare_ha_outbound_call.assert_not_awaited()
+
+
+@pytest.mark.parametrize("via_trunk", [False, True])
+@pytest.mark.parametrize("audio_choice,expect_pcm", [("auto", False), ("standard", False), ("pcm", True)])
+def test_static_dahua_contact_builds_full_offer_for_direct_and_trunk(
+    softphone_originate, via_trunk, audio_choice, expect_pcm,
+):
+    """Real SDP generation proves persisted contact choices survive routing."""
+    module = softphone_originate
+    endpoint = SimpleNamespace(
+        endpoint_id="caller", device_id="browser", sip_uri_user="browser",
+        availability=_Availability.AVAILABLE, supports=lambda _cap: True,
+    )
+    hass = SimpleNamespace(
+        data={"voip_stack": {"sip_trunk": SimpleNamespace(ready=True)}},
+        states=SimpleNamespace(get=lambda _: None),
+    )
+    metadata = {"sip_profile": "dahua", "dahua_audio": audio_choice}
+    entry = SimpleNamespace(metadata=metadata, sip_uri="" if via_trunk else "sip:8001@192.0.2.10", display_name="Door")
+    route = SimpleNamespace(
+        action=_RouteAction.TRUNK if via_trunk else _RouteAction.DIRECT,
+        reason=None, entry=entry, sip_uri=entry.sip_uri, target="8001",
+    )
+    module.resolve_ha_router = Mock(return_value=route)
+    module._async_resolve_browser_destination = AsyncMock(return_value=(route, "8001", None))
+    module._get_transport_config = Mock(return_value={"sip_port": 5060, "sip_video": True, "video_camera_send": True})
+    module._get_trunk_config = Mock(return_value={
+        "trunk_server": "pbx.example.test", "trunk_port": 5060, "trunk_transport": "udp", "trunk_username": "ha",
+    })
+    module._trunk_enabled = Mock(return_value=True)
+    module.reserve_sip_video_media = Mock(return_value=(SimpleNamespace(ports=(40000, 40002)), object(), object()))
+    captured = {}
+
+    class OfferCaptured(Exception):
+        pass
+
+    def capture(**kwargs):
+        captured.update(kwargs)
+        raise OfferCaptured
+
+    sys.modules[f"{module.__package__}.sip_client"].SipCallClient = capture
+    with pytest.raises(OfferCaptured):
+        asyncio.run(module.async_originate_browser_call(
+            _call(hass, destination="8001", send_video=False), endpoint_id="caller", browser_endpoint=endpoint,
+        ))
+    assert captured["include_dahua_pcm"] is expect_pcm
+    assert captured["include_common_codecs"] is True
+    assert captured["supported_send_rtp_formats"] is None
+    assert captured["supported_recv_rtp_formats"] is None
+    assert {fmt.frame_ms for fmt in captured["supported_send_formats"]} == {20}
+    assert captured["peer_user_agent"] == ""  # No fabricated registration/User-Agent.
+    media = importlib.import_module(f"{module.__package__}.core.sdp")
+    offer = media.build_offer_directional(
+        captured["local_ip"], captured["local_ip"], captured["local_rtp_port"],
+        captured["supported_send_formats"], captured["supported_recv_formats"],
+        include_common_codecs=captured["include_common_codecs"],
+        include_dahua_pcm=captured["include_dahua_pcm"],
+        video_port=captured["local_video_rtp_port"], video_formats=captured["video_formats"],
+        video_direction=captured["video_direction"],
+    )
+    audio = media.offered_pcm_formats(offer, allow_dahua_pcm=True)
+    assert any(fmt.encoding == "PCMU" for fmt in audio)
+    assert any(fmt.encoding == "PCMA" for fmt in audio)
+    assert any(fmt.encoding == "L16" and fmt.sample_rate == 16000 for fmt in audio)
+    assert any(fmt.encoding == "PCM" for fmt in audio) is expect_pcm
+    assert "a=ptime:20\r\n" in offer
+    video = media.parse_video_sdp(offer)
+    assert video["direction"] == "recvonly"
+    assert "packetization-mode=0" in offer
+    assert "profile-level-id=42001f" in offer
+
+
+def test_unprofiled_trunk_keeps_audio_only_offer_with_camera_off(softphone_originate):
+    module = softphone_originate
+    endpoint = SimpleNamespace(
+        endpoint_id="caller", device_id="browser", sip_uri_user="browser",
+        availability=_Availability.AVAILABLE, supports=lambda _cap: True,
+    )
+    hass = SimpleNamespace(
+        data={"voip_stack": {"sip_trunk": SimpleNamespace(ready=True)}},
+        states=SimpleNamespace(get=lambda _: None),
+    )
+    route = SimpleNamespace(action=_RouteAction.TRUNK, reason=None, entry=None, sip_uri="", target="441234567890")
+    module.resolve_ha_router = Mock(return_value=route)
+    module._async_resolve_browser_destination = AsyncMock(return_value=(route, route.target, None))
+    module._get_transport_config = Mock(return_value={"sip_port": 5060, "sip_video": True, "video_camera_send": True})
+    module._get_trunk_config = Mock(return_value={"trunk_server": "pbx.example.test", "trunk_port": 5060, "trunk_transport": "udp", "trunk_username": "ha"})
+    module._trunk_enabled = Mock(return_value=True)
+    captured = {}
+
+    class OfferCaptured(Exception):
+        pass
+
+    def capture(**kwargs):
+        captured.update(kwargs)
+        raise OfferCaptured
+
+    sys.modules[f"{module.__package__}.sip_client"].SipCallClient = capture
+    with pytest.raises(OfferCaptured):
+        asyncio.run(module.async_originate_browser_call(
+            _call(hass, destination=route.target, send_video=False), endpoint_id="caller", browser_endpoint=endpoint,
+        ))
+    assert captured["video_formats"] == ()
+    assert captured["local_video_rtp_port"] == 0
+    assert captured["include_dahua_pcm"] is False
+    assert {fmt.frame_ms for fmt in captured["supported_send_formats"]} == {20}
+    module.reserve_sip_video_media.assert_not_called()

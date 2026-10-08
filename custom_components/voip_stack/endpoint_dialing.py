@@ -29,6 +29,7 @@ from .media_ports import (
 )
 from .outbound_attempts import BrowserLeg, OutboundLeg
 from .pbx_routing import roster_entry_for_target
+from .peer_media_profile import resolve_peer_media_profile
 from .peer import sip_uri_for_peer
 from .runtime_data import preferred_browser_phone, sip_trunk
 from .trunk_signaling import reuse_registered_trunk_flow
@@ -201,7 +202,11 @@ class EndpointDialer:
                 and member_entry.sip_uri
                 and member_entry.metadata.get("registered")
             )
-            if bridge_to_softphone or policy.force_common_audio:
+            peer_profile = resolve_peer_media_profile(
+                member_entry.metadata if member_entry is not None else None,
+                user_agent_override=peer_user_agent_override or None,
+            )
+            if bridge_to_softphone or policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm:
                 sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
                 sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
                 rtp_audio_profile = None
@@ -287,7 +292,7 @@ class EndpointDialer:
                 password=policy.password,
                 outbound_proxy=policy.outbound_proxy,
                 include_common_codecs=(
-                    bridge_to_softphone or policy.force_common_audio
+                    bridge_to_softphone or policy.force_common_audio or peer_profile.is_dahua or peer_profile.include_dahua_pcm
                     or sip_target_has_unspecified_audio(peer_target, member_entry)
                 ),
                 allow_directional_audio_payloads=supports_directional_audio_payloads(
@@ -304,6 +309,7 @@ class EndpointDialer:
                         or ""
                     ).strip()
                 ),
+                include_dahua_pcm=peer_profile.include_dahua_pcm,
                 local_video_rtp_port=(
                     video_relay.right_port if video_relay is not None else 0
                 ),

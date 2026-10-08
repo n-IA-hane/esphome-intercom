@@ -8,6 +8,7 @@ import logging
 from homeassistant.core import HomeAssistant, ServiceCall
 
 from .trunk_policy import external_call_denied, is_trunk_uri, trunk_available
+from .peer_media_profile import resolve_peer_media_profile
 from .call_projection import publish_phone_projection
 from .core.audio_format import HA_TRUNK_AUDIO_FORMATS
 from .authorization import async_require_service_admin
@@ -452,6 +453,8 @@ async def async_originate_browser_call(
         )
     await _async_prepare_ha_outbound_call(hass, endpoint_id)
     uri = parse_sip_uri(route_uri)
+    entry_metadata = dict(route.entry.metadata or {}) if route.entry is not None else {}
+    peer_profile = resolve_peer_media_profile(entry_metadata)
     remote_tx_formats = _roster_entry_formats(
         route.entry, "tx_formats"
     ) or _device_formats(dest_device, "tx_formats")
@@ -468,19 +471,6 @@ async def async_originate_browser_call(
         route.entry,
         dest_device,
     )
-    if use_trunk or use_registered_contact_codecs:
-        sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
-        sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
-        rtp_audio_profile = None
-    elif rtp_audio_profile is not None:
-        sip_send_formats = list(rtp_audio_profile.send_formats)
-        sip_recv_formats = list(rtp_audio_profile.recv_formats)
-    entry_metadata = dict(route.entry.metadata or {}) if route.entry is not None else {}
-    target_device_id = str(
-        getattr(target_endpoint, "device_id", "")
-        or entry_metadata.get("device_id")
-        or ""
-    ).strip()
     native_audio_endpoint = bool(
         entry_metadata.get("local_ha")
         or entry_metadata.get("virtual_endpoint")
@@ -492,6 +482,18 @@ async def async_originate_browser_call(
         str(entry_metadata.get("endpoint_kind") or "").strip().lower()
         == EndpointKind.ESPHOME.value
     )
+    if use_trunk or use_registered_contact_codecs or (peer_profile.is_dahua and not native_audio_endpoint):
+        sip_send_formats = list(HA_TRUNK_AUDIO_FORMATS)
+        sip_recv_formats = list(HA_TRUNK_AUDIO_FORMATS)
+        rtp_audio_profile = None
+    elif rtp_audio_profile is not None:
+        sip_send_formats = list(rtp_audio_profile.send_formats)
+        sip_recv_formats = list(rtp_audio_profile.recv_formats)
+    target_device_id = str(
+        getattr(target_endpoint, "device_id", "")
+        or entry_metadata.get("device_id")
+        or ""
+    ).strip()
     # SIP video is HA/browser-owned. Local HA/group endpoints stay outside
     # this path. ESPHome targets advertise explicit capabilities, so avoid a
     # useless video m-line on audio-only firmware. Besides describing the leg
@@ -532,9 +534,9 @@ async def async_originate_browser_call(
     dahua_receive_only = bool(
         video_capable
         and not camera_send_enabled
-        and not use_trunk
+        and (not use_trunk or peer_profile.explicit_dahua)
         and not native_audio_endpoint
-        and str(entry_metadata.get("sip_profile") or "").strip().lower() == "dahua"
+        and peer_profile.is_dahua
         and target_video_codec.upper() in {"", "H264"}
         and (target_endpoint is None or target_endpoint.supports("video"))
     )
@@ -633,7 +635,9 @@ async def async_originate_browser_call(
         outbound_proxy=str(trunk_cfg.get(CONF_TRUNK_OUTBOUND_PROXY) or "")
         if use_trunk
         else "",
-        include_common_codecs=use_trunk
+        include_dahua_pcm=peer_profile.include_dahua_pcm if not native_audio_endpoint else None,
+        include_common_codecs=(peer_profile.is_dahua and not native_audio_endpoint)
+        or use_trunk
         or use_registered_contact_codecs
         or video_enabled
         or sip_target_has_unspecified_audio(None, route.entry, dest_device),
@@ -645,11 +649,7 @@ async def async_originate_browser_call(
             rtp_audio_profile is not None
             and "directional_audio_v1" in rtp_audio_profile.sdp_features
         ),
-        peer_user_agent=(
-            str(entry_metadata.get("user_agent") or "")
-            if use_registered_contact_codecs
-            else ""
-        ),
+        peer_user_agent=str(entry_metadata.get("user_agent") or ""),
         local_video_rtp_port=local_video_rtp_port,
         video_formats=offered_video_formats if video_enabled else (),
         video_direction=("sendrecv" if camera_send_enabled else "recvonly"),

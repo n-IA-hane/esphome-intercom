@@ -489,6 +489,28 @@ add_contact:
       required: false
       selector:
         text:
+    sip_profile:
+      name: SIP compatibility profile
+      description: Auto keeps peer detection. Select Dahua for a static Dahua door station, without inventing a registration or User-Agent.
+      selector:
+        select:
+          options:
+            - label: Auto
+              value: auto
+            - label: Dahua
+              value: dahua
+    dahua_audio:
+      name: Dahua audio compatibility
+      description: Requires the Dahua profile for an explicit audio choice. PCM allows proprietary PCM/16000 alongside standard codecs; it does not force the negotiated transmit codec. Auto follows the real User-Agent.
+      selector:
+        select:
+          options:
+            - label: Auto by User-Agent
+              value: auto
+            - label: Standard SIP codecs
+              value: standard
+            - label: Standard + Dahua PCM
+              value: pcm
     extension:
       name: Optional Extension
       description: Optional local/internal dial-plan alias such as 101. Inbound DTMF and internal callers resolve this field before external numbers.

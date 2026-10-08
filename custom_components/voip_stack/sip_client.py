@@ -404,6 +404,7 @@ class SipCallClient:
         include_common_codecs: bool = False,
         allow_directional_audio_payloads: bool = False,
         peer_user_agent: str = "",
+        include_dahua_pcm: bool | None = None,
         local_video_rtp_port: int = 0,
         video_format: sdp.RtpVideoFormat | None = None,
         video_formats: tuple[sdp.RtpVideoFormat, ...] | list[sdp.RtpVideoFormat] | None = None,
@@ -461,7 +462,10 @@ class SipCallClient:
             allow_directional_audio_payloads
         )
         self.peer_user_agent = str(peer_user_agent or "").strip()
-        self.include_dahua_pcm = supports_dahua_pcm(self.peer_user_agent)
+        self.include_dahua_pcm = (
+            supports_dahua_pcm(self.peer_user_agent)
+            if include_dahua_pcm is None else bool(include_dahua_pcm)
+        )
         self.local_video_rtp_port = int(local_video_rtp_port or 0)
         requested_video = tuple(video_formats or (() if video_format is None else (video_format,)))
         self.video_formats = requested_video if self.local_video_rtp_port > 0 else ()

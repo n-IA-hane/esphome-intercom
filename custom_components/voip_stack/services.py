@@ -183,6 +183,8 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             vol.Optional("sip_uri", default=""): URI_TEXT,
             vol.Optional("extension", default=""): IDENTIFIER_TEXT,
             vol.Optional("number", default=""): IDENTIFIER_TEXT,
+            vol.Optional("sip_profile"): vol.In(["auto", "dahua"]),
+            vol.Optional("dahua_audio"): vol.In(["auto", "standard", "pcm"]),
             vol.Optional("ha_bridge", default=False): cv.boolean,
             vol.Optional("transport", default=""): vol.Any(
                 "", vol.In(["tcp", "tls", "udp"])

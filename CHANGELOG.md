@@ -4,6 +4,15 @@
 
 Changes since stable **2026.10.1**.
 
+- Expose Dahua compatibility and audio-offer choices in contact creation,
+  editing and `add_contact`. Static Dahua contacts use common 20 ms audio and
+  the existing receive-only H.264 profile without pretending to be registered.
+  An explicitly profiled destination retains that behavior through a trunk;
+  ordinary trunk destinations remain unchanged. Includes a controlled PCM-offer
+  comparison for the remaining transmit-audio report in
+  [#115](https://github.com/n-IA-hane/esphome-intercom/issues/115). Physical
+  confirmation remains pending; no blanket transmit-audio fix is claimed.
+
 - Let ordinary HA automations originate backend audio calls from an Automation
   contact, wait for answer, speak through the existing TTS action and hang up
   using an execution-bound call reference. No browser or physical source phone

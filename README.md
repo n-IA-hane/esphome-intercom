@@ -648,6 +648,7 @@ capabilities.
 | Ring and conference groups | [Groups](docs/GROUPS.md) |
 | SIP video codecs and browser privacy | [SIP video](docs/SIP_VIDEO.md) |
 | Provider/PBX registration | [SIP trunk](docs/SIP_TRUNK.md) |
+| Dahua registered or static door station | [Dahua setup and audio comparison](docs/DAHUA.md) |
 | Names, extensions and route precedence | [Dial-plan resolver](docs/DIALPLAN_RESOLVER.md) |
 | ESP/HA phonebook representation | [Phonebook protocol](docs/PHONEBOOK_PROTOCOL.md) |
 | Expected signaling and media paths | [Call flows](docs/CALL_FLOWS.md) |

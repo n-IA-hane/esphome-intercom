@@ -209,17 +209,22 @@
             "number": "External number",
             "sip_uri": "SIP address",
             "fallback_destination": "Destination if not handled",
-            "timeout": "Wait for an automation"
+            "timeout": "Wait for an automation",
+            "sip_profile": "SIP compatibility profile",
+            "dahua_audio": "Dahua audio compatibility"
           },
           "data_description": {
             "extension": "Leave empty to dial the contact by its phonebook name.",
             "fallback_destination": "If no automation handles the call, forward here. Leave empty to end the call.",
-            "timeout": "Seconds before fallback if no automation takes control of the call. This is not a phone ringing duration."
+            "timeout": "Seconds before fallback if no automation takes control of the call. This is not a phone ringing duration.",
+            "sip_profile": "Auto keeps peer detection. Choose Dahua for a static Dahua door station.",
+            "dahua_audio": "Auto follows the real User-Agent. Standard excludes Dahua PCM; Standard + Dahua PCM allows PCM/16000 alongside standard codecs without forcing the transmit codec."
           }
         }
       },
       "error": {
-        "invalid_contact": "Use a unique name and extension. An ordinary contact needs a number or SIP address; an Automation contact must not contain them."
+        "invalid_contact": "Use a unique name and extension. An ordinary contact needs a number or SIP address; an Automation contact must not contain them.",
+        "invalid_sip_profile": "Select a valid SIP profile. Explicit Dahua audio choices require the Dahua profile. Automation contacts cannot use device profiles."
       }
     }
   },
@@ -259,6 +264,19 @@
         "ended": "Ended",
         "missed": "Missed",
         "failed": "Failed"
+      }
+    },
+    "sip_profile": {
+      "options": {
+        "auto": "Auto",
+        "dahua": "Dahua"
+      }
+    },
+    "dahua_audio": {
+      "options": {
+        "auto": "Auto by User-Agent",
+        "standard": "Standard SIP codecs",
+        "pcm": "Standard + Dahua PCM"
       }
     }
   },

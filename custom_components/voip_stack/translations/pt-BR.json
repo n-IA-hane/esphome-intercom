@@ -209,17 +209,22 @@
             "number": "Número externo",
             "sip_uri": "Endereço SIP",
             "fallback_destination": "Destino se não houver atendimento",
-            "timeout": "Aguardar uma automação"
+            "timeout": "Aguardar uma automação",
+            "sip_profile": "Perfil de compatibilidade SIP",
+            "dahua_audio": "Compatibilidade de áudio Dahua"
           },
           "data_description": {
             "extension": "Deixe vazio para chamar o contato pelo nome na agenda.",
             "fallback_destination": "Se nenhuma automação tratar a chamada, encaminhar para este destino. Deixe vazio para encerrar a chamada.",
-            "timeout": "Segundos até o destino alternativo se nenhuma automação assumir a chamada. Não é a duração do toque do telefone."
+            "timeout": "Segundos até o destino alternativo se nenhuma automação assumir a chamada. Não é a duração do toque do telefone.",
+            "sip_profile": "Auto mantém a detecção do dispositivo. Selecione Dahua para um interfone Dahua configurado como contato estático.",
+            "dahua_audio": "Auto usa o User-Agent real. Padrão exclui PCM Dahua; Padrão + PCM Dahua permite PCM/16000 junto com codecs padrão, sem forçar o codec de transmissão."
           }
         }
       },
       "error": {
-        "invalid_contact": "Use um nome e um ramal exclusivos. Um contato comum precisa de número ou endereço SIP; um contato de Automação não deve contê-los."
+        "invalid_contact": "Use um nome e um ramal exclusivos. Um contato comum precisa de número ou endereço SIP; um contato de Automação não deve contê-los.",
+        "invalid_sip_profile": "Selecione um perfil SIP válido. As opções explícitas de áudio Dahua exigem o perfil Dahua. Contatos de automação não podem usar perfis de dispositivo."
       }
     }
   },
@@ -259,6 +264,19 @@
         "ended": "Encerrada",
         "missed": "Perdida",
         "failed": "Falhou"
+      }
+    },
+    "sip_profile": {
+      "options": {
+        "auto": "Auto",
+        "dahua": "Dahua"
+      }
+    },
+    "dahua_audio": {
+      "options": {
+        "auto": "Auto pelo User-Agent",
+        "standard": "Codecs SIP padrão",
+        "pcm": "Padrão + PCM Dahua"
       }
     }
   },

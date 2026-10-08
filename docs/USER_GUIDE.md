@@ -236,6 +236,12 @@ destination.
 Hanging up terminates the Assist media leg and its active pipeline work. It
 does not leave a listening call session behind.
 
+## Dahua door stations
+
+For registered or static Dahua devices, see the [Dahua setup guide](DAHUA.md).
+The contact editor exposes the SIP profile and audio compatibility choices;
+you do not need to change Python code or mark a static contact as registered.
+
 ## Configure a trunk
 
 Leave the trunk disabled for a local-only installation. To connect FRITZ!Box,

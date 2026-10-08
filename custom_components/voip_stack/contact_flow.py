@@ -6,7 +6,7 @@ from homeassistant.config_entries import ConfigSubentryFlow
 from homeassistant.helpers.selector import SelectSelector, TextSelector, NumberSelector
 
 from .contact_config import contact_dicts
-from .phonebook_services import contact_from_data, _validate_contact_namespace
+from .phonebook_services import ContactProfileError, contact_from_data, _validate_contact_namespace
 from .roster import parse_roster_json
 
 
@@ -66,6 +66,8 @@ class ContactSubentryFlowHandler(ConfigSubentryFlow):
                     contact.number or contact.sip_uri or contact.address
                 ):
                     raise ValueError("A contact requires a number or SIP address")
+            except ContactProfileError:
+                errors["base"] = "invalid_sip_profile"
             except ValueError:
                 errors["base"] = "invalid_contact"
             else:
@@ -116,6 +118,12 @@ class ContactSubentryFlowHandler(ConfigSubentryFlow):
                     vol.Optional(
                         "sip_uri", default=values.get("sip_uri", "")
                     ): TextSelector(),
+                    vol.Optional("sip_profile", default=values.get("sip_profile", "auto")): SelectSelector(
+                        {"options": ["auto", "dahua"], "mode": "dropdown", "translation_key": "sip_profile"}
+                    ),
+                    vol.Optional("dahua_audio", default=values.get("dahua_audio", "auto")): SelectSelector(
+                        {"options": ["auto", "standard", "pcm"], "mode": "dropdown", "translation_key": "dahua_audio"}
+                    ),
                 }
             )
         return self.async_show_form(
