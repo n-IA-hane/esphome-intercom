@@ -868,8 +868,9 @@ class RuntimeAudioContext {{
   async close() {{ this.state = "closed"; }}
 }}
 class RuntimeWorkletNode {{
-  constructor(_context, name) {{
+  constructor(_context, name, options) {{
     this.name = name;
+    this.options = options;
     this.port = {{ onmessage: null, postMessage() {{}} }};
   }}
   connect(target) {{ return target; }}
@@ -1037,6 +1038,31 @@ await stuckClose.close("hangup");
 assert.ok(Date.now() - stuckCloseStarted < 1500);
 assert.equal(stuckClose._callId, "");
 assert.equal(stuckClose._audioContext, null);
+
+// Incoming codec/rate changes must never become the microphone TX contract.
+const asymmetric = new Engine();
+asymmetric._callId = "asymmetric";
+const asymmetricSession = {{
+  call_id: "asymmetric", audio_direction: "sendrecv",
+  tx_format: "8000:s16le:1:20", selected_tx_format: "8000:s16le:1:20",
+  rx_format: "16000:s16le:1:20", selected_rx_format: "16000:s16le:1:20",
+}};
+asymmetric._lastSessionPayload = asymmetricSession;
+await asymmetric._setupAudio({{audio_mode: "full_duplex"}}, asymmetricSession);
+assert.equal(asymmetric._captureNode.options.processorOptions.format.sampleRate, 8000);
+assert.equal(asymmetric._captureNode.options.processorOptions.format.channels, 1);
+assert.equal(asymmetric._captureNode.options.processorOptions.format.frameMs, 20);
+assert.equal(asymmetric._playbackNode.options.processorOptions.format.sampleRate, 16000);
+await asymmetric._reconcileAudioMedia({{
+  rx_format: "48000:s16le:2:20", selected_rx_format: "48000:s16le:2:20",
+}});
+assert.equal(asymmetric._txFormat.sampleRate, 8000);
+assert.equal(asymmetric._captureNode.options.processorOptions.format.sampleRate, 8000);
+assert.equal(asymmetric._captureNode.options.processorOptions.format.channels, 1);
+assert.equal(asymmetric._captureNode.options.processorOptions.format.frameMs, 20);
+assert.equal(asymmetric._playbackNode.options.processorOptions.format.sampleRate, 48000);
+assert.equal(asymmetric._playbackNode.options.outputChannelCount[0], 2);
+await asymmetric.close("test-complete");
 """
     completed = subprocess.run(
         [

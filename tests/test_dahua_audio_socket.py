@@ -1,6 +1,7 @@
 """Issue 115: all negotiated RTP audio payloads must reach browser playback."""
 
 import asyncio
+import math
 import socket
 import struct
 import sys
@@ -75,10 +76,13 @@ async def _exercise_dahua_call(monkeypatch, user_agent):
                 body = (
                     "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Door\r\n"
                     "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
-                    f"m=audio {remote_port} RTP/AVP 0 97\r\n"
-                    "a=rtpmap:0 PCMU/8000\r\na=rtpmap:97 PCM/16000\r\n"
-                    "a=ptime:20\r\na=sendrecv\r\n"
-                    "m=video 45002 RTP/AVP 105\r\na=rtpmap:105 H264/90000\r\na=sendrecv\r\n"
+                    f"m=audio {remote_port} RTP/AVP 0 97 {100 if user_agent else 99}\r\n"
+                    + ("a=rtpmap:97 PCM/16000\r\na=rtpmap:0 PCMU/8000\r\n" if user_agent else
+                       "a=rtpmap:0 PCMU/8000\r\na=rtpmap:97 PCM/16000\r\n")
+                    + f"a=rtpmap:{100 if user_agent else 99} telephone-event/8000\r\n"
+                    f"a=fmtp:{100 if user_agent else 99} 0-15\r\na=sendrecv\r\n"
+                    "m=video 45002 RTP/AVP 105\r\na=framerate:20.000000\r\n"
+                    "a=rtpmap:105 H264/90000\r\na=sendrecv\r\n"
                 ).encode()
             self.transport.sendto(sip.build_response(200, "OK", headers, body), address)
 
@@ -165,14 +169,71 @@ async def _exercise_dahua_call(monkeypatch, user_agent):
 
         from aiohttp import WSMsgType
 
-        await browser.messages.put(SimpleNamespace(
-            type=WSMsgType.BINARY,
-            data=audio_ws.encode_audio_frame(bytes(session.send_format.audio_format.nominal_frame_bytes)),
-        ))
-        outgoing, _ = await asyncio.wait_for(loop.sock_recvfrom(remote, 2048), 1)
-        packet = rtp.parse_packet(outgoing)
-        assert packet.payload_type == 0
-        assert packet.payload == b"\xff" * 160
+        # Nonzero, frame-distinct microphone samples exercise the real browser
+        # PCM -> RTP PCMU encoder. The receiver is the UDP socket advertised in
+        # the VTO answer, independently decoding mu-law without our codec helper.
+        expected_frames = [
+            tuple(int(5500 * math.sin(2 * math.pi * (430 + frame * 37) * i / 8000))
+                  for i in range(160))
+            for frame in range(8)
+        ]
+
+        # Queue less than the production 200 ms limit before measuring. This
+        # tests the encoder and its pacing, not synthetic microphone scheduler
+        # starvation when the test process first loads a receive resampler.
+        for samples in expected_frames:
+            await browser.messages.put(SimpleNamespace(
+                type=WSMsgType.BINARY,
+                data=audio_ws.encode_audio_frame(struct.pack("<160h", *samples)),
+            ))
+
+        async def microphone_and_door():
+            for index in range(len(expected_frames)):
+                # The automatic contact receives PCM while it sends PCMU;
+                # the manual contact receives PCMU. Neither may alter TX.
+                await send(
+                    97 if user_agent else 0, 20 + index,
+                    3200 + index * (320 if user_agent else 160),
+                    struct.pack("<320h", *([1000] * 320)) if user_agent else b"\xce" * 160,
+                )
+                await asyncio.sleep(.02)
+
+        producer = asyncio.create_task(microphone_and_door())
+        outgoing_packets = []
+        arrival_times = []
+        decoded_frames = []
+        try:
+            for expected in expected_frames:
+                outgoing, address = await asyncio.wait_for(loop.sock_recvfrom(remote, 2048), 1)
+                arrival_times.append(loop.time())
+                packet = rtp.parse_packet(outgoing)
+                outgoing_packets.append(packet)
+                assert address == ("127.0.0.1", local_port)
+                assert packet.payload_type == 0
+                assert len(packet.payload) == 160  # 8 kHz, mono, 20 ms PCMU.
+                decoded = []
+                for value in packet.payload:
+                    u = value ^ 0xff
+                    magnitude = (((u & 15) << 3) + 132) << ((u >> 4) & 7)
+                    decoded.append(132 - magnitude if u & 128 else magnitude - 132)
+                assert max(abs(actual - wanted) for actual, wanted in zip(decoded, expected)) <= 128
+                assert sum(sample * sample for sample in decoded) / 160 > 10_000_000
+                decoded_frames.append(tuple(decoded))
+                received = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))
+                assert len(received) == expected_bytes
+                assert any(received)
+            await producer
+        finally:
+            if not producer.done():
+                producer.cancel()
+                await asyncio.gather(producer, return_exceptions=True)
+        for before, after in zip(outgoing_packets, outgoing_packets[1:]):
+            assert (after.sequence - before.sequence) % 65536 == 1
+            assert (after.timestamp - before.timestamp) % (1 << 32) == 160
+            assert after.ssrc == before.ssrc
+        # Prevent an implementation that bursts all frames immediately.
+        assert .10 <= arrival_times[-1] - arrival_times[0] < .8
+        assert client.dialog.send_format == pcmu
 
         if user_agent:
             # RFC 3264 overlap accepts in-flight packets under the old mapping,
@@ -209,6 +270,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent):
         assert client.transport is None
         assert not sessions
         assert any(request.method == "BYE" for request in requests)
+    return tuple(decoded_frames)
 
 
 @pytest.mark.asyncio
@@ -218,3 +280,12 @@ async def test_dahua_pcm_and_pcmu_answer_delivers_actual_rtp_to_browser(monkeypa
     for _ in range(2):
         with monkeypatch.context() as patcher:
             await _exercise_dahua_call(patcher, user_agent)
+
+
+@pytest.mark.asyncio
+async def test_registered_and_manual_dahua_transmit_identical_nonzero_pcmu(monkeypatch):
+    captured = []
+    for user_agent in ("Dahua UAC/V4.511.0.0", ""):
+        with monkeypatch.context() as patcher:
+            captured.append(await _exercise_dahua_call(patcher, user_agent))
+    assert captured[0] == captured[1]
