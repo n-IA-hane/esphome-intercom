@@ -151,6 +151,7 @@ class MixerSpeaker final : public Component {
   static void audio_mixer_task(void *params);
   bool reserve_playback_(const FixedVector<SourceSpeaker *> &sources, size_t count, uint32_t frames);
   void reset_source_playback_(SourceSpeaker *source);
+  void stop_output_();
   Mutex playback_mutex_;
 
   EventGroupHandle_t event_group_{nullptr};
@@ -168,6 +169,7 @@ class MixerSpeaker final : public Component {
   optional<audio::AudioStreamInfo> audio_stream_info_;
 
   std::atomic<uint32_t> frames_in_pipeline_{0};  // Frames written to output but not yet played
+  bool restarting_output_{false};  // Main-loop-owned shared stop/restart barrier
   uint32_t all_stopped_since_ms_{0};             // Debounce transient all-stopped windows before stopping task
 };
 

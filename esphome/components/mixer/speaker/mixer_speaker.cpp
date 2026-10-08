@@ -168,12 +168,6 @@ void SourceSpeaker::loop() {
       }
       break;
     case speaker::STATE_STOPPING: {
-      if ((this->parent_->get_output_speaker()->get_pause_state()) ||
-          ((millis() - this->stopping_start_ms_) > STOPPING_TIMEOUT_MS)) {
-        // If parent speaker is paused or if the stopping timeout is exceeded, force stop the output speaker
-        this->parent_->get_output_speaker()->stop();
-      }
-
       if (this->parent_->get_output_speaker()->is_stopped() ||
           (this->playback_.pending_frames() == 0)) {
         // Output speaker is stopped OR all pending playback frames have played
@@ -181,6 +175,10 @@ void SourceSpeaker::loop() {
         this->stop_gracefully_ = false;
 
         this->state_ = speaker::STATE_STOPPED;
+      } else if (this->parent_->get_output_speaker()->get_pause_state() ||
+                 ((millis() - this->stopping_start_ms_) > STOPPING_TIMEOUT_MS)) {
+        // A forced stop discards mixed output belonging to every source.
+        this->parent_->stop_output_();
       }
       break;
     }
@@ -360,15 +358,29 @@ bool MixerSpeaker::reserve_playback_(const FixedVector<SourceSpeaker *> &sources
   return true;
 }
 
+void MixerSpeaker::stop_output_() {
+  if (this->restarting_output_) return;
+  this->restarting_output_ = true;
+  // The worker's existing cleanup drops its transfer buffer and reconciles all
+  // source timelines. Source input buffers remain available for the restart.
+  xEventGroupSetBits(this->event_group_, MIXER_TASK_COMMAND_STOP | MIXER_TASK_COMMAND_START);
+  // Stop the sink only after the writer has exited. An in-flight play() can
+  // otherwise restart the sink and strand this restart barrier.
+  if (!this->task_.is_created()) this->output_speaker_->stop();
+  this->enable_loop_soon_any_context();
+}
+
 void MixerSpeaker::loop() {
   uint32_t event_group_bits = xEventGroupGetBits(this->event_group_);
 
   // Handle pending start request
   if (event_group_bits & MIXER_TASK_COMMAND_START) {
     // Only start the task if it's fully stopped and cleaned up
-    if (!this->status_has_error() && !this->task_.is_created()) {
+    if (!this->status_has_error() && !this->task_.is_created() &&
+        (!this->restarting_output_ || this->output_speaker_->is_stopped())) {
       if (this->task_.create(audio_mixer_task, "mixer", TASK_STACK_SIZE, (void *) this, MIXER_TASK_PRIORITY,
                              this->task_stack_in_psram_)) {
+        this->restarting_output_ = false;
         xEventGroupClearBits(this->event_group_, MIXER_TASK_COMMAND_START);
       } else {
         ESP_LOGE(TAG, "Failed to start; retrying in 1 second");
@@ -398,6 +410,7 @@ void MixerSpeaker::loop() {
   // Retries on a subsequent loop if the task is still running on the other core
   if ((event_group_bits & MIXER_TASK_STATE_STOPPED) && this->task_.deallocate()) {
     ESP_LOGD(TAG, "Stopped");
+    if (this->restarting_output_) this->output_speaker_->stop();
     // Preserve a start requested while the previous task was stopping.
     xEventGroupClearBits(this->event_group_, MIXER_TASK_ALL_BITS & ~MIXER_TASK_COMMAND_START);
     this->all_stopped_since_ms_ = 0;
@@ -450,8 +463,11 @@ esp_err_t MixerSpeaker::start(audio::AudioStreamInfo &stream_info) {
 
   this->enable_loop_soon_any_context();  // ensure loop processes command
 
-  // Starting a new stream supersedes any previously queued stop request.
-  xEventGroupClearBits(this->event_group_, MIXER_TASK_COMMAND_STOP);
+  // A new source may cancel an idle stop, but cannot cancel shared-output
+  // cleanup after accepted mixed frames have been discarded.
+  if (!this->restarting_output_) {
+    xEventGroupClearBits(this->event_group_, MIXER_TASK_COMMAND_STOP);
+  }
 
   uint32_t event_bits = xEventGroupGetBits(this->event_group_);
   if (!(event_bits & MIXER_TASK_COMMAND_START)) {
