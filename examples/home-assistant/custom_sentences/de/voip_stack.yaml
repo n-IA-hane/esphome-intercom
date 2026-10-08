@@ -1,0 +1,66 @@
+# Responses are rendered by Home Assistant. See docs/ASSIST_INTENTS.md.
+language: de
+intents:
+  VoipCall:
+    data:
+    - sentences:
+      - rufe {target} an
+      - '{target} anrufen'
+      slots:
+        voip_response: template
+      response: default
+  VoipHangup:
+    data:
+    - sentences:
+      - auflegen
+      - anruf beenden
+      slots:
+        voip_response: template
+      response: default
+  VoipAnswer:
+    data:
+    - sentences:
+      - anruf annehmen
+      - annehmen
+      slots:
+        voip_response: template
+      response: default
+  VoipDecline:
+    data:
+    - sentences:
+      - '[anruf ]ablehnen[.]'
+      slots:
+        voip_response: template
+      response: default
+lists:
+  target:
+    wildcard: true
+
+responses:
+  intents:
+    VoipCall:
+      default: &voip_response >-
+        {% set messages = {
+          "unknown_origin": "Ich weiß nicht, welches VoIP-Gerät den Befehl gehört hat.",
+          "missing_target": "Welchen VoIP-Kontakt soll ich anrufen?",
+          "not_found": "Ich finde keinen VoIP-Kontakt namens " ~ slots.target ~ ".",
+          "ambiguous": "Der VoIP-Kontakt " ~ slots.target ~ " ist nicht eindeutig.",
+          "ambiguous_area": "Der Home-Assistant-Bereich " ~ slots.target ~ " ist nicht eindeutig.",
+          "area_empty": "Im Bereich " ~ slots.target ~ " gibt es kein VoIP-Gerät.",
+          "ambiguous_area_device": "Im Bereich " ~ slots.target ~ " gibt es mehrere VoIP-Geräte.",
+          "call_failed": "Ich konnte " ~ slots.target ~ " nicht anrufen.",
+          "hangup_failed": "Ich konnte den Anruf nicht beenden.",
+          "answer_failed": "Ich konnte den Anruf nicht annehmen.",
+          "decline_failed": "Ich konnte den Anruf nicht ablehnen.",
+          "VoipCall": "Ich rufe " ~ slots.target ~ " an.",
+          "VoipHangup": "OK.",
+          "VoipAnswer": "Ich nehme den Anruf an.",
+          "VoipDecline": "Ich lehne den Anruf ab."
+        } %}
+        {{ messages.get(slots.error or slots.action, messages.call_failed) }}
+    VoipHangup:
+      default: *voip_response
+    VoipAnswer:
+      default: *voip_response
+    VoipDecline:
+      default: *voip_response

@@ -299,7 +299,7 @@ The setup flow has two layers:
 | `sip_port` | HA SIP listener port. HA accepts SIP signaling over both UDP and TCP on this port. |
 | `rtp_port` | Base HA RTP UDP port used by HA softphone media and relays. |
 | `advertise_host` | Optional Contact/SDP host override for routed, VPN, LXC, Docker or multihomed installs. |
-| `assist_intents` | Optional Assist intents for call, answer, decline and hangup. |
+| `assist_intents` | Optional Assist intents for call, answer, decline and hangup. See [voice commands and customizable responses](ASSIST_INTENTS.md). |
 | `assist_endpoint_enabled` | Publish a native HA Assist pipeline as a callable phonebook destination. Disabled by default. |
 | `assist_extension` | Explicit 1-8 digit extension for the Assist destination. No extension is assumed or reserved. |
 | `assist_pipeline` | HA pipeline ID, or `preferred` to resolve HA's preferred pipeline. The pipeline's existing STT, conversation agent, TTS, language and voice settings are used. |

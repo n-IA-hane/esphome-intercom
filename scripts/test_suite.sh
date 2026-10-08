@@ -99,6 +99,7 @@ ha_tests=(
   tests/test_ha_integration_runtime.py
   tests/test_ha_call_transfer.py
   tests/test_ha_assist_speech.py
+  tests/test_assist_intent_responses_ha.py
   tests/test_local_source_runtime.py
   tests/test_ha_sip_application.py
   tests/test_phone_control_ha.py

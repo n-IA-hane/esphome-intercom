@@ -1,26 +1,66 @@
+# Responses are rendered by Home Assistant. See docs/ASSIST_INTENTS.md.
 language: en
-
 intents:
   VoipCall:
     data:
-      - sentences:
-          - "call {target}"
+    - sentences:
+      - call {target}
+      slots:
+        voip_response: template
+      response: default
   VoipHangup:
     data:
-      - sentences:
-          - "hang up"
-          - "end the call"
+    - sentences:
+      - hang up
+      - end the call
+      slots:
+        voip_response: template
+      response: default
   VoipAnswer:
     data:
-      - sentences:
-          - "answer"
-          - "answer the call"
+    - sentences:
+      - answer
+      - answer the call
+      slots:
+        voip_response: template
+      response: default
   VoipDecline:
     data:
-      - sentences:
-          - "decline"
-          - "decline the call"
-
+    - sentences:
+      - decline
+      - decline the call
+      slots:
+        voip_response: template
+      response: default
 lists:
   target:
     wildcard: true
+
+responses:
+  intents:
+    VoipCall:
+      default: &voip_response >-
+        {% set messages = {
+          "unknown_origin": "I do not know which VoIP device heard that.",
+          "missing_target": "Which VoIP contact should I call?",
+          "not_found": "I cannot find a VoIP contact named " ~ slots.target ~ ".",
+          "ambiguous": "The VoIP contact " ~ slots.target ~ " is ambiguous.",
+          "ambiguous_area": "The Home Assistant area " ~ slots.target ~ " is ambiguous.",
+          "area_empty": "The Home Assistant area " ~ slots.target ~ " has no VoIP device.",
+          "ambiguous_area_device": "The Home Assistant area " ~ slots.target ~ " has more than one VoIP device.",
+          "call_failed": "I could not call " ~ slots.target ~ ".",
+          "hangup_failed": "I could not hang up the VoIP call.",
+          "answer_failed": "I could not answer the VoIP call.",
+          "decline_failed": "I could not decline the VoIP call.",
+          "VoipCall": "Calling " ~ slots.target ~ ".",
+          "VoipHangup": "OK.",
+          "VoipAnswer": "Answering.",
+          "VoipDecline": "Declining."
+        } %}
+        {{ messages.get(slots.error or slots.action, messages.call_failed) }}
+    VoipHangup:
+      default: *voip_response
+    VoipAnswer:
+      default: *voip_response
+    VoipDecline:
+      default: *voip_response

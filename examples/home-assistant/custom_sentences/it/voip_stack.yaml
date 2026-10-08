@@ -1,27 +1,67 @@
+# Responses are rendered by Home Assistant. See docs/ASSIST_INTENTS.md.
 language: it
-
 intents:
   VoipCall:
     data:
-      - sentences:
-          - "chiama {target}"
-          - "chiama{target}"
+    - sentences:
+      - chiama {target}
+      - chiama{target}
+      slots:
+        voip_response: template
+      response: default
   VoipHangup:
     data:
-      - sentences:
-          - "riaggancia"
-          - "termina la chiamata"
+    - sentences:
+      - riaggancia
+      - termina la chiamata
+      slots:
+        voip_response: template
+      response: default
   VoipAnswer:
     data:
-      - sentences:
-          - "rispondi"
-          - "rispondi alla chiamata"
+    - sentences:
+      - rispondi
+      - rispondi alla chiamata
+      slots:
+        voip_response: template
+      response: default
   VoipDecline:
     data:
-      - sentences:
-          - "rifiuta"
-          - "rifiuta la chiamata"
-
+    - sentences:
+      - rifiuta
+      - rifiuta la chiamata
+      slots:
+        voip_response: template
+      response: default
 lists:
   target:
     wildcard: true
+
+responses:
+  intents:
+    VoipCall:
+      default: &voip_response >-
+        {% set messages = {
+          "unknown_origin": "Non so quale dispositivo VoIP ha ricevuto il comando.",
+          "missing_target": "Quale contatto VoIP devo chiamare?",
+          "not_found": "Non trovo un contatto VoIP chiamato " ~ slots.target ~ ".",
+          "ambiguous": "Il contatto VoIP " ~ slots.target ~ " è ambiguo.",
+          "ambiguous_area": "L'area Home Assistant " ~ slots.target ~ " è ambigua.",
+          "area_empty": "L'area Home Assistant " ~ slots.target ~ " non contiene dispositivi VoIP.",
+          "ambiguous_area_device": "L'area Home Assistant " ~ slots.target ~ " contiene più dispositivi VoIP.",
+          "call_failed": "Non sono riuscito a chiamare " ~ slots.target ~ ".",
+          "hangup_failed": "Non sono riuscito a riagganciare.",
+          "answer_failed": "Non sono riuscito a rispondere alla chiamata.",
+          "decline_failed": "Non sono riuscito a rifiutare la chiamata.",
+          "VoipCall": "Chiamo " ~ slots.target ~ ".",
+          "VoipHangup": "Va bene.",
+          "VoipAnswer": "Rispondo.",
+          "VoipDecline": "Rifiuto la chiamata."
+        } %}
+        {{ messages.get(slots.error or slots.action, messages.call_failed) }}
+    VoipHangup:
+      default: *voip_response
+    VoipAnswer:
+      default: *voip_response
+    VoipDecline:
+      default: *voip_response
