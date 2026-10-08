@@ -122,7 +122,7 @@ class ContactSubentryFlowHandler(ConfigSubentryFlow):
                         {"options": ["auto", "dahua"], "mode": "dropdown", "translation_key": "sip_profile"}
                     ),
                     vol.Optional("dahua_audio", default=values.get("dahua_audio", "auto")): SelectSelector(
-                        {"options": ["auto", "standard", "pcm"], "mode": "dropdown", "translation_key": "dahua_audio"}
+                        {"options": ["auto", "standard", "pcm", "symmetric"], "mode": "dropdown", "translation_key": "dahua_audio"}
                     ),
                 }
             )

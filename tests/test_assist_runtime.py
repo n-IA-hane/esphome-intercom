@@ -193,7 +193,7 @@ def test_assist_uses_g722_rtp_clock_instead_of_pcm_sample_count() -> None:
         g722 = sdp.RtpPcmFormat(9, "G722", 8000, 1, 20)
         session.invite = replace(session.invite, send_format=g722)
         session.encoder = types.SimpleNamespace(
-            encode=lambda _pcm: bytes(g722.rtp_timestamp_step)
+            fmt=g722, encode=lambda _pcm: bytes(g722.rtp_timestamp_step)
         )
         sent: list[bytes] = []
         session.transport = types.SimpleNamespace(

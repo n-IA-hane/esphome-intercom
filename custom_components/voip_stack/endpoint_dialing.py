@@ -310,6 +310,7 @@ class EndpointDialer:
                     ).strip()
                 ),
                 include_dahua_pcm=peer_profile.include_dahua_pcm,
+                match_received_codec=peer_profile.match_received_codec,
                 local_video_rtp_port=(
                     video_relay.right_port if video_relay is not None else 0
                 ),

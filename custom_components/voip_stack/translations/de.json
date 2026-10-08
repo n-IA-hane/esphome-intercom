@@ -218,7 +218,7 @@
             "fallback_destination": "Wenn keine Automation den Anruf bearbeitet, hierhin weiterleiten. Leer lassen, um den Anruf zu beenden.",
             "timeout": "Sekunden bis zur Ersatzzielwahl, wenn keine Automation den Anruf übernimmt. Dies ist keine Klingeldauer.",
             "sip_profile": "Auto behält die Geräteerkennung bei. Für eine statisch konfigurierte Dahua-Türstation Dahua auswählen.",
-            "dahua_audio": "Auto verwendet den tatsächlichen User-Agent. Standard schließt Dahua PCM aus; Standard + Dahua PCM erlaubt PCM/16000 zusätzlich zu Standard-Codecs, ohne den Sendecodec zu erzwingen."
+            "dahua_audio": "Auto verwendet den tatsächlichen User-Agent. Standard schließt Dahua PCM aus; PCM fügt es dem Angebot hinzu. Symmetrisch nutzt den empfangenen Codec auch zum Senden, sofern er dafür ausgehandelt wurde."
           }
         }
       },
@@ -276,7 +276,8 @@
       "options": {
         "auto": "Auto anhand des User-Agent",
         "standard": "Standard-SIP-Codecs",
-        "pcm": "Standard + Dahua PCM"
+        "pcm": "Standard + Dahua PCM",
+        "symmetric": "Dahua PCM, empfangenen Codec auch zum Senden nutzen"
       }
     }
   },

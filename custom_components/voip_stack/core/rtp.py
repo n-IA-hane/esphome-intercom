@@ -49,6 +49,10 @@ class AudioRtpSenderState:
     sequence: int
     timestamp: int
     ssrc: int
+    clock_rate: int = 0
+
+    def use_clock_rate(self, clock_rate: int) -> bool:
+        return use_audio_clock(self, clock_rate)
 
     @classmethod
     def create(cls, *, ssrc: int = 0) -> "AudioRtpSenderState":
@@ -57,6 +61,22 @@ class AudioRtpSenderState:
             timestamp=secrets.randbelow(0x100000000),
             ssrc=int(ssrc) & 0xFFFFFFFF or secrets.randbelow(0xFFFFFFFF) + 1,
         )
+
+
+def use_audio_clock(source, clock_rate: int) -> bool:
+    """Use a new SSRC when switching RTP clocks, as recommended by RFC 7160.
+
+    Audio sources here do not emit RTCP. Each call owns its sequence/timestamp
+    state; neither another leg's PT nor its RTP source identity is copied.
+    """
+    changed = bool(source.clock_rate and source.clock_rate != clock_rate)
+    if changed:
+        fresh = AudioRtpSenderState.create()
+        if fresh.ssrc == source.ssrc:
+            fresh.ssrc = (source.ssrc + 1) & 0xFFFFFFFF or 1
+        source.sequence, source.timestamp, source.ssrc = fresh.sequence, fresh.timestamp, fresh.ssrc
+    source.clock_rate = clock_rate
+    return changed
 
 
 def audio_payload_size_limit(fmt: _AudioRtpFormat) -> int:

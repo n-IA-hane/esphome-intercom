@@ -31,7 +31,7 @@ from .groups import GROUP_TYPE_CONFERENCE
 from .media_ports import RtpPortReservation
 from .core.rtp import RtpPacket, build_packet, next_sequence, next_timestamp, parse_packet
 from .core.sdp import build_answer_directional
-from .core import sdp
+from .core import rtp, sdp
 from .session_cleanup import async_wait_for_cleanup
 from .runtime_data import (
     browser_phone,
@@ -98,6 +98,7 @@ class _ConferenceLeg:
     sequence: int = field(default_factory=lambda: random.randrange(0, 0xFFFF))
     timestamp: int = field(default_factory=lambda: random.randrange(0, 0xFFFFFFFF))
     ssrc: int = field(default_factory=lambda: random.randrange(1, 0xFFFFFFFF))
+    clock_rate: int = 0
     rx_ssrc: int | None = None
     rx_packets: int = 0
     tx_packets: int = 0
@@ -262,7 +263,7 @@ class ConferenceRoom:
                 transport=transport,
                 port_reservation=port_reservation,
                 decoder=RtpAudioReceiver(dialog.recv_format, tuple(getattr(dialog, "recv_formats", ()))),
-                encoder=RtpPayloadEncoder(dialog.send_format),
+                encoder=RtpPayloadEncoder(dialog.send_format, send_formats=dialog.send_formats, match_received_codec=dialog.match_received_codec),
                 in_converter=PcmFrameConverter(dialog.recv_format.audio_format, CONFERENCE_FORMAT),
                 out_converter=PcmFrameConverter(CONFERENCE_FORMAT, dialog.send_format.audio_format),
                 client=client,
@@ -308,6 +309,8 @@ class ConferenceRoom:
             if leg.rx_ssrc is not None and packet.ssrc != leg.rx_ssrc:
                 raise ValueError(f"SSRC {packet.ssrc} != latched {leg.rx_ssrc}")
             pcm_frames = leg.decoder.decode(packet.payload_type, packet.payload)
+            if leg.encoder is not None:
+                leg.encoder.follow_received(leg.decoder.format_for(packet.payload_type))
             if not pcm_frames:
                 return
             if leg.rx_ssrc is None:
@@ -491,6 +494,7 @@ class ConferenceRoom:
                             continue
                         try:
                             payload = leg.encoder.encode(out_frame)
+                            rtp.use_audio_clock(leg, leg.encoder.fmt.rtp_clock_rate)
                             packet = RtpPacket(
                                 payload_type=leg.encoder.fmt.payload_type,
                                 sequence=leg.sequence,

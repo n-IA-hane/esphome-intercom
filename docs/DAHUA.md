@@ -5,7 +5,7 @@ section even when the Home Assistant browser is only receiving video. The
 profile also selects standard SIP audio formats at 20 ms instead of treating
 an unregistered door station as a generic directional PCM endpoint.
 
-This configuration is available in the development preview after 2026.10.1.
+This configuration is available in the updated **2026.10.3-dev** preview.
 It requires no Python patch, fabricated User-Agent, or `registered: true` flag.
 
 ## Dahua registered with Home Assistant
@@ -87,10 +87,15 @@ an explicitly Dahua contact; a bare dialed number has no such profile.
 | Auto by User-Agent | `auto` | Keep existing detection. A real Dahua User-Agent enables PCM; without one, use standard SIP codecs. |
 | Standard SIP codecs | `standard` | Offer standard codecs, excluding proprietary Dahua PCM. |
 | Standard + Dahua PCM | `pcm` | Add PCM/16000 to the standard offer without requiring a User-Agent. |
+| Dahua PCM, match received codec | `symmetric` | Offer PCM, then match transmission to a valid received codec when it is also negotiated for TX. |
 
-Explicit `standard` or `pcm` requires `sip_profile: dahua`. These choices do
-not force PCMU or PCM as the transmit codec. The remote SDP answer still drives
-transmit selection, and HA accepts the negotiated receive formats independently.
+Explicit audio choices require `sip_profile: dahua`. `standard` and `pcm`
+change the offer without overriding the initial transmit selection from the
+answer. `symmetric` additionally follows the codec of validated incoming audio,
+using the transmit payload mapping from the answer. It never copies an incoming
+payload number blindly. HA keeps the browser/application PCM contract stable
+and converts audio before encoding if required. Other peer profiles and the
+Auto default keep their existing transmit policy.
 Returning both settings to Auto removes the overrides.
 
 To compare the automatic-contact problem without modifying that registration:
@@ -112,6 +117,38 @@ Never reinterpret payload 97 solely by its number. It can mean PCM/16000 or
 L16 at a different rate, depending on the SDP. An unnegotiated mapping remains
 rejected. Incoming VTO calls keep their existing negotiation; these contact
 settings select offers when HA originates a call to the contact.
+
+## Test matching the received codec
+
+For the registered-target case where the VTO sends PCM but does not reproduce
+HA's PCMU, create a separate contact with the same active SIP URI and choose
+**Dahua PCM, match received codec**. This tests Asterisk-style symmetric codec
+selection without changing the original registration or every trunk destination.
+
+```yaml
+action: voip_stack.add_contact
+data:
+  name: Front door symmetric test
+  sip_uri: "sip:8001@192.0.2.20:5060;transport=udp"
+  sip_profile: dahua
+  dahua_audio: symmetric
+```
+
+Replace the example URI with the active door-station URI. Keep Send camera off.
+Once valid PCM arrives, HA can send PCM back if the answer permits it. If the
+peer sends PCMU again, HA can follow it. A change of RTP clock starts a new
+RTP source as recommended by [RFC 7160](https://www.rfc-editor.org/rfc/rfc7160.html#section-4).
+This audio path does not send RTCP; symmetric-mode SDP advertises zero audio
+RTCP bandwidth as specified by RFC 3556, without disabling video feedback.
+DTMF retains the correct event clock and
+a codec change waits until an active telephone event finishes. The packet
+duration must remain compatible with the current send cadence.
+
+Compare this contact with the standard and PCM-offer-only contacts. Please
+report which side hears speech, hangup from the VTO and an immediate second
+call. The symmetric mode is implemented and tested on software peers, but
+physical Dahua confirmation is still required. It is a compatibility policy,
+not a claim that the firmware requires symmetric audio.
 
 ## Verification and remaining hardware checks
 

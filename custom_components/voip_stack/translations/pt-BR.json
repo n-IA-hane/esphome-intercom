@@ -218,7 +218,7 @@
             "fallback_destination": "Se nenhuma automação tratar a chamada, encaminhar para este destino. Deixe vazio para encerrar a chamada.",
             "timeout": "Segundos até o destino alternativo se nenhuma automação assumir a chamada. Não é a duração do toque do telefone.",
             "sip_profile": "Auto mantém a detecção do dispositivo. Selecione Dahua para um interfone Dahua configurado como contato estático.",
-            "dahua_audio": "Auto usa o User-Agent real. Padrão exclui PCM Dahua; Padrão + PCM Dahua permite PCM/16000 junto com codecs padrão, sem forçar o codec de transmissão."
+            "dahua_audio": "Auto usa o User-Agent real. Standard exclui PCM Dahua; PCM o adiciona à oferta. Simétrico também transmite com o codec recebido, somente se negociado para essa direção."
           }
         }
       },
@@ -276,7 +276,8 @@
       "options": {
         "auto": "Auto pelo User-Agent",
         "standard": "Codecs SIP padrão",
-        "pcm": "Padrão + PCM Dahua"
+        "pcm": "Padrão + PCM Dahua",
+        "symmetric": "PCM Dahua, usar o codec recebido também para transmitir"
       }
     }
   },

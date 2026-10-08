@@ -193,18 +193,54 @@ class RtpPayloadDecoder:
 
 
 class RtpPayloadEncoder:
-    def __init__(self, fmt: sdp.RtpPcmFormat) -> None:
-        self.fmt = fmt
+    def __init__(self, fmt: sdp.RtpPcmFormat, *, send_formats=(), match_received_codec=False) -> None:
+        self.input_format = fmt.audio_format
+        self.send_formats = tuple(send_formats) or (fmt,)
+        self.match_received_codec = bool(match_received_codec)
+        self._converter = None
+        self._set_format(fmt)
+
+    def _set_format(self, fmt: sdp.RtpPcmFormat) -> None:
         pcm_format = fmt.audio_format
-        self._codec = (
+        codec = (
             OpusEncoder(pcm_format.sample_rate, pcm_format.channels, pcm_format.frame_ms)
             if fmt.encoding == "OPUS"
             else G722Encoder()
             if fmt.encoding == "G722"
             else None
         )
+        self.fmt = fmt
+        self._codec = codec
+
+    def follow_received(self, received: sdp.RtpPcmFormat) -> bool:
+        """Follow a valid received codec only through the negotiated TX mapping.
+
+        Like Asterisk's symmetric-codec policy, this never assumes that a
+        received payload number is also the peer's receive payload number.
+        Keep the input PCM contract and packet cadence stable for consumers.
+        """
+        if not self.match_received_codec:
+            return False
+        selected = next((fmt for fmt in self.send_formats if (
+            fmt.encoding == received.encoding and fmt.sample_rate == received.sample_rate
+            and fmt.channels == received.channels
+            and fmt.audio_format.frame_ms == self.input_format.frame_ms
+        )), None)
+        if selected is None or selected == self.fmt:
+            return False
+        from .core.audio_pcm import PcmFrameConverter
+
+        converter = PcmFrameConverter(self.input_format, selected.audio_format)
+        self._set_format(selected)
+        self._converter = converter if self.input_format != selected.audio_format else None
+        return True
 
     def encode(self, pcm: bytes) -> bytes:
+        if self._converter is not None:
+            frames = self._converter.convert(pcm)
+            if len(frames) != 1:
+                raise ValueError("Symmetric codec conversion must preserve packet duration")
+            pcm = frames[0]
         if self._codec is not None:
             return self._codec.encode(pcm)
         return pcm_to_rtp_payload(pcm, self.fmt)
@@ -291,6 +327,8 @@ class SipDialog(DialogSignalingState):
     local_video_rtp_port: int = 0
     local_video_direction: str = "inactive"
     recv_formats: tuple[sdp.RtpPcmFormat, ...] = ()
+    send_formats: tuple[sdp.RtpPcmFormat, ...] = ()
+    match_received_codec: bool = False
     recv_payload_history: tuple[sdp.RtpPcmFormat, ...] = ()
 
     @property
@@ -405,6 +443,7 @@ class SipCallClient:
         allow_directional_audio_payloads: bool = False,
         peer_user_agent: str = "",
         include_dahua_pcm: bool | None = None,
+        match_received_codec: bool = False,
         local_video_rtp_port: int = 0,
         video_format: sdp.RtpVideoFormat | None = None,
         video_formats: tuple[sdp.RtpVideoFormat, ...] | list[sdp.RtpVideoFormat] | None = None,
@@ -461,6 +500,7 @@ class SipCallClient:
         self.allow_directional_audio_payloads = bool(
             allow_directional_audio_payloads
         )
+        self.match_received_codec = bool(match_received_codec)
         self.peer_user_agent = str(peer_user_agent or "").strip()
         self.include_dahua_pcm = (
             supports_dahua_pcm(self.peer_user_agent)
@@ -1234,6 +1274,8 @@ class SipCallClient:
             and previous.recv_format.wire_token() == updated.recv_format.wire_token()
             and (previous.recv_formats or (previous.recv_format,))
             == (updated.recv_formats or (updated.recv_format,))
+            and (previous.send_formats or (previous.send_format,))
+            == (updated.send_formats or (updated.send_format,))
             and previous.remote_rtp_host == updated.remote_rtp_host
             and previous.remote_rtp_port == updated.remote_rtp_port
             and previous.remote_audio_direction == updated.remote_audio_direction
@@ -1356,6 +1398,7 @@ class SipCallClient:
                 selected.send,
                 selected.recv,
                 dtmf=dtmf_formats[0] if dtmf_formats else None,
+                audio_rtcp=not self.match_received_codec,
                 remote_sdp=request.body,
                 video_port=(self.local_video_rtp_port if video is not None else 0),
                 video_format=video_answer,
@@ -1382,6 +1425,8 @@ class SipCallClient:
                 send_format=selected.send,
                 recv_format=selected.recv,
                 recv_formats=selected.recv_formats if local_offer_sdp else (selected.recv,),
+                send_formats=selected.send_formats if local_offer_sdp else (selected.send,),
+                match_received_codec=self.match_received_codec,
                 recv_payload_history=recv_payload_history,
                 remote_target_uri=remote_target,
                 dtmf_payload_type=(
@@ -1942,6 +1987,7 @@ class SipCallClient:
                 self.supported_recv_formats,
                 include_common_codecs=self.include_common_codecs,
                 include_dahua_pcm=self.include_dahua_pcm,
+                audio_rtcp=not self.match_received_codec,
                 send_rtp_formats=self.supported_send_rtp_formats,
                 recv_rtp_formats=self.supported_recv_rtp_formats,
                 allow_directional_payloads=self.allow_directional_audio_payloads,
@@ -2499,6 +2545,7 @@ class SipCallClient:
                                         updated.local_rtp_port,
                                         updated.send_format,
                                         updated.recv_format,
+                                        audio_rtcp=not self.match_received_codec,
                                         dtmf=(
                                             sdp.offered_dtmf_formats(request.body)[0]
                                             if sdp.offered_dtmf_formats(request.body)
@@ -2528,6 +2575,7 @@ class SipCallClient:
                                     updated.local_rtp_port,
                                     updated.send_format,
                                     updated.recv_format,
+                                    audio_rtcp=not self.match_received_codec,
                                     dtmf=(
                                         sdp.offered_dtmf_formats(request.body)[0]
                                         if sdp.offered_dtmf_formats(request.body)
@@ -3435,6 +3483,8 @@ class SipCallClient:
                 send_format=audio.send,
                 recv_format=audio.recv,
                 recv_formats=audio.recv_formats,
+                send_formats=audio.send_formats,
+                match_received_codec=self.match_received_codec,
                 recv_payload_history=recv_payload_history,
                 remote_target_uri=remote_target,
                 dtmf_payload_type=(
@@ -3546,6 +3596,7 @@ class SipCallClient:
                     # Opus back through their decoded PCM shape would turn
                     # them into L16 and can make a standards-compliant peer
                     # reject an otherwise valid video-only session update.
+                    audio_rtcp=not self.match_received_codec,
                     audio_rtp_formats=current_common_rtp_formats,
                     send_rtp_formats=current_send_rtp_formats,
                     recv_rtp_formats=current_recv_rtp_formats,
@@ -4083,6 +4134,8 @@ class SipCallClient:
             send_format=selected.send,
             recv_format=selected.recv,
             recv_formats=selected.recv_formats,
+            send_formats=selected.send_formats,
+            match_received_codec=self.match_received_codec,
             recv_payload_history=recv_payload_history,
             remote_target_uri=remote_target_uri,
             route_set=route_set,

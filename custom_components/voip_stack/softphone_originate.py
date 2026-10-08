@@ -636,6 +636,7 @@ async def async_originate_browser_call(
         if use_trunk
         else "",
         include_dahua_pcm=peer_profile.include_dahua_pcm if not native_audio_endpoint else None,
+        match_received_codec=peer_profile.match_received_codec,
         include_common_codecs=(peer_profile.is_dahua and not native_audio_endpoint)
         or use_trunk
         or use_registered_contact_codecs

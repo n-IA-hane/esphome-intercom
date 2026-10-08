@@ -247,8 +247,11 @@ class SipProfileTest(unittest.TestCase):
 
     def test_g722_relay_advances_rtp_clock_by_160_not_pcm_samples(self) -> None:
         class PassthroughCodec:
-            def __init__(self, _fmt) -> None:
-                pass
+            def __init__(self, fmt, **_kwargs) -> None:
+                self.fmt = fmt
+
+            def follow_received(self, _received):
+                return False
 
             def decode(self, payload: bytes) -> bytes:
                 return payload

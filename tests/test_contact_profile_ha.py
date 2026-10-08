@@ -47,6 +47,7 @@ async def test_gui_create_edit_and_reset_profile_persists_in_one_contact(hass, e
     child = next(iter(entry.subentries.values()))
     assert child.data["metadata"] == {"sip_profile": "dahua", "dahua_audio": "pcm"}
     for profile, audio, expected in (
+        ("dahua", "symmetric", {"sip_profile": "dahua", "dahua_audio": "symmetric"}),
         ("dahua", "standard", {"sip_profile": "dahua", "dahua_audio": "standard"}),
         ("dahua", "auto", {"sip_profile": "dahua"}),
         ("auto", "auto", {}),

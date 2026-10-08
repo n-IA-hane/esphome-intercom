@@ -205,7 +205,7 @@ configuration.
 ### `voip_stack.add_contact`
 
 Ordinary SIP contacts also accept `sip_profile` (`auto` or `dahua`) and
-`dahua_audio` (`auto`, `standard` or `pcm`). The same choices appear in the
+`dahua_audio` (`auto`, `standard`, `pcm` or `symmetric`). The same choices appear in the
 contact editor. Explicit audio choices require the Dahua profile. They do not
 alter registration state or fabricate a User-Agent. See the
 [Dahua setup and comparison guide](DAHUA.md) for direct and trunk examples.

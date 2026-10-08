@@ -501,7 +501,7 @@ add_contact:
               value: dahua
     dahua_audio:
       name: Dahua audio compatibility
-      description: Requires the Dahua profile for an explicit audio choice. PCM allows proprietary PCM/16000 alongside standard codecs; it does not force the negotiated transmit codec. Auto follows the real User-Agent.
+      description: Requires the Dahua profile for an explicit audio choice. PCM adds proprietary PCM/16000 to the offer. Symmetric also transmits with a validated received codec when negotiated for TX. Auto retains User-Agent detection.
       selector:
         select:
           options:
@@ -511,6 +511,8 @@ add_contact:
               value: standard
             - label: Standard + Dahua PCM
               value: pcm
+            - label: Dahua PCM, match received codec
+              value: symmetric
     extension:
       name: Optional Extension
       description: Optional local/internal dial-plan alias such as 101. Inbound DTMF and internal callers resolve this field before external numbers.

@@ -130,7 +130,7 @@ def contact_from_data(data: Mapping[str, Any]) -> RosterEntry:
     }
     profile = str(data.get("sip_profile", metadata.get("sip_profile", "auto"))).strip().lower()
     audio = str(data.get("dahua_audio", metadata.get("dahua_audio", "auto"))).strip().lower()
-    if profile not in {"auto", "dahua"} or audio not in {"auto", "standard", "pcm"}:
+    if profile not in {"auto", "dahua"} or audio not in {"auto", "standard", "pcm", "symmetric"}:
         raise ContactProfileError("Unknown SIP profile or Dahua audio mode")
     if audio != "auto" and profile != "dahua":
         raise ContactProfileError("Select the Dahua SIP profile before choosing its audio compatibility")

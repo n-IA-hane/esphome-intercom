@@ -18,6 +18,8 @@ def commit_audio_session_update(
     session.send_format = negotiated.send_format
     session.recv_format = negotiated.recv_format
     session.recv_formats = getattr(negotiated, "recv_formats", ())
+    session.send_formats = getattr(negotiated, "send_formats", ())
+    session.match_received_codec = getattr(negotiated, "match_received_codec", False)
     session.remote_rtp_host = negotiated.remote_rtp_host
     session.remote_rtp_port = int(negotiated.remote_rtp_port)
     session.local_audio_direction = negotiated.local_audio_direction

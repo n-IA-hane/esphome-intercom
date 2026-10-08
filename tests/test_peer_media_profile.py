@@ -63,3 +63,11 @@ async def test_client_wire_offer_explicit_pcm_without_forging_identity(user_agen
     finally:
         await client.close()
         transport.close()
+
+
+def test_symmetric_audio_is_explicit_and_scoped_to_dahua():
+    profile = resolve({"sip_profile": "dahua", "dahua_audio": "symmetric"})
+    assert profile.is_dahua and profile.include_dahua_pcm and profile.match_received_codec
+    assert not resolve({"sip_profile": "dahua", "dahua_audio": "pcm"}).match_received_codec
+    assert not resolve({"user_agent": "Dahua UAC/1.0"}).match_received_codec
+    assert not resolve({}).match_received_codec

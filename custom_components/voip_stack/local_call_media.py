@@ -43,6 +43,8 @@ class LocalAudioContract:
     send_format: Any
     recv_format: Any
     recv_formats: tuple = ()
+    send_formats: tuple = ()
+    match_received_codec: bool = False
     local_audio_direction: str = "sendrecv"
     remote_audio_connection_held: bool = False
     remote_sdp: str = ""
@@ -92,7 +94,7 @@ class LocalCallMedia:
         self.rx_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=_RX_QUEUE_FRAMES)
         self.tx_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=_TX_QUEUE_FRAMES)
         self.decoder = RtpAudioReceiver(invite.recv_format, tuple(getattr(invite, "recv_formats", ())))
-        self.encoder = RtpPayloadEncoder(invite.send_format)
+        self.encoder = RtpPayloadEncoder(invite.send_format, send_formats=getattr(invite, "send_formats", ()), match_received_codec=getattr(invite, "match_received_codec", False))
         self.rx_converter = PcmFrameConverter(
             invite.recv_format.audio_format, LOCAL_PCM_FORMAT
         )
@@ -150,7 +152,7 @@ class LocalCallMedia:
             updated.recv_format, tuple(getattr(updated, "recv_formats", ())),
             previous=self.decoder,
         )
-        encoder = RtpPayloadEncoder(updated.send_format)
+        encoder = RtpPayloadEncoder(updated.send_format, send_formats=getattr(updated, "send_formats", ()), match_received_codec=getattr(updated, "match_received_codec", False))
         rx_converter = PcmFrameConverter(
             updated.recv_format.audio_format, LOCAL_PCM_FORMAT
         )
@@ -301,6 +303,7 @@ class LocalCallMedia:
             elif int(addr[1]) != self.remote_rtp_port:
                 self.remote_rtp_port = int(addr[1])
             pcm_frames = self.decoder.decode(packet.payload_type, packet.payload)
+            self.encoder.follow_received(self.decoder.format_for(packet.payload_type))
             if not pcm_frames:
                 return
             self.counters["rtp_rx"] += 1
@@ -356,9 +359,11 @@ class LocalCallMedia:
                             self.counters["drop_connection_hold"] += 1
                     else:
                         payload = encoder.encode(pcm)
+                        wire_format = encoder.fmt
+                        self.rtp_source.use_clock_rate(wire_format.rtp_clock_rate)
                         packet = rtp.build_packet(
                             rtp.RtpPacket(
-                                payload_type=invite.send_format.payload_type,
+                                payload_type=wire_format.payload_type,
                                 sequence=self.rtp_source.sequence,
                                 timestamp=self.rtp_source.timestamp,
                                 ssrc=self.rtp_source.ssrc,
@@ -386,7 +391,7 @@ class LocalCallMedia:
                 self.rtp_source.sequence = rtp.next_sequence(self.rtp_source.sequence)
                 self.rtp_source.timestamp = rtp.next_timestamp(
                     self.rtp_source.timestamp,
-                    invite.send_format.rtp_timestamp_step,
+                    encoder.fmt.rtp_timestamp_step,
                 )
                 next_send += frame_delay
                 if next_send <= loop.time():

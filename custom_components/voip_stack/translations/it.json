@@ -218,7 +218,7 @@
             "fallback_destination": "Se nessuna automazione gestisce la chiamata, viene inoltrata qui. Vuoto: chiudi la chiamata.",
             "timeout": "Secondi di attesa prima del fallback se nessuna automazione prende in carico la chiamata. Non è la durata dello squillo di un telefono.",
             "sip_profile": "Auto mantiene il rilevamento del dispositivo. Scegli Dahua per un citofono Dahua configurato come contatto statico.",
-            "dahua_audio": "Auto segue il vero User-Agent. Standard esclude PCM Dahua; Standard + PCM Dahua consente PCM/16000 insieme ai codec standard senza forzare il codec trasmesso."
+            "dahua_audio": "Auto usa il vero User-Agent. Standard esclude PCM Dahua; PCM lo aggiunge all'offerta. Simmetrico usa anche in trasmissione il codec ricevuto, solo se negoziato per quella direzione."
           }
         }
       },
@@ -276,7 +276,8 @@
       "options": {
         "auto": "Auto dal User-Agent",
         "standard": "Codec SIP standard",
-        "pcm": "Standard + PCM Dahua"
+        "pcm": "Standard + PCM Dahua",
+        "symmetric": "PCM Dahua, usa il codec ricevuto anche in trasmissione"
       }
     }
   },

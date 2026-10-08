@@ -218,7 +218,7 @@
             "fallback_destination": "If no automation handles the call, forward here. Leave empty to end the call.",
             "timeout": "Seconds before fallback if no automation takes control of the call. This is not a phone ringing duration.",
             "sip_profile": "Auto keeps peer detection. Choose Dahua for a static Dahua door station.",
-            "dahua_audio": "Auto follows the real User-Agent. Standard excludes Dahua PCM; Standard + Dahua PCM allows PCM/16000 alongside standard codecs without forcing the transmit codec."
+            "dahua_audio": "Auto follows the real User-Agent. Standard excludes Dahua PCM; PCM adds it to the offer. Symmetric also matches transmission to a received codec already negotiated for sending."
           }
         }
       },
@@ -276,7 +276,8 @@
       "options": {
         "auto": "Auto by User-Agent",
         "standard": "Standard SIP codecs",
-        "pcm": "Standard + Dahua PCM"
+        "pcm": "Standard + Dahua PCM",
+        "symmetric": "Dahua PCM, match received codec"
       }
     }
   },

@@ -113,6 +113,8 @@ class _SoftphoneMediaSession:
     send_format: Any
     recv_format: Any
     recv_formats: tuple[Any, ...] = ()
+    send_formats: tuple[Any, ...] = ()
+    match_received_codec: bool = False
     signaling_host: str = ""
     local_audio_direction: str = "sendrecv"
     remote_audio_connection_held: bool = False
@@ -575,6 +577,8 @@ def _active_softphone_media_session(
                 send_format=dialog.send_format,
                 recv_format=dialog.recv_format,
                 recv_formats=getattr(dialog, "recv_formats", ()),
+                send_formats=getattr(dialog, "send_formats", ()),
+                match_received_codec=getattr(dialog, "match_received_codec", False),
                 signaling_host=dialog.remote_host,
                 local_audio_direction=str(dialog.local_audio_direction),
                 remote_audio_connection_held=bool(
@@ -818,6 +822,7 @@ async def _run_audio_session(
     media_state_lock = asyncio.Lock()
     rtp_send_lock = asyncio.Lock()
     dtmf_send_lock = asyncio.Lock()
+    dtmf_source = None
     dtmf_tasks: set[asyncio.Task[None]] = set()
     debug_capture = (
         _DebugAudioCapture(session.call_id, rx_format=session.recv_format, tx_format=session.send_format)
@@ -849,6 +854,7 @@ async def _run_audio_session(
             return
         counters["drop_rx_queue"] = protocol.dropped_packets
         update = {
+            "active_tx_rtp_format": rtp_encoder.fmt.wire_token(),
             "rtp_tx_packets": counters["rtp_tx"],
             "rtp_rx_packets": counters["rtp_rx"],
             "rtp_tx_bytes": counters["rtp_tx_bytes"],
@@ -920,7 +926,7 @@ async def _run_audio_session(
             next_decoder = RtpAudioReceiver(
                 session.recv_format, session.recv_formats, previous=rtp_decoder
             )
-            next_encoder = RtpPayloadEncoder(session.send_format)
+            next_encoder = RtpPayloadEncoder(session.send_format, send_formats=session.send_formats, match_received_codec=session.match_received_codec)
             next_dtmf_decoder = (
                 RtpDtmfDecoder(session.dtmf_payload_type)
                 if session.dtmf_payload_type is not None
@@ -960,7 +966,7 @@ async def _run_audio_session(
     try:
         await ws.send_json(negotiation_payload())
         rtp_decoder = RtpAudioReceiver(session.recv_format, session.recv_formats)
-        rtp_encoder = RtpPayloadEncoder(session.send_format)
+        rtp_encoder = RtpPayloadEncoder(session.send_format, send_formats=session.send_formats, match_received_codec=session.match_received_codec)
     except asyncio.CancelledError:
         transport.close()
         raise
@@ -1078,6 +1084,9 @@ async def _run_audio_session(
                 last_audio_sequence = packet.sequence
                 last_audio_timestamp = packet.timestamp
                 last_audio_format = received_format
+                if not dtmf_send_lock.locked() and rtp_encoder.follow_received(received_format):
+                    _LOGGER.info("SIP audio TX follows negotiated RX codec call_id=%s tx=%s",
+                                 session.call_id, rtp_encoder.fmt.wire_token())
                 counters["rtp_rx"] += 1
                 counters["rtp_rx_bytes"] += len(data)
                 async with ws_send_lock:
@@ -1136,7 +1145,7 @@ async def _run_audio_session(
         async def send_dtmf(digit: str, duration_ms: int) -> None:
             """Send one browser digit using RFC 4733, then SIP INFO fallback."""
 
-            nonlocal sequence
+            nonlocal sequence, timestamp, ssrc, dtmf_source
             event = telephone_event_code(digit)
             if (
                 event is None
@@ -1151,17 +1160,30 @@ async def _run_audio_session(
                 return
             async with dtmf_send_lock:
                 event_rate = max(1, int(session.send_dtmf_clock_rate))
-                event_timestamp = timestamp
+                async with rtp_send_lock:
+                    audio_rate = rtp_encoder.fmt.rtp_clock_rate
+                    if rtp_source.use_clock_rate(audio_rate):
+                        sequence, timestamp, ssrc = rtp_source.sequence, rtp_source.timestamp, rtp_source.ssrc
+                    shared_clock = event_rate == audio_rate
+                    if not shared_clock and dtmf_source is None:
+                        dtmf_source = rtp.AudioRtpSenderState.create()
+                        if dtmf_source.ssrc == ssrc:
+                            dtmf_source.ssrc = (ssrc ^ 0x80000000) or 1
+                    event_timestamp = timestamp if shared_clock else dtmf_source.timestamp
+                    event_ssrc = ssrc if shared_clock else dtmf_source.ssrc
+                    event_generation = session.media_generation
 
                 async def emit(duration: int, marker: bool, end: bool) -> bool:
                     nonlocal sequence
                     async with rtp_send_lock:
+                        if closed.is_set() or session.media_generation != event_generation:
+                            return False
                         packet = rtp.build_packet(
                             rtp.RtpPacket(
                                 payload_type=int(session.send_dtmf_payload_type),
-                                sequence=sequence,
+                                sequence=sequence if shared_clock else dtmf_source.sequence,
                                 timestamp=event_timestamp,
-                                ssrc=ssrc,
+                                ssrc=event_ssrc,
                                 payload=build_telephone_event_payload(
                                     digit,
                                     duration=duration,
@@ -1171,8 +1193,11 @@ async def _run_audio_session(
                             )
                         )
                         transport.sendto(packet, (remote_rtp_host, remote_rtp_port))
-                        sequence = rtp.next_sequence(sequence)
-                        rtp_source.sequence = sequence
+                        if shared_clock:
+                            sequence = rtp.next_sequence(sequence)
+                            rtp_source.sequence = sequence
+                        else:
+                            dtmf_source.sequence = rtp.next_sequence(dtmf_source.sequence)
                     return True
 
                 await send_rtp_dtmf_event(
@@ -1181,9 +1206,13 @@ async def _run_audio_session(
                     duration_ms=duration_ms,
                     emit=emit,
                 )
+                if not shared_clock:
+                    dtmf_source.timestamp = rtp.next_timestamp(
+                        event_timestamp, round(max(40, min(5000, duration_ms)) * event_rate / 1000)
+                    )
 
         async def playout() -> None:
-            nonlocal sequence, timestamp, last_pcm, plc_active
+            nonlocal sequence, timestamp, ssrc, last_pcm, plc_active
             started = False
             next_deadline = loop.time()
             while not closed.is_set():
@@ -1226,12 +1255,18 @@ async def _run_audio_session(
                     session.remote_audio_connection_held
                     or session.local_audio_direction not in {"sendonly", "sendrecv"}
                 ):
-                    payload = rtp_encoder.encode(pcm)
-                    if payload:
-                        async with rtp_send_lock:
+                    async with rtp_send_lock:
+                        # No await separates codec selection, encoding and its
+                        # RTP header. The browser PCM contract stays unchanged.
+                        encoder = rtp_encoder
+                        payload = encoder.encode(pcm)
+                        wire_format = encoder.fmt
+                        if rtp_source.use_clock_rate(wire_format.rtp_clock_rate):
+                            sequence, timestamp, ssrc = rtp_source.sequence, rtp_source.timestamp, rtp_source.ssrc
+                        if payload:
                             packet = rtp.build_packet(
                                 rtp.RtpPacket(
-                                    payload_type=session.send_format.payload_type,
+                                    payload_type=wire_format.payload_type,
                                     sequence=sequence,
                                     timestamp=timestamp,
                                     ssrc=ssrc,
@@ -1241,10 +1276,10 @@ async def _run_audio_session(
                             transport.sendto(packet, (remote_rtp_host, remote_rtp_port))
                             sequence = rtp.next_sequence(sequence)
                             rtp_source.sequence = sequence
-                        if debug_capture is not None:
-                            debug_capture.note_rtp_tx(loop.time())
-                        counters["rtp_tx"] += 1
-                        counters["rtp_tx_bytes"] += len(packet)
+                            if debug_capture is not None:
+                                debug_capture.note_rtp_tx(loop.time())
+                            counters["rtp_tx"] += 1
+                            counters["rtp_tx_bytes"] += len(packet)
                 else:
                     counter = (
                         "drop_connection_hold"
@@ -1253,7 +1288,7 @@ async def _run_audio_session(
                     )
                     counters[counter] += 1
                 timestamp = rtp.next_timestamp(
-                    timestamp, session.send_format.rtp_timestamp_step
+                    timestamp, rtp_encoder.fmt.rtp_timestamp_step
                 )
                 rtp_source.timestamp = timestamp
                 counters["tx_playout_depth"] = len(tx_frames)

@@ -330,6 +330,8 @@ def dialog_rtp_peer(dialog: SipDialog) -> RtpPeer:
         audio_format=dialog.recv_format.audio_format,
         rtp_format=dialog.recv_format,
         inbound_rtp_formats=tuple(getattr(dialog, "recv_formats", ())),
+        outbound_rtp_formats=tuple(getattr(dialog, "send_formats", ())),
+        match_received_codec=getattr(dialog, "match_received_codec", False),
         send_payload_type=dialog.send_format.payload_type,
         send_audio_format=dialog.send_format.audio_format,
         send_rtp_format=dialog.send_format,

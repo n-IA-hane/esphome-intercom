@@ -269,7 +269,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
 
         self.assertIn("next_decoder = RtpAudioReceiver(", refresh)
         self.assertIn("session.recv_format, session.recv_formats, previous=rtp_decoder", refresh)
-        self.assertIn("next_encoder = RtpPayloadEncoder(session.send_format)", refresh)
+        self.assertIn("next_encoder = RtpPayloadEncoder(session.send_format,", refresh)
         self.assertNotIn("tx_frame_delay", refresh)
         self.assertNotIn("tx_silence_pcm", refresh)
         self.assertIn(
@@ -464,7 +464,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
         self.assertIn("_BROWSER_PLAYOUT_MAX_MS = 200", audio_ws)
         self.assertIn("_conceal_pcm_frame(", audio_ws)
         self.assertIn('counters["tx_playout_late_discard"]', audio_ws)
-        self.assertIn("payload = rtp_encoder.encode(pcm)", audio_ws)
+        self.assertIn("payload = encoder.encode(pcm)", audio_ws)
         self.assertIn("transport.sendto(", audio_ws)
         self.assertNotIn("async def ws_to_rtp()", audio_ws)
         self.assertNotIn("tx_queue: asyncio.Queue[bytes]", audio_ws)
@@ -474,7 +474,7 @@ class HaSoftphoneBackendContractTest(unittest.TestCase):
             ROOT / "custom_components" / "voip_stack" / "audio_ws_view.py"
         ).read_text()
         body = _function_body(audio_ws, "_run_audio_session")
-        self.assertIn("session.send_format.rtp_timestamp_step", body)
+        self.assertIn("rtp_encoder.fmt.rtp_timestamp_step", body)
         self.assertNotIn(
             "session.send_format.audio_format.nominal_frame_samples",
             body,

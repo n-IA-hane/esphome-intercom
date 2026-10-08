@@ -2,6 +2,7 @@
 
 import asyncio
 import math
+import json
 import socket
 import struct
 import sys
@@ -42,7 +43,7 @@ class _Browser:
         return message
 
 
-async def _exercise_dahua_call(monkeypatch, user_agent):
+async def _exercise_dahua_call(monkeypatch, user_agent, *, symmetric=False, pcm_tx_pt=97):
     """Independent SDP and PCM bytes reproduce the reporter's PT97/0 mismatch."""
     view = _load_audio_ws_runtime_module()
     audio_ws = _load_intercom_module("audio_ws")
@@ -76,8 +77,8 @@ async def _exercise_dahua_call(monkeypatch, user_agent):
                 body = (
                     "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Door\r\n"
                     "c=IN IP4 127.0.0.1\r\nt=0 0\r\n"
-                    f"m=audio {remote_port} RTP/AVP 0 97 {100 if user_agent else 99}\r\n"
-                    + ("a=rtpmap:97 PCM/16000\r\na=rtpmap:0 PCMU/8000\r\n" if user_agent else
+                    f"m=audio {remote_port} RTP/AVP 0 {pcm_tx_pt} {100 if user_agent else 99}\r\n"
+                    + (f"a=rtpmap:{pcm_tx_pt} PCM/16000\r\na=rtpmap:0 PCMU/8000\r\n" if user_agent else
                        "a=rtpmap:0 PCMU/8000\r\na=rtpmap:97 PCM/16000\r\n")
                     + f"a=rtpmap:{100 if user_agent else 99} telephone-event/8000\r\n"
                     f"a=fmtp:{100 if user_agent else 99} 0-15\r\na=sendrecv\r\n"
@@ -93,7 +94,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent):
         local_ip="127.0.0.1", local_name="Browser", local_sip_port=0,
         local_rtp_port=local_port, supported_send_formats=list(formats),
         supported_recv_formats=list(formats), include_common_codecs=True,
-        peer_user_agent=user_agent, local_video_rtp_port=41002,
+        peer_user_agent=user_agent, match_received_codec=symmetric, local_video_rtp_port=41002,
         video_formats=(sdp.RtpVideoFormat(
             payload_type=105, profile_level_id="42001f",
             packetization_mode=0, level_asymmetry_allowed=False,
@@ -121,6 +122,7 @@ async def _exercise_dahua_call(monkeypatch, user_agent):
         if not user_agent:
             assert b"a=rtpmap:97 L16/8000" in requests[0].body
         assert b"a=rtpmap:0 PCMU/8000" in requests[0].body
+        assert (b"b=RS:0\r\nb=RR:0" in requests[0].body) is symmetric
         hass.store["call_id"] = client.dialog.call_id
         registry = SimpleNamespace(
             resource_for=lambda *_args: None,
@@ -178,6 +180,15 @@ async def _exercise_dahua_call(monkeypatch, user_agent):
             for frame in range(8)
         ]
 
+        if symmetric:
+            expected_frames = [tuple([1200 + frame * 100] * 160) for frame in range(8)]
+
+        if symmetric:
+            # Establish the received codec before starting microphone capture;
+            # frames transmitted before that observation legitimately use PCMU.
+            await send(97, 19, 2880, struct.pack("<320h", *([1000] * 320)))
+            await asyncio.wait_for(browser.audio.get(), 1)
+
         # Queue less than the production 200 ms limit before measuring. This
         # tests the encoder and its pacing, not synthetic microphone scheduler
         # starvation when the test process first loads a receive resampler.
@@ -209,15 +220,22 @@ async def _exercise_dahua_call(monkeypatch, user_agent):
                 packet = rtp.parse_packet(outgoing)
                 outgoing_packets.append(packet)
                 assert address == ("127.0.0.1", local_port)
-                assert packet.payload_type == 0
-                assert len(packet.payload) == 160  # 8 kHz, mono, 20 ms PCMU.
-                decoded = []
-                for value in packet.payload:
-                    u = value ^ 0xff
-                    magnitude = (((u & 15) << 3) + 132) << ((u >> 4) & 7)
-                    decoded.append(132 - magnitude if u & 128 else magnitude - 132)
-                assert max(abs(actual - wanted) for actual, wanted in zip(decoded, expected)) <= 128
-                assert sum(sample * sample for sample in decoded) / 160 > 10_000_000
+                if symmetric:
+                    assert packet.payload_type == pcm_tx_pt  # Answer mapping, not RX97.
+                    assert len(packet.payload) == 640
+                    decoded = struct.unpack("<320h", packet.payload)
+                    assert all(abs(value - expected[-1]) <= 3 for value in decoded[64:])
+                    assert browser.json[0]["tx_format"].startswith("8000:")
+                else:
+                    assert packet.payload_type == 0
+                    assert len(packet.payload) == 160
+                    decoded = []
+                    for value in packet.payload:
+                        u = value ^ 0xff
+                        magnitude = (((u & 15) << 3) + 132) << ((u >> 4) & 7)
+                        decoded.append(132 - magnitude if u & 128 else magnitude - 132)
+                    assert max(abs(actual - wanted) for actual, wanted in zip(decoded, expected)) <= 128
+                    assert sum(sample * sample for sample in decoded) / 160 > 10_000_000
                 decoded_frames.append(tuple(decoded))
                 received = audio_ws.decode_audio_frame(await asyncio.wait_for(browser.audio.get(), 1))
                 assert len(received) == expected_bytes
@@ -229,11 +247,45 @@ async def _exercise_dahua_call(monkeypatch, user_agent):
                 await asyncio.gather(producer, return_exceptions=True)
         for before, after in zip(outgoing_packets, outgoing_packets[1:]):
             assert (after.sequence - before.sequence) % 65536 == 1
-            assert (after.timestamp - before.timestamp) % (1 << 32) == 160
+            assert (after.timestamp - before.timestamp) % (1 << 32) == (320 if symmetric else 160)
             assert after.ssrc == before.ssrc
         # Prevent an implementation that bursts all frames immediately.
         assert .10 <= arrival_times[-1] - arrival_times[0] < .8
         assert client.dialog.send_format == pcmu
+
+        if symmetric:
+            # The telephone-event clock stays 8 kHz while audio now uses
+            # 16 kHz. It needs its own RTP source, and a key press must not
+            # be split by a new incoming codec choice.
+            await browser.messages.put(SimpleNamespace(
+                type=WSMsgType.TEXT,
+                data=json.dumps({"type": "dtmf", "digit": "5", "duration_ms": 40}),
+            ))
+            events = []
+            async with asyncio.timeout(2):
+                while len([item for item in events if item.payload[1] & 128]) < 3:
+                    raw, _address = await loop.sock_recvfrom(remote, 2048)
+                    packet = rtp.parse_packet(raw)
+                    if packet.payload_type == session.send_dtmf_payload_type:
+                        events.append(packet)
+                        if len(events) == 1:
+                            await send(0, 40, 6400, b"\xff" * 160)
+            assert len({item.timestamp for item in events}) == 1
+            assert len({item.ssrc for item in events}) == 1
+            assert events[0].ssrc != outgoing_packets[-1].ssrc
+            assert all(struct.unpack("!H", item.payload[2:])[0] == 320 for item in events[-3:])
+            # Once the key press has finished, the next valid PCMU packet may
+            # change TX back. RFC 7160 starts a new source for the new clock.
+            await send(0, 41, 6560, b"\xff" * 160)
+            async with asyncio.timeout(1):
+                while True:
+                    raw, _address = await loop.sock_recvfrom(remote, 2048)
+                    packet = rtp.parse_packet(raw)
+                    if packet.payload_type == 0:
+                        assert packet.ssrc != outgoing_packets[-1].ssrc
+                        break
+            for _ in range(2):
+                await asyncio.wait_for(browser.audio.get(), 1)
 
         if user_agent:
             # RFC 3264 overlap accepts in-flight packets under the old mapping,
@@ -289,3 +341,10 @@ async def test_registered_and_manual_dahua_transmit_identical_nonzero_pcmu(monke
         with monkeypatch.context() as patcher:
             captured.append(await _exercise_dahua_call(patcher, user_agent))
     assert captured[0] == captured[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pcm_tx_pt", [97, 112])
+async def test_symmetric_dahua_transmits_pcm_using_answer_mapping(monkeypatch, pcm_tx_pt):
+    for _ in range(2):
+        await _exercise_dahua_call(monkeypatch, "Dahua UAC/V4.511.0.0", symmetric=True, pcm_tx_pt=pcm_tx_pt)

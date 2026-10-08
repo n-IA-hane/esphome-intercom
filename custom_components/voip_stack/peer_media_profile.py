@@ -14,6 +14,7 @@ class PeerMediaProfile:
     is_dahua: bool
     include_dahua_pcm: bool
     explicit_dahua: bool
+    match_received_codec: bool = False
 
 
 def resolve_peer_media_profile(
@@ -37,5 +38,5 @@ def resolve_peer_media_profile(
     legacy = configured and user_agent_override is None and not user_agent
     is_dahua = explicit or detected or legacy
     choice = str(metadata.get("dahua_audio") or "auto").strip().casefold()
-    include_pcm = choice == "pcm" or (choice == "auto" and detected)
-    return PeerMediaProfile(is_dahua, include_pcm, explicit)
+    include_pcm = choice in {"pcm", "symmetric"} or (choice == "auto" and detected)
+    return PeerMediaProfile(is_dahua, include_pcm, explicit, is_dahua and choice == "symmetric")

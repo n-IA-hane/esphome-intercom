@@ -235,6 +235,7 @@ class RtpPcmDirection:
     send: RtpPcmFormat
     recv: RtpPcmFormat
     recv_formats: tuple[RtpPcmFormat, ...] = ()
+    send_formats: tuple[RtpPcmFormat, ...] = ()
 
     @property
     def selected_format(self) -> RtpPcmFormat:
@@ -1457,6 +1458,7 @@ def build_offer_directional(
     recv_formats: list[AudioFormat],
     *,
     include_common_codecs: bool = False,
+    audio_rtcp: bool = True,
     include_dahua_pcm: bool = False,
     video_port: int = 0,
     video_format: RtpH264Format | None = None,
@@ -1598,6 +1600,10 @@ def build_offer_directional(
         "t=0 0",
         f"m=audio {int(media_port)} RTP/AVP {payloads}",
     ]
+    if not audio_rtcp:
+        # RFC 3556 disables RTCP only for this audio media section; video
+        # retains its own feedback transport and bandwidth policy.
+        lines.extend(("b=RS:0", "b=RR:0"))
     for fmt in rtp_formats:
         lines.append(
             f"a=rtpmap:{fmt.payload_type} {fmt.encoding}/{fmt.sample_rate}/{fmt.channels}"
@@ -3188,7 +3194,17 @@ def negotiate_answer_directional(
                     if compatible is not None:
                         receive.append(replace(offered, frame_ms=compatible.frame_ms))
                         break
-        return replace(selected, recv_formats=tuple(receive))
+        transmit = []
+        if local_direction in {"sendonly", "sendrecv"}:
+            for answer in answered_formats:
+                if not any(_same_rtp_audio_codec(answer, offered) for offered in offered_formats):
+                    continue
+                for local in local_send_preferred:
+                    compatible = _rtp_compatible_audio(answer, local)
+                    if compatible is not None:
+                        transmit.append(replace(answer, frame_ms=compatible.frame_ms))
+                        break
+        return replace(selected, recv_formats=tuple(receive), send_formats=tuple(transmit))
     selected = _negotiate_for_local_direction(
         answered_formats,
         local_send_preferred,
@@ -3286,6 +3302,7 @@ def build_answer_directional(
     recv: RtpPcmFormat,
     *,
     dtmf: RtpDtmfFormat | None = None,
+    audio_rtcp: bool = True,
     remote_sdp: str | bytes | None = None,
     video_port: int = 0,
     video_format: RtpH264Format | None = None,
@@ -3336,6 +3353,8 @@ def build_answer_directional(
         payload_values.append(str(dtmf.payload_type))
     payloads = " ".join(payload_values)
     audio_lines = [f"m=audio {int(media_port)} RTP/AVP {payloads}"]
+    if not audio_rtcp:
+        audio_lines.extend(("b=RS:0", "b=RR:0"))
     for fmt in selected:
         audio_lines.append(
             f"a=rtpmap:{fmt.payload_type} {fmt.encoding}/{fmt.sample_rate}/{fmt.channels}"
