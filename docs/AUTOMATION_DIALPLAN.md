@@ -26,6 +26,7 @@ This cookbook describes the native call automation interface developed for
 
 | I want to... | Start here |
 | --- | --- |
+| Place a scheduled call and speak after answer | [Outgoing announcements](#place-a-scheduled-announcement-call) |
 | Create my first call automation entirely in the editor | [First greeting](#create-your-first-greeting-in-the-editor) |
 | Say a message, then connect to Assist | [Greeting and forward](#forward-after-the-greeting) |
 | Use a name instead of a number | [Destination names and extensions](#destination-names-and-extensions) |
@@ -1518,3 +1519,96 @@ It blocks new external trunk calls, including forwarding and transfer attempts
 through HA; current calls continue and incoming/internal calls still work.
 This does not control calls a physical phone sends directly to another PBX.
 Only administrators and automations can change the setting.
+
+## Place a scheduled announcement call
+
+An ordinary Home Assistant automation can call a SIP phone and speak after it
+answers, without a dashboard, browser microphone or ESPHome device placing the
+call. For example, call the bedroom on weekday mornings or deliver a spoken
+parcel notification. Home Assistant supplies the schedule or event trigger.
+
+First create **Add contact > Automation**, name it `Wakeup-Caller`, and optionally
+assign an unused extension such as `660`. Then create the SIP account `bedroom`
+and register its phone with VoIP Stack. The Automation contact is the caller's
+identity; the registered phone is the destination. The outgoing sequence below
+runs directly, without triggering that contact's incoming-call automation.
+
+In **VoIP Stack: Call**, set **Calling Automation contact** rather than
+**Calling phone**, enter the destination, and store the action response as
+`wakeup`. This action waits for the final SIP answer and local media readiness.
+There is no separate event wait that could miss an immediate answer.
+
+```yaml
+alias: Weekday bedroom wake-up call
+description: Call the bedroom and speak after the phone answers.
+triggers:
+  - trigger: time
+    at: "07:30:00"
+conditions:
+  - condition: time
+    weekday:
+      - mon
+      - tue
+      - wed
+      - thu
+      - fri
+actions:
+  - action: voip_stack.call
+    data:
+      source_automation: Wakeup-Caller
+      destination: bedroom
+      answer_timeout: 30
+    response_variable: wakeup
+  - action: voip_stack.tts_say
+    data:
+      call_id: "{{ wakeup.call_id }}"
+      expected_generation: "{{ wakeup.generation }}"
+      tts_entity_id: tts.piper
+      message: "Good morning. This is your wake-up call."
+      timeout: 120
+  - action: voip_stack.hangup
+    data:
+      call_id: "{{ wakeup.call_id }}"
+      expected_generation: "{{ wakeup.generation }}"
+mode: single
+```
+
+Select your actual TTS entity if it differs from `tts.piper`. No generative
+conversation agent is needed. `tts_say` waits until synthesis and RTP output
+complete, including the final audio frame and a 200 ms silent RTP tail, before
+Hang up runs. The tail lets a normal remote jitter buffer render the last speech
+instead of discarding it on BYE. SIP does not acknowledge physical playback;
+phones configured with a larger buffer may need an additional HA Delay before
+Hang up.
+
+The response contains `call_id` and `generation`. Subsequent actions must use
+both values in the same automation execution. Another execution cannot take
+over the call by copying its ID, and an old generation cannot control a new
+session. Ordinary browser calls do not become Automation calls by supplying
+these fields.
+
+**Timeouts and failures:** `answer_timeout` is the maximum wait for the called
+party's final answer (1-120 seconds, default 30). Ringing and early media do not
+start TTS. Busy, rejection, transport failure and timeout fail the Call action,
+release its resources and stop the sequence. TTS `timeout` covers synthesis and
+transmission (default 120 seconds); failure or cancellation closes the outgoing
+call. Remote hangup stops the active operation and cleans up the session.
+
+Between actions, the Automation contact's **Automation inactivity timeout**
+(default 30 seconds) bounds an abandoned call. The timer is suspended while an
+application action is running. Stopping the HA automation during Call or TTS
+cancels that operation and cleans up immediately. Stopping it during an ordinary
+HA Delay is detected through this inactivity timeout, since the completed
+service action no longer owns the HA script. Keep explicit Hang up as the last
+action; the contact's incoming-call fallback does not route outgoing calls.
+
+This first outgoing application path supports registered SIP accounts, reachable
+ESPHome phones and direct SIP addresses. Browser destinations, groups, provider
+trunk routing and video origination are not supported on this path. Existing
+phone-originated calls keep their normal routing. Start the sequence from a
+normal time/event automation, not from a native VoIP call trigger that already
+owns another call. Administrators and automations may originate these calls.
+
+Two executions may call different available phones concurrently. An already
+claimed phone remains busy under the usual endpoint policy. Give each execution
+its own response variable scope; never select an arbitrary active call.

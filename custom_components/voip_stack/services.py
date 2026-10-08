@@ -67,6 +67,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             **phone_selector_fields,
             vol.Optional("call_id", default=""): SHORT_TEXT,
             vol.Optional("reason", default="local_hangup"): REASON_TEXT,
+            vol.Optional("expected_generation"): SEQUENCE,
         },
         extra=vol.PREVENT_EXTRA,
     )
@@ -75,6 +76,8 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
             **phone_selector_fields,
             vol.Optional("call_id", default=""): SHORT_TEXT,
             vol.Required("destination"): URI_TEXT,
+            vol.Optional("source_automation"): vol.All(cv.string, vol.Length(min=1, max=255)),
+            vol.Optional("answer_timeout", default=30): vol.All(vol.Coerce(float), vol.Range(min=1, max=120)),
             vol.Optional("ha_bridge", default=False): cv.boolean,
             vol.Optional("send_video", default=False): cv.boolean,
             vol.Optional("media_client_id", default=""): IDENTIFIER_TEXT,

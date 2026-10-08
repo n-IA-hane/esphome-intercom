@@ -244,7 +244,7 @@ def test_everyday_call_actions_hide_technical_fields_in_collapsed_sections() -> 
     document = yaml.safe_load(SERVICES_YAML.read_text())
 
     expected_primary = {
-        "call": {"device_id", "destination", "send_video"},
+        "call": {"device_id", "destination", "send_video", "source_automation", "answer_timeout"},
         "answer": {"device_id", "send_video"},
         "decline": {"device_id"},
         "hangup": {"device_id"},

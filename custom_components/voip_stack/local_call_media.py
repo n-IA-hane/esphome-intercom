@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from collections.abc import AsyncGenerator, Awaitable, Callable
 import contextlib
 import logging
@@ -26,6 +27,32 @@ _LOGGER = logging.getLogger(__name__)
 LOCAL_PCM_FORMAT = AudioFormat(16000, "s16le", 1, 20)
 _RX_QUEUE_FRAMES = 50
 _TX_QUEUE_FRAMES = 50
+# SIP has no playout-complete acknowledgement. Keep the existing paced RTP
+# silence flowing briefly after outgoing announcements so a normal peer jitter
+# buffer can render the final speech before BYE. Baresip defaults to 100-200 ms.
+_OUTGOING_PLAYOUT_TAIL_SECONDS = 0.2
+
+
+@dataclass(frozen=True, slots=True)
+class LocalAudioContract:
+    """Negotiated media for a local application, independent of SIP direction."""
+
+    call_id: str
+    remote_rtp_host: str
+    remote_rtp_port: int
+    send_format: Any
+    recv_format: Any
+    recv_formats: tuple = ()
+    local_audio_direction: str = "sendrecv"
+    remote_audio_connection_held: bool = False
+    remote_sdp: str = ""
+    dtmf_payload_type: int | None = None
+    dtmf_clock_rate: int = 8000
+    dtmf_events: frozenset[int] = frozenset()
+
+    @classmethod
+    def from_dialog(cls, dialog):
+        return cls(**{name: getattr(dialog, name) for name in cls.__dataclass_fields__ if name != "remote_sdp"})
 
 
 class _LocalRtpProtocol(asyncio.DatagramProtocol):
@@ -43,7 +70,7 @@ class LocalCallMedia:
         self,
         hass: HomeAssistant,
         *,
-        invite: SipInvite,
+        invite: SipInvite | LocalAudioContract,
         local_rtp_port: int,
         reservation: RtpPortReservation,
         on_complete: Callable[[str], Awaitable[None]],
@@ -82,6 +109,7 @@ class LocalCallMedia:
         self._stop_lock = asyncio.Lock()
         self._cleanup_done = asyncio.Event()
         self._completed = False
+        self._last_output_deadline = 0.0
         self._accepting_input = False
         self.can_receive = invite.local_audio_direction in {"recvonly", "sendrecv"}
         self.can_send = (
@@ -106,7 +134,7 @@ class LocalCallMedia:
             "speech_gate_opens": 0,
         }
 
-    def prepare_media_update(self, updated: SipInvite) -> Callable[[], None]:
+    def prepare_media_update(self, updated: SipInvite | LocalAudioContract) -> Callable[[], None]:
         """Prepare an atomic in-dialog audio update for the Local call RTP leg."""
 
         previous = self.invite
@@ -155,6 +183,7 @@ class LocalCallMedia:
             self.can_receive = can_receive
             self.can_send = can_send
             self.invite = updated
+            self._dtmf_sdp = None
 
         return _commit
 
@@ -242,7 +271,14 @@ class LocalCallMedia:
                     from .core.sdp import offered_dtmf_formats
                     from .dtmf import RtpDtmfDecoder
 
-                    formats = offered_dtmf_formats(self.invite.remote_sdp)
+                    if isinstance(self.invite, LocalAudioContract):
+                        from .core.sdp import RtpDtmfFormat
+                        formats = [RtpDtmfFormat(
+                            self.invite.dtmf_payload_type, self.invite.dtmf_clock_rate,
+                            self.invite.dtmf_events,
+                        )] if self.invite.dtmf_payload_type is not None else []
+                    else:
+                        formats = offered_dtmf_formats(self.invite.remote_sdp)
                     self._dtmf_sdp = self.invite.remote_sdp
                     self._dtmf_decoder = RtpDtmfDecoder(formats[0].payload_type) if formats else None
                     self._dtmf_events = formats[0].events if formats else frozenset()
@@ -335,6 +371,8 @@ class LocalCallMedia:
                                 (invite.remote_rtp_host, remote_rtp_port),
                             )
                             self.counters["rtp_tx"] += 1
+                            if queued:
+                                self._last_output_deadline = loop.time() + frame_delay
                 except Exception as err:  # noqa: BLE001 - keep the media clock alive.
                     self.counters["tx_error"] += 1
                     _LOGGER.debug(
@@ -411,6 +449,15 @@ class LocalCallMedia:
 
     def _start_application(self) -> None:
         """Attach the initial consumer under the transport startup lock."""
+
+    async def drain_output(self) -> None:
+        """Drain the last frame and a bounded silent RTP tail for remote playout."""
+        await self.tx_queue.join()
+        remaining = self._last_output_deadline + _OUTGOING_PLAYOUT_TAIL_SECONDS - asyncio.get_running_loop().time()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        if self.closed.is_set() or not self.can_send or self.transport is None:
+            raise RuntimeError("The call ended or stopped accepting announcement audio")
 
     def discard_output(self) -> None:
         """Remove interrupted playback before another application takes over."""

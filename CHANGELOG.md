@@ -4,6 +4,15 @@
 
 Changes since stable **2026.10.1**.
 
+- Let ordinary HA automations originate backend audio calls from an Automation
+  contact, wait for answer, speak through the existing TTS action and hang up
+  using an execution-bound call reference. No browser or physical source phone
+  is required. Includes a weekday wake-up example for
+  [#136](https://github.com/n-IA-hane/esphome-intercom/issues/136).
+- Resolve SIP transfers to local Automation contacts through HA's reachable
+  listener and the contact's extension, rather than the remote phone's host.
+  Explicit SIP/SIPS targets retain their existing behavior.
+
 - Fix negotiated receive audio being restricted to the preferred transmit codec
   when a SIP answer accepts multiple codecs. Keep the receive payload mappings
   from the local offer, decode accepted alternatives into the existing PCM

@@ -55,6 +55,15 @@ Advanced explicit-call fields remain available for legacy automations.
 
 Originate a call from Home Assistant.
 
+For a backend announcement, set `source_automation` to an enabled Automation
+contact's name or extension instead of selecting `device_id`. Set
+`answer_timeout` (default 30 seconds) and store the action response with
+`response_variable`. The action returns `call_id` and `generation` only after
+the destination answers and its local audio transport is ready. Pass these as
+`call_id` and `expected_generation` to `tts_say` and `hangup` in the same HA
+execution. See the [complete scheduled-call recipe](AUTOMATION_DIALPLAN.md#place-a-scheduled-announcement-call)
+for lifecycle, supported destinations and failure behavior.
+
 `destination` is the only destination field. Its value can be a roster name,
 extension, group name, public number, `user@host` or `sip:user@host`.
 The central phonebook resolves that value; no destination Device ID is needed.
@@ -100,6 +109,12 @@ Transfer an established call with the standard SIP REFER subscription.
 to a configured phone, extension, `user@host` or `sip:user@host`. For an
 attended transfer, set `replaces_call_id` to the established consultation call;
 VoIP Stack derives the RFC 3891 dialog tags and sends them in `Refer-To`.
+
+For a local Automation contact, a name or extension resolves to HA's reachable
+SIP listener, using the contact's extension when assigned. It is not addressed
+to the remote phone's SIP host. Explicit `sip:` and `sips:` URIs retain their
+supplied destinations. A successful target resolution does not establish that
+the receiving phone supports REFER; verify its SIP response and NOTIFY result.
 
 The optional action response reports the REFER acceptance status and the final
 `message/sipfrag` status delivered by NOTIFY. This is distinct from

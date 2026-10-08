@@ -109,7 +109,11 @@ decline:
 
 call:
   name: Call
-  description: Call a phonebook contact, extension, group, number or SIP address.
+  description: >-
+    Call a destination from a phone, or originate a backend audio call from an
+    Automation contact. With an Automation source, this action waits for the
+    destination to answer and returns call_id and generation for later actions.
+    Store the response in a variable. No browser is needed for that source.
   fields:
     device_id:
       name: Calling phone
@@ -120,6 +124,27 @@ call:
           filter:
             - integration: voip_stack
             - integration: esphome
+    source_automation:
+      name: Calling Automation contact
+      description: >-
+        Name or extension of an enabled Automation contact, such as Wakeup-Caller.
+        Use instead of Calling phone for a backend audio call. Requires an
+        action response variable and administrator or automation access.
+      selector:
+        text:
+    answer_timeout:
+      name: Wait for answer
+      description: >-
+        Maximum seconds to wait for the called party to answer an Automation-originated
+        call. Ringing and early media do not count as an answer. Failure stops the
+        action and releases the call.
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: s
+          mode: box
     destination:
       name: Destination
       description: Phonebook name, extension, group, number or SIP address.
@@ -405,6 +430,14 @@ hangup:
           required: false
           selector:
             text:
+        expected_generation:
+          name: Call generation
+          description: For an outgoing Automation call, use the generation returned by Call together with its call_id.
+          selector:
+            number:
+              min: 0
+              max: 2147483647
+              mode: box
 
 add_contact:
   name: Add Phonebook Contact

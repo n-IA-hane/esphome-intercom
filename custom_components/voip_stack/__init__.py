@@ -197,6 +197,26 @@ async def _handle_sip_decline_service(call: ServiceCall) -> None:
 
 
 async def _handle_sip_hangup_service(call: ServiceCall) -> None:
+    from .automation_call import automation_call
+    from .endpoint_lifecycle import call_registry
+    from .endpoint_session import TerminationIntent
+    from .session_cleanup import async_wait_for_cleanup
+
+    call_id = str(call.data.get("call_id") or "")
+    application = automation_call(call.hass, call_id) if call_id else None
+    if application is not None and application.outgoing:
+        application.claim(call)
+        barrier = call_registry(call.hass).request_termination(
+            call_id, TerminationIntent.bye(str(call.data.get("reason") or "local_hangup")),
+            generation=application.session.generation,
+        )
+        if barrier is not None:
+            await async_wait_for_cleanup(barrier)
+        return
+    if "expected_generation" in call.data:
+        registry = call_registry(call.hass)
+        if not registry.is_generation_current(call_id, int(call.data["expected_generation"])):
+            raise ServiceValidationError("The selected call has ended or changed generation")
     await _control_phone(call, PhoneOperation.HANGUP)
 
 
@@ -318,6 +338,10 @@ async def _handle_sip_call_target_service(
     *,
     force_ha_bridge: bool = False,
 ) -> dict[str, object] | None:
+    if "source_automation" in call.data:
+        from .automation_originate import async_originate_automation_call
+
+        return await async_originate_automation_call(call)
     result = await _originate_phone_action(
         call,
         force_ha_bridge=force_ha_bridge,

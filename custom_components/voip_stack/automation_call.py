@@ -34,13 +34,14 @@ class AutomationCall:
 
     hass: HomeAssistant
     session: EndpointCallSession
-    invite: SipInvite
+    invite: SipInvite | None
     contact: RosterEntry
     local_ip: str
     media: LocalCallMedia | None = None
     playback: BrowserPlayback | None = None
     controller: str = ""
     answered: bool = False
+    outgoing: bool = False
     deadline: asyncio.TimerHandle | None = None
     operation: asyncio.Task | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -91,7 +92,7 @@ class AutomationCall:
         self.deadline = None
         self.require_current()
         fallback = str(self.contact.metadata.get("fallback_destination") or "")
-        if fallback:
+        if fallback and not self.outgoing:
             try:
                 await self.forward(fallback, on_failure="terminate")
             except Exception:
@@ -121,6 +122,8 @@ class AutomationCall:
         self.require_current()
         if self.answered and self.media is not None:
             return
+        if self.outgoing:
+            raise ServiceValidationError("The outgoing automation call is not ready")
         registry = call_registry(self.hass)
         preanswered = registry.resource_for(self.session.call_id, "preanswered")
         reservation = (
@@ -238,6 +241,12 @@ class AutomationCall:
             try:
                 async with asyncio.timeout(timeout):
                     return await self.operation
+            except BaseException:
+                if self.outgoing:
+                    await call_registry(self.hass).terminate_call_wait(
+                        self.session.call_id, reason="automation_action_failed"
+                    )
+                raise
             finally:
                 self.operation = None
                 if self.media is not None:
@@ -266,8 +275,16 @@ class AutomationCall:
                 options,
             )
             stream.async_set_message(call.data["message"])
+            if self.outgoing:
+                errors = self.media.counters["tx_error"]
+                suppressed = self.media.counters["tx_suppressed"]
             await self.media.play_pcm_stream(stream.async_stream_result())
-            await self.media.tx_queue.join()
+            if self.outgoing:
+                await self.media.drain_output()
+                if self.media.counters["tx_error"] != errors or self.media.counters["tx_suppressed"] != suppressed:
+                    raise ServiceValidationError("Announcement audio could not be transmitted")
+            else:
+                await self.media.tx_queue.join()
             self.require_current()
 
         await self.run_operation(
@@ -336,6 +353,8 @@ class AutomationCall:
 
     async def forward(self, destination: str, *, on_failure: str = "resume") -> None:
         self.require_current()
+        if self.outgoing:
+            raise ServiceValidationError("Forward is supported for incoming automation calls")
         if self.lock.locked():
             raise ServiceValidationError(
                 "Wait for the current announcement before forwarding"
