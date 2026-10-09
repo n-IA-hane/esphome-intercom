@@ -208,9 +208,12 @@ that endpoint's normal ESPHome entities.
 
 ![ESP mirror card](images/esp-mirror-card.png)
 
-After an upgrade, restart HA, then hard refresh dashboards containing the card. In the Android Companion app use
-**Settings → Companion App → Troubleshooting → Reset frontend cache**. Read
-[`BREAKING_CHANGES.md`](BREAKING_CHANGES.md) before changing major versions.
+After updating the integration, restart HA. When the release includes card
+changes, reload the dashboard; if it still shows the previous card, use
+**Settings → Companion App → Troubleshooting → Reset frontend cache** in the
+Android app or clear the browser frontend cache. Follow any version-specific
+migration instructions linked from the release notes and
+[`BREAKING_CHANGES.md`](BREAKING_CHANGES.md).
 
 ### ESPHome external components
 

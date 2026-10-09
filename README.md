@@ -16,9 +16,19 @@ handle keypad input and forward unanswered calls.
 Start with two dashboard phones, or connect an ESPHome device using a maintained
 firmware profile. Add the features you need as your system grows.
 
+**Project status:** VoIP Stack's core architecture and public configuration
+model are stable. The major restructuring that separated the Home Assistant,
+ESP VoIP, audio and runtime components is complete. Development now focuses on
+bug fixes, upstream compatibility, new hardware profiles and incremental
+features. No further wholesale architectural rewrite is currently planned.
+
+Use stable releases for everyday installations. Development previews let users
+try upcoming changes; experimental hardware profiles are identified separately
+in the [supported hardware table](#supported-hardware).
+
 **[Install VoIP Stack](#installation) · [Choose an ESPHome device](#supported-hardware) · [Build call automations](docs/AUTOMATION_DIALPLAN.md)**
 
-*Developed independently and supported by the community. [❤️ Sponsor the project](https://github.com/sponsors/n-IA-hane)*
+*Developed and maintained by n-IA-hane, with community contributions and support. [❤️ Sponsor the project](https://github.com/sponsors/n-IA-hane)*
 
 ![VoIP Stack dashboard and central phonebook](docs/images/voip-dashboard-phonebook.png)
 
@@ -551,24 +561,27 @@ contains the complete component and cache instructions.
 
 ## Upgrading
 
-This project is maintained by one person and major releases may make deliberate
-breaking changes. Maintaining old and new call engines or service semantics in
-parallel is not sustainable; new features can require updates to automations,
-dashboards, config entries or custom ESPHome YAML.
+The earlier releases included substantial migrations while the SIP architecture
+and component boundaries were being established. Those migrations are complete.
+The [breaking-change history](docs/BREAKING_CHANGES.md) records which versions
+required them; it does not mean that every update requires rebuilding your setup.
 
-Before every upgrade:
+Current development builds on the existing architecture. Release notes describe
+the changes from the previous stable version and identify any configuration
+adjustments required for that release.
 
-1. read [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md) and the release
-   note;
-2. update through HACS and restart HA;
-3. run **Reconfigure** on the VoIP Stack integration and review every step;
-4. verify phone/routing automations;
-5. reset the frontend cache on dashboards or Companion sessions using the card;
-6. clear the ESPHome build cache before rebuilding firmware after package
-   changes.
+1. Read the target release notes and follow any migration instructions that
+   apply to your installed version.
+2. Update the integration through HACS and restart Home Assistant.
+3. When the card changes, reload the dashboard. Reset the frontend cache if the
+   browser or Companion app continues to show the previous card.
+4. Rebuild and upload ESPHome firmware when adopting firmware-side changes.
+   Follow the release's component references and clean-build instructions where
+   specified. Updating HA through HACS does not flash the ESP devices.
 
-Never assume an automation still has the same contract merely because the
-integration loaded successfully.
+Reconfiguration and edits to existing automations or YAMLs are needed only when
+the release instructions identify a relevant change. Experimental profiles and
+known device-specific limitations remain documented alongside the affected feature.
 
 ## What's new in 2026.10.1
 
@@ -809,6 +822,5 @@ licenses. They are consumed as upstream dependencies and are not copied into
 the project license.
 
 > [!NOTE]
-> VoIP Stack is an enthusiast open-source project maintained primarily by one
-> person. It is designed for trusted home and laboratory networks, not as an
-> emergency telephone service.
+> VoIP Stack is designed for trusted local networks. It is not an emergency
+> telephone service.

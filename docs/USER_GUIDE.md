@@ -336,17 +336,24 @@ If a call fails:
 5. read [`troubleshooting.md`](troubleshooting.md);
 6. collect diagnostics only after reproducing the failure.
 
-## Upgrade safely
+## Updating an existing installation
 
-1. Read [`BREAKING_CHANGES.md`](BREAKING_CHANGES.md).
+The core architecture and configuration model are established. Routine releases
+focus on fixes, compatibility updates and incremental features. Earlier structural
+migrations are recorded by version in [Breaking changes](BREAKING_CHANGES.md).
+
+1. Read the target release notes and apply migration instructions relevant to
+   your installed version.
 2. Download the update through HACS and restart Home Assistant.
-3. Open **Reconfigure** once and review the integration options.
-4. Open every card and confirm its selected phone Device.
-5. Reset the browser or Companion frontend cache.
-6. Rebuild ESPHome firmware when phone packages or component contracts changed.
+3. Reload the dashboard when the card changes. Reset the browser or Companion
+   frontend cache if it still displays the previous card.
+4. Rebuild ESPHome firmware when adopting firmware-side changes, using the
+   component versions and build instructions specified for that release.
 
-Do not restore `endpoint_id` in card YAML and do not copy old action fields such
-as `target`, `source` or `entity_id` into the current phone actions.
+Use **Reconfigure**, change card bindings or edit existing automations only when
+the release notes call for it or you want to change your setup. Current examples
+use the visual phone picker and supported action fields; see [Services](SERVICES.md)
+when adapting older YAML.
 
 ## Detailed references
 

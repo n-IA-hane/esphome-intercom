@@ -1,5 +1,11 @@
 # Breaking changes
 
+This is a versioned migration history, including the major changes made while
+the architecture was being developed. That restructuring phase is complete.
+For an existing installation, follow entries between your installed version and
+the version you are upgrading to. Older entries describe the behavior at that
+time and are not instructions for a fresh installation on the current release.
+
 ## 2026.10.3-dev: implicit automation call selection
 
 Outgoing Automation sequences no longer require response variables or call IDs.
@@ -563,7 +569,7 @@ Migration impact:
 
 ## 2026.7.0: SIP behavior
 
-The active branch is intentionally SIP-first and breaking:
+Version 2026.7.0 introduced the SIP architecture and these migration requirements:
 
 - ESP `voip_stack` is a SIP phone. `transport: udp|tcp` means SIP signaling
   transport only.

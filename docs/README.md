@@ -12,7 +12,7 @@ beyond the project overview in the [top-level README](../README.md).
 | Review the current release | [What is new in 2026.9.0](WHATS_NEW_2026_9_0.md) |
 | Choose a board and maintained YAML | [Deployment guide](DEPLOYMENT_GUIDE.md) |
 | Complete the shortest supported setup | [Quick start](../README.md#fastest-start) |
-| Upgrade without breaking automations | [Breaking changes](BREAKING_CHANGES.md) |
+| Update an existing installation | [Breaking changes](BREAKING_CHANGES.md) |
 | Configure ESP and HA options | [Configuration reference](reference.md) |
 | Diagnose calls and media | [Testing and debug](TESTING_AND_DEBUG.md) |
 | Resolve a specific failure | [Troubleshooting](troubleshooting.md) |
