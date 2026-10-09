@@ -45,7 +45,8 @@ async def media_file(hass, tmp_path):
 
 
 @pytest.mark.parametrize('delayed', [False, True])
-async def test_file_after_answer_then_bye_and_redial(lab, media_file, delayed):
+@pytest.mark.parametrize('implicit', [False, True])
+async def test_file_after_answer_then_bye_and_redial(lab, media_file, delayed, implicit):
     media_id, expected = media_file
     phone = lab.phones[0]
     for cycle in range(2):
@@ -56,6 +57,11 @@ async def test_file_after_answer_then_bye_and_redial(lab, media_file, delayed):
         actions[1] = {'action':'voip_stack.play_media', 'data':{
             'call_id':'{{ dialed.call_id }}', 'expected_generation':'{{ dialed.generation }}',
             'media': {'media_content_id':media_id, 'media_content_type':'audio/wav'}}}
+        if implicit:
+            actions[0].pop('response_variable')
+            for action in actions[1:]:
+                action['data'].pop('call_id')
+                action['data'].pop('expected_generation')
         script = Script(lab.hass, await async_validate_actions_config(lab.hass, cv.SCRIPT_SCHEMA(actions)), 'File call', 'automation')
         task = asyncio.create_task(script.async_run(context=Context()))
         await asyncio.wait_for(phone.invited.wait(), 2)

@@ -47,8 +47,10 @@ The optional Phone selector is mainly useful when starting a call or applying
 a setting outside a call-triggered automation. It identifies the local phone,
 never the remote destination.
 
-Without a call trigger, omitted phone selectors use the configured preferred
-phone or the sole compatible phone. Ambiguous requests fail explicitly.
+For phone settings and phone-originated calls, omitted phone selectors use the
+configured preferred phone or the sole compatible phone. Automation media and
+Hang up instead require their execution's call or an explicit phone/call selection.
+Ambiguous requests fail explicitly.
 Advanced explicit-call fields remain available for legacy automations.
 
 ### `voip_stack.call`
@@ -57,11 +59,14 @@ Originate a call from Home Assistant.
 
 For a backend announcement, set `source_automation` to an enabled Automation
 contact's name or extension instead of selecting `device_id`. Set
-`answer_timeout` (default 30 seconds) and store the action response with
-`response_variable`. The action returns `call_id` and `generation` only after
-the destination answers and its local audio transport is ready. Pass these as
-`call_id` and `expected_generation` to `tts_say`, `play_media` and `hangup` in the same HA
-execution. See the [complete scheduled-call recipe](AUTOMATION_DIALPLAN.md#place-a-scheduled-announcement-call)
+`answer_timeout` (default 30 seconds). After the destination answers and media
+is ready, the next `tts_say`, `play_media` or `hangup` automatically selects this
+execution's outgoing call. No `response_variable` or call identifiers are needed
+for a single-call sequence. Advanced workflows may still capture the response
+and pass `call_id` and `expected_generation` explicitly. Multiple live calls in
+the same execution require that explicit selection. A missing or ended implicit
+call raises an error, never a fallback to another phone.
+See the [complete scheduled-call recipe](AUTOMATION_DIALPLAN.md#place-a-scheduled-announcement-call)
 for lifecycle, supported destinations and failure behavior.
 
 `destination` is the only destination field. Its value can be a roster name,
@@ -460,7 +465,8 @@ synthesis and playback together, defaults to 120 seconds and accepts 1-600 secon
 The action answers the call if needed and waits for the audio to be sent before
 returning. It does not play on a room speaker or start Assist.
 
-Native VoIP triggers supply the call identity automatically. Legacy event-based
+Native VoIP triggers and a preceding Automation-source Call in the same execution
+supply the call identity automatically. Legacy event-based
 automations can keep passing `call_id` and `expected_generation` from their
 triggering event.
 A different automation cannot take over an already claimed call. A stale event
@@ -539,8 +545,8 @@ URL. HA retrieves and decodes the file, then sends it over the call's existing
 RTP channel. The remote phone does not fetch the file.
 
 Like `tts_say`, this action uses the call selected by the native VoIP trigger.
-For an outgoing scheduled call, pass `call_id` and `expected_generation` from
-the preceding `call` response. The action waits for transmission to finish and
+For an outgoing scheduled call, the preceding `call` in the same execution
+selects the call automatically; explicit references are optional. The action waits for transmission to finish and
 does not hang up automatically. `timeout` defaults to 120 seconds and accepts
 1-600 seconds, including download and decoding. Admin users and automations
 can invoke it, subject to the existing call owner/controller checks.

@@ -2,6 +2,15 @@
 
 ## 2026.10.3-dev
 
+### Simpler outgoing announcements
+
+- Call, Speak to the caller, Play audio and Hang up can now run sequentially
+  without `response_variable`, `call_id` or `expected_generation`. Actions select
+  the outgoing Automation call belonging to their own HA execution. Concurrent
+  executions stay separate; several live calls in one execution require an
+  explicit selection. A selectorless Hang up no longer falls back to a preferred
+  phone when the execution has no call.
+
 ### Recorded audio in Automation calls
 
 - Add `voip_stack.play_media` for [#138](https://github.com/n-IA-hane/esphome-intercom/issues/138).

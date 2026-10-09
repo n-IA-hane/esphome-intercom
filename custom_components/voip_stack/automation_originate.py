@@ -35,8 +35,6 @@ async def async_originate_automation_call(call: ServiceCall) -> dict:
         raise ServiceValidationError("Choose either a calling phone or an Automation contact")
     if call.data.get("send_video"):
         raise ServiceValidationError("Outgoing automation calls support audio only")
-    if not call.return_response:
-        raise ServiceValidationError("Set response_variable to retain the outgoing call identity")
     if current_execution.get() is not None:
         raise ServiceValidationError("Start outgoing automation calls from a normal Home Assistant automation")
     hass = call.hass

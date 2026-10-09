@@ -396,12 +396,14 @@ async def test_cancel_racing_with_final_answer_closes_accepted_dialog(lab, monke
     assert not any(session.live for session in lab.calls.sessions.values())
 
 
-async def test_missing_response_variable_is_rejected_before_dial(lab):
-    with pytest.raises(ServiceValidationError):
-        await lab.hass.services.async_call("voip_stack", "call", {
-            "source_automation": "Wakeup-Caller", "destination": "bedroom0",
-        }, blocking=True, context=Context())
-    assert not lab.phones[0].invites
+async def test_response_variable_is_optional(lab):
+    context = Context()
+    await lab.hass.services.async_call("voip_stack", "call", {
+        "source_automation": "Wakeup-Caller", "destination": "bedroom0",
+    }, blocking=True, context=context)
+    assert len(lab.phones[0].invites) == 1
+    await lab.hass.services.async_call("voip_stack", "hangup", {}, blocking=True, context=context)
+    assert not lab.calls.sessions
 
 
 async def test_nested_voip_trigger_cannot_start_an_unbound_second_call(lab):
@@ -449,3 +451,59 @@ async def test_script_stop_between_actions_is_bounded_by_application_deadline(la
     await asyncio.wait_for(lab.phones[0].bye.wait(), 2)
     await lab.hass.async_block_till_done()
     assert not any(session.live for session in lab.calls.sessions.values())
+
+
+def simple_sequence(destination="bedroom0"):
+    actions = sequence(destination)
+    actions[0].pop("response_variable")
+    for action in actions[1:]:
+        action["data"].pop("call_id")
+        action["data"].pop("expected_generation")
+    actions.insert(1, {"delay": {"milliseconds": 10}})
+    return actions
+
+
+async def test_two_scripts_speak_and_hang_up_their_own_call_without_ids(lab, monkeypatch):
+    stream = tts_fixture(monkeypatch, lab)
+    scripts = [Script(lab.hass, await async_validate_actions_config(lab.hass, cv.SCRIPT_SCHEMA(simple_sequence(f"bedroom{i}"))), f"Wakeup {i}", "automation") for i in range(2)]
+    await asyncio.gather(*(script.async_run(context=Context()) for script in scripts))
+    assert len(stream.calls) == 2
+    for phone in lab.phones:
+        assert phone.bye.is_set()
+        assert len(phone.invites) == 1
+        voiced = []
+        while not phone.audio.empty():
+            raw, _ = phone.audio.get_nowait()
+            payload = rtp.parse_packet(raw).payload
+            if any(payload): voiced.append(payload)
+        assert b''.join(voiced) == b'\x01\x80' * 960
+    assert not lab.calls.sessions
+    assert not lab.runtime.softphones
+
+
+async def test_implicit_action_never_falls_back_to_another_execution(lab, monkeypatch):
+    tts_fixture(monkeypatch, lab)
+    first, second = Context(), Context()
+    one = await dial(lab, first)
+    two = await dial(lab, second, destination="bedroom1")
+    await lab.hass.services.async_call("voip_stack", "hangup", {}, blocking=True, context=first)
+    for action, data in (("hangup", {}), ("tts_say", {"tts_entity_id":"tts.test", "message":"Wake up"})):
+        with pytest.raises(ServiceValidationError, match="no outgoing Automation call"):
+            await lab.hass.services.async_call("voip_stack", action, data, blocking=True, context=first)
+    assert lab.calls.get_session(one["call_id"]) is None
+    assert lab.calls.get_session(two["call_id"]).live
+    await lab.hass.services.async_call("voip_stack", "hangup", {}, blocking=True, context=second)
+
+
+async def test_multiple_calls_in_same_execution_require_explicit_selection(lab):
+    context = Context()
+    one = await dial(lab, context)
+    two = await dial(lab, context, destination="bedroom1")
+    with pytest.raises(ServiceValidationError, match="multiple calls"):
+        await lab.hass.services.async_call("voip_stack", "hangup", {}, blocking=True, context=context)
+    assert len(lab.calls.sessions) == 2
+    for result in (one, two):
+        await lab.hass.services.async_call("voip_stack", "hangup", {
+            "call_id":result["call_id"], "expected_generation":result["generation"],
+        }, blocking=True, context=context)
+    assert not lab.calls.sessions

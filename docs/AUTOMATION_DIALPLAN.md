@@ -1534,8 +1534,9 @@ identity; the registered phone is the destination. The outgoing sequence below
 runs directly, without triggering that contact's incoming-call automation.
 
 In **VoIP Stack: Call**, set **Calling Automation contact** rather than
-**Calling phone**, enter the destination, and store the action response as
-`wakeup`. This action waits for the final SIP answer and local media readiness.
+**Calling phone** and enter the destination. This action waits for the final
+SIP answer and local media readiness. Subsequent call actions automatically use
+the outgoing call belonging to this automation execution.
 There is no separate event wait that could miss an immediate answer.
 
 ```yaml
@@ -1558,18 +1559,12 @@ actions:
       source_automation: Wakeup-Caller
       destination: bedroom
       answer_timeout: 30
-    response_variable: wakeup
   - action: voip_stack.tts_say
     data:
-      call_id: "{{ wakeup.call_id }}"
-      expected_generation: "{{ wakeup.generation }}"
       tts_entity_id: tts.piper
       message: "Good morning. This is your wake-up call."
       timeout: 120
   - action: voip_stack.hangup
-    data:
-      call_id: "{{ wakeup.call_id }}"
-      expected_generation: "{{ wakeup.generation }}"
 mode: single
 ```
 
@@ -1581,11 +1576,20 @@ instead of discarding it on BYE. SIP does not acknowledge physical playback;
 phones configured with a larger buffer may need an additional HA Delay before
 Hang up.
 
-The response contains `call_id` and `generation`. Subsequent actions must use
-both values in the same automation execution. Another execution cannot take
-over the call by copying its ID, and an old generation cannot control a new
-session. Ordinary browser calls do not become Automation calls by supplying
-these fields.
+No response variable, Call-ID or generation is needed for the usual single-call
+sequence. HA's execution context identifies its own outgoing Automation call;
+other automations cannot take it over. If that call has ended, an implicit action
+fails instead of controlling another phone.
+
+For advanced workflows with several simultaneous calls in the same execution,
+keep `response_variable: wakeup` on Call and pass `call_id: "{{ wakeup.call_id }}"`
+and `expected_generation: "{{ wakeup.generation }}"` to select one explicitly.
+Implicit selection is rejected while that execution owns multiple live calls.
+These fields remain supported for existing automations. Separate service calls
+in Developer Tools do not share an automation execution: select the phone when
+performing manual controls. In particular, Hang up without a phone or call must
+have a native VoIP trigger or a unique outgoing call in its execution; it does
+not fall back to the configured preferred phone.
 
 **Timeouts and failures:** `answer_timeout` is the maximum wait for the called
 party's final answer (1-120 seconds, default 30). Ringing and early media do not
@@ -1610,8 +1614,9 @@ normal time/event automation, not from a native VoIP call trigger that already
 owns another call. Administrators and automations may originate these calls.
 
 Two executions may call different available phones concurrently. An already
-claimed phone remains busy under the usual endpoint policy. Give each execution
-its own response variable scope; never select an arbitrary active call.
+claimed phone remains busy under the usual endpoint policy. Each execution
+selects only its own call. Parallel branches sharing one execution must use
+explicit references if they originate more than one call.
 
 ## Play a recorded announcement
 
@@ -1639,24 +1644,18 @@ sequence:
       source_automation: Announcement-Caller
       destination: bedroom
       answer_timeout: 30
-    response_variable: announcement
   - action: voip_stack.play_media
     data:
-      call_id: "{{ announcement.call_id }}"
-      expected_generation: "{{ announcement.generation }}"
       media:
         media_content_id: media-source://media_source/local/parcel.wav
         media_content_type: audio/wav
       timeout: 120
   - action: voip_stack.hangup
-    data:
-      call_id: "{{ announcement.call_id }}"
-      expected_generation: "{{ announcement.generation }}"
 ```
 
 Replace `parcel.wav` with your uploaded file or use the Media picker to generate
-its identifier. **Call** waits for the final SIP answer before returning the
-reference. **Play audio** waits for transmission to complete, including the
+its identifier. **Call** waits for the final SIP answer before the
+next action starts. **Play audio** waits for transmission to complete, including the
 existing outgoing playout tail, before **Hang up** runs. No fixed delay is needed
 between these actions. Completion confirms transmission, not that a physical
 speaker reproduced the sound.

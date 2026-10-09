@@ -413,7 +413,8 @@ outcomes.
 name, optional extension, `fallback_destination` and inactivity `timeout`.
 Its `automation_requested` event identifies the call and generation.
 `voip_stack.tts_say` needs a TTS provider and message in a native call automation.
-The trigger supplies call identity automatically. Legacy actions can still
+The native trigger or a preceding Automation-source Call in the same execution
+supplies call identity automatically. Advanced actions can still
 supply explicit `call_id` and `expected_generation`. Optional language, provider
 options and maximum announcement duration are advanced fields.
 Use `voip_stack.forward` as the next action to continue to another destination.

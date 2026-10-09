@@ -1,5 +1,16 @@
 # Breaking changes
 
+## 2026.10.3-dev: implicit automation call selection
+
+Outgoing Automation sequences no longer require response variables or call IDs.
+Speak, Play audio and Hang up select the unique outgoing call owned by that HA
+execution. Explicit call references remain supported.
+
+For safety, Hang up without a phone or call now requires either a native VoIP
+trigger or that execution's unique outgoing Automation call. It does not fall
+back to the preferred phone. If an existing manual or unrelated automation
+relied on that fallback, select its intended phone in the action.
+
 ## 2026.10.3-dev: native Companion prototype archived
 
 The experimental dashboard-menu composer and native Companion phone endpoints

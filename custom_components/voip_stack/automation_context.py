@@ -47,11 +47,45 @@ CALL_ACTIONS = frozenset(
 )
 
 
+def _bind_outgoing_action(call: ServiceCall) -> ServiceCall:
+    """Resolve from existing session owners, never a global preferred phone."""
+    if call.service not in {"tts_say", "play_media", "hangup", "forward", "wait_for_dtmf"}:
+        return call
+    if call.data.get("call_id") or call.data.get("device_id"):
+        return call
+    registry = call_registry(call.hass)
+    matches = [
+        application
+        for _, application in registry.resource_items("automation")
+        if application.outgoing and application.controller == call.context.id
+        and application.session.live
+    ]
+    if not matches:
+        raise ServiceValidationError(
+            "This execution has no outgoing Automation call. Call first, or select a phone or call explicitly"
+        )
+    if len(matches) != 1:
+        raise ServiceValidationError(
+            "This execution has multiple calls. Select call_id and expected_generation explicitly"
+        )
+    application = matches[0]
+    generation = application.session.generation
+    expected = call.data.get("expected_generation")
+    application.require_current(generation if expected is None else expected)
+    return ServiceCall(
+        call.hass, call.domain, call.service,
+        {**call.data, "call_id": application.session.call_id, "expected_generation": generation},
+        context=call.context, return_response=call.return_response,
+    )
+
+
 def bind_call_action(call: ServiceCall) -> ServiceCall:
     """Resolve implicit actions before dispatch; retain explicit legacy requests."""
     execution = current_execution.get()
-    if execution is None or call.service not in CALL_ACTIONS:
+    if call.service not in CALL_ACTIONS:
         return call
+    if execution is None:
+        return _bind_outgoing_action(call)
     if execution.snapshot.get("automation_control") == "observed" and call.service in {
         "forward",
         "transfer",

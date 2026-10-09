@@ -112,8 +112,8 @@ call:
   description: >-
     Call a destination from a phone, or originate a backend audio call from an
     Automation contact. With an Automation source, this action waits for the
-    destination to answer and returns call_id and generation for later actions.
-    Store the response in a variable. No browser is needed for that source.
+    destination to answer. Subsequent actions use this execution's call automatically.
+    A response variable is optional for advanced explicit selection. No browser is needed.
   fields:
     device_id:
       name: Calling phone
@@ -128,8 +128,8 @@ call:
       name: Calling Automation contact
       description: >-
         Name or extension of an enabled Automation contact, such as Wakeup-Caller.
-        Use instead of Calling phone for a backend audio call. Requires an
-        action response variable and administrator or automation access.
+        Use instead of Calling phone for a backend audio call. Requires
+        administrator or automation access; no response variable is needed.
       selector:
         text:
     answer_timeout:
@@ -432,7 +432,7 @@ hangup:
             text:
         expected_generation:
           name: Call generation
-          description: For an outgoing Automation call, use the generation returned by Call together with its call_id.
+          description: Optional advanced selection paired with call_id. A single outgoing Automation call is selected automatically.
           selector:
             number:
               min: 0
@@ -926,7 +926,7 @@ capture_sip:
 play_media:
   name: Play audio to the caller
   description: Play an audio file on an Automation call and wait for transmission to
-    finish. Uses the call from its VoIP trigger or the reference returned by Call.
+    finish. Uses the call from its VoIP trigger or the outgoing call created in this execution.
     Does not hang up automatically.
   fields:
     media:
@@ -948,13 +948,13 @@ play_media:
           mode: box
     call_id:
       name: Call ID
-      description: Use the call_id returned by Call for a scheduled announcement.
-        Native VoIP triggers select their own call automatically.
+      description: Optional advanced selection. Native triggers and a single outgoing
+        Automation call select their own call automatically.
       selector:
         text: null
     expected_generation:
       name: Call generation
-      description: Use the generation returned by Call together with its call_id.
+      description: Only needed with an explicit call_id; use the generation returned by Call.
       selector:
         number:
           min: 1
@@ -1011,14 +1011,14 @@ tts_say:
               mode: box
         call_id:
           name: Call ID
-          description: Only needed for legacy automations that do not use a native
-            VoIP call trigger.
+          description: Optional advanced selection when handling multiple calls. Native
+            triggers and a single outgoing Automation call select their call automatically.
           selector:
             text: null
         expected_generation:
           name: Call generation
-          description: Legacy call generation paired with the explicit Call ID. Native
-            VoIP triggers supply it automatically.
+          description: Only needed with an explicit Call ID. Native triggers and a single
+            outgoing Automation call supply it automatically.
           selector:
             number:
               min: 1
