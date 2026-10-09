@@ -152,13 +152,21 @@ voip_stack:
   ringing_timeout: 30s
   calling_timeout: 30s
 
+  on_ringing:
+    - script.execute: voice_pe_claim_call_audio
+
+  on_calling:
+    - script.execute: voice_pe_claim_call_audio
+
   on_in_call:
+    - script.execute: voice_pe_claim_call_audio
     - mixer_speaker.apply_ducking:
         id: media_mixing_input
         decibel_reduction: 20
         duration: 0.0s
 
   on_idle:
+    - script.execute: voice_pe_release_call_audio
     - mixer_speaker.apply_ducking:
         id: media_mixing_input
         decibel_reduction: 0
@@ -181,8 +189,58 @@ voip_stack:
 # =============================================================================
 
 # The official GPIO0 center button keeps all of its normal click/hold actions.
-# Consume both edges of a press used to answer so its delayed single-click
-# automation cannot also start Assist after the call has been accepted.
+# Consume both edges of a call-control press so the delayed stock click/hold
+# handlers cannot start Assist. Idle gestures retain the official behavior.
+# Interaction reference: eigger/espcomponents packages/sip/voice_pe/voice_pe.yaml
+# (MIT). This overlay uses our existing SIP state, without copying its firmware.
+
+# Calls take microphone control until the SIP lifecycle returns to idle.
+# Resume wake word only if it was running before this call, and HA is connected.
+globals:
+  - id: voice_pe_call_audio_claimed
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: voice_pe_resume_mww
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+script:
+  - id: voice_pe_claim_call_audio
+    then:
+      - if:
+          condition:
+            lambda: return !id(voice_pe_call_audio_claimed);
+          then:
+            - lambda: |-
+                id(voice_pe_call_audio_claimed) = true;
+                id(voice_pe_resume_mww) = id(mww).is_running();
+            - if:
+                condition:
+                  voice_assistant.is_running:
+                then:
+                  - voice_assistant.stop:
+            - if:
+                condition:
+                  micro_wake_word.is_running:
+                then:
+                  - micro_wake_word.stop:
+  - id: voice_pe_release_call_audio
+    then:
+      - if:
+          condition:
+            lambda: return id(voice_pe_call_audio_claimed);
+          then:
+            - lambda: id(voice_pe_call_audio_claimed) = false;
+            - if:
+                condition:
+                  and:
+                    - lambda: return id(voice_pe_resume_mww);
+                    - api.connected:
+                then:
+                  - micro_wake_word.start:
+            - lambda: id(voice_pe_resume_mww) = false;
 
 binary_sensor:
   - id: !extend center_button
@@ -197,11 +255,16 @@ binary_sensor:
             return {};
           }
 
-          if (x && !id(center_button).state && id(phone).is_ringing() &&
+          if (x && !id(center_button).state &&
+              (id(phone).is_active() || id(voice_pe_call_audio_claimed)) &&
               !id(init_in_progress) && !id(color_changed) &&
               !id(group_volume_changed) && !id(disable_buttons).state) {
             voip_press_consumed = true;
-            id(phone).answer_call();
+            if (id(phone).is_ringing()) {
+              id(phone).answer_call();
+            } else if (id(phone).is_active()) {
+              id(phone).stop();
+            }
             return {};
           }
 

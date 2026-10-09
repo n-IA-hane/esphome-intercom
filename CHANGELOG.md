@@ -2,6 +2,17 @@
 
 ## 2026.10.3-dev
 
+### Voice PE call controls
+
+- The experimental Voice PE center button now ends an active call or cancels
+  an outgoing call, while retaining answer-on-press and idle Assist gestures.
+  Call-control press/release events do not reach the stock Assist click handler.
+- Calls pause wake word and stop an active Assist interaction. At idle, wake word
+  resumes only if it was previously running and HA is connected. Gain and the
+  official audio pipeline are unchanged. Ringtone ownership and low-volume
+  hardware diagnosis remain open in #97.
+
+
 ### Simpler outgoing announcements
 
 - Call, Speak to the caller, Play audio and Hang up can now run sequentially
