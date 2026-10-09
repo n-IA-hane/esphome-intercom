@@ -338,10 +338,6 @@ If a call fails:
 
 ## Updating an existing installation
 
-The core architecture and configuration model are established. Routine releases
-focus on fixes, compatibility updates and incremental features. Earlier structural
-migrations are recorded by version in [Breaking changes](BREAKING_CHANGES.md).
-
 1. Read the target release notes and apply migration instructions relevant to
    your installed version.
 2. Download the update through HACS and restart Home Assistant.
