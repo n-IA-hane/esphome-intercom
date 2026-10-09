@@ -13,6 +13,7 @@ beyond the project overview in the [top-level README](../README.md).
 | Choose a board and maintained YAML | [Deployment guide](DEPLOYMENT_GUIDE.md) |
 | Complete the shortest supported setup | [Quick start](../README.md#fastest-start) |
 | Update an existing installation | [Breaking changes](BREAKING_CHANGES.md) |
+| Connect ESP firmware to a classic PBX | [Static SIP peers without REGISTER](CLASSIC_PBX.md) |
 | Configure ESP and HA options | [Configuration reference](reference.md) |
 | Diagnose calls and media | [Testing and debug](TESTING_AND_DEBUG.md) |
 | Resolve a specific failure | [Troubleshooting](troubleshooting.md) |

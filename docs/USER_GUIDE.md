@@ -351,6 +351,14 @@ the release notes call for it or you want to change your setup. Current examples
 use the visual phone picker and supported action fields; see [Services](SERVICES.md)
 when adapting older YAML.
 
+## Use ESP firmware with a classic PBX
+
+ESP phones can use a static SIP peer configuration with a traditional PBX,
+without REGISTER. See [Use a VoIP Stack firmware with a classic PBX](CLASSIC_PBX.md)
+for Asterisk and FreeSWITCH static extensions, conventional SIP phones, ESP
+contacts, audio formats and call tests. This is a
+firmware-to-PBX path; HA can continue providing the device's Assist features.
+
 ## Detailed references
 
 - [Automation cookbook](AUTOMATION_DIALPLAN.md)

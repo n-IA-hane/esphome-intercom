@@ -492,6 +492,45 @@ and state automations remain available; see the
 The full [Automations as dialplan cookbook](docs/AUTOMATION_DIALPLAN.md) explains
 call completion, fallback, time limits, concurrent callers and troubleshooting.
 
+## Use ESP firmware with an existing PBX
+
+An ESP running VoIP Stack can also be a SIP phone for a classic PBX. Configure
+it as a static peer: the PBX knows the ESP's address, so no SIP REGISTER or
+account credentials are needed on the firmware. A normal registered desk phone
+or softphone can then dial the ESP's extension.
+
+For example, reserve extension **1001** on the PBX and associate it with the
+ESP's fixed address, such as `192.168.1.60:5060`. On Asterisk, a dialplan entry
+then calls the configured static endpoint:
+
+```ini
+exten => 1001,1,Dial(PJSIP/esp-bedroom,30)
+ same => n,Hangup()
+```
+
+The endpoint/AOR configuration is included in the guide below. Baresip is one
+way to test the calls; it is not required.
+
+For calls in the other direction, add a PBX destination to the firmware's
+existing phonebook:
+
+```yaml
+voip_stack:
+  static_contacts:
+    - name: "700"
+      ip: 192.168.1.20
+      port: 5060
+      transport: udp
+```
+
+This calls extension `700` on the PBX at `192.168.1.20`. The PBX must also have
+a static endpoint for the ESP and compatible audio settings. The device can
+retain its Assist and media features through ESPHome, or use a VoIP-only profile.
+
+[Set up an ESP with a classic PBX](docs/CLASSIC_PBX.md) includes the firmware
+settings, Asterisk and FreeSWITCH static-extension examples, ordinary SIP-phone
+calls, and the measured Asterisk 16 kHz microphone / 48 kHz playback setup.
+
 ## Optional SIP trunk
 
 The trunk is disabled by default. Enable it to connect HA to a provider or another

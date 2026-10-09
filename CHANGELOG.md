@@ -2,6 +2,14 @@
 
 ## 2026.10.3-dev
 
+### ESP firmware with a conventional PBX
+
+- Document static ESP extensions without REGISTER for Asterisk and FreeSWITCH,
+  calls from normal SIP phones, a reproducible baresip example and Asterisk
+  16 kHz microphone / 48 kHz receive settings. The ESP component's standard SDP
+  receive mapping and PCM handling were validated with Asterisk and Spotpear.
+  FreeSWITCH configuration is source-checked, not hardware-qualified.
+
 ### Voice PE call controls
 
 - The experimental Voice PE center button now ends an active call or cancels
