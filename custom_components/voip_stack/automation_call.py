@@ -253,10 +253,11 @@ class AutomationCall:
                     self.media.discard_output()
                 self.arm_deadline()
 
-    async def say(self, call: ServiceCall) -> None:
-        async def play() -> None:
-            from homeassistant.components import tts
+    async def _play_announcement(self, call: ServiceCall, stream_factory) -> None:
+        """Share ownership, readiness and final RTP drain for speech and files."""
+        from contextlib import aclosing
 
+        async def play() -> None:
             await self.answer()
             self.require_current()
             if self.playback is not None:
@@ -264,21 +265,11 @@ class AutomationCall:
                 self.require_current()
             assert self.media is not None
             if not self.media.can_send:
-                raise ServiceValidationError(
-                    "This caller cannot receive announcement audio"
-                )
-            options = {**call.data.get("options", {}), **self.media._tts_audio_output()}
-            stream = tts.async_create_stream(
-                self.hass,
-                call.data["tts_entity_id"],
-                call.data.get("language"),
-                options,
-            )
-            stream.async_set_message(call.data["message"])
-            if self.outgoing:
-                errors = self.media.counters["tx_error"]
-                suppressed = self.media.counters["tx_suppressed"]
-            await self.media.play_pcm_stream(stream.async_stream_result())
+                raise ServiceValidationError("This caller cannot receive announcement audio")
+            errors = self.media.counters["tx_error"]
+            suppressed = self.media.counters["tx_suppressed"]
+            async with aclosing(stream_factory()) as chunks:
+                await self.media.play_pcm_stream(chunks)
             if self.outgoing:
                 await self.media.drain_output()
                 if self.media.counters["tx_error"] != errors or self.media.counters["tx_suppressed"] != suppressed:
@@ -287,8 +278,27 @@ class AutomationCall:
                 await self.media.tx_queue.join()
             self.require_current()
 
-        await self.run_operation(
-            call, play, timeout=float(call.data.get("timeout", 120))
+        await self.run_operation(call, play, timeout=float(call.data.get("timeout", 120)))
+
+    async def say(self, call: ServiceCall) -> None:
+        from homeassistant.components import tts
+
+        def stream():
+            assert self.media is not None
+            options = {**call.data.get("options", {}), **self.media._tts_audio_output()}
+            result = tts.async_create_stream(
+                self.hass, call.data["tts_entity_id"], call.data.get("language"), options,
+            )
+            result.async_set_message(call.data["message"])
+            return result.async_stream_result()
+
+        await self._play_announcement(call, stream)
+
+    async def play_media(self, call: ServiceCall) -> None:
+        from .announcement_media import async_audio_stream
+
+        await self._play_announcement(
+            call, lambda: async_audio_stream(self.hass, call.data["media"]["media_content_id"])
         )
 
     async def wait_unanswered(self, call: ServiceCall) -> None:
@@ -435,6 +445,14 @@ async def async_tts_say(call: ServiceCall) -> None:
         await application.say(call)
     except Exception as err:
         raise ServiceValidationError(f"Announcement failed: {err}") from err
+
+
+async def async_play_media(call: ServiceCall) -> None:
+    application, call = await resolve_application_action(call)
+    try:
+        await application.play_media(call)
+    except Exception as err:
+        raise ServiceValidationError("Audio file playback failed; check the media source and call state") from err
 
 
 async def async_wait_unanswered(call: ServiceCall) -> None:

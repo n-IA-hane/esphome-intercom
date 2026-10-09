@@ -2,6 +2,16 @@
 
 ## 2026.10.3-dev
 
+### Recorded audio in Automation calls
+
+- Add `voip_stack.play_media` for [#138](https://github.com/n-IA-hane/esphome-intercom/issues/138).
+  Select a file with Home Assistant's Media picker or provide an HTTP(S) audio
+  URL. HA sends the recording through the existing VoIP call, without a browser.
+  Combine Call, Play audio and Hang up for recorded reminders, notifications or
+  sound effects. Playback waits for transmission to complete before the next
+  action and shares the TTS call ownership, timeout and cancellation handling.
+
+
 Changes since stable **2026.10.1**.
 
 - Add opt-in native HA response templates for VoIP voice commands, preserving

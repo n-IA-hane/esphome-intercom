@@ -157,6 +157,7 @@ async def lab(hass, monkeypatch, socket_enabled):
     await services.async_register_services(hass, {
         "call": voip_stack._handle_sip_call_target_service,
         "tts_say": automation_call.async_tts_say,
+        "play_media": automation_call.async_play_media,
         "hangup": voip_stack._handle_sip_hangup_service,
     })
     obj = SimpleNamespace(hass=hass, phones=phones, calls=calls, runtime=runtime, roster=roster)

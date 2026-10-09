@@ -454,3 +454,15 @@ automations can persistently restrict a browser, SIP-account or ESPHome phone
 without disabling the trunk for other phones. See
 [external call permissions](SERVICES.md#external-call-permissions) for scope and
 [the automation editor example](AUTOMATION_DIALPLAN.md#control-external-calls-per-phone).
+
+
+### Recorded audio on a call
+
+`voip_stack.play_media` sends an audio file through an Automation call's RTP
+channel. Use the native **Audio file** picker, or provide `media` containing
+`media_content_id` and `media_content_type`. The selected call follows the same
+owner and generation checks as `voip_stack.tts_say`. Playback blocks until
+transmission finishes; the next action decides whether to hang up or continue.
+
+See [service fields](SERVICES.md#voip_stackplay_media) and the
+[complete example](AUTOMATION_DIALPLAN.md#play-a-recorded-announcement).

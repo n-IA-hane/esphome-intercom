@@ -93,6 +93,7 @@ ha_tests=(
   tests/test_trunk_transfer_access.py
   tests/test_automation_call.py
   tests/test_automation_originate_ha.py
+  tests/test_announcement_media_ha.py
   tests/test_call_trigger.py
   tests/test_call_deadlines_runtime.py
   tests/test_automation_route_result.py

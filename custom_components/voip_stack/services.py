@@ -94,6 +94,15 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         vol.Optional("options", default=dict): dict,
         vol.Optional("timeout", default=120): vol.All(vol.Coerce(float), vol.Range(min=1, max=600)),
     }, extra=vol.PREVENT_EXTRA)
+    from homeassistant.helpers.selector import MediaSelector
+
+    play_media_schema = vol.Schema({
+        **phone_selector_fields,
+        vol.Optional("call_id", default=""): SHORT_TEXT,
+        vol.Optional("expected_generation"): SEQUENCE,
+        vol.Required("media"): MediaSelector({"accept": ["audio/*"]}),
+        vol.Optional("timeout", default=120): vol.All(vol.Coerce(float), vol.Range(min=1, max=600)),
+    }, extra=vol.PREVENT_EXTRA)
     unanswered_wait_schema = vol.Schema({
         **phone_selector_fields,
         vol.Optional("call_id", default=""): SHORT_TEXT,
@@ -284,6 +293,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         # automations remain allowed; authenticated callers must be admins so
         # global event-entity control cannot affect another user's call.
         "tts_say",
+        "play_media",
         "wait_for_dtmf",
         "wait_unanswered",
         "route",
@@ -316,6 +326,7 @@ async def async_register_services(hass: HomeAssistant, handlers: dict[str, objec
         schema=sip_call_schema,
         supports_response=SupportsResponse.OPTIONAL,
     )
+    hass.services.async_register(DOMAIN, "play_media", handler_for("play_media"), schema=play_media_schema)
     hass.services.async_register(DOMAIN, "tts_say", handler_for("tts_say"), schema=tts_say_schema)
     hass.services.async_register(DOMAIN, "wait_unanswered", handler_for("wait_unanswered"), schema=unanswered_wait_schema)
     hass.services.async_register(DOMAIN, "wait_for_dtmf", handler_for("wait_for_dtmf"), schema=dtmf_wait_schema, supports_response=SupportsResponse.OPTIONAL)

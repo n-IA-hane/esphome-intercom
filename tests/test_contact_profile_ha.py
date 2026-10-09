@@ -25,7 +25,7 @@ def entry(hass, monkeypatch):
     from custom_components.voip_stack import phonebook_services
 
     monkeypatch.setattr(phonebook_services, "_runtime_route_mappings", lambda _: [])
-    hass.config.components.update({"assist_pipeline", "http", "lovelace", "network"})
+    hass.config.components.update({"assist_pipeline", "ffmpeg", "http", "lovelace", "media_source", "network"})
     config = MockConfigEntry(domain="voip_stack", data={}, version=6)
     config.add_to_hass(hass)
     return config

@@ -1612,3 +1612,72 @@ owns another call. Administrators and automations may originate these calls.
 Two executions may call different available phones concurrently. An already
 claimed phone remains busy under the usual endpoint policy. Give each execution
 its own response variable scope; never select an arbitrary active call.
+
+## Play a recorded announcement
+
+Use **VoIP Stack: Play audio to the caller** (`voip_stack.play_media`) to send a
+recorded message or sound file through an Automation call. For example, a parcel
+notification can ring a phone and play a recording after somebody answers.
+This runs in Home Assistant without a browser or an ESP acting as the caller.
+
+In the action editor, **Audio file** opens Home Assistant's native Media picker.
+Upload a WAV or MP3 under **Media > My media**, then select it. The action also
+accepts a direct HTTP(S) audio-file URL. Home Assistant retrieves the file, so
+the receiving SIP phone does not need access to that URL.
+
+Create an **Automation** contact called `Announcement-Caller` and a callable
+contact called `bedroom`. For a SIP phone, register its account with VoIP Stack.
+This example can be pasted into a Home Assistant script and called from any
+ordinary automation:
+
+```yaml
+alias: Recorded phone announcement
+mode: single
+sequence:
+  - action: voip_stack.call
+    data:
+      source_automation: Announcement-Caller
+      destination: bedroom
+      answer_timeout: 30
+    response_variable: announcement
+  - action: voip_stack.play_media
+    data:
+      call_id: "{{ announcement.call_id }}"
+      expected_generation: "{{ announcement.generation }}"
+      media:
+        media_content_id: media-source://media_source/local/parcel.wav
+        media_content_type: audio/wav
+      timeout: 120
+  - action: voip_stack.hangup
+    data:
+      call_id: "{{ announcement.call_id }}"
+      expected_generation: "{{ announcement.generation }}"
+```
+
+Replace `parcel.wav` with your uploaded file or use the Media picker to generate
+its identifier. **Call** waits for the final SIP answer before returning the
+reference. **Play audio** waits for transmission to complete, including the
+existing outgoing playout tail, before **Hang up** runs. No fixed delay is needed
+between these actions. Completion confirms transmission, not that a physical
+speaker reproduced the sound.
+
+For a native **VoIP call received** trigger targeting an Automation contact,
+omit `call_id` and `expected_generation`: the trigger selects its own call.
+Playback answers that incoming call if needed. A normal browser-owned call
+cannot be converted into an Automation call by supplying its ID.
+
+Files use the existing announcement path: bounded decoding to 16 kHz mono PCM,
+then conversion to the negotiated SIP codec and RTP packetization. WAV and MP3
+are tested; other self-contained audio formats depend on HA's FFmpeg decoder.
+Playlists, DRM sources and formats requiring additional external resources are
+not supported. The file is streamed through bounded buffers, not loaded entirely
+into memory. This action does not record calls or automatically loop hold music.
+
+`timeout` covers resolution, download, decoding and transmission (default 120
+seconds, allowed range 1-600). A failed or cancelled outgoing announcement closes
+its call and releases the decoder. Remote hangup stops playback. Incoming
+Automation calls retain their existing error-handling and inactivity-timeout
+policy. As with TTS, concurrent playback actions on the same call are rejected;
+sequential playback, TTS and keypad-input actions can be combined. Playback does
+not hang up automatically, so the next action can play another file or wait for
+DTMF instead.

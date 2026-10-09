@@ -14,8 +14,10 @@
   "config_flow": true,
   "dependencies": [
     "assist_pipeline",
+    "ffmpeg",
     "http",
     "lovelace",
+    "media_source",
     "network"
   ],
   "documentation": "https://github.com/n-IA-hane/esphome-intercom",

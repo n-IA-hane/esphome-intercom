@@ -923,6 +923,52 @@ capture_sip:
           unit_of_measurement: s
           mode: box
 
+play_media:
+  name: Play audio to the caller
+  description: Play an audio file on an Automation call and wait for transmission to
+    finish. Uses the call from its VoIP trigger or the reference returned by Call.
+    Does not hang up automatically.
+  fields:
+    media:
+      name: Audio file
+      required: true
+      selector:
+        media:
+          accept:
+            - audio/*
+    timeout:
+      name: Maximum playback duration
+      description: Includes media resolution, download, decoding and transmission.
+        Timeout stops playback. Defaults to 120 seconds.
+      selector:
+        number:
+          min: 1
+          max: 600
+          unit_of_measurement: s
+          mode: box
+    call_id:
+      name: Call ID
+      description: Use the call_id returned by Call for a scheduled announcement.
+        Native VoIP triggers select their own call automatically.
+      selector:
+        text: null
+    expected_generation:
+      name: Call generation
+      description: Use the generation returned by Call together with its call_id.
+      selector:
+        number:
+          min: 1
+          max: 2147483647
+          mode: box
+    device_id:
+      name: Phone for manual execution
+      description: Select the phone with an Automation call when testing manually.
+      selector:
+        device:
+          filter:
+            - integration: voip_stack
+            - integration: esphome
+
 tts_say:
   name: Speak to the caller
   description: Pronounce a message on the automation call. The call is selected by

@@ -488,7 +488,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
 
     account_handlers = build_account_service_handlers(_refresh_and_push_phonebook)
     phonebook_handlers = build_phonebook_service_handlers(_refresh_and_push_phonebook)
-    from .automation_call import async_tts_say, async_wait_for_dtmf, async_wait_unanswered
+    from .automation_call import async_play_media, async_tts_say, async_wait_for_dtmf, async_wait_unanswered
     from .external_call_access import async_set_external_call_access
 
     await async_register_services(
@@ -507,6 +507,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             "call": _handle_sip_call_target_service,
             "forward": _handle_sip_forward_service,
             "tts_say": async_tts_say,
+            "play_media": async_play_media,
             "wait_for_dtmf": async_wait_for_dtmf,
             "wait_unanswered": async_wait_unanswered,
             "transfer": _handle_sip_transfer_service,

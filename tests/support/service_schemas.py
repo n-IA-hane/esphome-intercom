@@ -51,9 +51,21 @@ def load_service_schemas() -> dict[str, vol.Schema]:
         "from .const import DOMAIN\n",
         'DOMAIN = "voip_stack"\n',
     )
+    source = source.replace(
+        "    from homeassistant.helpers.selector import MediaSelector\n",
+        "",
+    )
+    # HA runtime tests exercise the actual selector. This facade only keeps
+    # non-HA service/field contract tests independent from HA dependencies.
     namespace = {
         "__name__": "voip_stack_services_schema_test",
         "SimpleNamespace": SimpleNamespace,
+        "MediaSelector": lambda _config: vol.Schema({
+            vol.Required("media_content_id"): str,
+            vol.Required("media_content_type"): str,
+            vol.Optional("entity_id"): str,
+            vol.Remove("metadata"): dict,
+        }),
         "cv": SimpleNamespace(
             string=str,
             entity_id=str,

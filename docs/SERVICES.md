@@ -60,7 +60,7 @@ contact's name or extension instead of selecting `device_id`. Set
 `answer_timeout` (default 30 seconds) and store the action response with
 `response_variable`. The action returns `call_id` and `generation` only after
 the destination answers and its local audio transport is ready. Pass these as
-`call_id` and `expected_generation` to `tts_say` and `hangup` in the same HA
+`call_id` and `expected_generation` to `tts_say`, `play_media` and `hangup` in the same HA
 execution. See the [complete scheduled-call recipe](AUTOMATION_DIALPLAN.md#place-a-scheduled-announcement-call)
 for lifecycle, supported destinations and failure behavior.
 
@@ -528,3 +528,22 @@ The wait belongs to the current call and accepts only its caller's digits.
 Ending the call cancels the wait. Digits entered before this action starts
 are not collected. For an IVR, first speak the choices, then wait for a key,
 then use HA's Choose action to forward to the selected destination.
+
+
+### `voip_stack.play_media`
+
+Play a recorded audio file to an Automation call. The **Audio file** field uses
+Home Assistant's Media picker; it supplies `media.media_content_id` and
+`media.media_content_type`. Choose an uploaded file or a direct HTTP(S) audio
+URL. HA retrieves and decodes the file, then sends it over the call's existing
+RTP channel. The remote phone does not fetch the file.
+
+Like `tts_say`, this action uses the call selected by the native VoIP trigger.
+For an outgoing scheduled call, pass `call_id` and `expected_generation` from
+the preceding `call` response. The action waits for transmission to finish and
+does not hang up automatically. `timeout` defaults to 120 seconds and accepts
+1-600 seconds, including download and decoding. Admin users and automations
+can invoke it, subject to the existing call owner/controller checks.
+
+See the [recorded announcement recipe](AUTOMATION_DIALPLAN.md#play-a-recorded-announcement)
+for a complete script, supported media and cancellation behavior.
