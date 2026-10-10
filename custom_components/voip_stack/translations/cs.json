@@ -1,0 +1,701 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "VoIP Stack",
+        "description": "SIP softphone a SIP bridge/router pro VoIP telefony ESPHome. HA na tomto portu automaticky naslouchá signalizaci přes UDP i TCP.",
+        "data": {
+          "sip_port": "SIP port",
+          "rtp_port": "RTP port",
+          "advertise_host": "Inzerovaný HA hostitel/IP",
+          "assist_intents": "Povolit záměry Assist",
+          "assist_endpoint_enabled": "Zahrnout hlasového asistenta",
+          "debug_mode": "Povolit ladění protokolu SIP/RTP",
+          "media_capture": "Zaznamenávat zvuk soukromých hovorů pro diagnostiku",
+          "experimental_sip_video": "Povolit SIP video pro Home Assistant softphone",
+          "sip_registrar_enabled": "Povolit lokální účty SIP",
+          "trunk_enabled": "Povolit volitelný SIP trunk",
+          "companion_enabled": "Povolit telefony Companion"
+        },
+        "data_description": {
+          "sip_port": "Naslouchací port pro SIP koncový bod HA. HA na tomto portu ambientně přijímá SIP signalizaci přes UDP i TCP.",
+          "rtp_port": "Základní RTP UDP port pro média a přenosy HA.",
+          "advertise_host": "Volitelné přepsání adresy zveřejňované v telefonních seznamech ESP. Použijte v případě, že se HA nachází za směrovačem, NAT, LXC, VPN nebo ve více podsítích a automaticky oznámená adresa není pro zařízení ESP dostupná.",
+          "assist_intents": "Registrovat volitelné obslužné rutiny Assist pro volání, ukončení hovoru, přijetí a odmítnutí (např. „Hey Jarvis, call Kitchen“). Vyslovená jména kontaktů se dynamicky vyhodnocují oproti aktuálnímu telefonnímu seznamu VoIP.",
+          "assist_endpoint_enabled": "Přidat SIP klapku propojenou přímo s konverzačním asistentem Home Assistant Assist. Není vyžadována žádná samostatná VoIP integrace ani SIP posluchač.",
+          "debug_mode": "Povolí podrobnou diagnostiku a logování SIP/RTP/médií bez zaznamenávání samotného zvuku hovorů.",
+          "media_capture": "Explicitně zaznamenává zvuk soukromých hovorů: až 15 sekund pro každý směr HA-softphonu a 8 sekund pro každou větev přenosu. Data se ukládají jako WAV/JSON do ~/.cache/voip_stack_debug (režim 0700) a promazávají se na limit 24 souborů / 64 MiB. Ponechte zakázané, pokud zrovna neshromažďujete diagnostický vzorek.",
+          "experimental_sip_video": "Umožnit softphonu Home Assistant vyjednávat SIP video s kompatibilními standardními telefony, softphony a dveřními stanicemi. Formáty H.264, VP8 a JPEG využívají vestavěnou cestu médií prohlížeče. Standardní koncové body ESP zůstávají pouze zvukové; kompatibilní profily ESP32-P4 mohou vyjednávat JPEG nebo H.264. Vyžaduje HTTPS a kompatibilní prohlížeč.",
+          "sip_registrar_enabled": "Přijímat REGISTER z lokálních SIP koncových bodů, jako jsou VoIP telefony, Zoiper, Linphone nebo baresip, pomocí účtů spravovaných službami VoIP Stack.",
+          "trunk_enabled": "Zobrazit nastavení trunku poskytovatele/ústředny. Pokud je tato možnost zakázána, nespustí se registrace trunku, externí trasa ani kolektor DTMF.",
+          "companion_enabled": "Vyhledávat kompatibilní aplikace Companion jako samostatné telefony pro příchozí hovory. Jejich názvy sledují sledování zařízení (device tracker) v mobilní aplikaci. Vyžaduje sestavení aplikace Companion s nativní podporou volání."
+        }
+      },
+      "video": {
+        "title": "SIP video",
+        "description": "Video je volitelné. Softphone Home Assistant a standardní koncové body SIP jej podporují a kompatibilní profily ESP32-P4 mohou vyjednávat JPEG nebo H.264. Ostatní koncové body ESP zůstávají pouze zvukové.",
+        "data": {
+          "video_transcoding_enabled": "Povolit transkódování videa",
+          "video_camera_send_enabled": "Povolit přenos z kamery prohlížeče"
+        },
+        "data_description": {
+          "video_transcoding_enabled": "Povolit VoIP Stacku používat binární soubor FFmpeg z Home Assistanta, pokud dvě vyjednané větve videa nemají přímou shodu v kodeku. Přímé formáty H.264, VP8 a JPEG zůstávají preferované. Omezený záložní režim může převádět starší video pro HA softphone a formáty H.264 nebo JPEG mezi větvemi SIP vlastněnými HA. Odesílání JPEG z prohlížeče může také využít jeden omezený normalizátor RFC 2435. Selhání ponechá aktivní kompatibilní zvuk.",
+          "video_camera_send_enabled": "Zobrazit volbu Odeslat kameru na kartě. Každý logický telefon Home Assistant si pamatuje svou volbu; povolení kamery zůstává lokální pro každý prohlížeč. Příjem videa nikdy nevyžaduje přístup ke kameře."
+        }
+      },
+      "assist": {
+        "title": "Klapka hlasového asistenta",
+        "description": "Zvolte SIP klapku a konverzačního asistenta Home Assistant Assist používaného pro telefonní hovory. Pokud jsou povoleny pokročilé detaily hovoru, VoIP Stack zahájí konverzaci uživatelskou zprávou typu `Příchozí SIP hovor od uživatele \"Daniele\".` Chování telefonu nakonfigurujte v poli Instrukce nebo výzva (prompt) samotného vybraného konverzačního asistenta v Nastavení > Zařízení a služby > integrace daného asistenta > Nakonfigurovat. Příklad instrukcí: `Pokud obdržíš zprávu začínající na \"Příchozí SIP hovor od\", považuj to za živý telefonní hovor. Jednou pozdrav volajícího, chovej se jako stručný recepční a neopakuj jeho jméno v každé odpovědi.` Přátelská nálada: `Během SIP hovorů zněj vesele a neformálně, ale zůstaň stručný a nápomocný.` Špatná nálada: `Ahoj. Je mi to úplně u p****e, takže se jdi vyf****at.`",
+        "data": {
+          "assist_extension": "Klapka hlasového asistenta",
+          "assist_pipeline": "Konverzační asistent (pipeline)",
+          "assist_advanced_call_context": "Poskytnout asistentovi pokročilé detaily hovoru"
+        },
+        "data_description": {
+          "assist_extension": "Číselná klapka o délce 1 až 255 číslic, unikátní napříč účty, kontakty a skupinami.",
+          "assist_pipeline": "Asistent (pipeline) použitý pro rozpoznávání řeči, konverzaci a převod textu na řeč při telefonních hovorech.",
+          "assist_advanced_call_context": "Pokud je tato možnost zakázána, Assist začne naslouchat bez úvodní textové zprávy. Pokud je povolena, odešle při spojení jméno a ID volajícího, shodu v telefonním seznamu, zdroj a volanou klapku. Jedná se o nedůvěryhodná metadata hovoru; shoda v telefonním seznamu neslouží jako autentizace."
+        }
+      },
+      "trunk": {
+        "title": "Volitelný SIP Trunk",
+        "description": "Connect Home Assistant to one provider or PBX. Incoming calls follow the configured routing and optional automations.",
+        "data": {
+          "trunk_transport": "Transport SIP trunku",
+          "trunk_server": "Server trunku",
+          "trunk_port": "SIP port trunku",
+          "trunk_domain": "Doména trunku",
+          "trunk_username": "Uživatelské jméno trunku",
+          "trunk_auth_username": "Uživatelské jméno pro autorizaci",
+          "trunk_password": "Heslo",
+          "trunk_register_expires": "Platnost REGISTER vyprší",
+          "trunk_outbound_proxy": "Odchozí proxy",
+          "trunk_inbound_default_target": "Záložní cíl",
+          "trunk_inbound_mode": "Zpracování příchozích hovorů",
+          "automation_routing_enabled": "Povolit automatizacím vybrat příchozí cíl",
+          "trunk_dtmf_timeout_ms": "Časový limit DTMF (sekundy)",
+          "trunk_dtmf_terminator": "Terminátor DTMF",
+          "trunk_allowed_ips": "Povolené příchozí IP adresy"
+        },
+        "data_description": {
+          "trunk_transport": "SIP transportní protokol použitý pro spojení mezi HA a poskytovatelem.",
+          "trunk_server": "Hostname registrátoru nebo proxy serveru poskytovatele.",
+          "trunk_port": "SIP port poskytovatele, obvykle 5060.",
+          "trunk_domain": "Volitelná SIP oblast (realm) či doména. Pokud není vyplněna, použije se hodnota trunk_server.",
+          "trunk_username": "Uživatelské jméno SIP účtu a výchozí uživatel v Request-URI pro příchozí hovory.",
+          "trunk_auth_username": "Uživatelské jméno pro Digest autentizaci (pokud se liší od SIP uživatelského jména).",
+          "trunk_password": "Heslo pro Digest autentizaci.",
+          "trunk_register_expires": "Doba platnosti registrace (REGISTER) v sekundách.",
+          "trunk_outbound_proxy": "Volitelný proxy server (hostname nebo sip:host:port) použitý jako další skok (next hop) pro signalizaci.",
+          "trunk_inbound_default_target": "V režimu okamžitého směrování se použije pouze tehdy, pokud se volaná destinace nenachází v telefonním seznamu. Volba pomocí DTMF a směrovací automatizace mohou vybrat jiný cíl.",
+          "trunk_inbound_mode": "Okamžité směrování přeskočí sběr číslic. Sběr klapky pomocí DTMF nejprve zvedne větev trunku (pre-answer) a umožní zadáním číslic vybrat klapku z telefonního seznamu.",
+          "automation_routing_enabled": "Před použitím záložního cíle publikovat krátký požadavek na směrování, na který může odpovědět automatizace. Explicitně zadané číslice DTMF mají vždy prioritu.",
+          "trunk_dtmf_timeout_ms": "Mezi-číslicový časový limit použitý v režimu DTMF. První číslice má povolený limit 10 sekund. Výchozí hodnota jsou 3 sekundy, maximum 10 sekund.",
+          "trunk_dtmf_terminator": "Volitelná ukončovací číslice, např. #. Prázdná hodnota znamená, že o ukončení rozhodne časový limit nebo přesná shoda s klapkou v telefonním seznamu.",
+          "trunk_allowed_ips": "Zadejte každou povolenou zdrojovou IP adresu nebo CIDR síť samostatně. Ty se mohou lišit od odchozího serveru. Vyžadováno u trunků bez registrace."
+        }
+      },
+      "trunk_mode": {
+        "title": "Registrace trunku",
+        "description": "Ponechte povoleno pro účet u poskytovatele. Zakážte u statického trunku, který přijímá hovory bez požadavků REGISTER. Povolené příchozí IP adresy nakonfigurujte v dalším kroku.",
+        "data": {
+          "trunk_register": "Registrovat trunk"
+        }
+      }
+    },
+    "error": {
+      "sip_rtp_port_conflict": "SIP a RTP musí používat různé porty.",
+      "assist_extension_invalid": "Klapka hlasového asistenta musí obsahovat 1 až 255 číslic.",
+      "assist_extension_conflict": "Klapka hlasového asistenta je již využívána jinou trasou.",
+      "trunk_server_required": "Je vyžadován server trunku.",
+      "trunk_username_required": "Je vyžadováno uživatelské jméno pro trunk.",
+      "trunk_password_required": "Je vyžadováno heslo pro trunk.",
+      "trunk_allowed_ips_invalid": "Zadejte alespoň jednu platnou IP adresu nebo CIDR síť. Neomezená síť /0 není povolena."
+    },
+    "abort": {
+      "reconfigure_successful": "VoIP Stack byl úspěšně překonfigurován.",
+      "already_configured": "VoIP Stack je již nakonfigurován."
+    }
+  },
+  "config_subentries": {
+    "phone": {
+      "entry_type": "Telefon",
+      "initiate_flow": {
+        "user": "Přidat telefon"
+      },
+      "title": "Koncový bod telefonu",
+      "step": {
+        "user": {
+          "title": "Přidat telefon",
+          "description": "Vytvořte další softphone pro prohlížeč Home Assistant nebo standardní SIP účet. Každý telefon sdílí stejný SIP posluchač a RTP pool.",
+          "data": {
+            "kind": "Typ telefonu"
+          }
+        },
+        "browser": {
+          "title": "Home Assistant softphone",
+          "description": "Vytvořte logický telefon pro jednu nebo více Lovelace karet. Karty vázané na stejný telefon vyzvánějí společně; první, která hovor přijme, přebírá média.",
+          "data": {
+            "name": "Jméno",
+            "extension": "Klapka",
+            "enabled": "Povoleno",
+            "dnd": "Nerušit",
+            "ring_group": "Vyzváněcí skupina",
+            "conference_group": "Konferenční skupina",
+            "conference_ring": "Vyzvánět při konferenčních hovorech",
+            "video_enabled": "Povolit video",
+            "auto_answer": "Automatický příjem",
+            "send_video": "Odesílat video"
+          },
+          "data_description": {
+            "name": "Vyžadované jméno telefonu používané kartou, telefonním seznamem a směrováním hovorů.",
+            "extension": "Volitelná unikátní volitelná klapka. Logický telefon zůstává dostupný pro vyzvánění, i když není připojená žádná karta v prohlížeči.",
+            "auto_answer": "Automaticky přijmout hovor, pokud má připojený prohlížeč oprávnění k mikrofonu.",
+            "send_video": "Ve výchozím nastavení odesílat obraz z kamery připojeného prohlížeče, pokud je vyjednáno video a je k dispozici oprávnění."
+          }
+        },
+        "sip_account": {
+          "title": "Standardní SIP účet",
+          "description": "Vytvořte přihlašovací údaje pro jakýkoli standardní SIP/RTP telefon nebo softphone. Není použito žádné chování specifické pro konkrétní prodejce.",
+          "data": {
+            "name": "Jméno",
+            "extension": "Klapka",
+            "username": "SIP uživatelské jméno",
+            "password": "SIP heslo",
+            "enabled": "Povoleno",
+            "dnd": "Nerušit",
+            "ring_group": "Vyzváněcí skupina",
+            "conference_group": "Konferenční skupina",
+            "conference_ring": "Vyzvánět při konferenčních hovorech",
+            "video_enabled": "Povolit vyjednávání videa",
+            "offline_policy": "Pokud není registrován",
+            "offline_forward_target": "Cíl přesměrování"
+          }
+        },
+        "reconfigure": {
+          "title": "Překonfigurovat telefon"
+        },
+        "companion": {
+          "title": "Telefon Companion",
+          "description": "Nakonfigurujte tento telefon Companion. Jeho název sleduje sledování zařízení (device tracker) mobilní aplikace.",
+          "data": {
+            "extension": "Klapka",
+            "enabled": "Povoleno",
+            "dnd": "Nerušit",
+            "ring_group": "Vyzváněcí skupina",
+            "conference_group": "Konferenční skupina",
+            "conference_ring": "Vyzvánět při konferenčních hovorech"
+          },
+          "data_description": {
+            "name": "Vyžadované jméno telefonu používané kartou, telefonním seznamem a směrováním hovorů.",
+            "extension": "Volitelná unikátní volitelná klapka. Logický telefon zůstává dostupný pro vyzvánění, i když není připojená žádná karta v prohlížeči."
+          }
+        }
+      },
+      "error": {
+        "phone_name_required": "Je vyžadováno jméno telefonu.",
+        "phone_username_invalid": "Používejte pouze písmena, číslice, tečky, podtržítka nebo pomlčky.",
+        "phone_password_required": "Je vyžadováno SIP heslo.",
+        "phone_forward_target_required": "Pro strategii Přesměrování je vyžadován cílový bod.",
+        "phone_alias_conflict": "Jméno, klapka nebo uživatelské jméno je již využíváno jiným telefonem."
+      },
+      "abort": {
+        "reconfigure_successful": "Telefon byl úspěšně překonfigurován.",
+        "already_configured": "Tento telefon již existuje."
+      }
+    },
+    "contact": {
+      "entry_type": "Kontakt",
+      "initiate_flow": {
+        "user": "Přidat kontakt"
+      },
+      "title": "Kontakt",
+      "step": {
+        "user": {
+          "title": "Přidat kontakt",
+          "description": "Vytvořte záznam v telefonním seznamu bez vytváření telefonu nebo entit. Kontakt typu Automatizace předá svůj hovor automatizacím HA.",
+          "data": {
+            "type": "Typ kontaktu"
+          }
+        },
+        "contact": {
+          "title": "Kontakt",
+          "description": "Vytvořte záznam v telefonním seznamu bez vytváření telefonu nebo entit. Kontakt typu Automatizace předá svůj hovor automatizacím HA.",
+          "data": {
+            "name": "Jméno",
+            "extension": "Volitelná klapka",
+            "number": "Externí číslo",
+            "sip_uri": "SIP adresa",
+            "fallback_destination": "Cíl, pokud hovor není zpracován",
+            "timeout": "Čekat na automatizaci"
+          },
+          "data_description": {
+            "extension": "Ponechte prázdné, pokud chcete kontakt vytáčet podle jeho jména v telefonním seznamu.",
+            "fallback_destination": "Pokud žádná automatizace hovor nezpracuje, přesměruje se sem. Ponechte prázdné pro ukončení hovoru.",
+            "timeout": "Sekundy před spuštěním záložního cíle, pokud žádná automatizace nepřevezme kontrolu nad hovorem. Nejedná se o dobu vyzvánění telefonu."
+          }
+        }
+      },
+      "error": {
+        "invalid_contact": "Použijte unikátní jméno a klapku. Běžný kontakt vyžaduje číslo nebo SIP adresu; kontakt typu Automatizace je nesmí obsahovat."
+      }
+    }
+  },
+  "selector": {
+    "trunk_inbound_mode": {
+      "options": {
+        "direct": "Směrovat okamžitě",
+        "dtmf": "Sbírat klapku pomocí DTMF"
+      }
+    },
+    "call_ingress": {
+      "options": {
+        "extension": "Místní hovor",
+        "trunk": "Hovor přes trunk"
+      }
+    },
+    "dtmf_source": {
+      "options": {
+        "caller": "Volající",
+        "callee": "Volaný"
+      }
+    },
+    "contact_type": {
+      "options": {
+        "contact": "Číslo nebo SIP adresa",
+        "automation": "Automatizace"
+      }
+    },
+    "dtmf_result": {
+      "options": {
+        "received": "Číslice přijaty",
+        "timeout": "Čekání na vstup vypršelo"
+      }
+    },
+    "call_outcome": {
+      "options": {
+        "ended": "Ukončeno",
+        "missed": "Zmeškané",
+        "failed": "Selhalo"
+      }
+    }
+  },
+  "system_health": {
+    "info": {
+      "sip_udp_ready": "SIP UDP posluchač",
+      "sip_tcp_ready": "SIP TCP posluchač",
+      "advertise_host": "Výběr inzerovaného hostitele",
+      "configured_phones": "Nakonfigurované telefony",
+      "online_esphome_phones": "Online ESPHome telefony",
+      "registered_sip_accounts": "Registrované SIP účty",
+      "trunk_registered": "SIP trunk registrován",
+      "active_calls": "Aktivní hovory",
+      "reserved_rtp_ports": "Rezervované RTP porty",
+      "runtime_tasks": "Běžící úlohy (tasks)",
+      "active_media_owners": "Aktivní vlastníci médií prohlížeče",
+      "media_workers": "Aktivní pracovníci médií"
+    }
+  },
+  "issues": {
+    "esphome_actions_incomplete": {
+      "title": "Ovládání ESPHome telefonu není kompletní",
+      "description": "U zařízení {phone} chybí akce pro ovládání hovorů ESPHome: {actions}. Aktualizujte jeho softwarový balíček VoIP telefonu a firmware."
+    },
+    "media_capture_enabled": {
+      "title": "Záznam soukromých médií hovorů je povolen",
+      "description": "VoIP Stack ukládá soukromá média hovorů pro diagnostiku. Po dokončení odstraňování problémů záznam médií zakažte."
+    }
+  },
+  "exceptions": {
+    "destination_required": {
+      "message": "Je vyžadován cíl hovoru."
+    },
+    "advertise_ip_unknown": {
+      "message": "Inzerovaná IP adresa Home Assistanta není známá."
+    },
+    "call_changed_during_operation": {
+      "message": "Hovor {call_id} se během požadované operace změnil."
+    },
+    "call_forwarding": {
+      "message": "Hovor {call_id} se přesměrovává."
+    },
+    "call_id_destination_required": {
+      "message": "Je vyžadováno ID hovoru a cíl."
+    },
+    "call_id_required": {
+      "message": "Je vyžadováno ID hovoru."
+    },
+    "call_inactive": {
+      "message": "Hovor {call_id} již není aktivní."
+    },
+    "call_not_forwardable": {
+      "message": "Hovor {call_id} není čekající nebo vyzvánějící hovor Home Assistanta, který by bylo možné přesměrovat."
+    },
+    "call_not_ringing": {
+      "message": "Hovor {call_id} již byl přijat nebo již nevyzvání."
+    },
+    "call_phase_mismatch": {
+      "message": "Hovor {call_id} je ve stavu {state}, nikoli ve fázi {phase}."
+    },
+    "call_phone_owner_missing": {
+      "message": "Hovor {call_id} nemá žádného přiřazeného vlastníka (telefon) Home Assistanta."
+    },
+    "call_sequence_mismatch": {
+      "message": "Sekvence hovoru {call_id} je {actual}, očekávána {expected}."
+    },
+    "call_state_mismatch": {
+      "message": "Stav hovoru {call_id} je {actual}, očekáván {expected}."
+    },
+    "call_unknown_or_ended": {
+      "message": "Hovor {call_id} je neznámý nebo byl ukončen."
+    },
+    "conference_full": {
+      "message": "Konference {conference} is plná."
+    },
+    "conference_phone_mismatch": {
+      "message": "Konferenční hovor {call_id} nepatří k telefonu {phone}."
+    },
+    "destination_not_forwardable": {
+      "message": "Cíl {destination} není platným cílem v SIP vytáčecím plánu pro přesměrování."
+    },
+    "destination_not_ha_phone": {
+      "message": "Cíl {destination} není nakonfigurovaným telefonem Home Assistanta."
+    },
+    "destination_not_ready": {
+      "message": "Cíl {destination} zatím není dostupný."
+    },
+    "forward_failure_policy_invalid": {
+      "message": "Strategie při selhání přesměrování musí být: resume (pokračovat), terminate (ukončit) nebo busy (obsazeno)."
+    },
+    "forward_ring_group_only": {
+      "message": "Již vyzvánějící hovor lze v současné době přesměrovat pouze do vyzváněcí skupiny."
+    },
+    "local_phone_operation_failed": {
+      "message": "Lokálnímu telefonu se nepodařilo dokončit požadovanou operaci hovoru."
+    },
+    "pbx_session_unavailable": {
+      "message": "Relace PBX pro hovor {call_id} již není dostupná."
+    },
+    "pending_route_missing": {
+      "message": "Pro hovor {call_id} neexistuje žádná čekající SIP trasa."
+    },
+    "phone_busy": {
+      "message": "Telefon {phone} je obsazený."
+    },
+    "phone_disabled": {
+      "message": "Telefon {phone} je zakázán."
+    },
+    "phone_self_target": {
+      "message": "Telefon Home Assistanta nemůže použít sám sebe jako cíl hovoru."
+    },
+    "ring_group_phone_already_declined": {
+      "message": "Tento telefon již hovor vyzváněcí skupiny odmítl."
+    },
+    "ring_group_phone_required": {
+      "message": "Přijměte hovor vyzváněcí skupiny z jednoho z jejích vyzvánějících telefonů."
+    },
+    "route_destination_required": {
+      "message": "Požadovaná akce trasy vyžaduje cílovou destinaci."
+    },
+    "route_hop_limit_exceeded": {
+      "message": "Hovor {call_id} překročil směrovací limit {limit} skoků (hops)."
+    },
+    "route_not_decidable": {
+      "message": "O SIP trase pro hovor {call_id} již nelze rozhodnout."
+    },
+    "sip_answer_failed": {
+      "message": "Transakce SIP odpovědi (answer) selhala pro hovor {call_id}."
+    },
+    "sip_call_start_failed": {
+      "message": "SIP volání na cíl {destination} se nepodařilo zahájit."
+    },
+    "sip_target_unresolved": {
+      "message": "SIP cíl {destination} se nepodařilo přeložit."
+    },
+    "trunk_required": {
+      "message": "Cíl {destination} vyžaduje registrovaný SIP trunk."
+    },
+    "esphome_action_missing": {
+      "message": "Zařízení {phone} neposkytuje vyžadovanou ESPHome akci {action}. Aktualizujte jeho softwarový balíček VoIP telefonu a firmware."
+    },
+    "esphome_route_missing": {
+      "message": "Zařízení {phone} neposkytuje žádnou trasu pro ovládání hovorů ESPHome."
+    },
+    "phone_not_browser": {
+      "message": "Vybrané zařízení není telefonem v prohlížeči Home Assistanta."
+    },
+    "phone_not_integration_owned": {
+      "message": "Vybrané zařízení není telefonem spravovaným službou VoIP Stack."
+    },
+    "phone_operation_not_supported": {
+      "message": "Telefon {phone} nepodporuje operaci {operation}."
+    },
+    "phone_selection_required": {
+      "message": "Vyberte telefon, který má tuto akci provést."
+    },
+    "phone_unavailable": {
+      "message": "Telefon {phone} je momentálně nedostupný."
+    },
+    "purge_devices_disabled": {
+      "message": "Tato akce je zakázána, protože VoIP Stack nevlastní zařízení ESPHome a nemůže je bezpečně odebrat."
+    },
+    "transfer_destination_required": {
+      "message": "Je vyžadován cíl přepojení nebo náhradní hovor."
+    },
+    "transfer_target_invalid": {
+      "message": "Cíl přepojení je neplatný nebo nejednoznačný."
+    },
+    "unknown_phone_device": {
+      "message": "Vybrané telefonní zařízení Home Assistanta je neznámé."
+    }
+  },
+  "entity": {
+    "event": {
+      "voip_stack_call_event": {
+        "name": "Hovor VoIP Stacku"
+      },
+      "phone_endpoint_call": {
+        "name": "Hovor"
+      }
+    },
+    "sensor": {
+      "voip_stack_ha_softphone_call_state": {
+        "name": "Stav hovoru VoIP Stacku"
+      },
+      "phone_endpoint_call_state": {
+        "name": "Stav hovoru",
+        "state": {
+          "offline": "Nepřipojeno",
+          "idle": "Neaktivní",
+          "calling": "Volání",
+          "remote_ringing": "Vyzvánění u vzdálené strany",
+          "ringing": "Vyzvánění",
+          "connecting": "Připojování",
+          "in_call": "Probíhá hovor",
+          "held": "Přidrženo",
+          "terminating": "Ukončování"
+        }
+      }
+    },
+    "switch": {
+      "phone_endpoint_dnd": {
+        "name": "Nerušit"
+      },
+      "phone_endpoint_conference_ring": {
+        "name": "Vyzvánět při konferenčních hovorech"
+      },
+      "phone_endpoint_auto_answer": {
+        "name": "Automatický příjem"
+      },
+      "phone_endpoint_send_video": {
+        "name": "Odesílat video"
+      }
+    },
+    "text": {
+      "phone_endpoint_extension": {
+        "name": "Klapka"
+      },
+      "phone_endpoint_ring_group": {
+        "name": "Vyzváněcí skupiny"
+      },
+      "phone_endpoint_conference_group": {
+        "name": "Konferenční skupiny"
+      }
+    },
+    "binary_sensor": {
+      "phone_endpoint_connectivity": {
+        "name": "Konektivita"
+      }
+    }
+  },
+  "triggers": {
+    "call_started": {
+      "name": "VoIP hovor zahájen",
+      "description": "Ponechte filtry prázdné, aby odpovídaly každému hovoru. Akce tento spouštěcí hovor použijí automaticky.",
+      "fields": {
+        "caller": {
+          "name": "Volající",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "destination": {
+          "name": "Cíl",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "ingress": {
+          "name": "Původ hovoru",
+          "description": "Volitelný filtr."
+        }
+      }
+    },
+    "call_received": {
+      "name": "VoIP hovor přijat",
+      "description": "Ponechte filtry prázdné, aby odpovídaly každému hovoru. Akce tento spouštěcí hovor použijí automaticky.",
+      "fields": {
+        "caller": {
+          "name": "Volající",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "destination": {
+          "name": "Cíl",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "ingress": {
+          "name": "Původ hovoru",
+          "description": "Volitelný filtr."
+        }
+      }
+    },
+    "route_requested": {
+      "name": "Vyžádán cíl VoIP hovoru",
+      "description": "Ponechte filtry prázdné, aby odpovídaly každému hovoru. Akce tento spouštěcí hovor použijí automaticky.",
+      "fields": {
+        "caller": {
+          "name": "Volající",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "destination": {
+          "name": "Cíl",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "ingress": {
+          "name": "Původ hovoru",
+          "description": "Volitelný filtr."
+        }
+      }
+    },
+    "call_connected": {
+      "name": "VoIP hovor spojen",
+      "description": "Ponechte filtry prázdné, aby odpovídaly každému hovoru. Akce tento spouštěcí hovor použijí automaticky.",
+      "fields": {
+        "caller": {
+          "name": "Volající",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "destination": {
+          "name": "Cíl",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "ingress": {
+          "name": "Původ hovoru",
+          "description": "Volitelný filtr."
+        }
+      }
+    },
+    "call_ended": {
+      "name": "VoIP hovor ukončen",
+      "description": "Ponechte filtry prázdné, aby odpovídaly každému hovoru. Akce tento spouštěcí hovor použijí automaticky.",
+      "fields": {
+        "caller": {
+          "name": "Volající",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "destination": {
+          "name": "Cíl",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "ingress": {
+          "name": "Původ hovoru",
+          "description": "Volitelný filtr."
+        },
+        "reason": {
+          "name": "Důvod ukončení",
+          "description": "Volitelný filtr."
+        },
+        "outcome": {
+          "name": "Výsledek hovoru",
+          "description": "Ukončeno normálně, zmeškáno nebo selhalo. Pro jakýkoli výsledek ponechte prázdné."
+        }
+      }
+    },
+    "dtmf_received": {
+      "name": "Přijata číslice z klávesnice při VoIP hovoru",
+      "description": "Ponechte filtry prázdné, aby odpovídaly každému hovoru. Akce tento spouštěcí hovor použijí automaticky.",
+      "fields": {
+        "caller": {
+          "name": "Volající",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "destination": {
+          "name": "Cíl",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "ingress": {
+          "name": "Původ hovoru",
+          "description": "Volitelný filtr."
+        },
+        "digit": {
+          "name": "Číslice klávesnice",
+          "description": "Volitelný filtr."
+        },
+        "source_leg": {
+          "name": "Kdo stiskl klávesu",
+          "description": "Volitelný filtr."
+        }
+      }
+    },
+    "call_unanswered": {
+      "name": "VoIP hovor nezodpovězen",
+      "description": "Cíl stále vyzvání i po zvolené době trvání. Přijetí, přesměrování nebo ukončení hovoru toto čekání zruší.",
+      "fields": {
+        "caller": {
+          "name": "Volající",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "destination": {
+          "name": "Cíl",
+          "description": "Jméno v telefonním seznamu nebo klapka. Pro všechny ponechte prázdné."
+        },
+        "ingress": {
+          "name": "Původ hovoru",
+          "description": "Volitelný filtr."
+        },
+        "for": {
+          "name": "Doba bez odpovědi",
+          "description": "Měřeno od okamžiku, kdy tento cíl začne vyzvánět."
+        }
+      }
+    }
+  },
+  "conditions": {
+    "is_call_state": {
+      "name": "Hovor je ve stavu",
+      "description": "Zkontroluje spouštěcí hovor nebo vybraný telefon.",
+      "fields": {
+        "state": {
+          "name": "Stav"
+        }
+      }
+    },
+    "is_call_origin": {
+      "name": "Hovor je z",
+      "description": "Zkontroluje spouštěcí hovor nebo vybraný telefon.",
+      "fields": {
+        "ingress": {
+          "name": "Původ"
+        }
+      }
+    },
+    "is_phone_available": {
+      "name": "Telefon je dostupný",
+      "description": "Zkontroluje spouštěcí hovor nebo vybraný telefon.",
+      "fields": {
+        "phone": {
+          "name": "Jméno v telefonním seznamu nebo klapka"
+        }
+      }
+    },
+    "is_dtmf_result": {
+      "name": "Vstup z klávesnice volajícího odpovídá",
+      "description": "Zkontroluje výsledek poslední akce Čekat na vstup z klávesnice v tomto spuštění.",
+      "fields": {
+        "status": {
+          "name": "Výsledek"
+        },
+        "digits": {
+          "name": "Očekávané číslice",
+          "description": "Ponechte prázdné, aby odpovídalo jakýmkoli přijatým číslicím."
+        }
+      }
+    }
+  }
+}
