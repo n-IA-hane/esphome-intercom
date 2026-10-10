@@ -59,7 +59,7 @@
       },
       "trunk": {
         "title": "Volitelný SIP Trunk",
-        "description": "Connect Home Assistant to one provider or PBX. Incoming calls follow the configured routing and optional automations.",
+        "description": "Připojte Home Assistant k jednomu poskytovateli nebo ústředně (PBX). Příchozí hovory se řídí nastaveným směrováním a volitelnými automatizacemi.",
         "data": {
           "trunk_transport": "Transport SIP trunku",
           "trunk_server": "Server trunku",
@@ -133,7 +133,7 @@
           }
         },
         "browser": {
-          "title": "Home Assistant softphone",
+          "title": "Softphone Home Assistantu",
           "description": "Vytvořte logický telefon pro jednu nebo více Lovelace karet. Karty vázané na stejný telefon vyzvánějí společně; první, která hovor přijme, přebírá média.",
           "data": {
             "name": "Jméno",
