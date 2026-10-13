@@ -19,10 +19,10 @@
           "parking_enabled": "Povolit parkování hovorů"
         },
         "data_description": {
-          "sip_port": "Naslouchací port pro SIP koncový bod HA. HA na tomto portu ambientně přijímá SIP signalizaci přes UDP i TCP.",
+          "sip_port": "Naslouchací port pro SIP koncový bod HA. HA na tomto portu automaticky přijímá SIP signalizaci přes UDP i TCP.",
           "rtp_port": "Základní RTP UDP port pro média a přenosy HA.",
           "advertise_host": "Volitelné přepsání adresy zveřejňované v telefonních seznamech ESP. Použijte v případě, že se HA nachází za směrovačem, NAT, LXC, VPN nebo ve více podsítích a automaticky oznámená adresa není pro zařízení ESP dostupná.",
-          "assist_intents": "Registrovat volitelné obslužné rutiny Assist pro volání, ukončení hovoru, přijetí a odmítnutí (např. „Hey Jarvis, call Kitchen“). Vyslovená jména kontaktů se dynamicky vyhodnocují oproti aktuálnímu telefonnímu seznamu VoIP.",
+          "assist_intents": "Registrovat volitelné obslužné rutiny Assist pro volání, ukončení hovoru, přijetí a odmítnutí (např. \"Hey Jarvis, zavolej do kuchyně\"). Vyslovená jména kontaktů se dynamicky vyhodnocují oproti aktuálnímu telefonnímu seznamu VoIP.",
           "assist_endpoint_enabled": "Přidat SIP klapku propojenou přímo s konverzačním asistentem Home Assistant Assist. Není vyžadována žádná samostatná VoIP integrace ani SIP posluchač.",
           "debug_mode": "Povolí podrobnou diagnostiku a logování SIP/RTP/médií bez zaznamenávání samotného zvuku hovorů.",
           "media_capture": "Explicitně zaznamenává zvuk soukromých hovorů: až 15 sekund pro každý směr HA-softphonu a 8 sekund pro každou větev přenosu. Data se ukládají jako WAV/JSON do ~/.cache/voip_stack_debug (režim 0700) a promazávají se na limit 24 souborů / 64 MiB. Ponechte zakázané, pokud zrovna neshromažďujete diagnostický vzorek.",
@@ -68,7 +68,7 @@
           "trunk_username": "Uživatelské jméno trunku",
           "trunk_auth_username": "Uživatelské jméno pro autorizaci",
           "trunk_password": "Heslo",
-          "trunk_register_expires": "Platnost REGISTER vyprší",
+          "trunk_register_expires": "Doba platnosti registrace (REGISTER)",
           "trunk_outbound_proxy": "Odchozí proxy",
           "trunk_inbound_default_target": "Záložní cíl",
           "trunk_inbound_mode": "Zpracování příchozích hovorů",
@@ -89,10 +89,10 @@
           "trunk_password": "Heslo pro Digest autentizaci.",
           "trunk_register_expires": "Doba platnosti registrace (REGISTER) v sekundách.",
           "trunk_outbound_proxy": "Volitelný proxy server (hostname nebo sip:host:port) použitý jako další skok (next hop) pro signalizaci.",
-          "trunk_inbound_default_target": "Vyberte přijímající telefon podle názvu nebo zadejte skupinu, klapku či kontakt typu Automation. Okamžité směrování použije tento cíl, pokud volaný cíl není v telefonním seznamu. Volba pomocí DTMF a automatizace směrování mohou vybrat jiný cíl.",
+          "trunk_inbound_default_target": "Vyberte přijímající telefon podle názvu nebo zadejte skupinu, klapku či kontakt typu Automatizace. Okamžité směrování použije tento cíl, pokud volaný cíl není v telefonním seznamu. Volba pomocí DTMF a automatizace směrování mohou vybrat jiný cíl.",
           "trunk_inbound_mode": "Okamžité směrování přeskočí sběr číslic. Sběr klapky pomocí DTMF nejprve zvedne větev trunku (pre-answer) a umožní zadáním číslic vybrat klapku z telefonního seznamu.",
           "automation_routing_enabled": "Před použitím záložního cíle publikovat krátký požadavek na směrování, na který může odpovědět automatizace. Explicitně zadané číslice DTMF mají vždy prioritu.",
-          "trunk_dtmf_timeout_ms": "Mezi-číslicový časový limit použitý v režimu DTMF. První číslice má povolený limit 10 sekund. Výchozí hodnota jsou 3 sekundy, maximum 10 sekund.",
+          "trunk_dtmf_timeout_ms": "Jak dlouho se po stisku klávesy čeká na další klávesu v režimu DTMF. Na první klávesu je 10 sekund. Výchozí hodnota jsou 3 sekundy, maximum 10 sekund.",
           "trunk_dtmf_terminator": "Volitelná ukončovací číslice, např. #. Prázdná hodnota znamená, že o ukončení rozhodne časový limit nebo přesná shoda s klapkou v telefonním seznamu.",
           "trunk_allowed_ips": "Zadejte každou povolenou zdrojovou IP adresu nebo CIDR síť samostatně. Ty se mohou lišit od odchozího serveru. Vyžadováno u trunků bez registrace.",
           "trunk_audio_codecs": "Zvukové kodeky povolené pro příchozí i odchozí hovory na tomto trunku. Ponechte výchozí nastavení, pokud ústředna nebo poskytovatel neurčí jiný seznam. Vyberte alespoň jeden kodek. Hovor vyžaduje společný kodek; DTMF se vyjednává samostatně. Tento seznam nemění ostatní trunky ani místní telefony.",
@@ -107,7 +107,7 @@
         }
       },
       "voicemail": {
-        "title": "Hlas hlasové schránky",
+        "title": "Hlasová schránka (TTS)",
         "description": "Vyberte entitu TTS v Home Assistantu pro společné telefonní menu.",
         "data": {
           "tts_entity_id": "Entita TTS"
@@ -194,7 +194,7 @@
           },
           "data_description": {
             "name": "Vyžadované jméno telefonu používané kartou, telefonním seznamem a směrováním hovorů.",
-            "extension": "Volitelná unikátní volitelná klapka. Logický telefon zůstává dostupný pro vyzvánění, i když není připojená žádná karta v prohlížeči.",
+            "extension": "Volitelné unikátní číslo (klapka), na které lze tomuto telefonu volat. Telefon bude vyzvánět, i když není otevřená žádná karta v prohlížeči.",
             "auto_answer": "Automaticky přijmout hovor, pokud má připojený prohlížeč oprávnění k mikrofonu.",
             "send_video": "Ve výchozím nastavení odesílat obraz z kamery připojeného prohlížeče, pokud je vyjednáno video a je k dispozici oprávnění."
           }
@@ -284,7 +284,7 @@
       "step": {
         "user": {
           "title": "SIP trunk",
-          "description": "Pojmenujte tuto linku a zvolte, zda poskytovatel vyžaduje registraci.",
+          "description": "Pojmenujte tento trunk a zvolte, zda poskytovatel vyžaduje registraci.",
           "data": {
             "name": "Jméno",
             "trunk_enabled": "Povolit tento trunk",
@@ -292,7 +292,7 @@
             "make_default": "Použít jako výchozí odchozí trunk"
           },
           "data_description": {
-            "make_default": "Použije se, pokud trunk nevybere akce volání ani volající telefon. Pokud je zvolený trunk nedostupný, nikdy se automaticky nepřepne na jinou linku."
+            "make_default": "Použije se, pokud trunk nevybere akce volání ani volající telefon. Pokud je zvolený trunk nedostupný, nikdy se automaticky nepřepne na jiný trunk."
           }
         },
         "trunk": {
@@ -306,7 +306,7 @@
             "trunk_username": "Uživatelské jméno trunku",
             "trunk_auth_username": "Uživatelské jméno pro autorizaci",
             "trunk_password": "Heslo",
-            "trunk_register_expires": "Platnost REGISTER vyprší",
+            "trunk_register_expires": "Doba platnosti registrace (REGISTER)",
             "trunk_outbound_proxy": "Odchozí proxy",
             "trunk_inbound_default_target": "Záložní cíl",
             "trunk_inbound_mode": "Zpracování příchozích hovorů",
@@ -327,10 +327,10 @@
             "trunk_password": "Heslo pro Digest autentizaci.",
             "trunk_register_expires": "Doba platnosti registrace (REGISTER) v sekundách.",
             "trunk_outbound_proxy": "Volitelný proxy server (hostname nebo sip:host:port) použitý jako další skok (next hop) pro signalizaci.",
-            "trunk_inbound_default_target": "Vyberte přijímající telefon podle názvu nebo zadejte skupinu, klapku či kontakt typu Automation. Okamžité směrování použije tento cíl, pokud volaný cíl není v telefonním seznamu. Volba pomocí DTMF a automatizace směrování mohou vybrat jiný cíl.",
+            "trunk_inbound_default_target": "Vyberte přijímající telefon podle názvu nebo zadejte skupinu, klapku či kontakt typu Automatizace. Okamžité směrování použije tento cíl, pokud volaný cíl není v telefonním seznamu. Volba pomocí DTMF a automatizace směrování mohou vybrat jiný cíl.",
             "trunk_inbound_mode": "Okamžité směrování přeskočí sběr číslic. Sběr klapky pomocí DTMF nejprve zvedne větev trunku (pre-answer) a umožní zadáním číslic vybrat klapku z telefonního seznamu.",
             "automation_routing_enabled": "Před použitím záložního cíle publikovat krátký požadavek na směrování, na který může odpovědět automatizace. Explicitně zadané číslice DTMF mají vždy prioritu.",
-            "trunk_dtmf_timeout_ms": "Mezi-číslicový časový limit použitý v režimu DTMF. První číslice má povolený limit 10 sekund. Výchozí hodnota jsou 3 sekundy, maximum 10 sekund.",
+            "trunk_dtmf_timeout_ms": "Jak dlouho se po stisku klávesy čeká na další klávesu v režimu DTMF. Na první klávesu je 10 sekund. Výchozí hodnota jsou 3 sekundy, maximum 10 sekund.",
             "trunk_dtmf_terminator": "Volitelná ukončovací číslice, např. #. Prázdná hodnota znamená, že o ukončení rozhodne časový limit nebo přesná shoda s klapkou v telefonním seznamu.",
             "trunk_allowed_ips": "Zadejte každou povolenou zdrojovou IP adresu nebo CIDR síť samostatně. Ty se mohou lišit od odchozího serveru. Vyžadováno u trunků bez registrace.",
             "trunk_audio_codecs": "Zvukové kodeky povolené pro příchozí i odchozí hovory na tomto trunku. Ponechte výchozí nastavení, pokud ústředna nebo poskytovatel neurčí jiný seznam. Vyberte alespoň jeden kodek. Hovor vyžaduje společný kodek; DTMF se vyjednává samostatně. Tento seznam nemění ostatní trunky ani místní telefony.",
@@ -458,7 +458,7 @@
     },
     "default_trunk_missing": {
       "title": "Vyberte výchozí odchozí SIP trunk",
-      "description": "Žádný existující trunk není vybrán jako výchozí. Otevřete VoIP Stack, upravte požadovanou linku a zapněte „Použít jako výchozí odchozí trunk“. Linku můžete také vybrat v možnostech telefonu nebo v akci volání. Odstranění linky nikdy bez upozornění nevybere jiného poskytovatele."
+      "description": "Žádný existující trunk není vybrán jako výchozí. Otevřete VoIP Stack, upravte požadovaný trunk a zapněte \"Použít jako výchozí odchozí trunk\". Trunk můžete také vybrat v možnostech telefonu nebo v akci volání. Odstranění trunku nikdy bez upozornění nevybere jiného poskytovatele."
     },
     "duplicate_extensions": {
       "title": "Duplicitní telefonní klapky",
@@ -509,7 +509,7 @@
       "message": "Hovor {call_id} je neznámý nebo byl ukončen."
     },
     "conference_full": {
-      "message": "Konference {conference} is plná."
+      "message": "Konference {conference} je plná."
     },
     "conference_phone_mismatch": {
       "message": "Konferenční hovor {call_id} nepatří k telefonu {phone}."
@@ -611,7 +611,7 @@
       "message": "Externí hovory jsou pro tento telefon zakázány."
     },
     "outgoing_trunk_not_selected": {
-      "message": "Není vybrán odchozí SIP trunk. Vyberte linku v možnostech telefonu nebo nastavte výchozí trunk."
+      "message": "Není vybrán odchozí SIP trunk. Vyberte trunk v možnostech telefonu nebo nastavte výchozí trunk."
     },
     "outgoing_trunk_unavailable": {
       "message": "Vybraný SIP trunk není dostupný. Zkontrolujte jeho senzor Připraveno."
