@@ -72,15 +72,15 @@
 # =============================================================================
 
 substitutions:
-  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@main"
   gmf_ai_audio_source: ""
   firmware_features: [voip, status_led, diagnostics]
   name: generic-native-int-fd
   friendly_name: Generic S3 Native VoIP Full Duplex
 
-  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
 
   # ---------------------------------------------------------------------------
   # Pinout: native microphone I2S bus
@@ -108,4 +108,4 @@ substitutions:
 # basic buttons and native diagnostics.
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/generic-s3-phone-native.yaml@dev
+  device: github://n-IA-hane/esphome-intercom/packages/devices/generic-s3-phone-native.yaml@main

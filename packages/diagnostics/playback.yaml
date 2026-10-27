@@ -2,7 +2,7 @@
 esphome:
   min_version: 2026.10.0
 defaults:
-  playback_diagnostics_source: '${ playback_diagnostics_source | default(ext_components_source | default("github://n-IA-hane/esphome-intercom@dev")) }'
+  playback_diagnostics_source: '${ playback_diagnostics_source | default(ext_components_source | default("github://n-IA-hane/esphome-intercom@main")) }'
   playback_diagnostics_player_id: '${ playback_diagnostics_player_id | default("speaker_media_player") }'
   playback_diagnostics_source_id: '${ playback_diagnostics_source_id | default("announcement_http_source") }'
   playback_diagnostics_media_source_id: '${ playback_diagnostics_media_source_id | default("media_http_source") }'

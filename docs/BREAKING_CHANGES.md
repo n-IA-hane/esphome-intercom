@@ -68,7 +68,7 @@ the value if the output clips. A 0-dB setting adds no software boost.
 Hardware PGA and echo-reference calibration remain separate controls; keep the
 values supplied for your board instead of copying another device's tuning.
 
-See [Audio Stack tuning](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/docs/AUDIO_TUNING.md)
+See [Audio Stack tuning](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/docs/AUDIO_TUNING.md)
 and the [Box V2 calibration](WAVESHARE_V2_PROCESSING.md#one-physical-calibration-for-this-board).
 
 ## Development firmware: ESPHome 2026.10 and music pairing
@@ -240,7 +240,7 @@ recordings and other phones' mailboxes are preserved.
 
 ## PBX development branch: separate SIP trunk entries
 
-The updated `v2026.11.0-dev` preview changes where trunks are configured.
+The updated `v2026.11.0` preview changes where trunks are configured.
 Older builds with the same version label used the former single-trunk flow.
 
 Previously, a single trunk was configured in the main VoIP Stack setup or

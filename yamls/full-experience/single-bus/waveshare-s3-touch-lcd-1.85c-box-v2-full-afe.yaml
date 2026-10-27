@@ -34,4 +34,4 @@ substitutions:
   # Optional overrides: mic_id, ai_avatar, component source refs, pins and buffers.
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-box-v2-afe.yaml@dev
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-box-v2-afe.yaml@main

@@ -9,7 +9,7 @@ The package syntax requires ESPHome 2026.10.0 or newer. The current composition 
 firmware checks use ESPHome 2026.10.0 with ESP-IDF 5.5.6. Validation, compilation and
 physical testing are different checks; experimental boards remain experimental.
 
-This guide describes the reorganized development packages. Start with the
+This guide describes the reorganized 2026.11.0 packages. Start with the
 [device setup guide](../yamls/README.md#how-to-use) and use a coordinated source
 revision containing this layout. Updating an older YAML is covered in the
 [migration checklist](../docs/BREAKING_CHANGES.md#development-firmware-new-device-packages).
@@ -24,7 +24,7 @@ substitutions:
   # Keep the board's other substitutions, pins and component sources.
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-full-afe.yaml@dev
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-full-afe.yaml@main
 ```
 
 Edit that existing list. These are examples of replacement values:
@@ -104,7 +104,7 @@ This is ESPHome's native configuration view. External components and assets
 remain referenced; it is not a self-contained firmware distribution. Keep
 editing the original YAML, and do not add `--show-secrets` to share a config.
 For codec-free stereo microphones and the available acquisition layouts, see
-[Audio Stack microphone delivery](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/docs/AUDIO_TUNING.md#1-choose-how-microphones-reach-the-processor).
+[Audio Stack microphone delivery](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/docs/AUDIO_TUNING.md#1-choose-how-microphones-reach-the-processor).
 
 ## On-device Options
 

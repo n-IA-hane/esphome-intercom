@@ -59,9 +59,9 @@ substitutions:
   status_led_chipset: WS2812
   status_led_rgb_order: GRB
 
-  ext_components_source: github://n-IA-hane/esphome-intercom@dev
-  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@dev
-  audio_stack_components_source: github://n-IA-hane/esphome-audio-stack@dev
+  ext_components_source: github://n-IA-hane/esphome-intercom@main
+  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@main
+  audio_stack_components_source: github://n-IA-hane/esphome-audio-stack@main
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/generic-s3-phone-single-camera.yaml@dev
+  device: github://n-IA-hane/esphome-intercom/packages/devices/generic-s3-phone-single-camera.yaml@main

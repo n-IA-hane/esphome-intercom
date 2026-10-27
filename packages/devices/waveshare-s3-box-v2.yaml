@@ -26,11 +26,11 @@ substitutions:
   voip_rx_task_stack_size: '12288'
   name: waveshare-s3-touch-lcd-185c-v2
   friendly_name: Waveshare S3 Touch LCD 1.85C V2
-  ext_components_source: github://n-IA-hane/esphome-intercom@dev
-  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@dev
-  audio_stack_components_source: github://n-IA-hane/esphome-audio-stack@dev
-  runtime_controller_components_source: github://n-IA-hane/esphome-runtime-controller@dev
-  assets_base: https://github.com/n-IA-hane/esphome-intercom/raw/dev/
+  ext_components_source: github://n-IA-hane/esphome-intercom@main
+  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@main
+  audio_stack_components_source: github://n-IA-hane/esphome-audio-stack@main
+  runtime_controller_components_source: github://n-IA-hane/esphome-runtime-controller@main
+  assets_base: https://github.com/n-IA-hane/esphome-intercom/raw/main/
   ai_avatar: f_off
   settings_row_width: '255'
   settings_wide_width: '285'

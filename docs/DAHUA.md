@@ -5,7 +5,7 @@ section even when the Home Assistant browser is only receiving video. The
 profile also selects standard SIP audio formats at 20 ms instead of treating
 an unregistered door station as a generic directional PCM endpoint.
 
-This configuration is available in the updated **2026.11.0-dev** preview.
+This configuration is available in the updated **2026.11.0** release.
 It requires no Python patch, fabricated User-Agent, or `registered: true` flag.
 
 ## Dahua registered with Home Assistant

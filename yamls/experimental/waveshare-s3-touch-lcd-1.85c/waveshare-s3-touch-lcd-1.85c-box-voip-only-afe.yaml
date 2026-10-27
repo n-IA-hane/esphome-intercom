@@ -48,8 +48,8 @@
 # =============================================================================
 
 substitutions:
-  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
-  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@main"
   gmf_ai_audio_source: ""
   firmware_features: [voip, display]
   name: waveshare-s3-185c-voip
@@ -57,8 +57,8 @@ substitutions:
 
   # Local sources keep repository builds reproducible. Release examples replace
   # these with the corresponding pinned public component revisions.
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
 
   i2s_mclk_pin: GPIO2
   i2s_bclk_pin: GPIO48
@@ -68,4 +68,4 @@ substitutions:
   speaker_enable_pin: GPIO15
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-box-v1-phone-afe.yaml@dev
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-box-v1-phone-afe.yaml@main

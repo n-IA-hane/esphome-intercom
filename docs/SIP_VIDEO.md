@@ -83,7 +83,7 @@ entity alone is not an advertised SIP video capability.
 For a direct call from the HA phone to the S3, enable SIP video in HA and use
 an HA integration version that negotiates reception independently from
 **Send Camera**. Stable `2026.10.1` still ties the outgoing video offer to that
-switch; the development preview removes that dependency. Updating only the
+switch; 2026.11.0 removes that dependency. Updating only the
 ESP external component does not update the HA integration.
 
 With the browser camera off, HA offers JPEG as `recvonly`. A camera-only S3

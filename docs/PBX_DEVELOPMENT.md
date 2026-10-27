@@ -1,7 +1,7 @@
 # HA PBX branch: implementation and qualification
 
 This guide describes the PBX implementation and qualification included in the
-**2026.11.0-dev** preview. Stable 2026.10.1 does not include these additions.
+**2026.11.0** release. Version 2026.10.1 did not include these additions.
 Asterisk and FreeSWITCH are protocol references and test peers, not dependencies.
 
 ## Ownership and public behavior

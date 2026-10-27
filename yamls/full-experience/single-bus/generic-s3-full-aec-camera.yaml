@@ -62,11 +62,11 @@ substitutions:
   runtime_controller_led_preset: rgb_single
   mic_id: mic_main
 
-  ext_components_source: github://n-IA-hane/esphome-intercom@dev
-  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@dev
-  audio_stack_components_source: github://n-IA-hane/esphome-audio-stack@dev
-  runtime_controller_components_source: github://n-IA-hane/esphome-runtime-controller@dev
-  assets_base: https://github.com/n-IA-hane/esphome-intercom/raw/dev/
+  ext_components_source: github://n-IA-hane/esphome-intercom@main
+  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@main
+  audio_stack_components_source: github://n-IA-hane/esphome-audio-stack@main
+  runtime_controller_components_source: github://n-IA-hane/esphome-runtime-controller@main
+  assets_base: https://github.com/n-IA-hane/esphome-intercom/raw/main/
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/generic-s3-single-aec-camera.yaml@dev
+  device: github://n-IA-hane/esphome-intercom/packages/devices/generic-s3-single-aec-camera.yaml@main

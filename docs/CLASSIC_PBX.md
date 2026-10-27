@@ -335,7 +335,7 @@ calls the PBX, and the PBX handles provider authentication and codec conversion.
 
 ## Keep microphone and playback rates independent
 
-Current development firmware also supports standard SDP with 16 kHz PCM sent
+Current firmware also supports standard SDP with 16 kHz PCM sent
 by the ESP and 48 kHz PCM received by it. Keep the maintained full profile's
 existing audio capabilities; its AFE microphone remains at 16 kHz. For this
 pre-release, select the component's development branch in the maintained YAML's
@@ -343,7 +343,7 @@ existing substitutions:
 
 ```yaml
 substitutions:
-  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@dev
+  voip_stack_components_source: github://n-IA-hane/esphome-voip-stack@main
 ```
 
 Rebuild and upload the ESP. On the Asterisk endpoint, replace the single-codec

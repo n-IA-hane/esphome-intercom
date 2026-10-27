@@ -21,7 +21,7 @@ phones. For the difference between a phone, card, contact and trunk, see
 
 The screenshots use Home Assistant's visual editors. Choose phones by their
 names; HA stores the identifiers for you. The new PBX actions described here
-are included in the current **2026.11.0-dev** prerelease. If an action is missing
+are included in the current **2026.11.0** release. If an action is missing
 after redownloading the same version, restart HA and reload the browser.
 
 ## Install Home Assistant VoIP Stack
@@ -761,7 +761,7 @@ response fields and advanced concurrent-call selection.
 
 Start with your maintained device YAML and its default AEC/AFE profile. For a
 custom two-microphone delivery, analog PGA controls or a recording of individual
-PCM stages, see [Audio Stack's tuning guide](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/docs/AUDIO_TUNING.md).
+PCM stages, see [Audio Stack's tuning guide](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/docs/AUDIO_TUNING.md).
 These development options are opt-in; removing their YAML excludes the
 corresponding capture/control code. The normal calling and Assist paths continue
 to use the same microphone and speaker owners.

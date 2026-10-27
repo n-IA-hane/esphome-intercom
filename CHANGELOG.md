@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026.11.0-dev
+## 2026.11.0
 
 > **VoIP Stack for Home Assistant does not require ESPHome or ESP devices.** You can use the integration with browser softphones and standard SIP phones.
 >
@@ -11,12 +11,12 @@
 > ESPHome 2026.10 includes substantial audio improvements and several of our accepted contributions. Thank you to the ESPHome team for your work, reviews and accepted PRs! <3
 
 > **Recommended: update your ESP firmware too.** Rebuild and upload the current
-> board YAML with the coordinated development components for all device-side
+> board YAML with the coordinated components for all device-side
 > features and fixes. Updating the HA integration through HACS does not update
 > the firmware running on an ESP.
 
 
-Development preview with changes since stable 2026.10.1.
+Changes since stable 2026.10.1.
 
 ### ESP32-S3 camera video calls
 

@@ -91,7 +91,7 @@ substitutions:
   camera_components_source: "github://Psix-anp/esphome-esp-video-camera@main"
   gmf_ai_audio_source: ""
   intercom_idf_root: ""
-  intercom_idf_ref: "dev"
+  intercom_idf_ref: "main"
   firmware_features: [voice, wake_word, voip, music, sendspin, timers, display, diagnostics, video]
   runtime_controller_debug: "false"
   name: waveshare-p4-touch
@@ -100,11 +100,11 @@ substitutions:
 
   # Toggled by scripts/yaml_paths.sh between local (../../../...) and remote
   # release mode.
-  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
-  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
-  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/dev/"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@main"
+  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/main/"
 
   # Logical LVGL dimensions after software rotation. Runtime layout still reads
   # the active LVGL resolution so the main dashboard can be reused on nearby
@@ -188,4 +188,4 @@ substitutions:
 # controller, phonebook sync, ESP AFE controls, LVGL dashboard and media assets.
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-p4-full-landscape.yaml@dev
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-p4-full-landscape.yaml@main

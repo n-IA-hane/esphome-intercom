@@ -86,7 +86,7 @@ and recording. The report does not certify every combination or provider.
 
 ## Two fixes in Home Assistant
 
-The development preview also corrects H.264 delivery to the browser. Standalone
+The 2026.11.0 release also corrects H.264 delivery to the browser. Standalone
 SPS/PPS parameter blocks are cached for the next picture, rather than submitted
 to WebCodecs as empty pictures. This prevents a decoder failure when the PBX
 switches from an initial frame to the camera stream.

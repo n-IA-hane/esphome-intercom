@@ -3,7 +3,7 @@ site_description: SIP phones, calls and automations in Home Assistant, with opti
 repo_url: https://github.com/n-IA-hane/esphome-intercom
 repo_name: n-IA-hane/esphome-intercom
 extra:
-  source_ref: dev
+  source_ref: main
 docs_dir: docs
 site_dir: site
 hooks:

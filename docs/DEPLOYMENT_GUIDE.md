@@ -168,10 +168,9 @@ a new device package that already owns the runtime bindings.
 3. Open **Settings → Devices & services → Add integration**.
 4. Select **VoIP Stack** and complete the config flow.
 
-For the current development preview, open the existing VoIP Stack repository
-in HACS, choose **Redownload** and select **2026.11.0-dev**. Allow prerelease
-versions if they are hidden. Restart HA after downloading and reload the
-dashboard. Use the coordinated development component and package references
+To update to 2026.11.0, open the existing VoIP Stack repository
+in HACS, choose **Redownload** and select **2026.11.0**. Restart HA after downloading and reload the
+dashboard. Use the coordinated stable component and package references
 when rebuilding an ESP; redownloading the HA integration does not flash it.
 
 <table>

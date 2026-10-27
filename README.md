@@ -31,20 +31,20 @@ off. [Learn the phone controls](docs/USER_GUIDE.md#read-the-phone-card) and
 [how to park and retrieve audio calls](docs/CALL_PARKING.md).
 [FreeSWITCH/FusionPBX setup](docs/FREESWITCH.md)._
 
-Stable release: [2026.10.1](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.1).
-Requires Home Assistant **2026.7.0 or newer**. The current development firmware
+Stable release: [2026.11.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0).
+Requires Home Assistant **2026.7.0 or newer**. The maintained firmware
 requires ESPHome **2026.10.0 or newer**.
 
-The stable 2026.10.1 firmware profiles use ESP VoIP Stack **2026.10.1**, Runtime Controller
-**2026.10.1**, and Audio Stack **2026.10.2** from their `main` branches. HA and ESP
+The 2026.11.0 firmware profiles use ESP VoIP Stack **2026.11.0**, Runtime Controller
+**2026.11.0**, and Audio Stack **2026.11.0** from their `main` branches. HA and ESP
 firmware do not need matching version numbers. Rebuilding ESP firmware is
 recommended to receive the updated AFE delivery and playback fixes; it is separate
 from updating HA through HACS.
 
-The development profiles below use coordinated `dev` sources. See the
-[2026.10.1 changes](CHANGELOG.md) for the stable release, and follow the
+The profiles below use coordinated `main` sources. See the
+[2026.11.0 changes](CHANGELOG.md), and follow the
 [current device-package migration](docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
-when adopting the development firmware.
+when updating existing firmware.
 
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3%20%7C%20ESP32--P4-blue.svg)](#supported-hardware)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-native-blue.svg)](https://www.home-assistant.io)
@@ -70,12 +70,12 @@ See the [firmware migration notes](docs/BREAKING_CHANGES.md#development-firmware
 when updating copied YAMLs. This does not force an immediate firmware update
 when installing the Home Assistant integration alone.
 
-## PBX additions in the development preview
+## PBX additions in 2026.11.0
 
-The [2026.11.0-dev preview](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0-dev)
+The [2026.11.0 release](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0)
 adds **multiple named SIP trunks, phone forwarding rules, call transfers,
 voicemail, call parking, directed pickup and conversation recording**. These additions are available in
-the development preview; stable 2026.10.1 does not include them.
+this release; 2026.10.1 did not include them.
 
 Start with the [illustrated PBX walkthrough](docs/PBX_WORKFLOWS.md). It explains
 which controls to use, what callers experience and how automations interact
@@ -182,7 +182,7 @@ and media features to an ESP endpoint.
 The reorganized firmware profiles select one device package and one
 `firmware_features` list. Follow the [progressive package examples](packages/README.md#work-through-a-full-profile)
 to remove Sendspin, build a voice-only device, or combine voice, calls and music.
-This layout is included in the development preview; use its coordinated `dev`
+This layout is included in 2026.11.0; use its coordinated `main`
 package and component sources. The current preview uses the official ESPHome
 audio, mixer, resampler, player, Voice Assistant, wake-word and OTA providers,
 with our Audio Stack/AEC/AFE, VoIP Stack and Runtime Controller. Follow the
@@ -342,7 +342,7 @@ The underlying audio stack is also reusable without VoIP. Custom ESPHome voice
 devices can use it to share codec or I2S ownership, speaker reference, AEC/AFE
 processing and a cleaned microphone stream between their own consumers.
 
-The [illustrated microphone wiring guide](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/README.md#microphone-wiring-and-delivery-illustrated)
+The [illustrated microphone wiring guide](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/README.md#microphone-wiring-and-delivery-illustrated)
 shows single-mic, stereo L/R, TDM and codec layouts, with YAML for independent
 AFE/BSS inputs or the new optional mono downmix before AEC/AFE.
 
@@ -633,7 +633,7 @@ calls, and the measured Asterisk 16 kHz microphone / 48 kHz playback setup.
 ## Optional SIP trunk
 
 Local calls need no trunk. Add a named line to connect HA to a provider or another
-PBX. In the development preview, use the integration's **Add SIP trunk** menu
+PBX. Use the integration's **Add SIP trunk** menu
 and edit each line separately. Keep **Register the trunk** enabled for account
 registration, or disable it for a static trunk and configure its allowed
 incoming SIP source IPs.
@@ -659,9 +659,9 @@ a trusted network.
 4. Open **Settings → Devices & services → Add integration**.
 5. Select **VoIP Stack** and complete the config flow.
 
-To install the development preview on an existing installation, open VoIP
-Stack in HACS, choose **Redownload** from its menu and select **2026.11.0-dev**.
-Allow prerelease versions if they are hidden, download, restart HA and reload
+To update an existing installation, open VoIP
+Stack in HACS, choose **Redownload** from its menu and select **2026.11.0**.
+Download, restart HA and reload
 the dashboard. HACS updates the HA integration and card, not ESP firmware.
 
 ![Install VoIP Stack from HACS](docs/images/hacs-download-voip-stack.png)
@@ -676,21 +676,20 @@ topologies are documented in the
 
 ### ESPHome components
 
-Use the maintained YAML whenever possible. For the coordinated development
+Use the maintained YAML whenever possible. For the coordinated
 firmware described here, a minimal custom external-component declaration is:
 
 ```yaml
 external_components:
-  - source: github://n-IA-hane/esphome-voip-stack@dev
+  - source: github://n-IA-hane/esphome-voip-stack@main
     components: [voip_stack]
-  - source: github://n-IA-hane/esphome-audio-stack@dev
+  - source: github://n-IA-hane/esphome-audio-stack@main
     components: [esp_audio_stack, esp_aec]
 ```
 
 Replace `esp_aec` with `esp_afe` only when the profile actually uses the full
-AFE pipeline. Stable release profiles use their documented `main` sources; the
-reorganized development profiles use coordinated `dev` sources. Keep the sources
-supplied with the selected profile rather than mixing release generations.
+AFE pipeline. The maintained profiles use coordinated `main` sources. Keep the
+sources supplied with the selected profile rather than mixing release generations.
 
 After a major ESPHome or component upgrade, clear that device's ESPHome build
 cache before compiling. The [deployment guide](docs/DEPLOYMENT_GUIDE.md)
@@ -710,14 +709,14 @@ contains the complete component and cache instructions.
 Reconfiguration and edits to existing automations or YAMLs are needed only when
 the release instructions identify a relevant change.
 
-## What's new in 2026.10.1
+## Previous release: 2026.10.1
 
 Static SIP trunks can now operate without registration, with explicit allowed
 incoming source IPs. Remote ESP phonebooks reuse HA's connected ESPHome service
 identity. SIP interoperability fixes preserve audio through one-way video direction
 conflicts, and translated card buttons grow to fit their labels.
 
-The Waveshare 1.85C-BOX V2 gains an experimental FULL profile with dual microphones,
+The Waveshare 1.85C-BOX V2 gained a FULL profile with dual microphones,
 AFE/AEC, voice features, calls, media and the circular touch UI. The coordinated
 Audio Stack update delivers processed AFE samples without waiting for another
 input iteration. Playback also includes the upstream mixer restart correction
@@ -752,6 +751,7 @@ are not a claim that every board with the same chip has the same wiring.
 |---|---|---|
 | Spotpear Ball v2 | [`spotpear-ball-v2-full-afe.yaml`](yamls/full-experience/single-bus/spotpear-ball-v2-full-afe.yaml) | Field tested |
 | Waveshare ESP32-S3 Audio Board | [`waveshare-s3-full-afe.yaml`](yamls/full-experience/single-bus/waveshare-s3-full-afe.yaml) | Field tested |
+| Waveshare ESP32-S3 Touch LCD 1.85C-BOX V2 | [`waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml`](yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml) | Supported FULL AEC/downmix or dual-microphone AFE |
 | Waveshare ESP32-P4 Touch LCD, full JPEG videophone | [`waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml`](yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml) | Field tested |
 | Waveshare ESP32-P4 Touch LCD, portrait | [`waveshare-p4-touch-full-afe-portrait.yaml`](yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml) | Experimental layout |
 | Generic ESP32-S3, single bus | [`generic-s3-full-aec.yaml`](yamls/full-experience/single-bus/generic-s3-full-aec.yaml) | Reference profile |

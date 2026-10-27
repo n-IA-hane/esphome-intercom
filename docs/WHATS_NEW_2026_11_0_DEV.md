@@ -6,12 +6,12 @@
 >
 > ESPHome 2026.10 includes substantial audio improvements and several of our accepted contributions. Thank you to the ESPHome team for your work, reviews and accepted PRs! <3
 
-# VoIP Stack 2026.11.0-dev
+# VoIP Stack 2026.11.0
 ## It's starting to look like a damn PBX.
 
-Development preview with changes since stable **2026.10.1**.
+Changes since stable **2026.10.1**.
 
-**ESP firmware migration:** the shared packages have been reorganized. Start from the updated YAML for your exact board and bring over your settings. [Migration checklist](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/BREAKING_CHANGES.md#development-firmware-new-device-packages).
+**ESP firmware migration:** the shared packages have been reorganized. Start from the updated YAML for your exact board and bring over your settings. [Migration checklist](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/BREAKING_CHANGES.md#development-firmware-new-device-packages).
 
 VoIP Stack is getting a little too confident. After all the work we've been putting into it, it's starting to look suspiciously like a proper PBX.
 
@@ -59,7 +59,7 @@ The card reuses the contact list and keypad you already know. Opening the transf
 
 HA automations can use the transfer action too. A failed preparation keeps the original conversation available when its caller is still present. Transfer support depends on the endpoints and media path. For a browser-to-browser call handed to a SIP phone or trunk, disable both local cameras first; active local video is not supported on that handoff. Endpoint and media limitations still apply; see the current snapshot limitations below.
 
-[Transfer instructions and supported combinations](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/USER_GUIDE.md#forward-or-transfer-a-call)
+[Transfer instructions and supported combinations](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/USER_GUIDE.md#forward-or-transfer-a-call)
 
 ## Park here, pick up over there
 
@@ -92,7 +92,7 @@ Optional hold audio uses HA Media. With no hold media configured, the parked cal
 
 Parking is available by default, with configurable access and slot numbers. It currently supports audio calls, not active video.
 
-[Parking and retrieval guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/CALL_PARKING.md)
+[Parking and retrieval guide](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/CALL_PARKING.md)
 
 ## Answer someone else's ringing phone
 
@@ -124,7 +124,7 @@ An existing enabled single trunk is migrated automatically, preserving credentia
 
 If an automation used the old trunk-status entity, select the current entity on the named trunk device rather than assuming its entity ID is unchanged.
 
-[Migration instructions](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/BREAKING_CHANGES.md#pbx-development-branch-separate-sip-trunk-entries)
+[Migration instructions](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/BREAKING_CHANGES.md#pbx-development-branch-separate-sip-trunk-entries)
 
 ## Multiple SIP lines, with independent rules
 
@@ -148,7 +148,7 @@ Incoming routing is independent: one line can ring Kitchen, another Office. A ca
 
 Audio and video codec lists are configurable per trunk. An empty video list makes the line audio-only; selecting a codec does not install additional transcoding support.
 
-[Trunk configuration and examples](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/SIP_TRUNK.md)
+[Trunk configuration and examples](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/SIP_TRUNK.md)
 
 ## Your phone, your forwarding rules
 
@@ -167,7 +167,7 @@ Settings belong to the phone in the backend and remain effective when the card i
 
 Automations can take control of their own call. A routing action does so; an automation that merely sends a notification leaves the default handling intact. Ring groups retain their group policy while several members are ringing.
 
-[Phone routing walkthrough](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/PHONE_ROUTING.md)
+[Phone routing walkthrough](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/PHONE_ROUTING.md)
 
 ## Voicemail for each phone
 
@@ -196,7 +196,7 @@ Messages remain in HA Media. The **Voicemail received** trigger supplies the exi
 
 **Disabling a mailbox deletes its messages and folder.** Re-enabling it starts with an empty mailbox. Removing the phone also removes its associated mailbox.
 
-[Voicemail setup, keypad commands and automations](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/VOICEMAIL.md)
+[Voicemail setup, keypad commands and automations](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/VOICEMAIL.md)
 
 ## Record a conversation when you need it
 
@@ -208,7 +208,7 @@ The recorder uses the existing call media path. A recording error stops recordin
 
 The current scope is supported two-party calls whose media passes through HA. Direct calls bypassing HA and conferences are outside that scope.
 
-[Recording guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/CALL_RECORDING.md)
+[Recording guide](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/CALL_RECORDING.md)
 
 ## Native Home Assistant phone automations
 
@@ -248,7 +248,7 @@ The additions include:
 
 These additions include requests [#136](https://github.com/n-IA-hane/esphome-intercom/issues/136), [#138](https://github.com/n-IA-hane/esphome-intercom/issues/138), [#117](https://github.com/n-IA-hane/esphome-intercom/issues/117) and [#119](https://github.com/n-IA-hane/esphome-intercom/issues/119).
 
-[Automation recipes](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/AUTOMATION_DIALPLAN.md)
+[Automation recipes](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/AUTOMATION_DIALPLAN.md)
 
 ## Shared phone state, BLF and card activity
 
@@ -287,7 +287,7 @@ Provider-facing profiles, early media and other PBX applications still need appr
 
 For NAT scenarios, a trunk can specify a reachable media IPv4 address without changing LAN calls or SIP registration. Correct RTP/RTCP mappings are required. **Automatic DDNS handling for this option is not included.**
 
-[FreeSWITCH/FusionPBX guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/FREESWITCH.md)
+[FreeSWITCH/FusionPBX guide](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/FREESWITCH.md)
 
 ## Rename entities without breaking your phones
 
@@ -309,7 +309,7 @@ Thanks also to **@Gafielt** for the German commands and response-localization wo
 
 Custom sentence examples must be installed separately; HACS does not copy them into your HA configuration. This translation does not include the separate dashboard card or voicemail IVR prompts.
 
-[Assist commands and installation](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/ASSIST_INTENTS.md)
+[Assist commands and installation](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/ASSIST_INTENTS.md)
 
 ## Everyday behavior and reliability improvements
 
@@ -355,7 +355,7 @@ The board package owns wiring, the audio profile owns capture/playback, feature 
 
 **Start from the refreshed YAML for your exact model and revision.** Keep the device name, secrets, network/API/OTA settings, custom pins and wanted behavior. Do not paste the old FULL preset or whole player/mixer blocks over the new device package. Existing leaf includes remain for custom configurations with their documented prerequisites.
 
-[Step-by-step package examples](https://github.com/n-IA-hane/esphome-intercom/blob/dev/packages/README.md) · [Device catalog](https://github.com/n-IA-hane/esphome-intercom/blob/dev/packages/DEVICE_CATALOG.md) · [Migration checklist](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
+[Step-by-step package examples](https://github.com/n-IA-hane/esphome-intercom/blob/main/packages/README.md) · [Device catalog](https://github.com/n-IA-hane/esphome-intercom/blob/main/packages/DEVICE_CATALOG.md) · [Migration checklist](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
 
 ### Official ESPHome audio providers, with our components around them
 
@@ -375,7 +375,7 @@ been removed.
 external-provider names, `tts_playback_start_timeout`, MWW `task_core` and
 `ring_buffer_duration`, and private resampler `task_core`/`task_priority` fields.
 The standard providers use their own scheduling, timeout and Stop behavior.
-[Native provider migration](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/BREAKING_CHANGES.md#development-firmware-native-audio-providers)
+[Native provider migration](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/BREAKING_CHANGES.md#development-firmware-native-audio-providers)
 
 ### ESP VoIP Stack: blind audio transfers over UDP and TCP
 
@@ -399,7 +399,7 @@ It covers static SIP endpoint configuration, inbound and outbound routing, Aster
 
 The documented setup uses static ESP peers without REGISTER and can operate independently of Home Assistant's PBX.
 
-[Conventional PBX setup and outgoing calls](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/CLASSIC_PBX.md)
+[Conventional PBX setup and outgoing calls](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/CLASSIC_PBX.md)
 
 ### Audio Stack: restart playback safely after a stop
 
@@ -439,7 +439,7 @@ Runtime Controller also adds an optional empty LED preset with explicit state st
 
 Thanks to the contributors behind [ESP VoIP Stack #6](https://github.com/n-IA-hane/esphome-voip-stack/pull/6) and [Runtime Controller #1](https://github.com/n-IA-hane/esphome-runtime-controller/pull/1).
 
-[Camera setup and current limits](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/SIP_VIDEO.md)
+[Camera setup and current limits](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/SIP_VIDEO.md)
 
 ## Waveshare 1.85C-BOX V2: one YAML, your choice of processing
 
@@ -469,8 +469,8 @@ Raw/processed recordings and cancellation off/on comparisons confirm reduced
 playback leakage in these windows. They do not qualify natural barge-in,
 independent near-end speech, every enclosure or long uptime.
 
-[Get the unified YAML](https://github.com/n-IA-hane/esphome-intercom/blob/dev/yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml)
-| [Read the processing and hardware notes](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/WAVESHARE_V2_PROCESSING.md)
+[Get the unified YAML](https://github.com/n-IA-hane/esphome-intercom/blob/main/yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml)
+| [Read the processing and hardware notes](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/WAVESHARE_V2_PROCESSING.md)
 
 ## Espressif ESP32-S3-BOX-3: dual-microphone FULL AFE
 
@@ -480,7 +480,7 @@ The existing contributor-tested single-microphone AEC profile remains available.
 
 **This is Espressif's BOX-3, not the Waveshare 1.85C-BOX V2.** Apparently, naming every device "some variation of box" was a collective industry decision.
 
-[Experimental profile](https://github.com/n-IA-hane/esphome-intercom/tree/dev/yamls/experimental/esp32-s3-box-3) · [Community discussion #116](https://github.com/n-IA-hane/esphome-intercom/issues/116)
+[Experimental profile](https://github.com/n-IA-hane/esphome-intercom/tree/main/yamls/experimental/esp32-s3-box-3) · [Community discussion #116](https://github.com/n-IA-hane/esphome-intercom/issues/116)
 
 ## More practical documentation
 
@@ -488,7 +488,7 @@ The illustrated user guide walks through transfer, parking, ringing-call pickup,
 
 Phone pickers use readable names. Ordinary examples start in the visual editor; detailed configuration remains available for advanced setups. The README and firmware guides now progress from a first call or an unchanged board profile to feature selection, shared voice/music/calls, custom settings and finally hardware/runtime internals.
 
-[Illustrated user guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/USER_GUIDE.md) · [PBX workflows](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/PBX_WORKFLOWS.md)
+[Illustrated user guide](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/USER_GUIDE.md) · [PBX workflows](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/PBX_WORKFLOWS.md)
 
 ## Further firmware changes since stable 2026.10.1
 
@@ -518,9 +518,9 @@ Phone pickers use readable names. Ordinary examples start in the visual editor; 
   INVITE ends, and properly closes incoming calls whose media preparation fails.
   Microphone-only and speaker-only firmware builds are checked separately.
 
-[Unified Box YAML](https://github.com/n-IA-hane/esphome-intercom/blob/dev/yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml)
-| [Processing choices and measured limits](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/WAVESHARE_V2_PROCESSING.md)
-| [General microphone delivery and tuning](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/docs/AUDIO_TUNING.md)
+[Unified Box YAML](https://github.com/n-IA-hane/esphome-intercom/blob/main/yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml)
+| [Processing choices and measured limits](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/WAVESHARE_V2_PROCESSING.md)
+| [General microphone delivery and tuning](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/docs/AUDIO_TUNING.md)
 
 These changes affect ESP firmware packages and documentation. HA backend/card
 logic is unchanged by this update. Updating HACS alone does not install ESP
@@ -528,11 +528,11 @@ firmware.
 
 ### Microphone wiring and delivery: illustrated configuration guide
 
-The full guide is included here and in the [Audio Stack README](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/README.md#microphone-wiring-and-delivery-illustrated).
+The full guide is included here and in the [Audio Stack README](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/README.md#microphone-wiring-and-delivery-illustrated).
 
-New to Audio Stack? The [annotated starting example](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/README.md#1-start-with-a-microphone-and-speaker)
+New to Audio Stack? The [annotated starting example](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/README.md#1-start-with-a-microphone-and-speaker)
 shows a **48 kHz bus and speaker with a 16 kHz microphone**, explaining
-each field inline. A [complete YAML](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/examples/00-generic-i2s-duplex.yaml)
+each field inline. A [complete YAML](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/examples/00-generic-i2s-duplex.yaml)
 is provided; microphone conversion does not limit the speaker to 16 kHz.
 
 <details>
@@ -571,8 +571,8 @@ The following YAML blocks are **fragments to merge into an existing board
 configuration**, not complete firmwares. Keep its pins, codecs, clocks and
 component declarations. Include the selected processor in `external_components`
 and declare it once. GPIOs and TDM mappings below are examples, not universal
-wiring instructions. [Complete codec-free stereo example](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/examples/05-stereo-i2s-downmix.yaml)
-and [complete TDM example](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/examples/04-dual-mic-downmix.yaml) are available.
+wiring instructions. [Complete codec-free stereo example](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/examples/05-stereo-i2s-downmix.yaml)
+and [complete TDM example](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/examples/04-dual-mic-downmix.yaml) are available.
 
 
 **Example GPIOs, not universal board pins:** the codec-free diagrams use
@@ -849,7 +849,7 @@ esp_audio_stack:
 ```
 
 Configure `no_dac_ref: false` in both ES8311 codec blocks, as described in
-[the stereo-reference section](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/README.md#5-use-the-codec-stereo-channel-as-a-reference).
+[the stereo-reference section](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/README.md#5-use-the-codec-stereo-channel-as-a-reference).
 Do not add `rx_mic_slots` or average these slots: the second signal is playback,
 not another microphone. A hardware-reference flag cannot create a physical
 feedback connection that the codec or board does not provide.
@@ -928,7 +928,7 @@ acquisition and sample-alignment design; setting `mic_mix` or calling them TDM
 cannot create that support.
 
 For analog gain controls and optional recordings before/after processing, see
-[Audio tuning and PCM capture](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/docs/AUDIO_TUNING.md).
+[Audio tuning and PCM capture](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/docs/AUDIO_TUNING.md).
 
 </details>
 
@@ -944,7 +944,7 @@ For analog gain controls and optional recordings before/after processing, see
   concurrent playback, Sendspin and recovery after an interrupted OTA. Its
   10 FPS setting is a limit: measured camera TX was 3.8-5.0 FPS under this
   concurrent workload. H.264 and acoustic echo performance are separate checks.
-  See the [P4 hardware notes](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/P4_HARDWARE_AND_MEDIA.md#esphome-202610-physical-check).
+  See the [P4 hardware notes](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/P4_HARDWARE_AND_MEDIA.md#esphome-202610-physical-check).
 
 ### Music Assistant and ESPHome 2026.10
 
@@ -967,7 +967,7 @@ For analog gain controls and optional recordings before/after processing, see
   collision. Its SIP/RTP lifecycle and negotiation remain the same.
 
 Updating HACS or Music Assistant alone does not update an ESP's firmware.
-Follow the [firmware migration and pairing guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/packages/README.md#pair-sendspin-with-music-assistant).
+Follow the [firmware migration and pairing guide](https://github.com/n-IA-hane/esphome-intercom/blob/main/packages/README.md#pair-sendspin-with-music-assistant).
 
 ### Further audio and runtime improvements
 
@@ -981,7 +981,7 @@ Follow the [firmware migration and pairing guide](https://github.com/n-IA-hane/e
   button. The shared round-device button cancels an active or pending Assist
   interaction before handling phone-page controls, keeping an established call
   active. The Box V2 hardware RESET button cannot be reassigned in firmware.
-- Optional [playback diagnostics](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/playback_diagnostics.md)
+- Optional [playback diagnostics](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/playback_diagnostics.md)
   observes native announcements and hardware completion without automatic
   recovery. It helps capture the state of a stalled pipeline before rebooting.
 - Shared committed call state now drives browser phones and PBX projections, including no-answer routing, voicemail handoff and browser application ownership.
@@ -998,25 +998,23 @@ The HA card offers blind transfer, not an attended consultation interface. Parki
 
 This update includes the backend correction for selecting the retained peer when either side initiates a bridged transfer. Independent SIP-peer coverage also checks rejected transfers and legacy peers without REFER. This is not blanket qualification of every physical ESP/PBX combination. A failed transfer must not be treated as successful merely because the command was accepted.
 
-The experimental board profiles and Spotpear long-uptime/announcement investigation retain their stated limits. Wake-word recognition during playback remains a separate investigation. This preview does not claim identical behavior across every handset, provider and PBX configuration.
+The experimental board profiles and Spotpear long-uptime/announcement investigation retain their stated limits. Wake-word recognition during playback remains a separate investigation. This release does not claim identical behavior across every handset, provider and PBX configuration.
 
-## Install or update this preview
+## Install or update 2026.11.0
 
 1. Open **VoIP Stack** in HACS and choose **Redownload**.
-2. Enable prereleases and select **2026.11.0-dev**, even if that version is already installed.
+2. Select **2026.11.0** and download the release.
 3. Restart Home Assistant.
 4. Reload the dashboard or reopen Companion.
 5. Review the trunk migration and each line's readiness.
 
-The version label may remain the same while the package is updated.
-
 **HACS does not update ESP firmware.** Rebuild and upload the appropriate profile to install component-side changes.
 
-The coordinated component previews are published separately:
+The coordinated component releases are published separately:
 
-- [ESP VoIP Stack 2026.11.0-dev](https://github.com/n-IA-hane/esphome-voip-stack/releases/tag/v2026.11.0-dev)
-- [ESP Audio Stack 2026.11.0-dev](https://github.com/n-IA-hane/esphome-audio-stack/releases/tag/v2026.11.0-dev)
-- [Runtime Controller 2026.11.0-dev](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.11.0-dev)
+- [ESP VoIP Stack 2026.11.0](https://github.com/n-IA-hane/esphome-voip-stack/releases/tag/v2026.11.0)
+- [ESP Audio Stack 2026.11.0](https://github.com/n-IA-hane/esphome-audio-stack/releases/tag/v2026.11.0)
+- [Runtime Controller 2026.11.0](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.11.0)
 - [Pinned GMF AI Audio 1.1.1 integration](https://github.com/n-IA-hane/esp-gmf/releases/tag/v1.1.1-afe-dev)
 
 HA backend/card package: the attached `voip_stack.zip` is built from the exact
@@ -1036,7 +1034,7 @@ For an ESP, include the YAML profile, board and firmware version. Where availabl
 
 Do not publish passwords, tokens or SIP captures containing credentials.
 
-[How to report a useful issue](https://github.com/n-IA-hane/esphome-intercom/blob/dev/README.md#before-opening-an-issue)
+[How to report a useful issue](https://github.com/n-IA-hane/esphome-intercom/blob/main/README.md#before-opening-an-issue)
 
 ## Thank you
 

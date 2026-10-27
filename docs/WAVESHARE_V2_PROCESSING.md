@@ -1,11 +1,15 @@
 # Waveshare 1.85C BOX V2 processing choices
 
 For other boards and microphone wiring, see Audio Stack's
-[illustrated microphone guide](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/README.md#microphone-wiring-and-delivery-illustrated).
+[illustrated microphone guide](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/README.md#microphone-wiring-and-delivery-illustrated).
 
 Use the [unified FULL YAML](../yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml)
 for the V2 board (SKU 30684). V1 and the headless Waveshare S3 Audio are different
 hardware profiles. ESPHome 2026.10.0 or newer is required.
+
+The V2 FULL profile is supported, including standalone AEC/downmix and
+dual-microphone AFE choices. Use the unified entrypoint for new installations;
+older V2 entrypoints remain compatibility aliases.
 
 ## Select the microphone delivery and processor
 
@@ -44,7 +48,7 @@ Older `full-aec.yaml` and `full-afe.yaml` entrypoints remain compatible aliases.
 Audio Stack owns capture, channel selection, conversion and optional downmix.
 The processor receives its normal one/two-channel input, independently of
 whether the microphones came from TDM or conventional I2S Left/Right slots.
-See the [general microphone-delivery guide](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/docs/AUDIO_TUNING.md)
+See the [general microphone-delivery guide](https://github.com/n-IA-hane/esphome-audio-stack/blob/main/docs/AUDIO_TUNING.md)
 for codec-free wiring and actual channel-count limitations.
 
 ## One physical calibration for this board
