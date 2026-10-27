@@ -53,6 +53,24 @@ cannot be switched reliably inside one process.
 `analyze_jtag_snapshots.py` summarizes the resulting GDB logs. Neither tool is
 an audio-quality test because halting the target disturbs real-time media.
 
+### Micro wake word analysis
+
+Install the optional host dependencies from `tools/requirements-mww-analyze.txt`.
+`mww_analyze.py` inspects PCM levels, clipping and capture gaps, and replays
+16 kHz mono audio through a stateful frontend and model. It follows ESPHome's
+integer feature quantization and decision window. Host results require a
+separate comparison with the identified target firmware.
+
+```bash
+python tools/mww_analyze.py analyze captures/ --output levels.json
+python tools/mww_analyze.py replay phrase.wav --output replay.json
+python tools/mww_analyze.py compare before.wav after.wav
+```
+
+The official-corpus replay tests are opt-in through `MWW_TEST_CORPUS`. That
+directory must contain an identified `manifest.json` and the corresponding WAV
+files.
+
 ## Deployment helper
 
 `deploy_ha_voip_stack.sh` is only for an explicitly authorized development

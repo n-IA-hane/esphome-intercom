@@ -1,0 +1,4 @@
+# Optional offline PCM/model analysis. No TensorFlow installation is required.
+numpy==2.3.2
+pymicro-features==2.0.2
+pymicro-wakeword==2.5.0
