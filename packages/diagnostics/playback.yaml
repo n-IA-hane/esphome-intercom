@@ -1,0 +1,79 @@
+# Optional playback observation for full Audio Stack profiles. No audio actions.
+esphome:
+  min_version: 2026.10.0
+defaults:
+  playback_diagnostics_source: '${ playback_diagnostics_source | default(ext_components_source | default("github://n-IA-hane/esphome-intercom@dev")) }'
+  playback_diagnostics_player_id: '${ playback_diagnostics_player_id | default("speaker_media_player") }'
+  playback_diagnostics_source_id: '${ playback_diagnostics_source_id | default("announcement_http_source") }'
+  playback_diagnostics_media_source_id: '${ playback_diagnostics_media_source_id | default("media_http_source") }'
+  playback_diagnostics_tts_id: '${ playback_diagnostics_tts_id | default("tts_speaker_input") }'
+  playback_diagnostics_mixer_input_id: '${ playback_diagnostics_mixer_input_id | default("tts_mixer_input") }'
+  playback_diagnostics_hardware_id: '${ playback_diagnostics_hardware_id | default("hw_speaker") }'
+  playback_diagnostics_mixer_id: '${ playback_diagnostics_mixer_id | default("audio_mixer") }'
+  playback_diagnostics_voice_id: '${ playback_diagnostics_voice_id | default("va") }'
+  playback_diagnostics_voice_enabled: '${ playback_diagnostics_voice_enabled | default(true) }'
+  _playback_voice_observer:
+    playback_diagnostics:
+      voice_assistant: ${playback_diagnostics_voice_id}
+    voice_assistant:
+      id: ${playback_diagnostics_voice_id}
+      on_tts_start:
+        - lambda: id(playback_diag).on_tts_start(x.size());
+      on_tts_end:
+        - lambda: id(playback_diag).on_tts_end();
+      on_end:
+        - lambda: id(playback_diag).on_va_end();
+      on_error:
+        - lambda: id(playback_diag).on_error(code, message);
+
+external_components:
+  - source: ${playback_diagnostics_source}
+    components: [playback_diagnostics]
+
+playback_diagnostics:
+  id: playback_diag
+  media_player: ${playback_diagnostics_player_id}
+  announcement_source: ${playback_diagnostics_source_id}
+  media_source: ${playback_diagnostics_media_source_id}
+  tts_speaker: ${playback_diagnostics_tts_id}
+  mixer_input: ${playback_diagnostics_mixer_input_id}
+  hardware_speaker: ${playback_diagnostics_hardware_id}
+  mixer: ${playback_diagnostics_mixer_id}
+
+packages:
+  voice_observer: ${ _playback_voice_observer if (playback_diagnostics_voice_enabled | string | lower) == 'true' else {} }
+
+api:
+  actions:
+    - action: playback_dump
+      variables:
+        reason: string
+      then:
+        - playback_diagnostics.dump:
+            id: playback_diag
+            reason: !lambda return reason;
+        - esp_audio_stack.dump_diagnostics:
+    - action: playback_watch_next_announcement
+      variables:
+        timeout_ms: int
+      then:
+        - playback_diagnostics.watch_next_announcement:
+            id: playback_diag
+            timeout: !lambda |-
+              return timeout_ms < 1000 ? 1000 : (timeout_ms > 300000 ? 300000 : timeout_ms);
+    - action: playback_cancel_watch
+      then:
+        - playback_diagnostics.cancel_watch:
+            id: playback_diag
+
+button:
+  - platform: template
+    id: playback_diagnostics_snapshot
+    name: Playback Diagnostics
+    entity_category: diagnostic
+    icon: mdi:clipboard-text-search
+    on_press:
+      - playback_diagnostics.dump:
+          id: playback_diag
+          reason: manual
+      - esp_audio_stack.dump_diagnostics:
