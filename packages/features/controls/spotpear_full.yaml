@@ -62,30 +62,47 @@ defaults:
       else: &id001
       - if:
           condition:
+            # Assist owns cancellation even while the call page is selected.
             lambda: |-
-              return id(current_mode) == 1 &&
-                     id(phone).is_idle() &&
-                     id(voip_dialer_active);
+              return id(va).is_running() ||
+                     id(runtime).is_activity_active("va_start_requested") ||
+                     id(runtime).is_activity_active("va_starting") ||
+                     id(runtime).is_activity_active("va_listening") ||
+                     id(runtime).is_activity_active("va_thinking") ||
+                     id(runtime).is_activity_active("va_responding") ||
+                     id(runtime).is_activity_active("va_barging") ||
+                     id(runtime).is_activity_active("va_stopping");
           then:
-          - script.execute: voip_dial_call
+          - runtime_controller.event:
+              id: runtime
+              event: manual_voice_toggle
           else:
           - if:
               condition:
-                and:
-                - lambda: return id(current_mode) == 1;
-                - voip_stack.is_idle: null
+                lambda: |-
+                  return id(current_mode) == 1 &&
+                         id(phone).is_idle() &&
+                         id(voip_dialer_active);
               then:
-              - voip_stack.call_toggle: null
+              - script.execute: voip_dial_call
               else:
               - if:
                   condition:
                     and:
                     - lambda: return id(current_mode) == 1;
-                    - voip_stack.is_active: null
+                    - voip_stack.is_idle: null
                   then:
                   - voip_stack.call_toggle: null
                   else:
-                  - runtime_controller.event:
-                      id: runtime
-                      event: manual_voice_toggle
+                  - if:
+                      condition:
+                        and:
+                        - lambda: return id(current_mode) == 1;
+                        - voip_stack.is_active: null
+                      then:
+                      - voip_stack.call_toggle: null
+                      else:
+                      - runtime_controller.event:
+                          id: runtime
+                          event: manual_voice_toggle
   _spotpear_first_without_timer: *id001
