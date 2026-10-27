@@ -144,8 +144,10 @@ def test_settings_match_compiled_capabilities(scene, variant):
     header = controls["settings_page_header"]
     assert page["scrollable"] is False
     assert wrapper["scrollable"] is True and str(wrapper["scroll_dir"]).removeprefix("LV_DIR_") == "VER"
-    assert "settings_back_button" in text(header)
-    assert "settings_back_button" not in text(wrapper)
+    assert "settings_back_button" not in text(page)
+    assert str(header["layout"]["flex_align_main"]).removeprefix("LV_FLEX_ALIGN_") == "CENTER"
+    assert len(header["widgets"]) == 1
+    assert header["widgets"][0]["label"]["text"] == "Options"
     assert "on_scroll" not in page
     if not scene.startswith("p4"):
         assert wrapper["gesture_bubble"] is False
@@ -185,6 +187,26 @@ def test_settings_match_compiled_capabilities(scene, variant):
         else:
             assert "audio_mixer" not in speakers
             assert str(speakers["tts_speaker_input"]["output_speaker"]) == "hw_speaker"
+
+
+@pytest.mark.parametrize("scene", ["spot240", "box360-afe-independent", "p4-landscape"])
+def test_options_header_has_one_centered_title_and_swipe_exit(scene):
+    config = expanded_scene(scene, "full")
+    page, controls = page_and_controls(config)
+    header = controls["settings_page_header"]
+    assert len(header["widgets"]) == 1
+    assert header["widgets"][0]["label"]["text"] == "Options"
+    assert str(header["layout"]["flex_align_main"]).removeprefix("LV_FLEX_ALIGN_") == "CENTER"
+    assert str(header["layout"]["flex_align_cross"]).removeprefix("LV_FLEX_ALIGN_") == "CENTER"
+    assert not any(kind == "button" for kind, _ in widget_nodes(header))
+    exit_actions = list(nodes(page["on_swipe_down"]))
+    if scene.startswith("p4"):
+        assert any(action_id(action, "lvgl.page.show") == "main_page"
+                   for action in exit_actions if "lvgl.page.show" in action)
+    else:
+        assert any(action_id(action, "script.execute") == "round_navigate"
+                   and action["script.execute"]["delta"] == -1
+                   for action in exit_actions if "script.execute" in action)
 
 
 @pytest.mark.parametrize("scene", ["spot240", "box360-aec", "box360-afe-independent"])

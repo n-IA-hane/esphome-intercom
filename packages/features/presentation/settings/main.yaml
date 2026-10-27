@@ -2,7 +2,6 @@
 # Round displays: Assist, contacts, dialer, Options, with absent features skipped.
 # Swipe up to advance and down to go back, without wrapping at either endpoint.
 # Its body scrolls; use the fixed header or exposed outer area for navigation.
-# The fixed Back button goes to the previous view.
 substitutions:
   _settings_round: ${ _settings_round | default(true) }
   _settings_afe: ${ _settings_afe | default(true) }
@@ -30,10 +29,6 @@ substitutions:
       lv_obj_add_event_cb(id(${_settings_page_id})->obj, [](lv_event_t *) {
         id(settings_sync_widgets).execute();
       }, LV_EVENT_SCREEN_LOADED, nullptr);
-  _settings_close_round:
-  - script.execute:
-      id: round_navigate
-      delta: -1
   _settings_close_p4:
   - lvgl.page.show:
       id: main_page
@@ -92,7 +87,7 @@ substitutions:
     bg_color: 0x202020
     scrollable: false
     on_swipe_up: ${ _round_navigation_up if _settings_round else [] }
-    on_swipe_down: ${ _round_navigation_down if _settings_round else [] }
+    on_swipe_down: ${ _round_navigation_down if _settings_round else _settings_close_p4 }
     widgets:
     - obj:
         id: settings_page_header
@@ -107,19 +102,9 @@ substitutions:
         layout:
           type: FLEX
           flex_flow: ROW
-          flex_align_main: SPACE_BETWEEN
+          flex_align_main: CENTER
           flex_align_cross: CENTER
         widgets:
-        - button:
-            id: settings_back_button
-            width: ${ 66 if _settings_round else 100 }
-            height: 44
-            on_click: ${ _settings_close_round if _settings_round else _settings_close_p4 }
-            widgets:
-            - label:
-                align: CENTER
-                text: Back
-                text_font: ${_settings_font}
         - label:
             text: Options
             text_color: 0xFFFFFF
