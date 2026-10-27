@@ -63,3 +63,6 @@ Thumbs.db
 
 # Generated documentation, built from README.md and docs/*.md.
 /site/
+
+# Local-only assistant avatars
+/assets/images/assistant/art/
