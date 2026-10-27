@@ -52,7 +52,7 @@ substitutions:
       delete_contact_missing_from:
         updates_number: 1
   firmware_button_stops_timer: false
-  afe_initial_mode: fd_high_perf
+  afe_initial_mode: sr_high_perf
   afe_mode_restore_value: false
   firmware_controls:
     packages:
@@ -67,4 +67,4 @@ packages:
   diagnostics: ${ _fw_diagnostics if 'diagnostics' in firmware_features else {} }
   flac_memory: !include '../audio/flac_codecs_psram.yaml'
 defaults:
-  afe_mode_options: ${ afe_mode_options | default(["fd_low_cost", "fd_high_perf"]) }
+  afe_mode_options: ${ afe_mode_options | default(["sr_low_cost", "sr_high_perf"]) }

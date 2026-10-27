@@ -1,7 +1,7 @@
 # Reconfigure the one AFE owner after selected consumers are quiescent.
 defaults:
-  afe_mode_options: ${ afe_mode_options | default(["fd_low_cost", "fd_high_perf"]) }
-  afe_initial_mode: ${ afe_initial_mode | default("fd_high_perf") }
+  afe_mode_options: ${ afe_mode_options | default(["sr_low_cost", "sr_high_perf"]) }
+  afe_initial_mode: ${ afe_initial_mode | default("sr_high_perf") }
   afe_mode_restore_value: ${ afe_mode_restore_value | default(false) }
   _fw_voice_busy:
     voice_assistant.is_running: {}
@@ -47,6 +47,17 @@ defaults:
 substitutions:
   afe_initial_mode: ${afe_initial_mode}
   afe_mode_restore_value: ${afe_mode_restore_value}
+esphome:
+  on_boot:
+  - priority: 500
+    then:
+    - lambda: |-
+        // Template Select restores at 800; configure before DSP setup at 400.
+        const auto mode = id(aec_mode_select).current_option();
+        if (mode == "sr_low_cost" || mode == "sr_high_perf") {
+          id(afe_processor).set_afe_type(0);
+          id(afe_processor).set_afe_mode(mode == "sr_low_cost" ? 0 : 1);
+        } else id(aec_mode_select).publish_state(id(afe_processor).get_mode_name());
 select:
 - platform: template
   name: AEC Mode

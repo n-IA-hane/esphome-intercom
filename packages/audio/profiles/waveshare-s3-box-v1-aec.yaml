@@ -36,7 +36,7 @@ esp_aec:
   id: aec_processor
   sample_rate: 16000
   filter_length: 4
-  mode: sr_low_cost
+  mode: ${aec_initial_mode}
 microphone:
 - platform: esp_audio_stack
   id: mic_afe

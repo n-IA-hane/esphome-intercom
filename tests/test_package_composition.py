@@ -226,7 +226,8 @@ def test_device_parameter_overrides_are_not_shadowed_or_concatenated(tmp_path: P
     document = yaml_util.load_yaml(config)
     document['substitutions'].update({
         'voip_transport': 'tcp', 'voip_sip_port': '5090', 'voip_rtp_port': '41000',
-        'mww_task_priority': '5', 'afe_mode_options': ['fd_low_cost', 'fd_high_perf'],
+        'mww_task_priority': '5', 'afe_mode_options': ['sr_low_cost'],
+        'afe_initial_mode': 'sr_low_cost',
     })
     config.write_text(yaml_util.dump(document))
     result = subprocess.run(
@@ -241,7 +242,10 @@ def test_device_parameter_overrides_are_not_shadowed_or_concatenated(tmp_path: P
     assert int(current['voip_stack']['sip_port']) == 5090
     assert int(current['voip_stack']['rtp_port']) == 41000
     mode = next(item for item in current['select'] if item['id'] == 'aec_mode_select')
-    assert mode['options'] == ['fd_low_cost', 'fd_high_perf']
+    assert mode['options'] == ['sr_low_cost']
+    assert mode['initial_option'] == 'sr_low_cost'
+    assert current['esp_afe']['type'] == 'sr'
+    assert current['esp_afe']['mode'] == 'low_cost'
     boost = next(item for item in current['script'] if item['id'] == 'boost_mww_priority')
     body = boost['then'][-1]['lambda']
     assert 'vTaskPrioritySet(mww_task, 5);' in getattr(body, 'value', body)

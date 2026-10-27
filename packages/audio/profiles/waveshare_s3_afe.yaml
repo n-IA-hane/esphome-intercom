@@ -1,8 +1,8 @@
 # Physical audio/backend configuration; local GMF selection is explicit.
 esp_afe:
   id: afe_processor
-  type: fd
-  mode: high_perf
+  type: ${ afe_initial_mode.split('_', 1)[0] }
+  mode: ${ afe_initial_mode.split('_', 1)[1] }
   mic_num: 2
   aec_filter_length: 4
   aec_nlp_level: normal

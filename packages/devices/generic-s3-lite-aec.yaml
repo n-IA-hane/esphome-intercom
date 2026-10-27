@@ -53,7 +53,7 @@ substitutions:
       delete_contact_missing_from:
         updates_number: 1
   firmware_button_stops_timer: false
-  aec_initial_mode: fd_high_perf
+  aec_initial_mode: sr_high_perf
   aec_mode_restore_value: true
   firmware_controls:
     packages:
@@ -70,4 +70,4 @@ packages:
 runtime_controller:
   storage_in_psram: true
 defaults:
-  aec_mode_options: ${ aec_mode_options | default(["fd_low_cost", "fd_high_perf"]) }
+  aec_mode_options: ${ aec_mode_options | default(["sr_low_cost", "sr_high_perf"]) }

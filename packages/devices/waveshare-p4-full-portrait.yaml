@@ -1,6 +1,6 @@
 # Device wiring and consumer parameters. Shared feature modules own lifecycle and controls.
 defaults:
-  afe_mode_options: ${ afe_mode_options | default(["fd_low_cost", "fd_high_perf"]) }
+  afe_mode_options: ${ afe_mode_options | default(["sr_low_cost", "sr_high_perf"]) }
   firmware_processing_modes: ${afe_mode_options}
   _p4_diagnostics: !include '../diagnostics/native_no_wifi_signal.yaml'
 substitutions:
@@ -91,7 +91,7 @@ substitutions:
     packages:
       button: !include '../features/controls/primary_button.yaml'
       processing: !include '../features/audio_controls/afe_mode.yaml'
-  afe_initial_mode: fd_high_perf
+  afe_initial_mode: sr_high_perf
   afe_mode_restore_value: false
 packages:
   feature_validation: !include ../profiles/feature_validation.yaml

@@ -50,11 +50,7 @@ widgets:
       width: ${settings_dropdown_width}
       height: 28
       selected_text: !lambda 'return id(aec_mode_select).current_option();'
-      options:
-        - "sr_low_cost"
-        - "sr_high_perf"
-        - "voip_low_cost"
-        - "voip_high_perf"
+      options: ${aec_mode_options}
       on_value:
         - select.set_index:
             id: aec_mode_select

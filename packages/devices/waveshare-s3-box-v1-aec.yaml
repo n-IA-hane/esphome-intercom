@@ -84,7 +84,7 @@ substitutions:
     packages:
       buttons: !include '../features/controls/primary_button.yaml'
       mode: !include '../features/audio_controls/aec_mode.yaml'
-  aec_initial_mode: sr_low_cost
+  aec_initial_mode: sr_high_perf
   aec_mode_restore_value: true
   firmware_boot_display_actions:
   - light.turn_on:

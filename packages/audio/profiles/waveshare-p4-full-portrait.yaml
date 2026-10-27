@@ -39,8 +39,8 @@ esp_afe:
   task_priority: 18
   feed_task_priority: 18
   fetch_task_priority: 18
-  type: fd
-  mode: low_cost
+  type: ${ afe_initial_mode.split('_', 1)[0] }
+  mode: ${ afe_initial_mode.split('_', 1)[1] }
   mic_num: 2
   aec_enabled: true
   aec_filter_length: 4

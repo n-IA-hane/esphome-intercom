@@ -145,11 +145,16 @@ conformance, but are not currently a replacement for `esp_audio_stack`:
 
 ## Generated-code coverage
 
+FULL AEC/AFE profiles expose SR low-cost and SR high-performance modes, with
+high-performance as the default. Their DSP and user selector share one
+initial-mode setting. Select low-cost when the board's memory budget requires
+it. Phone-only profiles keep their existing FD/VoIP modes independently.
+
 The current generated-code snapshots confirm:
 
 - Waveshare P4 landscape AFE: TDM ES7210 input and ES8311 output go through
-  `esp_codec_dev`; dual mic is structural with SE/BSS enabled, VAD/AEC boot ON
-  and FD high-perf as the maintained default. It uses `gmf_ai_audio` and the
+  `esp_codec_dev`; dual mic is structural with SE/BSS enabled, VAD/AEC boot ON.
+  It uses `gmf_ai_audio` and the
   same ESP-SR v2 generation as the S3 dual-mic target, not the historical
   standalone P4 ESP-SR 2.3.x override.
 - Waveshare S3 full AFE: TDM ES7210 input and ES8311 output also go through

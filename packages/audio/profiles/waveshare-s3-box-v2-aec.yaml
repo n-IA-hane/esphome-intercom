@@ -3,7 +3,7 @@ esp_aec:
   id: aec_processor
   sample_rate: 16000
   filter_length: 4
-  mode: fd_low_cost
+  mode: ${aec_initial_mode}
 external_components:
 - source: ${audio_stack_components_source}
   components: [esp_aec]

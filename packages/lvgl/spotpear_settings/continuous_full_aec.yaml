@@ -228,9 +228,7 @@ widgets:
       align: TOP_MID
       y: 480
       width: ${settings_mid_width}
-      options:
-        - SR low cost
-        - SR high perf
+      options: ${aec_mode_options}
       on_value:
         - select.set_index:
             id: aec_mode_select

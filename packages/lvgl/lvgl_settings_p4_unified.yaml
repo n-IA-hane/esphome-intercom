@@ -11,7 +11,7 @@
 #   switches: speaker_mute, mute (mic), auto_answer_switch
 #             dnd_switch, aec_switch, vad_switch
 #             wake_word_switch
-#   selects : aec_mode_select  (options published by esp_afe FD pipeline)
+#   selects : aec_mode_select  (options shared with the AFE mode selector)
 #
 # Substitutions used (already defined in the device YAML):
 #   settings_row_width      e.g. "600"
@@ -248,9 +248,7 @@ widgets:
         - dropdown:
             id: ui_aec_mode_dd
             width: 240
-            options:
-              - "fd_low_cost"
-              - "fd_high_perf"
+            options: ${afe_mode_options}
             selected_text: !lambda 'return id(aec_mode_select).current_option();'
             on_value:
               - select.set_index:

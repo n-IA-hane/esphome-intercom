@@ -28,8 +28,8 @@ esp_audio_stack:
       no_dac_ref: true
 esp_afe:
   id: afe_processor
-  type: fd
-  mode: low_cost
+  type: ${ afe_initial_mode.split('_', 1)[0] }
+  mode: ${ afe_initial_mode.split('_', 1)[1] }
   mic_num: 2
   se_enabled: true
   aec_enabled: true

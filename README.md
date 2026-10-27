@@ -755,6 +755,14 @@ are not a claim that every board with the same chip has the same wiring.
 The complete hardware, memory and C6 firmware notes are in the
 [deployment guide](docs/DEPLOYMENT_GUIDE.md#esp-devices).
 
+FULL profiles using `esp_aec` or `esp_afe` start in `sr_high_perf` and offer
+`sr_low_cost` as the lower-memory alternative. The processor and mode selector
+use the same initial-mode setting. VoIP-only profiles retain their separate
+FD/VoIP choices and standalone callbacks; the native ESPHome profile adds no
+external DSP mode. These defaults do not change microphone calibration or
+wake-word gain. Where mode restoration is enabled, the restored SR choice is
+applied before the processor starts, so the selector matches the running DSP.
+
 The Generic Full Lite AEC profile keeps Voice Assistant, wake word, software
 AEC, VoIP, HTTP playback, TTS, timers and the runtime controller. It uses size
 optimization and leaves Sendspin disabled. PSRAM is still required. Its measured

@@ -4,8 +4,8 @@ defaults:
   audio_processor: ${ audio_processor | default("aec") }
   mic_mix: ${ mic_mix | default("average") }
   mic_id: ${ mic_id | default("mic_main") }
-  aec_mode_options: ${ aec_mode_options | default(["fd_low_cost", "fd_high_perf"]) }
-  afe_mode_options: ${ afe_mode_options | default(["sr_low_cost", "sr_high_perf", "fd_low_cost", "fd_high_perf"]) }
+  aec_mode_options: ${ aec_mode_options | default(["sr_low_cost", "sr_high_perf"]) }
+  afe_mode_options: ${ afe_mode_options | default(["sr_low_cost", "sr_high_perf"]) }
 substitutions:
   audio_processor: ${audio_processor}
   mic_mix: ${mic_mix}
@@ -153,9 +153,9 @@ substitutions:
     packages:
       buttons: ${ _round_full_buttons if _fw_display and _fw_voice and _fw_voip else _round_simple_buttons }
       processing: !include ${ '../features/audio_controls/afe_mode.yaml' if _v2_afe else '../features/audio_controls/aec_mode.yaml' }
-  aec_initial_mode: fd_low_cost
+  aec_initial_mode: sr_high_perf
   aec_mode_restore_value: false
-  afe_initial_mode: fd_high_perf
+  afe_initial_mode: sr_high_perf
   afe_mode_restore_value: false
 runtime_controller:
   id: runtime

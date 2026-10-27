@@ -1,7 +1,7 @@
 # Standalone AEC reconfiguration uses its existing synchronous mode action.
 defaults:
-  aec_mode_options: ${ aec_mode_options | default(["fd_low_cost", "fd_high_perf"]) }
-  aec_initial_mode: ${ aec_initial_mode | default("fd_high_perf") }
+  aec_mode_options: ${ aec_mode_options | default(["sr_low_cost", "sr_high_perf"]) }
+  aec_initial_mode: ${ aec_initial_mode | default("sr_high_perf") }
   aec_mode_restore_value: ${ aec_mode_restore_value | default(true) }
   _fw_aec_voice_busy:
     voice_assistant.is_running: {}
@@ -34,6 +34,16 @@ defaults:
 substitutions:
   aec_initial_mode: ${aec_initial_mode}
   aec_mode_restore_value: ${aec_mode_restore_value}
+esphome:
+  on_boot:
+  - priority: 500
+    then:
+    - lambda: |-
+        // Template Select restores at 800; configure before DSP setup at 400.
+        const auto mode = id(aec_mode_select).current_option();
+        if (mode == "sr_low_cost") id(aec_processor).set_mode(0);
+        else if (mode == "sr_high_perf") id(aec_processor).set_mode(1);
+        else id(aec_mode_select).publish_state(id(aec_processor).get_mode_name());
 select:
 - platform: template
   name: AEC Mode

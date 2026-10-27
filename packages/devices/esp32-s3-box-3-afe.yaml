@@ -1,11 +1,11 @@
 # Device wiring and consumer parameters. Shared feature modules own lifecycle and controls.
 defaults:
-  afe_mode_options: ${ afe_mode_options | default(["fd_low_cost", "fd_high_perf"]) }
+  afe_mode_options: ${ afe_mode_options | default(["sr_low_cost", "sr_high_perf"]) }
 substitutions:
   firmware_led_package: ../../features/shared/absent.yaml
   firmware_status_led_requires_display: true
   firmware_button_stops_timer: false
-  afe_initial_mode: fd_low_cost
+  afe_initial_mode: sr_high_perf
   afe_mode_restore_value: false
   firmware_voice_binding:
     voice_assistant:

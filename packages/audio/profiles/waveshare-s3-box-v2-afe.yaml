@@ -3,8 +3,8 @@ substitutions:
   afe_agc_restore_mode: RESTORE_DEFAULT_OFF
 esp_afe:
   id: afe_processor
-  type: fd
-  mode: high_perf
+  type: ${ afe_initial_mode.split('_', 1)[0] }
+  mode: ${ afe_initial_mode.split('_', 1)[1] }
   mic_num: ${ 1 if _v2_average else 2 }
   output_prebuffer_frames: ${ 0 if _v2_average else 1 }
   aec_filter_length: 4

@@ -230,11 +230,7 @@ widgets:
       align: TOP_MID
       y: 480
       width: ${settings_mid_width}
-      options:
-        - sr_low_cost
-        - sr_high_perf
-        - fd_low_cost
-        - fd_high_perf
+      options: ${afe_mode_options}
       on_value:
         - select.set_index:
             id: aec_mode_select

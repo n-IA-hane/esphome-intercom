@@ -3,7 +3,7 @@ substitutions:
   firmware_lvgl: true
   firmware_led_package: ../../led/status_spotpear_ball_v2.yaml
   firmware_primary_button_id: main_button
-  afe_initial_mode: fd_high_perf
+  afe_initial_mode: sr_high_perf
   afe_mode_restore_value: false
   firmware_music_binding:
     media_source:
@@ -106,6 +106,6 @@ packages:
   flac_memory: !include '../audio/flac_codecs_psram.yaml'
   application: !include '../profiles/application.yaml'
 defaults:
-  afe_mode_options: ${ afe_mode_options | default(["sr_low_cost", "sr_high_perf", "fd_low_cost", "fd_high_perf"])
+  afe_mode_options: ${ afe_mode_options | default(["sr_low_cost", "sr_high_perf"])
     }
   firmware_processing_modes: ${afe_mode_options}
