@@ -1,13 +1,10 @@
-> **Attention: ESPHome 2026.10.0 or newer is required.**
+> **VoIP Stack for Home Assistant does not require ESPHome or ESP devices.** You can use the integration with browser softphones and standard SIP phones.
 >
-> ESPHome 2026.10 brings substantial audio changes, including several of our
-> accepted contributions. Thank you to the ESPHome team for your work, reviews
-> and accepted PRs! <3
+> **For ESP firmware builds only: ESPHome 2026.10.0 or newer is required.**
 >
-> We have aligned Audio Stack, ESP VoIP Stack, Runtime Controller and the
-> maintained device packages with this release. Older ESPHome versions are no
-> longer supported and their operation is not guaranteed. Upgrade the builder
-> before compiling the new firmware.
+> Audio Stack, ESP VoIP Stack, Runtime Controller and the maintained device YAMLs now follow ESPHome 2026.10’s audio interfaces. Upgrade your ESPHome builder before compiling this firmware; older builder versions are no longer supported.
+>
+> ESPHome 2026.10 includes substantial audio improvements and several of our accepted contributions. Thank you to the ESPHome team for your work, reviews and accepted PRs! <3
 
 # VoIP Stack 2026.11.0-dev
 ## It's starting to look like a damn PBX.
