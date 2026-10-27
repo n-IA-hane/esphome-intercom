@@ -159,7 +159,10 @@ The current generated-code snapshots confirm:
   standalone P4 ESP-SR 2.3.x override.
 - Waveshare S3 full AFE: TDM ES7210 input and ES8311 output also go through
   `esp_codec_dev`; dual mic is structural with SE/BSS enabled.
-- Spotpear single-mic AEC: ES8311 input and ES8311 output go through
+- Spotpear FULL AFE: ES8311 stereo RX supplies one microphone and the separate
+  right-channel DAC reference. AFE uses a single microphone without SE/BSS,
+  with SR high-performance as the default.
+- Spotpear phone-only AEC: ES8311 input and ES8311 output go through
   `esp_codec_dev`; stereo RX supplies mic plus playback reference, and the
   processor is standalone `esp_aec` over Espressif's `afe_aec_create("MR", ...)`
   contract.

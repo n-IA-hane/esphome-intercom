@@ -32,8 +32,8 @@ off. [Learn the phone controls](docs/USER_GUIDE.md#read-the-phone-card) and
 [FreeSWITCH/FusionPBX setup](docs/FREESWITCH.md)._
 
 Stable release: [2026.10.1](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.10.1).
-Requires Home Assistant **2026.7.0 or newer**. Firmware builds require ESPHome
-**2026.10.0 or newer**.
+Requires Home Assistant **2026.7.0 or newer**. The current development firmware
+requires ESPHome **2026.10.0 or newer**.
 
 The stable 2026.10.1 firmware profiles use ESP VoIP Stack **2026.10.1**, Runtime Controller
 **2026.10.1**, and Audio Stack **2026.10.2** from their `main` branches. HA and ESP
@@ -41,8 +41,10 @@ firmware do not need matching version numbers. Rebuilding ESP firmware is
 recommended to receive the updated AFE delivery and playback fixes; it is separate
 from updating HA through HACS.
 
-See the [2026.10.1 changes](CHANGELOG.md) and
-[upgrade instructions](docs/BREAKING_CHANGES.md#2026100-coordinated-update-and-call-automations).
+The development profiles below use coordinated `dev` sources. See the
+[2026.10.1 changes](CHANGELOG.md) for the stable release, and follow the
+[current device-package migration](docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
+when adopting the development firmware.
 
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3%20%7C%20ESP32--P4-blue.svg)](#supported-hardware)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-native-blue.svg)](https://www.home-assistant.io)
@@ -64,7 +66,7 @@ phonebook. Each room phone still has its own identity and call state._
 </table>
 
 Maintained ESP firmware profiles require **ESPHome 2026.10.0 or newer**.
-See the [firmware migration notes](docs/BREAKING_CHANGES.md#2026100-esphome-202690-for-maintained-firmware-profiles)
+See the [firmware migration notes](docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
 when updating copied YAMLs. This does not force an immediate firmware update
 when installing the Home Assistant integration alone.
 
@@ -657,6 +659,11 @@ a trusted network.
 4. Open **Settings → Devices & services → Add integration**.
 5. Select **VoIP Stack** and complete the config flow.
 
+To install the development preview on an existing installation, open VoIP
+Stack in HACS, choose **Redownload** from its menu and select **2026.11.0-dev**.
+Allow prerelease versions if they are hidden, download, restart HA and reload
+the dashboard. HACS updates the HA integration and card, not ESP firmware.
+
 ![Install VoIP Stack from HACS](docs/images/hacs-download-voip-stack.png)
 
 The card is registered automatically. A normal LAN can keep SIP `5060` and RTP
@@ -669,14 +676,14 @@ topologies are documented in the
 
 ### ESPHome components
 
-Use the maintained YAML whenever possible. A minimal custom external-component
-declaration is:
+Use the maintained YAML whenever possible. For the coordinated development
+firmware described here, a minimal custom external-component declaration is:
 
 ```yaml
 external_components:
-  - source: github://n-IA-hane/esphome-voip-stack@main
+  - source: github://n-IA-hane/esphome-voip-stack@dev
     components: [voip_stack]
-  - source: github://n-IA-hane/esphome-audio-stack@main
+  - source: github://n-IA-hane/esphome-audio-stack@dev
     components: [esp_audio_stack, esp_aec]
 ```
 
@@ -748,12 +755,19 @@ are not a claim that every board with the same chip has the same wiring.
 | Waveshare ESP32-P4 Touch LCD, full JPEG videophone | [`waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml`](yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-landscape-videophone-jpeg.yaml) | Field tested |
 | Waveshare ESP32-P4 Touch LCD, portrait | [`waveshare-p4-touch-full-afe-portrait.yaml`](yamls/full-experience/single-bus/waveshare-p4-touch-full-afe-portrait.yaml) | Experimental layout |
 | Generic ESP32-S3, single bus | [`generic-s3-full-aec.yaml`](yamls/full-experience/single-bus/generic-s3-full-aec.yaml) | Reference profile |
+| Generic ESP32-S3 with DVP JPEG camera | [`generic-s3-full-aec-camera.yaml`](yamls/full-experience/single-bus/generic-s3-full-aec-camera.yaml) | Reference wiring for Freenove FNK0085 N8R8; camera transmission |
 | Generic ESP32-S3, single bus, 4 MB flash | [`generic-s3-full-lite-aec.yaml`](yamls/full-experience/single-bus/generic-s3-full-lite-aec.yaml) | Experimental; limited OTA headroom |
 | Generic ESP32-S3, dual bus | [`generic-s3-full-aec.yaml`](yamls/full-experience/dual-bus/generic-s3-full-aec.yaml) | Reference profile |
 | Native ESPHome mic/speaker | [`generic-s3-full-esphome-native.yaml`](yamls/full-experience/esphome-native/generic-s3-full-esphome-native.yaml) | Reference profile |
 
 The complete hardware, memory and C6 firmware notes are in the
 [deployment guide](docs/DEPLOYMENT_GUIDE.md#esp-devices).
+
+S3 camera profiles transmit JPEG video during calls; displaying the remote
+video on an S3 screen is not implemented. Supported P4 profiles transmit their
+camera and display the remote video. Devices with both a microphone and a
+speaker keep bidirectional audio on either platform. See the
+[SIP video guide](docs/SIP_VIDEO.md#esp32-s3-camera-preview-and-sip-video).
 
 FULL profiles using `esp_aec` or `esp_afe` start in `sr_high_perf` and offer
 `sr_low_cost` as the lower-memory alternative. The processor and mode selector
@@ -766,8 +780,9 @@ applied before the processor starts, so the selector matches the running DSP.
 The Generic Full Lite AEC profile keeps Voice Assistant, wake word, software
 AEC, VoIP, HTTP playback, TTS, timers and the runtime controller. It uses size
 optimization and leaves Sendspin disabled. PSRAM is still required. Its measured
-OTA image is about 1.78 MB, leaving roughly 59 KB in the standard 4 MB flash
-layout; check the build size again after adding components or updating
+OTA image was about 1.78 MB in an earlier build, leaving roughly 59 KB in the
+standard 4 MB flash layout. That is historical headroom; check the build size
+again after adding components or updating
 dependencies. The full 8 MB profile retains Sendspin and more flash headroom.
 
 ## Documentation

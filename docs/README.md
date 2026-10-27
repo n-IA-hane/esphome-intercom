@@ -44,7 +44,7 @@ explains how to carry settings from an older YAML into the new device packages.
 
 Published release notes and their artifacts are available in the
 [GitHub releases](https://github.com/n-IA-hane/esphome-intercom/releases).
-The PBX additions in these guides are included in the updated 2026.10.3-dev
+The PBX additions in these guides are included in the updated 2026.11.0-dev
 preview, not stable 2026.10.1.
 
 ## Architecture and protocols
@@ -95,7 +95,7 @@ Each ESPHome component ships its own README with the full option list, YAML snip
   [`esp_h264_video_source`](https://github.com/n-IA-hane/esphome-voip-stack/tree/dev/esphome/components/esp_h264_video_source)
   and [`p4_video_renderer`](https://github.com/n-IA-hane/esphome-voip-stack/tree/dev/esphome/components/p4_video_renderer),
   the compile-gated P4 SIP video TX and RX paths.
-- [`esp_audio_stack`](https://github.com/n-IA-hane/esphome-audio-stack/tree/main/esphome/components/esp_audio_stack), the
+- [`esp_audio_stack`](https://github.com/n-IA-hane/esphome-audio-stack/tree/dev/esphome/components/esp_audio_stack), the
   coordinated full-duplex audio backend for shared codec buses, dual I2S
   MEMS/amp boards that need software reference handling, Espressif
   rate/layout conversion, AEC reference capture, PSRAM placement and
@@ -112,10 +112,11 @@ Each ESPHome component ships its own README with the full option list, YAML snip
   YAML-programmed reducer used by maintained full-experience profiles to derive
   LED, LVGL/display, audio ducking, ringtone and timer policies from one state
   snapshot. It is control-plane only and does not process audio samples.
-- [`esp_aec`](https://github.com/n-IA-hane/esphome-audio-stack/tree/main/esphome/components/esp_aec), standalone ESP-SR echo cancellation.
-- [`esp_afe`](https://github.com/n-IA-hane/esphome-audio-stack/tree/main/esphome/components/esp_afe), the full Espressif AFE pipeline (AEC + NS + VAD + AGC, optional dual-mic Speech Enhancement).
-- internal shared audio primitives used privately by the local media/voice
-  component forks and by the split audio-stack repository.
+- [`esp_aec`](https://github.com/n-IA-hane/esphome-audio-stack/tree/dev/esphome/components/esp_aec), standalone ESP-SR echo cancellation.
+- [`esp_afe`](https://github.com/n-IA-hane/esphome-audio-stack/tree/dev/esphome/components/esp_afe), the full Espressif AFE pipeline (AEC + NS + VAD + AGC, optional dual-mic Speech Enhancement).
+- [Playback diagnostics](playback_diagnostics.md), optional observation of the
+  native announcement pipeline and hardware completion. Maintained firmware
+  uses official ESPHome media and voice providers.
 - `voip_simulator`, an internal test/simulation component used by the virtual
   device harness. It is not a production YAML component.
 

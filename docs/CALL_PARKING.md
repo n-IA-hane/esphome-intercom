@@ -1,6 +1,6 @@
 # Call parking and directed pickup
 
-This guide describes the updated 2026.10.3-dev preview. Redownload an older
+This guide describes the updated 2026.11.0-dev preview. Redownload an older
 build with the same version label to receive these additions.
 
 Parking leaves the other party connected to Home Assistant while you put down

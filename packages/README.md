@@ -120,9 +120,9 @@ and Options; with VoIP but no Voice Assistant, it starts at Contacts. A
 display-only profile shows Options alone.
 
 Inside Options, swipes in the body scroll the controls. Navigate from the
-fixed header or an exposed area outside the scrolling body, or use **Back**
-to return to the previous view. P4 keeps its existing settings gesture and
-button.
+fixed header or an exposed area outside the scrolling body. The centered
+**Options** header has no Back button. On P4, swipe up from the main screen
+to open Options and swipe down to return to that screen.
 
 Audio comes first: master volume, playback volume, microphone gain and mutes.
 Master controls the complete speaker output, including calls. Playback volume
@@ -130,6 +130,13 @@ is shared by music and announcements. Processing controls follow the chosen
 backend: AEC and processing mode, plus NS, AGC and VAD where available. The
 dual-microphone AFE profile has no runtime BSS switch. The mode selector retains
 the backend's existing restrictions during active Assist or VoIP sessions.
+
+Maintained FULL AEC/AFE profiles start in **SR HIGH** (`sr_high_perf`) and offer
+**SR LOW** (`sr_low_cost`). FD modes remain available in the separate VoIP-only
+profiles. These processing choices do not replace board-specific microphone
+and reference calibration; keep saved gains unless a level measurement calls
+for a change. See the [Box V2 controls](../docs/WAVESHARE_V2_PROCESSING.md#physical-buttons)
+for the distinction between its programmable button and hardware RESET.
 
 Wake word and Sendspin pairing controls appear only with their features.
 The final **VoIP** section contains auto answer, Do not disturb, conference

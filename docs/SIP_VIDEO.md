@@ -2,9 +2,11 @@
 
 VoIP Stack can optionally turn the Home Assistant softphone card into a SIP
 video phone for standard SIP phones, softphones and door stations. SIP video
-is a supported `2026.8.0` capability. Standard ESPHome profiles remain
-audio-only. Qualified ESP32-P4 profiles can send and receive RTP/JPEG or H.264
-video without changing the audio contract.
+is a supported `2026.8.0` capability. ESPHome profiles remain audio-only unless
+a video source or sink is configured. ESP32-S3 profiles with a supported native
+camera can transmit RTP/JPEG; rendering remote video on an S3 display is not
+implemented. Qualified ESP32-P4 profiles can transmit and receive RTP/JPEG or
+H.264 video without changing the audio contract.
 
 Video is disabled by default and does not alter an audio-only installation.
 Open the VoIP Stack integration, choose **Reconfigure**, then enable
@@ -90,10 +92,15 @@ is needed for this matching JPEG path. Conference rooms remain audio-only;
 calling a conference is not equivalent to calling one HA phone directly.
 
 [Community testing](https://github.com/n-IA-hane/esphome-voip-stack/pull/6#issuecomment-6122628313)
-confirms five minutes of S3-originated video, immediate redial and preservation
-of a simultaneous camera web stream. The reverse direction still needs a
-hardware retest with the HA integration version recorded. If it remains
-without video, collect one HA-to-S3 SIP capture and the ESP diagnostic log:
+confirmed S3-originated video, immediate redial and preservation of a
+simultaneous camera web stream. A later [HA-to-S3 retest by @jayfan0](https://github.com/n-IA-hane/esphome-voip-stack/pull/6#issuecomment-6172662217)
+confirmed immediate S3 camera video after updating the HA integration. That
+reported call lasted 64 minutes before an unexplained disconnect without debug
+logs, so it is not evidence of unrestricted long-uptime behavior. Both reports
+concern the S3's outgoing camera stream, independently of which side dialed;
+they do not add remote-video rendering on S3 screens.
+
+If a camera call remains without video, collect one HA-to-S3 SIP capture and the ESP diagnostic log:
 check the INVITE's `m=video` and direction, the answer's video port and direction,
 then RTP delivery. See [Testing and debugging](TESTING_AND_DEBUG.md).
 

@@ -21,7 +21,7 @@ phones. For the difference between a phone, card, contact and trunk, see
 
 The screenshots use Home Assistant's visual editors. Choose phones by their
 names; HA stores the identifiers for you. The new PBX actions described here
-are included in the current **2026.10.3-dev** prerelease. If an action is missing
+are included in the current **2026.11.0-dev** prerelease. If an action is missing
 after redownloading the same version, restart HA and reload the browser.
 
 ## Install Home Assistant VoIP Stack

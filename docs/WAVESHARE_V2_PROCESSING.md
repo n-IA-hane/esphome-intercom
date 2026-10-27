@@ -32,6 +32,11 @@ independent switch in the dual-microphone profile. VAD remains available as
 **Voice Activity Detector** and **Voice Detected**. **Echo Cancellation** and
 **AEC Mode** keep their existing names; AFE also contains an AEC stage.
 
+Maintained FULL presets start in **SR HIGH** (`sr_high_perf`) and expose only
+SR HIGH and **SR LOW** (`sr_low_cost`). The separate VoIP-only presets retain
+FD choices. The historical FD measurements below describe their identified
+firmware, not the current FULL default.
+
 SIP may use UDP or TCP; RTP audio remains UDP. The existing `transport.yaml`
 sets this scalar directly, without separate duplicate transport packages.
 Older `full-aec.yaml` and `full-afe.yaml` entrypoints remain compatible aliases.
@@ -65,6 +70,20 @@ optimization to fit the existing OTA slots. Standalone AEC retains `PERF`.
 No animation pose, source image, display resolution or application feature was
 removed. A root `v2_compiler_optimization` override remains possible, but every
 custom build must pass its actual partition-size check.
+
+## Physical buttons
+
+The V2 has one programmable button on **GPIO0/BOOT**. The other button is
+**RESET**, wired directly to the ESP32-S3 `CHIP_PU` reset input, so it cannot
+be reassigned to Call/Answer in firmware. See the
+[manufacturer's V2 schematic](https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85C/ESP32-S3-Touch-LCD-1.85C_V2.pdf).
+
+In the maintained FULL interface, a short press stops a ringing timer first.
+Otherwise, an active or pending Assist interaction takes priority: pressing
+the button cancels Assist while an established audio call remains active.
+When Assist is inactive, the existing view-specific phone and voice controls
+apply. Options uses a centered title and swipe navigation, without a Back
+button; swipe down from its fixed header to return to the preceding view.
 
 ## Physical checks on 2026-10-22
 

@@ -5,7 +5,7 @@ section even when the Home Assistant browser is only receiving video. The
 profile also selects standard SIP audio formats at 20 ms instead of treating
 an unregistered door station as a generic directional PCM endpoint.
 
-This configuration is available in the updated **2026.10.3-dev** preview.
+This configuration is available in the updated **2026.11.0-dev** preview.
 It requires no Python patch, fabricated User-Agent, or `registered: true` flag.
 
 ## Dahua registered with Home Assistant
@@ -188,7 +188,7 @@ also provides per-profile and per-call offer controls. Our explicit contact
 choices follow that separation: choose advertised capabilities per destination
 and continue validating the actual offer/answer exchange.
 
-[Dahua lists G.711 and PCM for the VTO2211G-WP](https://www.dahuasecurity.com/products/discontinued-products/video-intercoms/vto2211g-wp).
+[Dahua lists G.711 and PCM for the VTO2211G-WP](https://material.dahuasecurity.com/uploads/cpq/prm-os-srv-res/smart/datasheetzipfiles/VTO2211G-WP_datasheet_20230223.pdf).
 An [Asterisk community investigation](https://community.asterisk.org/t/dahua-vto4202f-p-s2-asterisk-dahua-vth5422h-no-video/94956)
 also reports working G.711 without PCM on a different Dahua setup. These are
 reasons to provide a standard-codec comparison, not evidence that the remaining

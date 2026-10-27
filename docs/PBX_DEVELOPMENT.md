@@ -1,9 +1,7 @@
 # HA PBX branch: implementation and qualification
 
-The work started on `feature/ha-pbx`, based on
-`16714a9b5000126278ad90d87bff1ec9cd1b6c2a`, and is being promoted to `dev`.
-Branch promotion and prerelease publication are separate steps. The updated
-2026.10.3-dev package includes the PBX additions described here.
+This guide describes the PBX implementation and qualification included in the
+**2026.11.0-dev** preview. Stable 2026.10.1 does not include these additions.
 Asterisk and FreeSWITCH are protocol references and test peers, not dependencies.
 
 ## Ownership and public behavior

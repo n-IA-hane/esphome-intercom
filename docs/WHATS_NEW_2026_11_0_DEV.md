@@ -974,6 +974,19 @@ Follow the [firmware migration and pairing guide](https://github.com/n-IA-hane/e
 
 ### Further audio and runtime improvements
 
+- FULL AEC/AFE presets now start in **SR HIGH** and offer SR LOW. Separate
+  VoIP-only profiles retain FD choices. Existing board-specific microphone and
+  echo-reference calibration is preserved.
+- Positive **Mic Gain** now applies constant gain, preserving the beginning of
+  quiet speech after silence. Review saved positive settings for clipping when
+  upgrading. Micro Wake Word remains the official ESPHome provider.
+- Options has a centered title and uses swipe navigation without a Back
+  button. The shared round-device button cancels an active or pending Assist
+  interaction before handling phone-page controls, keeping an established call
+  active. The Box V2 hardware RESET button cannot be reassigned in firmware.
+- Optional [playback diagnostics](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/playback_diagnostics.md)
+  observes native announcements and hardware completion without automatic
+  recovery. It helps capture the state of a stalled pipeline before rebooting.
 - Shared committed call state now drives browser phones and PBX projections, including no-answer routing, voicemail handoff and browser application ownership.
 - FULL firmware packages use native Runtime Controller observers for Assist, wake word, timers and HA connectivity. Existing user callbacks remain available. VoIP-only profiles keep direct VoIP callbacks and do not acquire a Runtime Controller dependency.
 - Coordinated ESP updates retain our Audio Stack, AFE and VoIP fixes while selecting official playback providers. Playback completion follows DMA descriptor identity; reference silence/partial frames and AFE acquisition boundaries keep their ownership. Delayed SIP offers, stereo DC filtering and mixed-codec reception use their corrected contracts.

@@ -432,16 +432,20 @@ For ESP debug:
 
 For AFE or I2S lifecycle work, keep the production hot path event-driven:
 
-- the ESP-SR feed task supplies complete input/reference frames;
-- the fetch task blocks on the feed semaphore and then calls ESP-SR fetch;
-- stop or reconfigure explicitly wakes the blocked task;
+- Espressif's AFE manager owns the feed/fetch workers;
+- the wrapper read callback supplies queued microphone/reference PCM;
+- the result callback delivers processed PCM through the bounded output stream;
+- stop or reconfigure retires work through the current session owner;
 - I2S reads/writes block on DMA/backpressure;
 - finite timeouts are reserved for lifecycle and fault bounds, not periodic
   checks for possible audio work.
 
+Waiting for input or output capacity can be normal. Correlate task state with
+PCM progress and queue ownership before identifying a bottleneck.
+
 This follows Espressif's documented
 [ESP-SR feed/fetch model](https://docs.espressif.com/projects/esp-sr/en/latest/esp32p4/audio_front_end/README.html),
-[ESP-ADF event/ring-buffer pipeline](https://docs.espressif.com/projects/esp-adf/en/latest/api-reference/framework/audio_pipeline.html)
+[GMF AI Audio 1.1.1 manager](https://components.espressif.com/components/espressif/gmf_ai_audio/versions/1.1.1/readme)
 and [blocking I2S API](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/i2s.html).
 Search for `vTaskDelay`, short timed semaphore waits and periodic wake loops
 before accepting an audio-path change.
@@ -492,7 +496,7 @@ orientation's dimensions. `--prepare-only` writes the host configuration
 without compiling or running it.
 
 Inspect the top, middle and end snapshots, including the physical circular
-boundary on round displays. Check the fixed Back button, wrapped labels,
+boundary on round displays. Check the centered Options title, wrapped labels,
 values and units, optional controls and the final VoIP section. A host
 snapshot proves the rendered layout, not panel operation, touch propagation,
 speaker audio or DSP behavior. Gesture tests need real LVGL pointer input;
@@ -506,6 +510,9 @@ or exposed area outside the scrolling body, and verify that dragging inside
 the body scrolls without leaving the page. During a call, a recognized swipe
 must not become a hangup, while a normal hangup tap must still work. These
 host checks do not replace validation of the physical touchscreen.
+
+Options has no Back button. P4 enters Options with an upward swipe and leaves
+with a downward swipe from the fixed header or another navigation area.
 
 Settings must update from their existing owners' notifications and refresh on
 page entry. Verify that opening or refreshing the page causes no writes to

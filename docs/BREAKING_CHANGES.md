@@ -51,6 +51,26 @@ not a long-uptime result for every supported board. The outstanding Spotpear
 announcement report remains open; preserve its complete logs and exact firmware
 revision if it recurs.
 
+## Development firmware: processing modes and microphone gain
+
+Maintained FULL AEC/AFE profiles now start in `sr_high_perf` and offer
+`sr_low_cost` as the alternative. The separate VoIP-only profiles retain their
+FD/VoIP choices. If a copied FULL YAML overrides the initial mode or selector
+options with FD values, remove that override or replace it with the intended
+SR mode when adopting the current preset. The DSP and selector use the same
+initial setting, including a restored SR choice where restoration is enabled.
+
+Audio Stack's positive **Mic Gain** is now a constant post-processor gain
+instead of an automatic ALC. Existing saved values are retained, but weak
+speech following quiet input can arrive at a higher level than in older
+firmware. Check restored positive gains with speech and playback, and reduce
+the value if the output clips. A 0-dB setting adds no software boost.
+Hardware PGA and echo-reference calibration remain separate controls; keep the
+values supplied for your board instead of copying another device's tuning.
+
+See [Audio Stack tuning](https://github.com/n-IA-hane/esphome-audio-stack/blob/dev/docs/AUDIO_TUNING.md)
+and the [Box V2 calibration](WAVESHARE_V2_PROCESSING.md#one-physical-calibration-for-this-board).
+
 ## Development firmware: ESPHome 2026.10 and music pairing
 
 Upgrade the builder to **ESPHome 2026.10.0 or newer** before compiling the current
