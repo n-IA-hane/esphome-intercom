@@ -127,8 +127,9 @@ leave duplicate players, controls or callbacks alongside the new composition.
 
 This is a firmware configuration migration, separate from updating VoIP Stack
 through HACS. It does not require deleting the HA integration, its phones or
-your working device. This preview uses coordinated `dev` packages and component
-sources. Use its published source references rather than mixing them with `main`.
+your working device. The 2026.11.0 firmware uses coordinated packages and
+component sources from `main`. Use the source references published with your
+selected release.
 
 ### Choose FULL or standalone VoIP-only
 

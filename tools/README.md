@@ -71,6 +71,22 @@ The official-corpus replay tests are opt-in through `MWW_TEST_CORPUS`. That
 directory must contain an identified `manifest.json` and the corresponding WAV
 files.
 
+Model/corpus replay and the Playback Diagnostics Xtensa assembly check carry
+the `diagnostic_reference` marker. The normal `fast` and `software-full` suites
+exclude these six reference-dependent cases; the dependency-free diagnostic
+tests remain in those suites. CI still rejects every skipped, failed or errored
+test in its selected mandatory suites.
+
+To execute the reference checks, install the optional requirements, provide
+`MWW_TEST_CORPUS` and `PLAYBACK_DIAGNOSTICS_COMPILE_COMMANDS` pointing to the
+identified corpus and an existing diagnostic firmware compile database, then run:
+
+```bash
+python -m pytest tests/test_mww_analyze.py tests/test_playback_diagnostics.py \
+  -m diagnostic_reference --junitxml=reference-results.xml
+python scripts/check_test_results.py reference-results.xml
+```
+
 ## Deployment helper
 
 `deploy_ha_voip_stack.sh` is only for an explicitly authorized development
