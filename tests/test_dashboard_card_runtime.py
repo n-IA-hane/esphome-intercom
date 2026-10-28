@@ -413,11 +413,12 @@ def install_native_phone_contract(page):
     """Probe the dashboard's public child API without duplicating a softphone."""
     page.evaluate("""()=>{
       class NativePhone extends HTMLElement {
-        setConfig(value){this.config=value;}
+        setConfig(value){this.config=value;this.presentation={video:false,settings:false,keypad:false,keypadAvailable:true,optionsAvailable:true};this.notify();}
         setDashboardMode(value){this.embedded=value;}
         set hass(value){this.boundHass=value;}
         focusPhoneView(){this.focused=true;this.focusCalls=(this.focusCalls||0)+1;engine.videoCanvasOwner=this;return true;}
-        openPhoneOptions(){this.focusPhoneView();this.presentation={video:false,settings:true};this.notify();}
+        togglePhoneOptions(){this.focusPhoneView();this.presentation.settings=!this.presentation.settings;this.notify();}
+        togglePhoneKeypad(){this.focusPhoneView();this.presentation.keypad=!this.presentation.keypad;this.notify();}
         answerPhoneCall(options){this.answers=(this.answers||[]).concat(options);return Promise.resolve();}
         notify(){this.dispatchEvent(new CustomEvent('voip-presentation-changed',{detail:this.presentation}));}
       }
@@ -433,7 +434,10 @@ def test_dashboard_reuses_native_phone_options_and_preserves_the_owner(dashboard
     assert page.evaluate("card._phoneView.embedded") is True
     assert page.evaluate("card._phoneView.config.device_id") == "studio-device"
     assert page.evaluate("card._phoneView.config.mode") == "ha_softphone"
-    page.get_by_role("button", name="Options", exact=True).click()
+    options = page.get_by_role("button", name="Options", exact=True)
+    assert options.inner_text() == ""
+    assert options.locator("ha-icon").get_attribute("icon") == "mdi:cog"
+    options.click()
     assert page.locator(".phone-view").is_visible()
     assert page.locator(".scroller").is_hidden()
     assert page.locator(".dashboard-header").is_visible()
@@ -562,3 +566,30 @@ def test_dashboard_remount_restores_responsive_measurement(dashboard_page):
     hangup = page.locator(".owner-call .answer")
     assert hangup.is_visible()
     assert page.evaluate("card._els.card.scrollWidth <= card.clientWidth+1")
+
+
+@pytest.mark.browser_real
+def test_dashboard_keypad_and_options_toggle_the_same_native_surface(dashboard_page):
+    page = dashboard_page
+    install_native_phone_contract(page)
+    keypad = page.get_by_role("button", name="Keypad", exact=True)
+    options = page.get_by_role("button", name="Options", exact=True)
+    assert keypad.inner_text() == ""
+    assert keypad.locator("ha-icon").get_attribute("icon") == "mdi:dialpad"
+    keypad.click()
+    assert keypad.get_attribute("aria-expanded") == "true"
+    assert page.locator(".phone-view").is_visible()
+    assert page.locator(".scroller").is_hidden()
+    options.click()
+    assert options.get_attribute("aria-expanded") == "true"
+    options.click()
+    assert options.get_attribute("aria-expanded") == "false"
+    assert page.locator(".phone-view").is_visible()
+    keypad.click()
+    assert page.locator(".phone-view").is_hidden()
+    assert page.locator(".scroller").is_visible()
+    page.evaluate("()=>{card._phoneView.presentation.keypadAvailable=false;card._phoneView.notify()}")
+    assert keypad.is_disabled()
+    page.evaluate("()=>card.setConfig({device_id:'missing-owner'})")
+    assert keypad.is_disabled()
+    assert options.is_disabled()

@@ -36,6 +36,9 @@ in the dashboard layout editor to display more columns and rows.
   header. The calling-phone selector stays in the visual editor.
 - **The same phone options:** auto-answer, ringtone, Do not disturb and media
   device preferences use the familiar softphone controls.
+- **Native keypad:** open the dialpad icon to enter a number or SIP address,
+  then use the same keypad for browser-call DTMF, including video calls.
+  The gear icon opens and closes the familiar phone options.
 - **Video calls:** choose video or audio-only when answering a video offer.
   The first received video frame opens the full-card call view, with the
   familiar red call bar and phone controls. The tiles return after hangup.

@@ -1478,7 +1478,8 @@ class VoipStackEngine extends EventTarget {
     return this._dashboardOperation(owner, async (browser) => {
       let current = await this._dashboardSnapshot(owner);
       if (current.state !== "idle") throw new Error("The selected phone is already busy or unavailable.");
-      const destination = String(target?.extension || target?.number || target?.name || "").trim();
+      const destination = [target?.name, target?.extension, target?.number]
+        .map(value => String(value || "").trim()).find(Boolean) || "";
       if (!destination) throw new Error("This contact has no destination.");
       if (!browser) {
         return this._hass.callService("voip_stack", "call", { device_id: owner.device_id, destination });

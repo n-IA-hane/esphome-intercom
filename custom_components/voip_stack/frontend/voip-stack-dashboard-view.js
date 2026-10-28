@@ -31,8 +31,9 @@ const STYLES = `
     -webkit-backdrop-filter:blur(15px) saturate(1.12); backdrop-filter:blur(15px) saturate(1.12); }
   .phone-view { flex:1 1 auto; min-height:0; overflow:hidden; }
   .phone-view voip-stack-card { display:block; height:100%; min-height:0; }
-  .options { margin-left:auto; flex:none; }
-  ha-card.video-mode .dashboard-header,ha-card.video-mode .notice { display:none; }
+  .header-tools { margin-left:auto; flex:none; display:flex; align-items:center; gap:8px; }
+  .header-tools .action { width:44px; height:44px; padding:0; }
+  :host ha-card.video-mode .dashboard-header,:host ha-card.video-mode .notice { display:none; }
   .dashboard-header { flex:none; display:flex; align-items:center; gap:20px; padding:18px 22px;
     border-bottom:1px solid var(--dash-line); background:color-mix(in srgb,var(--dash-ink) 3%,transparent); }
   .identity { display:flex; align-items:center; gap:14px; min-width:0; flex:1 1 34%; }
@@ -129,9 +130,10 @@ const STYLES = `
   .details-peer { font-weight:600; overflow-wrap:anywhere; }
   .details-state { color:var(--dash-muted); margin-top:4px; font-size:13px; }
   .details-actions { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
-  :host(.compact) .dashboard-header { flex-direction:column; align-items:stretch; gap:12px; padding:15px; }
+  :host(.compact) .dashboard-header { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; padding:15px; }
   :host(.compact) .identity { flex-basis:auto; }
-  :host(.compact) .owner-call { flex-basis:auto; }
+  :host(.compact) .owner-call { flex-basis:auto; grid-column:1 / -1; }
+  :host(.compact) .header-tools { grid-column:2; grid-row:1; }
   :host(.compact) .scroller { padding:14px; }
   :host(.narrow) .owner-call { flex-wrap:wrap; }
   :host(.narrow) .call-actions { width:100%; }
@@ -174,8 +176,12 @@ export function buildDashboardSkeleton(shadow, t, callbacks) {
   const hangup = action(t("Hang up"), "mdi:phone-hangup", "hangup"); hangup.onclick = () => callbacks.command("hangup");
   const moreCalls = action(t("Call details"), "mdi:phone-log", "more-calls"); moreCalls.onclick = callbacks.ownerDetails;
   callActions.append(answerVideo, answer, decline, hangup, moreCalls); ownerCall.append(callIconBox, callCopy, callActions);
-  const options = action(t("Options"), "mdi:cog", "options"); options.onclick = callbacks.options;
-  header.append(identity, ownerCall, options);
+  const tools = dashboardElement("div", "header-tools");
+  const options = action("", "mdi:cog", "options"); options.onclick = callbacks.options;
+  options.title = t("Options"); options.setAttribute("aria-label", t("Options"));
+  const keypad = action("", "mdi:dialpad", "keypad"); keypad.onclick = callbacks.keypad;
+  keypad.title = t("Keypad"); keypad.setAttribute("aria-label", t("Keypad"));
+  tools.append(keypad, options); header.append(identity, ownerCall, tools);
   const notice = dashboardElement("p", "notice"); notice.setAttribute("role", "status"); notice.setAttribute("aria-live", "polite");
   const scroller = dashboardElement("div", "scroller"); scroller.tabIndex = 0;
   scroller.setAttribute("aria-label", `${t("Extensions")}, ${t("Contacts")}`);
@@ -197,7 +203,7 @@ export function buildDashboardSkeleton(shadow, t, callbacks) {
   dialog.addEventListener("click", (event) => { if (event.target === dialog) { const box = dialog.getBoundingClientRect(); if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dialog.close(); } });
   const phoneHost = dashboardElement("div", "phone-view"); phoneHost.hidden = true;
   card.append(header, notice, scroller, phoneHost, dialog); shadow.append(style, card);
-  return { card, title, ownerName, ownerIcon, ownerCall, callIcon, callLabel, callPeer, callNumber, answer, answerVideo, decline, hangup, moreCalls, options, phoneHost, notice, scroller, sections, dialog, detailsTitle, detailsSummary, detailsRows };
+  return { card, title, ownerName, ownerIcon, ownerCall, callIcon, callLabel, callPeer, callNumber, answer, answerVideo, decline, hangup, moreCalls, options, keypad, phoneHost, notice, scroller, sections, dialog, detailsTitle, detailsSummary, detailsRows };
 }
 
 export function buildDashboardTile(key, callbacks) {

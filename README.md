@@ -26,10 +26,7 @@ phones, then add the features you need. The ESP firmware also works with
 
 ![Real Mobotix video call in the Home Assistant phone card](docs/images/pbx-mobotix-video-green.png)
 
-_A real door-station call through a FreeSWITCH-based PBX, with the local webcam
-off. [Learn the phone controls](docs/USER_GUIDE.md#read-the-phone-card) and
-[how to park and retrieve audio calls](docs/CALL_PARKING.md).
-[FreeSWITCH/FusionPBX setup](docs/FREESWITCH.md)._
+_A call from a MOBOTIX video door station, with the local webcam off._
 
 Stable release: [2026.11.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0).
 Development preview: [2026.11.1-dev changes](docs/WHATS_NEW_2026_11_1_DEV.md),
@@ -821,9 +818,10 @@ capabilities.
 | Services, selectors and side effects | [Home Assistant services](docs/SERVICES.md) |
 | Automations and contextual routing | [Automation cookbook](docs/AUTOMATION_DIALPLAN.md) |
 | Ring and conference groups | [Groups](docs/GROUPS.md) |
-| Phone mailboxes, MWI and message automations (PBX development branch) | [Voicemail](docs/VOICEMAIL.md) |
+| Phone mailboxes, MWI and message automations | [Voicemail](docs/VOICEMAIL.md) |
 | SIP video codecs and browser privacy | [SIP video](docs/SIP_VIDEO.md) |
 | Provider/PBX registration | [SIP trunk](docs/SIP_TRUNK.md) |
+| Optional FreeSWITCH/FusionPBX audio and video setup | [FreeSWITCH](docs/FREESWITCH.md) |
 | Dahua registered or static door station | [Dahua setup and audio comparison](docs/DAHUA.md) |
 | Names, extensions and route precedence | [Dial-plan resolver](docs/DIALPLAN_RESOLVER.md) |
 | ESP/HA phonebook representation | [Phonebook protocol](docs/PHONEBOOK_PROTOCOL.md) |

@@ -1362,6 +1362,39 @@ immediate.startHaSoftphone=async()=>{{
 await immediate.dashboardStartCall(immediateOwner,{{extension:"101"}});
 assert.equal(immediateResumes,1,"A committed answer must attach media after the command gate releases");
 
+// ShadowNameVsExtension: named tiles always reach the central PBX resolver by name.
+// Exercise the real dashboard and originate methods, including their wire payload.
+const namedSessionBackup=new Map(session);
+for (const browser of [false,true]) {{
+  for (const [target,expected] of [
+    [{{name:" Shadow destination ",extension:"101",number:"202"}},"Shadow destination"],
+    [{{name:"Saved contact",number:"+12025550123"}},"Saved contact"],
+    [{{name:"101",extension:"202"}},"101"],
+    [{{name:"  ",extension:"101"}},"101"],
+    [{{extension:" ",number:"202"}},"202"],
+  ]) {{
+    session.clear();
+    const named=new Engine();const sent=[];
+    const who={{device_id:"named-device",endpoint_id:"named",softphone:browser}};
+    named._phoneStates.set("named",{{state:"idle",calls:[]}});
+    named.prepareAudioCall=async()=>{{}};
+    named._hass={{callWS:async request=>{{
+      if(request.type==="call_service")sent.push(request.service_data);
+      return {{endpoint_id:"named",device_id:"named-device",state:"idle"}};
+    }},callService:async(domain,service,data)=>{{sent.push(data);return {{}};}}}};
+    await named.dashboardStartCall(who,target);
+    assert.equal(sent.length,1);
+    assert.equal(sent[0].destination,expected,`ShadowNameVsExtension browser=${{browser}}`);
+    assert.equal(sent[0].device_id,"named-device");
+  }}
+}}
+session.clear();
+const manualDial=new Engine();let manualRequest;
+manualDial._hass={{callWS:async request=>{{manualRequest=request;return {{state:"idle",device_id:"manual-device",endpoint_id:"manual"}};}}}};
+await manualDial.startHaSoftphone({{name:"101",manual:true}},{{device_id:"manual-device",endpoint_id:"manual"}},{{callee:"101"}});
+assert.equal(manualRequest.service_data.destination,"101","Explicit keypad numbers retain their own meaning");
+session.clear();for(const [key,value] of namedSessionBackup)session.set(key,value);
+
 // A retained backend scope must also consume an answer after the last view
 // unmounts. Keeping browser presence alone does not attach the call's audio.
 const unmounted = new Engine();

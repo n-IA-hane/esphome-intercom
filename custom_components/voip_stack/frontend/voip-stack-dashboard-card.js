@@ -32,7 +32,7 @@ class VoipStackDashboardCard extends HTMLElement {
     this._ownerSelector = "";
     this._syncKey = "";
     this._syncPending = false;
-    this._phonePresentation = {video:false,settings:false};
+    this._phonePresentation = {video:false,settings:false,keypad:false,keypadAvailable:false,optionsAvailable:false};
     this._videoFocusCallId = "";
     this._engineListener = () => {
       this._syncOwner(); this._render();
@@ -56,7 +56,7 @@ class VoipStackDashboardCard extends HTMLElement {
       this._epoch++;
       this._releaseOwner();
       this._ownerSnapshot = null;
-      this._phonePresentation = {video:false,settings:false};
+      this._phonePresentation = {video:false,settings:false,keypad:false,keypadAvailable:false,optionsAvailable:false};
       this._videoFocusCallId = "";
       this._pending = "";
       this._error = "";
@@ -204,7 +204,7 @@ class VoipStackDashboardCard extends HTMLElement {
     if (!this.shadowRoot) return;
     if (!this._els) {
       this._els = buildDashboardSkeleton(this.shadowRoot, (text) => this._t(text), {
-        command: (action) => this._ownerCommand(action), options: () => this._openOptions(), ownerDetails: () => this._openDetails(this._ownerTileKey()),
+        command: (action) => this._ownerCommand(action), options: () => this._openOptions(), keypad: () => this._toggleKeypad(), ownerDetails: () => this._openDetails(this._ownerTileKey()),
       });
       this._resizeObserver.observe(this._els.card);
       this._ensurePhoneView();
@@ -294,16 +294,22 @@ class VoipStackDashboardCard extends HTMLElement {
 
   _renderPhoneSurface() {
     if (!this._els) return;
-    const {video,settings} = this._owner() ? this._phonePresentation : {video:false,settings:false};
-    this._els.phoneHost.hidden = !(video || settings);
-    this._els.scroller.hidden = !!(video || settings);
+    const {video,settings,keypad,keypadAvailable,optionsAvailable} = this._owner() ? this._phonePresentation : {};
+    this._els.phoneHost.hidden = !(video || settings || keypad);
+    this._els.scroller.hidden = !!(video || settings || keypad);
     this._els.card.classList.toggle("video-mode", !!video);
-    this._els.options.disabled = !this._phoneView;
+    this._els.options.disabled = !this._phoneView || !optionsAvailable;
     this._els.options.setAttribute("aria-expanded", String(!!settings));
+    this._els.keypad.disabled = !this._phoneView || !keypadAvailable;
+    this._els.keypad.setAttribute("aria-expanded", String(!!keypad));
   }
 
   _openOptions() {
-    this._phoneView?.openPhoneOptions?.();
+    this._phoneView?.togglePhoneOptions?.();
+  }
+
+  _toggleKeypad() {
+    this._phoneView?.togglePhoneKeypad?.();
   }
 
   _renderHeader(owner) {

@@ -705,6 +705,25 @@ class VoipStackCard extends HTMLElement {
     if (!this._settingsOpen) this._toggleSettings();
   }
 
+  togglePhoneOptions() {
+    if (!this._els || this._els.settingsBtn.hidden) return;
+    this.focusPhoneView();
+    this._toggleSettings();
+  }
+
+  togglePhoneKeypad() {
+    if (!this._els || this._els.keypadBtn.hidden) return;
+    this.focusPhoneView();
+    // Options may cover an already-open keypad. Reveal that existing view
+    // rather than toggling its retained state closed behind the panel.
+    if (this._settingsOpen && this._keypadOpen()) {
+      this._settingsOpen = false;
+      this._render();
+    } else {
+      this._toggleKeypad();
+    }
+  }
+
   async answerPhoneCall({ video = false } = {}) {
     this.focusPhoneView();
     await this._answer({ sendVideo: !!video, acceptVideo: !!video });
@@ -2100,7 +2119,11 @@ class VoipStackCard extends HTMLElement {
     // Error
     els.err.textContent = this._t(this._errorMsg);
     if (this._dashboardEmbedded) {
-      const presentation = { video: visualMediaVisible, settings: showSettingsPanel };
+      const presentation = {
+        video: visualMediaVisible, settings: showSettingsPanel,
+        keypad: !showSettingsPanel && !els.keypadPanel.hidden,
+        keypadAvailable: !els.keypadBtn.hidden, optionsAvailable: !els.settingsBtn.hidden,
+      };
       const key = JSON.stringify(presentation);
       if (key !== this._dashboardPresentationKey) {
         this._dashboardPresentationKey = key;

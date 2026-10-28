@@ -50,7 +50,7 @@ async def qualify(args):
                  for origin in storage["origins"] if origin["origin"] == args.url
                  for item in origin["localStorage"] if item["name"] == "hassTokens")
     results = {"scenarios": [], "screenshots": [], "browser_errors": [],
-               "capture_proof": [], "lifecycle": [], "cleanup_errors": []}
+               "capture_proof": [], "lifecycle": [], "cleanup_errors": [], "dtmf_controls": [], "call_requests": []}
     async with HaWs(args.url, token) as ws:
         # HTTP is available before configured integrations finish setting up.
         # Wait for HA's actual startup state before invoking their commands.
@@ -107,6 +107,21 @@ async def qualify(args):
                 HTMLMediaElement.prototype.play = function() { this.muted=true;return Promise.resolve(); };
             """)
             page = await context.new_page()
+            def observe_websocket(socket):
+                def observe_control(payload):
+                    if not isinstance(payload, str):
+                        return
+                    try:
+                        control = json.loads(payload)
+                    except json.JSONDecodeError:
+                        return
+                    if control.get("type") == "call_service" and control.get("domain") == "voip_stack" and control.get("service") == "call":
+                        results["call_requests"].append({"destination":control.get("service_data",{}).get("destination"),
+                                                         "device_id":control.get("service_data",{}).get("device_id")})
+                    if control.get("type") == "dtmf":
+                        results["dtmf_controls"].append({"digit":control.get("digit"), "duration_ms":control.get("duration_ms")})
+                socket.on("framesent", observe_control)
+            page.on("websocket", observe_websocket)
             remote = await context.new_page()
             receiving_page = await context.new_page()
             for label, browser_page in (("owner", page), ("peer", remote), ("receiver", receiving_page)):
@@ -258,7 +273,9 @@ async def qualify(args):
                 await shot("04-outgoing-connected")
                 await dashboard.locator(".owner-call .hangup").click()
                 await state("idle")
-                results["scenarios"].append("outgoing-call-hangup")
+                assert any(request["destination"] == peer["name"] and request["device_id"] == owner["device_id"]
+                           for request in results["call_requests"]), results["call_requests"]
+                results["scenarios"].append("outgoing-call-hangup-by-canonical-name")
                 await peer_start(receiver["extension"])
                 ringing_tile = dashboard.locator(f'.tile[data-key="endpoint:{receiver["endpoint_id"]}"]')
                 await expect(ringing_tile).to_have_class(re.compile(r"\bringing\b"))
@@ -317,16 +334,53 @@ async def qualify(args):
                 await dashboard.locator(".owner-call .hangup").click()
                 await state("idle")
                 results["scenarios"].append("in-call-view-recreation-keeps-call-and-one-capture")
-                # Runtime controls come from the real native phone view, sharing
-                # the same endpoint settings and media owner as the other card.
-                await dashboard.locator(".options").click()
+                # Numeric dialing and settings use the same native child and engine.
                 embedded = dashboard.locator("voip-stack-card[data-dashboard-phone]")
+                await expect(dashboard.locator(".options")).to_have_text("")
+                await expect(dashboard.locator(".options ha-icon")).to_have_attribute("icon", "mdi:cog")
+                await dashboard.locator(".keypad").click()
+                await expect(embedded.locator(".keypad-panel")).to_be_visible()
+                await expect(dashboard.locator(".scroller")).to_be_hidden()
+                await embedded.get_by_role("button", name="Clear destination", exact=True).click()
+                for digit in peer["extension"]:
+                    await embedded.get_by_role("button", name=digit, exact=True).click()
+                await expect(embedded.locator(".keypad-input")).to_have_value(peer["extension"])
+                await dashboard.screenshot(path=str(args.out / "09-keypad-desktop.png"))
+                results["screenshots"].append("09-keypad-desktop.png")
+                await page.set_viewport_size({"width":390,"height":1000})
+                await expect(dashboard).to_have_class(re.compile(r"\bnarrow\b"))
+                await dashboard.screenshot(path=str(args.out / "09-keypad-mobile.png"))
+                results["screenshots"].append("09-keypad-mobile.png")
+                await page.set_viewport_size({"width":1500,"height":1100})
+                await dashboard.locator(".options").click()
                 await expect(embedded.locator(".settings-panel")).to_be_visible()
                 await expect(embedded.locator(".auto-answer-row").first).to_be_visible()
                 await shot("10-native-phone-options")
-                await embedded.evaluate("card => card._toggleSettings()")
+                await dashboard.locator(".options").click()
+                await expect(embedded.locator(".settings-panel")).to_be_hidden()
+                await expect(embedded.locator(".keypad-panel")).to_be_visible()
+                await expect(dashboard.locator(".phone-view")).to_be_visible()
+                captures = await capture_count()
+                await embedded.locator(".voip-button.call").click()
+                await state("busy")
+                await peer_card.evaluate("card=>card._answer()")
+                await connected()
+                await one_capture(captures, "native-keypad-number-dial")
+                # Native dialing intentionally closes number entry before the call.
+                # Reopen the same control in its in-call DTMF mode.
+                await dashboard.locator(".keypad").click()
+                await expect(embedded.locator(".keypad-panel")).to_be_visible()
+                await embedded.get_by_role("button", name="4", exact=True).click()
+                async with asyncio.timeout(5):
+                    while not any(item["digit"] == "4" for item in results["dtmf_controls"]):
+                        await asyncio.sleep(0.05)
+                await dashboard.locator(".keypad").click()
+                await dashboard.locator(".owner-call .hangup").click()
+                await state("idle")
                 await expect(dashboard.locator(".scroller")).to_be_visible()
-                results["scenarios"].append("dashboard-reuses-native-phone-options")
+                await expect(dashboard.locator(".phone-view")).to_be_hidden()
+                results["scenarios"].append("native-keypad-dials-number-and-sends-in-call-dtmf")
+                results["scenarios"].append("icon-only-options-toggle-retains-native-keypad")
 
                 if args.video:
                     for phone_card in (embedded, peer_card):
@@ -350,6 +404,15 @@ async def qualify(args):
                     }""",timeout=20000)
                     await expect(dashboard.locator(".scroller")).to_be_hidden()
                     await expect(embedded.locator(".video-canvas")).to_be_visible()
+                    await embedded.get_by_role("button", name="Keypad", exact=True).click()
+                    await expect(embedded.locator(".keypad-panel")).to_be_visible()
+                    await embedded.get_by_role("button", name="5", exact=True).click()
+                    async with asyncio.timeout(5):
+                        while not any(item["digit"] == "5" for item in results["dtmf_controls"]):
+                            await asyncio.sleep(0.05)
+                    await shot("12-video-native-keypad")
+                    await embedded.get_by_role("button", name="Contacts", exact=True).click()
+                    await expect(embedded.locator(".keypad-panel")).to_be_hidden()
                     await shot("12-video-replaces-tiles-desktop")
                     await dashboard.screenshot(path=str(args.out / "12-video-card-desktop.png"))
                     results["screenshots"].append("12-video-card-desktop.png")

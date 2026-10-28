@@ -519,8 +519,11 @@ availability. The grid adapts to the card width and scrolls vertically when
 the content exceeds the available height. Glass surfaces and text colors
 follow the active Home Assistant theme.
 
-Open **Options** for the same phone settings as the softphone card, including
-auto-answer, ringtone and browser media devices. A video offer adds separate
+Use the header's **Keypad** icon to enter a number or SIP URI. The same native
+keypad sends DTMF during browser calls. Open the **Options** gear for the same
+phone settings as the softphone card, including auto-answer, ringtone and
+browser media devices. Both icons toggle their existing phone view; closing
+options returns to an already-open keypad. A video offer adds separate
 video and audio-only answer buttons. Once a remote video frame arrives, the
 video fills the card and the native call bar provides the in-call controls.
 Hanging up restores the extension tiles.
