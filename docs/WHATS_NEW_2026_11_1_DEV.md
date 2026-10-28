@@ -138,8 +138,10 @@ through LVGL. Its VoIP adapter connects to the existing video receiver; other
 producers can feed the standalone component too. A display-equipped board can
 receive video, with a separate camera required to send its own image.
 
-The default receive limits are 320x240 and up to two admitted frames per second.
-Bounded buffers keep the latest queued image. The existing P4 renderer retains its hardware decoding path.
+The default display surface is 320x240, with up to two admitted frames per second.
+Larger JPEG frames use bounded half-size or quarter-size decoding to fit that
+surface. Bounded buffers keep the latest queued image. The existing P4 renderer
+retains its hardware decoding path.
 The shared FULL video policy suspends MWW during video and restores listening
 according to the user's Wake Word setting when video ends.
 

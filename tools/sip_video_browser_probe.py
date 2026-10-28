@@ -130,7 +130,9 @@ def _validate_sendonly_video(sample: dict, expected_codec: str = "") -> None:
         raise RuntimeError(f"sendonly video did not send a camera frame: {sample}")
     if stats.get("sent", 0) <= 0 or stats.get("received", 0) <= 0:
         raise RuntimeError(f"sendonly video lost bidirectional audio: {sample}")
-    codec = str(sample.get("video_format") or "").split("/", 1)[0].upper()
+    description = str(sample.get("video_format") or "")
+    token = re.match(r"(?:pt=[0-9]+:)?([^/;]+)/", description, re.IGNORECASE)
+    codec = token.group(1).upper() if token else ""
     if expected_codec and codec != expected_codec.upper():
         raise RuntimeError(f"expected {expected_codec} video, negotiated {codec!r}")
 
@@ -1446,6 +1448,10 @@ def main() -> int:
                 if str(after_hold.get("card_state") or "").lower() == "in_call"
                 else flowing
             )
+            # Preserve the observed UI even when a later media assertion fails.
+            # A screenshot is evidence of presentation, not a media-quality pass.
+            if args.screenshot:
+                page.screenshot(path=args.screenshot, full_page=True)
             engine_stats = active.get("engine_stats") or {}
             video_stats = engine_stats.get("video") or {}
             if args.expect_sendonly_video:
@@ -1531,8 +1537,6 @@ def main() -> int:
                     float(surface.get("height", 0)) * 0.25,
                 ):
                     raise RuntimeError(f"video overlays leave too little visible video: {flowing}")
-            if args.screenshot:
-                page.screenshot(path=args.screenshot, full_page=True)
             if args.expect_remote_hangup:
                 wait_for_idle_cleanup("idle_after_remote_hangup")
             elif not args.no_hangup:

@@ -131,8 +131,14 @@ def _sendonly_sample() -> dict:
     }
 
 
-def test_probe_accepts_sender_only_video_without_remote_canvas() -> None:
-    probe._validate_sendonly_video(_sendonly_sample(), "JPEG")
+@pytest.mark.parametrize(
+    "description",
+    ["JPEG/90000", "pt=26:JPEG/90000;framerate=2;rtp-profile=RTP/AVP;direction=recvonly"],
+)
+def test_probe_accepts_sender_only_video_without_remote_canvas(description: str) -> None:
+    sample = _sendonly_sample()
+    sample["video_format"] = description
+    probe._validate_sendonly_video(sample, "JPEG")
 
 
 @pytest.mark.parametrize("direction", ["inactive", "recvonly", "sendrecv", ""])
