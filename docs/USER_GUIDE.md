@@ -519,6 +519,12 @@ availability. The grid adapts to the card width and scrolls vertically when
 the content exceeds the available height. Glass surfaces and text colors
 follow the active Home Assistant theme.
 
+Open **Options** for the same phone settings as the softphone card, including
+auto-answer, ringtone and browser media devices. A video offer adds separate
+video and audio-only answer buttons. Once a remote video frame arrives, the
+video fills the card and the native call bar provides the in-call controls.
+Hanging up restores the extension tiles.
+
 For an operator console, give its section the full view width in Home
 Assistant's layout editor. The grid grows to three, four or five columns as
 space increases; narrow cards use one or two columns. Resize the card height

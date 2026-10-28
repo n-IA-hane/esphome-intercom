@@ -31,6 +31,18 @@ async def qualify(args):
     if urlsplit(args.url).hostname not in {"127.0.0.1", "localhost", "::1"}:
         raise ValueError("Use the isolated loopback HA laboratory for this call test")
     args.out.mkdir(parents=True, exist_ok=True)
+    # systemd can report active before HA has opened its HTTP listener.
+    host = urlsplit(args.url).hostname
+    port = urlsplit(args.url).port or 80
+    async with asyncio.timeout(60):
+        while True:
+            try:
+                _reader, writer = await asyncio.open_connection(host, port)
+                writer.close()
+                await writer.wait_closed()
+                break
+            except ConnectionRefusedError:
+                await asyncio.sleep(0.25)
     refresh_playwright_auth(token_url=args.url, credentials_path=args.credentials,
                             storage_path=args.storage, storage_hass_url=args.url)
     storage = json.loads(args.storage.read_text())
@@ -83,7 +95,7 @@ async def qualify(args):
             browser = await runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True,
                 args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
                       "--autoplay-policy=no-user-gesture-required"])
-            context = await browser.new_context(storage_state=str(args.storage), permissions=["microphone"],
+            context = await browser.new_context(storage_state=str(args.storage), permissions=["microphone", "camera"],
                                                  viewport={"width": 1500, "height": 1100})
             await context.add_init_script("""navigator.mediaDevices.getUserMedia =
                 ((original) => async (constraints) => {
@@ -101,7 +113,7 @@ async def qualify(args):
                 browser_page.on("pageerror", lambda error, label=label:
                     results["browser_errors"].append(f"{label}: {error}"))
             dashboard = page.locator("voip-stack-dashboard-card")
-            owner_card = page.locator("voip-stack-card")
+            owner_card = page.locator("voip-stack-card:not([data-dashboard-phone])")
             peer_card = remote.locator("voip-stack-card")
             receiving_card = receiving_page.locator("voip-stack-card")
 
@@ -210,6 +222,8 @@ async def qualify(args):
                 await peer_card.evaluate("async card => { if(card._autoAnswer) await card._toggleAutoAnswer(); }")
                 await receiving_card.evaluate("async card => { if(card._autoAnswer) await card._toggleAutoAnswer(); }")
                 await owner_card.evaluate("async card => { if(card._autoAnswer) await card._toggleAutoAnswer(); }")
+                for phone_card in (owner_card, peer_card, receiving_card):
+                    await phone_card.evaluate("async card=>{await card._toggleVideoCamera(false);card._settingsOpen=false;card._render()}")
                 await state("idle")
                 await shot("01-idle-dark-wide")
                 await peer_start()
@@ -303,6 +317,81 @@ async def qualify(args):
                 await dashboard.locator(".owner-call .hangup").click()
                 await state("idle")
                 results["scenarios"].append("in-call-view-recreation-keeps-call-and-one-capture")
+                # Runtime controls come from the real native phone view, sharing
+                # the same endpoint settings and media owner as the other card.
+                await dashboard.locator(".options").click()
+                embedded = dashboard.locator("voip-stack-card[data-dashboard-phone]")
+                await expect(embedded.locator(".settings-panel")).to_be_visible()
+                await expect(embedded.locator(".auto-answer-row").first).to_be_visible()
+                await shot("10-native-phone-options")
+                await embedded.evaluate("card => card._toggleSettings()")
+                await expect(dashboard.locator(".scroller")).to_be_visible()
+                results["scenarios"].append("dashboard-reuses-native-phone-options")
+
+                if args.video:
+                    for phone_card in (embedded, peer_card):
+                        await phone_card.evaluate("async card => {await card._toggleVideoCamera(true);card._settingsOpen=false;card._render()}")
+                    await page.bring_to_front()
+                    await peer_start()
+                    await state("ringing")
+                    await expect(dashboard.locator(".answer-video")).to_be_visible()
+                    await expect(dashboard.locator(".scroller")).to_be_visible()
+                    await shot("11-incoming-video-choices")
+                    await dashboard.locator(".answer-video").click()
+                    await connected()
+                    await page.wait_for_function("""()=>{
+                        const e=window.__qualificationEngine;
+                        const find=(root)=>{for(const node of root.querySelectorAll('*')){
+                          if(node.tagName==='VOIP-STACK-DASHBOARD-CARD')return node;
+                          if(node.shadowRoot){const found=find(node.shadowRoot);if(found)return found;}
+                        }};
+                        const d=find(document);
+                        return e.videoVisible&&e.stats.video.rendered>0&&d?._phonePresentation.video;
+                    }""",timeout=20000)
+                    await expect(dashboard.locator(".scroller")).to_be_hidden()
+                    await expect(embedded.locator(".video-canvas")).to_be_visible()
+                    await shot("12-video-replaces-tiles-desktop")
+                    await dashboard.screenshot(path=str(args.out / "12-video-card-desktop.png"))
+                    results["screenshots"].append("12-video-card-desktop.png")
+                    await page.set_viewport_size({"width":390,"height":1000})
+                    await expect(dashboard).to_have_class(re.compile(r"\bnarrow\b"))
+                    await shot("13-video-replaces-tiles-mobile")
+                    await dashboard.screenshot(path=str(args.out / "13-video-card-mobile.png"))
+                    results["screenshots"].append("13-video-card-mobile.png")
+                    results["video"] = await page.evaluate("""()=>({stats:window.__qualificationEngine.stats.video,
+                        encoding:window.__qualificationEngine._video?._encoding,
+                        captures:window.__dashboardCaptureRequests})""")
+                    # Native hangup follows the audio-level scale animation.
+                    # Use its normal DOM click, as the maintained video probe does.
+                    hangup = embedded.locator(".voip-button.hangup")
+                    await expect(hangup).to_be_visible()
+                    await expect(hangup).to_be_enabled()
+                    await hangup.evaluate("button=>button.click()")
+                    await state("idle")
+                    await expect(dashboard.locator(".scroller")).to_be_visible()
+                    await expect(dashboard.locator(".phone-view")).to_be_hidden()
+                    results["scenarios"].append("real-video-first-frame-replaces-tiles-and-hangup-restores-them")
+                    await page.bring_to_front()
+                    await peer_start()
+                    await state("ringing")
+                    await expect(dashboard.locator(".answer-video")).to_be_visible()
+                    await dashboard.locator(".owner-call .answer").click()
+                    await connected()
+                    audio_only = await snapshot(owner)
+                    assert not audio_only.get("video_active"), audio_only
+                    assert not await page.evaluate("window.__qualificationEngine.videoActive")
+                    await expect(dashboard.locator(".scroller")).to_be_visible()
+                    await expect(dashboard.locator(".phone-view")).to_be_hidden()
+                    await shot("14-video-offer-answered-audio-only")
+                    results["audio_only_answer"] = {"video_active":audio_only.get("video_active"),
+                        "send_video":audio_only.get("send_video"),"call_id":audio_only.get("call_id")}
+                    await dashboard.locator(".owner-call .hangup").click()
+                    await state("idle")
+                    results["scenarios"].append("video-offer-answered-audio-only-preserves-tiles")
+                    for phone_card in (embedded, peer_card):
+                        await phone_card.evaluate("card => card._toggleVideoCamera(false)")
+                    await embedded.evaluate("card=>{card._settingsOpen=false;card._render()}")
+
                 for width in (1100, 760, 390):
                     await page.set_viewport_size({"width": width, "height": 1000})
                     await shot(f"05-responsive-{width}")
@@ -336,6 +425,12 @@ async def qualify(args):
                                 "service_data": {"device_id": endpoint["device_id"], "call_id": current["call_id"]}})
                     except Exception as error:
                         results["cleanup_errors"].append(f"hangup {endpoint['endpoint_id']}: {error}")
+                for endpoint in (owner, peer, receiver):
+                    try:
+                        await ws.command({"type":"call_service","domain":"voip_stack","service":"set_send_video",
+                            "service_data":{"device_id":endpoint["device_id"],"send_video":False}})
+                    except Exception as error:
+                        results["cleanup_errors"].append(f"camera preference reset: {error}")
                 for endpoint in (owner, peer, receiver):
                     try:
                         await ws.command({"type": "call_service", "domain": "voip_stack", "service": "set_auto_answer",
@@ -379,6 +474,7 @@ def main():
     parser.add_argument("--storage", type=Path, default=lab / "playwright-storage.json")
     parser.add_argument("--out", type=Path, default=ROOT / "test_captures/voip-dashboard")
     parser.add_argument("--owner", default="default")
+    parser.add_argument("--video", action="store_true", help="Include a real two-browser video call")
     parser.add_argument("--setup", action="store_true", help="Create dedicated lab views before the test")
     asyncio.run(qualify(parser.parse_args()))
 

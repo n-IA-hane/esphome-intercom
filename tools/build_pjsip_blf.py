@@ -32,7 +32,8 @@ def build(cache: Path, jobs: int) -> Path:
     binary = cache / "voip-stack-blf-client"
     identity = {"version": VERSION, "revision": REVISION,
                 "client_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-                "configure": CONFIGURE, "driver_build_format": 1}
+                "configure": CONFIGURE, "driver_build_format": 2,
+                "driver_sanitizers": ["address", "undefined"]}
     manifest = cache / "voip-stack-blf-build.json"
     previous = json.loads(manifest.read_text()) if manifest.is_file() else {}
     revision_file = cache / "voip-stack-upstream-revision"
@@ -70,7 +71,8 @@ def build(cache: Path, jobs: int) -> Path:
                            stderr=subprocess.STDOUT, check=True)
         suffix = next((cache / "pjsip/lib").glob("libpjsip-simple-*.a")).name
         suffix = suffix.removeprefix("libpjsip-simple-").removesuffix(".a")
-        flags = ["-DPJ_AUTOCONF=1", "-O2", "-g", "-Wall", "-Wextra", "-Werror"]
+        flags = ["-DPJ_AUTOCONF=1", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+                 "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         includes = [f"-I{cache / name / 'include'}" for name in ("pjsip", "pjlib", "pjlib-util", "pjmedia")]
         libraries = [f"-L{cache / name / 'lib'}" for name in ("pjsip", "pjlib", "pjlib-util")]
         subprocess.run([os.environ.get("CC", "cc"), *flags, *includes, str(source), *libraries,

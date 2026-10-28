@@ -191,6 +191,7 @@ const IT = {
   "Ringing": "Squilla", "Incoming": "In arrivo", "Incoming call": "Chiamata in arrivo",
   "Calling": "Chiamata in corso", "In call with": "In chiamata con", "On hold": "In attesa",
   "Do not disturb": "Non disturbare", "Pick up": "Rispondi qui", "Choose call": "Scegli chiamata",
+  "Answer with video": "Rispondi in video", "Answer audio only": "Rispondi solo audio",
   "Answer": "Rispondi", "Decline": "Rifiuta", "Hang up": "Chiudi", "Call details": "Dettagli chiamata",
   "Attended transfer": "Trasferimento assistito", "Close": "Chiudi", "Unknown": "Sconosciuto", "Connected": "Connessa",
   "Select the calling phone in the card editor.": "Seleziona il telefono chiamante nell'editor della card.",

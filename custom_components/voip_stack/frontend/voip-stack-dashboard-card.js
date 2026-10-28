@@ -32,7 +32,19 @@ class VoipStackDashboardCard extends HTMLElement {
     this._ownerSelector = "";
     this._syncKey = "";
     this._syncPending = false;
-    this._engineListener = () => { this._syncOwner(); this._render(); };
+    this._phonePresentation = {video:false,settings:false};
+    this._videoFocusCallId = "";
+    this._engineListener = () => {
+      this._syncOwner(); this._render();
+      const owner = this._owner();
+      if (owner?.softphone && voipStackEngine.videoVisible && voipStackEngine.endpointId === owner.endpoint_id &&
+          this._videoFocusCallId !== voipStackEngine.callId) {
+        this._videoFocusCallId = voipStackEngine.callId;
+        const otherDashboard = voipStackEngine.videoCanvasOwner?.hasAttribute?.("data-dashboard-phone") &&
+          voipStackEngine.videoCanvasOwner !== this._phoneView;
+        if (!otherDashboard) this._phoneView?.focusPhoneView?.();
+      }
+    };
     this._resizeObserver = new ResizeObserver(() => this._measure());
   }
 
@@ -44,11 +56,14 @@ class VoipStackDashboardCard extends HTMLElement {
       this._epoch++;
       this._releaseOwner();
       this._ownerSnapshot = null;
+      this._phonePresentation = {video:false,settings:false};
+      this._videoFocusCallId = "";
       this._pending = "";
       this._error = "";
       this._els?.dialog.close();
     }
     this._config = value;
+    this._configurePhoneView();
     this._renderKey = "";
     if (this.isConnected) this._bindOwner();
     this._render();
@@ -57,6 +72,7 @@ class VoipStackDashboardCard extends HTMLElement {
   set hass(hass) {
     const languageChanged = this._hass?.language !== hass?.language;
     this._hass = hass;
+    if (this._phoneView) this._phoneView.hass = hass;
     if (languageChanged && this._els) {
       this._resizeObserver.disconnect(); this._els = null; this._tiles.clear(); this._renderKey = "";
     }
@@ -69,6 +85,10 @@ class VoipStackDashboardCard extends HTMLElement {
   connectedCallback() {
     this._epoch++;
     voipStackEngine.addEventListener("state", this._engineListener);
+    if (this._els) {
+      this._resizeObserver.observe(this._els.card);
+      this._measure();
+    }
     this._bind(); this._render();
   }
 
@@ -110,7 +130,7 @@ class VoipStackDashboardCard extends HTMLElement {
       if (this._hass?.connection !== connection) return;
       this._devices = result?.devices || [];
       this._devicesLoaded = true; this._devicesRevision++;
-      this._bindOwner(); this._render();
+      this._configurePhoneView(); this._bindOwner(); this._render();
     } catch (error) {
       if (this._hass?.connection === connection) { this._error = error?.message || String(error); this._render(); }
     }
@@ -184,9 +204,10 @@ class VoipStackDashboardCard extends HTMLElement {
     if (!this.shadowRoot) return;
     if (!this._els) {
       this._els = buildDashboardSkeleton(this.shadowRoot, (text) => this._t(text), {
-        command: (action) => this._ownerCommand(action), ownerDetails: () => this._openDetails(this._ownerTileKey()),
+        command: (action) => this._ownerCommand(action), options: () => this._openOptions(), ownerDetails: () => this._openDetails(this._ownerTileKey()),
       });
       this._resizeObserver.observe(this._els.card);
+      this._ensurePhoneView();
       this._measure();
     }
     const key = JSON.stringify([this._store.revision, this._store.ready, this._store.error, this._rosterRaw,
@@ -205,6 +226,8 @@ class VoipStackDashboardCard extends HTMLElement {
     e.notice.textContent = notice; e.notice.hidden = !notice;
     e.notice.classList.toggle("error", !!(this._error || this._store.error));
     const sections = dashboardSections(this._store.phones, this._roster, this._config.device_id);
+    this._ensurePhoneView();
+    this._renderPhoneSurface();
     this._renderHeader(owner ? { ...owner, icon: sections.owner?.icon, metadata: sections.owner?.metadata } : null);
     this._tileData.clear();
     // Header details need the owner metadata, independently of visible tiles.
@@ -236,6 +259,53 @@ class VoipStackDashboardCard extends HTMLElement {
     if (e.dialog.open) this._renderDetails();
   }
 
+  _configurePhoneView() {
+    if (!this._phoneView) return;
+    const owner = this._owner();
+    const config = {...this._config, type:"custom:voip-stack-card", mode:owner?.softphone ? "ha_softphone" : "esp_mirror"};
+    const key = JSON.stringify(config);
+    if (key !== this._phoneConfigKey) { this._phoneConfigKey = key; this._phoneView.setConfig(config); }
+    if (this._hass) this._phoneView.hass = this._hass;
+  }
+
+  _ensurePhoneView() {
+    if (!this.isConnected || !this._els) return;
+    if (this._phoneView) {
+      if (this._phoneView.parentElement !== this._els.phoneHost) this._els.phoneHost.append(this._phoneView);
+      this._configurePhoneView();
+      return;
+    }
+    if (this._phoneViewPromise) return;
+    this._phoneViewPromise = customElements.whenDefined("voip-stack-card").then(() => {
+      if (!this.isConnected || !this._els) return;
+      const phone = document.createElement("voip-stack-card");
+      phone.setAttribute("data-dashboard-phone", "");
+      this._phoneView = phone;
+      phone.setDashboardMode?.(true);
+      phone.addEventListener("voip-presentation-changed", event => {
+        this._phonePresentation = event.detail;
+        this._renderPhoneSurface();
+      });
+      this._configurePhoneView();
+      this._els.phoneHost.append(phone);
+      this._renderPhoneSurface();
+    }).finally(() => { this._phoneViewPromise = null; });
+  }
+
+  _renderPhoneSurface() {
+    if (!this._els) return;
+    const {video,settings} = this._owner() ? this._phonePresentation : {video:false,settings:false};
+    this._els.phoneHost.hidden = !(video || settings);
+    this._els.scroller.hidden = !!(video || settings);
+    this._els.card.classList.toggle("video-mode", !!video);
+    this._els.options.disabled = !this._phoneView;
+    this._els.options.setAttribute("aria-expanded", String(!!settings));
+  }
+
+  _openOptions() {
+    this._phoneView?.openPhoneOptions?.();
+  }
+
   _renderHeader(owner) {
     const e = this._els; const value = owner ? phonePresentation(owner) : null; const call = value?.primary;
     e.ownerIcon.setAttribute("icon", owner ? dashboardIconFor(owner) : "mdi:phone");
@@ -250,9 +320,12 @@ class VoipStackDashboardCard extends HTMLElement {
     const caller = this._ownerSnapshot?.caller || "";
     e.callNumber.textContent = peer?.extension || (/^[+\d*# ()-]+$/.test(caller) ? caller : "");
     e.callNumber.hidden = !e.callNumber.textContent;
+    const offeredVideo = !!owner?.softphone && !!this._ownerSnapshot?.video_offered;
+    e.answerVideo.hidden = !incoming || !offeredVideo;
+    e.answer.querySelector("span").textContent = this._t(offeredVideo ? "Answer audio only" : "Answer");
     e.answer.hidden = !incoming; e.decline.hidden = !incoming; e.hangup.hidden = incoming;
     e.moreCalls.hidden = value.calls.length < 2;
-    for (const button of [e.answer, e.decline, e.hangup, e.moreCalls]) button.disabled = !!this._pending;
+    for (const button of [e.answerVideo, e.answer, e.decline, e.hangup, e.moreCalls]) button.disabled = !!this._pending;
   }
 
   _renderTile(tile, phone, owner) {
@@ -330,9 +403,16 @@ class VoipStackDashboardCard extends HTMLElement {
     const epoch = this._epoch;
     this._pending = action; this._error = ""; this._render();
     try {
+      this._phoneView?.focusPhoneView?.();
       if (action === "call") await voipStackEngine.dashboardStartCall(owner, target);
       else if (action === "pickup") await voipStackEngine.dashboardPickup(owner, target, call);
-      else if (action === "answer") await voipStackEngine.dashboardAnswer(owner, this._callSnapshot(owner, call));
+      else if (action === "answer" || action === "answer_video") {
+        if (owner.softphone && this._phoneView?.answerPhoneCall) {
+          await this._phoneView.answerPhoneCall({video:action === "answer_video"});
+        } else {
+          await voipStackEngine.dashboardAnswer(owner, this._callSnapshot(owner, call));
+        }
+      }
       else await voipStackEngine.dashboardTerminate(action, owner, this._callSnapshot(owner, call));
     } catch (error) {
       if (epoch === this._epoch) this._error = error?.message || String(error);
@@ -370,7 +450,9 @@ class VoipStackDashboardCard extends HTMLElement {
       };
       if (phone.owner) {
         if (call.direction === "incoming" && call.state === "early") {
-          addAction("Answer", "mdi:phone", () => this._ownerCommand("answer", call));
+          const offeredVideo = owner?.softphone && this._ownerSnapshot?.call_id === call.id && this._ownerSnapshot?.video_offered;
+          if (offeredVideo) addAction("Answer with video", "mdi:video", () => this._ownerCommand("answer_video", call));
+          addAction(offeredVideo ? "Answer audio only" : "Answer", "mdi:phone", () => this._ownerCommand("answer", call));
           addAction("Decline", "mdi:phone-hangup", () => this._ownerCommand("decline", call));
         } else addAction("Hang up", "mdi:phone-hangup", () => this._ownerCommand("hangup", call));
       } else if (call.pickup_available && owner?.state === "idle" && this._store.ready) {

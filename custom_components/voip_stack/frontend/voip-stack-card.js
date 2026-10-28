@@ -224,6 +224,12 @@ class VoipStackCard extends HTMLElement {
       ) return;
       this._applyHangupAudioLevel(detail.level);
     };
+    this._browserPreferencesListener = event => {
+      if (event.detail !== this._phonePreferenceStorageId()) return;
+      this._readBrowserPreferences();
+      this._syncRingtoneRequest(this._getEspState());
+      this._render();
+    };
     this._resizeObserver = new ResizeObserver(() => this._measureLayout());
   }
 
@@ -238,6 +244,7 @@ class VoipStackCard extends HTMLElement {
     voipStackEngine.addEventListener("video-error", this._engineErrorListener);
     voipStackEngine.addEventListener("media-devices", this._mediaDevicesListener);
     voipStackEngine.addEventListener("audio-level", this._audioLevelListener);
+    voipStackEngine.addEventListener("phone-preferences", this._browserPreferencesListener);
     void voipStackEngine.refreshMediaDevices?.();
     this._observeLayout();
     if (this._hass) {
@@ -285,6 +292,7 @@ class VoipStackCard extends HTMLElement {
     voipStackEngine.removeEventListener("video-error", this._engineErrorListener);
     voipStackEngine.removeEventListener("media-devices", this._mediaDevicesListener);
     voipStackEngine.removeEventListener("audio-level", this._audioLevelListener);
+    voipStackEngine.removeEventListener("phone-preferences", this._browserPreferencesListener);
     voipStackEngine.clearRingtoneRequest(this._ringtoneRequestKey);
     voipStackEngine.releaseVideoCanvas(this);
     voipStackEngine.releaseSoftphoneController(this, this._softphoneRuntimeKey());
@@ -680,6 +688,29 @@ class VoipStackCard extends HTMLElement {
     return formatVideoFailureReason(reason);
   }
 
+  // Presentation API shared with the dashboard. Call/media ownership stays
+  // in the existing card and page engine.
+  setDashboardMode(enabled) {
+    this._dashboardEmbedded = !!enabled;
+    this._render();
+  }
+
+  focusPhoneView() {
+    if (!this._isHaSoftphoneMode()) return true;
+    return voipStackEngine.focusSoftphoneView(this, this._softphoneRuntimeKey(), this._getSoftphoneEndpointId());
+  }
+
+  openPhoneOptions() {
+    this.focusPhoneView();
+    if (!this._settingsOpen) this._toggleSettings();
+  }
+
+  async answerPhoneCall({ video = false } = {}) {
+    this.focusPhoneView();
+    await this._answer({ sendVideo: !!video, acceptVideo: !!video });
+    if (this._errorMsg) throw new Error(this._errorMsg);
+  }
+
   setConfig(config) {
     const oldSelector = this.config?.entity_id || this.config?.device_id || "";
     const oldMode = this.config?.mode || this.config?.card_mode || "esp_mirror";
@@ -723,15 +754,7 @@ class VoipStackCard extends HTMLElement {
       this._softphoneTargetDeviceId;
     // Ringtone and microphone filtering are browser preferences. Auto-answer
     // and camera intent come from the logical phone snapshot.
-    const deviceId = this._phonePreferenceStorageId();
-    if (deviceId) {
-      try {
-        this._ringtoneEnabled = localStorage.getItem(`voip_ringtone_${deviceId}`) === "true";
-        this._micAntiAliasEnabled =
-          localStorage.getItem(`voip_microphone_anti_alias_${deviceId}`) !==
-          "false";
-      } catch (_) {}
-    }
+    this._readBrowserPreferences();
     if (this._hass && this._isHaSoftphoneMode()) {
       if (this.isConnected) this._subscribeBusEvents();
       if (this.isConnected) this._loadSoftphoneState();
@@ -1691,6 +1714,11 @@ class VoipStackCard extends HTMLElement {
       this._skeletonMode = "main";
     }
     const els = this._els;
+    if (this._dashboardEmbedded) {
+      els.card.style.border = "0";
+      els.card.style.borderRadius = "0";
+      els.card.style.boxShadow = "none";
+    }
 
     const espState = this._getEspState();
     if (this._transferDraft && (this._transferDraft.callId !== this._sessionCallId() || espState !== "in_call")) {
@@ -1722,7 +1750,7 @@ class VoipStackCard extends HTMLElement {
 
     if (!this._isHaSoftphoneMode() && this._isEspUnavailable()) {
       els.headerName.textContent = this._formatHeaderTitle(displayName);
-      els.header.hidden = !displayName;
+      els.header.hidden = this._dashboardEmbedded || !displayName;
       els.destRow.hidden = true;
       els.offlinePanel.hidden = false;
       els.answerBtn.hidden = true;
@@ -1835,7 +1863,7 @@ class VoipStackCard extends HTMLElement {
     this._syncRingtoneRequest(espState);
 
     els.headerName.textContent = this._formatHeaderTitle(displayName);
-    els.header.hidden = !displayName;
+    els.header.hidden = this._dashboardEmbedded || !displayName;
 
     // ESP cards mirror the ESP contact cycler. The optional keypad keeps its
     // own manual buffer and calls the ESPHome start_call service directly.
@@ -2071,6 +2099,16 @@ class VoipStackCard extends HTMLElement {
 
     // Error
     els.err.textContent = this._t(this._errorMsg);
+    if (this._dashboardEmbedded) {
+      const presentation = { video: visualMediaVisible, settings: showSettingsPanel };
+      const key = JSON.stringify(presentation);
+      if (key !== this._dashboardPresentationKey) {
+        this._dashboardPresentationKey = key;
+        this.dispatchEvent(new CustomEvent("voip-presentation-changed", {
+          detail: presentation, bubbles: true, composed: true,
+        }));
+      }
+    }
   }
 
   _renderPhoneActivity(hidden) {
@@ -2700,7 +2738,7 @@ class VoipStackCard extends HTMLElement {
         const wantsVideo = Boolean(
           this._softphoneSupportsVideo() &&
           this._softphoneSnapshot?.video_camera_send_enabled &&
-          this._softphoneSnapshot?.send_video
+          (typeof options.sendVideo === "boolean" ? options.sendVideo : this._softphoneSnapshot?.send_video)
         );
         const audioDirection = String(
           this._softphoneSnapshot?.audio_direction || "sendrecv"
@@ -2746,6 +2784,7 @@ class VoipStackCard extends HTMLElement {
           ...this._softphoneServiceScope(),
           call_id: callId,
           send_video: sendVideo,
+          ...(typeof options.acceptVideo === "boolean" ? {accept_video:options.acceptVideo} : {}),
           media_client_id: voipStackEngine.mediaClientId,
         });
         // The backend can commit a local or SIP answer and publish in_call
@@ -3263,6 +3302,18 @@ class VoipStackCard extends HTMLElement {
     }
   }
 
+  _readBrowserPreferences() {
+    const deviceId = this._phonePreferenceStorageId();
+    if (deviceId) {
+      try {
+        this._ringtoneEnabled = localStorage.getItem(`voip_ringtone_${deviceId}`) === "true";
+        this._micAntiAliasEnabled =
+          localStorage.getItem(`voip_microphone_anti_alias_${deviceId}`) !==
+          "false";
+      } catch (_) {}
+    }
+  }
+
   _toggleRingtone() {
     this._settingsOpen = true;
     this._ringtoneEnabled = !this._ringtoneEnabled;
@@ -3272,6 +3323,7 @@ class VoipStackCard extends HTMLElement {
         localStorage.setItem(`voip_ringtone_${deviceId}`, this._ringtoneEnabled.toString());
       } catch (_) {}
     }
+    voipStackEngine.dispatchEvent?.(new CustomEvent("phone-preferences", {detail:deviceId}));
     if (this._ringtoneEnabled) voipStackEngine.unlockRingtone();
     this._syncRingtoneRequest(this._getEspState());
     this._render();
@@ -3289,6 +3341,7 @@ class VoipStackCard extends HTMLElement {
         );
       } catch (_) {}
     }
+    voipStackEngine.dispatchEvent?.(new CustomEvent("phone-preferences", {detail:deviceId}));
     this._render();
   }
 

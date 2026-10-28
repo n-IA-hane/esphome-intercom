@@ -508,6 +508,7 @@ async def run_ring_group_call(
                     winner.endpoint_id,
                     winner_media_client_id,
                     enable_video_send=bool(browser_decision.get("send_video", False)),
+                    accept_video=bool(browser_decision.get("accept_video", True)),
                 )
                 if winner.pickup:
                     publish_bridge_projection(hass, session, event_type="picked_up", route_kind="pickup")

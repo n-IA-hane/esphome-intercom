@@ -34,6 +34,11 @@ in the dashboard layout editor to display more columns and rows.
   browser or ESP phone.
 - **Phone controls:** answer, decline and hang up from the selected phone's
   header. The calling-phone selector stays in the visual editor.
+- **The same phone options:** auto-answer, ringtone, Do not disturb and media
+  device preferences use the familiar softphone controls.
+- **Video calls:** choose video or audio-only when answering a video offer.
+  The first received video frame opens the full-card call view, with the
+  familiar red call bar and phone controls. The tiles return after hangup.
 - **DND and voicemail:** see Do not disturb, mailbox waiting status and the
   count of new messages alongside each phone.
 - **Saved contacts:** call external destinations from their own section.
@@ -60,8 +65,20 @@ cards on one view uses that same call owner.
 
 Selecting an ESP phone keeps audio on the ESP. Selecting a browser phone uses
 the browser microphone and speaker, with microphone permission requested when
-placing or answering a call. Dashboard answering uses audio; the existing
-phone card provides camera and video controls.
+placing or answering a call. Browser video uses the same media engine and
+controls as the existing phone card. A video offer alone keeps the tiles
+visible until a remote frame arrives.
+
+<details>
+<summary>Video call layouts on desktop and mobile</summary>
+
+Browser call screenshots with a synthetic camera source.
+
+![A video call fills the dashboard with native call controls](images/voip-dashboard-video-desktop.png)
+
+![The same video call and controls on mobile](images/voip-dashboard-video-mobile.png)
+
+</details>
 
 Registered SIP phones appear as monitored and callable destinations. Choose a
 browser or ESP phone as the dashboard's calling phone. Multiple and held calls

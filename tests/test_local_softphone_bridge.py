@@ -353,6 +353,20 @@ class LocalSoftphoneBridgeTest(unittest.TestCase):
             b"camera",
         )
 
+    def test_audio_only_answer_rejects_both_video_directions(self) -> None:
+        self.start(request_video=True, enable_caller_video_send=True)
+        caller = self.bridge.acquire_media("call-1", "office", "office-card")
+        answered = self.bridge.answer(
+            "call-1", "kitchen", "kitchen-card",
+            enable_video_send=True, accept_video=False,
+        )
+        self.assertFalse(answered.call.video_enabled)
+        self.assertEqual(answered.call.video_direction_for("office"), "inactive")
+        self.assertEqual(answered.call.video_direction_for("kitchen"), "inactive")
+        for endpoint, lease in (("office", caller), ("kitchen", answered.media_lease)):
+            with self.assertRaises(bridge_module.LocalMediaNotNegotiatedError):
+                self.bridge.send_video("call-1", endpoint, lease.token, b"camera")
+
     def test_both_cameras_disabled_keeps_negotiated_video_inactive(self) -> None:
         self.bridge.start_call(
             "office",

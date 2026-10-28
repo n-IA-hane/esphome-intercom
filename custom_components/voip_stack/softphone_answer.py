@@ -61,7 +61,8 @@ async def async_answer_browser_call(
             call,
             endpoint_id=endpoint_id,
         )
-    camera_send_requested = bool(
+    accept_video = bool(call.data.get("accept_video", True))
+    camera_send_requested = accept_video and bool(
         transport_config(hass).get(CONF_VIDEO_CAMERA_SEND, False)
     ) and bool(call.data.get("send_video", False))
 
@@ -77,6 +78,7 @@ async def async_answer_browser_call(
                 "endpoint_id": endpoint_id,
                 "media_client_id": str(call.data.get("media_client_id") or ""),
                 "send_video": camera_send_requested,
+                **({"accept_video": accept_video} if "accept_video" in call.data else {}),
             },
         )
         return
@@ -97,6 +99,7 @@ async def async_answer_browser_call(
                 endpoint_id,
                 str(call.data.get("media_client_id") or ""),
                 enable_video_send=camera_send_requested,
+                accept_video=accept_video,
             )
         except LocalBridgeError as err:
             raise _service_error(
@@ -218,8 +221,8 @@ async def async_answer_browser_call(
     media_reservation = (preanswered or {}).get("rtp_reservation")
     video_media_reservation = (preanswered or {}).get("video_rtp_reservation")
     video_failure_reason = str((preanswered or {}).get("video_failure_reason") or "")
-    endpoint_video_enabled = browser_endpoint is None or browser_endpoint.supports(
-        "video"
+    endpoint_video_enabled = accept_video and (
+        browser_endpoint is None or browser_endpoint.supports("video")
     )
     camera_send_enabled = (
         endpoint_video_enabled

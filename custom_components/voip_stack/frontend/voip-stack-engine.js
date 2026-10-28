@@ -804,6 +804,21 @@ class VoipStackEngine extends EventTarget {
     return true;
   }
 
+  // Move presentation between views of the same phone without changing its
+  // page-owned media session or acquiring another microphone.
+  focusSoftphoneView(owner, controllerKey, endpointId) {
+    const endpoint = String(endpointId || "").trim();
+    const key = String(controllerKey || "").trim();
+    if (!owner || owner.isConnected === false || !key || !endpoint) return false;
+    if (this._callId && this._endpointId && this._endpointId !== endpoint) return false;
+    if (this._softphoneControllers.get(key) === owner) return true;
+    const previous = this._softphoneControllers.get(key);
+    this._softphoneControllers.set(key, owner);
+    if (previous && this._videoCanvasOwner === previous) this.releaseVideoCanvas(previous);
+    this._emit();
+    return true;
+  }
+
   releaseSoftphoneController(owner, endpointId) {
     const endpoint = String(endpointId || "").trim();
     if (!owner || this._softphoneControllers.get(endpoint) !== owner) return false;
@@ -819,6 +834,8 @@ class VoipStackEngine extends EventTarget {
   get videoActive() {
     return Boolean(this._video?.active);
   }
+
+  get videoCanvasOwner() { return this._videoCanvasOwner; }
 
   get videoVisible() {
     return Boolean(this._callId && this._video?.callId === this._callId && this._video.visible);

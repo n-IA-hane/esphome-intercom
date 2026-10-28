@@ -49,6 +49,13 @@ answer:
       default: false
       selector:
         boolean:
+    accept_video:
+      name: Accept video
+      description: Accept offered video on a browser phone. Turn off to answer with audio only, independently of the local camera preference.
+      required: false
+      default: true
+      selector:
+        boolean:
     advanced:
       name: Advanced options
       description: Select a specific concurrent call.

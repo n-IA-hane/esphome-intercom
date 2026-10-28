@@ -29,6 +29,10 @@ const STYLES = `
     background:color-mix(in srgb,var(--dash-surface) 84%,transparent);
     box-shadow:var(--ha-card-box-shadow,0 14px 42px rgba(0,0,0,.18));
     -webkit-backdrop-filter:blur(15px) saturate(1.12); backdrop-filter:blur(15px) saturate(1.12); }
+  .phone-view { flex:1 1 auto; min-height:0; overflow:hidden; }
+  .phone-view voip-stack-card { display:block; height:100%; min-height:0; }
+  .options { margin-left:auto; flex:none; }
+  ha-card.video-mode .dashboard-header,ha-card.video-mode .notice { display:none; }
   .dashboard-header { flex:none; display:flex; align-items:center; gap:20px; padding:18px 22px;
     border-bottom:1px solid var(--dash-line); background:color-mix(in srgb,var(--dash-ink) 3%,transparent); }
   .identity { display:flex; align-items:center; gap:14px; min-width:0; flex:1 1 34%; }
@@ -59,7 +63,7 @@ const STYLES = `
     min-height:44px; padding:9px 15px; display:inline-flex; align-items:center; justify-content:center; gap:8px;
     background:color-mix(in srgb,var(--dash-ink) 9%,transparent); font-size:14px; font-weight:600; }
   .action ha-icon { --mdc-icon-size:21px; }
-  .answer { background:linear-gradient(130deg,#339d4c,#17743a); color:white; border-color:#43b961; }
+  .answer,.answer-video { background:linear-gradient(130deg,#339d4c,#17743a); color:white; border-color:#43b961; }
   .decline,.hangup { background:linear-gradient(130deg,#c32e43,#8e172a); color:white; border-color:#ec4057; }
   .notice { margin:0; padding:10px 22px; color:var(--dash-muted); border-bottom:1px solid var(--dash-line); font-size:13px; }
   .notice.error { color:var(--error-color,#ef6170); }
@@ -165,11 +169,13 @@ export function buildDashboardSkeleton(shadow, t, callbacks) {
   const callNumber = dashboardElement("div", "call-number"); callCopy.append(callLabel, callPeer, callNumber);
   const callActions = dashboardElement("div", "call-actions");
   const answer = action(t("Answer"), "mdi:phone", "answer"); answer.onclick = () => callbacks.command("answer");
+  const answerVideo = action(t("Answer with video"), "mdi:video", "answer-video"); answerVideo.onclick = () => callbacks.command("answer_video");
   const decline = action(t("Decline"), "mdi:phone-hangup", "decline"); decline.onclick = () => callbacks.command("decline");
   const hangup = action(t("Hang up"), "mdi:phone-hangup", "hangup"); hangup.onclick = () => callbacks.command("hangup");
   const moreCalls = action(t("Call details"), "mdi:phone-log", "more-calls"); moreCalls.onclick = callbacks.ownerDetails;
-  callActions.append(answer, decline, hangup, moreCalls); ownerCall.append(callIconBox, callCopy, callActions);
-  header.append(identity, ownerCall);
+  callActions.append(answerVideo, answer, decline, hangup, moreCalls); ownerCall.append(callIconBox, callCopy, callActions);
+  const options = action(t("Options"), "mdi:cog", "options"); options.onclick = callbacks.options;
+  header.append(identity, ownerCall, options);
   const notice = dashboardElement("p", "notice"); notice.setAttribute("role", "status"); notice.setAttribute("aria-live", "polite");
   const scroller = dashboardElement("div", "scroller"); scroller.tabIndex = 0;
   scroller.setAttribute("aria-label", `${t("Extensions")}, ${t("Contacts")}`);
@@ -189,8 +195,9 @@ export function buildDashboardSkeleton(shadow, t, callbacks) {
   detailsHeading.append(detailsTitle, close); const detailsSummary = dashboardElement("p", "details-summary"); const detailsRows = dashboardElement("div");
   dialog.append(detailsHeading, detailsSummary, detailsRows);
   dialog.addEventListener("click", (event) => { if (event.target === dialog) { const box = dialog.getBoundingClientRect(); if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dialog.close(); } });
-  card.append(header, notice, scroller, dialog); shadow.append(style, card);
-  return { card, title, ownerName, ownerIcon, ownerCall, callIcon, callLabel, callPeer, callNumber, answer, decline, hangup, moreCalls, notice, scroller, sections, dialog, detailsTitle, detailsSummary, detailsRows };
+  const phoneHost = dashboardElement("div", "phone-view"); phoneHost.hidden = true;
+  card.append(header, notice, scroller, phoneHost, dialog); shadow.append(style, card);
+  return { card, title, ownerName, ownerIcon, ownerCall, callIcon, callLabel, callPeer, callNumber, answer, answerVideo, decline, hangup, moreCalls, options, phoneHost, notice, scroller, sections, dialog, detailsTitle, detailsSummary, detailsRows };
 }
 
 export function buildDashboardTile(key, callbacks) {

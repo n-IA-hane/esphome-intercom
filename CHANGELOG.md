@@ -6,7 +6,7 @@
 >
 > **For ESP firmware builds only: ESPHome 2026.10.0 or newer is required.**
 >
-> Audio Stack, ESP VoIP Stack, Runtime Controller and the maintained device YAMLs now follow ESPHome 2026.10’s audio interfaces. Upgrade your ESPHome builder before compiling this firmware; older builder versions are no longer supported.
+> Audio Stack, ESP VoIP Stack, Runtime Controller and the maintained device YAMLs now follow ESPHome 2026.10's audio interfaces. Upgrade your ESPHome builder before compiling this firmware; older builder versions are no longer supported.
 >
 > ESPHome 2026.10 includes substantial audio improvements and several of our accepted contributions. Thank you to the ESPHome team for your work, reviews and accepted PRs! <3
 

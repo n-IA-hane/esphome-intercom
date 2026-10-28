@@ -567,6 +567,7 @@ class LocalSoftphoneBridge:
         owner_id: object = "",
         *,
         enable_video_send: bool = False,
+        accept_video: bool = True,
     ) -> LocalAnswerResult:
         """Atomically let the first callee card answer and own its media leg."""
         call = self._require_internal(call_id)
@@ -597,6 +598,10 @@ class LocalSoftphoneBridge:
         if owner:
             lease, acquired = self._acquire_media(call, endpoint, owner)
         if call.callee_state is LocalCallState.RINGING:
+            if not accept_video:
+                call.video_enabled = False
+                call.caller_video_send = False
+                call.callee_video_send = False
             call.caller_state = LocalCallState.IN_CALL
             call.callee_state = LocalCallState.IN_CALL
             call.callee_video_send = bool(

@@ -407,3 +407,158 @@ def test_dashboard_header_opens_hidden_owner_multiple_calls_and_controls(dashboa
     held.get_by_role("button", name="Hang up", exact=True).click()
     assert page.evaluate("engine.actions.at(-1)") == ["hangup", "studio-device", "owner-held-call"]
     assert page.evaluate("card._tileData.get('endpoint:studio').owner") is True
+
+
+def install_native_phone_contract(page):
+    """Probe the dashboard's public child API without duplicating a softphone."""
+    page.evaluate("""()=>{
+      class NativePhone extends HTMLElement {
+        setConfig(value){this.config=value;}
+        setDashboardMode(value){this.embedded=value;}
+        set hass(value){this.boundHass=value;}
+        focusPhoneView(){this.focused=true;this.focusCalls=(this.focusCalls||0)+1;engine.videoCanvasOwner=this;return true;}
+        openPhoneOptions(){this.focusPhoneView();this.presentation={video:false,settings:true};this.notify();}
+        answerPhoneCall(options){this.answers=(this.answers||[]).concat(options);return Promise.resolve();}
+        notify(){this.dispatchEvent(new CustomEvent('voip-presentation-changed',{detail:this.presentation}));}
+      }
+      customElements.define('voip-stack-card',NativePhone);
+    }""")
+    page.wait_for_function("!!card._phoneView")
+
+
+@pytest.mark.browser_real
+def test_dashboard_reuses_native_phone_options_and_preserves_the_owner(dashboard_page):
+    page = dashboard_page
+    install_native_phone_contract(page)
+    assert page.evaluate("card._phoneView.embedded") is True
+    assert page.evaluate("card._phoneView.config.device_id") == "studio-device"
+    assert page.evaluate("card._phoneView.config.mode") == "ha_softphone"
+    page.get_by_role("button", name="Options", exact=True).click()
+    assert page.locator(".phone-view").is_visible()
+    assert page.locator(".scroller").is_hidden()
+    assert page.locator(".dashboard-header").is_visible()
+    page.evaluate("()=>{card._phoneView.presentation={video:false,settings:false};card._phoneView.notify()}")
+    assert page.locator(".scroller").is_visible()
+    assert page.locator(".phone-view").is_hidden()
+    old_child = page.evaluate("()=>{window.nativeChild=card._phoneView;return true;}")
+    assert old_child
+    page.evaluate("()=>card.setConfig({device_id:'studio-device',show_recording_controls:true})")
+    assert page.evaluate("card._phoneView===nativeChild") is True
+    assert page.evaluate("card._phoneView.config.show_recording_controls") is True
+
+
+@pytest.mark.browser_real
+def test_dashboard_video_answers_and_visibility_follow_the_first_frame(dashboard_page):
+    page = dashboard_page
+    install_native_phone_contract(page)
+    page.evaluate("""()=>{
+      engine.pushOwner({...ownerState,video_offered:true,capabilities:['audio','video'],sequence:2,revision:2});
+    }""")
+    page.set_viewport_size({"width":390,"height":1000})
+    page.evaluate("card.style.width='350px'")
+    page.wait_for_function("card.classList.contains('narrow')")
+    assert page.evaluate("card.shadowRoot.querySelector('ha-card').scrollWidth <= card.clientWidth+1")
+    page.get_by_role("button", name="Answer with video", exact=True).click()
+    assert page.evaluate("card._phoneView.answers.at(-1)") == {"video": True}
+    page.get_by_role("button", name="Answer audio only", exact=True).click()
+    assert page.evaluate("card._phoneView.answers.at(-1)") == {"video": False}
+    # Negotiation alone must not hide the extension tiles.
+    page.evaluate("()=>{card._phoneView.presentation={video:false,settings:false};card._phoneView.notify()}")
+    assert page.locator(".scroller").is_visible()
+    page.evaluate("()=>{card._phoneView.presentation={video:true,settings:false};card._phoneView.notify()}")
+    assert page.locator(".scroller").is_hidden()
+    assert page.locator(".phone-view").is_visible()
+    assert page.locator(".dashboard-header").is_hidden()
+    # The child retains the native video controls; ending the presentation restores tiles.
+    page.evaluate("()=>{card._phoneView.presentation={video:false,settings:false};card._phoneView.notify()}")
+    assert page.locator(".scroller").is_visible()
+    assert page.locator(".dashboard-header").is_visible()
+
+
+def test_dashboard_view_handoff_never_changes_the_media_session():
+    source = (FRONTEND / "voip-stack-engine.js").read_text()
+    body = source.split("  focusSoftphoneView(owner, controllerKey, endpointId) {", 1)[1]
+    body = body.split("\n  releaseSoftphoneController(", 1)[0].rsplit("\n  }", 1)[0]
+    script = """
+const assert=require('node:assert/strict');
+const focus=new Function('owner','controllerKey','endpointId',BODY);
+const old={isConnected:true}, next={isConnected:true};
+const session={_callId:'call-A',_endpointId:'studio',_softphoneControllers:new Map([['device:studio',old]]),
+ _videoCanvasOwner:old,_videoCanvas:{name:'old'},mic:{identity:'unchanged'},events:0,
+ releaseVideoCanvas(owner){assert.equal(owner,old);this._videoCanvasOwner=null;this._videoCanvas=null;},_emit(){this.events++;}};
+const mic=session.mic;
+assert.equal(focus.call(session,next,'device:studio','studio'),true);
+assert.equal(session._softphoneControllers.get('device:studio'),next);
+assert.equal(session.mic,mic);assert.equal(session._callId,'call-A');assert.equal(session._endpointId,'studio');
+assert.equal(session._videoCanvas,null);assert.equal(session.events,1);
+assert.equal(focus.call(session,next,'device:studio','studio'),true);assert.equal(session.events,1);
+assert.equal(focus.call(session,old,'device:kitchen','kitchen'),false);
+assert.equal(session._softphoneControllers.has('device:kitchen'),false);
+assert.equal(focus.call(session,{isConnected:false},'device:studio','studio'),false);
+""".replace("BODY", json.dumps(body))
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.browser_real
+def test_two_dashboards_do_not_fight_for_the_video_canvas(dashboard_page):
+    page = dashboard_page
+    install_native_phone_contract(page)
+    page.evaluate("""()=>{
+      window.second=document.createElement('voip-stack-dashboard-card');
+      second.setConfig({device_id:'studio-device'});second.hass=hass;document.body.append(second);
+    }""")
+    page.wait_for_function("!!second._phoneView&&!!second._owner()")
+    page.evaluate("""()=>{
+      engine.active=true;engine.callId='video-A';engine.endpointId='studio';engine.videoVisible=true;
+      engine.dispatchEvent(new Event('state'));engine.dispatchEvent(new Event('state'));
+    }""")
+    assert page.evaluate("card._phoneView.focusCalls") == 1
+    assert page.evaluate("second._phoneView.focusCalls||0") == 0
+    page.evaluate("()=>{second._openOptions();engine.dispatchEvent(new Event('state'))}")
+    assert page.evaluate("engine.videoCanvasOwner===second._phoneView") is True
+    assert page.evaluate("card._phoneView.focusCalls") == 1
+
+
+def test_dashboard_video_answer_respects_the_global_camera_policy():
+    source = (FRONTEND / "voip-stack-card.js").read_text()
+    expression = source.split("const wantsVideo = Boolean(", 1)[1].split("\n        );", 1)[0]
+    script = """
+const assert=require('node:assert/strict');
+const wants=new Function('options','return Boolean('+EXPRESSION+');');
+const check=(global,preference,options)=>wants.call({_softphoneSupportsVideo:()=>true,
+ _softphoneSnapshot:{video_camera_send_enabled:global,send_video:preference}},options);
+assert.equal(check(false,true,{sendVideo:true}),false);
+assert.equal(check(true,false,{sendVideo:true}),true);
+assert.equal(check(true,true,{sendVideo:false}),false);
+assert.equal(check(true,true,{}),true);
+assert.equal(check(false,true,{}),false);
+""".replace("EXPRESSION", json.dumps(expression))
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.browser_real
+def test_dashboard_owner_change_clears_the_previous_video_presentation(dashboard_page):
+    page = dashboard_page
+    install_native_phone_contract(page)
+    page.evaluate("()=>{card._phoneView.presentation={video:true,settings:false};card._phoneView.notify()}")
+    assert page.locator(".scroller").is_hidden()
+    page.evaluate("()=>card.setConfig({device_id:'missing-owner'})")
+    assert page.locator(".scroller").is_visible()
+    assert page.locator(".phone-view").is_hidden()
+    assert page.locator("h2").inner_text() == ""
+    page.evaluate("()=>card.setConfig({})")
+    assert page.locator(".scroller").is_visible()
+    assert page.locator(".phone-view").is_hidden()
+
+
+@pytest.mark.browser_real
+def test_dashboard_remount_restores_responsive_measurement(dashboard_page):
+    page = dashboard_page
+    page.evaluate("()=>{card.remove();document.body.append(card);card.style.width='350px'}")
+    page.wait_for_function("card.classList.contains('narrow')&&card.classList.contains('compact')")
+    assert page.evaluate("card._els.card.style.getPropertyValue('--dash-columns')") == "1"
+    hangup = page.locator(".owner-call .answer")
+    assert hangup.is_visible()
+    assert page.evaluate("card._els.card.scrollWidth <= card.clientWidth+1")

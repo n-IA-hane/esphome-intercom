@@ -39,6 +39,8 @@ def pjsip_blf_binary():
     manifest = json.loads(binary.with_name("voip-stack-blf-build.json").read_text())
     source = Path(__file__).parents[1] / "tools/pjsip_blf_client.c"
     assert manifest["revision"] == REVISION
+    assert manifest.get("driver_sanitizers") == ["address", "undefined"], (
+        "Native BLF peer requires sanitizer coverage; rerun python tools/build_pjsip_blf.py")
     assert manifest["client_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest(), (
         "Native BLF peer is stale; rerun python tools/build_pjsip_blf.py")
     return binary
@@ -58,9 +60,12 @@ class NativeBlfPeer:
     async def _read(self):
         try:
             while line := await self.process.stdout.readline():
-                self.output.write(line.decode())
+                self.output.write(line)
                 self.output.flush()
-                event = json.loads(line)
+                try:
+                    event = json.loads(line)
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise AssertionError(f"Native BLF peer emitted invalid JSON: {line!r}") from exc
                 if event["event"] == "notify":
                     root = ElementTree.fromstring(event["xml"])
                     assert root.tag == "{" + NS["d"] + "}dialog-info"
@@ -113,7 +118,7 @@ async def native_peer(lab, binary, tmp_path, transport, *, endpoint="sip:bedroom
     lab.runtime.endpoints.update(endpoint, extension="101")
     methods = lab.calls.component("sip_application")
     with (tmp_path / f"pjsip-{transport}.stderr").open("wb") as errors, \
-         (tmp_path / f"pjsip-{transport}.jsonl").open("w") as output:
+         (tmp_path / f"pjsip-{transport}.jsonl").open("wb") as output:
         process = await asyncio.create_subprocess_exec(
             str(binary), "127.0.0.1", str(lab.runtime.transport_config["sip_port"]), transport,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=errors, cwd=tmp_path)

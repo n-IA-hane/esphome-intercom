@@ -83,14 +83,19 @@ static void on_transaction(pjsip_evsub *sub, pjsip_transaction *tsx, pjsip_event
 static void on_notify(pjsip_evsub *sub, pjsip_rx_data *rdata, int *code,
                       pj_str_t **text, pjsip_hdr *headers, pjsip_msg_body **body)
 {
-    pjsip_dlg_event_status state;
+    pjsip_dlg_event_status state = {0};
     pjsip_msg *message = rdata->msg_info.msg;
     pj_str_t state_name = pj_str("Subscription-State");
     pjsip_hdr *header = pjsip_msg_find_hdr_by_name(message, &state_name, NULL);
     char printed[1024];
     int length = header ? pjsip_hdr_print_on(header, printed, sizeof(printed)) : 0;
-    PJ_UNUSED_ARG(text); PJ_UNUSED_ARG(headers); PJ_UNUSED_ARG(body);
-    check(pjsip_dlg_event_get_status(sub, &state), "parse dialog event");
+    PJ_UNUSED_ARG(sub); PJ_UNUSED_ARG(text); PJ_UNUSED_ARG(headers); PJ_UNUSED_ARG(body);
+    /* Parse this NOTIFY in its receive pool. PJSIP 2.16's cached status may
+     * retain strings from a reset pool after an empty dialog-info update.
+     * A fresh status also leaves absent dialog fields empty. */
+    if (message->body && message->body->len)
+        check(pjsip_dlg_event_parse_dialog_info(rdata, rdata->tp_info.pool, &state),
+              "parse dialog event");
     *code = reject_next_notify ? 481 : 200;
     reject_next_notify = 0;
     printf("{\"event\":\"notify\",\"response\":%d,\"cseq\":%d,\"subscription_state\":",
