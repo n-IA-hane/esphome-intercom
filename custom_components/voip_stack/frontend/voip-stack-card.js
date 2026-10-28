@@ -1995,6 +1995,7 @@ class VoipStackCard extends HTMLElement {
     const showRuntimeOptions = (showCall && !this._starting && !this._stopping) || inCallOptions;
     const showSettingsPanel = showRuntimeOptions && this._settingsOpen;
     els.card.classList.toggle("settings-open", showSettingsPanel);
+    els.card.classList.toggle("dashboard-inline-options", !!this._dashboardEmbedded && showSettingsPanel);
     const canUseKeypad = transferring || softphoneMode || !!this._startCallService;
     els.runtimeControls.hidden = !showRuntimeOptions;
     els.keypadBtn.hidden = !(

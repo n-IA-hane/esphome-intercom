@@ -32,7 +32,10 @@ const STYLES = `
   .phone-view { flex:1 1 auto; min-height:0; overflow:hidden; }
   .phone-view voip-stack-card { display:block; height:100%; min-height:0; }
   .header-tools { margin-left:auto; flex:none; display:flex; align-items:center; gap:8px; }
-  .header-tools .action { width:44px; height:44px; padding:0; }
+  .header-tools .action { width:44px; height:44px; padding:0; gap:0; }
+  .header-tools .action > span:empty { display:none; }
+  .header-tools .action ha-icon { display:flex; align-items:center; justify-content:center;
+    width:21px; height:21px; line-height:1; }
   :host ha-card.video-mode .dashboard-header,:host ha-card.video-mode .notice { display:none; }
   .dashboard-header { flex:none; display:flex; align-items:center; gap:20px; padding:18px 22px;
     border-bottom:1px solid var(--dash-line); background:color-mix(in srgb,var(--dash-ink) 3%,transparent); }

@@ -452,6 +452,40 @@ def test_dashboard_reuses_native_phone_options_and_preserves_the_owner(dashboard
 
 
 @pytest.mark.browser_real
+@pytest.mark.parametrize("width", [390, 1480])
+def test_dashboard_header_icons_are_centered_in_their_touch_targets(dashboard_page, width):
+    page = dashboard_page
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.evaluate("width=>card.style.width=(width-40)+'px'", width)
+    for name in ("Options", "Keypad"):
+        button = page.get_by_role("button", name=name, exact=True)
+        offset = button.evaluate("""button=>{
+          const icon=button.querySelector('ha-icon');
+          const b=button.getBoundingClientRect(),i=icon.getBoundingClientRect();
+          return {x:i.x+i.width/2-b.x-b.width/2,y:i.y+i.height/2-b.y-b.height/2};
+        }""")
+        assert abs(offset["x"]) <= 0.5, offset
+        assert abs(offset["y"]) <= 0.5, offset
+
+
+@pytest.mark.browser_real
+def test_dashboard_keeps_its_options_toggle_reachable_over_live_video(dashboard_page):
+    page = dashboard_page
+    install_native_phone_contract(page)
+    page.evaluate("""()=>{
+      engine.active=true;engine.callId='retained-video';
+      card._phoneView.presentation={video:true,settings:true,keypad:false,
+        keypadAvailable:true,optionsAvailable:true};card._phoneView.notify();
+    }""")
+    assert page.locator(".dashboard-header").is_visible()
+    page.get_by_role("button", name="Options", exact=True).click()
+    assert page.locator(".dashboard-header").is_hidden()
+    assert page.locator(".phone-view").is_visible()
+    assert page.evaluate("engine.callId") == "retained-video"
+    assert page.evaluate("engine.closed") == 0
+
+
+@pytest.mark.browser_real
 def test_dashboard_video_answers_and_visibility_follow_the_first_frame(dashboard_page):
     page = dashboard_page
     install_native_phone_contract(page)

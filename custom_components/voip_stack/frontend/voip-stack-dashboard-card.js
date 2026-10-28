@@ -297,7 +297,7 @@ class VoipStackDashboardCard extends HTMLElement {
     const {video,settings,keypad,keypadAvailable,optionsAvailable} = this._owner() ? this._phonePresentation : {};
     this._els.phoneHost.hidden = !(video || settings || keypad);
     this._els.scroller.hidden = !!(video || settings || keypad);
-    this._els.card.classList.toggle("video-mode", !!video);
+    this._els.card.classList.toggle("video-mode", !!video && !settings);
     this._els.options.disabled = !this._phoneView || !optionsAvailable;
     this._els.options.setAttribute("aria-expanded", String(!!settings));
     this._els.keypad.disabled = !this._phoneView || !keypadAvailable;

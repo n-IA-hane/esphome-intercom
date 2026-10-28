@@ -35,7 +35,8 @@ in the dashboard layout editor to display more columns and rows.
 - **Phone controls:** answer, decline and hang up from the selected phone's
   header. The calling-phone selector stays in the visual editor.
 - **The same phone options:** auto-answer, ringtone, Do not disturb and media
-  device preferences use the familiar softphone controls.
+  device preferences open directly beneath the dashboard's header, using the
+  familiar softphone controls.
 - **Native keypad:** open the dialpad icon to enter a number or SIP address,
   then use the same keypad for browser-call DTMF, including video calls.
   The gear icon opens and closes the familiar phone options.

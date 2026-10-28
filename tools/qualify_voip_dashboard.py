@@ -424,6 +424,22 @@ async def qualify(args):
                     results["video"] = await page.evaluate("""()=>({stats:window.__qualificationEngine.stats.video,
                         encoding:window.__qualificationEngine._video?._encoding,
                         captures:window.__dashboardCaptureRequests})""")
+                    video_call_id = (await connected())[0]["call_id"]
+                    captures = await capture_count()
+                    await embedded.get_by_role("button", name="Options", exact=True).click()
+                    await expect(embedded.locator(".settings-panel")).to_be_visible()
+                    await expect(embedded.locator(".runtime-controls")).to_be_hidden()
+                    await expect(embedded.locator(".header")).to_be_hidden()
+                    await expect(dashboard.locator(".dashboard-header")).to_be_visible()
+                    await connected(video_call_id)
+                    await shot("13-video-inline-options")
+                    await dashboard.locator(".options").click()
+                    await expect(embedded.locator(".settings-panel")).to_be_hidden()
+                    await expect(dashboard.locator(".dashboard-header")).to_be_hidden()
+                    await expect(embedded.locator(".video-canvas")).to_be_visible()
+                    await connected(video_call_id)
+                    await one_capture(captures, "video-options-keeps-the-same-media-session", expected=0)
+                    results["scenarios"].append("video-inline-options-keep-call-and-restore-native-video-controls")
                     # Native hangup follows the audio-level scale animation.
                     # Use its normal DOM click, as the maintained video probe does.
                     hangup = embedded.locator(".voip-button.hangup")

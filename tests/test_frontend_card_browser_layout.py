@@ -12,6 +12,52 @@ pytestmark = [pytest.mark.js_runtime, pytest.mark.browser_real]
 
 
 @pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
+@pytest.mark.parametrize("embedded", [None, False, True])
+def test_inline_dashboard_options_omit_native_chrome_only(embedded):
+    playwright = pytest.importorskip("playwright.sync_api")
+    with playwright.sync_playwright() as runner:
+        browser = runner.chromium.launch(executable_path=shutil.which("chromium"), headless=True)
+        try:
+            page = browser.new_page(viewport={"width": 420, "height": 800})
+
+            def serve(route):
+                name = route.request.url.split("/")[-1].split("?")[0]
+                path = FRONTEND / name
+                route.fulfill(
+                    content_type="text/javascript" if name.endswith(".js") else "text/html",
+                    body=path.read_text() if name.endswith(".js") and path.is_file()
+                    else "<html><body></body></html>",
+                )
+
+            page.route("http://card.test/**", serve)
+            page.goto("http://card.test/")
+            page.evaluate("""async embedded=>{
+              await import('/voip-stack-card.js');
+              window.card=document.createElement('voip-stack-card');
+              card.config={mode:'ha_softphone',device_id:'desk-device',name:'Desk'};
+              card._activeDeviceInfo={device_id:'desk-device',endpoint_id:'desk',name:'Desk'};
+              card._softphoneSnapshot={state:'idle',enabled:true,device_id:'desk-device'};
+              card._hass={language:'en',user:{is_admin:true},config:{location_name:'Home'},states:{}};
+              if(embedded!==null)card.setDashboardMode(embedded);
+              document.body.append(card);
+              card.togglePhoneKeypad();card.togglePhoneOptions();
+            }""", embedded)
+            assert page.evaluate("card._settingsOpen") is True
+            assert page.locator(".settings-panel").is_visible()
+            for selector in (".header", ".runtime-controls"):
+                assert page.locator(selector).is_visible() == (not embedded)
+            # The hidden child toolbar still advertises its native actions to
+            # the Dashboard. Closing options must reveal the retained keypad.
+            assert page.evaluate("card._els.settingsBtn.hidden") is False
+            assert page.evaluate("card._els.keypadBtn.hidden") is False
+            page.evaluate("card.togglePhoneOptions()")
+            assert page.locator(".keypad-panel").is_visible()
+            assert page.evaluate("card._settingsOpen") is False
+        finally:
+            browser.close()
+
+
+@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
 @pytest.mark.parametrize("mode", ["ha_softphone", "esp_mirror", "ha_transfer"])
 @pytest.mark.parametrize("initial_keypad", [False, True])
 def test_contacts_keypad_navigation_leaves_options(mode, initial_keypad, tmp_path):
