@@ -75,7 +75,7 @@ class VoipStackDashboardCardEditor extends HTMLElement {
     }
     select.value = selected; select.onchange = () => this._changed("device_id", select.value); ownerField.append(select);
     const titleField = field("Title (optional)", "dashboard-title"); const input = document.createElement("input");
-    input.id = "dashboard-title"; input.type = "text"; input.value = this._config.title || ""; input.placeholder = this._t("VoIP Dashboard");
+    input.id = "dashboard-title"; input.type = "text"; input.value = this._config.title || "";
     input.onchange = () => this._changed("title", input.value); titleField.append(input);
     if (this._error) {
       const error = document.createElement("p"); error.className = "hint error"; error.textContent = this._error; root.append(error);

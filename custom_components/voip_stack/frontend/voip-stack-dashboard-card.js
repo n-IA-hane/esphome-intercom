@@ -195,8 +195,12 @@ class VoipStackDashboardCard extends HTMLElement {
     if (key === this._renderKey) return;
     this._renderKey = key;
     const e = this._els; const owner = this._owner();
-    e.title.textContent = this._config.title || this._t("VoIP Dashboard");
-    e.ownerName.textContent = owner ? `${owner.name || ""}${owner.extension ? ` · ${owner.extension}` : ""}` : this._t("Select the calling phone in the card editor.");
+    const customTitle = this._config.title?.trim();
+    e.title.textContent = customTitle || owner?.name || "";
+    e.ownerName.textContent = owner
+      ? customTitle ? [owner.name, owner.extension].filter(Boolean).join(" · ") : owner.extension || ""
+      : this._t("Select the calling phone in the card editor.");
+    e.ownerName.hidden = !e.ownerName.textContent;
     const notice = this._error || this._store.error || (!this._store.ready ? this._t("Waiting for phone state") : "");
     e.notice.textContent = notice; e.notice.hidden = !notice;
     e.notice.classList.toggle("error", !!(this._error || this._store.error));

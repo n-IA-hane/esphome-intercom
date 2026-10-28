@@ -500,7 +500,7 @@ including messages being read or deleted. These are different triggers: a count
 change does not necessarily mean a new recording arrived. See the
 [voicemail guide](VOICEMAIL.md) for media access and complete examples.
 
-## Use the VoIP Dashboard
+## Use the VoIP dashboard
 
 Add **VoIP Dashboard** from Home Assistant's card picker. In its visual editor,
 choose the phone the card belongs to and an optional title. The phone picker
@@ -509,6 +509,8 @@ The dashboard resource loads with the ordinary VoIP Stack card resource.
 
 The YAML card type is `custom:voip-stack-dashboard-card`. The editor saves
 the selected phone as `device_id`, just like the softphone card.
+An empty title uses the selected phone's name, with its extension underneath
+when available. A custom title keeps the selected phone's identity below it.
 
 The header represents the selected phone. The upper grid contains the other
 browser, ESP and registered SIP phones. Saved contacts and automation

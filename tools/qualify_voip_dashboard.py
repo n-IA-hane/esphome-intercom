@@ -112,7 +112,7 @@ async def qualify(args):
 
             async def state(value):
                 await expect(dashboard).to_have_count(1)
-                await expect(dashboard.locator(".owner-name")).to_contain_text(owner["name"])
+                await expect(dashboard.locator("h2")).to_have_text(owner["name"])
                 expected = ({"calling", "remote_ringing", "connecting", "answering",
                              "in_call", "held", "terminating"} if value == "busy" else {value})
                 async with asyncio.timeout(20):
@@ -190,7 +190,7 @@ async def qualify(args):
                 view["theme"] = name
                 await ws.command({"type": "lovelace/config/save", "config": configuration})
                 await page.reload()
-                await expect(dashboard.locator(".owner-name")).to_contain_text(owner["name"], timeout=20000)
+                await expect(dashboard.locator("h2")).to_have_text(owner["name"], timeout=20000)
                 return await dashboard.evaluate("""card=>{
                     const style=getComputedStyle(card);
                     return {text:style.getPropertyValue('--primary-text-color').trim(),
@@ -201,7 +201,7 @@ async def qualify(args):
                 await page.goto(f"{args.url}/lovelace/voip-dashboard-qualification")
                 await remote.goto(f"{args.url}/lovelace/voip-dashboard-peer")
                 await receiving_page.goto(f"{args.url}/lovelace/voip-dashboard-receiver")
-                await expect(dashboard.locator(".owner-name")).to_contain_text(owner["name"], timeout=20000)
+                await expect(dashboard.locator("h2")).to_have_text(owner["name"], timeout=20000)
                 await expect(owner_card).to_be_visible(timeout=20000)
                 assert await owner_card.evaluate("card=>card.config.device_id") == owner["device_id"]
                 results["engine"] = await bind_page_engine()

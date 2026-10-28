@@ -11,7 +11,13 @@ conversations are on hold, then call or pick up directly from the same card.
 ![VoIP Dashboard with ringing, active and held calls](images/voip-dashboard-desktop.png)
 
 Illustrative snapshot with voicemail, Do not disturb and an offline phone.
-[See the mobile portrait layout](images/voip-dashboard-mobile.png).
+
+<details>
+<summary>Mobile portrait layout</summary>
+
+![VoIP Dashboard in mobile portrait layout](images/voip-dashboard-mobile.png)
+
+</details>
 
 Glass surfaces follow your Home Assistant theme. The responsive grid adapts
 from a narrow phone screen to a full-width operator console, with separate
@@ -35,6 +41,10 @@ in the dashboard layout editor to display more columns and rows.
 The header belongs to the phone selected for this card. It keeps that phone's
 identity, status and call controls together while the grid shows the rest of
 the system.
+
+Leave the optional title empty to use the selected phone's name as the heading,
+with its extension underneath when available. A custom title keeps the phone's
+identity below it.
 
 Add **VoIP Dashboard** from Home Assistant's card picker and choose its calling
 phone in the visual editor. The card loads through the existing VoIP Stack

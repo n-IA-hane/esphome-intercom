@@ -448,7 +448,7 @@ JPEG/H.264 compile-time profiles.
 
 See the [capability matrix, privacy controls and limits](docs/SIP_VIDEO.md).
 
-## VoIP Dashboard
+## VoIP dashboard
 
 The **VoIP Dashboard** card puts the phone system in one responsive operator
 view: live extension tiles, callers, conversations on hold, mailbox counters

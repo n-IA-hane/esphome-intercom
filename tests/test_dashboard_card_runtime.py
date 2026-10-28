@@ -183,7 +183,8 @@ def test_dashboard_real_dom_header_details_and_shared_command_routing(dashboard_
     assert page.get_by_text("Customer on hold", exact=True).is_visible()
     assert page.locator(".transfer-line:visible").count() == 0
     assert page.locator(".owner-badge:visible").count() == 0
-    assert page.locator(".owner-name").inner_text() == "Studio · 107"
+    assert page.locator("h2").inner_text() == "Studio"
+    assert page.locator(".owner-name").inner_text() == "107"
     assert page.locator(".tile[data-key='endpoint:studio']").count() == 0
     assert page.get_by_role("button", name="Pick up: Kitchen", exact=True).is_disabled()
     page.get_by_role("button", name="Answer", exact=True).click()
@@ -199,6 +200,26 @@ def test_dashboard_real_dom_header_details_and_shared_command_routing(dashboard_
     assert page.evaluate("engine.closed") == 0
     assert page.evaluate("engine.phoneSubscribers.size") == 0
     assert page.evaluate("engine.ownerSubscribers.size") == 0
+
+
+@pytest.mark.browser_real
+def test_dashboard_optional_title_uses_owner_and_omits_missing_extension(dashboard_page):
+    page = dashboard_page
+    for title in (None, "", "   "):
+        page.evaluate("title=>card.setConfig({device_id:'studio-device',title})", title)
+        assert page.locator("h2").inner_text() == "Studio"
+        assert page.locator(".owner-name").inner_text() == "107"
+    page.evaluate("()=>card.setConfig({device_id:'studio-device',title:'  Reception desk  '})")
+    assert page.locator("h2").inner_text() == "Reception desk"
+    assert page.locator(".owner-name").inner_text() == "Studio · 107"
+    page.evaluate("""()=>{
+      const owner={...fixture.phones.find(x=>x.endpoint_id==='studio'),extension:''};
+      card._devices=card._devices.map(x=>({...x,extension:''}));
+      engine.push({kind:'delta',revision:1,phones:[owner]});
+      card.setConfig({device_id:'studio-device'});
+    }""")
+    assert page.locator("h2").inner_text() == "Studio"
+    assert page.locator(".owner-name").is_hidden()
 
 
 @pytest.mark.browser_real
@@ -359,7 +380,8 @@ def test_dashboard_semantic_colors_remain_distinct_under_muted_ha_theme(dashboar
 def test_dashboard_owner_change_moves_only_the_grid_exclusion(dashboard_page):
     page = dashboard_page
     page.evaluate("card.setConfig({type:'custom:voip-stack-dashboard-card',device_id:'reception-device'})")
-    assert page.locator(".owner-name").inner_text() == "Reception · 100"
+    assert page.locator("h2").inner_text() == "Reception"
+    assert page.locator(".owner-name").inner_text() == "100"
     assert page.get_by_text("Extensions (7)", exact=True).is_visible()
     assert page.locator(".tile[data-key='endpoint:reception']").count() == 0
     assert page.locator(".tile[data-key='endpoint:studio']").count() == 1
