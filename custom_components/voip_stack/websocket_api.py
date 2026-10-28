@@ -86,6 +86,7 @@ WS_TYPE_RESOLVE_DEVICE = f"{DOMAIN}/resolve_device"
 WS_TYPE_HA_SOFTPHONE_STATE = f"{DOMAIN}/ha_softphone_state"
 WS_TYPE_SUBSCRIBE_CALL_EVENTS = f"{DOMAIN}/subscribe_call_events"
 WS_TYPE_SUBSCRIBE_HA_SOFTPHONE = f"{DOMAIN}/subscribe_ha_softphone_state"
+WS_TYPE_SUBSCRIBE_PHONE_STATES = f"{DOMAIN}/subscribe_phone_states"
 
 
 def _clean_group_token(value: object) -> str:
@@ -1568,11 +1569,25 @@ def _endpoint_id_from_selector(
 
 
 def async_register_websocket_api(hass: HomeAssistant) -> None:
+    websocket_api.async_register_command(hass, websocket_subscribe_phone_states)
     websocket_api.async_register_command(hass, websocket_subscribe_call_events)
     websocket_api.async_register_command(hass, websocket_subscribe_ha_softphone_state)
     websocket_api.async_register_command(hass, websocket_ha_softphone_state)
     websocket_api.async_register_command(hass, websocket_list_devices)
     websocket_api.async_register_command(hass, websocket_resolve_device)
+
+
+@websocket_api.websocket_command({vol.Required("type"): WS_TYPE_SUBSCRIBE_PHONE_STATES})
+@callback
+def websocket_subscribe_phone_states(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: Dict[str, Any],
+) -> None:
+    """Observe readable phones without publishing browser availability."""
+    from .phone_monitor import PhoneStateSubscription
+
+    PhoneStateSubscription(hass, connection, msg["id"]).start()
 
 
 @websocket_api.websocket_command(

@@ -32,6 +32,8 @@ off. [Learn the phone controls](docs/USER_GUIDE.md#read-the-phone-card) and
 [FreeSWITCH/FusionPBX setup](docs/FREESWITCH.md)._
 
 Stable release: [2026.11.0](https://github.com/n-IA-hane/esphome-intercom/releases/tag/v2026.11.0).
+Development preview: [2026.11.1-dev changes](docs/WHATS_NEW_2026_11_1_DEV.md),
+including the new VoIP Dashboard.
 Requires Home Assistant **2026.7.0 or newer**. The maintained firmware
 requires ESPHome **2026.10.0 or newer**.
 
@@ -445,6 +447,23 @@ presentation path, initial-video and audio-first re-INVITE behavior, and the
 JPEG/H.264 compile-time profiles.
 
 See the [capability matrix, privacy controls and limits](docs/SIP_VIDEO.md).
+
+## VoIP Dashboard
+
+The **VoIP Dashboard** card puts the phone system in one responsive operator
+view: live extension tiles, callers, conversations on hold, mailbox counters
+and saved contacts. Select its calling phone in the card editor. Incoming
+calls for that phone appear in the header with Answer and Decline controls;
+ringing tiles offer directed pickup when the backend makes it available.
+
+The glass surfaces follow your Home Assistant theme. Tiles update through a
+shared WebSocket subscription to the PBX state observer, which also supplies
+SIP busy lamps. Browser and ESP phones can control calls from the dashboard;
+registered SIP phones can be monitored and called.
+
+Add **VoIP Dashboard** from the card picker, or use
+`type: custom:voip-stack-dashboard-card` and select the phone in its visual
+editor. See the [dashboard guide](docs/USER_GUIDE.md#use-the-voip-dashboard).
 
 ## Phonebook and routing
 

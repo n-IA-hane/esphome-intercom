@@ -11,6 +11,7 @@ phones. For the difference between a phone, card, contact and trunk, see
 | I want to... | Start here |
 | --- | --- |
 | Choose which phone places a call | [Calling phone picker](#choose-the-calling-phone-in-the-editor) |
+| See all phones and recover a ringing call | [VoIP Dashboard](#use-the-voip-dashboard) |
 | Add a provider or another PBX | [SIP trunks](#configure-a-trunk) |
 | Send an unanswered call somewhere else | [Ringing timeout and forwarding](#choose-what-happens-when-nobody-answers) |
 | Move an answered call to someone else | [Transfer a call](#forward-or-transfer-a-call) |
@@ -20,9 +21,8 @@ phones. For the difference between a phone, card, contact and trunk, see
 | React when a phone rings or its mailbox changes | [Native automation tools](#phone-state-in-automations) |
 
 The screenshots use Home Assistant's visual editors. Choose phones by their
-names; HA stores the identifiers for you. The new PBX actions described here
-are included in the current **2026.11.0** release. If an action is missing
-after redownloading the same version, restart HA and reload the browser.
+names; HA stores the identifiers for you. After updating the integration,
+restart HA and reload the browser to load its updated cards and actions.
 
 ## Install Home Assistant VoIP Stack
 
@@ -499,6 +499,60 @@ Use **Phone mailbox changed** when you want to react to message-count changes,
 including messages being read or deleted. These are different triggers: a count
 change does not necessarily mean a new recording arrived. See the
 [voicemail guide](VOICEMAIL.md) for media access and complete examples.
+
+## Use the VoIP Dashboard
+
+Add **VoIP Dashboard** from Home Assistant's card picker. In its visual editor,
+choose the phone the card belongs to and an optional title. The phone picker
+stays in the editor; the card header always describes that selected phone.
+The dashboard resource loads with the ordinary VoIP Stack card resource.
+
+The YAML card type is `custom:voip-stack-dashboard-card`. The editor saves
+the selected phone as `device_id`, just like the softphone card.
+
+The header represents the selected phone. The upper grid contains the other
+browser, ESP and registered SIP phones. Saved contacts and automation
+destinations appear below. Icons identify the destination type and its
+availability. The grid adapts to the card width and scrolls vertically when
+the content exceeds the available height. Glass surfaces and text colors
+follow the active Home Assistant theme.
+
+For an operator console, give its section the full view width in Home
+Assistant's layout editor. The grid grows to three, four or five columns as
+space increases; narrow cards use one or two columns. Resize the card height
+to choose how many rows are visible before scrolling.
+
+| Tile | Meaning and action |
+| --- | --- |
+| Available | Call this destination from the selected phone when that phone is free. |
+| Blue, ringing | Shows the caller. Use **Pick up** to recover an eligible ringing call on the selected phone. |
+| Red, in call | Shows the connected party. Open the tile for the individual conversations. |
+| On hold | Shows held conversations alongside the active conversation. |
+| DND or offline | Shows the endpoint's reported availability and Do not disturb setting. |
+| Mailbox badge | Shows the count of new voicemail messages. |
+
+The header describes the selected phone's incoming or outgoing call. Answer,
+Decline and Hang up act on that phone and call. With an ESP selected, audio
+stays on the ESP. With a browser phone selected, the dashboard uses the same
+page-level media engine as the ordinary softphone card; microphone permission
+is requested when placing or answering a call. The dashboard answers browser
+calls with audio. Use the phone card for camera and video controls.
+
+You can keep both cards on one view. Closing a card releases its display
+listeners while an active call remains owned by the media engine. Monitoring
+another browser phone leaves its presence and microphone untouched.
+
+Held and active conversations are separate entries. A transfer label requires
+an explicit transfer relationship from the PBX. For a conventional handset
+which has only held one call and started another, the dashboard shows those
+two facts until a transfer operation is known. External contacts have no live
+BLF status. Registered SIP phones can be monitored and called; select a browser
+or ESP phone as the dashboard's calling phone.
+
+The dashboard receives an initial snapshot and then changed endpoints over
+Home Assistant's WebSocket. It shares the PBX observer with SIP BLF, with
+permission checks for the monitored endpoints. A reconnect replaces the
+snapshot before actions become available again.
 
 ## Busy lamps on SIP phones
 

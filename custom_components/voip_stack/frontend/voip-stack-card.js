@@ -46,6 +46,7 @@ const {
   buildUnconfiguredCardSkeleton,
 } = await import(`./voip-stack-card-view.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 await import(`./voip-stack-card-editor.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
+await import(`./voip-stack-dashboard-card.js?v=${encodeURIComponent(VOIP_STACK_MODULE_VERSION)}`);
 const HANGUP_SERVICE_TIMEOUT_MS = 3000;
 
 function settleServiceWithin(promise, timeoutMs, timeoutMessage) {

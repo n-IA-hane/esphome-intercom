@@ -1269,6 +1269,139 @@ assert.equal(asymmetric._captureNode.options.processorOptions.format.frameMs, 20
 assert.equal(asymmetric._playbackNode.options.processorOptions.format.sampleRate, 48000);
 assert.equal(asymmetric._playbackNode.options.outputChannelCount[0], 2);
 await asymmetric.close("test-complete");
+
+// An operator view is passive and shares one subscription between cards.
+const dashboard = new Engine();
+const observers = [];
+let monitorUnsubscribed = 0;
+const monitorConnection = {{
+  subscribeMessage: async (listener, request) => {{
+    observers.push({{listener, request}});
+    return () => {{monitorUnsubscribed++;}};
+  }},
+}};
+dashboard.configure({{connection: monitorConnection}});
+const firstMonitorEvents = [], secondMonitorEvents = [];
+const releaseMonitor = dashboard.subscribePhoneStates(event => firstMonitorEvents.push(event));
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(observers.length, 1);
+assert.equal(observers[0].request.type, "voip_stack/subscribe_phone_states");
+observers[0].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"desk",state:"idle"}}]}});
+const releaseSecondMonitor = dashboard.subscribePhoneStates(event => secondMonitorEvents.push(event));
+assert.equal(secondMonitorEvents[0].phones[0].state,"idle");
+assert.equal(observers.length,1);
+observers[0].listener({{kind:"delta",revision:1,phones:[{{endpoint_id:"desk",state:"ringing"}}],removed:[]}});
+observers[0].listener({{kind:"delta",revision:0,phones:[{{endpoint_id:"desk",state:"idle"}}],removed:[]}});
+assert.equal(secondMonitorEvents.at(-1).phones[0].state,"ringing");
+// A server reconnect starts a new revision stream, even on the same HA socket object.
+observers[0].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"desk",state:"in_call"}}]}});
+assert.equal(dashboard._phoneStates.get("desk").state,"in_call");
+observers[0].listener({{kind:"delta",revision:1,phones:[],removed:["desk"]}});
+assert.equal(dashboard._phoneStates.size,0);
+releaseMonitor();
+assert.equal(monitorUnsubscribed,0);
+releaseSecondMonitor();
+assert.equal(monitorUnsubscribed,1);
+assert.equal(dashboard._phoneStates.size,0);
+assert.equal(dashboard._softphoneScopeSubscriptions.size,0);
+
+// Losing a delta requires a new full snapshot; the old callback cannot revive state.
+const reconnectEvents=[];
+const releaseReconnecting=dashboard.subscribePhoneStates(event=>reconnectEvents.push(event));
+await new Promise(resolve => setImmediate(resolve));
+observers[1].listener({{kind:"snapshot",revision:0,phones:[]}});
+observers[1].listener({{kind:"delta",revision:2,phones:[{{endpoint_id:"stale"}}]}});
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(observers.length,3);
+assert.equal(reconnectEvents.at(-1).kind,"reset");
+observers[1].listener({{kind:"snapshot",revision:9,phones:[{{endpoint_id:"stale"}}]}});
+assert.equal(dashboard._phoneStates.size,0);
+observers[2].listener({{kind:"snapshot",revision:0,phones:[{{endpoint_id:"fresh",state:"idle"}}]}});
+assert.equal(dashboard._phoneStates.has("fresh"),true);
+releaseReconnecting();
+
+// Removing the final card must preserve the presence lease of its active call.
+const ownedView = new Engine();
+let viewUnsubscribe=0;
+ownedView._busConnection={{subscribeMessage:async()=>()=>{{viewUnsubscribe++;}}}};
+const releaseView=ownedView.subscribeSoftphoneState(()=>{{}},{{endpoint_id:"desk"}});
+await new Promise(resolve => setImmediate(resolve));
+ownedView.claimSoftphoneSession("view-call","desk");
+releaseView();
+assert.equal(viewUnsubscribe,0);
+assert.equal(ownedView.softphoneCallIdFor("desk"),"view-call");
+ownedView.releaseSoftphoneSession("view-call","desk");
+assert.equal(viewUnsubscribe,1);
+assert.equal(ownedView._softphoneScopeSubscriptions.size,0);
+
+// Permission preflight may take time: never answer the next caller by accident.
+const guarded = new Engine();
+const guardedOwner={{device_id:"desk-device",endpoint_id:"desk",softphone:true}};
+let guardedState={{endpoint_id:"desk",call_id:"incoming-A",state:"ringing"}};
+let guardedCommands=0;
+guarded._hass={{callWS:async()=>guardedState,callService:async()=>{{guardedCommands++;}}}};
+guarded.prepareAudioCall=async()=>{{guardedState={{endpoint_id:"desk",call_id:"incoming-B",state:"ringing"}};}};
+await assert.rejects(guarded.dashboardAnswer(guardedOwner,{{call_id:"incoming-A"}}),/no longer ringing/);
+assert.equal(guardedCommands,0);
+assert.equal(guarded.softphoneCallIdFor("desk"),"");
+assert.equal(guarded._dashboardOperations.size,0);
+assert.equal(guarded._mediaIntent,null);
+
+// A callee can answer before the originate service returns to the browser.
+const immediate = new Engine();
+const immediateOwner={{device_id:"fast-device",endpoint_id:"fast",softphone:true}};
+let immediateResumes=0;
+immediate._hass={{callWS:async()=>({{endpoint_id:"fast",device_id:"fast-device",state:"idle"}})}};
+immediate.prepareAudioCall=async()=>{{}};
+immediate.resumeSession=async()=>{{immediateResumes++;}};
+immediate.startHaSoftphone=async()=>{{
+  immediate.claimSoftphoneSession("fast-call","fast");
+  immediate._onSoftphoneState({{endpoint_id:"fast",device_id:"fast-device",state:"in_call",call_id:"fast-call"}});
+  return {{state:"calling",call_id:"fast-call"}};
+}};
+await immediate.dashboardStartCall(immediateOwner,{{extension:"101"}});
+assert.equal(immediateResumes,1,"A committed answer must attach media after the command gate releases");
+
+// A retained backend scope must also consume an answer after the last view
+// unmounts. Keeping browser presence alone does not attach the call's audio.
+const unmounted = new Engine();
+let unmountedResumes = 0;
+const releaseUnmounted = unmounted.subscribeSoftphoneState(() => {{}}, {{device_id:"unmounted-device"}});
+unmounted._lastSoftphoneStates.set("endpoint:unmounted-desk", {{
+  endpoint_id:"unmounted-desk",device_id:"unmounted-device",state:"calling",call_id:"unmounted-call",
+}});
+unmounted.claimSoftphoneSession("unmounted-call","unmounted-desk");
+unmounted.resumeSession = async (owner, deviceId, state) => {{
+  assert.equal(owner.endpoint_id,"unmounted-desk");
+  assert.equal(deviceId,"unmounted-device");
+  assert.equal(state.call_id,"unmounted-call");
+  unmountedResumes++;
+}};
+releaseUnmounted();
+assert.equal(unmounted._softphoneSubscribers.size,0);
+assert.equal(unmounted._softphoneScopeSubscriptions.size,1);
+unmounted._onSoftphoneState({{
+  endpoint_id:"unmounted-desk",device_id:"unmounted-device",state:"in_call",call_id:"unmounted-call",
+}}, {{device_id:"unmounted-device"}});
+await new Promise(resolve => setTimeout(resolve,0));
+assert.equal(unmountedResumes,1,"An answer after dashboard unmount must attach media exactly once");
+
+// A live phone card remains first to supply its microphone filtering choice.
+const preferred = new Engine();
+preferred.claimSoftphoneSession("preferred-call","preferred-desk");
+const preferredAttachments=[];
+preferred.resumeSession=async(owner)=>{{preferredAttachments.push(owner.microphone_anti_alias);}};
+const releasePreferred=preferred.subscribeSoftphoneState((snapshot)=>{{
+  void preferred.resumeSession({{microphone_anti_alias:false}},"preferred-device",snapshot);
+}},{{device_id:"preferred-device"}});
+storage.set("voip_microphone_anti_alias_preferred-device","false");
+preferred._onSoftphoneState({{endpoint_id:"preferred-desk",device_id:"preferred-device",call_id:"preferred-call",state:"in_call"}});
+await new Promise(resolve=>setTimeout(resolve,0));
+assert.deepEqual(preferredAttachments,[false]);
+releasePreferred();
+preferred._onSoftphoneState({{endpoint_id:"preferred-desk",device_id:"preferred-device",call_id:"preferred-call",state:"in_call"}});
+await new Promise(resolve=>setTimeout(resolve,0));
+assert.deepEqual(preferredAttachments,[false,false],"An unmounted phone keeps its saved filtering preference");
 """
     completed = subprocess.run(
         [

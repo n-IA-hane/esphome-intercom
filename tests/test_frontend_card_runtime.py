@@ -64,6 +64,7 @@ source = source
       softphoneSnapshotSupersedes, targetFromRosterEntry, terminalPeerLabel,
     }} = globalThis.__cardModel;`,
   )
+  .replace(/await import[^;]*voip-stack-dashboard-card[^;]*;/, "")
   .replace("class VoipStackCard extends HTMLElement", "export class VoipStackCard extends HTMLElement");
 
 const serviceCalls = [];

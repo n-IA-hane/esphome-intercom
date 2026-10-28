@@ -91,6 +91,7 @@ ha_tests=(
   tests/test_phone_settings_ha.py
   tests/test_phone_policy_runtime_ha.py
   tests/test_phone_state_ha.py
+  tests/test_phone_monitor_ha.py
   tests/test_trunk_config_flow.py
   tests/test_trunk_catalog_ha.py
   tests/test_trunk_calls_ha.py
@@ -113,6 +114,7 @@ ha_tests=(
   tests/test_call_pickup_ha.py
   tests/test_group_pickup_regressions_ha.py
   tests/test_dialog_info_ha.py
+  tests/test_pjsip_blf_ha.py
   tests/test_automation_originate_ha.py
   tests/test_announcement_media_ha.py
   tests/test_call_trigger.py
@@ -182,6 +184,7 @@ PY
       tests/test_frontend_video_browser.py
       tests/test_browser_audio_startup.py
       tests/test_frontend_media_devices_runtime.py
+      tests/test_dashboard_card_runtime.py
       -q --tb=short -m browser_real
     )
     ;;

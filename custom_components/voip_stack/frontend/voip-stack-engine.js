@@ -1,6 +1,7 @@
 const WS_AUDIO = 1;
 const WS_SUBSCRIBE_CALL_EVENTS = "voip_stack/subscribe_call_events";
 const WS_SUBSCRIBE_HA_SOFTPHONE = "voip_stack/subscribe_ha_softphone_state";
+const WS_SUBSCRIBE_PHONE_STATES = "voip_stack/subscribe_phone_states";
 const MODULE_VERSION = (() => {
   try {
     return new URL(import.meta.url).searchParams.get("v") || "dev";
@@ -170,6 +171,26 @@ class VoipStackEngine extends EventTarget {
     this._softphoneSubscriberSelectors = new Map();
     this._lastSoftphoneStates = new Map();
     this._softphoneScopeSubscriptions = new Map();
+    this._phoneStateSubscribers = new Set();
+    this._phoneStates = new Map();
+    this._phoneStateRevision = null;
+    this._phoneStateUnsub = null;
+    this._phoneStatePending = null;
+    this._phoneStateEpoch = 0;
+    this._phoneStateFailed = false;
+    this._phoneStateReady = () => {
+      if (!this._phoneStateFailed) return;
+      this._phoneStateFailed = false;
+      this._ensurePhoneStateSubscription();
+    };
+    this._phoneStateDisconnected = () => {
+      this._phoneStates.clear();
+      this._phoneStateRevision = null;
+      for (const listener of this._phoneStateSubscribers) {
+        try { listener({ kind: "reset", reason: "disconnected" }); } catch (error) { console.error(error); }
+      }
+    };
+    this._dashboardOperations = new Map();
     this._controlWaiter = null;
     this._connectPromise = null;
     this._connectGeneration = 0;
@@ -239,6 +260,9 @@ class VoipStackEngine extends EventTarget {
     const conn = hass?.connection || null;
     if (!conn) return;
     if (conn !== this._busConnection) {
+      this._busConnection?.removeEventListener?.("ready", this._phoneStateReady);
+      this._busConnection?.removeEventListener?.("disconnected", this._phoneStateDisconnected);
+      this._resetPhoneStateSubscription("connection_changed");
       if (this._busUnsub) this._busUnsub();
       this._busUnsub = null;
       this._busSubscribePending = false;
@@ -251,6 +275,8 @@ class VoipStackEngine extends EventTarget {
       if (this._busSubscribeRetryTimer) clearTimeout(this._busSubscribeRetryTimer);
       this._busSubscribeRetryTimer = null;
       this._busConnection = conn;
+      conn.addEventListener?.("ready", this._phoneStateReady);
+      conn.addEventListener?.("disconnected", this._phoneStateDisconnected);
     }
     this._ensureBusSubscriptions(conn);
   }
@@ -295,6 +321,81 @@ class VoipStackEngine extends EventTarget {
     for (const record of this._softphoneScopeSubscriptions.values()) {
       this._ensureSoftphoneScopeSubscription(conn, record);
     }
+    this._ensurePhoneStateSubscription();
+  }
+
+  _resetPhoneStateSubscription(reason) {
+    this._phoneStateEpoch++;
+    try { this._phoneStateUnsub?.(); } catch (_) {}
+    this._phoneStateUnsub = null;
+    this._phoneStatePending = null;
+    this._phoneStateFailed = false;
+    this._phoneStateRevision = null;
+    this._phoneStates.clear();
+    for (const listener of this._phoneStateSubscribers) {
+      try { listener({ kind: "reset", reason }); } catch (error) { console.error(error); }
+    }
+  }
+
+  _ensurePhoneStateSubscription() {
+    const conn = this._busConnection;
+    if (!conn || !this._phoneStateSubscribers.size || this._phoneStateUnsub ||
+        this._phoneStatePending || this._phoneStateFailed) return;
+    const epoch = ++this._phoneStateEpoch;
+    const pending = {};
+    this._phoneStatePending = pending;
+    Promise.resolve().then(() => conn.subscribeMessage((event) => {
+      if (epoch !== this._phoneStateEpoch || conn !== this._busConnection) return;
+      if (!["snapshot", "delta"].includes(event?.kind) ||
+          !Number.isSafeInteger(event.revision)) return;
+      if (event.kind === "snapshot") {
+        this._phoneStates.clear();
+      } else {
+        if (this._phoneStateRevision !== null && event.revision <= this._phoneStateRevision) return;
+        if (this._phoneStateRevision === null || event.revision !== this._phoneStateRevision + 1) {
+          this._resetPhoneStateSubscription("revision_gap");
+          this._ensurePhoneStateSubscription();
+          return;
+        }
+      }
+      this._phoneStateRevision = event.revision;
+      for (const id of event.removed || []) this._phoneStates.delete(id);
+      for (const phone of event.phones || []) {
+        if (phone?.endpoint_id) this._phoneStates.set(phone.endpoint_id, phone);
+      }
+      for (const listener of this._phoneStateSubscribers) {
+        try { listener(event); } catch (error) { console.error("voip-stack-engine phone state", error); }
+      }
+    }, { type: WS_SUBSCRIBE_PHONE_STATES })).then((unsubscribe) => {
+      if (epoch === this._phoneStateEpoch && conn === this._busConnection &&
+          this._phoneStateSubscribers.size) this._phoneStateUnsub = unsubscribe;
+      else unsubscribe();
+    }).catch((error) => {
+      if (epoch !== this._phoneStateEpoch) return;
+      this._phoneStateFailed = true;
+      for (const listener of this._phoneStateSubscribers) {
+        try { listener({ kind: "error", error: error?.message || String(error) }); }
+        catch (failure) { console.error(failure); }
+      }
+    }).finally(() => {
+      if (this._phoneStatePending === pending) this._phoneStatePending = null;
+    });
+  }
+
+  subscribePhoneStates(listener) {
+    this._phoneStateSubscribers.add(listener);
+    if (this._phoneStateRevision !== null) {
+      listener({ kind: "snapshot", revision: this._phoneStateRevision,
+        phones: [...this._phoneStates.values()] });
+    }
+    this._ensurePhoneStateSubscription();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this._phoneStateSubscribers.delete(listener);
+      if (!this._phoneStateSubscribers.size) this._resetPhoneStateSubscription("unsubscribed");
+    };
   }
 
   _isUnknownEndpointError(err) {
@@ -419,6 +520,7 @@ class VoipStackEngine extends EventTarget {
     const endpointId = this._mediaIntent.endpointId;
     this._mediaIntent = null;
     if (!this._ownedSoftphoneCalls.has(endpointId)) void this._discardPreparedAudio();
+    this._releaseUnusedSoftphoneScopes();
     return true;
   }
 
@@ -434,6 +536,27 @@ class VoipStackEngine extends EventTarget {
       }
       this._persistOwnedSoftphoneCalls();
       this._syncControlHealthMonitor();
+      this._releaseUnusedSoftphoneScopes();
+    }
+  }
+
+  _softphoneScopeHasSession(record) {
+    const selector = record.selector;
+    let endpointId = selector.endpoint_id;
+    if (!endpointId && selector.device_id) {
+      endpointId = [...this._lastSoftphoneStates.values()].find(
+        (state) => String(state.device_id || state.endpoint_device_id || "") === selector.device_id,
+      )?.endpoint_id;
+    }
+    return Boolean(endpointId && (this.softphoneCallIdFor(endpointId) ||
+      this._mediaIntent?.endpointId === endpointId));
+  }
+
+  _releaseUnusedSoftphoneScopes() {
+    for (const [key, record] of this._softphoneScopeSubscriptions) {
+      if (record.refs || this._softphoneScopeHasSession(record)) continue;
+      try { record.unsub?.(); } catch (_) {}
+      this._softphoneScopeSubscriptions.delete(key);
     }
   }
 
@@ -1205,6 +1328,16 @@ class VoipStackEngine extends EventTarget {
     const key = endpointId ? `endpoint:${endpointId}` : `device:${deviceId}`;
     this._lastSoftphoneState = state;
     this._lastSoftphoneStates.set(key, state);
+    // An owned session survives its last Lovelace view. Its confirmed media
+    // must therefore also attach when the remote party answers after unmount.
+    const hasLiveView = [...this._softphoneSubscribers].some((listener) =>
+      softphoneStateMatches(state, this._softphoneSubscriberSelectors.get(listener) || {}));
+    if (endpointId && this.softphoneCallIdFor(endpointId) && !hasLiveView) {
+      void this.syncOwnedSoftphoneState({ ...state, endpoint_id: endpointId,
+        device_id: deviceId, softphone: true }, state).catch((error) => {
+        this.dispatchEvent(new CustomEvent("error", { detail: { message: error?.message || String(error) } }));
+      });
+    }
     for (const cb of this._softphoneSubscribers) {
       const selector = this._softphoneSubscriberSelectors.get(cb) || {};
       // Dispatch only through the subscription owned by this callback so one
@@ -1245,12 +1378,176 @@ class VoipStackEngine extends EventTarget {
       this._softphoneSubscribers.delete(cb);
       this._softphoneSubscriberSelectors.delete(cb);
       record.refs = Math.max(0, record.refs - 1);
-      if (record.refs) return;
+      if (record.refs || this._softphoneScopeHasSession(record)) return;
       try { record.unsub?.(); } catch (_) {}
       if (this._softphoneScopeSubscriptions.get(key) === record) {
         this._softphoneScopeSubscriptions.delete(key);
       }
     };
+  }
+
+  _dashboardIsBrowser(owner) {
+    return Boolean(owner?.softphone || owner?.kind === "browser" || owner?.endpoint_type === "browser");
+  }
+
+  _browserPhoneInfo(owner) {
+    let microphoneAntiAlias = owner.microphone_anti_alias;
+    if (microphoneAntiAlias === undefined) {
+      try {
+        microphoneAntiAlias = localStorage.getItem(
+          `voip_microphone_anti_alias_${owner.device_id || owner.endpoint_id || "preferred"}`,
+        ) !== "false";
+      } catch (_) { microphoneAntiAlias = true; }
+    }
+    return { ...owner, softphone: true, microphone_anti_alias: microphoneAntiAlias };
+  }
+
+  async _dashboardSnapshot(owner) {
+    if (!owner?.device_id || !owner?.endpoint_id || !this._hass) {
+      throw new Error("Choose a phone in the dashboard editor.");
+    }
+    if (this._dashboardIsBrowser(owner)) {
+      const state = await this._hass.callWS({ type: "voip_stack/ha_softphone_state",
+        device_id: owner.device_id, media_client_id: this.mediaClientId });
+      if (state.endpoint_id) this._lastSoftphoneStates.set(`endpoint:${state.endpoint_id}`, state);
+      return state;
+    }
+    const phone = this._phoneStates.get(owner.endpoint_id) || {};
+    const selected = (phone.calls || []).find((call) => call.direction === "incoming" && call.state === "early")
+      || phone.calls?.[0];
+    return { ...phone, call_id: selected?.id || "" };
+  }
+
+  async _dashboardOperation(owner, operation) {
+    const endpointId = String(owner?.endpoint_id || "");
+    if (!endpointId || !owner?.device_id) throw new Error("Choose a phone in the dashboard editor.");
+    if (this._dashboardOperations.has(endpointId)) throw new Error("A phone command is already in progress.");
+    const token = {};
+    const browser = this._dashboardIsBrowser(owner);
+    if (browser && !this.tryAcquireMediaIntent(endpointId, token)) {
+      throw new Error("This browser is already handling another phone call.");
+    }
+    this._dashboardOperations.set(endpointId, token);
+    try { return await operation(browser); }
+    finally {
+      if (this._dashboardOperations.get(endpointId) === token) this._dashboardOperations.delete(endpointId);
+      if (browser) this.releaseMediaIntent(token);
+      const committed = this._lastSoftphoneStates.get(`endpoint:${endpointId}`);
+      if (browser && committed) await this.dashboardSyncOwner(owner, committed);
+      this._emit();
+    }
+  }
+
+  async dashboardSyncOwner(owner, snapshot) {
+    return this.syncOwnedSoftphoneState(owner, snapshot);
+  }
+
+  async syncOwnedSoftphoneState(owner, snapshot) {
+    if (!this._dashboardIsBrowser(owner) || !snapshot) return;
+    const endpointId = String(owner.endpoint_id || "");
+    const callId = String(snapshot.call_id || "");
+    if (String(snapshot.endpoint_id || endpointId) !== endpointId) return;
+    if (this._dashboardOperations.has(endpointId) || this._mediaIntent?.endpointId === endpointId) return;
+    if (snapshot.state === "in_call" && this.ownsSoftphoneSession(callId, endpointId) &&
+        snapshot.media_owner !== "other") {
+      return this.resumeSession(this._browserPhoneInfo(owner), owner.device_id, snapshot);
+    }
+    const owned = this.softphoneCallIdFor(endpointId);
+    if (owned && !ACTIVE_SOFTPHONE_STATES.has(String(snapshot.state || "")) &&
+        (!callId || callId === owned)) await this._releaseTerminalMedia(owned, endpointId);
+  }
+
+  async dashboardStartCall(owner, target) {
+    return this._dashboardOperation(owner, async (browser) => {
+      let current = await this._dashboardSnapshot(owner);
+      if (current.state !== "idle") throw new Error("The selected phone is already busy or unavailable.");
+      const destination = String(target?.extension || target?.number || target?.name || "").trim();
+      if (!destination) throw new Error("This contact has no destination.");
+      if (!browser) {
+        return this._hass.callService("voip_stack", "call", { device_id: owner.device_id, destination });
+      }
+      await this.prepareAudioCall({ needsMicrophone: true });
+      current = await this._dashboardSnapshot(owner);
+      if (current.state !== "idle") throw new Error("The selected phone is already busy or unavailable.");
+      return this.startHaSoftphone(target, this._browserPhoneInfo(owner), {
+        device_id: owner.device_id, endpoint_id: owner.endpoint_id, callee: destination,
+      });
+    });
+  }
+
+  async dashboardAnswer(owner, snapshot) {
+    const callId = String(snapshot?.call_id || snapshot?.id || "");
+    let result;
+    await this._dashboardOperation(owner, async (browser) => {
+      let current = await this._dashboardSnapshot(owner);
+      const ringing = (state) => String(state.call_id || "") === callId &&
+        ["ringing", "incoming"].includes(String(state.state || ""));
+      if (!callId || !ringing(current)) throw new Error("This incoming call is no longer ringing.");
+      if (browser) {
+        const direction = current.audio_direction || "sendrecv";
+        await this.prepareAudioCall({ needsMicrophone: ["sendonly", "sendrecv"].includes(direction) });
+        current = await this._dashboardSnapshot(owner);
+        if (!ringing(current)) throw new Error("This incoming call is no longer ringing.");
+        this.claimSoftphoneSession(callId, owner.endpoint_id);
+      }
+      let answered = false;
+      try {
+        await this._hass.callService("voip_stack", "answer", {
+          device_id: owner.device_id, call_id: callId,
+          ...(browser ? { media_client_id: this.mediaClientId, send_video: false } : {}),
+        });
+        answered = true;
+        result = await this._dashboardSnapshot(owner);
+      } catch (error) {
+        if (browser && !answered && !(this.active && this.callId === callId && this.endpointId === owner.endpoint_id)) {
+          this.releaseSoftphoneSession(callId, owner.endpoint_id);
+        }
+        throw error;
+      }
+    });
+    await this.dashboardSyncOwner(owner, result);
+    return result;
+  }
+
+  async dashboardTerminate(action, owner, snapshot) {
+    if (!["decline", "hangup"].includes(action)) throw new Error("Unknown phone command.");
+    const callId = String(snapshot?.call_id || snapshot?.id || "");
+    if (!callId) throw new Error("The call has already ended.");
+    const generation = action === "hangup" && Number.isSafeInteger(snapshot.generation) && snapshot.generation > 0
+      ? { expected_generation: snapshot.generation } : {};
+    if (this._dashboardIsBrowser(owner)) {
+      return this.terminateSoftphoneCall(action, { device_id: owner.device_id,
+        endpoint_id: owner.endpoint_id, call_id: callId, ...generation });
+    }
+    return this._hass.callService("voip_stack", action, { device_id: owner.device_id, call_id: callId, ...generation });
+  }
+
+  async dashboardPickup(owner, target, candidate) {
+    if (!candidate?.pickup_available || !candidate?.id || !target?.device_id) {
+      throw new Error("This phone has no ringing call available for pickup.");
+    }
+    let result;
+    await this._dashboardOperation(owner, async (browser) => {
+      const current = await this._dashboardSnapshot(owner);
+      if (current.state !== "idle") throw new Error("The selected phone is already busy or unavailable.");
+      if (browser) await this.prepareAudioCall({ needsMicrophone: true });
+      const reply = await this._hass.callWS({ type: "call_service", domain: "voip_stack",
+        service: "pickup", return_response: true, service_data: {
+          device_id: owner.device_id, target_device_id: target.device_id,
+          call_id: candidate.id, expected_generation: candidate.generation,
+          leg_id: candidate.leg_id,
+          ...(browser ? { media_client_id: this.mediaClientId } : {}),
+        } });
+      result = reply?.response || reply;
+      if (browser) {
+        result = await this._dashboardSnapshot(owner);
+        if (result.call_id && ACTIVE_SOFTPHONE_STATES.has(String(result.state || ""))) {
+          this.claimSoftphoneSession(result.call_id, owner.endpoint_id);
+        }
+      }
+    });
+    await this.dashboardSyncOwner(owner, result);
+    return result;
   }
 
   setRingtoneRequest(key, active, enabled) {

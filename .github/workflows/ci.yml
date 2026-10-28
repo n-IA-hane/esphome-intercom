@@ -75,7 +75,7 @@ jobs:
       - name: Install dependencies for independent SIP and video peers
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg cmake libssl-dev libsndfile1-dev zlib1g-dev \
+          sudo apt-get install -y ffmpeg cmake libssl-dev libsndfile1-dev zlib1g-dev uuid-dev \
             sip-tester libavcodec-dev libavfilter-dev libavformat-dev \
             libswscale-dev libavdevice-dev libavutil-dev
       - name: Build pinned independent SIP test peer
@@ -85,9 +85,12 @@ jobs:
           echo "VOIP_TEST_BARESIP_MODULE_PATH=$RUNNER_TEMP/sip-peer/lib/baresip/modules" >> "$GITHUB_ENV"
       - name: Install Home Assistant test dependencies
         run: python -m pip install -r requirements-test.txt -r requirements-ha-test.txt
+      - name: Build pinned independent BLF subscriber
+        run: python tools/build_pjsip_blf.py --jobs 2
       - name: Run Home Assistant suite
         env:
           PYTEST_ADDOPTS: --junitxml=test-results/home-assistant.xml -ra
+          VOIP_REQUIRE_PJSIP_BLF: "1"
         run: PYTHON=python HA_PYTHON=python scripts/test_suite.sh ha --keep-going
       - name: Require executed Home Assistant tests
         run: python scripts/check_test_results.py test-results/home-assistant.xml
