@@ -117,6 +117,49 @@ def test_probe_can_use_a_deterministic_video_capture(tmp_path: Path) -> None:
     )
 
 
+def _sendonly_sample() -> dict:
+    return {
+        "card_state": "in_call",
+        "video_direction": "sendonly",
+        "video_active": True,
+        "engine_video_active": True,
+        "video_format": "JPEG/90000",
+        "engine_stats": {"sent": 400, "received": 400, "video": {"sent": 18}},
+        # A receiver-only peer sends no image to the browser. Its hidden
+        # canvas and zero video RX are required to remain a valid witness.
+        "canvas": None,
+    }
+
+
+def test_probe_accepts_sender_only_video_without_remote_canvas() -> None:
+    probe._validate_sendonly_video(_sendonly_sample(), "JPEG")
+
+
+@pytest.mark.parametrize("direction", ["inactive", "recvonly", "sendrecv", ""])
+def test_probe_sender_only_gate_rejects_other_negotiated_directions(direction: str) -> None:
+    sample = _sendonly_sample()
+    sample["video_direction"] = direction
+    with pytest.raises(RuntimeError, match="expected browser sendonly"):
+        probe._validate_sendonly_video(sample)
+
+
+@pytest.mark.parametrize("counter", ["sent", "received", "video"])
+def test_probe_sender_only_gate_still_requires_real_audio_and_camera(counter: str) -> None:
+    sample = _sendonly_sample()
+    sample["engine_stats"][counter] = {"sent": 0} if counter == "video" else 0
+    with pytest.raises(RuntimeError, match="did not send|bidirectional audio"):
+        probe._validate_sendonly_video(sample)
+
+
+def test_probe_sender_only_gate_rejects_wrong_codec_and_early_hangup() -> None:
+    sample = _sendonly_sample()
+    with pytest.raises(RuntimeError, match="expected H264"):
+        probe._validate_sendonly_video(sample, "H264")
+    sample["card_state"] = "idle"
+    with pytest.raises(RuntimeError, match="ended before"):
+        probe._validate_sendonly_video(sample, "JPEG")
+
+
 def test_revoked_refresh_falls_back_to_login_flow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

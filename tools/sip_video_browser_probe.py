@@ -111,6 +111,30 @@ def _fake_media_args(video_file: Path | None = None, audio_file: Path | None = N
         args.append(f"--use-file-for-fake-audio-capture={audio_file.resolve()}")
     return args
 
+
+def _validate_sendonly_video(sample: dict, expected_codec: str = "") -> None:
+    """Qualify a receiver-only peer without inventing remote camera frames.
+
+    Directions are local to the browser, as in RFC 3264. A sending browser
+    must still exchange real audio in both directions; its remote video
+    canvas correctly stays hidden when the peer has no sending camera.
+    """
+    if sample.get("card_state") != "in_call":
+        raise RuntimeError(f"sendonly video call ended before the hold completed: {sample}")
+    if sample.get("video_direction") != "sendonly":
+        raise RuntimeError(f"expected browser sendonly video: {sample}")
+    if not sample.get("video_active") or not sample.get("engine_video_active"):
+        raise RuntimeError(f"sendonly video was not attached: {sample}")
+    stats = sample.get("engine_stats") or {}
+    if (stats.get("video") or {}).get("sent", 0) <= 0:
+        raise RuntimeError(f"sendonly video did not send a camera frame: {sample}")
+    if stats.get("sent", 0) <= 0 or stats.get("received", 0) <= 0:
+        raise RuntimeError(f"sendonly video lost bidirectional audio: {sample}")
+    codec = str(sample.get("video_format") or "").split("/", 1)[0].upper()
+    if expected_codec and codec != expected_codec.upper():
+        raise RuntimeError(f"expected {expected_codec} video, negotiated {codec!r}")
+
+
 DEEP_CARD = r"""
 () => {
   const deep = (selector, root = document) => {
@@ -705,6 +729,19 @@ def main() -> int:
         help="require a working browser audio call with no active video path",
     )
     parser.add_argument(
+        "--expect-sendonly-video",
+        action="store_true",
+        help="require camera TX plus duplex audio to a peer without a sending camera",
+    )
+    parser.add_argument(
+        "--expect-video-codec", choices=("JPEG", "H264", "VP8"),
+        help="require this negotiated codec with --expect-sendonly-video",
+    )
+    parser.add_argument(
+        "--mute-audio", action="store_true",
+        help="mute Chromium output while retaining actual audio capture and processing",
+    )
+    parser.add_argument(
         "--expect-native-camera",
         action="store_true",
         help=(
@@ -771,6 +808,10 @@ def main() -> int:
         parser.error("--fake-audio-file must be an existing PCM WAV file")
     if args.expect_audio_only and (args.send_camera or args.deny_camera):
         parser.error("--expect-audio-only cannot be combined with camera options")
+    if args.expect_sendonly_video and (args.expect_audio_only or args.deny_camera):
+        parser.error("--expect-sendonly-video requires an enabled video sender")
+    if args.expect_video_codec and not args.expect_sendonly_video:
+        parser.error("--expect-video-codec requires --expect-sendonly-video")
     if args.expect_native_camera and not args.expect_audio_only:
         parser.error("--expect-native-camera requires --expect-audio-only")
     if args.expect_remote_hangup and args.no_hangup:
@@ -778,6 +819,8 @@ def main() -> int:
     if args.cancel_during_ring and not args.outbound:
         parser.error("--cancel-during-ring requires --outbound")
     if args.deny_camera:
+        args.send_camera = True
+    if args.expect_sendonly_video:
         args.send_camera = True
     if args.fake_video_file:
         args.fake_video_file = args.fake_video_file.expanduser()
@@ -853,6 +896,7 @@ def main() -> int:
             "headless": True,
             "args": [
                 *_fake_media_args(args.fake_video_file, args.fake_audio_file),
+                *(["--mute-audio"] if args.mute_audio else []),
                 "--autoplay-policy=no-user-gesture-required",
                 f"--unsafely-treat-insecure-origin-as-secure={origin}",
             ],
@@ -1358,6 +1402,7 @@ def main() -> int:
                     timeout=int(args.video_timeout * 1000),
                     polling=100,
                 )
+            if not args.expect_audio_only and not args.expect_sendonly_video:
                 page.wait_for_function(
                     f"""() => {{
                       const x = ({LIGHT_CARD_STATE})();
@@ -1384,6 +1429,8 @@ def main() -> int:
                     polling=100,
                 )
             flowing = sample("video_flowing")
+            if args.expect_sendonly_video:
+                print("SENDONLY_VIDEO_FLOWING", flush=True)
             if args.sample_interval > 0:
                 deadline = time.monotonic() + args.hold_seconds
                 sample_number = 0
@@ -1401,6 +1448,8 @@ def main() -> int:
             )
             engine_stats = active.get("engine_stats") or {}
             video_stats = engine_stats.get("video") or {}
+            if args.expect_sendonly_video:
+                _validate_sendonly_video(after_hold, args.expect_video_codec or "")
             if engine_stats.get("tx_dropped", 0) != 0:
                 raise RuntimeError(f"browser audio TX dropped frames: {active}")
             if engine_stats.get("frames_drop", 0) != 0:
@@ -1456,7 +1505,7 @@ def main() -> int:
                 and not (active.get("canvas") or {}).get("non_black")
             ):
                 raise RuntimeError(f"decoded canvas has no non-black sample: {active}")
-            if not args.expect_audio_only:
+            if not args.expect_audio_only and not args.expect_sendonly_video:
                 layout = flowing.get("layout") or {}
                 surface = layout.get("surface") or {}
                 canvas_layout = layout.get("canvas") or {}
