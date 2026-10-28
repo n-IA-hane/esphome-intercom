@@ -52,7 +52,7 @@
 # =============================================================================
 
 substitutions:
-  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@main"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
   gmf_ai_audio_source: ""
   firmware_features: [voip, status_led, diagnostics]
   # Hardware identity stays stable across YAML updates so HA entities and
@@ -60,10 +60,10 @@ substitutions:
   name: waveshare-s3
   friendly_name: Waveshare S3 Audio
 
-  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
-  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/main/"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
+  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/dev/"
 
   # One firmware advertises one codec. Opus is the maintained VoIP-only
   # default and uses the mandatory RFC 7587 opus/48000/2 RTP mapping.
@@ -106,4 +106,4 @@ substitutions:
   status_led_rgb_order: RGB
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-phone.yaml@main
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-phone.yaml@dev

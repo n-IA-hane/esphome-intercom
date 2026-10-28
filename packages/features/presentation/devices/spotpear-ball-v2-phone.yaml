@@ -26,6 +26,7 @@ voip_stack:
   - script.execute: update_call_idle_labels
   - script.execute: draw_display
 packages:
+  visibility: !include '../visibility.yaml'
   call_media_route: !include '../../../lvgl/spotpear_call_media_route.yaml'
   lvgl_settings_nav: !include '../../../lvgl/lvgl_settings_navigation.yaml'
   lvgl_settings_sync_volumes: !include '../../../lvgl/lvgl_settings_sync_volumes.yaml'

@@ -291,7 +291,7 @@ lvgl:
   pages: ${ _round_page_initializing_page + _round_page_idle_page + _round_page_listening_page + _round_page_thinking_page
     + _round_page_replying_page + _round_page_error_page + _round_page_muted_page + (_round_timer_page if _round_has_timers
     else []) + _round_page_no_ha_page + _round_page_no_wifi_page + (_round_phone_pages if _round_has_phone else
-    []) + _round_page_settings_continuous_page }
+    []) + _round_page_settings_continuous_page + (_round_video_pages | default([])) }
 script:
 - id: compute_layout_metrics
   then:

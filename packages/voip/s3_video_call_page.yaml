@@ -1,0 +1,49 @@
+# FULL round-display receive page. The transport/decoder stays independently reusable.
+substitutions:
+  _round_video_pages: ${_round_video_pages}
+  _round_video_route: ${_round_video_route}
+  _round_name_video_page: ${_round_name_video_page}
+  _round_video_status_allowed: 'target != id(call_video_page)->obj'
+packages:
+  receiver: !include s3_video_jpeg.yaml
+  wake_word: ${ _s3_video_wake_hooks if _s3_video_has_wake_word else {} }
+esp_video_renderer:
+  on_first_frame:
+    - script.execute: draw_display
+  on_video_ended:
+    - script.execute: draw_display
+defaults:
+  _s3_video_has_wake_word: ${ ('voice' in firmware_features and 'wake_word' in firmware_features) if firmware_features is defined else true }
+  _s3_video_wake_hooks: !include video_mww_policy.yaml
+  _round_video_route: |-
+    if (id(phone).is_in_call() && id(s3_video).has_remote_frame())
+      target = id(call_video_page)->obj;
+  _round_name_video_page: |-
+    else if (target == id(call_video_page)->obj) page_name = "video";
+  _round_video_pages:
+    - id: call_video_page
+      bg_color: 0x000000
+      bg_opa: COVER
+      scrollable: false
+      widgets:
+        - obj:
+            id: call_video_surface
+            width: 100%
+            height: 100%
+            align: CENTER
+            pad_all: 0
+            border_width: 0
+            bg_opa: TRANSP
+            scrollable: false
+        - button:
+            align: BOTTOM_MID
+            y: -12
+            width: 100
+            height: 44
+            bg_color: 0xB71C1C
+            on_click:
+              - voip_stack.stop:
+            widgets:
+              - label:
+                  align: CENTER
+                  text: End call

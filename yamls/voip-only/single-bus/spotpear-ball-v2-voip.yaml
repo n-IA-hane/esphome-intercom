@@ -55,7 +55,7 @@
 # =============================================================================
 
 substitutions:
-  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@main"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
   gmf_ai_audio_source: ""
   firmware_features: [voip, display, status_led, diagnostics]
   # Hardware identity is shared by the SIP transport setting. The selected
@@ -64,11 +64,11 @@ substitutions:
   name: spotpear-ball-v2
   friendly_name: Spotpear Ball v2
 
-  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
 
-  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/main/"
+  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/dev/"
 
   # Call layout proportions (relative to display_height)
   call_btn_size: "25%"
@@ -131,4 +131,4 @@ substitutions:
 # Shared packages: voip-only call controls, phonebook sync, Spotpear LED/LVGL
 # navigation, esp_audio_stack codec controls and AEC controls.
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/spotpear-ball-v2-phone.yaml@main
+  device: github://n-IA-hane/esphome-intercom/packages/devices/spotpear-ball-v2-phone.yaml@dev

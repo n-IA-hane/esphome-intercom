@@ -16,13 +16,10 @@ script:
       }
 
       // Timer overlay: show only on VA pages that support it
-      int phase = id(voice_assistant_phase);
-      bool on_timer_page = id(current_mode) == 0 && (
-        phase == ${voice_assist_idle_phase_id} ||
-        phase == ${voice_assist_listening_phase_id} ||
-        phase == ${voice_assist_thinking_phase_id} ||
-        phase == ${voice_assist_muted_phase_id}
-      );
+      const auto *page = lv_display_get_screen_active(lv_obj_get_display(id(timer_overlay)));
+      const bool on_timer_page =
+          page == id(idle_page)->obj || page == id(listening_page)->obj ||
+          page == id(thinking_page)->obj || page == id(muted_page)->obj;
 
       // Hide if: not on a supported page, no timers, or timer finished (<=1s, not active)
       bool timer_finished = !any_active && (timers.empty() || first_timer.seconds_left <= 1);

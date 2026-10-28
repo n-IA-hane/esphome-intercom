@@ -101,11 +101,11 @@ substitutions:
   name: generic-s3-dual-aec
   friendly_name: Generic S3 Dual AEC
 
-  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
-  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@main"
-  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/main/"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
+  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/dev/"
   mic_id: mic_main
   runtime_controller_led_preset: rgb_single
 
@@ -135,4 +135,4 @@ substitutions:
 # dual-bus AEC audio, mixer/media player and diagnostics.
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/generic-s3-dual-aec.yaml@main
+  device: github://n-IA-hane/esphome-intercom/packages/devices/generic-s3-dual-aec.yaml@dev

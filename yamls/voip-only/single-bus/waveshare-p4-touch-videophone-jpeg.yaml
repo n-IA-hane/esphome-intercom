@@ -37,14 +37,14 @@
 # symbols, buffers and managed libraries are absent from this firmware.
 
 substitutions:
-  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
-  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@main"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
   camera_components_source: "github://Psix-anp/esphome-esp-video-camera@main"
   gmf_ai_audio_source: ""
   intercom_idf_root: ""
-  intercom_idf_ref: "main"
+  intercom_idf_ref: "dev"
   firmware_features: [voip, display, video]
   p4_video_width: "800"
   p4_video_height: "800"
@@ -55,7 +55,7 @@ substitutions:
   p4_video_max_decode_height: "800"
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-p4-phone-jpeg.yaml@main
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-p4-phone-jpeg.yaml@dev
 esphome:
   min_version: 2026.10.0
   build_path: .esphome/build/waveshare-p4-touch-videophone-jpeg

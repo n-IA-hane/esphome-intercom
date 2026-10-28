@@ -73,12 +73,12 @@ substitutions:
   mic_id: mic_afe
   afe_vad_restore_mode: ALWAYS_ON
 
-  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
-  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@main"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
 
-  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/main/"
+  assets_base: "https://github.com/n-IA-hane/esphome-intercom/raw/dev/"
 
   # AI avatar folder (${assets_base}assets/images/assistant/<ai_avatar>/)
   ai_avatar: default
@@ -160,4 +160,4 @@ substitutions:
 # navigation, ESP AFE controls, mixer/media player and assets.
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-box-v1-aec.yaml@main
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-box-v1-aec.yaml@dev

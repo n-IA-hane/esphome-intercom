@@ -1864,7 +1864,8 @@ defaults:
       // The VA idle animation is stopped before page switches. Start the
       // idle animation loop immediately when VA idle becomes the visible
       // page, instead of waiting for the template binary_sensor refresh.
-      if (target == id(idle_page)->obj) {
+      id(display_visibility).reconcile();
+      if (target == id(idle_page)->obj && id(display_visibility).is_visible(id(idle_anim))) {
         if (!id(ai_animation_loop).is_running()) id(ai_animation_loop).execute();
       } else if (id(ai_animation_loop).is_running()) {
         id(ai_animation_loop).stop();
@@ -1933,6 +1934,12 @@ defaults:
   _v1_render_4:
   - script.execute: draw_display
 packages:
+  visibility: !include
+    file: ../visibility.yaml
+    vars:
+      _visibility_has_avatar: true
+      _visibility_has_pagination: true
+      _visibility_idle_widget_id: idle_anim
   phase: !include '../phase.yaml'
   settings_navigation: !include '../../../lvgl/lvgl_settings_navigation.yaml'
   settings_volume: !include '../../../lvgl/lvgl_settings_sync_volumes.yaml'

@@ -48,6 +48,7 @@ script:
       condition:
         lambda: !lambda |-
           return id(current_mode) == 0 &&
+                 id(display_visibility).is_visible(id(idle_anim)) &&
                  id(voice_assistant_phase) == ${voice_assist_idle_phase_id} &&
                  !id(init_in_progress);
       then:
@@ -58,6 +59,7 @@ script:
   then:
   - lambda: !lambda |-
       if (id(current_mode) != 0 ||
+          !id(display_visibility).is_visible(id(reply_line_0)) ||
           id(voice_assistant_phase) != ${voice_assist_replying_phase_id}) {
         return;
       }
@@ -93,6 +95,7 @@ script:
       condition:
         lambda: !lambda |-
           return id(current_mode) == 0 &&
+                 id(display_visibility).is_visible(id(reply_line_0)) &&
                  id(voice_assistant_phase) == ${voice_assist_replying_phase_id} &&
                  id(reply_total_pages) > 1;
       then:

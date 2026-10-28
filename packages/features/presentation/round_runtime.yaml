@@ -310,6 +310,11 @@ switch:
   on_turn_off:
   - script.execute: draw_display
 packages:
+  visibility: !include
+    file: visibility.yaml
+    vars:
+      _visibility_has_avatar: true
+      _visibility_has_pagination: true
   phase: !include 'phase.yaml'
   navigation: !include '../../lvgl/lvgl_settings_navigation.yaml'
   settings: !include 'settings/main.yaml'
@@ -319,6 +324,8 @@ packages:
   artwork: ${ _round_artwork if _fw_sendspin else {} }
   content: !include 'round_content.yaml'
 defaults:
+  _visibility_has_avatar: true
+  _visibility_has_pagination: true
   _round_navigation_up:
   - script.execute:
       id: round_navigate
@@ -378,6 +385,7 @@ defaults:
         }
       }
 
+      ${ _round_video_route | default('') }
       if (target == nullptr) return;
 
       const char* page_name = "unknown";
@@ -394,6 +402,7 @@ defaults:
       ${ _round_name_call_in_call_page if _round_has_phone else '' }
       ${ _round_name_call_ended_page if _round_has_phone else '' }
       ${ _round_timer_name if _round_has_timers else '' }
+      ${ _round_name_video_page | default('') }
       id(runtime_rendered_page) = page_name;
 
       // Skip page load if already showing (avoids redundant SPI transfer)
@@ -419,7 +428,8 @@ defaults:
       // The VA idle animation is stopped before page switches. Start the
       // idle animation loop immediately when VA idle becomes the visible
       // page, instead of waiting for the template binary_sensor refresh.
-      if (target == id(idle_page)->obj) {
+      id(display_visibility).reconcile();
+      if (target == id(idle_page)->obj && id(display_visibility).is_visible(id(idle_anim))) {
         if (!id(ai_animation_loop).is_running()) id(ai_animation_loop).execute();
       } else if (id(ai_animation_loop).is_running()) {
         id(ai_animation_loop).stop();
@@ -437,6 +447,7 @@ defaults:
           target != id(replying_page)->obj &&
           target != id(thinking_page)->obj &&
           target != id(settings_continuous_page)->obj &&
+          ${ _round_video_status_allowed | default('true') } &&
           ${ 'target != id(call_dialer_page)->obj' if _round_has_phone else 'true' };
       if (show_status) {
         lv_obj_clear_flag(id(top_clock_label), LV_OBJ_FLAG_HIDDEN);

@@ -396,6 +396,12 @@ touchscreen:
       level: 100%
   - script.execute: backlight_timer
 packages:
+  visibility: !include
+    file: ../visibility.yaml
+    vars:
+      _visibility_has_avatar: true
+      _visibility_has_pagination: false
+      _visibility_idle_widget_id: idle_animation
   phase: !include '../phase.yaml'
   cleanup: !include '../../../lvgl/p4_va_cleanup.yaml'
   ppa: !include '../../../lvgl/p4_ppa.yaml'
@@ -634,7 +640,8 @@ defaults:
       condition:
         lambda: !lambda |-
           std::string call_state = ${ 'id(phone).get_state_str()' if _fw_voip else 'std::string()' };
-          return id(current_mode) == 0 &&
+          return id(display_visibility).is_visible(id(idle_animation)) &&
+                 id(current_mode) == 0 &&
                  id(voice_assistant_phase) == ${voice_assist_idle_phase_id} &&
                  !id(init_in_progress) &&
                  (call_state == "idle" || call_state.empty());
@@ -734,7 +741,7 @@ defaults:
     - while:
         condition:
           lambda: !lambda |-
-            return true;
+            return id(display_visibility).is_visible(id(idle_animation));
         then:
         - lvgl.animimg.start: idle_animation
         - delay: 25s

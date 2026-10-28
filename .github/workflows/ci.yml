@@ -167,7 +167,7 @@ jobs:
         with:
           python-version: "3.14.2"
       - name: Install official ESPHome and composition helper dependency
-        run: python -m pip install esphome==2026.10.0 pytest==9.0.3
+        run: python -m pip install esphome==2026.10.0 pytest==9.0.3 pytest-asyncio==1.4.0 pytest-timeout==2.4.0
       - name: Compile and link FULL dual-microphone AFE with the native UI
         run: |
           python - <<'PY'
@@ -181,10 +181,19 @@ jobs:
                                  original['substitutions']['firmware_features'], profile)
           data = yaml_util.load_yaml(config)
           data['substitutions'].update(audio_processor='afe', mic_mix='passthrough')
+          data.setdefault('esphome', {})['build_path'] = str(Path(os.environ['RUNNER_TEMP']) / 'box-v2' / 'build')
           config.write_text(yaml_util.dump(data))
           PY
           set -o pipefail
           python -m esphome compile "$RUNNER_TEMP/box-v2/device.yaml" 2>&1 | tee test-results/box-v2-firmware.log
+      - name: Check real LVGL visibility and animation ownership
+        env:
+          LVGL_HOST_SOURCE: ${{ runner.temp }}/box-v2/build/managed_components/lvgl__lvgl
+          LVGL_HOST_BUILD_ROOT: ${{ runner.temp }}/lvgl-host
+        run: |
+          python -m pytest -q tests/test_lvgl_visibility_runtime.py -m diagnostic_reference \
+            --junitxml=test-results/box-v2-lvgl-visibility.xml
+          python scripts/check_test_results.py test-results/box-v2-lvgl-visibility.xml
       - name: Preserve full firmware build and source identities
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

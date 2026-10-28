@@ -104,6 +104,36 @@ If a camera call remains without video, collect one HA-to-S3 SIP capture and the
 check the INVITE's `m=video` and direction, the answer's video port and direction,
 then RTP delivery. See [Testing and debugging](TESTING_AND_DEBUG.md).
 
+### Receiving video on a FULL round S3 display
+
+The optional software JPEG renderer can display incoming video independently
+from a local camera. For the maintained FULL round layouts, add:
+
+```yaml
+packages:
+  incoming_video: github://n-IA-hane/esphome-intercom/packages/voip/s3_video_call_page.yaml@dev
+```
+
+Use the coordinated development component sources for this package. It creates
+one black video page at boot and reuses the existing call-page router and End
+call action. The first decoded frame selects that page; hangup restores the
+normal call or terminal page. Clock, battery and other top-layer widgets are
+hidden during video. The existing status renderer selects their visibility on
+the next page. The timer overlay is displayed only on supported assistant pages;
+the timer itself continues while a video call is shown.
+
+The renderer owns JPEG buffers, decoding and image presentation. The page
+package controls only presentation and keeps the existing video MWW policy.
+Without this FULL layout, the lower-level `s3_video_jpeg.yaml` package still
+accepts an application-owned LVGL container.
+
+Display profiles use native screen/layout events to stop offscreen avatar
+activity, suspend text pagination and suppress scrolling labels while hidden.
+Animations resume only when their view is visible. This adds no polling task
+and leaves call termination and functional timers independent. The existing
+P4 hardware video path is unchanged; software validation of these visibility
+hooks is separate from physical P4 qualification.
+
 ## ESP32-P4 video endpoints
 
 P4 video is compile-gated. A firmware includes exactly one SIP video codec:

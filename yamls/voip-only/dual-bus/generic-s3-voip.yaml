@@ -58,7 +58,7 @@
 # =============================================================================
 
 substitutions:
-  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@main"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
   gmf_ai_audio_source: ""
   firmware_features: [voip, status_led, diagnostics]
   # Hardware identity stays stable across YAML updates so HA entities and
@@ -66,9 +66,9 @@ substitutions:
   name: generic-s3-dual-bus
   friendly_name: Generic S3 Dual Bus
 
-  ext_components_source: "github://n-IA-hane/esphome-intercom@main"
-  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@main"
-  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@main"
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
 
   # ---------------------------------------------------------------------------
   # Pinout: microphone I2S bus
@@ -93,4 +93,4 @@ substitutions:
   status_led_rgb_order: GRB
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/generic-s3-phone-dual.yaml@main
+  device: github://n-IA-hane/esphome-intercom/packages/devices/generic-s3-phone-dual.yaml@dev

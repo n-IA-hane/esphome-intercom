@@ -24,6 +24,11 @@
 # Support: https://github.com/sponsors/n-IA-hane
 
 substitutions:
+  ext_components_source: "github://n-IA-hane/esphome-intercom@dev"
+  voip_stack_components_source: "github://n-IA-hane/esphome-voip-stack@dev"
+  audio_stack_components_source: "github://n-IA-hane/esphome-audio-stack@dev"
+  runtime_controller_components_source: "github://n-IA-hane/esphome-runtime-controller@dev"
+  gmf_ai_audio_source: ""
   name: waveshare-s3-touch-lcd-185c-v2
   friendly_name: Waveshare S3 Touch LCD 1.85C V2
   firmware_features: [voice, wake_word, voip, music, sendspin, timers, display, diagnostics]
@@ -34,4 +39,4 @@ substitutions:
   # Optional overrides: mic_id, ai_avatar, component source refs, pins and buffers.
 
 packages:
-  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-box-v2-aec.yaml@main
+  device: github://n-IA-hane/esphome-intercom/packages/devices/waveshare-s3-box-v2-aec.yaml@dev

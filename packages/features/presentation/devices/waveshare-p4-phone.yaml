@@ -1,5 +1,6 @@
 # P4 telephone screen and optional video surface; frame-arrival gates remain unchanged.
 packages:
+  visibility: !include '../visibility.yaml'
   call_media_route: ${ _p4_phone_route if _p4_phone_has_video else {} }
 font:
 - file:
