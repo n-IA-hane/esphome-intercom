@@ -43,6 +43,7 @@ nav:
   - ESP firmware:
       - Phone entities and migration: ESP_ENTITY_SURFACE.md
       - Sound and announcement actions: ESPHOME_SOUND_ACTIONS.md
+      - Display screenshots: ESP_SCREENSHOT.md
       - P4 hardware and media: P4_HARDWARE_AND_MEDIA.md
       - Espressif dependencies: ESPRESSIF_COMPONENTS.md
   - Reference:

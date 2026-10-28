@@ -4,6 +4,10 @@ globals:
     type: bool
     restore_value: true
     initial_value: "true"
+  - id: g_mww_video_suspended
+    type: bool
+    restore_value: false
+    initial_value: "false"
   - id: g_va_state
     type: int
     restore_value: false

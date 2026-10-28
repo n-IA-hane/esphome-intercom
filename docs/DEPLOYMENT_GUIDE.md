@@ -159,6 +159,10 @@ See the [runtime package guide](https://github.com/n-IA-hane/esphome-runtime-con
 for those adapters' required IDs and helpers. Do not add the old full preset to
 a new device package that already owns the runtime bindings.
 
+For display-equipped firmware, [on-demand screenshots](ESP_SCREENSHOT.md) add
+a native **Take screenshot** action and a stored JPEG for Home Assistant Generic
+Camera. Choose the backend that covers the display's complete rendering path.
+
 ## Home Assistant
 
 ### Install through HACS

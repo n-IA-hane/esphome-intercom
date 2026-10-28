@@ -133,26 +133,4 @@ script:
           \ = \"call_video\";"
 defaults:
   _p4_video_has_wake_word: ${ ('voice' in firmware_features and 'wake_word' in firmware_features) if firmware_features is defined else true }
-  _p4_video_wake_word_hooks:
-    globals:
-    - id: restore_mww_after_video_call
-      type: bool
-      restore_value: false
-      initial_value: 'false'
-    voip_stack:
-      on_video_start:
-      - lambda: id(restore_mww_after_video_call) = id(g_wake_word_enabled);
-      - if:
-          condition:
-            lambda: return id(restore_mww_after_video_call);
-          then:
-          - switch.turn_off: wake_word_switch
-      on_video_end:
-      - if:
-          condition:
-            lambda: return id(restore_mww_after_video_call);
-          then:
-          - globals.set:
-              id: restore_mww_after_video_call
-              value: 'false'
-          - switch.turn_on: wake_word_switch
+  _p4_video_wake_word_hooks: !include video_mww_policy.yaml

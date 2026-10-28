@@ -78,6 +78,24 @@ device_resolver = _load_module("device_resolver")
 
 
 class SipEndpointParseTest(unittest.TestCase):
+    def test_compact_full_video_metadata_is_lossless_and_fits_state_limit(self) -> None:
+        original = (
+            "Waveshare S3 Touch LCD 1.85C V2 | 192.168.1.192 | 5060 | 40000 | full_duplex | "
+            "16000:s16le:1:16; 16000:s16le:1:10; 16000:s16le:1:20 | "
+            "48000:s16le:1:10; 32000:s16le:1:16; 16000:s16le:1:10; 16000:s16le:1:16; "
+            "16000:s16le:1:32; 16000:s16le:1:20 | sip_udp | 101 | sf=d1 | video=jpeg"
+        )
+        compact = original.replace(" | ", "|").replace("; ", ";")
+        self.assertEqual(len(original), 277)
+        self.assertEqual(len(compact), 250)
+        self.assertEqual(device_resolver.parse_voip_endpoint(original), device_resolver.parse_voip_endpoint(compact))
+        parsed = device_resolver.parse_voip_endpoint(compact)
+        assert parsed is not None
+        self.assertEqual(len(parsed["tx_formats"]), 3)
+        self.assertEqual(len(parsed["rx_formats"]), 6)
+        self.assertEqual(parsed["name"], "Waveshare S3 Touch LCD 1.85C V2")
+        self.assertEqual(parsed["sip_video_codec"], "jpeg")
+
     def test_parses_sip_endpoint_sensor_with_audio_formats(self) -> None:
         endpoint = (
             "Waveshare S3 Audio | 192.168.1.47 | 5060 | 40000 | "

@@ -1,0 +1,11 @@
+# Add esp_screenshot and choose its display backend in the main YAML.
+# This package exposes the existing capture primitive through the native API.
+# The screenshot component ID defaults to screen_capture.
+defaults:
+  screenshot_id: screen_capture
+api:
+  actions:
+    - action: take_screenshot
+      then:
+        - esp_screenshot.capture:
+            id: ${screenshot_id}

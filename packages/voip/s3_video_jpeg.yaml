@@ -1,0 +1,28 @@
+# Receive JPEG on an S3 LVGL display. The caller supplies call_video_surface.
+# Add a camera_id to voip_stack.video separately when the board also has a camera.
+substitutions:
+  s3_sip_jpeg_width: '320'
+  s3_sip_jpeg_height: '240'
+  s3_sip_jpeg_fps: '2'
+  s3_video_container_id: call_video_surface
+external_components:
+  - source: ${voip_stack_components_source}
+    components:
+      - esp_video_renderer
+esp_video_renderer:
+  id: s3_video
+  width: ${s3_sip_jpeg_width}
+  height: ${s3_sip_jpeg_height}
+  framerate: ${s3_sip_jpeg_fps}
+  voip:
+    id: s3_video_sink
+lvgl:
+  on_boot:
+    - lambda: id(s3_video).attach_video_container(id(${s3_video_container_id}));
+voip_stack:
+  video:
+    codec: jpeg
+    sink: s3_video_sink
+    width: ${s3_sip_jpeg_width}
+    height: ${s3_sip_jpeg_height}
+    framerate: ${s3_sip_jpeg_fps}

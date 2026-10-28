@@ -5,6 +5,9 @@
 
 #include <algorithm>
 #include <cstring>
+#ifdef USE_ESP_SCREENSHOT
+#include "esp_cache.h"
+#endif
 
 namespace esphome::mipi_dsi {
 
@@ -308,6 +311,39 @@ bool MipiDsi::submit_bitmap_(int x_start, int y_start, int x_end, int y_end,
   xSemaphoreGive(this->submit_mutex_);
   return true;
 }
+
+
+#ifdef USE_ESP_SCREENSHOT
+bool MipiDsi::copy_frame_buffer_rgb565(uint8_t *target, size_t capacity) {
+  const size_t required = this->width_ * this->height_ * sizeof(uint16_t);
+  if (this->is_failed() || this->color_depth_ != display::COLOR_BITNESS_565 ||
+      target == nullptr || capacity < required || this->frame_buffer_ == nullptr ||
+      this->frame_buffer_size_ != required || this->submit_mutex_ == nullptr ||
+      xSemaphoreTake(this->submit_mutex_, 0) != pdTRUE)
+    return false;
+  // Every panel writer already holds submit_mutex_ until its DMA completes.
+  // Reading after M2C synchronization sees the final composed panel buffer,
+  // including direct video, without exposing or borrowing a live pointer.
+  const bool synced = esp_cache_msync(this->frame_buffer_, required,
+                                       ESP_CACHE_MSYNC_FLAG_DIR_M2C) == ESP_OK;
+  if (synced) {
+    const auto *source = reinterpret_cast<const uint16_t *>(this->frame_buffer_);
+    auto *output = reinterpret_cast<uint16_t *>(target);
+    const int width = this->get_width();
+    const int height = this->get_height();
+    for (int y = 0; y < height; ++y) {
+      for (int x = 0; x < width; ++x) {
+        int native_x = x, native_y = y;
+        this->rotate_(native_x, native_y);
+        const uint16_t pixel = source[size_t(native_y) * this->width_ + native_x];
+        *output++ = this->big_endian_ ? convert_big_endian(pixel) : pixel;
+      }
+    }
+  }
+  xSemaphoreGive(this->submit_mutex_);
+  return synced;
+}
+#endif
 
 
 void MipiDsi::write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,

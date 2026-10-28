@@ -19,6 +19,7 @@ script:
               - lambda: 'return !id(init_in_progress);'
               - lambda: 'return !id(g_ota_in_progress);'
               - lambda: 'return id(g_wake_word_enabled);'
+              - lambda: 'return !id(g_mww_video_suspended);'
               - switch.is_off: mute
               - not:
                   micro_wake_word.is_running:

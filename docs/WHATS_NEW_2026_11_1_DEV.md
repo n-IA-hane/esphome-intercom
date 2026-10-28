@@ -112,13 +112,68 @@ The [testing tools guide](../tools/README.md) describes the reproducible lab
 workflow and its evidence. Software and browser checks cover their respective
 layers; physical audio quality remains a separate device test.
 
+## Optional ESP firmware extensions
+
+These features run on the ESP. Enable the corresponding component or package
+in its YAML, then rebuild and upload the firmware. The Home Assistant
+integration and Dashboard update independently of these device-side options.
+
+### Capture the display on demand
+
+`esp_screenshot` captures supported LVGL displays and the P4 MIPI DSI
+framebuffer. Its optional diagnostics package exposes **Take screenshot** as a
+native ESPHome action in Home Assistant.
+
+Show the latest image through Generic Camera, with a capture button below it.
+The capture ID changes when a new JPEG is ready; reading the image URL serves
+that saved screenshot. Compression runs in a persistent worker with bounded
+buffers, and HTTP readers keep a consistent image during downloads.
+
+[Screenshot setup and Home Assistant example](ESP_SCREENSHOT.md)
+
+### Receive JPEG video on an S3 display
+
+The optional `esp_video_renderer` presents incoming baseline JPEG images
+through LVGL. Its VoIP adapter connects to the existing video receiver; other
+producers can feed the standalone component too. A display-equipped board can
+receive video, with a separate camera required to send its own image.
+
+The default receive limits are 320x240 and up to two admitted frames per second.
+Bounded buffers keep the latest queued image. The existing P4 renderer retains its hardware decoding path.
+The shared FULL video policy suspends MWW during video and restores listening
+according to the user's Wake Word setting when video ends.
+
+Renderer and screenshot workers expose `task_core`, `task_priority`,
+`task_stack_size`, `task_stack_in_psram` and `buffer_in_psram` for explicit
+execution and memory placement.
+
+[ESP video renderer guide](https://github.com/n-IA-hane/esphome-voip-stack/blob/dev/docs/ESP_VIDEO_RENDERER.md)
+
+### Register the ESP with a PBX
+
+ESP VoIP Stack adds optional SIP accounts alongside the existing direct Home
+Assistant route. Configure accounts in YAML or through native ESPHome actions,
+select the outgoing line and keep runtime changes temporary or save them
+explicitly. UDP/TCP, Digest authentication and automatic binding renewal share
+the existing signaling worker.
+
+An optional MWI subscription reports mailbox waiting status and message counts
+to YAML triggers and conditions. Your automations own the LED or display.
+Leaving registration disabled preserves the existing direct configuration.
+
+[PBX accounts and actions](https://github.com/n-IA-hane/esphome-voip-stack/blob/dev/docs/SIP_REGISTRATION.md)
+and [message waiting](https://github.com/n-IA-hane/esphome-voip-stack/blob/dev/docs/SIP_MWI.md).
+
 ## Updating from 2026.11.0
 
 This prerelease updates the Home Assistant integration and frontend. Existing
 phone-card configurations remain usable; add the dashboard as a separate card
 where you want the operator view.
 
-ESP firmware and device YAMLs retain their **2026.11.0** Audio Stack, ESP VoIP
-Stack and Runtime Controller components from `main`. Keep your existing ESP
-firmware for this dashboard update. Home Assistant **2026.7.0 or newer** remains
-the integration requirement.
+Keep your existing ESP firmware for the Dashboard update. The maintained device
+YAMLs continue to use the stable components from `main`. To try the optional ESP
+extensions above, select their documented `dev` component sources and packages,
+then rebuild with ESPHome **2026.10.0 or newer**. Audio Stack and Runtime
+Controller keep their existing stable behavior.
+
+Home Assistant **2026.7.0 or newer** remains the integration requirement.

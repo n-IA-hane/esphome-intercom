@@ -1,0 +1,24 @@
+# Include only on FULL endpoints with voice + wake_word enabled.
+# Video suspends the recognizer, never the user's persisted Wake Word choice.
+voip_stack:
+  on_video_start:
+    - script.execute: suspend_mww_for_video
+  on_video_end:
+    - script.execute: resume_mww_after_video
+
+script:
+  - id: suspend_mww_for_video
+    mode: restart
+    then:
+      - globals.set:
+          id: g_mww_video_suspended
+          value: 'true'
+      - script.stop: start_mww_when_ready
+      - micro_wake_word.stop:
+  - id: resume_mww_after_video
+    mode: restart
+    then:
+      - globals.set:
+          id: g_mww_video_suspended
+          value: 'false'
+      - script.execute: start_mww_when_ready
