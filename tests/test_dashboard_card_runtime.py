@@ -70,7 +70,7 @@ def test_dashboard_semantic_icons_follow_actual_metadata_and_keep_availability_a
     script = f"""
 import assert from 'node:assert/strict';
 import {{dashboardIconFor,dashboardTypeFor,dashboardSections,dashboardCanCall}} from {json.dumps(MODEL.as_uri())};
-for(const [kind,icon] of [['browser','mdi:home-assistant'],['ha_softphone','mdi:home-assistant'],['esphome','mdi:chip'],['sip_account','mdi:phone-classic'],['contact','mdi:contacts']]){{
+for(const [kind,icon] of [['browser','mdi:home-assistant'],['ha_softphone','mdi:home-assistant'],['esphome','mdi:deskphone'],['sip_account','mdi:phone-classic'],['contact','mdi:contacts']]){{
   for(const state of ['idle','ringing','in_call','unavailable']) assert.equal(dashboardIconFor({{kind,state}}),icon);
 }}
 assert.equal(dashboardIconFor({{metadata:{{virtual_endpoint:'automation'}}}}),'mdi:robot');
@@ -80,7 +80,7 @@ assert.equal(dashboardIconFor({{metadata:{{group_type:'conference'}}}}),'mdi:acc
 assert.equal(dashboardIconFor({{kind:'esphome',icon:'mdi:doorbell-video',metadata:{{icon:'mdi:robot'}}}}),'mdi:doorbell-video');
 assert.equal(dashboardIconFor({{kind:'esphome',icon:'javascript:bad',metadata:{{icon:'mdi:doorbell'}}}}),'mdi:doorbell');
 for(const icon of ['mdi:','mdi:bad icon','mdi:foo<script>','<svg>','https://icons.invalid/icon.svg'])
-  assert.equal(dashboardIconFor({{kind:'esphome',icon}}),'mdi:chip');
+  assert.equal(dashboardIconFor({{kind:'esphome',icon}}),'mdi:deskphone');
 assert.equal(dashboardTypeFor({{kind:'contact',metadata:{{virtual_endpoint:'automation'}}}}),'Automation');
 const owner={{endpoint_id:'owner',device_id:'owner-device',kind:'browser',state:'idle',availability:'available'}};
 const phones=new Map([['owner',owner],['esp',{{endpoint_id:'esp',device_id:'esp-device',kind:'esphome',state:'idle',availability:'offline'}}]]);
@@ -218,7 +218,7 @@ def test_dashboard_delta_preserves_untouched_tile_dom(dashboard_page):
 @pytest.mark.browser_real
 def test_dashboard_endpoint_icons_availability_and_automation_routing(dashboard_page):
     page = dashboard_page
-    expected = {"reception": "mdi:chip", "office": "mdi:phone-classic", "bedroom": "mdi:home-assistant", "kitchen": "mdi:chip", "garage": "mdi:chip"}
+    expected = {"reception": "mdi:deskphone", "office": "mdi:phone-classic", "bedroom": "mdi:home-assistant", "kitchen": "mdi:deskphone", "garage": "mdi:deskphone"}
     for endpoint, icon in expected.items():
         assert page.locator(f".tile[data-key='endpoint:{endpoint}'] .tile-icon > ha-icon").first.get_attribute("icon") == icon
     assert page.locator(".identity-icon ha-icon").get_attribute("icon") == "mdi:home-assistant"

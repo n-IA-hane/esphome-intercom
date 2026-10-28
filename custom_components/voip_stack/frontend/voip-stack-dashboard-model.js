@@ -119,7 +119,7 @@ export function dashboardIconFor(phone) {
     if (typeof custom === "string" && /^mdi:[a-z0-9]+(?:-[a-z0-9]+)*$/.test(custom)) return custom;
   }
   return {
-    "Home Assistant phone": "mdi:home-assistant", "ESPHome phone": "mdi:chip",
+    "Home Assistant phone": "mdi:home-assistant", "ESPHome phone": "mdi:deskphone",
     "SIP phone": "mdi:phone-classic", "Saved contact": "mdi:contacts",
     "Automation": "mdi:robot", "Assist pipeline": "mdi:account-voice",
     "Ring group": "mdi:phone-ring", "Conference group": "mdi:account-group",
