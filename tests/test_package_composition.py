@@ -184,6 +184,7 @@ def test_generic_feature_composition(tmp_path: Path, profile_path: str, features
     *[[feature for feature in FULL if feature != removed] + ['display']
       for removed in ('voip', 'voice', 'music', 'sendspin', 'timers', 'wake_word')],
 ])
+@pytest.mark.timeout(190)  # The official config subprocess has its own 180-second limit.
 def test_spotpear_presentation_follows_features(tmp_path: Path, features: list[str]) -> None:
     config = device_config(tmp_path, features, 'yamls/full-experience/single-bus/spotpear-ball-v2-full-afe.yaml')
     result = subprocess.run(

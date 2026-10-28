@@ -62,8 +62,8 @@ async def async_answer_browser_call(
             endpoint_id=endpoint_id,
         )
     accept_video = bool(call.data.get("accept_video", True))
-    camera_send_requested = accept_video and bool(
-        transport_config(hass).get(CONF_VIDEO_CAMERA_SEND, False)
+    camera_send_requested = bool(
+        accept_video and transport_config(hass).get(CONF_VIDEO_CAMERA_SEND, False)
     ) and bool(call.data.get("send_video", False))
 
     # A browser ring-group member resolves its own pending candidate before
