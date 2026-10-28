@@ -19,6 +19,7 @@ FIXTURES = ROOT / "tests/fixtures/playback_diagnostics"
 
 @pytest.mark.skipif(not os.environ.get("PLAYBACK_DIAGNOSTICS_COMPILE_COMMANDS"),
                     reason="Target assembly guard requires an explicit existing Xtensa compile database")
+@pytest.mark.diagnostic_reference
 def test_real_xtensa_progress_has_no_atomic_helper_or_lock(tmp_path):
     database = Path(os.environ["PLAYBACK_DIAGNOSTICS_COMPILE_COMMANDS"])
     entry = next((item for item in json.loads(database.read_text())

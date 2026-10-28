@@ -161,11 +161,11 @@ export YAML_PATH_MODE=$path_mode
 case "$MODE" in
   fast)
     pytest_args+=("${ha_ignores[@]}")
-    pytest_args+=(-m "not ha and not js_runtime and not browser_real and not live and not mutation and not slow")
+    pytest_args+=(-m "not ha and not js_runtime and not browser_real and not live and not mutation and not slow and not diagnostic_reference")
     ;;
   software-full)
     pytest_args+=("${ha_ignores[@]}")
-    pytest_args+=(-m "not live and not mutation and not browser_real")
+    pytest_args+=(-m "not live and not mutation and not browser_real and not diagnostic_reference")
     ;;
   browser)
     "$PYTHON" - <<'PY'
