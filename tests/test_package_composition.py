@@ -204,7 +204,7 @@ def test_spotpear_presentation_follows_features(tmp_path: Path, features: list[s
     if video_receive:
         renderer = document['esp_video_renderer']
         assert (int(renderer['width']), int(renderer['height'])) == (240, 240)
-        assert int(renderer['framerate']) == 2
+        assert int(renderer['framerate']) == 5
         assert document['voip_stack']['video']['codec'] == 'jpeg'
         assert 'camera_id' not in document['voip_stack']['video']
         assert 'source' not in document['voip_stack']['video']
