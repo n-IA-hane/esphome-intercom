@@ -35,15 +35,3 @@ defaults:
             border_width: 0
             bg_opa: TRANSP
             scrollable: false
-        - button:
-            align: BOTTOM_MID
-            y: -12
-            width: 100
-            height: 44
-            bg_color: 0xB71C1C
-            on_click:
-              - voip_stack.stop:
-            widgets:
-              - label:
-                  align: CENTER
-                  text: End call

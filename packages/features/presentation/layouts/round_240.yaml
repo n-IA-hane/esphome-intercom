@@ -387,7 +387,8 @@ script:
           id: top_battery_label
           text: !lambda |-
             bool charging = id(usb_connected).state;
-            float bat = id(battery_percentage).state;
+            // Match the whole-percent battery value displayed by Home Assistant.
+            float bat = std::round(id(battery_percentage).state);
             float wifi = ${ 'id(wifi_pct).state' if 'diagnostics' in firmware_features else 'std::max(0.0f, std::min(100.0f, 2.0f * (wifi::global_wifi_component->wifi_rssi() + 100.0f)))' };
             std::string ret;
             if (bat < 10) ret = charging ? "\U000F089F" : "\U000F008E";
