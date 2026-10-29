@@ -64,6 +64,7 @@ from .core.video_rtp import (
     split_annex_b,
     unknown_dynamic_payload_type,
 )
+from .core.imageattr import constraints_payload
 from .websocket_api import (
     _ha_softphone_store,
     _publish_ha_softphone_state,
@@ -856,7 +857,7 @@ def _sdp_parameter_sets(video_format: sdp.RtpVideoFormat) -> list[bytes]:
 def _video_format_payload(
     video_format: sdp.RtpVideoFormat,
 ) -> dict[str, object]:
-    return {
+    payload = {
         "codec": video_format.browser_codec,
         "encoding": video_format.encoding,
         "clock_rate": video_format.clock_rate,
@@ -867,6 +868,9 @@ def _video_format_payload(
         "max_framerate": video_format.max_framerate,
         "format": video_format.wire_token(),
     }
+    if video_format.encoding == "JPEG" and video_format.image_attributes is not None:
+        payload["image_attributes"] = constraints_payload(video_format.image_attributes)
+    return payload
 
 
 def _video_negotiation_payload(

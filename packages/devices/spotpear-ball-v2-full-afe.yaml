@@ -95,7 +95,7 @@ substitutions:
   # JPEG reception follows display + VoIP; audio-only builds omit the renderer.
   s3_sip_jpeg_width: '240'
   s3_sip_jpeg_height: '240'
-  s3_sip_jpeg_fps: '5'
+  s3_sip_jpeg_fps: '10'
 runtime_controller:
   id: runtime
   storage_in_psram: true

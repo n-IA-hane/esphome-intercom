@@ -336,6 +336,9 @@ class SipDialog(DialogSignalingState):
     send_formats: tuple[sdp.RtpPcmFormat, ...] = ()
     match_received_codec: bool = False
     recv_payload_history: tuple[sdp.RtpPcmFormat, ...] = ()
+    # A valid but unusable RFC 6236 answer needs one ordinary re-offer without
+    # imageattr. Keep that intent attached to this exact media generation.
+    imageattr_fallback_needed: bool = False
 
     @property
     def selected_format(self) -> sdp.RtpPcmFormat:
@@ -1342,7 +1345,96 @@ class SipCallClient:
         )
         self.dialog = updated
         notify_media_commit(on_committed, updated)
-        return None
+        await self._complete_imageattr_fallback()
+        return None if self.dialog is not None else "media_update_failed"
+
+    @staticmethod
+    def _video_answer_or_fallback(answer, offered, **kwargs):
+        """Preserve usable media while requesting the RFC 6236 fallback."""
+
+        try:
+            return sdp.negotiate_video_answer_directional(answer, offered, **kwargs), False
+        except sdp.ImageAttributeFallbackRequired:
+            formats = (offered,) if isinstance(offered, sdp.RtpVideoFormat) else tuple(offered)
+            legacy = sdp.remove_image_attributes(formats)
+            return sdp.negotiate_video_answer_directional(
+                sdp.remove_image_attributes(answer), legacy, **kwargs,
+            ), True
+
+    async def _complete_imageattr_fallback(self) -> None:
+        """Use the existing serialized offer owner for one optional fallback."""
+
+        current = self.dialog
+        if current is None or not current.imageattr_fallback_needed:
+            return
+        # Clear the intent before awaiting signaling. A new incompatible
+        # attribute on an unsolicited answer to the legacy offer is ignored
+        # by the SDP negotiator, so this cannot become an offer loop.
+        current.imageattr_fallback_needed = False
+        formats = sdp.remove_image_attributes(sdp.offered_video_formats(current.local_sdp_body))
+        if not formats or current.local_video_rtp_port == 0:
+            return
+        candidate = await self.async_prepare_video_reinvite(
+            local_video_rtp_port=current.local_video_rtp_port,
+            video_formats=formats,
+            video_direction=current.local_video_direction,
+            offer_template=sdp.remove_image_attributes(current.local_sdp_body),
+            expected_dialog=current,
+        )
+        if candidate is None:
+            return
+        commit = rollback = on_committed = None
+        committed = False
+        try:
+            if self.on_media_update is not None:
+                update = await self.on_media_update(current, candidate, "INVITE")
+                if isinstance(update, PreparedDialogMediaUpdate):
+                    commit, rollback = update.commit, update.rollback
+                    on_committed = update.on_committed
+                else:
+                    commit = update
+                if commit is None and not self._same_dialog_media(current, candidate):
+                    return
+
+            async def commit_current():
+                if self.dialog is not current:
+                    raise ConnectionAbortedError("SIP dialog changed during media preparation")
+                if commit is not None:
+                    await commit()
+
+            async def publish():
+                nonlocal committed
+                if not self.commit_prepared_reinvite(current, candidate):
+                    raise ConnectionAbortedError("SIP dialog changed during media commit")
+                committed = True
+                notify_media_commit(on_committed, candidate)
+
+            async def rollback_unpublished():
+                # Cancellation can arrive while the common finalize barrier
+                # is completing. Publication is the irreversible commit point.
+                if not committed and rollback is not None:
+                    await rollback()
+
+            await apply_remote_offer_media(commit_current, rollback_unpublished, finalize=publish)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "SIP image-size fallback media preparation failed call_id=%s",
+                self.dialog_ids.call_id,
+            )
+        finally:
+            # The peer already accepted this generation. The common media
+            # compensation restores the previous contract before releasing
+            # its reservation, and refuses to overwrite a newer dialog.
+            if not committed:
+                prepared = self._prepared_reinvite
+                if prepared is not None and prepared[0] is current and prepared[1] is candidate:
+                    await self.restore_prepared_reinvite(current, candidate)
+                    # A BYE or a newer generation forbids compensation. The
+                    # old reservation still belongs to this completed owner.
+                    if self._prepared_reinvite is prepared and self.dialog is not current and self.dialog is not candidate:
+                        self._prepared_reinvite = None
 
     def _request_matches_dialog(self, request: sip.SipMessage, _host: str, method: str) -> bool:
         """Match an in-dialog request using the RFC 3261 dialog identifiers.
@@ -1473,9 +1565,10 @@ class SipCallClient:
             )
             if self.codec_policy.video is not None:
                 accepted_video = tuple(codec for codec in accepted_video if codec in self.codec_policy.video)
+            imageattr_fallback = False
             video_directional = (
                 (
-                    sdp.negotiate_video_answer_directional(
+                    self._video_answer_or_fallback(
                         request.body,
                         tuple(sdp.offered_video_formats(local_offer_sdp)),
                     )
@@ -1492,6 +1585,8 @@ class SipCallClient:
                 if accepted_video and self.local_video_rtp_port
                 else None
             )
+            if local_offer_sdp and video_directional is not None:
+                video_directional, imageattr_fallback = video_directional
             video = video_directional.send if video_directional is not None else None
             local_video = (
                 video_directional.recv if video_directional is not None else None
@@ -1617,6 +1712,7 @@ class SipCallClient:
                 remote_audio_connection_held=bool(parsed["connection_held"]),
                 video_format=video,
                 local_video_format=local_video,
+                imageattr_fallback_needed=imageattr_fallback,
                 local_video_rtp_port=(self.local_video_rtp_port if video is not None else 0),
                 local_video_direction=local_video_direction,
                 local_sdp_session_id=session_id,
@@ -2491,7 +2587,8 @@ class SipCallClient:
                 if self._cancel_requested:
                     await self._terminate_confirmed_dialog()
                     return "cancelled"
-                return "in_call"
+                await self._complete_imageattr_fallback()
+                return "in_call" if self.dialog is not None else "timeout"
             if msg.status_code in {401, 407} and self.password:
                 self._send_invite_error_ack(msg, addr[0], addr[1])
                 if self._cancel_requested:
@@ -3738,14 +3835,14 @@ class SipCallClient:
                 return None
             recv_payload_history = _validate_receive_payload_update(current, audio.recv_formats)
             parsed = sdp.parse_sdp(answer.body)
-            video_pair = (
-                sdp.negotiate_video_answer_directional(
+            video_pair, imageattr_fallback = (
+                self._video_answer_or_fallback(
                     answer.body,
                     offered_video_formats,
                     allow_h264_level_capability=True,
                 )
                 if offered_video_formats and local_video_rtp_port > 0
-                else None
+                else (None, False)
             )
             video_send = video_pair.send if video_pair is not None else None
             video_recv = video_pair.recv if video_pair is not None else None
@@ -3818,6 +3915,7 @@ class SipCallClient:
                 remote_audio_connection_held=bool(parsed["connection_held"]),
                 video_format=video_send,
                 local_video_format=video_recv,
+                imageattr_fallback_needed=imageattr_fallback,
                 local_video_rtp_port=(
                     local_video_rtp_port if video_send is not None else 0
                 ),
@@ -3864,199 +3962,209 @@ class SipCallClient:
                 or (removing_video and current.video_format is None)
             ):
                 return None
-            try:
-                session_id = int(
-                    current.local_sdp_session_id or self._sdp_session_id
-                )
-                session_version = int(current.local_sdp_session_version)
-                offer = sdp.build_video_reoffer(
-                    offer_template or current.local_sdp_body,
-                    video_port=local_video_port,
-                    video_formats=offered_video,
-                    video_direction="inactive" if removing_video else video_direction,
-                )
-                offer = sdp.rewrite_sdp_origin(
-                    offer, session_id, session_version
-                )
-                if sdp.sdp_description_changed(current.local_sdp_body, offer):
-                    session_version += 1
+            fallback_target = ""
+            for imageattr_round in range(2):
+                try:
+                    session_id = int(
+                        current.local_sdp_session_id or self._sdp_session_id
+                    )
+                    session_version = int(current.local_sdp_session_version) + imageattr_round
+                    offer = sdp.build_video_reoffer(
+                        offer_template or current.local_sdp_body,
+                        video_port=local_video_port,
+                        video_formats=offered_video,
+                        video_direction="inactive" if removing_video else video_direction,
+                    )
                     offer = sdp.rewrite_sdp_origin(
                         offer, session_id, session_version
                     )
-                request = build_dialog_request(
-                    "INVITE",
-                    call_id=self.dialog_ids.call_id,
-                    local_tag=self.dialog_ids.local_tag,
-                    remote_tag=self.dialog_ids.remote_tag,
-                    cseq=self._next_dialog_cseq(),
-                    local_uri=current.local_uri,
-                    remote_uri=current.remote_uri,
-                    remote_target_uri=(
-                        current.remote_target_uri or current.remote_uri
-                    ),
-                    route_set=current.route_set,
-                    contact_uri=self._pending_contact_uri or current.local_uri,
-                    transport=self.signaling_transport,
-                    local_display_name=self.local_name,
-                    remote_display_name=self._dialog_remote_display_name,
-                    content_type="application/sdp",
-                    body=offer.encode(),
-                )
-                next_host, next_port = self._dialog_next_hop(
-                    request.routing.next_hop_uri,
-                    current.remote_host,
-                    current.remote_sip_port,
-                )
-            except (TypeError, ValueError, sdp.SdpError, sip.SipError):
-                _LOGGER.exception(
-                    "SIP local video re-INVITE could not be prepared call_id=%s",
-                    self.dialog_ids.call_id,
-                )
-                return None
-
-            try:
-                await asyncio.wait_for(self._dialog_request_lock.acquire(), timeout=max(0, deadline - asyncio.get_running_loop().time()))
-            except TimeoutError:
-                return None
-            try:
-                if self.dialog is not current:
-                    return None
-                _LOGGER.info(
-                    "SIP TX re-INVITE call_id=%s offered=[%s]",
-                    self.dialog_ids.call_id,
-                    ", ".join(sdp.offered_media_descriptions(offer)),
-                )
-                early_candidate: SipDialog | None = None
-                final_addr = (next_host, next_port)
-
-                async def handle_request(message, addr) -> None:
-                    terminal = await self._dispatch_in_dialog_request(
-                        message, addr, local_offer_pending=True
-                    )
-                    if terminal is not None:
-                        raise ConnectionAbortedError(terminal)
-
-                async def handle_provisional(message, addr) -> None:
-                    nonlocal early_candidate
-                    status = int(message.status_code or 0)
-                    self.last_sip_status_code = status
-                    self.last_sip_reason = message.reason
-                    if not await self._ack_reliable_provisional(
-                        message, addr, process_early_media=False
-                    ):
-                        raise ConnectionAbortedError("provisional_rejected")
-                    if message.body:
-                        early_candidate = self._dialog_candidate_from_answer(
-                            current,
-                            offer,
-                            message,
-                            local_video_rtp_port=local_video_port,
-                            offered_video_formats=offered_video,
-                            video_direction=(
-                                "inactive" if removing_video else video_direction
-                            ),
-                            session_version=session_version,
+                    if sdp.sdp_description_changed(current.local_sdp_body, offer):
+                        session_version += 1
+                        offer = sdp.rewrite_sdp_origin(
+                            offer, session_id, session_version
                         )
-                        if early_candidate is None:
-                            raise ConnectionAbortedError("invalid_early_answer")
-
-                def capture_final(_message, addr) -> None:
-                    nonlocal final_addr
-                    final_addr = addr
+                    request = build_dialog_request(
+                        "INVITE",
+                        call_id=self.dialog_ids.call_id,
+                        local_tag=self.dialog_ids.local_tag,
+                        remote_tag=self.dialog_ids.remote_tag,
+                        cseq=self._next_dialog_cseq(),
+                        local_uri=current.local_uri,
+                        remote_uri=current.remote_uri,
+                        remote_target_uri=(
+                            fallback_target or current.remote_target_uri or current.remote_uri
+                        ),
+                        route_set=current.route_set,
+                        contact_uri=self._pending_contact_uri or current.local_uri,
+                        transport=self.signaling_transport,
+                        local_display_name=self.local_name,
+                        remote_display_name=self._dialog_remote_display_name,
+                        content_type="application/sdp",
+                        body=offer.encode(),
+                    )
+                    next_host, next_port = self._dialog_next_hop(
+                        request.routing.next_hop_uri,
+                        current.remote_host,
+                        current.remote_sip_port,
+                    )
+                except (TypeError, ValueError, sdp.SdpError, sip.SipError):
+                    _LOGGER.exception(
+                        "SIP local video re-INVITE could not be prepared call_id=%s",
+                        self.dialog_ids.call_id,
+                    )
+                    return None
 
                 try:
-                    message = await self._run_built_dialog_request(
-                        request, next_host, next_port, method="INVITE", timeout=max(0, deadline - asyncio.get_running_loop().time()),
-                        active=lambda: self.dialog is current,
-                        on_provisional=handle_provisional, on_final=capture_final,
-                    )
-                except (ConnectionAbortedError, ConnectionError, OSError):
+                    await asyncio.wait_for(self._dialog_request_lock.acquire(), timeout=max(0, deadline - asyncio.get_running_loop().time()))
+                except TimeoutError:
                     return None
-                if message is None:
-                    self._start_bye_request_transaction(
-                        current.remote_host,
-                        current.remote_sip_port,
-                        current.remote_target_uri or current.remote_uri,
-                        current.local_uri,
-                        current.remote_uri,
-                        route_set=current.route_set,
+                try:
+                    if self.dialog is not current:
+                        return None
+                    _LOGGER.info(
+                        "SIP TX re-INVITE call_id=%s offered=[%s]",
+                        self.dialog_ids.call_id,
+                        ", ".join(sdp.offered_media_descriptions(offer)),
                     )
-                    self.dialog = None
-                    return None
-                addr = final_addr
-                status = int(message.status_code or 0)
-                self.last_sip_status_code = status
-                self.last_sip_reason = message.reason
-                if 200 <= status < 300:
-                    candidate = (
-                        self._dialog_candidate_from_answer(
-                            current,
-                            offer,
-                            message,
-                            local_video_rtp_port=local_video_port,
-                            offered_video_formats=offered_video,
-                            video_direction=(
-                                "inactive" if removing_video else video_direction
-                            ),
-                            session_version=session_version,
+                    early_candidate: SipDialog | None = None
+                    final_addr = (next_host, next_port)
+
+                    async def handle_request(message, addr) -> None:
+                        terminal = await self._dispatch_in_dialog_request(
+                            message, addr, local_offer_pending=True
                         )
-                        if message.body
-                        else early_candidate
-                    )
-                    remote_tag = sip.extract_tag(message.header("To"))
-                    ack_target = (
-                        candidate.remote_target_uri
-                        if candidate is not None
-                        else current.remote_target_uri or current.remote_uri
-                    )
-                    acked = self._send_ack(
-                        current.remote_host,
-                        current.remote_sip_port,
-                        ack_target,
-                        current.local_uri,
-                        current.remote_uri,
-                        route_set=current.route_set,
-                        cseq=request.ids.cseq,
-                        remote_tag=remote_tag,
-                    )
-                    if candidate is None or not acked:
+                        if terminal is not None:
+                            raise ConnectionAbortedError(terminal)
+
+                    async def handle_provisional(message, addr) -> None:
+                        nonlocal early_candidate
+                        status = int(message.status_code or 0)
+                        self.last_sip_status_code = status
+                        self.last_sip_reason = message.reason
+                        if not await self._ack_reliable_provisional(
+                            message, addr, process_early_media=False
+                        ):
+                            raise ConnectionAbortedError("provisional_rejected")
+                        if message.body:
+                            early_candidate = self._dialog_candidate_from_answer(
+                                current,
+                                offer,
+                                message,
+                                local_video_rtp_port=local_video_port,
+                                offered_video_formats=offered_video,
+                                video_direction=(
+                                    "inactive" if removing_video else video_direction
+                                ),
+                                session_version=session_version,
+                            )
+                            if early_candidate is None:
+                                raise ConnectionAbortedError("invalid_early_answer")
+
+                    def capture_final(_message, addr) -> None:
+                        nonlocal final_addr
+                        final_addr = addr
+
+                    try:
+                        message = await self._run_built_dialog_request(
+                            request, next_host, next_port, method="INVITE", timeout=max(0, deadline - asyncio.get_running_loop().time()),
+                            active=lambda: self.dialog is current,
+                            on_provisional=handle_provisional, on_final=capture_final,
+                        )
+                    except (ConnectionAbortedError, ConnectionError, OSError):
+                        return None
+                    if message is None:
                         self._start_bye_request_transaction(
                             current.remote_host,
                             current.remote_sip_port,
-                            ack_target,
+                            current.remote_target_uri or current.remote_uri,
                             current.local_uri,
                             current.remote_uri,
                             route_set=current.route_set,
                         )
                         self.dialog = None
                         return None
-                    self._prepared_reinvite = (
-                        current,
-                        candidate,
-                        offered_video if candidate.video_format is not None else (),
-                        (
-                            video_direction
-                            if candidate.video_format is not None
-                            else "inactive"
-                        ),
+                    addr = final_addr
+                    status = int(message.status_code or 0)
+                    self.last_sip_status_code = status
+                    self.last_sip_reason = message.reason
+                    if 200 <= status < 300:
+                        candidate = (
+                            self._dialog_candidate_from_answer(
+                                current,
+                                offer,
+                                message,
+                                local_video_rtp_port=local_video_port,
+                                offered_video_formats=offered_video,
+                                video_direction=(
+                                    "inactive" if removing_video else video_direction
+                                ),
+                                session_version=session_version,
+                            )
+                            if message.body
+                            else early_candidate
+                        )
+                        remote_tag = sip.extract_tag(message.header("To"))
+                        ack_target = (
+                            candidate.remote_target_uri
+                            if candidate is not None
+                            else current.remote_target_uri or current.remote_uri
+                        )
+                        acked = self._send_ack(
+                            current.remote_host,
+                            current.remote_sip_port,
+                            ack_target,
+                            current.local_uri,
+                            current.remote_uri,
+                            route_set=current.route_set,
+                            cseq=request.ids.cseq,
+                            remote_tag=remote_tag,
+                        )
+                        if candidate is None or not acked:
+                            self._start_bye_request_transaction(
+                                current.remote_host,
+                                current.remote_sip_port,
+                                ack_target,
+                                current.local_uri,
+                                current.remote_uri,
+                                route_set=current.route_set,
+                            )
+                            self.dialog = None
+                            return None
+                        if candidate.imageattr_fallback_needed and imageattr_round == 0:
+                            # The first 2xx has already been ACKed. Reuse this same
+                            # serialized offer owner and original staged baseline;
+                            # only the optional attribute changes in the second O/A.
+                            offered_video = sdp.remove_image_attributes(offered_video)
+                            offer_template = sdp.remove_image_attributes(offer)
+                            fallback_target = candidate.remote_target_uri
+                            continue
+                        self._prepared_reinvite = (
+                            current,
+                            candidate,
+                            offered_video if candidate.video_format is not None else (),
+                            (
+                                video_direction
+                                if candidate.video_format is not None
+                                else "inactive"
+                            ),
+                        )
+                        return candidate
+                    self._send_invite_error_ack(
+                        message,
+                        addr[0],
+                        addr[1],
+                        request_uri=request.routing.request_uri,
+                        local_uri=current.local_uri,
+                        remote_uri=current.remote_uri,
+                        route_set=current.route_set,
+                        cseq=request.ids.cseq,
+                        branch=request.ids.branch,
                     )
-                    return candidate
-                self._send_invite_error_ack(
-                    message,
-                    addr[0],
-                    addr[1],
-                    request_uri=request.routing.request_uri,
-                    local_uri=current.local_uri,
-                    remote_uri=current.remote_uri,
-                    route_set=current.route_set,
-                    cseq=request.ids.cseq,
-                    branch=request.ids.branch,
-                )
-                if status in {408, 481}:
-                    self.dialog = None
-                return None
-            finally:
-                self._dialog_request_lock.release()
+                    if status in {408, 481}:
+                        self.dialog = None
+                    return None
+                finally:
+                    self._dialog_request_lock.release()
         finally:
             self._local_offer_lock.release()
 
@@ -4365,10 +4473,10 @@ class SipCallClient:
                 )
             return False
         parsed = sdp.parse_sdp(msg.body)
-        video_directional = (
-            sdp.negotiate_video_answer_directional(msg.body, self.video_formats)
+        video_directional, imageattr_fallback = (
+            self._video_answer_or_fallback(msg.body, self.video_formats)
             if self.video_formats
-            else None
+            else (None, False)
         )
         video_answer = (
             video_directional.send if video_directional is not None else None
@@ -4456,6 +4564,7 @@ class SipCallClient:
             remote_audio_connection_held=bool(parsed["connection_held"]),
             video_format=video_answer,
             local_video_format=local_video_answer,
+            imageattr_fallback_needed=imageattr_fallback,
             remote_video_rtp_host=(str(remote_video["connection_ip"]) if remote_video else ""),
             remote_video_rtp_port=(int(remote_video["media_port"]) if remote_video else 0),
             remote_video_rtcp_host=(

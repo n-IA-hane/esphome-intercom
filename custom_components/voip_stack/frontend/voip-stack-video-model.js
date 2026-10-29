@@ -68,7 +68,46 @@ export function directionalVideoContract(negotiated, direction) {
       ? rawMaxFramerate
       : null,
     format: String(value("format", "") || ""),
+    imageAttributes: encoding === "JPEG" ? value("image_attributes", null) : null,
   };
+}
+
+// The negotiated receiver preference is immutable. Call once per source size
+// or sender generation, never once per camera frame at steady state.
+export function jpegImagePlan(width, height, attributes) {
+  const constraints = attributes?.recv;
+  if (!constraints || constraints.wildcard || !(width > 0 && height > 0)) return null;
+  const allows = (range, value) => Array.isArray(range.values) && range.values.length
+    ? range.values.includes(value)
+    : value >= range.min && value <= range.max && (value - range.min) % range.step === 0;
+  const sets = [...(constraints.sets || [])].slice(0, 8).sort((a, b) => b.q - a.q);
+  for (const set of sets) {
+    let best = null;
+    let bestArea = -1;
+    let bestPadding = Infinity;
+    const maxWidth = Math.min(1280, set.x.max, Math.ceil(width / 8) * 8);
+    const maxHeight = Math.min(1280, set.y.max, Math.ceil(height / 8) * 8);
+    for (let w = 8; w <= maxWidth; w += 8) {
+      if (!allows(set.x, w)) continue;
+      for (let h = 8; h <= maxHeight; h += 8) {
+        if (w * h > 1280 * 800 || !allows(set.y, h)) continue;
+        if (set.par && (w / h < set.par[0] || w / h > set.par[1])) continue;
+        const scale = Math.min(1, w / width, h / height);
+        const cw = Math.max(1, Math.floor(width * scale + 1e-9));
+        const ch = Math.max(1, Math.floor(height * scale + 1e-9));
+        const area = cw * ch;
+        const padding = w * h - area;
+        if (area > bestArea || (area === bestArea && padding < bestPadding)) {
+          bestArea = area;
+          bestPadding = padding;
+          best = { width: w, height: h, contentWidth: cw, contentHeight: ch,
+            offsetX: (w - cw) / 2, offsetY: (h - ch) / 2 };
+        }
+      }
+    }
+    if (best) return best;
+  }
+  return null;
 }
 
 function positiveInteger(value) {

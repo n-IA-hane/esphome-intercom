@@ -15,6 +15,12 @@ from .audio_format import (
     choose_common_frame_ms,
 )
 from .codec_capabilities import common_sip_codecs
+from .imageattr import (
+    ANY_IMAGE_ATTRIBUTES, ImageAttributes,
+    ImageConstraints as ImageConstraints, ImageRange as ImageRange, ImageSet as ImageSet,
+    ImageAttributeFallbackRequired, constraints_usable, intersect_constraints,
+    parse_imageattr, plan_jpeg_image, serialize_imageattr, merge_image_attributes,
+)
 
 
 class SdpError(ValueError):
@@ -270,6 +276,7 @@ class RtpVideoFormat:
     # Keep it in the directional media contract so a browser sender cannot
     # silently exceed the receive envelope selected by a SIP endpoint.
     max_framerate: float | None = None
+    image_attributes: ImageAttributes | None = None
 
     def wire_token(self) -> str:
         token = f"pt={self.payload_type}:{self.encoding}/{self.clock_rate}"
@@ -404,7 +411,7 @@ DEFAULT_VIDEO_FORMATS = (
         encoding="VP8",
         fmtp="max-fr=20;max-fs=3600",
     ),
-    RtpVideoFormat(payload_type=26, encoding="JPEG"),
+    RtpVideoFormat(payload_type=26, encoding="JPEG", image_attributes=ANY_IMAGE_ATTRIBUTES),
 )
 _SUPPORTED_RTCP_FEEDBACK = frozenset({"nack pli", "ccm fir"})
 
@@ -602,7 +609,7 @@ def video_answer_contract(
         return replace(offered, fmtp=answered.fmtp)
     if offered.encoding != "H264":
         return (
-            offered
+            replace(offered, image_attributes=answered.image_attributes if offered.image_attributes is not None else None)
             if _fmtp_parameters(offered.fmtp) == _fmtp_parameters(answered.fmtp)
             else None
         )
@@ -680,7 +687,53 @@ def video_offer_answer_directional(
         return RtpVideoDirection(send=offered, recv=answered, answer=answered)
     if _fmtp_parameters(offered.fmtp) != _fmtp_parameters(answered.fmtp):
         return None
+    if offered.encoding == "JPEG":
+        return _jpeg_image_contract(offered, answered)
     return RtpVideoDirection(send=offered, recv=answered, answer=answered)
+
+
+def jpeg_image_plan(video_format: RtpVideoFormat, native_width: int, native_height: int):
+    attributes = video_format.image_attributes
+    return plan_jpeg_image(attributes.recv if attributes is not None else None, native_width, native_height)
+
+
+def remove_image_attributes(value):
+    """Build one legacy retry through the existing O/A owner, without new state."""
+    if isinstance(value, RtpVideoFormat):
+        return replace(value, image_attributes=None)
+    if isinstance(value, bytes):
+        return remove_image_attributes(value.decode()).encode()
+    if isinstance(value, str):
+        return "\r\n".join(line for line in value.splitlines() if not line.startswith("a=imageattr:")) + "\r\n"
+    return tuple(remove_image_attributes(item) for item in value)
+
+
+def _jpeg_image_contract(offered: RtpVideoFormat, answered: RtpVideoFormat, *, strict_answer: bool = False) -> RtpVideoDirection:
+    """Project remote receive preferences onto local TX, preserving both legs."""
+    if offered.image_attributes is None or answered.image_attributes is None:
+        return RtpVideoDirection(send=remove_image_attributes(offered), recv=remove_image_attributes(answered),
+                                 answer=remove_image_attributes(answered))
+    send = intersect_constraints(offered.image_attributes.recv, answered.image_attributes.send)
+    recv = intersect_constraints(answered.image_attributes.recv, offered.image_attributes.send)
+    remote_direction = normalize_direction(offered.direction)
+    send_active = remote_direction in {"sendrecv", "recvonly"}
+    recv_active = remote_direction in {"sendrecv", "sendonly"}
+    send_usable, recv_usable = constraints_usable(send), constraints_usable(recv)
+    if (send_active and not send_usable) or (recv_active and not recv_usable):
+        if strict_answer:
+            raise ImageAttributeFallbackRequired(offered.payload_type)
+        return RtpVideoDirection(send=remove_image_attributes(offered), recv=remove_image_attributes(answered),
+                                 answer=remove_image_attributes(answered))
+    if not send_usable:
+        send = None
+    if not recv_usable:
+        recv = None
+    answer_attributes = ImageAttributes(send=send, recv=recv) if send is not None or recv is not None else None
+    return RtpVideoDirection(
+        send=replace(offered, image_attributes=ImageAttributes(recv=send)),
+        recv=replace(answered, image_attributes=ImageAttributes(recv=recv)),
+        answer=replace(answered, image_attributes=answer_attributes),
+    )
 
 
 _H264_SUBPROFILE_PATTERNS = (
@@ -1882,6 +1935,7 @@ def _parse_media_sections(sdp_body: str | bytes) -> tuple[str, str, list[dict]]:
                 "rtcp_mux": False,
                 "rtcp_mux_only": False,
                 "framerate": None,
+                "image_attributes": {},
                 "direction": session_direction,
             }
             sections.append(current)
@@ -1937,6 +1991,14 @@ def _parse_media_sections(sdp_body: str | bytes) -> tuple[str, str, list[dict]]:
                 current["rtcp_mux"] = True
             elif line == "a=rtcp-mux-only":
                 current["rtcp_mux_only"] = True
+            elif line.startswith("a=imageattr:"):
+                # Optional capabilities cannot invalidate an otherwise usable
+                # audio/video SDP. A later valid PT-specific value wins.
+                parsed_image = parse_imageattr(line.removeprefix("a=imageattr:"))
+                if parsed_image is not None and len(current["image_attributes"]) < 32:
+                    payload, attributes = parsed_image
+                    current["image_attributes"][payload] = merge_image_attributes(
+                        current["image_attributes"].get(payload), attributes)
             elif line.startswith("a=framerate:"):
                 framerate = float(line.removeprefix("a=framerate:").strip())
                 if not math.isfinite(framerate) or framerate <= 0:
@@ -2218,6 +2280,7 @@ def parse_video_sdp(sdp_body: str | bytes) -> dict | None:
             "rtcp_mux": bool(section["rtcp_mux"]),
             "rtcp_mux_only": bool(section["rtcp_mux_only"]),
             "framerate": section["framerate"],
+            "image_attributes": dict(section["image_attributes"]),
             "direction": section["direction"],
             "connection_held": bool(section["connection_held"]),
         }
@@ -2330,6 +2393,8 @@ def offered_video_formats(sdp_body: str | bytes) -> list[RtpVideoFormat]:
                 # Retain advertised capabilities without inventing any.
                 rtcp_feedback=feedback,
                 max_framerate=parsed["framerate"],
+                image_attributes=(parsed["image_attributes"].get(payload_type,
+                    parsed["image_attributes"].get(None)) if encoding == "JPEG" else None),
             )
         )
     return out
@@ -2492,6 +2557,8 @@ def _project_local_video_answer(
         # differing fmtp contracts.  Preserve the historical echo-answer for
         # an explicitly identical local capability only.
         return None
+    if offered.encoding == "JPEG":
+        return _jpeg_image_contract(offered, answer)
     return RtpVideoDirection(send=offered, recv=answer, answer=answer)
 
 
@@ -2671,6 +2738,10 @@ def negotiate_video_answer_directional(
             send=selected,
             recv=replace(candidate, direction=selected.direction),
         )
+    if candidate.encoding == "JPEG":
+        contract = _jpeg_image_contract(selected, candidate, strict_answer=True)
+        return RtpVideoDirection(send=contract.send,
+                                 recv=replace(contract.recv, direction=selected.direction))
     return RtpVideoDirection(
         send=selected,
         recv=replace(candidate, direction=selected.direction),
@@ -2822,6 +2893,8 @@ def _video_media_lines(
         lines.append(f"a=rtcp-fb:{payload_type} {feedback}")
     if selected.max_framerate is not None:
         lines.append(f"a=framerate:{selected.max_framerate:g}")
+    if selected.encoding == "JPEG" and selected.image_attributes is not None:
+        lines.append("a=" + serialize_imageattr(payload_type, selected.image_attributes))
     if int(media_port) > 0:
         lines.append(f"a=rtcp:{int(media_port) + 1}")
     lines.append(f"a={direction}")
@@ -2854,6 +2927,8 @@ def _video_media_lines_many(
         fmtp = _serialized_video_fmtp(item)
         if fmtp:
             lines.append(f"a=fmtp:{payload_type} {fmtp}")
+        if item.encoding == "JPEG" and item.image_attributes is not None:
+            lines.append("a=" + serialize_imageattr(payload_type, item.image_attributes))
         if profile == "RTP/AVPF" or item.rtcp_feedback:
             feedback = item.rtcp_feedback or (
                 ("nack pli", "ccm fir") if item.encoding in {"H264", "VP8"} else ()

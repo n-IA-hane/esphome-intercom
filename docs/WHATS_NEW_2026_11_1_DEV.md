@@ -146,6 +146,12 @@ retains its hardware decoding path.
 The shared FULL video policy suspends MWW during video and restores listening
 according to the user's Wake Word setting when video ends.
 
+JPEG calls can negotiate image dimensions with standard SDP `imageattr`.
+Compatible browser senders fit the camera picture to the receiver's preferred
+size before compression, preserving proportions and reducing decoding work on
+the ESP. Peers without this optional attribute keep the existing video path.
+The maintained Spotpear display profile now advertises a 10 FPS budget.
+
 Renderer and screenshot workers expose `task_core`, `task_priority`,
 `task_stack_size`, `task_stack_in_psram` and `buffer_in_psram` for explicit
 execution and memory placement.

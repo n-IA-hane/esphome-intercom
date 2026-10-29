@@ -553,3 +553,119 @@ def test_video_recorder_gets_interrupt_to_finalize_container() -> None:
     asyncio.run(peer._stop_process(process, finalize_output=True))
 
     assert process.signals == [signal.SIGINT]
+
+
+def _jpeg_answer(imageattr=""):
+    # Deliberately independent of the tool offer builder and production serializer.
+    return ("v=0\r\no=- 99 1 IN IP4 127.0.0.1\r\ns=peer answer\r\n"
+            "c=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 40002 RTP/AVP 26\r\n"
+            "a=rtpmap:26 JPEG/90000\r\na=recvonly\r\n" + imageattr).encode()
+
+
+def test_jpeg_image_attributes_are_explicit_and_default_offer_is_legacy():
+    peer = _load_tool()
+    arguments = dict(local_ip="127.0.0.1", audio_port=40000, video_port=40002,
+                     codec="jpeg", direction="sendonly", video_profile="RTP/AVP")
+    legacy = peer._offer(**arguments)
+    offered = peer._offer(**arguments, imageattr=True)
+    assert b"imageattr" not in legacy
+    line = b"a=imageattr:26 send * recv *\r\n"
+    assert line in offered
+    assert offered.replace(line, b"") == legacy
+
+
+@pytest.mark.parametrize("native", [(640, 480), (480, 640)])
+def test_jpeg_missing_and_wildcard_answer_keep_native_fixture(native):
+    peer = _load_tool()
+    assert peer._jpeg_sender_plan(_jpeg_answer(), native, enabled=False) == (None, "disabled")
+    assert peer._jpeg_sender_plan(_jpeg_answer(), native, enabled=True) == (None, "absent")
+    wildcard = _jpeg_answer("a=imageattr:26 send * recv *\r\n")
+    assert peer._jpeg_sender_plan(wildcard, native, enabled=True) == (None, "wildcard")
+
+
+@pytest.mark.parametrize(("native", "content", "offset"), [
+    ((640, 480), (320, 240), (0, 0)),
+    ((480, 640), (180, 240), (70, 0)),
+])
+def test_jpeg_sender_uses_answer_limits_and_letterboxes_without_stretch(native, content, offset):
+    peer = _load_tool()
+    answer = _jpeg_answer("a=imageattr:26 recv [x=320,y=240]\r\n")
+    plan, status = peer._jpeg_sender_plan(answer, native, enabled=True)
+    assert status == "selected"
+    assert (plan.width, plan.height) == (320, 240)
+    assert (plan.content_width, plan.content_height) == content
+    assert (plan.offset_x, plan.offset_y) == offset
+    assert plan.content_width * native[1] == plan.content_height * native[0]
+
+
+def test_jpeg_unusable_answer_is_explicit_instead_of_inventing_a_size():
+    peer = _load_tool()
+    answer = _jpeg_answer("a=imageattr:26 recv [x=4096,y=4096]\r\n")
+    assert peer._jpeg_sender_plan(answer, (640, 480), enabled=True) == (None, "incompatible")
+
+
+def test_jpeg_packet_geometry_is_independent_of_negotiated_metadata():
+    peer = _load_tool()
+    # RFC 2435 main header: 40*8 by 30*8, independent of the plan helper.
+    packet = peer.rtp.RtpPacket(26, 1, 9000, 7, bytes([0, 0, 0, 0, 1, 80, 40, 30]))
+    receipt = {"codec": "jpeg", "video_selected_dimensions": [640, 480]}
+    peer._record_jpeg_wire_dimensions(packet, receipt, "tx")
+    assert receipt["video_tx_wire_dimensions"] == [320, 240]
+    assert receipt["video_selected_dimensions"] == [640, 480]
+
+
+def test_ffmpeg_peer_applies_shared_plan_with_padding(monkeypatch):
+    peer = _load_tool()
+    calls = []
+
+    async def create(*args, **kwargs):
+        calls.append(args)
+        return object()
+
+    monkeypatch.setattr(peer.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(peer.asyncio, "create_subprocess_exec", create)
+    plan, status = peer._jpeg_sender_plan(
+        _jpeg_answer("a=imageattr:26 recv [x=320,y=240]\r\n"), (480, 640), enabled=True
+    )
+    assert status == "selected"
+    asyncio.run(peer._start_video_sender(codec="jpeg", destination=("127.0.0.1", 40002),
+                duration=1, framerate=2, video_size=(480, 640), image_plan=plan))
+    command = calls[0]
+    assert "testsrc2=size=480x640:rate=2" in command
+    filter_value = command[command.index("-vf") + 1]
+    assert "scale=180:240:" in filter_value
+    assert "pad=320:240:70.0:0.0:color=black" in filter_value
+    assert filter_value.endswith("setsar=1")
+
+
+@pytest.mark.parametrize("value", ["0x240", "320x-1", "999999x240", "320x241", "320:240", "320x240,noise"])
+def test_video_size_rejects_unbounded_or_invalid_fixture(value):
+    peer = _load_tool()
+    with pytest.raises(peer.argparse.ArgumentTypeError):
+        peer._parse_video_size(value)
+
+
+def test_old_video_packets_cannot_hide_a_later_incompatible_geometry():
+    peer = _load_tool()
+    result = {"audio_tx_packets": 100, "audio_rx_packets": 100,
+              "video_tx_required": True, "video_tx_packets": 100,
+              "video_geometry_history": [{"imageattr_status": "selected"},
+                                         {"imageattr_status": "incompatible"}]}
+    with pytest.raises(RuntimeError, match="JPEG image attributes"):
+        peer._validate_media_flow(result)
+
+
+def test_legacy_ffmpeg_video_fixture_keeps_its_original_geometry(monkeypatch):
+    peer = _load_tool()
+    commands = []
+
+    async def create(*args, **kwargs):
+        commands.append(args)
+        return object()
+
+    monkeypatch.setattr(peer.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(peer.asyncio, "create_subprocess_exec", create)
+    asyncio.run(peer._start_video_sender(codec="jpeg", destination=("127.0.0.1", 40002),
+                                       duration=1, framerate=2))
+    assert "testsrc2=size=320x180:rate=2" in commands[0]
+    assert "-vf" not in commands[0]

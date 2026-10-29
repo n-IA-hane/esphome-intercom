@@ -195,17 +195,37 @@ self.onmessage = async (event) => {
     jpegBusy = true;
     let frameClosed = false;
     try {
-      const width = Math.max(
+      const sourceWidth = Math.max(
         1,
         Number(frame.displayWidth || frame.codedWidth || jpegCanvas.width),
       );
-      const height = Math.max(
+      const sourceHeight = Math.max(
         1,
         Number(frame.displayHeight || frame.codedHeight || jpegCanvas.height),
       );
+      const plan = message.imagePlan;
+      const width = plan ? Number(plan.width) : sourceWidth;
+      const height = plan ? Number(plan.height) : sourceHeight;
+      if (plan && (!Number.isInteger(width) || !Number.isInteger(height) ||
+          width < 8 || height < 8 || width % 8 || height % 8 ||
+          width > 1280 || height > 1280 || width * height > 1280 * 800 ||
+          !(plan.contentWidth > 0 && plan.contentWidth <= width &&
+            plan.contentHeight > 0 && plan.contentHeight <= height &&
+            plan.offsetX >= 0 && plan.offsetY >= 0 &&
+            plan.offsetX + plan.contentWidth <= width && plan.offsetY + plan.contentHeight <= height))) {
+        throw new Error("JPEG image preference produced invalid dimensions");
+      }
       if (jpegCanvas.width !== width) jpegCanvas.width = width;
       if (jpegCanvas.height !== height) jpegCanvas.height = height;
-      jpegContext.drawImage(frame, 0, 0, width, height);
+      if (plan) {
+        if (plan.contentWidth !== width || plan.contentHeight !== height) {
+          jpegContext.fillStyle = "#000000";
+          jpegContext.fillRect(0, 0, width, height);
+        }
+        jpegContext.drawImage(frame, plan.offsetX, plan.offsetY, plan.contentWidth, plan.contentHeight);
+      } else {
+        jpegContext.drawImage(frame, 0, 0, width, height);
+      }
       frame.close();
       frameClosed = true;
       const blob = await jpegCanvas.convertToBlob({

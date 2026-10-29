@@ -10,6 +10,7 @@ const {
   cameraCaptureContract,
   cameraEncoderContract,
   directionalVideoContract,
+  jpegImagePlan,
   emptyVideoStats,
 } = await import(
   `./voip-stack-video-model.js?v=${encodeURIComponent(VIDEO_MODULE_VERSION)}`
@@ -135,6 +136,9 @@ export class VoipStackVideo extends EventTarget {
       kind: "jpeg",
       encodeQueueSize: 0,
       worker,
+      imageAttributes: this._mediaContract("send").imageAttributes,
+      sourceGeometry: "",
+      imagePlan: null,
       close() {
         if (this.state === "closed") return;
         this.state = "closed";
@@ -272,6 +276,18 @@ export class VoipStackVideo extends EventTarget {
       this._jpegQueuedFrame = frame;
       return;
     }
+    const width = Number(frame.displayWidth || frame.codedWidth || 0);
+    const height = Number(frame.displayHeight || frame.codedHeight || 0);
+    const geometry = `${width}x${height}`;
+    if (encoder.sourceGeometry !== geometry) {
+      encoder.sourceGeometry = geometry;
+      encoder.imagePlan = jpegImagePlan(width, height, encoder.imageAttributes);
+    }
+    if (encoder.imageAttributes?.recv && !encoder.imageAttributes.recv.wildcard && !encoder.imagePlan) {
+      frame.close();
+      this._stats.dropped++;
+      return;
+    }
     this._jpegEncodePending = true;
     encoder.encodeQueueSize = 1;
     try {
@@ -280,6 +296,7 @@ export class VoipStackVideo extends EventTarget {
         generation,
         senderGeneration,
         timestamp: Number(frame.timestamp ?? performance.now() * 1000),
+        imagePlan: encoder.imagePlan,
         frame,
       }, [frame]);
     } catch (error) {

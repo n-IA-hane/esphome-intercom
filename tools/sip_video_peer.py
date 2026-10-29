@@ -16,6 +16,7 @@ import contextlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import shutil
@@ -231,6 +232,8 @@ for _rate in (16000, 24000, 32000, 48000):
 
 def _validate_media_flow(result: dict) -> None:
     """Required negotiated streams must actually carry media."""
+    if any(item.get("imageattr_status") == "incompatible" for item in result.get("video_geometry_history", [])):
+        raise RuntimeError("JPEG image attributes contain no compatible receive geometry")
     mode = result.get("peer_audio_mode", "full_duplex")
     required_audio = {
         "full_duplex": ("audio_tx_packets", "audio_rx_packets"),
@@ -303,6 +306,36 @@ def _reserve_video_ports(
     raise RuntimeError("could not reserve a video RTP/RTCP pair")
 
 
+def _parse_video_size(value: str) -> tuple[int, int]:
+    match = re.fullmatch(r"([1-9][0-9]{0,3})[xX]([1-9][0-9]{0,3})", value)
+    if match is None:
+        raise argparse.ArgumentTypeError("video size must be WIDTHxHEIGHT")
+    width, height = map(int, match.groups())
+    if not (2 <= width <= 8192 and 2 <= height <= 8192) or width % 2 or height % 2:
+        raise argparse.ArgumentTypeError("video dimensions must be even values between 2 and 8192")
+    return width, height
+
+
+def _video_source_dimensions(codec: str, configured=None) -> tuple[int, int]:
+    return tuple(configured) if configured is not None else _parse_video_size(str(VIDEO_PROFILES[codec]["size"]))
+
+
+def _jpeg_sender_plan(answer: bytes, native: tuple[int, int], *, enabled: bool):
+    """Use the production selector, keeping missing/wildcard attributes legacy."""
+    if not enabled:
+        return None, "disabled"
+    selected = next((item for item in sdp.offered_video_formats(answer)
+                     if item.encoding == "JPEG" and item.payload_type == 26), None)
+    attrs = selected.image_attributes if selected is not None else None
+    constraints = attrs.recv if attrs is not None else None
+    if constraints is None:
+        return None, "absent"
+    if constraints.wildcard:
+        return None, "wildcard"
+    plan = sdp.jpeg_image_plan(selected, *native)
+    return plan, "selected" if plan is not None else "incompatible"
+
+
 def _offer(
     *,
     local_ip: str,
@@ -313,6 +346,7 @@ def _offer(
     video_profile: str,
     audio_direction: str = "sendrecv",
     audio_codec: str = "pcma",
+    imageattr: bool = False,
 ) -> bytes:
     audio = AUDIO_PROFILES[audio_codec]
     audio_payload_type = int(audio["payload_type"])
@@ -339,6 +373,8 @@ def _offer(
             f"a=rtpmap:{payload_type} {profile['rtpmap']}",
         )
     )
+    if imageattr and codec == "jpeg":
+        lines.append(f"a=imageattr:{payload_type} send * recv *")
     if profile["fmtp"]:
         lines.append(f"a=fmtp:{payload_type} {profile['fmtp']}")
     if video_profile == "RTP/AVPF" and codec in {"h264", "h265", "vp8"}:
@@ -692,6 +728,15 @@ async def _receive_rtcp(
         )
 
 
+def _record_jpeg_wire_dimensions(packet, counters: dict, direction: str) -> None:
+    """Record actual RFC 2435 geometry independently of SDP/resize planning."""
+    if counters.get("codec") != "jpeg" or packet.payload_type != 26 or len(packet.payload) < 8:
+        return
+    width, height = packet.payload[6] * 8, packet.payload[7] * 8
+    if width and height:
+        counters[f"video_{direction}_wire_dimensions"] = [width, height]
+
+
 async def _relay_video(
     sock: socket.socket,
     destination: tuple[str, int],
@@ -723,6 +768,7 @@ async def _relay_video(
         # full tuple made legitimate browser video look like local FFmpeg
         # input and reflected it back to HA during loopback tests.
         if int(_addr[1]) == int(destination[1]):
+            _record_jpeg_wire_dimensions(packet, counters, "rx")
             counters["video_rx_packets"] += 1
             counters["video_rx_bytes"] += len(raw)
             counters["video_rx_last_sequence"] = packet.sequence
@@ -735,6 +781,7 @@ async def _relay_video(
             continue
         if not send_enabled:
             continue
+        _record_jpeg_wire_dimensions(packet, counters, "tx")
         counters["video_tx_packets"] += 1
         counters["video_tx_bytes"] += len(raw)
         counters["video_last_sequence"] = packet.sequence
@@ -787,11 +834,23 @@ async def _start_video_sender(
     duration: float,
     framerate: int,
     video_file: str = "",
+    video_size: tuple[int, int] | None = None,
+    image_plan=None,
 ):
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("FFmpeg is required for the video qualification peer")
     profile = VIDEO_PROFILES[codec]
+    native = _video_source_dimensions(codec, video_size)
+    filters = []
+    if image_plan is not None:
+        filters = ["-vf", (
+            f"scale={image_plan.content_width}:{image_plan.content_height}:flags=bilinear,"
+            f"pad={image_plan.width}:{image_plan.height}:{image_plan.offset_x}:{image_plan.offset_y}:color=black,"
+            "setsar=1"
+        )]
+    elif video_file and video_size is not None:
+        filters = ["-vf", f"scale={native[0]}:{native[1]}:flags=bilinear,setsar=1"]
     source = (
         ["-stream_loop", "-1", "-i", video_file]
         if video_file
@@ -799,7 +858,7 @@ async def _start_video_sender(
             "-f",
             "lavfi",
             "-i",
-            f"testsrc2=size={profile['size']}:rate={framerate}",
+            f"testsrc2=size={native[0]}x{native[1]}:rate={framerate}",
         ]
     )
     command = [
@@ -813,6 +872,7 @@ async def _start_video_sender(
         "-t",
         str(max(2.0, duration + 2.0)),
         "-an",
+        *filters,
         "-c:v",
         str(profile["encoder"]),
         *profile["args"],
@@ -943,6 +1003,7 @@ async def async_main(args: argparse.Namespace) -> int:
             direction=initial_video_direction,
             video_profile=args.video_profile,
             audio_codec=args.audio_codec,
+            imageattr=getattr(args, "imageattr", False),
         ),
     )
     result: dict = {
@@ -960,6 +1021,13 @@ async def async_main(args: argparse.Namespace) -> int:
         "audio_hold_after": args.audio_hold_after,
         "audio_hold_seconds": args.audio_hold_seconds,
         "video_profile": args.video_profile,
+        "video_imageattr_enabled": getattr(args, "imageattr", False),
+        "video_native_dimensions": (list(_video_source_dimensions(args.codec, getattr(args, "video_size", None)))
+                                    if args.codec != "audio" else None),
+        "video_selected_dimensions": None,
+        "video_tx_wire_dimensions": None,
+        "video_rx_wire_dimensions": None,
+        "video_geometry_history": [],
         "call_id": call_id,
         "local_sip": f"{local_ip}:{sip_port}",
         "local_audio_rtp": audio_port,
@@ -1225,6 +1293,7 @@ async def async_main(args: argparse.Namespace) -> int:
         async def _start_negotiated_video(
             parsed: dict | None,
             direction: str,
+            answer_body: bytes,
         ) -> None:
             nonlocal video_process, video_receiver_process, jpeg_recorder
             if parsed is None or video_socket is None or rtcp_socket is None:
@@ -1288,18 +1357,38 @@ async def async_main(args: argparse.Namespace) -> int:
                 )
             )
             if direction in {"sendonly", "sendrecv"}:
+                native = _video_source_dimensions(args.codec, getattr(args, "video_size", None))
+                plan, status = _jpeg_sender_plan(
+                    answer_body, native, enabled=args.codec == "jpeg" and getattr(args, "imageattr", False)
+                )
+                geometry = {
+                    "native": list(native),
+                    "selected": None if status == "incompatible" else ([plan.width, plan.height] if plan is not None else list(native)),
+                    "content": None if status == "incompatible" else ([plan.content_width, plan.content_height] if plan is not None else list(native)),
+                    "offset": None if status == "incompatible" else ([plan.offset_x, plan.offset_y] if plan is not None else [0, 0]),
+                    "imageattr_status": status,
+                }
+                result["video_geometry_history"].append(geometry)
+                result["video_selected_dimensions"] = geometry["selected"]
+                result["video_imageattr_status"] = status
+                if status == "incompatible":
+                    # Continue the audio witness; never transmit geometry outside
+                    # an understood receive contract. Final media validation fails.
+                    return
                 video_process = await _start_video_sender(
                     codec=args.codec,
                     destination=(local_ip, video_port),
                     duration=args.duration,
                     framerate=args.video_fps,
                     video_file=args.video_file,
+                    video_size=native if getattr(args, "video_size", None) is not None else None,
+                    image_plan=plan,
                 )
                 video_tasks.append(
                     asyncio.create_task(_drain_stderr(video_process, video_stderr))
                 )
 
-        await _start_negotiated_video(parsed_video, initial_video_direction)
+        await _start_negotiated_video(parsed_video, initial_video_direction, response.body)
 
         call_deadline = loop.time() + args.duration
         local_reinvite_cseq = ""
@@ -1349,6 +1438,7 @@ async def async_main(args: argparse.Namespace) -> int:
                     direction=args.direction if active else "inactive",
                     video_profile=args.video_profile,
                     audio_codec=args.audio_codec,
+                    imageattr=getattr(args, "imageattr", False),
                 ),
             )
             await loop.sock_sendto(sip_socket, request, (args.host, args.port))
@@ -1455,7 +1545,7 @@ async def async_main(args: argparse.Namespace) -> int:
             result[f"{prefix}_video_direction"] = selected.direction
             result[f"{prefix}_remote_video_rtp"] = int(parsed["media_port"])
             await _stop_negotiated_video()
-            await _start_negotiated_video(parsed, args.direction)
+            await _start_negotiated_video(parsed, args.direction, final_response.body)
             result["video_transitions"].append(
                 {
                     "name": prefix,
@@ -1933,6 +2023,10 @@ def main() -> int:
             "for PCM profiles and codec-native silence for Opus"
         ),
     )
+    parser.add_argument("--imageattr", action="store_true",
+                        help="offer RFC 6236 wildcard image attributes for JPEG and honor receive constraints")
+    parser.add_argument("--video-size", type=_parse_video_size, default=None,
+                        help="native video fixture dimensions WIDTHxHEIGHT before negotiated scaling")
     parser.add_argument("--video-file", default="")
     parser.add_argument("--video-fps", type=int, choices=range(1, 31), default=15)
     parser.add_argument(
@@ -1942,6 +2036,10 @@ def main() -> int:
     )
     parser.add_argument("--out", default="/tmp/sip_video_peer.json")
     args = parser.parse_args()
+    if args.imageattr and args.codec != "jpeg":
+        parser.error("--imageattr requires --codec jpeg")
+    if args.video_size is not None and args.codec == "audio":
+        parser.error("--video-size requires a video codec")
     if not 0.0 <= args.audio_gain <= 1.0:
         parser.error("--audio-gain must be between 0 and 1")
     transition_times = [

@@ -4,8 +4,9 @@ VoIP Stack can optionally turn the Home Assistant softphone card into a SIP
 video phone for standard SIP phones, softphones and door stations. SIP video
 is a supported `2026.8.0` capability. ESPHome profiles remain audio-only unless
 a video source or sink is configured. ESP32-S3 profiles with a supported native
-camera can transmit RTP/JPEG; rendering remote video on an S3 display is not
-implemented. Qualified ESP32-P4 profiles can transmit and receive RTP/JPEG or
+camera can transmit RTP/JPEG; the optional software JPEG renderer can display
+remote video through LVGL on an S3. Camera transmission and display reception
+are qualified separately for the available S3 boards. Qualified ESP32-P4 profiles can transmit and receive RTP/JPEG or
 H.264 video without changing the audio contract.
 
 Video is disabled by default and does not alter an audio-only installation.
@@ -35,6 +36,25 @@ dialog and browser audio remain active whenever audio negotiation succeeded.
    sending its own camera.
 4. During the call, turn either camera off to stop that direction. Turning your
    camera off does not prohibit receiving the other party's video.
+
+## JPEG image-size negotiation
+
+JPEG endpoints can use the standard RFC 6236 `imageattr` SDP attribute to
+request an image size suitable for their decoder and display. Home Assistant's
+default JPEG offer includes `a=imageattr:26 send * recv *`, allowing the peer to
+answer with its receive preferences. Sending and receiving keep independent
+image-size contracts, including after a video re-offer.
+
+The browser sender fits the camera picture into the selected receive bounds
+before JPEG compression. It preserves the picture's proportions and avoids
+upscaling. The JPEG canvas uses dimensions divisible by eight, adding minimal
+black padding when necessary. For example, a 640x360 picture can become 320x180
+content inside a 320x184 JPEG. The existing worker performs the resize; the ESP
+retains its bounded decoder buffers.
+
+No extra YAML setting is needed for this negotiation. Peers that omit the
+attribute retain the existing behavior, while unsupported optional preferences
+leave the audio call available. Frame rate remains a separate SDP setting.
 
 For a door station, the common goal is two-way audio with video only from the
 station. Use the [Dahua guide](DAHUA.md) for its explicit compatibility settings.
