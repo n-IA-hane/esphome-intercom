@@ -3,6 +3,7 @@
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
 #include "esphome/components/media_player/media_player.h"
+#include "esphome/components/switch/switch.h"
 #include "lvgl_pointer_probe.h"
 #include <string_view>
 
@@ -31,6 +32,27 @@ class UiPhone {
   bool is_ringing() const { return this->ringing; }
   bool is_calling() const { return this->calling; }
   bool is_in_call() const { return this->in_call; }
+  void set_conference_ring_switch(switch_::Switch *setting) { this->conference_ring_switch_ = setting; }
+  switch_::Switch *get_conference_ring_switch() const { return this->conference_ring_switch_; }
+  bool get_conference_ring() const {
+    return this->conference_ring_switch_ != nullptr ? this->conference_ring_switch_->state : this->conference_ring_;
+  }
+  void set_conference_ring(bool value) {
+    if (this->conference_ring_switch_ != nullptr) {
+      if (value) this->conference_ring_switch_->turn_on();
+      else this->conference_ring_switch_->turn_off();
+    } else this->conference_ring_ = value;
+  }
+ protected:
+  switch_::Switch *conference_ring_switch_{nullptr};
+  bool conference_ring_{false};
+};
+
+// The UI consumes renderer readiness, not decoder or RTP internals.
+class UiVideo {
+ public:
+  bool remote_frame{false};
+  bool has_remote_frame() const { return this->remote_frame; }
 };
 
 class UiRuntime {

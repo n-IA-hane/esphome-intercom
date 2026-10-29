@@ -30,6 +30,7 @@ font:
   size: 22
   glyphsets:
   - GF_Latin_Core
+  extras: ${ _p4_voicemail_font_extra if _fw_voip else [] }
 - file:
     type: gfonts
     family: Noto Sans
@@ -278,7 +279,7 @@ lvgl:
   log_level: WARN
   rotation: 180
   top_layer:
-    widgets: ${ (_p4_widgets_2 if _fw_timers else []) }
+    widgets: ${ (_p4_widgets_2 if _fw_timers else []) + (_p4_voicemail_widgets if _fw_voip else []) }
   pages: ${ _p4_widgets_4 + _p4_widgets_8 + _p4_widgets_12 + (_p4_widgets_16 if _fw_timers else []) + _p4_widgets_111
     + _p4_widgets_144 }
 globals:
@@ -396,12 +397,14 @@ touchscreen:
       level: 100%
   - script.execute: backlight_timer
 packages:
+  voicemail: !include ${ '../p4_voicemail.yaml' if _fw_voip else '../../shared/absent.yaml' }
   visibility: !include
     file: ../visibility.yaml
     vars:
       _visibility_has_avatar: true
       _visibility_has_pagination: false
       _visibility_idle_widget_id: idle_animation
+      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if _fw_voip else '' }
   phase: !include '../phase.yaml'
   cleanup: !include '../../../lvgl/p4_va_cleanup.yaml'
   ppa: !include '../../../lvgl/p4_ppa.yaml'
@@ -1109,7 +1112,7 @@ defaults:
     - label:
         id: weather_clock_label
         align: TOP_RIGHT
-        x: -30
+        x: ${ -74 if _fw_voip else -30 }
         y: 12
         text: ''
         text_color: 8947848

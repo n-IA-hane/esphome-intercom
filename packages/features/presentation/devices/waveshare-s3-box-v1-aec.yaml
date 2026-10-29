@@ -61,6 +61,7 @@ font:
     - 󰢾
     - 󰟐
     - 󱗐
+    - ${ "\U000F057D" if _fw_voip else "" }
 - file: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
   id: call_icons
   size: 42
@@ -537,11 +538,15 @@ script:
             else if (wifi < 80) ret += "\U000F08BD";
             else ret += "\U000F08BE";
             ret += api::global_api_server->is_connected() ? "\U000F07D0" : "\U000F15D0";
+            ${ _voicemail_status_text | default('') }
             return ret;
       else:
       - lvgl.label.update:
           id: top_battery_label
-          text: ''
+          text: !lambda |-
+            std::string ret;
+            ${ _voicemail_status_text | default('') }
+            return ret;
 - id: backlight_timer
   mode: restart
   then:
@@ -1934,6 +1939,10 @@ defaults:
   _v1_render_4:
   - script.execute: draw_display
 packages:
+  voicemail: !include
+    file: ${ '../voicemail.yaml' if _fw_voip else '../../shared/absent.yaml' }
+    vars:
+      voicemail_changed_code: id(update_idle_labels).execute();
   visibility: !include
     file: ../visibility.yaml
     vars:

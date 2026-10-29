@@ -6,6 +6,8 @@ import shutil
 
 import pytest
 
+pytestmark = [pytest.mark.js_runtime, pytest.mark.browser_real]
+
 web = pytest.importorskip("aiohttp.web")
 ROOT = Path(__file__).resolve().parents[1]
 FRONT = ROOT / "custom_components/voip_stack/frontend"
@@ -70,6 +72,7 @@ return results;
         await runner.cleanup()
 
 
+@pytest.mark.skipif(shutil.which("chromium") is None, reason="Chromium is unavailable")
 def test_real_browser_jpeg_sizes_orientation_and_padding(tmp_path):
     result = asyncio.run(exercise())
     (tmp_path / "result.json").write_text(json.dumps(result, indent=2))

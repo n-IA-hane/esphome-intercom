@@ -267,6 +267,11 @@ async def async_setup_mailboxes(hass, entry):
 
     entry.async_on_unload(hass.bus.async_listen(EVENT_VOICEMAIL_CHANGED, changed))
     entry.async_on_unload(hass.bus.async_listen(EVENT_DEVICE_REGISTRY_UPDATED, device_removed))
+    from .esphome_mailbox import EspHomeMailboxBridge
+
+    runtime.esphome_mailbox = EspHomeMailboxBridge(hass)
+    runtime.esphome_mailbox.start()
+    entry.async_on_unload(runtime.esphome_mailbox.unsubscribe)
     await async_refresh_mailbox_state(hass)
 
 
@@ -314,3 +319,5 @@ async def async_refresh_mailbox_state(hass):
         if endpoint.kind.is_softphone:
             _ha_softphone_store(hass, endpoint.endpoint_id)["voicemail"] = mailbox_snapshot(hass, endpoint.endpoint_id)
             _publish_ha_softphone_state(hass, endpoint_id=endpoint.endpoint_id)
+    if runtime.esphome_mailbox is not None:
+        await runtime.esphome_mailbox.async_push()

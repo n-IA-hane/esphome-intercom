@@ -110,6 +110,7 @@ ha_tests=(
   tests/test_parking_lot_ha.py
   tests/test_call_recording_ha.py
   tests/test_esphome_origination_ha.py
+  tests/test_esphome_mailbox_ha.py
   tests/test_sip_phone_policy_ha.py
   tests/test_call_pickup_ha.py
   tests/test_group_pickup_regressions_ha.py
@@ -140,6 +141,7 @@ ha_tests=(
   tests/test_trunk_inbound_router_behavior.py
   tests/test_softphone_video_intent.py
   tests/test_video_keepalive_runtime.py
+  tests/test_imageattr_ws.py
   tests/test_video_transcoder.py
 )
 ha_ignores=()
@@ -182,6 +184,7 @@ PY
     pytest_args=(
       tests/test_frontend_card_browser_layout.py
       tests/test_frontend_video_browser.py
+      tests/test_imageattr_browser.py
       tests/test_browser_audio_startup.py
       tests/test_frontend_media_devices_runtime.py
       tests/test_dashboard_card_runtime.py

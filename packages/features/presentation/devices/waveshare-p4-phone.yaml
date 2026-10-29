@@ -1,6 +1,14 @@
 # P4 telephone screen and optional video surface; frame-arrival gates remain unchanged.
 packages:
-  visibility: !include '../visibility.yaml'
+  voicemail: !include
+    file: ../p4_voicemail.yaml
+    vars:
+      _p4_voicemail_font_id: videophone_small_font
+      _p4_voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(videophone_page)->obj
+  visibility: !include
+    file: ../visibility.yaml
+    vars:
+      _visibility_extra_code: id(update_voicemail_status).execute();
   call_media_route: ${ _p4_phone_route if _p4_phone_has_video else {} }
 font:
 - file:
@@ -27,6 +35,7 @@ font:
   size: 22
   glyphsets:
   - GF_Latin_Core
+  extras: ${ _p4_voicemail_font_extra }
 globals:
 - id: videophone_peer
   type: std::string
@@ -50,6 +59,8 @@ lvgl:
   byte_order: little_endian
   log_level: WARN
   rotation: 270
+  top_layer:
+    widgets: ${ _p4_voicemail_widgets }
   on_boot: ${ _p4_phone_video_boot if _p4_phone_has_video else [] }
   pages: ${ _p4_phone_pages + (_p4_phone_video_pages if _p4_phone_has_video else []) }
 wifi:

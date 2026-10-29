@@ -118,7 +118,7 @@ def test_settings_match_compiled_capabilities(scene, variant):
     owners = {
         "ui_auto_answer_sw": (has_voip, "auto_answer_switch"),
         "ui_dnd_sw": (has_voip, "dnd_switch"),
-        "ui_conference_ring_sw": (has_voip, "voip_conference_ring"),
+        "ui_conference_ring_sw": (has_voip, "phone"),
         "ui_playback_vol_slider": (has_player, "speaker_media_player"),
         "ui_wake_word_sw": (has_wake, "wake_word_switch"),
         "ui_ns_sw": (mono_afe, "ns_switch"),

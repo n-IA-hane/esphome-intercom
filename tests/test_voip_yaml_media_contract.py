@@ -235,8 +235,9 @@ def test_spotpear_layout_and_aec_sync_use_runtime_contracts() -> None:
     actions = config['lvgl']['on_boot']
     if isinstance(actions, dict):
         actions = actions['then']
-    assert action_id(actions[0], 'script.execute') == 'compute_layout_metrics'
-    assert action_id(actions[1], 'script.execute') == 'reposition_widgets'
+    layout_actions = [action_id(action, 'script.execute') for action in actions
+                      if action_id(action, 'script.execute') in {'compute_layout_metrics', 'reposition_widgets'}]
+    assert layout_actions == ['compute_layout_metrics', 'reposition_widgets']
     options = by_id(config['lvgl']['pages'], 'ui_aec_mode_dd')['options']
     assert options == ['sr_low_cost', 'sr_high_perf']
     assert options == by_id(config['select'], 'aec_mode_select')['options']

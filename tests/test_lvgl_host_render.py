@@ -12,7 +12,7 @@ from PIL import Image
 import pytest
 
 from tests.test_lvgl_settings_composition import expanded_scene
-from tools.render_lvgl import find_id, yaml_input
+from tools.render_lvgl import find_id, yaml_input, make_status_config, nodes, strings
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,12 +42,13 @@ def test_production_page_runs_real_lvgl_owner_sync_and_snapshot(tmp_path, scene,
     source.write_text(yaml_util.dump(document))
     (tmp_path / "secrets.yaml").write_text("wifi_ssid: fixture-network\nwifi_password: fixture-password\n")
     output = tmp_path / "render"
-    command = [sys.executable, str(ROOT / "tools/render_lvgl.py"), "--input", str(source),
+    build_parent = (Path(os.environ["LVGL_HOST_BUILD_ROOT"]) / str(size)
+                    if "LVGL_HOST_BUILD_ROOT" in os.environ else tmp_path / "host-cache")
+    command = [sys.executable, str(ROOT / "tools/render_lvgl.py"), "--input", os.path.relpath(source, ROOT),
                "--page", "settings_continuous_page", "--width", str(size), "--height", str(size),
-               "--output", str(output), "--build-parent",
-               str(Path(os.environ["LVGL_HOST_BUILD_ROOT"]) / str(size))
-               if "LVGL_HOST_BUILD_ROOT" in os.environ else str(tmp_path / "host-cache"), "--round", "--pointer"]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=480)
+               "--output", os.path.relpath(output, ROOT), "--build-parent",
+               os.path.relpath(build_parent, ROOT), "--round", "--pointer"]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=480, cwd=ROOT)
     diagnostics = "\n".join(path.read_text(errors="replace")[-5000:]
                             for path in (output / "compile.log", output / "run.log") if path.exists())
     assert result.returncode == 0, result.stdout + result.stderr + diagnostics
@@ -73,3 +74,31 @@ def test_production_page_runs_real_lvgl_owner_sync_and_snapshot(tmp_path, scene,
         with Image.open(output / (position + ".png")) as image:
             assert image.size == (size, size)
             assert len(image.getcolors(size * size) or []) > 8
+
+
+@pytest.mark.parametrize("scene,page,width,height", [
+    ("box360-aec", "idle_page", 360, 360),
+    ("p4-portrait", "main_page", 800, 1280),
+])
+def test_status_snapshot_copies_production_widgets_fonts_and_header_context(tmp_path, scene, page, width, height):
+    document = expanded_scene(scene, "full")
+    native = document["lvgl"]
+    host, page_hash = make_status_config(document, page, width, height, tmp_path)
+    assert page_hash
+    assert host["display"][0]["dimensions"] == {"width": width, "height": height}
+    names = {"top_clock_label", "top_battery_label", "top_voicemail_label"}
+    expected = [widget for widget in native["top_layer"]["widgets"]
+                if any(str(node.get("id", "")) in names for node in nodes(widget))]
+    assert host["lvgl"]["top_layer"]["widgets"] == yaml_input(expected)
+    fonts = {str(font["id"]): font for font in document["font"]}
+    for font in host["font"]:
+        assert font == fonts[str(font["id"])]
+    captures = [node["snapshot.take"]["filename"] for node in nodes(host) if "snapshot.take" in node]
+    assert captures == ["off", "on"]
+    assert "api" not in host and "wifi" not in host
+    assert "voip_stack" not in host
+    if scene.startswith("p4"):
+        assert "weather_clock_label" in set(strings(host["lvgl"]["pages"]))
+        assert "weather_date_label" in set(strings(host["lvgl"]["pages"]))
+        label = next(node["label"] for node in nodes(host["lvgl"]["pages"]) if str(node.get("label", {}).get("id")) == "weather_clock_label")
+        assert int(label["x"]) == -74

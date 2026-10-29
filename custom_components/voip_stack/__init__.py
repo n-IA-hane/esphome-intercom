@@ -76,6 +76,7 @@ from .phone_config import (
 from .endpoint_device import async_ensure_endpoint_device
 from .route_decisions import set_pending_route_decision as _set_pending_route_decision
 from .runtime_data import (
+    require_runtime_data,
     VoipStackConfigEntry,
     VoipStackRuntime,
     registration_data,
@@ -803,6 +804,10 @@ async def _async_stop_runtime(hass: HomeAssistant) -> None:
     """Release media owners before closing the PBX runtime."""
     from .websocket_api import _async_shutdown_all
 
+    runtime = require_runtime_data(hass)
+    if runtime.esphome_mailbox is not None:
+        await runtime.esphome_mailbox.async_close()
+        runtime.esphome_mailbox = None
     await _async_shutdown_all(hass)
     await _async_stop_sip_endpoint(hass)
 

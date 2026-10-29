@@ -1,0 +1,35 @@
+# The existing header font and visibility observer own this small status badge.
+packages:
+  state: !include
+    file: voicemail.yaml
+    vars:
+      voicemail_changed_code: id(update_voicemail_status).execute();
+script:
+- id: update_voicemail_status
+  then:
+  - lambda: |-
+      const bool show = id(ui_voicemail_waiting) && (${_p4_voicemail_visible_code});
+      const bool hidden = lv_obj_has_flag(id(top_voicemail_label), LV_OBJ_FLAG_HIDDEN);
+      if (show && hidden) lv_obj_clear_flag(id(top_voicemail_label), LV_OBJ_FLAG_HIDDEN);
+      else if (!show && !hidden) lv_obj_add_flag(id(top_voicemail_label), LV_OBJ_FLAG_HIDDEN);
+defaults:
+  _p4_voicemail_font_id: font_body
+  _p4_voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(main_page)->obj
+  _p4_voicemail_widgets:
+  - label:
+      id: top_voicemail_label
+      align: TOP_RIGHT
+      x: -24
+      y: 18
+      text: "\U000F057D"
+      text_font: ${_p4_voicemail_font_id}
+      text_color: 16762967
+      hidden: true
+  _p4_voicemail_font_extra:
+  - file: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
+    glyphs:
+    - "\U000F057D"
+
+substitutions:
+  _p4_voicemail_widgets: ${_p4_voicemail_widgets}
+  _p4_voicemail_font_extra: ${_p4_voicemail_font_extra}

@@ -1,0 +1,26 @@
+# Loaded only by a presentation that actually owns avatar/pagination work.
+defaults:
+  _visibility_avatar_body: |-
+    if (id(display_visibility).is_visible(id(${_visibility_idle_widget_id})) &&
+        id(current_mode) == 0 && !id(init_in_progress) &&
+        id(voice_assistant_phase) == ${voice_assist_idle_phase_id}) {
+      if (!id(ai_animation_loop).is_running()) id(ai_animation_loop).execute();
+    } else {
+      id(ai_animation_loop).stop();
+      lv_animimg_delete(id(${_visibility_idle_widget_id}));
+    }
+
+  _visibility_pager_body: |-
+    if (id(display_visibility).is_visible(id(reply_line_0)) &&
+        id(current_mode) == 0 && id(reply_total_pages) > 1 &&
+        id(voice_assistant_phase) == ${voice_assist_replying_phase_id}) {
+      if (!id(reply_pagination_timer).is_running()) {
+        id(update_replying_text).execute();
+        id(reply_pagination_timer).execute();
+      }
+    } else {
+      id(reply_pagination_timer).stop();
+    }
+substitutions:
+  _visibility_avatar_body: ${_visibility_avatar_body}
+  _visibility_pager_body: ${_visibility_pager_body}

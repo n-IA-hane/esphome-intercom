@@ -294,6 +294,11 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
     required -= set(fonts) | set(LV_FONTS) | {"settings_active", "main_page", "settings_close"}
     required -= set(context_pages)
     required -= {str(item["id"]) for item in host["globals"]}
+    # Bind the native setting through its optional entity when the real profile
+    # has one; PBX-only profiles retain the same authoritative phone interface.
+    if pointer and "phone" in required and find_id(config, "switch", "voip_conference_ring"):
+        required.add("voip_conference_ring")
+        host["ui_fixture"]["conference_ring_id"] = "voip_conference_ring"
     for owner in sorted(required):
         if find_id(config, "number", owner):
             slider = next((node for node in nodes(page) if node.get("min_value") is not None
@@ -346,6 +351,8 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
             host["ui_fixture"]["phone_id"] = owner
         elif pointer and owner == "runtime":
             host["ui_fixture"]["runtime_id"] = owner
+        elif pointer and (find_id(config, "esp_video_renderer", owner) or find_id(config, "p4_video_renderer", owner)):
+            host["ui_fixture"]["video_id"] = owner
         else:
             raise ValueError(f"No host data owner for {owner!r}; refusing to remove production callbacks")
     if not pointer:
@@ -589,6 +596,111 @@ def make_host_config(config, page_id, width, height, build_parent, pointer=False
     return host, page_hash
 
 
+def _header_widgets(value, names):
+    """Retain production header leaves and their exact container geometry."""
+    if isinstance(value, list):
+        return [projected for item in value if (projected := _header_widgets(item, names)) is not None]
+    if not isinstance(value, dict):
+        return None
+    if str(value.get("id", "")) in names:
+        return copy.deepcopy(value)
+    projected = copy.deepcopy(value)
+    retained = False
+    for key, item in value.items():
+        if isinstance(item, (dict, list)):
+            child = _header_widgets(item, names)
+            if child:
+                projected[key] = child
+                retained = True
+            elif key in ("widgets", "tiles") or key.startswith("on_"):
+                projected.pop(key, None)
+    if not retained:
+        return None
+    return {key: item for key, item in projected.items() if not key.startswith("on_")}
+
+
+def make_status_config(config, page_id, width, height, build_parent):
+    """Partial pixel proof: exact status widgets/fonts, with fixture input data."""
+    lvgl = config["lvgl"][0] if isinstance(config["lvgl"], list) else config["lvgl"]
+    original = next(page for page in lvgl["pages"] if str(page["id"]) == page_id)
+    page_hash = hashlib.sha256(yaml_util.dump(original).encode()).hexdigest()
+    header_names = {"weather_clock_label", "weather_date_label"}
+    headers = _header_widgets(original.get("widgets", []), header_names) or []
+    # A dynamic P4 landscape card needs its layout owner. Avoid projecting its
+    # initial one-pixel placeholder as if it were the running device geometry.
+    if any(item.get("width") == 1 or item.get("height") == 1 for item in nodes(headers)):
+        headers = []
+    status_names = {"top_clock_label", "top_battery_label", "top_voicemail_label"}
+    top = [copy.deepcopy(widget) for widget in lvgl.get("top_layer", {}).get("widgets", [])
+           if any(str(node.get("id", "")) in status_names for node in nodes(widget))]
+    if not top:
+        raise ValueError("Production status widgets missing")
+    page = {"id": page_id, "bg_color": original.get("bg_color", 0), "widgets": yaml_input(headers)}
+    host = {
+        "esphome": {"name": f"lvgl-status-{width}-{height}", "build_path": str(build_parent / "build"),
+                    "compile_process_limit": 2, "includes": [str(ROOT / "tests/fixtures/lvgl_host/status_inputs.h")]},
+        "host": {}, "logger": {"level": "INFO"},
+        "globals": [{"id": "ui_voicemail_waiting", "type": "bool", "initial_value": "false"}],
+        "display": [{"platform": "snapshot", "id": "render_display",
+                     "dimensions": {"width": width, "height": height}, "auto_clear_enabled": False}],
+        "lvgl": {"id": "render_lvgl", "displays": ["render_display"], "pages": [page],
+                 "top_layer": {"widgets": yaml_input(top)}, "color_depth": 16},
+        "script": [],
+    }
+    ids = widget_ids([page], {"widgets": top})
+    boot = [{"lvgl.page.show": page_id}]
+    for name, value in (("top_clock_label", "12:34"), ("weather_clock_label", "12:34"),
+                        ("weather_date_label", "Thursday 29 October")):
+        if name in ids:
+            boot.append({"lvgl.label.update": {"id": name, "text": value}})
+    if "top_battery_label" in ids:
+        owner = find_id(config, "script", "update_idle_labels")
+        def updates_status(node):
+            action = node.get("lvgl.label.update")
+            if not isinstance(action, dict):
+                return False
+            targets = action.get("id", [])
+            if not isinstance(targets, list):
+                targets = [targets]
+            return any(str(target.get("id", "") if isinstance(target, dict) else target) == "top_battery_label"
+                       for target in targets)
+        formatter = next(copy.deepcopy(node) for node in nodes(owner) if updates_status(node))
+        for name in references(formatter)-ids-{"ui_voicemail_waiting"}:
+            if find_id(config, "sensor", name):
+                host.setdefault("sensor", []).append({"platform": "template", "id": name, "update_interval": "never"})
+                boot.append({"sensor.template.publish": {"id": name, "state": 100.0}})
+            elif find_id(config, "binary_sensor", name):
+                host.setdefault("binary_sensor", []).append({"platform": "template", "id": name})
+                boot.append({"binary_sensor.template.publish": {"id": name, "state": True}})
+            else:
+                raise ValueError(f"Unknown production status input {name}")
+        host["script"].append({"id": "status_snapshot_refresh", "then": [formatter]})
+        refresh = "status_snapshot_refresh"
+    else:
+        owner = copy.deepcopy(find_id(config, "script", "update_voicemail_status"))
+        if owner is None:
+            raise ValueError("Production voicemail visibility owner missing")
+        host["script"].append(owner)
+        refresh = "update_voicemail_status"
+    for state in ("off", "on"):
+        boot.extend([
+            {"globals.set": {"id": "ui_voicemail_waiting", "value": "true" if state == "on" else "false"}},
+            {"script.execute": refresh},
+            {"lambda": Lambda("lv_obj_update_layout(id(" + page_id + ")->obj); lv_refr_now(nullptr);")},
+            {"snapshot.take": {"id": "render_display", "filename": state}},
+        ])
+    bounds = []
+    for name in sorted(ids & (status_names | header_names)):
+        bounds.append('lv_area_t area_' + name + '; lv_obj_get_coords(id(' + name + '), &area_' + name + '); ' +
+                      'printf("UI_STATUS_BOUNDS ' + name + ' %d %d %d %d\\n",int(area_' + name + '.x1),int(area_' + name + '.y1),int(area_' + name + '.x2),int(area_' + name + '.y2));')
+    boot.append({"lambda": Lambda("\n".join(bounds) + "\n::exit(0);")})
+    host["esphome"]["on_boot"] = [{"priority": -300, "then": boot}]
+    fonts = {str(font["id"]): font for font in config["font"]}
+    used = set(strings(host["lvgl"])) & set(fonts)
+    host["font"] = [copy.deepcopy(fonts[name]) for name in sorted(used)]
+    return host, page_hash
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, type=Path)
@@ -600,16 +712,27 @@ def main():
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--round", action="store_true", help="Also show the physical circular viewport, retaining raw captures")
     parser.add_argument("--pointer", action="store_true", help="Exercise the real production dialer with a host LVGL pointer")
+    parser.add_argument("--status-only", action="store_true", help="Render exact production status overlays off/on, without the full page or input qualification")
     args = parser.parse_args()
+    args.input = args.input.resolve()
+    args.output = args.output.resolve()
+    args.build_parent = args.build_parent.resolve()
+    if args.status_only and args.pointer:
+        parser.error("--status-only and --pointer qualify different scopes")
+    capture_names = ("off", "on") if args.status_only else ("top", "mid", "end")
     args.output.mkdir(parents=True, exist_ok=True)
     args.build_parent.mkdir(parents=True, exist_ok=True)
     production = yaml_util.load_yaml(args.input)
-    config, page_hash = make_host_config(production, args.page, args.width, args.height, args.build_parent, args.pointer)
+    config, page_hash = (make_status_config(production, args.page, args.width, args.height, args.build_parent)
+                         if args.status_only else make_host_config(production, args.page, args.width, args.height, args.build_parent, args.pointer))
     path = args.build_parent / "host.yaml"
     path.write_text(yaml_util.dump(config))
     shutil.copyfile(path, args.output / "host.yaml")
     result = {"production_page_sha256": page_hash, "source": str(args.input),
               "width": args.width, "height": args.height, "scope": "Production page pixels with host data owners; no hardware or audio qualification."}
+    if args.status_only:
+        result["scope"] = "Status-overlay-only native LVGL pixels: production widgets/fonts/positions and adjacent static header containers; fixture battery/network/clock/MWI input. Avatar, media, other page content, gestures and hardware are outside this proof."
+        result["states"] = {"off": False, "on": True}
     policy = overlay_policy(production)
     result["production_overlay_policy_sha256"] = hashlib.sha256(policy.encode()).hexdigest() if policy else None
     result["status"] = "prepared"
@@ -633,7 +756,7 @@ def main():
             raise RuntimeError(f"Host compilation failed; see {args.output / 'compile.log'}")
         executable = args.build_parent / "build/.pioenvs" / config["esphome"]["name"] / "program"
         captures = args.build_parent / ".esphome/snapshots" / config["esphome"]["name"]
-        for position in ("top", "mid", "end"):
+        for position in capture_names:
             stale = captures / (position + ".bmp")
             if stale.exists():
                 archive = args.output / "previous-incomplete-snapshots"
@@ -648,7 +771,7 @@ def main():
         from PIL import Image, ImageDraw
 
         result["snapshots"] = []
-        for position in ("top", "mid", "end"):
+        for position in capture_names:
             source = captures / (position + ".bmp")
             if not source.is_file():
                 raise RuntimeError(f"Snapshot missing: {source}")

@@ -315,6 +315,10 @@ packages:
     vars:
       _visibility_has_avatar: true
       _visibility_has_pagination: true
+  voicemail: !include
+    file: ${ 'voicemail.yaml' if _round_has_phone else '../shared/absent.yaml' }
+    vars:
+      voicemail_changed_code: id(update_idle_labels).execute();
   phase: !include 'phase.yaml'
   navigation: !include '../../lvgl/lvgl_settings_navigation.yaml'
   settings: !include 'settings/main.yaml'
