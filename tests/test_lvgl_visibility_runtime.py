@@ -16,7 +16,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests/fixtures/lvgl_visibility"
 LVGL_COMPONENT_SHA = "184e532558c1c45fefed631f3e235423d22582aafb4630f3e8885c35281a49ae"
-CASES = ("matrix", "hidden", "script_only", "bootstrap", "transition", "top", "generic", "owner_paused")
+CASES = ("matrix", "hidden", "script_only", "bootstrap", "transition", "top", "generic", "owner_paused",
+         "unrelated_events")
 pytestmark = [pytest.mark.diagnostic_reference, pytest.mark.integration, pytest.mark.timeout(180)]
 
 

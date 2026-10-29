@@ -14,20 +14,22 @@ class VisibilityPolicy {
     this->callback_ = callback;
     this->context_ = context;
   }
+  void reserve_roots(size_t count) { this->roots_.reserve(count); }
   void add_root(lv_obj_t *root) {
     if (root == nullptr || std::find(this->roots_.begin(), this->roots_.end(), root) != this->roots_.end()) return;
     this->roots_.push_back(root);
-    this->collect_(root);
-    lv_obj_add_event_cb(root, screen_event_, LV_EVENT_SCREEN_UNLOAD_START, this);
-    lv_obj_add_event_cb(root, screen_event_, LV_EVENT_SCREEN_LOAD_START, this);
-    lv_obj_add_event_cb(root, screen_event_, LV_EVENT_SCREEN_LOADED, this);
-    lv_obj_add_event_cb(root, screen_event_, LV_EVENT_DELETE, this);
+    if (this->display_ != nullptr) this->bind_(root);
   }
   void attach(lv_display_t *display) {
-    this->display_ = display;
     this->add_root(lv_display_get_layer_top(display));
     this->add_root(lv_display_get_layer_sys(display));
     this->add_root(lv_display_get_layer_bottom(display));
+    size_t labels = 0, images = 0;
+    for (auto *root : this->roots_) this->count_(root, labels, images);
+    this->labels_.reserve(labels);
+    this->images_.reserve(images);
+    this->display_ = display;
+    for (auto *root : this->roots_) this->bind_(root);
     // Initial visibility must include computed geometry, including script-only
     // containers that have no native animation to trigger a later update.
     for (auto *root : this->roots_) lv_obj_update_layout(root);
@@ -93,6 +95,21 @@ class VisibilityPolicy {
  protected:
   struct Label { lv_obj_t *object; lv_label_long_mode_t mode; };
   struct Image { lv_obj_t *object; bool paused{false}; };
+  void bind_(lv_obj_t *root) {
+    this->collect_(root);
+    lv_obj_add_event_cb(root, screen_event_, LV_EVENT_ALL, this);
+  }
+  static void count_(lv_obj_t *object, size_t &labels, size_t &images) {
+    if (lv_obj_check_type(object, &lv_label_class)) {
+      const auto mode = lv_label_get_long_mode(object);
+      if (mode == LV_LABEL_LONG_MODE_SCROLL || mode == LV_LABEL_LONG_MODE_SCROLL_CIRCULAR) ++labels;
+    }
+#if LV_USE_ANIMIMG
+    if (lv_obj_check_type(object, &lv_animimg_class)) ++images;
+#endif
+    for (uint32_t i = 0; i < lv_obj_get_child_count(object); ++i)
+      count_(lv_obj_get_child(object, i), labels, images);
+  }
   void collect_(lv_obj_t *object) {
     if (lv_obj_check_type(object, &lv_label_class)) {
       const auto mode = lv_label_get_long_mode(object);
@@ -111,9 +128,13 @@ class VisibilityPolicy {
     self->notify_();
   }
   static void screen_event_(lv_event_t *event) {
+    const auto code = lv_event_get_code(event);
+    // ALL saves three descriptors per screen. Draw/layout events must never
+    // trigger reconciliation from inside LVGL's rendering or invalidation.
+    if (code != LV_EVENT_DELETE && code != LV_EVENT_SCREEN_UNLOAD_START &&
+        code != LV_EVENT_SCREEN_LOAD_START && code != LV_EVENT_SCREEN_LOADED) return;
     auto *self = static_cast<VisibilityPolicy *>(lv_event_get_user_data(event));
     auto *screen = lv_event_get_target_obj(event);
-    const auto code = lv_event_get_code(event);
     if (code == LV_EVENT_DELETE) {
       if (self->loading_ == screen) self->loading_ = nullptr;
       if (self->unloading_ == screen) self->unloading_ = nullptr;

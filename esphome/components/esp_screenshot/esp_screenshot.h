@@ -80,7 +80,7 @@ protected:
   unsigned width_{0}, height_{0};
   uint8_t *pixels_{nullptr}, *coverage_{nullptr}, *jpeg_[2]{};
   size_t pixel_size_{0}, jpeg_capacity_{256 * 1024}, jpeg_size_[2]{};
-  char capture_id_[2][32]{};
+  char capture_id_[2][18]{};  // Two uint32 hex words, separator and terminator.
   uint32_t boot_id_{0}, sequence_{0};
   SnapshotSlots slots_{};
   int writing_slot_{-1};

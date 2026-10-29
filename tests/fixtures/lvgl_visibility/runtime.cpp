@@ -291,6 +291,23 @@ static void generic_pause(bool owner_paused) {
               "generic non-idle animation did not resume on return");
 }
 
+static void unrelated_events() {
+  Scene s(false);
+  // One binding per root, with no reconciliation from rendering callbacks.
+  s.require(lv_obj_get_event_count(s.pages[0]) == 1,
+            "visibility installed redundant root event descriptors");
+  const auto notifications = s.notifications;
+  lv_obj_send_event(s.pages[0], LV_EVENT_REFRESH, nullptr);
+  lv_obj_send_event(s.pages[0], LV_EVENT_DRAW_MAIN_BEGIN, nullptr);
+  lv_obj_send_event(s.pages[0], LV_EVENT_DRAW_MAIN_END, nullptr);
+  s.require(s.notifications == notifications,
+            "rendering or unrelated event ran visibility reconciliation");
+  s.show(1);
+  s.require(!s.script_running, "filtered callback lost screen-unload handling");
+  s.show(0);
+  s.require(s.script_running, "filtered callback lost screen-load handling");
+}
+
 int main(int argc, char **argv) {
   const std::string name = argc > 1 ? argv[1] : "matrix";
   if (name == "matrix") screen_matrix();
@@ -301,6 +318,7 @@ int main(int argc, char **argv) {
   else if (name == "top") top_layer();
   else if (name == "generic") generic_pause(false);
   else if (name == "owner_paused") generic_pause(true);
+  else if (name == "unrelated_events") unrelated_events();
   else return 3;
   std::cout << "PASS real_lvgl_9_5 " << name << '\n';
 }

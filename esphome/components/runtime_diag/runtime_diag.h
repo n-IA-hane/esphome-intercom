@@ -33,16 +33,18 @@ class RuntimeDiag : public Component {
  protected:
   std::string build_snapshot_(const char *reason);
 
+#if configUSE_TRACE_FACILITY
   struct TaskSample {
     // TaskStatus_t::xTaskNumber is UBaseType_t in current ESP-IDF/FreeRTOS.
     // Using the public field type keeps the diagnostic component compatible
     // with IDF releases that do not expose the private TaskNumber_t alias.
     UBaseType_t number{0};
     uint32_t runtime{0};
-    bool used{false};
   };
 
   static constexpr size_t MAX_TASK_SAMPLES = 48;
+  static_assert(MAX_TASK_SAMPLES <= UINT8_MAX);
+#endif
 
   uint32_t last_loop_ms_{0};
   uint32_t max_loop_gap_ms_{0};
@@ -55,10 +57,13 @@ class RuntimeDiag : public Component {
   uint32_t burst_next_ms_{0};
   uint32_t burst_index_{0};
   std::string burst_reason_;
+#if configUSE_TRACE_FACILITY
   TaskSample previous_tasks_[MAX_TASK_SAMPLES]{};
+  uint8_t previous_task_count_{0};
   uint32_t previous_total_runtime_{0};
   int64_t previous_task_sample_us_{0};
   bool have_previous_tasks_{false};
+#endif
   std::vector<std::pair<std::string, std::string>> context_;
 
 #if CONFIG_HEAP_TRACING_STANDALONE

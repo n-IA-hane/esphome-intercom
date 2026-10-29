@@ -63,10 +63,11 @@ lvgl_visibility:
         capture_output=True, text=True, timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    code = next(tmp_path.rglob("main.cpp")).read_text()
-    assert "visibility->add_page(home)" in code
-    assert "visibility->add_page(options)" in code
-    assert "visibility->set_lvgl(" in code
+    code = next((tmp_path / ".esphome/build").glob("*/src/main.cpp")).read_text()
+    assert "policy.add_root(home->obj)" in code
+    assert "policy.add_root(options->obj)" in code
+    assert "policy.reserve_roots(5)" in code
+    assert "visibility->set_initializer([](" in code
     assert "runtime_controller" not in code
 
 
@@ -85,10 +86,10 @@ def test_public_round_video_page_has_one_router_and_no_layer_overlay(tmp_path):
         capture_output=True, text=True, timeout=180,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    code = next(tmp_path.rglob("main.cpp")).read_text()
+    code = next((tmp_path / ".esphome/build").glob("*/src/main.cpp")).read_text()
     assert "target = call_video_page->obj" in code
     assert "s3_video->attach_video_container(call_video_surface)" in code
-    assert "display_visibility->add_page(call_video_page)" in code
+    assert "policy.add_root(call_video_page->obj)" in code
     assert "incoming_video_overlay" not in code
     assert "target != call_video_page->obj" in code
     assert "video_top_layer_was_hidden" not in code
