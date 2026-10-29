@@ -199,8 +199,18 @@ def test_spotpear_presentation_follows_features(tmp_path: Path, features: list[s
     assert document['substitutions']['firmware_features'] == features
     assert ('lvgl' in document) is ('display' in features)
     assert ('display' in document) is ('display' in features)
+    video_receive = 'display' in features and 'voip' in features
+    assert ('esp_video_renderer' in document) is video_receive
+    if video_receive:
+        renderer = document['esp_video_renderer']
+        assert (int(renderer['width']), int(renderer['height'])) == (240, 240)
+        assert int(renderer['framerate']) == 2
+        assert document['voip_stack']['video']['codec'] == 'jpeg'
+        assert 'camera_id' not in document['voip_stack']['video']
+        assert 'source' not in document['voip_stack']['video']
     if 'display' in features:
         pages = {str(page['id']) for page in document['lvgl']['pages']}
+        assert ('call_video_page' in pages) is video_receive
         if 'voice' not in features:
             def events(value):
                 if isinstance(value, dict):

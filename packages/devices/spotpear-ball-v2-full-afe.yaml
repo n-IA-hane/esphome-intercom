@@ -92,6 +92,10 @@ substitutions:
         }
       processing: !include '../features/audio_controls/afe_mode.yaml'
   _spotpear_diagnostics: !include '../diagnostics/native.yaml'
+  # JPEG reception follows display + VoIP; audio-only builds omit the renderer.
+  s3_sip_jpeg_width: '240'
+  s3_sip_jpeg_height: '240'
+  s3_sip_jpeg_fps: '2'
 runtime_controller:
   id: runtime
   storage_in_psram: true
@@ -100,6 +104,7 @@ packages:
   hardware: !include '../board/spotpear_ball_v2.yaml'
   display_hardware: !include '${ ''../board/spotpear_display.yaml'' if ''display'' in firmware_features else ''../features/shared/absent.yaml''
     }'
+  video_receive: !include ${ '../voip/s3_video_call_page.yaml' if 'display' in firmware_features and 'voip' in firmware_features else '../features/shared/absent.yaml' }
   audio: !include '../audio/profiles/spotpear_afe.yaml'
   boot: !include '../features/shared/spotpear_boot.yaml'
   diagnostics: ${ _spotpear_diagnostics if 'diagnostics' in firmware_features else {} }
