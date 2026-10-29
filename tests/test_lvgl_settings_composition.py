@@ -296,3 +296,21 @@ def test_round_boot_events_execute_against_the_real_runtime_profile(tmp_path):
     assert compiled.returncode == 0, compiled.stderr
     executed = subprocess.run([str(binary)], capture_output=True, text=True)
     assert executed.returncode == 0, executed.stderr
+
+
+@pytest.mark.parametrize("scene", ["spot240", "box360-aec", "p4-landscape", "p4-portrait"])
+def test_options_title_is_part_of_the_full_height_scroll_content(scene):
+    config = expanded_scene(scene, "full")
+    page, controls = page_and_controls(config)
+    wrapper = controls["settings_page_wrapper"]
+    header = controls["settings_page_header"]
+    assert page["widgets"] == [{"obj": wrapper}]
+    assert wrapper["widgets"][0] == {"obj": header}
+    assert wrapper["y"] == 0 and wrapper["height"] == 1.0
+    assert str(wrapper["scrollbar_mode"]).removeprefix("LV_SCROLLBAR_MODE_") == "AUTO"
+    assert header["height"] == "LV_SIZE_CONTENT"
+    assert wrapper["pad_top"] <= (240 if scene == "spot240" else 360 if scene.startswith("box") else 800) // 12
+    if not scene.startswith("p4"):
+        assert header["scroll_chain_ver"] is False
+        assert header["gesture_bubble"] is False
+        assert "round_navigate" in text(header["on_swipe_down"])

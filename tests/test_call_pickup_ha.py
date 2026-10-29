@@ -111,6 +111,18 @@ async def test_pickup_preparation_cannot_steal_answered_or_cancelled_call(
         entry, data={**entry.data, "parking": {"enabled": True}}
     )
     caller, original, picker = registered_phones
+    prepared, continue_preparation = asyncio.Event(), asyncio.Event()
+    hold_preparation = group and winner == "original_answer"
+    if hold_preparation:
+        from custom_components.voip_stack import ring_group_orchestrator
+        prepare = ring_group_orchestrator.async_prepare_group_candidates
+
+        async def prepared_before_dial(*args, **kwargs):
+            await prepare(*args, **kwargs)
+            prepared.set()
+            await continue_preparation.wait()
+
+        monkeypatch.setattr(ring_group_orchestrator, "async_prepare_group_candidates", prepared_before_dial)
 
     async def wait_for(predicate):
         async with asyncio.timeout(4):
@@ -128,8 +140,32 @@ async def test_pickup_preparation_cannot_steal_answered_or_cancelled_call(
     )
     session = next(iter(runtime.calls.sessions.values()))
     if group:
-        from custom_components.voip_stack.dialog_info import snapshot
-        await wait_for(lambda: any(item.state == "early" for item in snapshot(runtime.runtime, "transfer_b")))
+        # A group claims phones before its SIP legs start. The BLF projection
+        # can already be early while the actual destination is still calling.
+        checked = asyncio.Event()
+
+        def destination_is_ringing():
+            checked.set()
+            return any(
+                leg.endpoint_id == "transfer_b" and leg.state == "remote_ringing"
+                for leg in session.legs.values()
+            ) and "Incoming call" in original.read()
+
+        ready = asyncio.create_task(wait_for(destination_is_ringing))
+        if hold_preparation:
+            try:
+                await asyncio.wait_for(prepared.wait(), 3)
+                from custom_components.voip_stack.dialog_info import snapshot
+                assert any(item.state == "early" for item in snapshot(runtime.runtime, "transfer_b"))
+                await asyncio.wait_for(checked.wait(), 3)
+                assert not ready.done(), "Pickup barrier admitted a claim without a ringing SIP leg"
+            except BaseException:
+                ready.cancel()
+                await asyncio.gather(ready, return_exceptions=True)
+                raise
+            finally:
+                continue_preparation.set()
+        await ready
     entered, release = asyncio.Event(), asyncio.Event()
     start = SipRtpRelay.start
     first = True

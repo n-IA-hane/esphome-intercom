@@ -13,7 +13,7 @@ from tests.test_package_composition import device_config
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "packages/features/presentation"
-GLYPH = "\U000F057D"
+GLYPH = "\U000F01EE"
 SCENES = {
     "box": "yamls/full-experience/single-bus/waveshare-s3-touch-lcd-1.85c-box-v2-full.yaml",
     "spotpear": "yamls/full-experience/single-bus/spotpear-ball-v2-full-afe.yaml",
@@ -69,21 +69,23 @@ def test_voicemail_composes_only_with_a_real_phone_and_requires_no_registration(
     glyphs = "".join(char for extra in font.get("extras", []) for char in extra["glyphs"])
     assert (GLYPH in glyphs) is voip
     assert "ui_voicemail" not in text(document.get("interval", []))
-    if scene.startswith("p4"):
-        assert ("top_voicemail_label" in ids) is voip
-        if voip:
-            label = next(node["label"] for node in nodes(document["lvgl"]["top_layer"]) if isinstance(node.get("label"), dict) and str(node["label"].get("id")) == "top_voicemail_label")
-            assert label["hidden"] is True
-            assert label["text"] == GLYPH
-            assert int(label["y"]) == (31 if scene == "p4-portrait" else 18)
-            action = next(item for item in document["script"] if str(item["id"]) == "update_voicemail_status")
-            assert "id(main_page)->obj" in text(action)
-            assert "has_waiting_messages" not in text(action)
-            assert "update_voicemail_status" in text(document["lvgl_visibility"]["on_change"])
-    else:
-        assert "top_voicemail_label" not in ids
+    assert ("top_voicemail_label" in ids) is voip
+    if voip:
+        label = next(node["label"] for node in nodes(document["lvgl"]["top_layer"])
+                     if isinstance(node.get("label"), dict) and str(node["label"].get("id")) == "top_voicemail_label")
+        assert label["hidden"] is True
+        assert label["text"] == GLYPH
+        assert label["align"] == "TOP_MID"
+        assert label["y"] == (6 if scene.startswith("p4") else "72%")
+        action = next(item for item in document["script"] if str(item["id"]) == "update_voicemail_status")
+        assert "id(phone).is_idle()" in text(action)
+        assert "voice_assistant_phase" in text(action)
+        assert "has_waiting_messages" not in text(action)
+        assert "update_voicemail_status" in text(document["lvgl_visibility"]["on_change"])
+        assert "update_voicemail_status" in text(next(item for item in document["script"] if str(item["id"]) == "draw_display"))
+    if not scene.startswith("p4"):
         action = next(item for item in document["script"] if str(item["id"]) == "update_idle_labels")
-        assert ("ui_voicemail_waiting" in text(action)) is voip
+        assert "ui_voicemail_waiting" not in text(action)
 
 
 @pytest.mark.parametrize("feature", ["USE_ESPHOME_VOIP_MWI", "USE_ESPHOME_VOIP_HA_MWI"])
@@ -92,20 +94,21 @@ def test_native_mwi_projection_coalesces_events_and_video_visibility(tmp_path, f
     projection = yaml_util.load_yaml(PACKAGE / "voicemail.yaml")
     boot = str(projection["esphome"]["on_boot"][0]["then"][0]["lambda"])
     boot = boot.replace("${voicemail_changed_code}", "++refreshes;")
-    badge = yaml_util.load_yaml(PACKAGE / "p4_voicemail.yaml")
+    badge = yaml_util.load_yaml(PACKAGE / "voicemail_badge.yaml")
     update = str(badge["script"][0]["then"][0]["lambda"])
-    update = update.replace("${_p4_voicemail_visible_code}", badge["defaults"]["_p4_voicemail_visible_code"])
+    update = update.replace("${_voicemail_visible_code}", "(active == &home || active == &contacts) && assistant_idle")
     source = r'''
 #include <cassert>
 #include <functional>
 #define USE_ESPHOME_VOIP_MWI
 #define id(value) value
 constexpr unsigned LV_OBJ_FLAG_HIDDEN=1;
-struct Object { bool hidden=true; unsigned writes=0; } label, home, video;
+struct Object { bool hidden=true; unsigned writes=0; } label, home, video, contacts, options;
 struct Page { Object *obj; } page{&home};
 Page *main_page=&page;
 Object *top_voicemail_label=&label, *active=&home;
 bool ui_voicemail_waiting=false;
+bool assistant_idle=true;
 unsigned refreshes=0;
 Object *lv_disp_get_scr_act(void *) { return active; }
 bool lv_obj_has_flag(Object *object,unsigned) { return object->hidden; }
@@ -113,6 +116,8 @@ void lv_obj_clear_flag(Object *object,unsigned) { object->hidden=false; ++object
 void lv_obj_add_flag(Object *object,unsigned) { object->hidden=true; ++object->writes; }
 struct Phone {
  bool waiting=false;
+ bool idle=true;
+ bool is_idle() { return idle; }
  std::function<void()> callback;
  bool has_waiting_messages() { return waiting; }
  void add_on_message_waiting_callback(std::function<void()> fn) { callback=fn; }
@@ -132,9 +137,17 @@ int main() {
  sync_badge(); assert(label.writes==1);
  active=&video; sync_badge(); assert(label.hidden && label.writes==2);
  active=&home; sync_badge(); assert(!label.hidden && label.writes==3);
+ active=&options; sync_badge(); assert(label.hidden);
+ active=&contacts; sync_badge(); assert(!label.hidden);
+ for (int call_state=1;call_state<=4;++call_state) {
+   phone.idle=false; sync_badge(); assert(label.hidden);
+   phone.idle=true; sync_badge(); assert(!label.hidden);
+ }
+ active=&home; assistant_idle=false; sync_badge(); assert(label.hidden);
+ assistant_idle=true; sync_badge(); assert(!label.hidden);
  phone.emit(false); assert(refreshes==2 && !ui_voicemail_waiting);
- sync_badge(); assert(label.hidden && label.writes==4);
- phone.emit(false); sync_badge(); assert(refreshes==2 && label.writes==4);
+ sync_badge(); assert(label.hidden);
+ unsigned writes=label.writes; phone.emit(false); sync_badge(); assert(refreshes==2 && label.writes==writes);
 }
 '''
     source = source.replace("#define USE_ESPHOME_VOIP_MWI", "#define " + feature)

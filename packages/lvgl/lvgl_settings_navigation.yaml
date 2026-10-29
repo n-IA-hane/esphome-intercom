@@ -3,8 +3,8 @@
 # FULL round profiles use round_navigate from round_runtime for this sequence:
 # Assist -> Contacts -> Dialer -> Options, skipping views not compiled in.
 # Swipe bottom to top to advance, top to bottom to go back. Ends do not wrap.
-# Inside Options, the body scrolls. Navigate from its fixed header or exposed
-# area outside the scrolling body, or use Back to return to the previous view.
+# Inside Options, the title and controls share one scrolling body. Scroll to
+# the top, then swipe the visible title down to return to the previous view.
 # The device populates g_settings_pages at boot. Older users of the multi-page
 # API can still call the legacy cycling action settings_navigate below; FULL
 # round navigation does not use that action.

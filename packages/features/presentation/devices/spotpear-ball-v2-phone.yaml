@@ -27,10 +27,13 @@ voip_stack:
   - script.execute: draw_display
 packages:
   voicemail: !include
-    file: ../voicemail.yaml
+    file: ../voicemail_badge.yaml
     vars:
-      voicemail_changed_code: id(update_idle_labels).execute();
-  visibility: !include '../visibility.yaml'
+      _voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(call_idle_page)->obj
+  visibility: !include
+    file: ../visibility.yaml
+    vars:
+      _visibility_extra_code: id(update_voicemail_status).execute();
   call_media_route: !include '../../../lvgl/spotpear_call_media_route.yaml'
   lvgl_settings_nav: !include '../../../lvgl/lvgl_settings_navigation.yaml'
   lvgl_settings_sync_volumes: !include '../../../lvgl/lvgl_settings_sync_volumes.yaml'
@@ -154,6 +157,7 @@ script:
       then:
       - script.execute: update_call_idle_labels
       - script.execute: update_idle_labels
+  - script.execute: update_voicemail_status
 - id: update_call_idle_labels
   then:
   - lambda: id(peer_name) = id(phone).get_current_destination();
@@ -305,14 +309,12 @@ script:
             else if (wifi < 80) ret += "\U000F08BD";
             else ret += "\U000F08BE";
             ret += api::global_api_server->is_connected() ? "\U000F07D0" : "\U000F15D0";
-            ${ _voicemail_status_text | default('') }
             return ret;
       else:
       - lvgl.label.update:
           id: top_battery_label
           text: !lambda |-
             std::string ret;
-            ${ _voicemail_status_text | default('') }
             return ret;
 - id: backlight_timer
   mode: restart
@@ -406,7 +408,7 @@ font:
     - 󰢾
     - 󰟐
     - 󱗐
-    - "\U000F057D"
+    - "\U000F01EE"
 - file: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
   id: call_icons
   size: 42

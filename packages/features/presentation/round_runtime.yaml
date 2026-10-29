@@ -285,7 +285,7 @@ script:
 - id: draw_display
   mode: restart
   then: ${ _round_draw_base + (_round_draw_phone_tail if _round_has_phone else []) + (_round_draw_timer_tail if
-    _round_has_timers else []) }
+    _round_has_timers else []) + (_voicemail_draw if _round_has_phone else []) }
 - id: switch_to_va
   then:
   - lambda: !lambda |-
@@ -315,10 +315,11 @@ packages:
     vars:
       _visibility_has_avatar: true
       _visibility_has_pagination: true
+      _visibility_extra_code: ${ 'id(update_voicemail_status).execute();' if _round_has_phone else '' }
   voicemail: !include
-    file: ${ 'voicemail.yaml' if _round_has_phone else '../shared/absent.yaml' }
+    file: ${ 'voicemail_badge.yaml' if _round_has_phone else '../shared/absent.yaml' }
     vars:
-      voicemail_changed_code: id(update_idle_labels).execute();
+      _voicemail_visible_code: (lv_disp_get_scr_act(nullptr) == id(idle_page)->obj || lv_disp_get_scr_act(nullptr) == id(call_idle_page)->obj) && id(voice_assistant_phase) == ${voice_assist_idle_phase_id}
   phase: !include 'phase.yaml'
   navigation: !include '../../lvgl/lvgl_settings_navigation.yaml'
   settings: !include 'settings/main.yaml'

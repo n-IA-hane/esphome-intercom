@@ -91,6 +91,23 @@ Registered SIP phones can subscribe to `message-summary`. RFC 3842 MWI reports
 new and old message counts through the existing SIP SUBSCRIBE/NOTIFY dialogs.
 MWI does not carry a message catalog, recordings or transcriptions.
 
+### ESP display indicator
+
+The maintained Spotpear, S3 LCD and P4 display packages show an unread-message
+envelope centered above the status area on the Assist idle and VoIP idle views.
+Mailbox events and page changes update its visibility; reading the messages
+clears the indicator.
+
+For a Home Assistant mailbox, enable the phone's mailbox as described above.
+The device packages enable `ha_integration.message_waiting`, and VoIP Stack
+delivers the counts through the authenticated ESPHome API. SIP registration
+is optional. Registered PBX accounts can instead enable
+`registration.message_waiting` for standard SIP MWI. When both sources are
+configured, the envelope represents unread messages in either source.
+
+See the [ESP message-waiting guide](https://github.com/n-IA-hane/esphome-voip-stack/blob/dev/docs/SIP_MWI.md)
+for component configuration and YAML triggers.
+
 ## Send a call to voicemail
 
 Call `voicemail.<phone>` or `*60<extension>` to leave a message directly.

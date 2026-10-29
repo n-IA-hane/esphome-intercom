@@ -23,9 +23,3 @@ esphome:
         id(phone).add_on_message_waiting_callback(refresh);
         refresh();
         #endif
-defaults:
-  _voicemail_status_text: |-
-    if (id(ui_voicemail_waiting)) ret += "\U000F057D";
-
-substitutions:
-  _voicemail_status_text: ${_voicemail_status_text}

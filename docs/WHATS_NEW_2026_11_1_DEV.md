@@ -167,7 +167,10 @@ explicitly. UDP/TCP, Digest authentication and automatic binding renewal share
 the existing signaling worker.
 
 An optional MWI subscription reports mailbox waiting status and message counts
-to YAML triggers and conditions. Your automations own the LED or display.
+to YAML triggers and conditions. The maintained display packages show a centered
+unread-message envelope on their Assist idle and VoIP idle views. HA mailboxes
+update it through the native ESPHome API; registered PBX accounts use SIP MWI.
+Custom YAML can use the same events for its own LED or display.
 Leaving registration disabled preserves the existing direct configuration.
 
 [PBX accounts and actions](https://github.com/n-IA-hane/esphome-voip-stack/blob/dev/docs/SIP_REGISTRATION.md)

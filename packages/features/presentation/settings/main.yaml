@@ -1,7 +1,7 @@
 # One settings page, composed at configuration time from the available controls.
 # Round displays: Assist, contacts, dialer, Options, with absent features skipped.
 # Swipe up to advance and down to go back, without wrapping at either endpoint.
-# Its body scrolls; use the fixed header or exposed outer area for navigation.
+# The title scrolls with the controls; swipe its visible title to navigate back.
 substitutions:
   _settings_round: ${ _settings_round | default(true) }
   _settings_afe: ${ _settings_afe | default(true) }
@@ -16,9 +16,7 @@ substitutions:
   _settings_slider_touch_pad: ${ [0, ((40 if (display_width | int) <= 240 else 48) - (settings_slider_height | int)) // 2] | max }
   _settings_row_height: 48
   _settings_label_width: ${ (_settings_control_width | int) - (_settings_switch_width | int) - 12 }
-  _settings_header_y: ${ (display_height | int) // 10 if _settings_round else 0 }
-  _settings_header_height: ${ 52 if _settings_round else 56 }
-  _settings_content_y: ${ (_settings_header_y | int) + (_settings_header_height | int) }
+  _settings_top_padding: ${ (display_height | int) // 16 if _settings_round else 16 }
   _settings_register_audio:
     lambda: ${_settings_audio_callbacks}
   _settings_register_voip:
@@ -82,6 +80,29 @@ substitutions:
         flex_align_cross: CENTER
         pad_row: ${settings_pad_row}
       widgets: ${_settings_right_widgets}
+  _settings_title_widgets:
+  - obj:
+      id: settings_page_header
+      width: ${ settings_narrow_width if _settings_round else settings_row_width }
+      height: SIZE_CONTENT
+      bg_color: 0x202020
+      border_width: 0
+      pad_all: 0
+      scrollable: false
+      scroll_chain_ver: ${ not _settings_round }
+      gesture_bubble: ${ not _settings_round }
+      on_swipe_up: ${ _round_navigation_up if _settings_round else [] }
+      on_swipe_down: ${ _round_navigation_down if _settings_round else [] }
+      layout:
+        type: FLEX
+        flex_flow: ROW
+        flex_align_main: CENTER
+        flex_align_cross: CENTER
+      widgets:
+      - label:
+          text: Options
+          text_color: 0xFFFFFF
+          text_font: ${_settings_font}
   _settings_page:
   - id: ${_settings_page_id}
     bg_color: 0x202020
@@ -90,34 +111,14 @@ substitutions:
     on_swipe_down: ${ _round_navigation_down if _settings_round else _settings_close_p4 }
     widgets:
     - obj:
-        id: settings_page_header
-        align: TOP_MID
-        y: ${_settings_header_y}
-        width: ${ settings_narrow_width if _settings_round else settings_row_width }
-        height: ${_settings_header_height}
-        bg_color: 0x202020
-        border_width: 0
-        pad_all: 0
-        scrollable: false
-        layout:
-          type: FLEX
-          flex_flow: ROW
-          flex_align_main: CENTER
-          flex_align_cross: CENTER
-        widgets:
-        - label:
-            text: Options
-            text_color: 0xFFFFFF
-            text_font: ${_settings_font}
-    - obj:
         id: settings_page_wrapper
         x: 0
-        y: ${_settings_content_y}
+        y: 0
         width: 100%
-        height: ${ (display_height | int) - (_settings_content_y | int) }
+        height: 100%
         bg_color: 0x202020
         border_width: 0
-        pad_top: 8
+        pad_top: ${_settings_top_padding}
         pad_bottom: ${ (display_height | int) // 6 if _settings_round else 16 }
         pad_left: 0
         pad_right: 0
@@ -132,7 +133,7 @@ substitutions:
           flex_align_cross: CENTER
           flex_align_track: CENTER
           pad_row: ${settings_pad_row}
-        widgets: ${ _settings_general_columns + (_settings_voip_widgets if _fw_voip else []) }
+        widgets: ${ _settings_title_widgets + _settings_general_columns + (_settings_voip_widgets if _fw_voip else []) }
 packages:
   audio_video: !include audio_video.yaml
   voip: !include ${ 'voip.yaml' if _fw_voip else '../../shared/absent.yaml' }

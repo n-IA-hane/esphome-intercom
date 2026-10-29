@@ -12,7 +12,7 @@ from PIL import Image
 import pytest
 
 from tests.test_lvgl_settings_composition import expanded_scene
-from tools.render_lvgl import find_id, yaml_input, make_status_config, nodes, strings
+from tools.render_lvgl import find_id, yaml_input, make_host_config, make_status_config, nodes, strings
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +57,7 @@ def test_production_page_runs_real_lvgl_owner_sync_and_snapshot(tmp_path, scene,
     log = (output / "run.log").read_text()
     assert "UI_PROBE owner_sync=pass user_write=pass drag=pass reject=pass" in log
     assert "UI_PROBE overlay_restore=pass" in log
+    assert "UI_OPTIONS flow_header=pass scrollbar_auto=pass" in log
     assert "UI_POINTER source_dialer_gestures=pass suppressed_commands=pass positive_digit_tap=pass" in log
     assert "UI_BOOT registry=1 first_valid=1" in log
     assert "UI_POINTER ordered_navigation=pass bounded_ends=pass real_registry=pass" in log
@@ -101,4 +102,19 @@ def test_status_snapshot_copies_production_widgets_fonts_and_header_context(tmp_
         assert "weather_clock_label" in set(strings(host["lvgl"]["pages"]))
         assert "weather_date_label" in set(strings(host["lvgl"]["pages"]))
         label = next(node["label"] for node in nodes(host["lvgl"]["pages"]) if str(node.get("label", {}).get("id")) == "weather_clock_label")
-        assert int(label["x"]) == -74
+        assert int(label["x"]) == -30
+
+
+@pytest.mark.parametrize("scene,width,height", [
+    ("p4-landscape", 1280, 800), ("p4-portrait", 800, 1280),
+])
+def test_p4_options_snapshot_keeps_phone_owner_without_dialer_input(tmp_path, scene, width, height):
+    document = expanded_scene(scene, "full")
+    host, page_hash = make_host_config(document, "settings_p4_page", width, height, tmp_path)
+    assert page_hash
+    assert host["ui_fixture"]["phone_id"] == "phone"
+    assert host["ui_fixture"]["conference_ring_id"] == "voip_conference_ring"
+    # Keep the real owner callbacks, including its conference-ring switch.
+    callback = next(script for script in host["script"] if script["id"] == "settings_sync_conference_ring")
+    assert "id(phone).get_conference_ring()" in "\n".join(strings(callback))
+    assert "voip_stack" not in host and "api" not in host

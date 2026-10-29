@@ -1,10 +1,11 @@
 # P4 telephone screen and optional video surface; frame-arrival gates remain unchanged.
 packages:
   voicemail: !include
-    file: ../p4_voicemail.yaml
+    file: ../voicemail_badge.yaml
     vars:
-      _p4_voicemail_font_id: videophone_small_font
-      _p4_voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(videophone_page)->obj
+      _voicemail_font_id: videophone_small_font
+      _voicemail_y: 6
+      _voicemail_visible_code: lv_disp_get_scr_act(nullptr) == id(videophone_page)->obj && id(videophone_terminal_notice).empty()
   visibility: !include
     file: ../visibility.yaml
     vars:
@@ -35,7 +36,7 @@ font:
   size: 22
   glyphsets:
   - GF_Latin_Core
-  extras: ${ _p4_voicemail_font_extra }
+  extras: ${ _voicemail_font_extra }
 globals:
 - id: videophone_peer
   type: std::string
@@ -59,8 +60,6 @@ lvgl:
   byte_order: little_endian
   log_level: WARN
   rotation: 270
-  top_layer:
-    widgets: ${ _p4_voicemail_widgets }
   on_boot: ${ _p4_phone_video_boot if _p4_phone_has_video else [] }
   pages: ${ _p4_phone_pages + (_p4_phone_video_pages if _p4_phone_has_video else []) }
 wifi:
@@ -689,6 +688,7 @@ defaults:
             id(videophone_call_button), lv_color_hex(action_color),
             LV_PART_MAIN);
         ${ 'lv_label_set_text(id(videophone_video_peer_label), peer.c_str());' if _p4_phone_has_video else '' }
+    - script.execute: update_voicemail_status
   - id: update_videophone_settings
     mode: restart
     then:
