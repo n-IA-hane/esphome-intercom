@@ -6,7 +6,6 @@ import asyncio
 import logging
 
 from homeassistant.components import network
-from homeassistant.components.esphome.const import CLIENT_INFO
 from homeassistant.const import EVENT_SERVICE_REGISTERED, EVENT_STATE_CHANGED, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -109,6 +108,10 @@ class EspHomeMailboxBridge:
             api_host = entry.data.get("host") if entry is not None else None
             if not api_host:
                 continue
+            # ESPHome is optional. A native action and its owning config entry
+            # confirm that HA has loaded it before using its client identity.
+            from homeassistant.components.esphome.const import CLIENT_INFO
+
             snapshot = mailbox_snapshot(self.hass, identity)
             available = bool(not unavailable and snapshot["enabled"])
             try:

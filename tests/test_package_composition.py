@@ -544,6 +544,10 @@ def test_p4_standalone_phone_keeps_codec_and_display_optional(tmp_path, codec, f
     assert 'Could not resolve substitution' not in result.stderr, result.stderr
     generated = next(tmp_path.rglob('main.cpp')).read_text()
     assert ('voip_stack::VoipStack' in generated) is ('voip' in features)
+    has_display = 'voip' in features and 'display' in features
+    assert ('lvgl::LvglComponent' in generated) is has_display
+    assert ('top_voicemail_label' in generated) is has_display
+    assert ('add_on_message_waiting_callback' in generated) is has_display
     assert ('esp_video_camera::ESPVideoCamera' in generated) is ('video' in features)
     assert ('esp_h264_video_source::' in generated) is ('video' in features and codec == 'h264')
     assert ('esp_jpeg_video_source::' in generated) is ('video' in features and codec == 'jpeg')

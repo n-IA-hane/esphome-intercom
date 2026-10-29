@@ -117,3 +117,14 @@ def test_browser_suite_selects_all_real_browser_regressions(tmp_path: Path) -> N
             if isinstance(imported, str) and imported.startswith("playwright."):
                 playwright_files.add(str(path.relative_to(ROOT)))
     assert playwright_files <= set(arguments)
+
+
+def test_optional_esphome_mailbox_regression_uses_the_ha_interpreter(tmp_path: Path) -> None:
+    path = "tests/test_esphome_mailbox_optional_ha.py"
+    ha_path = tmp_path / "ha"
+    software_path = tmp_path / "software"
+    ha_path.mkdir()
+    software_path.mkdir()
+    assert path in _record_suite_arguments(ha_path, "ha")
+    arguments = _record_suite_arguments(software_path, "software-full")
+    assert f"--ignore={path}" in arguments

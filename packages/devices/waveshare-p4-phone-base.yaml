@@ -27,7 +27,6 @@ substitutions:
 defaults:
   _p4_phone: !include '../features/voip/devices/waveshare-p4-phone.yaml'
   _p4_phone_display: !include '../board/waveshare-p4-phone-display.yaml'
-  _p4_phone_ui: !include '../features/presentation/devices/waveshare-p4-phone.yaml'
 packages:
   hardware: !include '../board/waveshare-p4-phone.yaml'
   audio: !include '../audio/profiles/waveshare-p4-phone.yaml'
@@ -35,5 +34,5 @@ packages:
   telephone: ${ _p4_phone if 'voip' in firmware_features else {} }
   display_hardware: ${ _p4_phone_display if 'voip' in firmware_features and 'display' in firmware_features else
     {} }
-  display: ${ _p4_phone_ui if 'voip' in firmware_features and 'display' in firmware_features else {} }
+  display: !include ${ '../features/presentation/devices/waveshare-p4-phone.yaml' if 'voip' in firmware_features and 'display' in firmware_features else '../features/shared/absent.yaml' }
   maintenance: !include '../features/shared/standalone_phone_maintenance.yaml'

@@ -75,6 +75,7 @@ def test_voicemail_composes_only_with_a_real_phone_and_requires_no_registration(
             label = next(node["label"] for node in nodes(document["lvgl"]["top_layer"]) if isinstance(node.get("label"), dict) and str(node["label"].get("id")) == "top_voicemail_label")
             assert label["hidden"] is True
             assert label["text"] == GLYPH
+            assert int(label["y"]) == (31 if scene == "p4-portrait" else 18)
             action = next(item for item in document["script"] if str(item["id"]) == "update_voicemail_status")
             assert "id(main_page)->obj" in text(action)
             assert "has_waiting_messages" not in text(action)

@@ -1,11 +1,11 @@
 """HA mailbox truth reaches the physical ESP through its native API owner."""
 
 import asyncio
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+import sys
 from unittest.mock import AsyncMock
 
 import pytest
-from homeassistant.components.esphome.const import CLIENT_INFO
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
@@ -35,6 +35,11 @@ pytestmark = pytest.mark.ha
 async def esp_mailbox(mailbox_lab, monkeypatch):
     lab = mailbox_lab
     hass = lab.hass
+    # The native service below models a loaded ESPHome integration. Keep its
+    # optional SDK out of this suite, while testing its exact identity contract.
+    native_constants = ModuleType("homeassistant.components.esphome.const")
+    native_constants.CLIENT_INFO = "Authenticated ESPHome fixture client"
+    monkeypatch.setitem(sys.modules, native_constants.__name__, native_constants)
     native = MockConfigEntry(domain="esphome", title="Physical API identity", data={
         "host": "192.0.2.80", "device_name": "physical_node",
     })
@@ -80,6 +85,7 @@ async def esp_mailbox(mailbox_lab, monkeypatch):
     await hass.async_block_till_done(wait_background_tasks=True)
     obj = SimpleNamespace(**vars(lab), device=device, native=native, state=state,
         endpoint_id=identity, received=received, source_ip=source_ip, control=control,
+        client_info=native_constants.CLIENT_INFO,
         delivered=delivered, bridge=lab.runtime.esphome_mailbox)
     yield obj
     await obj.bridge.async_close()
@@ -105,7 +111,7 @@ async def test_initial_snapshot_uses_native_api_owner_not_sip_address(esp_mailbo
     lab = esp_mailbox
     assert lab.received == [{
         "available": True, "waiting": False, "new_messages": 0, "old_messages": 0,
-        "source_client_info": CLIENT_INFO, "source_client_address": "192.0.2.1",
+        "source_client_info": lab.client_info, "source_client_address": "192.0.2.1",
     }]
     lab.source_ip.assert_awaited_with(lab.hass, target_ip="192.0.2.80")
     device = lab.runtime.endpoints.get(lab.endpoint_id)

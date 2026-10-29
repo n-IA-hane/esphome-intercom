@@ -397,7 +397,10 @@ touchscreen:
       level: 100%
   - script.execute: backlight_timer
 packages:
-  voicemail: !include ${ '../p4_voicemail.yaml' if _fw_voip else '../../shared/absent.yaml' }
+  voicemail: !include
+    file: ${ '../p4_voicemail.yaml' if _fw_voip else '../../shared/absent.yaml' }
+    vars:
+      _p4_voicemail_y: 31
   visibility: !include
     file: ../visibility.yaml
     vars:

@@ -111,6 +111,7 @@ ha_tests=(
   tests/test_call_recording_ha.py
   tests/test_esphome_origination_ha.py
   tests/test_esphome_mailbox_ha.py
+  tests/test_esphome_mailbox_optional_ha.py
   tests/test_sip_phone_policy_ha.py
   tests/test_call_pickup_ha.py
   tests/test_group_pickup_regressions_ha.py
