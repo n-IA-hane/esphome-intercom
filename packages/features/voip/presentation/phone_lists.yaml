@@ -23,7 +23,7 @@ defaults:
       case BlfState::IDLE: row.set_detail("Idle"); row.set_trailing("\U000F05E1"); row.color=0x4ADE80; break;
       case BlfState::CALLING: row.set_detail("Calling"); row.set_trailing("\U000F03FB"); row.color=0x38BDF8; break;
       case BlfState::RINGING:
-        row.set_detail(state.ringing_dialogs > 0 ? "Ringing, tap to pick up" : "Ringing");
+        row.set_detail(state.ringing_dialogs > 0 ? "Ringing: pickup" : "Ringing");
         row.set_trailing("\U000F11AB"); row.color=0x38BDF8; row.blink=true;
         row.action=state.ringing_dialogs > 0 ? 1 : 0; break;
       case BlfState::ACTIVE: row.set_detail("In call"); row.set_trailing("\U000F03F6"); row.color=0xF87171; break;

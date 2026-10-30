@@ -87,6 +87,14 @@ def palette_config(build, output, body, icon_font):
         }
         auto *outgoing=lv_obj_get_child(id(rows),6);
         if(strcmp(lv_label_get_text(lv_obj_get_child(outgoing,2)),"Calling"))::exit(88);
+        auto *ringing=lv_obj_get_child(lv_obj_get_child(id(rows),2),2);
+        if(strcmp(lv_label_get_text(ringing),"Ringing: pickup"))::exit(98);
+        lv_point_t measured;
+        lv_text_get_size(&measured,lv_label_get_text(ringing),lv_obj_get_style_text_font(ringing,LV_PART_MAIN),
+          lv_obj_get_style_text_letter_space(ringing,LV_PART_MAIN),lv_obj_get_style_text_line_space(ringing,LV_PART_MAIN),
+          LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+        if(measured.x>lv_obj_get_content_width(ringing))::exit(99);
+        printf("RINGING_LABEL_FIT pixels=%d available=%d\n",int(measured.x),int(lv_obj_get_content_width(ringing)));
         if(allocations.calls || allocations.frees)::exit(89);
         id(epoch)=1;id(list_view).refresh();lv_refr_now(nullptr);
         auto *first=lv_obj_get_child(id(rows),1);
