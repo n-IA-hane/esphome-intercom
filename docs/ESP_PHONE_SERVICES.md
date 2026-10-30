@@ -141,6 +141,43 @@ be declared through the ESP client's `ca_certificate`; certificate validation
 still applies. The Home Assistant services use manifest Python dependencies
 and supported integration boundaries, including on Home Assistant OS.
 
+## Memory and execution placement
+
+Phone services reuse the existing task and memory controls. For a FULL device
+with PSRAM, override these settings in its main YAML when needed:
+
+```yaml
+voip_stack:
+  signaling_buffers_in_psram: true
+
+ldap_directory:
+  task_stack_in_psram: true
+  buffer_in_psram: true
+
+imap_voicemail:
+  task_stack_in_psram: true
+  buffer_in_psram: true
+```
+
+The maintained display packages already select external storage for the LDAP
+and IMAP workers. SIP signaling and contact storage are cold data; their
+placement is separate from `voip_stack.buffers_in_psram`, which controls audio
+staging. Preserve your board's validated audio and DSP settings.
+
+LDAP receives and maps one directory entry at a time. A boot-allocated staging
+table holds up to `max_entries` contacts until the complete search succeeds;
+an interrupted or invalid search retains the preceding phonebook. On the
+ESP32-S3 ABI, its records use 140 bytes each: 2,240 bytes for 16 entries or
+8,960 bytes for 64, excluding string data. The signaling PSRAM option also
+preallocates the canonical 64-contact table in external memory. The internal
+storage path grows only to the required contact count and reuses its capacity.
+
+LDAP refresh, IMAP catalog changes and playback wake their existing workers.
+Worker stacks and network buffers remain allocated between operations, and
+idle workers sleep on notifications or their protocol's blocking wait. BLF
+uses the existing SIP worker. Its watch limit, the IMAP page size and the
+display row pool are independent bounds that you can tune to the installation.
+
 ## Updating an existing installation
 
 1. Update the integration and coordinated ESP components to this preview.

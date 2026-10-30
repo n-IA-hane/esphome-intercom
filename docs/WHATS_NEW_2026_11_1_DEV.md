@@ -198,8 +198,11 @@ device name is presented as the caller's name.
 - **Visual voicemail:** tap the idle envelope or open Voicemail from Contacts.
   A dedicated page shows caller, date, duration and read state. Play, Stop,
   Delete and paged navigation reuse the existing audio player and archive.
-- **Clean ownership:** permanent ESPHome removal revokes credentials and deletes
+- **Automatic cleanup:** permanent ESPHome removal revokes credentials and deletes
   the managed directory/mailbox data. Offline and reload cycles retain them.
+- **Lower directory memory peaks:** LDAP maps one entry at a time into a
+  reusable staging table. Contact storage can use PSRAM independently of the
+  audio buffers, and workers retain their allocated stacks between operations.
 - **Compact discovery:** managed phones negotiate through SIP OPTIONS/SDP,
   replacing the lengthy Endpoint sensor with their native device/account owner.
 

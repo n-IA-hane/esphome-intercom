@@ -364,6 +364,22 @@ async def _mailbox_scenario(witness, args, fixture, ws, result, sip_host, local_
         result["mwi_read"] = await trace.waiting("no", since=deposited_at)
         await witness.service("screenshot_show_idle")
         await witness.screenshot(args.address, args.output.with_name(args.output.stem + "-idle-read.jpg"))
+        if getattr(args, "phone_services_checkpoint", False):
+            replayed = 0
+            while True:
+                print(json.dumps({"checkpoint": "inspect_voicemail_and_profile", "message_id": event["message_id"],
+                    **identity, "additional_plays": replayed, "images": [str(args.output.with_name(args.output.stem + suffix))
+                        for suffix in ("-idle-unread.jpg", "-voicemail.jpg", "-idle-read.jpg")]}), flush=True)
+                command = (await asyncio.to_thread(sys.stdin.readline)).strip()
+                if command == "CONTINUE " + event["message_id"]:
+                    break
+                if command != "PLAY " + event["message_id"] or replayed >= 2:
+                    raise RuntimeError("The profiling checkpoint requires this fixture message identity and permits at most two replays")
+                await witness.service("play_voicemail", fields)
+                await wait_snapshot(witness, lambda s: s["selected"] == identity["uid"] and s["player"] == 1)
+                await wait_snapshot(witness, lambda s: s["player"] == 0)
+                replayed += 1
+            result["profiling_replays"] = replayed
         await witness.service("delete_voicemail", fields)
         await wait_snapshot(witness, lambda s: s["total"] == 0)
         result["mailbox"] = {"passed": True, "message_id": event["message_id"], **identity,
@@ -394,6 +410,8 @@ async def run(witness, args, result, wire_class):
     if "mailbox" in phases:
         required.update({"refresh_voicemail", "screenshot_show_idle", "screenshot_show_voicemail", "screenshot_close_voicemail",
                          "screenshot_tap_phone_row", "mark_voicemail_read", "delete_voicemail"})
+        if getattr(args, "phone_services_checkpoint", False):
+            required.add("play_voicemail")
     if phases & {"blf", "subscriptions"}:
         required.update({"refresh_ldap_directory", "screenshot_show_contacts", "start_call_on_line",
                          "screenshot_scroll_phone_list"})
