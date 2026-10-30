@@ -85,7 +85,7 @@ can each be selected in YAML, including on VoIP-only profiles.
 </p>
 
 _Demo directory entries, captured on a real ESP display.
-The animated contact menu shows scrolling, live BLF and message waiting;
+The animated contact menu shows live BLF and message waiting;
 options and the in-call keypad are shown separately._
 
 See [standard services for ESP phones](docs/ESP_PHONE_SERVICES.md) for setup,
